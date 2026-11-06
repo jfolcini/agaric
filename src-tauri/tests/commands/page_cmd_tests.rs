@@ -6875,6 +6875,188 @@ async fn import_markdown_stores_link_labels_from_every_form() {
     mat.shutdown();
 }
 
+/// A GFM table cell escapes the pipe of an aliased link, `[[Note\|alias]]`:
+/// the import links the page `Note` with the label `alias` and keeps the pipe
+/// escaped, as the editor's table writer does, so the row keeps its columns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_an_escaped_pipe_link_in_a_table_cell() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    let note = import_file(&pool, &mat, dir.path(), "Note.md", "## H\n\nbody\n").await;
+    assert_eq!(note.page_title, "Note");
+
+    let table = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Table.md",
+        "| [[Note\\|alias]] | x |\n| --- | --- |\n| 1 | 2 |\n",
+    )
+    .await;
+
+    let notes: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content LIKE 'Note%' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(notes, vec![note.page_id.clone()], "no page but Note itself");
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND parent_id = ? \
+         AND deleted_at IS NULL",
+    )
+    .bind(&table.page_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!(
+            "| [[{}\\|alias]] | x |\n| --- | --- |\n| 1 | 2 |",
+            note.page_id
+        )
+    );
+    assert_eq!(table.warnings, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// A table cell's `[[#H\|see]]` is a ref to the file's own heading, and a
+/// `[[Table#G\|gone]]` whose heading is missing links the page, its pipe still
+/// escaped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_escaped_pipe_self_anchor_links_in_a_table_cell() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let table = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Table.md",
+        "## H\n\n| [[#H\\|see]] | [[Table#G\\|gone]] |\n| --- | --- |\n",
+    )
+    .await;
+
+    let heading: String =
+        sqlx::query_scalar("SELECT id FROM blocks WHERE content = '## H' AND deleted_at IS NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE content LIKE '|%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!(
+            "| (({heading})) | [[{}\\|gone]] |\n| --- | --- |",
+            table.page_id
+        )
+    );
+    mat.shutdown();
+}
+
+/// A folder import reads a table cell's `[[Note\|alias]]` as the note it names
+/// and a `[[Note#H\|see]]` as a ref to that note's heading, linked once the
+/// note is imported after the table; an anchor naming no block links the note,
+/// its pipe still escaped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn folder_import_reads_escaped_pipe_links_in_a_table_cell() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    import_folder(
+        &pool,
+        &mat,
+        dir.path(),
+        &[
+            (
+                "vault/Table.md",
+                "| [[Note\\|alias]] | [[Note#H\\|see]] | [[Note#Z\\|z\\|w]] |\n| --- | --- | --- |\n",
+            ),
+            ("vault/Note.md", "## H\n\nbody\n"),
+        ],
+        &[],
+    )
+    .await;
+
+    let notes: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content LIKE '%Note%' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(notes.len(), 1, "no page but vault/Note: {notes:?}");
+    let heading: String =
+        sqlx::query_scalar("SELECT id FROM blocks WHERE content = '## H' AND deleted_at IS NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE content LIKE '|%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!(
+            "| [[{note}\\|alias]] | (({heading})) | [[{note}\\|z\\|w]] |\n| --- | --- | --- |",
+            note = notes[0]
+        )
+    );
+    mat.shutdown();
+}
+
+/// Edit as Markdown reads a table cell's stored `[[ULID\|alias]]` as the link
+/// it is: a table copied into a new block keeps it and creates no page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_as_markdown_keeps_an_escaped_pipe_link_in_a_table_cell() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let note = dup_page(&pool, &mat, "Note").await;
+    let page = dup_page(&pool, &mat, "Table").await;
+    let table = format!("| [[{note}\\|alias]] | x |\n| --- | --- |");
+    dup_child(&pool, &mat, &page, &table).await;
+    settle(&mat).await;
+    let pages = || {
+        sqlx::query_scalar::<_, String>(
+            "SELECT content FROM blocks WHERE block_type = 'page' AND deleted_at IS NULL \
+             ORDER BY id",
+        )
+        .fetch_all(&pool)
+    };
+    let before = pages().await.unwrap();
+    let base = page_source(&pool, &page).await;
+
+    save_source(&pool, &mat, &page, &format!("{base}\n{table}\n"), &base)
+        .await
+        .unwrap();
+
+    assert_eq!(pages().await.unwrap(), before, "the save creates no page");
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tables, [table.clone(), table]);
+    mat.shutdown();
+}
+
 /// #5160 D9 — a `#tag` in a Logseq `[label]([[Page]])` label lands inside the
 /// stored `[[ULID|label]]`, where it stays text, so the import mints no tag for
 /// it; a `#tag` outside the link is still one.

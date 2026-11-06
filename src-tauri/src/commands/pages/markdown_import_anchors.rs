@@ -236,15 +236,22 @@ fn rewrite_anchor_tokens(
             {
                 return whole.to_string();
             }
-            if agaric_store::cache::PAGE_LINK_RE.is_match(whole) {
+            if is_internal_page_link(whole) {
                 return whole.to_string();
             }
             // A block ref has no label form, so a label is dropped with it
             // (#5160 D9); the page-link fallback keeps it.
-            let Some((name, label)) = refs.links.page_links.readings.get(caps[1].trim()) else {
+            let body = unescape_link_pipes(&caps[1]);
+            let Some((name, label)) = refs.links.page_links.readings.get(body.trim()) else {
                 return whole.to_string();
             };
             let label = label.as_deref();
+            let page_link = || {
+                escape_pipes_as(
+                    &caps[1],
+                    &stored_page_link(page_id, label, Some(page_title)),
+                )
+            };
             let mut block_ref = |target_id: String| {
                 outcomes.dropped_labels += usize::from(label.is_some());
                 format!("(({target_id}))")
@@ -260,7 +267,7 @@ fn rewrite_anchor_tokens(
                     block_ref(target_id)
                 } else {
                     outcomes.unresolved_block_anchors += 1;
-                    stored_page_link(page_id, label, Some(page_title))
+                    page_link()
                 }
             } else if let Some(pending) = refs.links.pending_heading_anchors.get(name) {
                 if let Some(target_id) = refs
@@ -277,7 +284,7 @@ fn rewrite_anchor_tokens(
                 } else {
                     any_patched = true;
                     outcomes.unresolved_headings += 1;
-                    stored_page_link(page_id, label, Some(page_title))
+                    page_link()
                 }
             } else {
                 whole.to_string()
@@ -459,13 +466,14 @@ pub(super) fn link_deferred_links(
             if is_in_span(m.start(), &code_spans) {
                 return m.as_str().to_string();
             }
-            let label = caps.get(3).map(|l| l.as_str()).filter(|l| !l.is_empty());
+            let label = caps.get(3).map(|l| unescape_link_pipes(l.as_str()));
+            let label = label.as_deref().filter(|l| !l.is_empty());
             if let Some(block) = target(&caps[1], &caps[2]) {
                 outcomes.dropped_labels += usize::from(label.is_some());
                 return format!("(({block}))");
             }
             outcomes.dropped_anchors += 1;
-            stored_page_link(&caps[1], label, None)
+            escape_pipes_as(m.as_str(), &stored_page_link(&caps[1], label, None))
         })
         .into_owned()
 }

@@ -317,9 +317,10 @@ pub(super) fn collect_inbound_page_link_bodies(blocks: &[import::ParsedBlock]) -
             if !page_link_is_token(&content, whole.start(), &code_spans) {
                 continue;
             }
-            let body = cap[1].trim();
+            let body = unescape_link_pipes(&cap[1]);
+            let body = body.trim();
             // Skip canonical `[[ULID]]` bodies — they are already internal refs.
-            if body.is_empty() || agaric_store::cache::PAGE_LINK_RE.is_match(&cap[0]) {
+            if body.is_empty() || is_internal_page_link(&cap[0]) {
                 continue;
             }
             bodies.insert(body.to_string());
@@ -394,42 +395,75 @@ pub(super) fn rewrite_inbound_page_links(
             // inside an inline-code span (#3605), the `#[[Tag]]` multi-word tag
             // form (#1950), the `![[file]]` embed (#1925) and an escaped token
             // stay byte-identical.
-            if !page_link_is_token(&content, m.start(), &code_spans) {
+            if !page_link_is_token(&content, m.start(), &code_spans) || is_internal_page_link(whole)
+            {
                 return whole.to_string();
             }
-            // Already an internal `[[ULID]]` ref — keep verbatim.
-            if agaric_store::cache::PAGE_LINK_RE.is_match(whole) {
-                return whole.to_string();
-            }
-            let Some((name, label)) = links.readings.get(caps[1].trim()) else {
-                return whole.to_string();
-            };
-            if let Some(block) = links.blocks.get(name) {
-                return format!("(({block}))");
-            }
-            match links.ids.get(name) {
-                Some(ulid) => {
-                    let title = titles.get(ulid).map(String::as_str);
-                    // A deferred anchor rides with the page: `[[ULID#anchor]]`.
-                    let target = links
-                        .deferred
-                        .get(name)
-                        .map_or_else(|| ulid.clone(), |anchor| format!("{ulid}#{anchor}"));
-                    stored_page_link(&target, label.as_deref(), title)
-                }
+            match internal_ref_for(&caps[1], links, titles) {
+                Some(stored) => escape_pipes_as(&caps[1], &stored),
                 None => whole.to_string(),
             }
         })
         .into_owned()
 }
 
+/// The stored ref the link body `body` rewrites to: its reading's block as a
+/// `((ULID))`, else its page as a link; `None` for a body with no reading, or
+/// whose name has no page.
+fn internal_ref_for(
+    body: &str,
+    links: &PageLinks,
+    titles: &HashMap<String, String>,
+) -> Option<String> {
+    let (name, label) = links.readings.get(unescape_link_pipes(body).trim())?;
+    if let Some(block) = links.blocks.get(name) {
+        return Some(format!("(({block}))"));
+    }
+    let ulid = links.ids.get(name)?;
+    let title = titles.get(ulid).map(String::as_str);
+    // A deferred anchor rides with the page: `[[ULID#anchor]]`.
+    let target = links
+        .deferred
+        .get(name)
+        .map_or_else(|| ulid.clone(), |anchor| format!("{ulid}#{anchor}"));
+    Some(stored_page_link(&target, label.as_deref(), title))
+}
+
+/// `text` with each `\|` read as `|`. A GFM table cell must escape every pipe
+/// it holds, so Obsidian writes an aliased link there as `[[Note\|alias]]`,
+/// and the editor's table reader unescapes a cell the same way.
+pub(super) fn unescape_link_pipes(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains("\\|") {
+        std::borrow::Cow::Owned(text.replace("\\|", "|"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
+/// Whether the `[[…]]` token `whole` is already an internal `[[ULID]]` ref,
+/// its label pipe escaped or not.
+pub(super) fn is_internal_page_link(whole: &str) -> bool {
+    agaric_store::cache::PAGE_LINK_RE.is_match(&unescape_link_pipes(whole))
+}
+
+/// `stored`, the ref written for the link body `body`, with every pipe escaped
+/// when `body` escaped one: the link sits in a table cell, where the editor's
+/// table writer escapes them all and a bare `|` would split the cell.
+pub(super) fn escape_pipes_as(body: &str, stored: &str) -> String {
+    if body.contains("\\|") {
+        stored.replace('|', "\\|")
+    } else {
+        stored.to_string()
+    }
+}
+
 /// A link a folder import leaves for [`link_import_anchors_inner`]:
 /// `[[ULID#anchor]]` or `[[ULID#anchor|label]]`, an anchor into the page
 /// `ULID` that named none of its blocks when the link was imported. Group 1 is
-/// the page, 2 the anchor and 3 the label.
+/// the page, 2 the anchor and 3 the label, after a `|` or a table cell's `\|`.
 pub(super) static DEFERRED_LINK_RE: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"\[\[([0-9A-Z]{26})#([^\]|\n]+)(?:\|([^\]\n]*))?\]\]")
+        regex::Regex::new(r"\[\[([0-9A-Z]{26})#([^\]|\n]+?)(?:\\?\|([^\]\n]*))?\]\]")
             .expect("invalid deferred link regex")
     });
 
