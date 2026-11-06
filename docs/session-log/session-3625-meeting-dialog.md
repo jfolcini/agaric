@@ -1,4 +1,4 @@
-# Session 3622 — the `/meeting` dialog
+# Session 3625 — the `/meeting` dialog
 
 The fifth PR of #5364 slice 2 (S5a-2 in the build plan on #5410): the *New meeting* dialog and the `/meeting` slash command that opens it, on top of the `add_meeting` command from S5a-1.
 
