@@ -52,6 +52,10 @@ The batched follow-up for the non-blocking notes on every PR merged in the 24 ho
 Every PR merged from 2026-11-05 15:00 UTC, with what became of its non-blocking notes:
 
 - **Taken here:** #6406, #6411, #6425 (one note moot), #6431, #6432, #6433.
-- **Notes moot or not taken (reasons above):** #6390, #6392, #6394, #6395, #6396 (`pagesUpdated`: ITEM1), #6398, #6410, #6423, #6424, #6415, #6420.
+- **Notes moot or not taken (reasons above):** #6390, #6392, #6394, #6395, #6396 (`pagesUpdated`, pending below), #6398, #6410, #6423, #6424, #6415, #6420.
 - **Notes already batched by their own follow-ups:** #6391, #6402, #6404.
 - **No non-blocking notes, per the coordinator's sweep of all 41:** #6393, #6397, #6399, #6400, #6401, #6403, #6405, #6407, #6408, #6409, #6412, #6413, #6414, #6418, #6421, #6422, #6426, #6427, #6428, #6429, #6430.
+
+## Pending
+
+- **#6396, `pagesUpdated` counts a merge that appended nothing.** Counting only `merged.length > 0` (red first: "counts no page updated when the merge changed nothing") turns three existing `ImportSection-merges.test.tsx` cases red. They assert that an update which added no block, `merged: []`, reports success rather than "No content was imported." So #6396 chose this on purpose. Taking the note means changing those expectations, which needs the maintainer's decision.
