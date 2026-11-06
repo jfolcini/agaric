@@ -46,9 +46,9 @@ mod tests;
 // the text after the first `|`, any run holding neither `]` nor a newline;
 // `PAGE_LINK_RE` captures it as group 2 (empty when the token has none). In a
 // GFM table cell the editor escapes every pipe, so the token reads
-// `[[ULID\|label]]` there: the separator is `\|` or `|`, and a label shown
-// as text reads its own `\|` as `|`. Only the ULID decides what a token
-// links, so every reader that wants the target ignores the label.
+// `[[ULID\|label]]` there: the separator is `\|` or `|`, and the label of a
+// cell's token shown as text reads its own `\|` as `|`. Only the ULID decides
+// what a token links, so every reader that wants the target ignores the label.
 //
 // `TAG_REF_RE` captures the inner ULID from inline tag-reference
 // `#[ULID]` tokens. The `#` prefix is intentionally tight — this matches

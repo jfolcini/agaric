@@ -33,6 +33,10 @@ describe('truncateContent', () => {
     expect(truncateContent('| [[01ARZ3NDEKTSV4RRFFQ69G5FAV\\|a\\|b]] | x |')).toBe('| a|b | x |')
   })
 
+  it('keeps a backslash-pipe in the label of a link outside a table as typed', () => {
+    expect(truncateContent('See [[01ARZ3NDEKTSV4RRFFQ69G5FAV|a\\|b]] now')).toBe('See a\\|b now')
+  })
+
   // A human link left as text (no space resolved it) is not a stored link: its
   // `|` belongs to the title (`Article | Medium`), not to a label.
   it('keeps the whole text of an unresolved [[A | B]]', () => {
