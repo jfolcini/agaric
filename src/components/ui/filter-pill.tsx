@@ -48,7 +48,10 @@ export function FilterPill({
       data-slot="filter-pill"
       tone="secondary"
       {...rest}
-      className={cn('filter-pill rounded-md min-w-0 max-w-[16rem] shrink-0 gap-1 text-xs', className)}
+      className={cn(
+        'filter-pill rounded-md min-w-0 max-w-[16rem] shrink-0 gap-1 text-xs',
+        className,
+      )}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role is forwarded to a <Badge> wrapper grouping a label + remove button; <fieldset>/<optgroup> etc. would break the inline pill layout and carry form/list semantics
       role="group"
       aria-label={groupAriaLabel ?? label}
