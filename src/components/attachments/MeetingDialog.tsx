@@ -63,8 +63,7 @@ type SummaryMode = 'text' | 'file'
 async function defaultMeetingDate(blockId: string | undefined): Promise<string> {
   if (blockId === undefined) return format(new Date(), 'yyyy-MM-dd')
   const block = unwrap(await commands.getBlock(blockId))
-  const pageId = block.page_id ?? block.id
-  const page = pageId === block.id ? block : unwrap(await commands.getBlock(pageId))
+  const page = unwrap(await commands.getBlock(block.page_id ?? block.id))
   const title = page.content ?? ''
   return JOURNAL_DAY.test(title) ? title : format(new Date(), 'yyyy-MM-dd')
 }
@@ -158,11 +157,7 @@ export function MeetingDialog({
       // store, so the name lists and attachment caches drop what they hold.
       invalidateDerivedCaches()
       onCreated(created)
-      writePreference(
-        PREFERENCES.meetingTemplate,
-        templateId === NO_TEMPLATE ? '' : templateId,
-        spaceId,
-      )
+      writePreference(PREFERENCES.meetingTemplate, templateId, spaceId)
       notify.success(
         t('meeting.created', { title: `${input.title || t('meeting.defaultTitle')} ${date}` }),
         { action: { label: t('action.undo'), onClick: () => void undo(created) } },

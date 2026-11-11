@@ -5,15 +5,17 @@
  */
 
 import { type InvokeArgs, invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { MeetingDialog } from '@/components/attachments/MeetingDialog'
+import { getAttachmentInvalidationKey } from '@/lib/attachment-invalidation'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, blockTags, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
@@ -549,5 +551,291 @@ describe('MeetingDialog — mutation triage (#5364)', () => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('meeting.undoFailed')),
     )
     expect(onCreated).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('MeetingDialog — mutation triage (#6435)', () => {
+  let warn: MockInstance<typeof logger.warn>
+  let error: MockInstance<typeof logger.error>
+
+  beforeEach(() => {
+    warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    error = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    warn.mockRestore()
+    error.mockRestore()
+  })
+
+  function templateIn(spaceId: string, title: string): string {
+    const id = dispatch('create_page_in_space', {
+      parentId: null,
+      content: title,
+      spaceId,
+    }) as string
+    dispatch('set_property', {
+      blockId: id,
+      key: 'template',
+      value: {
+        value_text: 'true',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    return id
+  }
+
+  function templateOptions(): string[] {
+    const select = document.querySelector('select')
+    if (select === null) throw new Error('no template select')
+    return [...select.options].map((option) => option.value)
+  }
+
+  /** Lets every IPC already answered run its continuations, then renders. */
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+  }
+
+  function failing(command: string, failure: Error): void {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === command) throw failure
+      return dispatch(cmd, args)
+    })
+  }
+
+  it('names its parts: description, template, no template and the summary choice', async () => {
+    render(<Harness blockId={blockOnDay('2031-03-14')} />)
+    await waitFor(() => expect(templateOptions()).toContain(SEED_IDS.PAGE_TMPL_MEETING))
+
+    expect(screen.getByText(t('meeting.description'))).toBeInTheDocument()
+    const select = screen.getByLabelText(t('meeting.templateLabel')) as HTMLSelectElement
+    expect(select.tagName).toBe('SELECT')
+    expect(within(select).getByRole('option', { name: t('meeting.noTemplate') })).toHaveValue(
+      'none',
+    )
+    expect(screen.getByText(t('meeting.summaryLabel'), { selector: 'legend' })).toBeInTheDocument()
+    expect(screen.getByRole('radiogroup')).toHaveAccessibleName(t('meeting.summaryLabel'))
+  })
+
+  it('shows today and no template until the block’s day and the templates arrive', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2030, 0, 2, 10, 0))
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'get_block' || cmd === 'query_by_property') return new Promise(() => {})
+      return dispatch(cmd, args)
+    })
+    render(<Harness blockId={blockOnDay('2031-03-14')} />)
+
+    expect((await dateInput()).value).toBe('2030-01-02')
+    expect(templateOptions()).toEqual(['none'])
+  })
+
+  it('dates a meeting with no block today, with nothing to log', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2030, 0, 2, 10, 0))
+    render(<MeetingDialog onClose={vi.fn()} onCreated={vi.fn()} />)
+    await waitFor(() => expect(templateOptions()).toContain(SEED_IDS.PAGE_TMPL_MEETING))
+    await settle()
+
+    expect((await dateInput()).value).toBe('2030-01-02')
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('dates the meeting today, with nothing to log, once both reads find a page that is no day', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2030, 0, 2, 10, 0))
+    render(<Harness blockId={SEED_IDS.BLOCK_GS_1} />)
+    await waitFor(() =>
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_block')).toHaveLength(2),
+    )
+    await settle()
+
+    expect((await dateInput()).value).toBe('2030-01-02')
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('logs a block it cannot read and keeps today', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2030, 0, 2, 10, 0))
+    const failure = new Error('backend down')
+    failing('get_block', failure)
+    render(<Harness blockId={blockOnDay('2031-03-14')} />)
+
+    await waitFor(() =>
+      expect(warn).toHaveBeenCalledWith(
+        'MeetingDialog',
+        'could not read the block’s day',
+        undefined,
+        failure,
+      ),
+    )
+    expect((await dateInput()).value).toBe('2030-01-02')
+  })
+
+  it('logs templates it cannot list and offers no template', async () => {
+    const failure = new Error('backend down')
+    failing('query_by_property', failure)
+    render(<Harness blockId={blockOnDay('2031-03-14')} />)
+
+    await waitFor(() =>
+      expect(warn).toHaveBeenCalledWith(
+        'MeetingDialog',
+        'could not list the templates',
+        undefined,
+        failure,
+      ),
+    )
+    expect(templateOptions()).toEqual(['none'])
+  })
+
+  it('lists the templates of the space it is in, not of the one it left', async () => {
+    const work = templateIn('SPACE_WORK', 'Work Template')
+    let release = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      const scope = (args as { scope?: { space_id?: string } } | undefined)?.scope
+      if (cmd === 'query_by_property' && scope?.space_id === 'SPACE_PERSONAL') await held
+      return dispatch(cmd, args)
+    })
+    render(<MeetingDialog onClose={vi.fn()} onCreated={vi.fn()} />)
+
+    act(() => useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' }))
+    await waitFor(() => expect(templateOptions()).toEqual(['none', work]))
+    await act(async () => {
+      release()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(templateOptions()).toEqual(['none', work])
+  })
+
+  it('cannot be sent before a space is chosen', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    render(<MeetingDialog onClose={vi.fn()} onCreated={vi.fn()} />)
+    await settle()
+
+    expect(screen.getByRole('button', { name: t('meeting.create') })).toBeDisabled()
+  })
+
+  it('names the meeting in the toast with its title trimmed on both sides', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
+    await waitFor(async () => expect((await dateInput()).value).toBe('2031-03-14'))
+
+    await user.type(screen.getByLabelText(t('meeting.titleLabel')), '  Sync  ')
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    const [message] = vi.mocked(toast.success).mock.calls[0] ?? []
+    expect(message).toBe(t('meeting.created', { title: 'Sync 2031-03-14' }))
+  })
+
+  it('drops a summary file picked before switching back to written text', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
+    await waitFor(async () => expect((await dateInput()).value).toBe('2031-03-14'))
+
+    await user.click(screen.getByRole('radio', { name: t('meeting.summaryAsFile') }))
+    await user.upload(screen.getByLabelText(t('meeting.summaryFileLabel')), file('recap.txt', [83]))
+    await user.click(screen.getByRole('radio', { name: t('meeting.summaryAsText') }))
+    await user.type(screen.getByLabelText(t('meeting.summaryTextLabel')), 'Written.')
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    const pageId = pageTitled('Meeting 2031-03-14')?.['id']
+    const children = [...blocks.values()].filter(
+      (b) => b['parent_id'] === pageId && b['deleted_at'] == null,
+    )
+    expect(children.map((b) => b['content'])).toContain('Written.')
+    expect(children.flatMap((b) => attachedNames(b['id'] as string))).toEqual([])
+  })
+
+  it('has every attachment list re-read after the meeting is made and after its Undo', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const onCreated = vi.fn()
+    render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} onCreated={onCreated} />)
+    await waitFor(async () => expect((await dateInput()).value).toBe('2031-03-14'))
+    const before = getAttachmentInvalidationKey()
+
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(getAttachmentInvalidationKey()).toBe(before + 1)
+
+    const [, options] = vi.mocked(toast.success).mock.calls[0] ?? []
+    ;(options as { action?: { onClick: () => void } } | undefined)?.action?.onClick()
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(2))
+    expect(getAttachmentInvalidationKey()).toBe(before + 2)
+  })
+
+  it('logs a refused meeting with the block it was for', async () => {
+    const user = userEvent.setup()
+    const blockId = blockOnDay('2031-03-14')
+    const failure = new Error('backend down')
+    failing('add_meeting', failure)
+    render(<Harness blockId={blockId} />)
+    await waitFor(async () => expect((await dateInput()).value).toBe('2031-03-14'))
+
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        'MeetingDialog',
+        'meeting.createFailed (IPC error)',
+        { linkBlockId: blockId },
+        failure,
+      ),
+    )
+  })
+
+  it('logs a failed Undo', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
+    await waitFor(async () => expect((await dateInput()).value).toBe('2031-03-14'))
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    const failure = new Error('backend down')
+    failing('revert_ops', failure)
+
+    const [, options] = vi.mocked(toast.success).mock.calls[0] ?? []
+    ;(options as { action?: { onClick: () => void } } | undefined)?.action?.onClick()
+
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        'MeetingDialog',
+        'meeting.undoFailed (IPC error)',
+        undefined,
+        failure,
+      ),
+    )
+  })
+
+  it('submits without letting the browser send the form', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const prevented: boolean[] = []
+    const record = (event: Event) => prevented.push(event.defaultPrevented)
+    document.addEventListener('submit', record)
+    try {
+      render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
+      await waitFor(async () => expect((await dateInput()).value).toBe('2031-03-14'))
+
+      await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+
+      await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+      expect(prevented).toEqual([true])
+    } finally {
+      document.removeEventListener('submit', record)
+    }
   })
 })
