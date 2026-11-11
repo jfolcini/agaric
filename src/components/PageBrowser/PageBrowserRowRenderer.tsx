@@ -29,7 +29,6 @@ export interface PageBrowserRowRendererProps {
   row: PageBrowserRow
   measureElement: (el: Element | null) => void
   focusedIndex: number
-  hasStarred: boolean
   sectionLabelId: string
   filterText: string
   isFiltering: boolean
@@ -85,7 +84,6 @@ function HeaderRow({
   virtualRow,
   row,
   measureElement,
-  hasStarred,
   sectionLabelId,
 }: HeaderRowProps): React.ReactElement {
   const { t } = useTranslation()
@@ -97,10 +95,6 @@ function HeaderRow({
     ? t('pageBrowser.bookmarksSectionLabel', { count: row.count })
     : t('pageBrowser.pagesSectionLabel', { count: row.count })
   const labelId = `${sectionLabelId}-${row.section}`
-  // The `Pages` header gets a thin top divider when it follows the
-  // `Starred` section, separating the two groups visually without
-  // an extra DOM node.
-  const showDivider = !isStarredHeader && hasStarred
   return (
     <div
       key={virtualRow.key}
@@ -110,10 +104,9 @@ function HeaderRow({
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid row inside role="grid"; a real <tr> needs a <table> and breaks the flex/grid layout
       role="row"
       aria-labelledby={labelId}
-      className={cn(
-        listHeaderVariants({ className: 'page-browser-section' }),
-        showDivider && 'border-t border-border',
-      )}
+      // The row above already draws the section break (`list-row`); a top
+      // border here would stack a second line on it.
+      className={listHeaderVariants({ className: 'page-browser-section' })}
       style={rowStyle(virtualRow.start)}
     >
       <div

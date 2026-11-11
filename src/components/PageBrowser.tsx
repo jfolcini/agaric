@@ -677,7 +677,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                     row={row}
                     measureElement={virtualizer.measureElement}
                     focusedIndex={focusedIndex}
-                    hasStarred={hasStarred}
                     sectionLabelId={sectionLabelId}
                     filterText={filterText}
                     isFiltering={isFiltering}
