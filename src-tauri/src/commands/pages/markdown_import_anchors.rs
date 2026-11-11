@@ -97,6 +97,7 @@ pub(super) fn unique_headings(
         .filter_map(|c| {
             let text = heading_link_text(&c.content)?;
             let key = (c.page_id.as_str(), normalize_heading_anchor(text));
+            // Counted above: `heading_link_text` is `obsidian_heading_text` filtered.
             (counts[&key] == 1).then(|| (c.id.clone(), text.to_owned()))
         })
         .collect()
