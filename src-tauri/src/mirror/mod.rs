@@ -1178,13 +1178,15 @@ impl Mirror {
         // A page with no blocks has nothing a blank file could delete, so an
         // editor's final newline or BOM on its empty file changes nothing
         // (#6506).
-        if render.text.trim().is_empty()
-            && let Some(blank) = blank_text(&bytes)
-        {
-            let line_ids = vec![None; blank.split('\n').count()];
+        if render.text.trim().is_empty() && is_blank(&bytes) {
+            if let Some(why) = pause_reason(root, &self.device_id) {
+                return Ok(Wrote::Paused(why));
+            }
+            // Written back as the render, as an ingest writes back LF and no BOM.
+            store::write_atomic(&root.join(path), render.text.as_bytes())?;
             let shadow = Shadow {
-                text: blank.to_owned(),
-                line_ids,
+                text: render.text.clone(),
+                line_ids: render.line_ids.clone(),
                 buffer: Some(render.buffer.clone()),
             };
             return self.record(page_id, path, shadow);
@@ -1257,11 +1259,10 @@ enum Wrote {
     Refused(String),
 }
 
-/// `bytes` as text when they hold nothing but whitespace and a BOM.
-fn blank_text(bytes: &[u8]) -> Option<&str> {
+/// Whether `bytes` hold nothing but whitespace and a BOM.
+fn is_blank(bytes: &[u8]) -> bool {
     std::str::from_utf8(bytes)
-        .ok()
-        .filter(|text| text.trim_start_matches('\u{feff}').trim().is_empty())
+        .is_ok_and(|text| text.trim_start_matches('\u{feff}').trim().is_empty())
 }
 
 /// This device's last op `seq`, `0` before its first.
