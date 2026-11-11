@@ -76,13 +76,13 @@ pub(super) async fn load_anchor_candidates(
     Ok(candidates)
 }
 
-/// The blocks of `targets` among `candidates` a link may name by heading
+/// The blocks among `candidates` that pass `is_target` and that a link may name by heading
 /// (#6277 F4), each with its [`heading_link_text`]: a heading whose text no
 /// other heading of its page shares, compared as [`anchor_block`] compares
 /// it, so `[[Title#Heading]]` names that block whichever reader resolves it.
 pub(super) fn unique_headings(
     candidates: &[AnchorCandidate],
-    targets: &HashMap<String, String>,
+    is_target: impl Fn(&str) -> bool,
 ) -> HashMap<String, String> {
     let mut counts: HashMap<(&str, String), usize> = HashMap::new();
     for c in candidates {
@@ -93,7 +93,7 @@ pub(super) fn unique_headings(
     }
     candidates
         .iter()
-        .filter(|c| targets.contains_key(&c.id))
+        .filter(|c| is_target(&c.id))
         .filter_map(|c| {
             let text = heading_link_text(&c.content)?;
             let key = (c.page_id.as_str(), normalize_heading_anchor(text));

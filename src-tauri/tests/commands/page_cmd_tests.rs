@@ -19635,7 +19635,7 @@ async fn children_of(pool: &SqlitePool, page: &BlockId, content: &str) -> Vec<(S
 /// Import `notes`, `(path, text)` in order, as one folder pick carrying
 /// `files`, then end it as the Data tab does, with `link_import_anchors`.
 /// Returns every warning, the imports' then the end's.
-async fn import_folder(
+pub(super) async fn import_folder(
     pool: &SqlitePool,
     mat: &Materializer,
     dir: &std::path::Path,

@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!\", b.page_id AS \"page_id!\",\n                  (EXISTS (SELECT 1 FROM block_properties p JOIN blocks s ON s.id = p.block_id\n                           WHERE p.value_ref = b.id AND s.deleted_at IS NULL)\n                   OR EXISTS (SELECT 1 FROM attachments a\n                              WHERE a.block_id = b.id AND a.deleted_at IS NULL))\n                      AS \"held!: bool\"\n           FROM blocks b\n           WHERE b.id IN (SELECT value FROM json_each(?1))\n             AND b.block_type = 'content' AND b.deleted_at IS NULL\n             AND b.page_id IS NOT NULL AND ltrim(b.content) LIKE '#%'",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "page_id!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      },
+      {
+        "name": "held!: bool",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "fb29b8df784dadf50088505ca6a62b4960cc299f7e4cfdefac50c434b1ec1a16"
+}
