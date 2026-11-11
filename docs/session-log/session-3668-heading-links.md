@@ -57,3 +57,8 @@ The reviews approved the form above, but no one could confirm that Obsidian reso
   - Specta bindings check: `bindings.ts` unchanged.
   - `cargo nextest run --workspace` in two partitions: 3869 and 3861 passed, 0 failed.
   - `npm run typecheck:e2e-tauri`, plus oxlint and oxfmt on the spec.
+- **Bench regression, fixed:**
+  - `bench-slo` (run 42978049844) measured `export_page_markdown (2K children)` at 34.99 ms, against a 30 ms budget and 19.10 ms in the run before this round.
+  - Cause: `drop_named_heading_anchors` read the page's blocks again through `load_anchor_candidates` on every export and file read.
+  - Fix: it now builds the candidates from the `descendants` the render already holds, which is the same set.
+  - The export bench on a dev box, the same machine for both runs: 76.12 ms before the fix, 39.72 ms after. CI is what decides the budget.

@@ -1773,7 +1773,7 @@ pub(super) async fn load_page_export_data(
     if export || read == PageRead::File {
         let (addressed, held) = load_addressed_blocks(conn, &descendants).await?;
         refs.addressed_blocks.extend(addressed);
-        drop_named_heading_anchors(conn, page_id, &mut refs.addressed_blocks, &held).await?;
+        drop_named_heading_anchors(&descendants, &mut refs.addressed_blocks, &held);
     }
     let properties = if front_matter {
         load_page_properties(conn, page_id).await?
@@ -1861,23 +1861,39 @@ async fn resolve_heading_refs(
     Ok(headings)
 }
 
-/// Take out of `addressed` the headings of `page_id` every link names by
-/// text (#6277 F4): those [`resolve_heading_refs`] names, a heading no
-/// ref-typed value or attachment `held`s. Their lines are written bare, as
-/// Obsidian puts no block id on a heading, so no line both carries `^ULID`
-/// and is named `[[Title#Heading]]`.
-async fn drop_named_heading_anchors(
-    conn: &mut sqlx::SqliteConnection,
-    page_id: &str,
+/// Take out of `addressed` the headings of the page, its `descendants`, that
+/// every link names by text (#6277 F4): those [`resolve_heading_refs`] names,
+/// a heading no ref-typed value or attachment `held`s. Their lines are written
+/// bare, as Obsidian puts no block id on a heading, so no line both carries
+/// `^ULID` and is named `[[Title#Heading]]`. Read from the rows the render
+/// already holds, the set `load_anchor_candidates` would read for the page.
+fn drop_named_heading_anchors(
+    descendants: &[BlockRow],
     addressed: &mut HashSet<String>,
     held: &HashSet<String>,
-) -> Result<(), AppError> {
-    let candidates = load_anchor_candidates(conn, &HashSet::from([page_id])).await?;
+) {
+    let candidates: Vec<AnchorCandidate> = descendants
+        .iter()
+        .filter(|b| b.block_type == "content")
+        .filter_map(|b| {
+            let content = b.content.as_deref()?;
+            let page_id = b.page_id.as_ref()?;
+            content
+                .trim_start_matches(' ')
+                .starts_with('#')
+                .then(|| AnchorCandidate {
+                    id: b.id.to_string(),
+                    page_id: page_id.to_string(),
+                    parent_id: None,
+                    position: None,
+                    content: content.to_owned(),
+                })
+        })
+        .collect();
     let named = unique_headings(&candidates, |id| {
         addressed.contains(id) && !held.contains(id)
     });
     addressed.retain(|id| !named.contains_key(id));
-    Ok(())
 }
 
 /// What the importer would resolve the page's referenced names against: its
