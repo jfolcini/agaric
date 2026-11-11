@@ -133,7 +133,7 @@ async fn apply_agenda_diff(
 /// alone leap-year correctness) in portable SQLite would add a brittle
 /// nested CASE for marginal benefit — see the issue's \"do not
 /// over-engineer\" note.
-const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio FROM (
+pub(crate) const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio FROM (
             SELECT bp.value_date AS date, bp.block_id, 'property:' || bp.key AS source, 0 AS prio
             FROM block_properties bp
             JOIN blocks b ON b.id = bp.block_id
@@ -406,7 +406,8 @@ async fn flush_pending_agenda_diff(
 /// timestamps (`created_at` / `completed_at` / `repeat-until`) from source 1.
 #[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("agenda", || rebuild_agenda_cache_impl(pool)).await
+    super::rebuild_with_timing("agenda", || rebuild_agenda_cache_impl(pool)).await?;
+    crate::derivations::record(pool, crate::derivations::Derivation::Agenda).await
 }
 
 async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
@@ -449,7 +450,8 @@ pub async fn rebuild_agenda_cache_split(
     super::rebuild_with_timing("agenda", || {
         rebuild_agenda_cache_split_impl(write_pool, read_pool)
     })
-    .await
+    .await?;
+    crate::derivations::record(write_pool, crate::derivations::Derivation::Agenda).await
 }
 
 async fn rebuild_agenda_cache_split_impl(

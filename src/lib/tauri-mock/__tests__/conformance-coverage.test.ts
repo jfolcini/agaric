@@ -218,6 +218,12 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'back, where the mock upserts a constant row and skips the seven-day freshness ' +
     'short-circuit entirely (handlers/links.ts)',
 
+  // ── Integrity check (#6488) ──
+  rebuild_derived_state:
+    'the report it returns is the input problem: it carries `today` from ' +
+    '`chrono::Local::now()`, like `compute_reconciliation_report`, and the rebuild rewrites ' +
+    'derived tables the mock keeps no copy of',
+
   // ── Quick capture ──
   quick_capture_block:
     'the local DATE is the input, not the scope: `chrono::Local::now()` names the journal ' +
@@ -608,6 +614,8 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
   // bucket. Seeding the page is no escape: `seed.blocks[].content` is a
   // literal, and the harness has no clock seam.
   'quick_capture_block',
+  // Returns the integrity report, which carries `today` (#6488).
+  'rebuild_derived_state',
   // Not an input problem but an observation one, and permanent for a different
   // reason than its neighbours: its only durable write is the `pending_pairing`
   // row in `app_settings`, and NO command in `bindings.ts` reads that key on

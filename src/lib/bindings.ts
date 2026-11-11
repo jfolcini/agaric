@@ -976,7 +976,12 @@ export const commands = {
 	 *  the live vault disagrees. Reads through the reader pool and engine exports;
 	 *  the only writes are the queued work it waits for.
 	 */
-	computeReconciliationReport: () => typedError<ReconciliationReport, AppError>(__TAURI_INVOKE("compute_reconciliation_report")),
+	computeReconciliationReport: () => typedError<ReconciliationReport_Serialize, AppError>(__TAURI_INVOKE("compute_reconciliation_report")),
+	/**
+	 *  Tauri command: rebuild every derived cache, then return a fresh
+	 *  integrity report.
+	 */
+	rebuildDerivedState: () => typedError<ReconciliationReport_Serialize, AppError>(__TAURI_INVOKE("rebuild_derived_state")),
 	/**  Tauri command: return the current MCP status for the Settings tab. */
 	getMcpStatus: () => typedError<McpStatus, AppError>(__TAURI_INVOKE("get_mcp_status")),
 	/**
@@ -2175,6 +2180,17 @@ export type DistinctUnfitValue = {
 	/**  The value as [`list_unfit_property_values_inner`] shows it. */
 	value: string,
 } & PropertyUnfitCounts;
+
+/**  One divergence as the screen shows it (#6488). */
+export type DivergenceSample = {
+	/**  The artefact it belongs to, as in [`ArtefactDivergences::artefact`]. */
+	artefact: string,
+	key: string,
+	/**  What the rebuild from the base tables computed. */
+	expected: string,
+	/**  What the maintained state holds. */
+	actual: string,
+};
 
 /**  A single draft row from `block_drafts`. */
 export type Draft = {
@@ -3898,7 +3914,10 @@ export type QueryResultRow = {
 } & ActiveBlockRow;
 
 /**  What [`compute_reconciliation_report`] returns. */
-export type ReconciliationReport = {
+export type ReconciliationReport = ReconciliationReport_Serialize | ReconciliationReport_Deserialize;
+
+/**  What [`compute_reconciliation_report`] returns. */
+export type ReconciliationReport_Deserialize = {
 	/**
 	 *  Rows in `blocks` — live and tombstoned — at the time of the run: what
 	 *  every rebuild folded. The non-vacuity figure: zero divergences over
@@ -3920,6 +3939,43 @@ export type ReconciliationReport = {
 	 *  An artefact that agreed with its rebuild is absent.
 	 */
 	artefacts: ArtefactDivergences[],
+	/**
+	 *  The first divergence of each artefact, `artefacts` order, its values
+	 *  cut to [`SAMPLE_CHARS`]. For the screen only: the copied report and the
+	 *  bug report never carry it (module docs).
+	 */
+	samples?: DivergenceSample[] | null,
+};
+
+/**  What [`compute_reconciliation_report`] returns. */
+export type ReconciliationReport_Serialize = {
+	/**
+	 *  Rows in `blocks` — live and tombstoned — at the time of the run: what
+	 *  every rebuild folded. The non-vacuity figure: zero divergences over
+	 *  zero blocks describes an empty vault, not a clean one.
+	 */
+	blocks_scanned: number,
+	/**
+	 *  The local calendar date (`YYYY-MM-DD`) the projected-agenda rebuild
+	 *  was pinned to — the one artefact that is not a pure function of the
+	 *  database (`reconciliation_oracle::rebuild_projected_agenda_from_base`).
+	 *  Recorded so a run that straddled local midnight is diagnosable.
+	 */
+	today: string,
+	/**  Sum of `count` over `artefacts`. */
+	total_divergences: number,
+	/**
+	 *  One entry per artefact that diverged, in the oracle's root-cause-first
+	 *  order (`blocks.page_id` before the `pages_cache` counts keyed on it).
+	 *  An artefact that agreed with its rebuild is absent.
+	 */
+	artefacts: ArtefactDivergences[],
+	/**
+	 *  The first divergence of each artefact, `artefacts` order, its values
+	 *  cut to [`SAMPLE_CHARS`]. For the screen only: the copied report and the
+	 *  bug report never carry it (module docs).
+	 */
+	samples?: DivergenceSample[] | null,
 };
 
 /**

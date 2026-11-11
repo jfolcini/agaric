@@ -89,6 +89,8 @@ pub use dispatch::invalidations_for_op;
 // snapshot-sized import sizes its fixture from it.
 #[cfg(any(test, feature = "test-util"))]
 pub use dispatch::SYNC_BLOCK_LINKS_PER_BLOCK_MAX;
+// #6488: the integrity check's Rebuild runs the whole set.
+pub use dispatch::FULL_CACHE_REBUILD_TASKS;
 // #3886: the `move_same_page` hint PRODUCER, re-exported unconditionally — the
 // local move command (`commands/blocks/move_ops.rs`) is its production caller.
 // It lives next to `invalidations_for_op`'s `MoveBlock` arm because the

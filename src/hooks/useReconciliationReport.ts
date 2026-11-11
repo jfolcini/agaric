@@ -8,6 +8,10 @@
  * takes the reader pool, but it is O(pages × blocks): it runs when the user
  * presses Run in Settings › App health and at no other time. Nothing here fires on
  * mount. A failure is logged by `useIpcCommand` and toasted here.
+ *
+ * `rebuild` runs `rebuild_derived_state` (#6488): it rewrites every derived
+ * cache from the notes and returns the report that leaves, which replaces the
+ * one on screen.
  */
 
 import { useCallback, useState } from 'react'
@@ -26,6 +30,11 @@ export interface UseReconciliationReportResult {
   running: boolean
   /** Start a run. Never rejects — a failure is logged, toasted, and consumed. */
   run: () => Promise<void>
+  /** True while a rebuild is in flight. */
+  rebuilding: boolean
+  /** Rebuild every derived cache, then show the report it leaves. Never
+   *  rejects, like `run`. */
+  rebuild: () => Promise<void>
 }
 
 export function useReconciliationReport(module: string): UseReconciliationReportResult {
@@ -48,5 +57,23 @@ export function useReconciliationReport(module: string): UseReconciliationReport
     await execute()
   }, [execute])
 
-  return { report, running: loading, run }
+  const rebuildCommand = useIpcCommand<void, ReconciliationReport>({
+    call: () => commands.rebuildDerivedState().then(unwrap),
+    module,
+    errorLogMessage: 'integrity rebuild failed',
+    onSuccess: (next) => {
+      setReport(next)
+      notify.success(t('integrity.rebuilt'))
+    },
+    onError: () => {
+      notify.error(t('integrity.rebuildFailed'))
+    },
+  })
+  const executeRebuild = rebuildCommand.execute
+
+  const rebuild = useCallback(async (): Promise<void> => {
+    await executeRebuild()
+  }, [executeRebuild])
+
+  return { report, running: loading, run, rebuilding: rebuildCommand.loading, rebuild }
 }

@@ -29,6 +29,18 @@ function mirrorStatus(): MirrorStatus {
   }
 }
 
+/** The report a vault with no divergence gives: every derived row agrees. */
+function cleanReport() {
+  const now = new Date()
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return {
+    blocks_scanned: blocks.size,
+    today: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+    total_divergences: 0,
+    artefacts: [],
+  }
+}
+
 export const systemHandlers = {
   // #2110 M3b — OpenTelemetry frontend-span ingest. Off by default; the frontend
   // tracer only invokes it when observability is enabled, which the default e2e
@@ -127,16 +139,10 @@ export const systemHandlers = {
   // answer it can honestly give: a real vault whose derived state agrees with
   // its base tables answers exactly this. `today` is the local calendar date
   // the backend pins the projected-agenda rebuild to (`chrono::Local`).
-  compute_reconciliation_report: () => {
-    const now = new Date()
-    const pad = (n: number): string => String(n).padStart(2, '0')
-    return {
-      blocks_scanned: blocks.size,
-      today: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
-      total_divergences: 0,
-      artefacts: [],
-    }
-  },
+  compute_reconciliation_report: cleanReport,
+  // #6488 — the mock holds no derived cache to fall behind, so a rebuild has
+  // nothing to rewrite and leaves the same clean report.
+  rebuild_derived_state: cleanReport,
 
   // #5363 — the Markdown mirror. The mock has no disk: the folder is only the
   // `app_settings` row, so nothing is validated, written or ever diverges.
@@ -167,6 +173,7 @@ export const systemHandlers = {
   | 'collect_bug_report_metadata'
   | 'read_logs_for_report'
   | 'compute_reconciliation_report'
+  | 'rebuild_derived_state'
   | 'pick_mirror_folder'
   | 'set_mirror_folder'
   | 'get_mirror_status'

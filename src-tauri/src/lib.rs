@@ -327,6 +327,7 @@ macro_rules! agaric_commands {
             $crate::commands::bug_report::read_logs_for_report,
             // Reconciliation oracle against the live vault (#4886)
             $crate::commands::reconciliation::compute_reconciliation_report,
+            $crate::commands::reconciliation::rebuild_derived_state,
             // MCP — Settings "Agent access" tab
             $crate::commands::mcp::get_mcp_status,
             $crate::commands::mcp::mcp_set_enabled,
@@ -1451,34 +1452,22 @@ fn surface_recovery_status<R: tauri::Runtime>(
     });
 }
 
-/// [`boot_cache_gating`]'s FTS check. Rebuilds when the index carries no
-/// [`agaric_store::fts::FTS_STRIP_MARKER`] — rows an older strip wrote (#6488),
-/// or a rebuild that never finished — or when it is empty with rows to index,
-/// the post-migration-0006 state, not a fresh install.
-async fn schedule_fts_rebuild_if_due(
+/// [`boot_cache_gating`]'s FTS check. An empty index with rows to index
+/// is the post-migration-0006 state, not a fresh install.
+async fn schedule_fts_rebuild_if_empty(
     read_pool: &sqlx::SqlitePool,
     materializer_handle: &materializer::Materializer,
 ) {
     use materializer::MaterializeTask;
 
-    let marker = agaric_store::fts::FTS_STRIP_MARKER;
-    let stripped_by_older_rule = log_or_zero(
-        sqlx::query_scalar!(
-            r#"SELECT NOT EXISTS (SELECT 1 FROM app_settings WHERE key = ?) AS "due!: i64""#,
-            marker,
-        )
-        .fetch_one(read_pool)
-        .await,
-        "fts_strip_marker_absent",
-    ) != 0;
     let fts_empty = log_or_zero(
         sqlx::query_scalar::<_, i64>("SELECT EXISTS (SELECT 1 FROM fts_blocks)")
             .fetch_one(read_pool)
             .await,
         "fts_blocks_exists",
     ) == 0;
-    let empty_with_rows_to_index = fts_empty
-        && log_or_zero(
+    if fts_empty {
+        let indexable = log_or_zero(
             sqlx::query_scalar::<_, i64>(
                 "SELECT EXISTS (SELECT 1 FROM blocks WHERE deleted_at IS NULL \
                  AND content IS NOT NULL)",
@@ -1487,18 +1476,76 @@ async fn schedule_fts_rebuild_if_due(
             .await,
             "fts_indexable_block_exists",
         ) != 0;
-    if stripped_by_older_rule || empty_with_rows_to_index {
+        if indexable {
+            tracing::info!("FTS index empty — scheduling rebuild");
+            if let Err(e) =
+                materializer_handle.try_enqueue_background(MaterializeTask::RebuildFtsIndex)
+            {
+                tracing::warn!(
+                    error = %e,
+                    "failed to enqueue FTS rebuild at boot",
+                );
+            }
+        }
+    }
+}
+
+/// [`boot_cache_gating`]'s version check (#6488): rebuild every cache whose
+/// rule's version is not the one its last vault-wide rebuild recorded
+/// (`agaric_store::derivations`). The queued rebuilds record it themselves;
+/// the two passes with no task run here, on the writer, each in one
+/// transaction that records it.
+async fn rebuild_stale_derivations(
+    write_pool: &sqlx::SqlitePool,
+    read_pool: &sqlx::SqlitePool,
+    materializer_handle: &materializer::Materializer,
+) {
+    use agaric_store::derivations::Derivation;
+    use materializer::MaterializeTask;
+
+    let stale = match agaric_store::derivations::stale(read_pool).await {
+        Ok(stale) => stale,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the derivation versions at boot");
+            return;
+        }
+    };
+    for derivation in stale {
         tracing::info!(
-            stripped_by_older_rule,
-            empty_with_rows_to_index,
-            "scheduling FTS rebuild at boot"
+            ?derivation,
+            "rebuilding a cache its rule's version left behind"
         );
-        if let Err(e) = materializer_handle.try_enqueue_background(MaterializeTask::RebuildFtsIndex)
-        {
-            tracing::warn!(
-                error = %e,
-                "failed to enqueue FTS rebuild at boot",
-            );
+        let tasks = match derivation {
+            Derivation::FtsStrip => vec![MaterializeTask::RebuildFtsIndex],
+            Derivation::TagRefTokens => vec![
+                MaterializeTask::RebuildBlockTagRefsCache,
+                MaterializeTask::RebuildTagsCache,
+            ],
+            Derivation::Agenda => vec![MaterializeTask::RebuildAgendaCache],
+            Derivation::PageLink => vec![MaterializeTask::RebuildPageLinkCache],
+            Derivation::LinkTokens => {
+                match agaric_store::cache::rederive_block_links(write_pool).await {
+                    Ok(()) => vec![
+                        MaterializeTask::RebuildPageLinkCache,
+                        MaterializeTask::RebuildPagesCacheCounts,
+                    ],
+                    Err(e) => {
+                        tracing::error!(error = %e, "link re-derive failed; the next boot retries it");
+                        Vec::new()
+                    }
+                }
+            }
+            Derivation::TitleSortKey => {
+                if let Err(e) = agaric_store::cache::rekey_title_sort_keys(write_pool).await {
+                    tracing::error!(error = %e, "title re-key failed; the next boot retries it");
+                }
+                Vec::new()
+            }
+        };
+        for task in tasks {
+            if let Err(e) = materializer_handle.try_enqueue_background(task) {
+                tracing::warn!(error = %e, "failed to enqueue a derivation rebuild at boot");
+            }
         }
     }
 }
@@ -1588,8 +1635,8 @@ async fn schedule_pages_cache_rebuild_if_stale(
 }
 
 /// [`spawn_boot_maintenance`]'s off-critical-path work: link-metadata GC on
-/// the writer, then the FTS, `block_tag_refs` and `pages_cache` gating on the
-/// reader, in that order.
+/// the writer, the derivation version check, then the FTS, `block_tag_refs`
+/// and `pages_cache` gating on the reader, in that order.
 async fn boot_cache_gating(
     write_pool: sqlx::SqlitePool,
     read_pool: sqlx::SqlitePool,
@@ -1607,7 +1654,8 @@ async fn boot_cache_gating(
         }
     }
 
-    schedule_fts_rebuild_if_due(&read_pool, &materializer_handle).await;
+    rebuild_stale_derivations(&write_pool, &read_pool, &materializer_handle).await;
+    schedule_fts_rebuild_if_empty(&read_pool, &materializer_handle).await;
     schedule_block_tag_refs_rebuild_if_empty(&read_pool, &materializer_handle).await;
     schedule_pages_cache_rebuild_if_stale(&read_pool, &materializer_handle).await;
 }
@@ -1629,8 +1677,9 @@ fn spawn_boot_maintenance(
     // items off the synchronous critical path. These don't gate
     // any user IPC — link-metadata GC is purely cleanup and the
     // FTS / `block_tag_refs` gating is a one-shot "schedule the
-    // rebuild if the table is stale or empty" check (the rebuild itself
-    // is already a background materializer task). Releasing the
+    // rebuild if the table is empty" check (the rebuild itself
+    // is already a background materializer task), and the derivation
+    // version check queues rebuilds the same way. Releasing the
     // foreground queue earlier means the first user action (a
     // `list_blocks` for the journal) doesn't compete with these
     // maintenance reads.
