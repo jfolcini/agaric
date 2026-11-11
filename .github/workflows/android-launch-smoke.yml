@@ -6,7 +6,7 @@ name: Android launch smoke
 # 0.15.0 crashed on every Android launch with CI green.
 #
 # Runs on a release tag (`release.yml` gates `android-build-and-release` on it)
-# and nightly (`scheduled-deep-checks.yml`), never per PR. `workflow_dispatch`
+# and weekly (`scheduled-deep-checks.yml`), never per PR. `workflow_dispatch`
 # runs it on any branch. It ships nothing: the APK is signed with a throwaway
 # key and discarded, so it takes no secrets and restores no cache.
 
@@ -146,8 +146,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Launch the APK on an emulator
-        # No AVD cache: a key this job alone reads costs every other lane its
-        # share of the repo's cache quota (`.github/AGENTS.md` § Caches).
+        # No AVD cache: it would be read once a week, and `.github/AGENTS.md`
+        # § Caches says a weekly reader finds the entry evicted.
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 34
