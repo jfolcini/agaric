@@ -249,7 +249,7 @@ fn bench_large_page_tick(c: &mut Criterion) {
                 for round in 0..iters {
                     sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
                         .bind(format!("Edited {round}"))
-                        .bind(block_id(0, (round as usize) % BLOCKS))
+                        .bind(block_id(0, usize::try_from(round).unwrap() % BLOCKS))
                         .execute(&vault.pool)
                         .await
                         .unwrap();
