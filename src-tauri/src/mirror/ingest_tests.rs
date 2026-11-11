@@ -1351,7 +1351,7 @@ async fn a_space_folder_removed_trashes_none_of_its_pages() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_mirror_moved_to_a_new_folder_trashes_nothing_and_writes_every_page() {
+async fn a_folder_with_no_states_of_its_own_starts_as_new_trashing_nothing() {
     let mut fx = Fx::new().await;
     let (alpha, _) = fx.page("Alpha", &["one"]).await;
     fx.tick().await;

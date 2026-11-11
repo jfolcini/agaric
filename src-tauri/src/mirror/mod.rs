@@ -542,8 +542,8 @@ impl Mirror {
         (!holds_something).then(|| format!("the folder {} is empty", root.display()))
     }
 
-    /// Start over in a folder the states were not written to: nothing it
-    /// lacks is a file that vanished from it.
+    /// Start over in another folder, with its own states: nothing it lacks
+    /// is a file that vanished from it.
     fn forget_folder(&mut self) {
         self.pages.clear();
         self.layout.clear();
@@ -598,6 +598,7 @@ impl Mirror {
         };
         if self.store.bind(&folder)? {
             self.forget_folder();
+            self.pages = self.store.load()?;
         }
         let root = PathBuf::from(folder);
         let paused = pause_reason(&root, &self.device_id).or_else(|| self.emptied(&root));
