@@ -174,7 +174,7 @@ async fn round_trip(specs: Vec<Spec>, encoding: (bool, bool)) -> Result<(), Test
     let all = files(&root);
     prop_assert!(all.len() > 1, "every page is written: {all:?}");
     // An empty page writes an empty file, which `ingest::file_text` refuses
-    // as an emptied save: that case is not a round trip and is left out.
+    // as an emptied save; left out until #6506 is fixed.
     let written: Vec<_> = all
         .iter()
         .filter(|(_, bytes)| !bytes.is_empty())
