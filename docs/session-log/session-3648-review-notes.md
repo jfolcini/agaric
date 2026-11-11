@@ -33,6 +33,7 @@ The batched follow-up for the non-blocking notes on every PR merged in the 24 ho
 - **#6394, `parseEnex`'s `fileName`.** It's now required, and `addNoteLinkRule`'s branch for no file name, which only tests reached, is deleted.
 - **Existing-test edits, approved by the maintainer:**
   - Two `ImportSection-merges.test.tsx` assertions that pinned "1 existing page updated" for an unchanged re-import now expect "1 existing page already up to date".
+  - `useImportRunner.test.tsx`'s exact outcome gains `upToDate: false`.
   - The `parseEnex(xml)` call sites in `enex-import.test.ts` and `enex-import.property.test.ts` pass a file name, with no expected value changed.
   - The first link test's bare `parseEnex(xml)` assertion, which pinned the deleted branch, is removed; its `Work.enex` twin stays.
 
@@ -65,7 +66,3 @@ Every PR merged from 2026-11-05 15:00 UTC, with what became of its non-blocking 
 - **Notes moot or not taken (reasons above):** #6390, #6392, #6395, #6396 (`title_pages`), #6398, #6410, #6423, #6424, #6415, #6420.
 - **Notes already batched by their own follow-ups:** #6391, #6402, #6404.
 - **No non-blocking notes, per the coordinator's sweep of all 41:** #6393, #6397, #6399, #6400, #6401, #6403, #6405, #6407, #6408, #6409, #6412, #6413, #6414, #6418, #6421, #6422, #6426, #6427, #6428, #6429, #6430.
-
-## Pending
-
-- **`useImportRunner.test.tsx`'s exact run outcome needs `upToDate: false`.** "runs a mixed success/failure batch and constructs the summary + outcome" asserts the outcome with an exact `toEqual`, and #6396's fix adds the `upToDate` field to it. No existing value changes, but adding the line is an existing-test edit waiting on the maintainer, so that test stays red until then.
