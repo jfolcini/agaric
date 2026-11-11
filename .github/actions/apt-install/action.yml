@@ -194,7 +194,8 @@ runs:
           local host dropped=1
           sudo test -r "${mirrors}" || return 1
           for host in $(grep -oE "Temporary failure resolving '[^']+'" "${apt_err}" | cut -d"'" -f2 | sort -u); do
-            sudo grep -vF "${host}" "${mirrors}" >"${kept}" || true
+            # `//host/`, so `archive.ubuntu.com` never matches the Azure line.
+            sudo grep -vF "//${host}/" "${mirrors}" >"${kept}" || true
             [ -s "${kept}" ] || continue
             echo "::warning::apt-install: ${host} does not resolve; retrying with the other mirrors in ${mirrors}"
             sudo cp "${kept}" "${mirrors}"
@@ -261,8 +262,7 @@ runs:
             ;;
         esac
 
-        print_apt_log
-
+        # The loop already printed the log of a failed download.
         if fetch_failed; then
           echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: apt-get install could not download its packages twice (exit ${install_status}). Ubuntu mirror problem — rerun the job."
           {
@@ -273,6 +273,8 @@ runs:
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           exit 75
         fi
+
+        print_apt_log
 
         if [ "${update_status}" -ne 0 ]; then
           # Distinct code, distinct marker — the #4163 ask, and the same

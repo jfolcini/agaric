@@ -3,22 +3,24 @@
 - From 13:51Z on 2026-11-11, `main`'s CI and #6502 failed in every job that had to download a .deb. The cause each time was `Temporary failure resolving 'azure.archive.ubuntu.com'`, and `apt-get install` exited 100. The image's `mirror+file` failover never moved on to `archive.ubuntu.com`, the next mirror in `/etc/apt/apt-mirrors.txt`.
 - `actions/apt-install` retried only an install that timed out, so a download failure went straight to red as an ordinary failure. It never got the `AGARIC_APT_INFRA` marker and exit 75 that mean "rerun the job".
 - The install's stderr is now kept and printed after each attempt. When apt reports a download it could not make (`Temporary failure resolving`, `Could not resolve`, `Failed to fetch`, `Unable to fetch some archives`), the step retries once:
-  - Each host apt named as unresolvable is dropped from `/etc/apt/apt-mirrors.txt`, unless it is the last mirror there, and the package lists are refreshed from the rest.
+  - Each host apt named as unresolvable is dropped from `/etc/apt/apt-mirrors.txt`, unless it is the last mirror there, and the package lists are refreshed from the rest. The match is on `//host/`, so `archive.ubuntu.com` never takes the Azure line with it.
   - With nothing to drop, the step waits a minute instead.
   - A second failure exits 75 with the marker.
   - A package apt cannot find still fails at once with apt's own status.
 - The first push only retried after a minute. Its own CI run then showed the marker working, ending in `AGARIC_APT_INFRA` and exit 75, and showed that a minute does not outlast this outage. That is why the mirror drop was added.
-- Test: `scripts/apt-install-action.test.mjs` runs the action's own `run:` script, read from `action.yml`, against stubbed `sudo`, `apt-get` and `sleep`. The `sudo` stub points `/etc/apt/apt-mirrors.txt` at a temp copy, so no test touches the real file. Six cases:
+- Test: `scripts/apt-install-action.test.mjs` runs the action's own `run:` script, read from `action.yml`, against stubbed `sudo`, `apt-get` and `sleep`. The `sudo` stub points `/etc/apt/apt-mirrors.txt` at a temp copy, so no test touches the real file. Seven cases:
   - a download that fails twice: exit 75, two installs, one wait;
   - one that fails once: passes on the retry;
   - a missing package: exit 100, no retry;
   - a clean install;
   - the image's three mirrors with Azure unresolvable: Azure is dropped, the lists are refreshed, the retry passes, and the other two mirrors stay;
-  - Azure as the only mirror: it is kept, and the step ends in 75.
+  - Azure as the only mirror: it is kept, and the step ends in 75;
+  - `archive.ubuntu.com` unresolvable: only that line goes, and the Azure and security lines stay.
 - The test is registered in `_validate.yml`'s script-test step.
 - Red: on main the two download cases fail, with exit 100 where 75 and 0 are expected. Before the drop, the three-mirror case failed with 75 where 0 is expected.
 - Falsified, each part broken in turn:
   - no infra classification reddens the twice case;
   - no retry reddens both download cases;
   - no last-mirror guard reddens the only-mirror case;
-  - no drop, or no list refresh after it, reddens the three-mirror case.
+  - no drop, or no list refresh after it, reddens the three-mirror case;
+  - a substring host match reddens the `archive.ubuntu.com` case.

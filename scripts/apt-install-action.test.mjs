@@ -35,10 +35,12 @@ const IMAGE_MIRRORS = [
   'https://archive.ubuntu.com/ubuntu/\tpriority:2',
   'https://security.ubuntu.com/ubuntu/\tpriority:3',
 ].join('\n')
-const UNRESOLVABLE_AZURE = [
-  `E: Failed to fetch mirror+file:/etc/apt/apt-mirrors.txt/pool/main/b/brotli/libbrotli-dev_1.1.0-2ubuntu0.1_amd64.deb  Temporary failure resolving '${AZURE}'`,
+/** What `apt-get install` prints when `host` does not resolve. */
+const unresolvableErrors = (host) => [
+  `E: Failed to fetch mirror+file:/etc/apt/apt-mirrors.txt/pool/main/b/brotli/libbrotli-dev_1.1.0-2ubuntu0.1_amd64.deb  Temporary failure resolving '${host}'`,
   'E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?',
 ]
+const UNRESOLVABLE_AZURE = unresolvableErrors(AZURE)
 
 /**
  * Run the action's script against stubbed `sudo`, `apt-get`, `sleep` and the
@@ -48,12 +50,13 @@ const UNRESOLVABLE_AZURE = [
  *
  * With `mirrors`, the image's `/etc/apt/apt-mirrors.txt` holds that text (the
  * `sudo` stub points every use of that path at a temp copy), and the install
- * instead fails with the Azure resolve error for as long as the list still
- * names Azure: the outage the image's own mirror failover does not ride out.
+ * instead fails with a resolve error for `unresolvable` (Azure unless given)
+ * for as long as the list still names that host: the outage the image's own
+ * mirror failover does not ride out.
  *
- * @param {{ failures?: number, errors?: string[], mirrors?: string | null }} options
+ * @param {{ failures?: number, errors?: string[], mirrors?: string | null, unresolvable?: string }} options
  */
-function runAction({ failures = 0, errors = [], mirrors = null }) {
+function runAction({ failures = 0, errors = [], mirrors = null, unresolvable = AZURE }) {
   const dir = mkdtempSync(join(tmpdir(), 'apt-install-action-'))
   try {
     const installs = join(dir, 'installs')
@@ -80,8 +83,8 @@ function runAction({ failures = 0, errors = [], mirrors = null }) {
     const failing =
       mirrors === null
         ? `[ "$(wc -l < ${JSON.stringify(installs)})" -le ${failures === Infinity ? 999 : failures} ]`
-        : `grep -qF ${JSON.stringify(AZURE)} ${JSON.stringify(mirrorList)}`
-    const failingErrors = mirrors === null ? errors : UNRESOLVABLE_AZURE
+        : `grep -qF ${JSON.stringify(`//${unresolvable}/`)} ${JSON.stringify(mirrorList)}`
+    const failingErrors = mirrors === null ? errors : unresolvableErrors(unresolvable)
     stub(
       'apt-get',
       [
@@ -175,4 +178,12 @@ void test('the last mirror in the list is never dropped', () => {
   assert.equal(run.installs, 2)
   assert.equal(run.updates, 1)
   assert.equal(run.sleeps, 1)
+})
+
+void test('only the mirror named as unresolvable is dropped, not one whose name contains it', () => {
+  const run = runAction({ mirrors: IMAGE_MIRRORS, unresolvable: 'archive.ubuntu.com' })
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  assert.doesNotMatch(run.mirrors, /^https:\/\/archive\.ubuntu\.com\//m)
+  assert.match(run.mirrors, /^http:\/\/azure\.archive\.ubuntu\.com\/ubuntu\/\tpriority:1$/m)
+  assert.match(run.mirrors, /^https:\/\/security\.ubuntu\.com\/ubuntu\/\tpriority:3$/m)
 })
