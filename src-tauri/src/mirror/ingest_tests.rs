@@ -1376,3 +1376,38 @@ async fn a_mirror_moved_to_a_new_folder_trashes_nothing_and_writes_every_page() 
         "the new folder holds the page"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mirror_moved_away_and_back_finds_its_files_as_it_left_them() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    // The file in the user's own form, read in, so its bytes are not the render.
+    fx.write("* one\n");
+    fx.settle_file().await;
+    let home = fx.root.to_str().unwrap().to_owned();
+    let set =
+        |folder: String| set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(folder), true);
+
+    let other = TempDir::new().unwrap();
+    let away = other.path().to_str().unwrap().to_owned();
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(away), true)
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(home), true)
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await);
+    assert_eq!(pages_titled(&fx, "Alpha").await, [alpha], "no twin");
+    assert_eq!(fx.read(), "* one\n", "the file keeps its form");
+    let status = fx.status().await;
+    assert!(status.diverged.is_empty(), "{:?}", status.diverged);
+    assert!(status.failed.is_empty(), "{:?}", status.failed);
+}
