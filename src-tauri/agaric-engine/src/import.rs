@@ -4311,7 +4311,7 @@ fn is_property_key(s: &str) -> bool {
 }
 
 /// The key and value of a `key:: value` line: `::` followed by a space or a
-/// tab (Logseq users write either) after a valid [`is_property_key`], so a
+/// tab (Logseq users write either) after a valid `is_property_key`, so a
 /// `::` mid-sentence (`std::vector`) is content, or `::` ending the line, the
 /// value left empty (#5160 P7).
 pub fn split_property_line(line: &str) -> Option<(&str, &str)> {
