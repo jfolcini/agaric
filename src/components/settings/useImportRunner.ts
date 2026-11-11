@@ -67,6 +67,8 @@ export interface ImportRunResult {
   propertiesSet: number
   /** Existing pages files merged into (#6277 decision 7). */
   pagesUpdated: number
+  /** Existing pages a file was merged into without a change. */
+  pagesUnchanged: number
   /** Soft, per-file parse warnings; the file still imported. */
   warnings: string[]
   /** Files that threw and produced no page, with their failure reason. */
@@ -110,8 +112,10 @@ export interface RunOptions {
 /** What a completed {@link UseImportRunner.run} returns to the caller. */
 export interface RunOutcome {
   totalBlocks: number
-  /** Existing pages files merged into, which may have added no block. */
+  /** Existing pages a merge changed, which may have added no block. */
   pagesUpdated: number
+  /** Whether the run's only effect was pages re-imported without a change. */
+  upToDate: boolean
   succeededFiles: number
   /** The combined seeded + per-unit failures (what the result panel showed). */
   failedFiles: FailedFile[]
@@ -254,6 +258,7 @@ export function useImportRunner(): UseImportRunner {
       let totalProps = 0
       let totalBytes = 0
       let pagesUpdated = 0
+      let pagesUnchanged = 0
       const allWarnings: string[] = initialWarnings ? [...initialWarnings] : []
       // Hard failures: units that threw and produced no page. Seeded with any
       // parse failures the caller recorded, then extended per import failure.
@@ -326,10 +331,12 @@ export function useImportRunner(): UseImportRunner {
             // Only a file that can merge needs the run's pages; the rest import as new pages anyway.
             unit.merges === undefined ? [] : [...importedPageIds],
           )
-          // A merge is the page's undo step, as an Edit as Markdown save is.
-          if (result.merged) {
+          // A merge is the page's undo step, as an Edit as Markdown save is; one
+          // that appended nothing left its page as it was.
+          if (result.merged?.length === 0) pagesUnchanged += 1
+          else if (result.merged) {
             pagesUpdated += 1
-            if (result.merged.length > 0) notifyUndoNewAction(result.page_id, result.merged)
+            notifyUndoNewAction(result.page_id, result.merged)
           }
           // Collapse is this device's layout, so the blocks a Logseq page
           // folded are folded here (#5160 D14).
@@ -392,7 +399,8 @@ export function useImportRunner(): UseImportRunner {
       // #1927 — the title to navigate to after a successful import. We resolve
       // it to a page id lazily in the View action, so the toast/panel only need
       // the title.
-      const navTitle = totalBlocks > 0 || pagesUpdated > 0 ? lastTitle : null
+      const navTitle = totalBlocks > 0 || pagesUpdated > 0 || pagesUnchanged > 0 ? lastTitle : null
+      const upToDate = totalBlocks === 0 && pagesUpdated === 0 && pagesUnchanged > 0
 
       setImportResult({
         pageTitle: units.length === 1 ? lastTitle : null,
@@ -402,6 +410,7 @@ export function useImportRunner(): UseImportRunner {
         blocksCreated: totalBlocks,
         propertiesSet: totalProps,
         pagesUpdated,
+        pagesUnchanged,
         warnings: allWarnings,
         failures: failedFiles,
         navTitle,
@@ -419,7 +428,15 @@ export function useImportRunner(): UseImportRunner {
       // re-open the picker without a stale value.
       event.target.value = ''
 
-      return { totalBlocks, pagesUpdated, succeededFiles, failedFiles, cancelled, navTitle }
+      return {
+        totalBlocks,
+        pagesUpdated,
+        upToDate,
+        succeededFiles,
+        failedFiles,
+        cancelled,
+        navTitle,
+      }
     },
     [confirmMerges],
   )

@@ -76,6 +76,7 @@ export function makeSyntheticCtx(overrides?: {
     openTablePicker,
     openPropertyDrawer,
     openVoiceNoteRecorder,
+    openMeetingDialog: vi.fn(),
   }
 
   return {
