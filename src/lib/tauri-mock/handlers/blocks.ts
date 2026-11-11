@@ -1037,7 +1037,9 @@ export const blocksHandlers = {
     })
     return paginateKeyset(
       roots,
-      (b) => [b['deleted_at'] as number, String(b['id'])],
+      // The backend's `Cursor.deleted_at` is a String holding the epoch ms; at
+      // 13 digits, string order is numeric order.
+      (b) => [String(b['deleted_at']), String(b['id'])],
       limit,
       a['cursor'],
       null,
