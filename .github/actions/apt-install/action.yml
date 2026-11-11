@@ -101,8 +101,9 @@ runs:
         # apt's stdout (`Get:` / `Ign:` index lines, then dpkg's unpack and
         # `Setting up` lines for every package) goes to this file and is
         # printed only when the update or the install fails: that is the
-        # evidence a mirror stall needs (#4163). Its stderr (`W:` / `E:`) is
-        # not redirected and always prints.
+        # evidence a mirror stall needs (#4163). Its stderr (`W:` / `E:`)
+        # always prints: the update's directly, the install's after each
+        # attempt, from `apt-install.err` below.
         apt_log="${RUNNER_TEMP}/apt-install.log"
         print_apt_log() {
           cat "${apt_log}"
