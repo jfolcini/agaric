@@ -290,8 +290,8 @@ pub async fn rename(
     space_id: &str,
     title: &str,
     path: &str,
-) -> Result<MirrorIngested, NotIngested> {
-    let refused = |e: AppError| NotIngested::Refused(e.to_string());
+) -> Result<MirrorIngested, String> {
+    let refused = |e: AppError| e.to_string();
     let page = BlockId::from_trusted(page_id);
     let now = sqlx::query!("SELECT content, space_id FROM blocks WHERE id = ?", page_id)
         .fetch_one(read_pool)

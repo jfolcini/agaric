@@ -802,12 +802,11 @@ impl Mirror {
         .await;
         let event = match renamed {
             Ok(event) => event,
-            Err(NotIngested::Refused(why)) => {
+            Err(why) => {
                 self.state.file_failed(path, &why);
                 self.refused_new.insert(path.to_owned(), (bytes, why));
                 return;
             }
-            Err(NotIngested::NoBase) => return,
         };
         (ingest.notify)(event);
         self.missing.remove(page_id);
