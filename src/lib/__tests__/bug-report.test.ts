@@ -376,8 +376,10 @@ describe('formatIntegrityReport', () => {
 
       13 divergences over 1200 blocks scanned, 2026-09-09.
 
-      - \`pages_cache.child_block_count\` — 12 rows: 01ARZ, 01BX5
-      - \`block_tag_inherited\` — 1 row"
+      ### Out-of-date caches (rebuildable)
+
+      - \`pages_cache.child_block_count\` — 12 rows: 01ARZ, 01BX5 — Pages list: counts out of date
+      - \`block_tag_inherited\` — 1 row — Inherited tags: values out of date"
     `)
   })
 
@@ -465,5 +467,44 @@ describe('the integrity section in a bug report', () => {
     })
     expect(body).toContain('artefact_number_20.some_column')
     expect(body).not.toContain(_internals.INTEGRITY_TRUNCATION_MARKER)
+  })
+})
+
+// #6488 — the copy names each group and each table in plain words, and keeps
+// the on-screen samples out: they quote the user's text and the issue is public.
+describe('formatIntegrityReport groups (#6488)', () => {
+  const report: ReconciliationReport = {
+    blocks_scanned: 2441,
+    today: '2026-11-11',
+    total_divergences: 30,
+    artefacts: [
+      { artefact: 'fts_blocks.stripped', count: 27, sample_keys: ['01KNHVPX'] },
+      { artefact: 'engine.blocks.row', count: 3, sample_keys: ['01SPACE / 01BLOCK'] },
+    ],
+    samples: [
+      {
+        artefact: 'fts_blocks.stripped',
+        key: '01KNHVPX',
+        expected: 'private words the rebuild computed',
+        actual: 'private words the index holds',
+      },
+    ],
+  }
+
+  it('puts each artefact under its group with its plain-words label', () => {
+    expect(formatIntegrityReport(report)).toBe(
+      [
+        '## Integrity check',
+        '30 divergences over 2441 blocks scanned, 2026-11-11.',
+        '### Out-of-date caches (rebuildable)\n\n' +
+          '- `fts_blocks.stripped` — 27 rows: 01KNHVPX — Search index: text indexed with an older rule',
+        '### Disagreements with the sync engine\n\n' +
+          '- `engine.blocks.row` — 3 rows: 01SPACE / 01BLOCK — Blocks: rows only one side holds',
+      ].join('\n\n'),
+    )
+  })
+
+  it('carries no sample value', () => {
+    expect(formatIntegrityReport(report)).not.toContain('private words')
   })
 })

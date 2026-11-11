@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO sync_deferred_purges (block_id) VALUES (?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "b187f4c65fbbf8f3dfac4e05e5e77225fcded129d7ad5e2ef801f781a2c7b7ab"
+}

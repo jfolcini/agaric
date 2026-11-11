@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO app_settings (key, value, updated_at) VALUES (?, '0', 0)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "e9fdbeae27e0f61192a326af15017040113a9ab3717afb99f40c3f45d4e3c318"
+}

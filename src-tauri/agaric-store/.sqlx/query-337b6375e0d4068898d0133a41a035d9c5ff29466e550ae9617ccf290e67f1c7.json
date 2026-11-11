@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE pages_cache SET title_sort_key = json_extract(j.value, '$[1]') FROM json_each(?) AS j WHERE pages_cache.page_id = json_extract(j.value, '$[0]') AND pages_cache.title_sort_key != json_extract(j.value, '$[1]')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "337b6375e0d4068898d0133a41a035d9c5ff29466e550ae9617ccf290e67f1c7"
+}

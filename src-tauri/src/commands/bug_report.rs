@@ -250,7 +250,7 @@ const STABLE_MESSAGES: &[&str] = &[
     "failed to bootstrap spaces — aborting boot",
     "failed to clean up stale link metadata",
     "cleaned up stale link metadata entries",
-    "scheduling FTS rebuild at boot",
+    "FTS index empty — scheduling rebuild",
     "failed to enqueue FTS rebuild at boot",
     "failed to enqueue block_tag_refs rebuild at boot",
     "failed to enqueue projected agenda cache rebuild at boot",

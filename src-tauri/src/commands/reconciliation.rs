@@ -14,18 +14,22 @@
 //! left and the next has not yet reached, which reads as a divergence a second
 //! run will not reproduce.
 //!
-//! # Counts and keys, never values
+//! # Counts and keys in the bug report, one value on the screen
 //!
 //! The oracle's `Divergence` carries `expected` / `actual` strings that quote
 //! what the rebuild computed — a stripped FTS body, a tag's name, an
-//! attachment's `fs_path`. The report drops them on purpose, for the reason
-//! #609 and #4854 gave for the bug bundle: the frontend embeds bug-report
-//! metadata verbatim in a prefilled PUBLIC GitHub issue body, and a row VALUE
-//! is the user's content while a row KEY is an opaque ULID, hash or date the
-//! maintainer cannot resolve without the vault. So each artefact reports its
-//! name, how many rows diverged, and a bounded sample of keys — enough to say
-//! "17 rows of `pages_cache.child_block_count` disagree, starting with these",
-//! which is a bug report; a full dump is not.
+//! attachment's `fs_path`. A row VALUE is the user's content while a row KEY
+//! is an opaque ULID, hash or date the maintainer cannot resolve without the
+//! vault, and the frontend embeds the copied report verbatim in a prefilled
+//! PUBLIC GitHub issue body (#609, #4854). So each artefact reports its name,
+//! how many rows diverged, and a bounded sample of keys — enough to say "17
+//! rows of `pages_cache.child_block_count` disagree, starting with these",
+//! which is a bug report — and the copied text carries nothing else.
+//!
+//! The one value the report does carry is [`ReconciliationReport::samples`]:
+//! one truncated expected-versus-actual pair per artefact, for the screen
+//! alone, so the user can see what is wrong before they decide to rebuild or
+//! report it (#6488). The copy and the bug report leave it out.
 
 use std::collections::BTreeMap;
 
@@ -35,7 +39,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
 
-use crate::db::ReadPool;
+use crate::db::{ReadPool, WriteCtx};
 use crate::materializer::Materializer;
 use crate::reconciliation_oracle::{self, Divergence};
 use agaric_core::error::AppError;
@@ -47,6 +51,9 @@ use super::sanitize_internal_error;
 /// maintainer will ask for first; small enough that a vault with thousands of
 /// stale rows still produces a report that fits in an issue body.
 pub const SAMPLE_KEYS_PER_ARTEFACT: usize = 10;
+
+/// Characters a [`DivergenceSample`] keeps of each side before it cuts.
+pub const SAMPLE_CHARS: usize = 120;
 
 /// What [`compute_reconciliation_report`] returns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -66,6 +73,48 @@ pub struct ReconciliationReport {
     /// order (`blocks.page_id` before the `pages_cache` counts keyed on it).
     /// An artefact that agreed with its rebuild is absent.
     pub artefacts: Vec<ArtefactDivergences>,
+    /// The first divergence of each artefact, `artefacts` order, its values
+    /// cut to [`SAMPLE_CHARS`]. For the screen only: the copied report and the
+    /// bug report never carry it (module docs).
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub samples: Option<Vec<DivergenceSample>>,
+}
+
+/// One divergence as the screen shows it (#6488).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct DivergenceSample {
+    /// The artefact it belongs to, as in [`ArtefactDivergences::artefact`].
+    pub artefact: String,
+    pub key: String,
+    /// What the rebuild from the base tables computed.
+    pub expected: String,
+    /// What the maintained state holds.
+    pub actual: String,
+}
+
+/// `text` cut to [`SAMPLE_CHARS`] characters, on a character boundary, with
+/// an ellipsis when it was longer.
+fn truncate_sample(text: &str) -> String {
+    match text.char_indices().nth(SAMPLE_CHARS) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text.to_owned(),
+    }
+}
+
+/// The first divergence of each artefact, first-seen order.
+fn first_of_each_artefact(divergences: &[Divergence]) -> Vec<DivergenceSample> {
+    let mut seen = std::collections::BTreeSet::new();
+    divergences
+        .iter()
+        .filter(|d| seen.insert(d.artefact))
+        .map(|d| DivergenceSample {
+            artefact: d.artefact.to_owned(),
+            key: d.key.clone(),
+            expected: truncate_sample(&d.expected),
+            actual: truncate_sample(&d.actual),
+        })
+        .collect()
 }
 
 /// One derived artefact's disagreement with its from-base rebuild.
@@ -129,6 +178,7 @@ pub async fn compute_reconciliation_report_inner(
         today: today.format("%Y-%m-%d").to_string(),
         total_divergences: i64::try_from(divergences.len()).unwrap_or(i64::MAX),
         artefacts: group_by_artefact(&divergences),
+        samples: Some(first_of_each_artefact(&divergences)),
     })
 }
 
@@ -165,6 +215,64 @@ pub async fn compute_reconciliation_report(
     settled_reconciliation_report(
         &pool.0,
         &materializer,
+        materializer.app_data_dir().as_deref(),
+        today,
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+/// Rebuild every derived cache from the base tables, then report what still
+/// disagrees (#6488). What it rebuilds is every artefact the report lists
+/// outside `engine.*`: those are caches, and a rebuild loses nothing the base
+/// tables do not still hold. It never touches `blocks` against the engine,
+/// which no rebuild can repair. The user copies the report first, so the
+/// evidence outlives the rebuild.
+///
+/// The two passes with no materializer task (the link graph and the Pages
+/// title keys) run here on the writer; everything else goes through the
+/// background queue, page ids first since the page caches read them, and the
+/// report waits for it to drain.
+#[instrument(skip(write_pool, read_pool, materializer), err)]
+pub async fn rebuild_derived_state_inner(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    materializer: &Materializer,
+    app_data_dir: Option<&std::path::Path>,
+    today: chrono::NaiveDate,
+) -> Result<ReconciliationReport, AppError> {
+    use crate::materializer::{FULL_CACHE_REBUILD_TASKS, MaterializeTask};
+
+    materializer.flush_foreground().await?;
+    materializer
+        .enqueue_background(MaterializeTask::RebuildPageIds)
+        .await?;
+    materializer.flush_background().await?;
+    agaric_store::cache::rederive_block_links(write_pool).await?;
+    agaric_store::cache::rekey_title_sort_keys(write_pool).await?;
+    for task in FULL_CACHE_REBUILD_TASKS {
+        materializer.enqueue_background(task).await?;
+    }
+    materializer
+        .enqueue_background(MaterializeTask::RebuildFtsIndex)
+        .await?;
+    settled_reconciliation_report(read_pool, materializer, app_data_dir, today).await
+}
+
+/// Tauri command: rebuild every derived cache, then return a fresh
+/// integrity report.
+#[tauri::command]
+#[specta::specta]
+pub async fn rebuild_derived_state(
+    ctx: State<'_, WriteCtx>,
+    read_pool: State<'_, ReadPool>,
+) -> Result<ReconciliationReport, AppError> {
+    let today = chrono::Local::now().date_naive();
+    let materializer = ctx.materializer();
+    rebuild_derived_state_inner(
+        ctx.pool(),
+        &read_pool.0,
+        materializer,
         materializer.app_data_dir().as_deref(),
         today,
     )
@@ -738,5 +846,189 @@ mod tests {
             matches!(err, AppError::Database(_)),
             "the sqlx error surfaces as AppError::Database, got {err:?}"
         );
+    }
+
+    /// #6488 — the screen's sample: the first divergence of each artefact,
+    /// each side cut to `SAMPLE_CHARS` characters on a character boundary.
+    #[test]
+    fn each_artefact_samples_its_first_divergence_cut_to_length_6488() {
+        let long = "é".repeat(SAMPLE_CHARS + 5);
+        let mut divergences: Vec<Divergence> = (0..3)
+            .map(|i| divergence("pages_cache.child_block_count", &format!("PAGE{i:02}")))
+            .collect();
+        divergences.push(Divergence {
+            artefact: "fts_blocks.stripped",
+            key: "BLOCK00".to_owned(),
+            expected: long.clone(),
+            actual: "short".to_owned(),
+            owner: "test",
+        });
+
+        let samples = first_of_each_artefact(&divergences);
+
+        assert_eq!(
+            samples
+                .iter()
+                .map(|s| (s.artefact.as_str(), s.key.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("pages_cache.child_block_count", "PAGE00"),
+                ("fts_blocks.stripped", "BLOCK00")
+            ],
+            "one per artefact, its first, first-seen order"
+        );
+        assert_eq!(
+            samples[1].expected,
+            format!("{}…", "é".repeat(SAMPLE_CHARS)),
+            "a long side is cut, on a character boundary"
+        );
+        assert_eq!(samples[1].actual, "short", "a short side is whole");
+    }
+
+    /// #6488 — a block a sync import left awaiting its purge is expected to be
+    /// out of its doc, so the membership check does not report it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_block_awaiting_its_purge_is_not_missing_from_the_engine_6488() {
+        const AWAITING: &str = "01AWAITING6488000000000000";
+        let (pool, _dir, mat, ids) = vault_in_a_space().await;
+        let [space, page, ..] = ids.as_slice() else {
+            panic!("the fixture returns six ids");
+        };
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'content', 'leaving', ?, 4, ?, ?)",
+            AWAITING,
+            page,
+            page,
+            space,
+        )
+        .execute(&pool)
+        .await
+        .expect("a row its doc no longer holds");
+        sqlx::query!(
+            "INSERT INTO sync_deferred_purges (block_id) VALUES (?)",
+            AWAITING
+        )
+        .execute(&pool)
+        .await
+        .expect("awaiting its purge");
+
+        let report =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
+
+        let engine: Vec<&str> = report
+            .artefacts
+            .iter()
+            .map(|a| a.artefact.as_str())
+            .filter(|a| a.starts_with("engine."))
+            .collect();
+        assert_eq!(
+            engine,
+            Vec::<&str>::new(),
+            "nothing disagrees with the engine"
+        );
+        mat.shutdown();
+    }
+
+    /// #6488 — Rebuild rewrites every stale cache and returns the report it
+    /// leaves: a count, a search row and a title key, each written stale.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rebuild_rewrites_every_stale_cache_6488() {
+        let (pool, _dir, mat, page_id) = settled_vault().await;
+        sqlx::query!(
+            "UPDATE pages_cache SET child_block_count = child_block_count + 5, \
+             title_sort_key = 'zzz'"
+        )
+        .execute(&pool)
+        .await
+        .expect("corrupt the page row");
+        // dynamic-sql: `fts_blocks` is an FTS5 virtual table, which
+        // sqlx-macros' describe cannot read (#4886).
+        sqlx::query("UPDATE fts_blocks SET stripped = 'an older strip' WHERE block_id != ?")
+            .bind(&page_id)
+            .execute(&pool)
+            .await
+            .expect("corrupt the child's search row");
+        let before =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
+        let mut stale: Vec<String> = before.artefacts.into_iter().map(|a| a.artefact).collect();
+        stale.sort();
+        assert_eq!(
+            stale,
+            vec![
+                "fts_blocks.stripped".to_owned(),
+                "pages_cache.child_block_count".to_owned(),
+                "pages_cache.title_sort_key".to_owned(),
+            ],
+            "the three caches are stale before the rebuild"
+        );
+
+        let after = rebuild_derived_state_inner(&pool, &pool, &mat, None, pinned_today())
+            .await
+            .expect("rebuild");
+
+        assert_eq!(after.artefacts, Vec::new(), "nothing is left stale");
+        mat.shutdown();
+    }
+
+    /// #6488 — a block stored under a lowercase id, or naming a lowercase
+    /// parent, is reported under its own artefact, by its stored id.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_block_id_in_a_non_standard_form_is_reported_6488() {
+        let (pool, _dir, mat, page_id) = settled_vault().await;
+        let lower = page_id.to_ascii_lowercase();
+        // Older data predates the parent foreign key it would fail now; one
+        // connection, so the pragma covers the insert.
+        let mut conn = pool.acquire().await.expect("a connection");
+        // dynamic-sql: a pragma, which sqlx-macros cannot describe.
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .expect("let a lowercase parent stand");
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+             VALUES ('01lowercase000000000000000', 'content', NULL, ?, ?)",
+            lower,
+            page_id,
+        )
+        .execute(&mut *conn)
+        .await
+        .expect("a row from older data");
+        drop(conn);
+
+        let report =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
+
+        let id_form: Vec<&ArtefactDivergences> = report
+            .artefacts
+            .iter()
+            .filter(|a| a.artefact == "blocks.id_form")
+            .collect();
+        assert_eq!(
+            id_form,
+            vec![&ArtefactDivergences {
+                artefact: "blocks.id_form".to_owned(),
+                count: 1,
+                sample_keys: vec!["01lowercase000000000000000".to_owned()],
+            }],
+            "one block, by its stored id"
+        );
+        let sample = report
+            .samples
+            .unwrap_or_default()
+            .into_iter()
+            .find(|s| s.artefact == "blocks.id_form")
+            .expect("its sample");
+        assert_eq!(
+            sample.actual,
+            format!("id = 01lowercase000000000000000, parent_id = {lower}")
+        );
+        mat.shutdown();
     }
 }
