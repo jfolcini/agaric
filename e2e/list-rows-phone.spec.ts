@@ -70,6 +70,80 @@ test.describe('List rows on a phone @pages @mobile', () => {
     await expectFlushTouchRows(page.locator('[data-history-item]'), 3)
   })
 
+  // Reset used to wrap onto a line of its own under the content, making every
+  // row three lines tall; it now shares the meta line, the content under it.
+  test('a History row keeps its Reset action on the meta line, above the content', async ({
+    page,
+  }) => {
+    await openPagesView(page)
+    await createPageFromPagesView(page, 'Row one')
+    await navigateToView(page, 'History')
+    const row = page.locator('[data-history-item]').filter({ hasText: 'Row one' }).first()
+    const badge = row.getByTestId('history-type-badge')
+    const reset = row.getByRole('button', { name: 'Reset to this point' })
+    const content = row.locator('.history-item-preview')
+    const device = row.locator('.history-item-device-group')
+    await expect(content).toBeVisible()
+    const [badgeBox, resetBox, contentBox, deviceBox] = await Promise.all([
+      badge.boundingBox(),
+      reset.boundingBox(),
+      content.boundingBox(),
+      device.boundingBox(),
+    ])
+    if (!badgeBox || !resetBox || !contentBox || !deviceBox) {
+      throw new Error('row parts are not laid out')
+    }
+    // Reset sits on the badge's line, and the content takes a line of its own
+    // below it, starting at the badge's left edge.
+    expect(resetBox.y).toBeLessThan(contentBox.y)
+    expect(contentBox.y).toBeGreaterThanOrEqual(badgeBox.y + badgeBox.height - 1)
+    expect(Math.abs(contentBox.x - badgeBox.x)).toBeLessThanOrEqual(1)
+    // Two lines, not three: the device id trails the content line instead of
+    // wrapping onto a line of its own under the badge.
+    const deviceCenter = deviceBox.y + deviceBox.height / 2
+    expect(deviceCenter).toBeGreaterThanOrEqual(contentBox.y)
+    expect(deviceCenter).toBeLessThanOrEqual(contentBox.y + contentBox.height)
+    expect(
+      Math.abs(resetBox.y + resetBox.height / 2 - (badgeBox.y + badgeBox.height / 2)),
+    ).toBeLessThanOrEqual(resetBox.height / 2)
+  })
+
+  // The cursor's accent bar used to be an inset box-shadow, which the card's
+  // rounded corner bent into a curve on an end row. The bar now runs the row's
+  // full height, and the card squares that corner while the cursor sits in it.
+  test("the cursor bar meets the card's corner square on its first row", async ({ page }) => {
+    await openPagesView(page)
+    await createPageFromPagesView(page, 'Row one')
+    await navigateToView(page, 'History')
+    const grid = page.getByRole('grid')
+    await expect(grid.locator('[data-history-item]').nth(2)).toBeVisible()
+    const card = page.locator('[data-slot="scroll-area"]').filter({ has: grid })
+    await grid.focus()
+    await page.keyboard.press('Home')
+    const row = grid.locator('.list-cursor')
+    await expect(row).toHaveCount(1)
+    const m = await row.evaluate((el) => {
+      const bar = getComputedStyle(el, '::before')
+      const c = el.closest('[data-slot="scroll-area"]') as HTMLElement
+      return {
+        content: bar.content,
+        width: bar.width,
+        top: bar.top,
+        bottom: bar.bottom,
+        rowTop: el.getBoundingClientRect().top,
+        cardTop: c.getBoundingClientRect().top + parseFloat(getComputedStyle(c).borderTopWidth),
+      }
+    })
+    // The row sits in the card's corner, so the corner would clip the bar.
+    expect(Math.abs(m.rowTop - m.cardTop)).toBeLessThanOrEqual(FLUSH_TOLERANCE_PX)
+    expect([m.content, m.width, m.top, m.bottom]).toEqual(['""', '2px', '0px', '0px'])
+    await expect(card).toHaveCSS('border-top-left-radius', '0px')
+    await expect(card).toHaveCSS('border-top-right-radius', '8px')
+    // Off the end row, the corner is round again.
+    await page.keyboard.press('ArrowDown')
+    await expect(card).toHaveCSS('border-top-left-radius', '8px')
+  })
+
   test('Tags rows sit flush and are touch-sized', async ({ page }) => {
     await navigateToView(page, 'Tags')
     await expectFlushTouchRows(page.locator('[data-slot="list-item"]'), 3)

@@ -138,13 +138,10 @@ function HistoryListItemInner({
       tabIndex={isFocused ? 0 : -1}
       aria-disabled={isNonReversible || undefined}
     >
-      {/* Below `sm` the text takes the first line and Diff / Reset wrap under it,
-          indented past the checkbox: the 4rem the text leaves free is less than
-          the checkbox plus a button at either pointer size. */}
       <div
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in an aria grid; <td> requires table ancestry and breaks the flex layout
         role="gridcell"
-        className="flex items-center gap-3 w-full max-sm:flex-wrap max-sm:gap-y-1 max-sm:[&>.history-item-main]:basis-[calc(100%-4rem)] max-sm:[&>.history-item-main+*]:ml-7 max-sm:pointer-coarse:[&>.history-item-main+*]:ml-14"
+        className="history-row-cell w-full"
       >
         {/* Checkbox.
              sub-fix 5: keep both row-click and checkbox-click as active
