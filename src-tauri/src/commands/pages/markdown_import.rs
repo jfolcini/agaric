@@ -327,7 +327,7 @@ pub(super) fn announce_import_start(
 /// Open the import's first chunk and create the page `file` writes into, or
 /// adopt the empty same-title page an earlier file's link created (#5160
 /// D12), returning the transaction, the page's ULID and title and how the
-/// file's property lines read ([`import_property_lines`]). A file that merges
+/// file's property lines read ([`create_note_targets`], #5160 D11). A file that merges
 /// into the page of its title, which holds blocks ([`import_target`], #6277
 /// decision 7), rolls the chunk back and merges ([`merge_into_page`]),
 /// returning its result.
@@ -401,7 +401,15 @@ pub(super) async fn create_import_page(
             (page_id, title)
         }
     };
-    let lines = import_property_lines(&mut tx, space_id, parse_output).await?;
+    let mut lines = PropertyLines::load(&mut tx, Some(space_id), PropertyWrite::Import).await?;
+    let values = parse_output
+        .blocks
+        .iter()
+        .flat_map(|block| &block.properties)
+        .chain(&parse_output.frontmatter);
+    lines.resolve_refs(&mut tx, Some(space_id), values).await?;
+    create_note_targets(&mut tx, materializer, device_id, file, &mut lines).await?;
+    lines.keep_refused_as_text(&mut parse_output.blocks, &mut parse_output.warnings);
     Ok(ImportPage::Write(Box::new(OpenPage {
         tx,
         page_id,
@@ -410,23 +418,44 @@ pub(super) async fn create_import_page(
     })))
 }
 
-/// How the file's property lines and front matter read against the space's
-/// definitions: each ref value resolved, and each value a definition refuses
-/// kept as text in its block, with a warning (#5160 D11).
-pub(super) async fn import_property_lines(
+/// Make the page of each ref value that names a note of the same folder pick
+/// with no page yet, as a link to that note makes it (#6277 G6): the note
+/// adopts it when it imports ([`import_target`], #5160 D12), so the order a
+/// pick's notes import in loses no ref. Any other title names no page, and
+/// its value is kept as text (D11).
+async fn create_note_targets(
     tx: &mut CommandTx,
-    space_id: &str,
-    parse_output: &mut import::ParseOutput,
-) -> Result<PropertyLines, AppError> {
-    let mut lines = PropertyLines::load(tx, Some(space_id), PropertyWrite::Import).await?;
-    let values = parse_output
-        .blocks
+    materializer: &Materializer,
+    device_id: &str,
+    file: &ImportFile<'_>,
+    lines: &mut PropertyLines,
+) -> Result<(), AppError> {
+    let notes: HashMap<String, &String> = file
+        .notes
         .iter()
-        .flat_map(|block| &block.properties)
-        .chain(&parse_output.frontmatter);
-    lines.resolve_refs(tx, Some(space_id), values).await?;
-    lines.keep_refused_as_text(&mut parse_output.blocks, &mut parse_output.warnings);
-    Ok(lines)
+        .map(|title| (agaric_core::tag_norm::name_key(title), title))
+        .collect();
+    for name in lines.missing_titles() {
+        let Some(title) = notes.get(&agaric_core::tag_norm::name_key(&name)) else {
+            continue;
+        };
+        let (page, page_op) = create_block_in_tx(
+            &mut *tx,
+            materializer.loro_state(),
+            device_id,
+            "page".into(),
+            (*title).clone(),
+            None,
+            None,
+            None,
+        )
+        .await?;
+        tx.enqueue_background(page_op);
+        let page_id = page.id.into_string();
+        stamp_space_property(tx, materializer, device_id, page_id.clone(), file.space_id).await?;
+        lines.name_ref(name, page_id);
+    }
+    Ok(())
 }
 
 /// Everything the block loop and the post-commit anchor phase need to rewrite a

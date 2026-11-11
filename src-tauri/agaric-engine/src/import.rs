@@ -2472,12 +2472,12 @@ fn parse_outline(
 fn read_blocks(
     normalized: &str,
     mode: ParseMode,
-    foreign: (bool, bool),
+    (foreign, file): (bool, bool),
     id_lines: Option<&std::collections::HashSet<usize>>,
     keep_refs: bool,
 ) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
     let none = std::collections::HashSet::new();
-    let read = parse_block_lines(normalized, mode, foreign, &none, id_lines);
+    let read = parse_block_lines(normalized, mode, (foreign, file), &none, id_lines);
     let ids = if keep_refs {
         LOGSEQ_BLOCK_REF_RE
             .find_iter(normalized)
@@ -2489,7 +2489,7 @@ fn read_blocks(
     if read.2.stripped_refs == 0 || ids.is_empty() {
         return read;
     }
-    parse_block_lines(normalized, mode, foreign, &ids, id_lines)
+    parse_block_lines(normalized, mode, (foreign, file), &ids, id_lines)
 }
 
 /// Counts of the lossy / silently-corrected transforms [`parse_block_lines`]

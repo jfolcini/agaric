@@ -13,6 +13,9 @@ pub(super) struct ImportFile<'a> {
     pub(super) title: &'a str,
     pub(super) content: &'a str,
     pub(super) rule: MergeRule<'a>,
+    /// The titles of the notes of a folder pick, this file's among them;
+    /// empty for any other import.
+    pub(super) notes: &'a [String],
     /// The files sent with the file, which a merge maps onto the page's own.
     pub(super) vault_files: &'a [VaultFile],
     /// A folder's note: the paths of the pick's notes.
