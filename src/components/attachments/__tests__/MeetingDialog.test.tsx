@@ -706,7 +706,7 @@ describe('MeetingDialog — mutation triage (#6435)', () => {
     })
     render(<MeetingDialog onClose={vi.fn()} onCreated={vi.fn()} />)
 
-    act(() => useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' }))
+    await act(() => useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' }))
     await waitFor(() => expect(templateOptions()).toEqual(['none', work]))
     await act(async () => {
       release()
