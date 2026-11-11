@@ -185,7 +185,7 @@ function TreePageRow({
       data-page-index={pageIndex}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid row inside role="grid"; a real <tr> needs a <table> and breaks the flex/grid layout
       role="row"
-      className={cn(focusedIndex === pageIndex && 'rounded-lg list-cursor')}
+      className={cn('list-row rounded-sm', focusedIndex === pageIndex && 'list-cursor')}
       style={rowStyle(virtualRow.start)}
     >
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner button controls; CSS-grid cell would break as a <td> without a <table> */}

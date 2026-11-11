@@ -50,10 +50,8 @@ import { renamePage } from '@/stores/page-rename'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
-/** A desktop row: `py-2` around the 24 px icon buttons. `measureElement` corrects it. */
+/** Under a desktop `ListItem` row (45 px measured); `measureElement` corrects it. */
 const estimateTagRowHeight = (): number => 40
-/** The `space-y-2` spacing, which absolutely positioned rows cannot use. */
-const TAG_ROW_GAP = 8
 
 /** The virtualizer asks only for indices below its `count`, which is `tags.length`. */
 function tagAt(tags: readonly TagCacheRow[], index: number): TagCacheRow {
@@ -91,7 +89,6 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     count: tags.length,
     getScrollElement: () => listRef.current,
     estimateSize: estimateTagRowHeight,
-    gap: TAG_ROW_GAP,
     overscan: 5,
     getItemKey: (index) => tagAt(tags, index).tag_id,
   })

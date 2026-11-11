@@ -17,6 +17,7 @@ import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { listRowVariants } from '@/components/ui/list-item'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { RichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import type { BlockRow } from '@/lib/bindings'
@@ -118,7 +119,10 @@ export function TrashRowItem({
       aria-selected={isSelected}
       data-trash-item
       className={cn(
-        'trash-item flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-lg border bg-card p-4 transition-colors cursor-pointer',
+        listRowVariants({
+          className:
+            'trash-item flex-col sm:flex-row items-start sm:items-center justify-between gap-2 cursor-pointer',
+        }),
         isSelected ? 'bg-accent/50 border-accent' : 'hover:bg-accent/50 active:bg-accent/70',
         isFocused && 'list-cursor',
       )}

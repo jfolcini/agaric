@@ -74,15 +74,12 @@ export function HistoryListView({
   // collapsed height (~80px = p-4 + 2 lines) is a starting point;
   // `measureElement` corrects to actual height after first paint, so
   // expanded rows do not push subsequent rows out of view.
-  const estimateSize = useCallback(() => 80, [])
+  const estimateSize = useCallback(() => 64, [])
   // oxlint-disable-next-line react/incompatible-library -- The Compiler skips memoizing a component that calls this API, so nothing virtualizer-derived is cached inside this component; the residual hazard the diagnostic names is such a value reaching a MEMOIZED consumer. `HistoryListItem` IS `React.memo`, so this crossing is worth spelling out: what reaches it is `rowRef={virtualizer.measureElement}` — assigned once in the Virtualizer constructor (virtual-core 3.17.8), so its identity never changes and there is nothing that can go stale — and `virtualRow.start`, baked into a FRESH `style` object literal every render, which makes the shallow compare miss unconditionally and repaint the row at the current offset. `getVirtualItems()`/`getTotalSize()` are read in this render body. (#4409)
   const virtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => listRef.current,
     estimateSize,
-    // The rows are bordered cards; without a gap their borders doubled into
-    // 2px seams.
-    gap: 8,
     overscan: 5,
     getItemKey: (index) => {
       const entry = entries[index]

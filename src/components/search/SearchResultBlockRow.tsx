@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { SnippetHighlight } from '@/components/search/SnippetHighlight'
 import { Badge } from '@/components/ui/badge'
+import { listRowVariants } from '@/components/ui/list-item'
 import { Spinner } from '@/components/ui/spinner'
 import type { MatchOffset, SearchBlockRow as SearchBlockRowT } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
@@ -139,8 +140,11 @@ function SearchResultBlockRowImpl({
       tabIndex={-1}
       onClick={handleClick}
       className={cn(
-        'list-none flex items-center gap-2 rounded-md px-3 py-1.5 text-sm cursor-pointer',
-        'hover:bg-accent/30 active:bg-accent/40 transition-colors',
+        listRowVariants({
+          density: 'compact',
+          className: 'list-none gap-2 text-sm cursor-pointer',
+        }),
+        'active:bg-accent/70',
         isFocused && 'bg-accent',
         loading && 'opacity-60 cursor-progress',
       )}

@@ -2458,11 +2458,37 @@
  * buttons) nor off any ancestor: the Journal container
  * and #main-content take programmatic focus at boot and match :focus-visible
  * then. The tint is an image layer so it sits over a row's own background. */
+/* ── List rows ──────────────────────────────────────────────────────────
+ * The row of a table-like list (`listRowVariants`, `src/components/ui/
+ * list-item.tsx`). Rows sit flush, separated by a hairline inset to the
+ * text column (the row's own `px-3`), never by a card per row; the last row
+ * of a run draws none. A virtualized row is absolutely positioned inline,
+ * which wins over `relative`, so the divider anchors either way. */
+@utility list-row {
+  position: relative;
+  &::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0.75rem 0;
+    bottom: 0;
+    height: 1px;
+    background-color: color-mix(in oklab, var(--border) 70%, transparent);
+    pointer-events: none;
+  }
+  &:last-child::after {
+    content: none;
+  }
+}
+
+/* The keyboard cursor on a list row: a fill plus a 2px edge bar in the
+ * ring colour, so the row stays legible where a tint alone washes out
+ * (dark, high contrast). */
 @utility list-cursor {
   background-image: linear-gradient(
     color-mix(in oklab, var(--accent) 30%, transparent),
     color-mix(in oklab, var(--accent) 30%, transparent)
   );
+  box-shadow: inset 2px 0 0 var(--ring);
   :where(:has(> :focus-visible)) > &,
   :where([role='grid'], [aria-activedescendant]):focus-visible & {
     @apply outline-hidden ring-2 ring-inset ring-ring;
