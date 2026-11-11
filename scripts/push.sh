@@ -24,7 +24,7 @@
 # …) before its test phases, so once it is green nothing is left for the hook
 # to do and we invoke `git push --no-verify`: the freshly-opened connection is
 # used immediately. `SKIP_CI_VERIFY='<reason>'` makes the verifier skip all of
-# that, pre-push hooks included.
+# that; the push then runs the pre-push hooks itself, without `--no-verify`.
 #
 # USAGE
 # -----
@@ -471,9 +471,15 @@ echo ""
 echo "▶ Verifying (CI-equivalent) BEFORE opening any push connection…"
 bash "$ROOT/scripts/verify-ci-equivalent.sh"
 
-echo "✓ Verifier finished — pushing now (git push --no-verify)…"
+# Under SKIP_CI_VERIFY the verifier skipped Phase A2 too, so the pre-push
+# hooks run inside `git push` instead: `no-commit-to-branch` is one CI never runs.
+NO_VERIFY=(--no-verify)
+SKIP_CI_VERIFY_SET="${SKIP_CI_VERIFY:-}"
+[ -n "${SKIP_CI_VERIFY_SET//[[:space:]]/}" ] && NO_VERIFY=()
 
-# Belt-and-suspenders: even though no hook runs inside the push (so the
+echo "✓ Verifier finished — pushing now (git push ${NO_VERIFY[*]-})…"
+
+# Belt-and-suspenders: even when no hook runs inside the push (so the
 # connection is not held idle), keep SSH keepalives on so a slow pack
 # upload can't be dropped mid-transfer by GitHub's idle timeout. Respects
 # any GIT_SSH_COMMAND the caller already set.
@@ -483,7 +489,7 @@ export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o ServerAliveInterval=15 -o Ser
 # verifier — an unpushable destination never gets this far (#3683).
 
 echo ""
-if ! push_with_retry --no-verify "${PUSH_ARGS[@]+"${PUSH_ARGS[@]}"}"; then
+if ! push_with_retry ${NO_VERIFY[@]+"${NO_VERIFY[@]}"} "${PUSH_ARGS[@]+"${PUSH_ARGS[@]}"}"; then
     echo "" >&2
     case "${PUSH_FAILURE_KIND:-}" in
         local-refusal)
@@ -496,8 +502,8 @@ if ! push_with_retry --no-verify "${PUSH_ARGS[@]+"${PUSH_ARGS[@]}"}"; then
             echo "✗ verification passed but the PUSH FAILED at the remote — the branch was NOT updated." >&2
             echo "  git push reached the remote and did not succeed (after retries where" >&2
             echo "  applicable); nothing landed. git's words below say why: a dropped" >&2
-            echo "  connection, a rejected non-fast-forward (fetch/rebase and retry), or" >&2
-            echo "  a remote rejection." >&2
+            echo "  connection, a rejected non-fast-forward (fetch/rebase and retry), a" >&2
+            echo "  remote rejection, or under SKIP_CI_VERIFY a pre-push hook." >&2
             ;;
     esac
     if [ -n "${PUSH_FAILURE_TAIL:-}" ]; then

@@ -407,7 +407,7 @@ phase_a_skip_compose() {
 # The caller's entries that are NOT already in the required set — i.e.
 # exactly the hooks the caller's SKIP actually removes from this run.
 # This, not the raw `SKIP`, is what the non-equivalence warning reports:
-# a caller who redundantly re-skips `vitest` has changed nothing, and
+# a caller who re-skips a hook the category plan already skips has changed nothing, and
 # warning about it would train the reader to ignore the warning.
 phase_a_skip_extra() {
     local required="${1:-}" caller="${2:-}"
