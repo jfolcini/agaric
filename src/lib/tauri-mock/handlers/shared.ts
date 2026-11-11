@@ -213,20 +213,27 @@ function copyJournalTemplateBlocks(dayPageId: string, spaceId: string | null, da
     .toSorted((x, y) => compareUtf8Bytes(x['id'] as string, y['id'] as string))[0]
   if (template === undefined) return
   copyTemplateBlocks(template['id'] as string, dayPageId, (content) =>
-    expandJournalTemplateVariables(content, date),
+    isRecordingPlaceholder(content) ? null : expandJournalTemplateVariables(content, date),
   )
+}
+
+/** `is_recording_placeholder`: a block reading `<% recording %>`. */
+export function isRecordingPlaceholder(content: string): boolean {
+  const m = /^<%(.*)%>$/.exec(content.trim())
+  return m !== null && m[1]?.trim().toLowerCase() === 'recording'
 }
 
 /**
  * Copy the content blocks of the template page `templateId` under `destPageId`,
- * nesting included, each expanded by `expand`. Returns the copies, depth-first,
+ * nesting included, each expanded by `expand`, or left out when it answers
+ * `null`, its children taking its place. Returns the copies, depth-first,
  * as `copy_page_blocks_in_tx` does. The same approximation as
  * {@link copyJournalTemplateBlocks}: content and nesting only.
  */
 export function copyTemplateBlocks(
   templateId: string,
   destPageId: string,
-  expand: (content: string) => string,
+  expand: (content: string) => string | null,
 ): Record<string, unknown>[] {
   const copied: Record<string, unknown>[] = []
   const copyChildren = (sourceParent: string, destParent: string): void => {
@@ -236,11 +243,16 @@ export function copyTemplateBlocks(
       )
       .toSorted(comparePositionThenId)
     for (const source of children) {
+      const content = expand((source['content'] as string | null) ?? '')
+      if (content === null) {
+        copyChildren(source['id'] as string, destParent)
+        continue
+      }
       const id = fakeId()
       const row = {
         id,
         block_type: 'content',
-        content: expand((source['content'] as string | null) ?? ''),
+        content,
         parent_id: destParent,
         page_id: destPageId,
         position: 0,

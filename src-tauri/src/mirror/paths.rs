@@ -119,6 +119,17 @@ fn disambiguate(mut owners: Vec<(&str, String)>) -> HashMap<String, String> {
         .collect()
 }
 
+/// Each `(id, name)` space's folder below the mirror's folder, distinct
+/// under `fold`.
+pub fn space_folders(spaces: &[(String, String)]) -> HashMap<String, String> {
+    disambiguate(
+        spaces
+            .iter()
+            .map(|(id, name)| (id.as_str(), space_folder(name)))
+            .collect(),
+    )
+}
+
 /// A live page as the mirror lays it out: its id, its space's and its title.
 pub struct PageEntry {
     pub id: String,
@@ -131,12 +142,7 @@ pub struct PageEntry {
 /// as the space folders are among themselves. `spaces` are `(id, name)`; a
 /// page whose space is not among them gets no file.
 pub fn layout(spaces: &[(String, String)], pages: &[PageEntry]) -> HashMap<String, String> {
-    let folders = disambiguate(
-        spaces
-            .iter()
-            .map(|(id, name)| (id.as_str(), space_folder(name)))
-            .collect(),
-    );
+    let folders = space_folders(spaces);
     let mut by_space: HashMap<&str, Vec<(&str, String)>> = HashMap::new();
     for page in pages.iter().filter(|p| folders.contains_key(&p.space_id)) {
         by_space

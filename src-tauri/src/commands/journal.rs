@@ -5,6 +5,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
 
+use crate::commands::meeting_attachments::is_recording_placeholder;
 use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
@@ -308,7 +309,9 @@ async fn find_journal_template_in_tx(
 /// The variables expand against `date`, the day being created, not the
 /// clock: `<% today %>` and `<% page title %>` are the day. `<% time %>` is
 /// the clock, since a day has no time of its own, and `<% datetime %>` is
-/// both. Returns the copied rows, depth-first.
+/// both. A `<% recording %>` block is left out and its children take its
+/// place, as `/template` does: a day has no recording to put there. Returns
+/// the copied rows, depth-first.
 pub(crate) async fn apply_journal_template_in_tx(
     tx: &mut CommandTx,
     materializer: &Materializer,
@@ -329,7 +332,10 @@ pub(crate) async fn apply_journal_template_in_tx(
         device_id,
         &template_id,
         page_id,
-        |content| expand_journal_template_variables(content, day, time),
+        |content| {
+            (!is_recording_placeholder(content))
+                .then(|| expand_journal_template_variables(content, day, time))
+        },
     )
     .await?;
     Ok(copied.unwrap_or_else(|why| {
@@ -1649,6 +1655,75 @@ mod tests {
         .unwrap();
         assert_eq!(seqs.len(), 5, "page create, space, three copies: {seqs:?}");
         assert_eq!(seqs[4] - seqs[0], 4, "contiguous: {seqs:?}");
+
+        mat.shutdown();
+    }
+
+    /// A `<% recording %>` block (any case, inner spaces) is left out of a
+    /// day and its subtree lifted into its place, as `/template` does (#5364).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_day_drops_the_recording_placeholder_and_keeps_its_children() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        let template = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &mat,
+            None,
+            "Daily template".into(),
+            space.clone(),
+        )
+        .await
+        .expect("template page")
+        .into_string();
+        flag(&pool, &mat, &template, "journal-template").await;
+        child(&pool, &mat, &template, "Agenda").await;
+        let placeholder = child(&pool, &mat, &template, "  <%  Recording %> ").await;
+        let under = child(&pool, &mat, &placeholder, "Under it").await;
+        child(&pool, &mat, &under, "Deeper").await;
+        child(&pool, &mat, &template, "Notes").await;
+
+        let day = NaiveDate::parse_from_str(DAY, "%Y-%m-%d").unwrap();
+        let page = journal_for_date_inner(&pool, DEV, &mat, day, &space)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let page_id = page.id.into_string();
+        let blocks = page_blocks(&pool, &page_id).await;
+        let parent_of = |content: &str| {
+            let (_, parent, _) = blocks
+                .iter()
+                .find(|(c, _, _)| c == content)
+                .unwrap_or_else(|| panic!("{content:?} is copied: {blocks:?}"));
+            parent.clone()
+        };
+        let mut top: Vec<(&str, i64)> = blocks
+            .iter()
+            .filter(|(_, parent, _)| parent == &page_id)
+            .map(|(content, _, position)| (content.as_str(), *position))
+            .collect();
+        top.sort_by_key(|&(_, position)| position);
+        assert_eq!(
+            top.iter().map(|&(content, _)| content).collect::<Vec<_>>(),
+            ["Agenda", "Under it", "Notes"],
+            "the placeholder's child takes its place: {blocks:?}"
+        );
+        assert_eq!(blocks.len(), 4, "no placeholder copied: {blocks:?}");
+        let under_id: String = sqlx::query_scalar!(
+            r#"SELECT id as "id!: String" FROM blocks WHERE page_id = ?1 AND content = ?2"#,
+            page_id,
+            "Under it",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            parent_of("Deeper"),
+            under_id,
+            "the grandchild keeps its parent"
+        );
 
         mat.shutdown();
     }

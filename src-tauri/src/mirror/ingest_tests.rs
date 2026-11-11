@@ -448,3 +448,177 @@ proptest! {
             })?;
     }
 }
+
+/// The live pages titled `title`.
+async fn pages_titled(fx: &Fx, title: &str) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT id FROM blocks
+          WHERE block_type = 'page' AND content = ? AND deleted_at IS NULL",
+    )
+    .bind(title)
+    .fetch_all(&fx.pool)
+    .await
+    .unwrap()
+}
+
+fn write_at(fx: &Fx, path: &str, bytes: impl AsRef<[u8]>) {
+    let file = fx.root.join(path);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, bytes).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_in_a_space_folder_becomes_a_page_one_undo_removes() {
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    let own = "* first\n\nsecond\n";
+    write_at(&fx, "TestSpace/Gamma.md", own);
+
+    fx.tick().await;
+    assert!(
+        pages_titled(&fx, "Gamma").await.is_empty(),
+        "read once it settles"
+    );
+    fx.tick().await;
+
+    let pages = pages_titled(&fx, "Gamma").await;
+    assert_eq!(pages.len(), 1);
+    assert_eq!(fx.contents(&pages[0]).await, ["first", "second"]);
+    let file = std::fs::read_to_string(fx.root.join("TestSpace/Gamma.md")).unwrap();
+    assert_eq!(file, own, "the file keeps its bytes");
+    fx.tick().await;
+    fx.tick().await;
+    assert_eq!(pages_titled(&fx, "Gamma").await, pages, "no twin");
+
+    let event = fx.events().pop().unwrap();
+    assert_eq!(event.page_id, pages[0]);
+    undo_ops_inner(&fx.pool, DEV, &fx.mat, event.op_refs)
+        .await
+        .unwrap();
+    settle(&fx.mat).await;
+    assert!(pages_titled(&fx, "Gamma").await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_in_a_subfolder_is_a_namespaced_page_and_its_saves_edit_it() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    write_at(&fx, "TestSpace/Projects/Plan.md", "one\n");
+    fx.settle_file().await;
+    let pages = pages_titled(&fx, "Projects/Plan").await;
+    assert_eq!(pages.len(), 1);
+
+    write_at(&fx, "TestSpace/Projects/Plan.md", "uno\n");
+    fx.settle_file().await;
+    assert_eq!(pages_titled(&fx, "Projects/Plan").await, pages);
+    assert_eq!(fx.contents(&pages[0]).await, ["uno"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_titled_as_a_page_of_the_space_is_refused_and_left_alone() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    write_at(&fx, "TestSpace/alpha.md", "other\n");
+    fx.settle_file().await;
+
+    assert_eq!(fx.contents(&page).await, ["one"]);
+    assert_eq!(pages_titled(&fx, "alpha").await, Vec::<String>::new());
+    let file = std::fs::read_to_string(fx.root.join("TestSpace/alpha.md")).unwrap();
+    assert_eq!(file, "other\n");
+    let failed = fx.status().await.failed;
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].path, "TestSpace/alpha.md");
+    assert!(fx.events().is_empty());
+
+    std::fs::remove_file(fx.root.join("TestSpace/alpha.md")).unwrap();
+    fx.tick().await;
+    assert!(
+        fx.status().await.failed.is_empty(),
+        "a file gone is no failure"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_outside_every_space_folder_or_hidden_is_left_alone() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    write_at(&fx, "loose.md", "loose\n");
+    write_at(&fx, "Elsewhere/Note.md", "note\n");
+    write_at(&fx, "TestSpace/.Hidden.md", "hidden\n");
+    write_at(&fx, "TestSpace/notes.txt", "text\n");
+    fx.settle_file().await;
+
+    for title in [
+        "loose",
+        "Note",
+        "Elsewhere/Note",
+        ".Hidden",
+        "Hidden",
+        "notes",
+    ] {
+        assert!(pages_titled(&fx, title).await.is_empty(), "{title}");
+    }
+    assert!(fx.events().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_one_undo_could_not_revert_leaves_no_page() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    let huge: String = (0..1200).map(|n| format!("line {n}\n\n")).collect();
+    write_at(&fx, "TestSpace/Huge.md", &huge);
+    fx.settle_file().await;
+
+    assert!(pages_titled(&fx, "Huge").await.is_empty());
+    let failed = fx.status().await.failed;
+    assert_eq!(failed.len(), 1);
+    assert!(failed[0].message.contains("exceeds maximum"), "{failed:?}");
+    let file = std::fs::read_to_string(fx.root.join("TestSpace/Huge.md")).unwrap();
+    assert_eq!(file, huge);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_landing_while_a_new_file_is_read_is_not_written_over() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    // CRLF, so the read has a write-back to make.
+    write_at(&fx, "TestSpace/Delta.md", "one\r\n");
+    let newer = fx.root.join("TestSpace/Delta.md");
+    *fx.on_event.lock().unwrap() =
+        Some(Box::new(move || std::fs::write(&newer, "newer\n").unwrap()));
+    fx.settle_file().await;
+
+    let pages = pages_titled(&fx, "Delta").await;
+    assert_eq!(pages.len(), 1);
+    assert_eq!(fx.contents(&pages[0]).await, ["one"]);
+    let file = std::fs::read_to_string(fx.root.join("TestSpace/Delta.md")).unwrap();
+    assert_eq!(file, "newer\n", "the newer save is kept, to be read next");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn choosing_another_folder_forgets_the_old_folders_new_file_failures() {
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    write_at(&fx, "TestSpace/alpha.md", "other\n");
+    fx.settle_file().await;
+    assert_eq!(fx.status().await.failed.len(), 1);
+
+    let other = TempDir::new().unwrap();
+    set_mirror_folder_inner(
+        &fx.pool,
+        DEV,
+        &fx.state,
+        Some(other.path().to_str().unwrap().to_owned()),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        fx.status().await.failed.is_empty(),
+        "{:?}",
+        fx.status().await.failed
+    );
+}
