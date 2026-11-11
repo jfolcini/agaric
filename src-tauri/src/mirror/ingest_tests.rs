@@ -48,9 +48,15 @@ impl Fx {
         let folder = TempDir::new().unwrap();
         let state = MirrorState::new(data.path().to_path_buf());
         let root = folder.path().to_path_buf();
-        set_mirror_folder_inner(&pool, DEV, &state, Some(root.to_str().unwrap().to_owned()))
-            .await
-            .unwrap();
+        set_mirror_folder_inner(
+            &pool,
+            DEV,
+            &state,
+            Some(root.to_str().unwrap().to_owned()),
+            true,
+        )
+        .await
+        .unwrap();
         let events = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&events);
         let on_event: Hook = Arc::default();
@@ -164,7 +170,7 @@ impl Fx {
     }
 
     async fn status(&self) -> MirrorStatus {
-        get_mirror_status_inner(&self.pool, &self.state)
+        get_mirror_status_inner(&self.pool, DEV, &self.state)
             .await
             .unwrap()
     }
@@ -612,6 +618,7 @@ async fn choosing_another_folder_forgets_the_old_folders_new_file_failures() {
         DEV,
         &fx.state,
         Some(other.path().to_str().unwrap().to_owned()),
+        true,
     )
     .await
     .unwrap();
@@ -935,4 +942,312 @@ async fn a_file_that_two_vanished_pages_last_wrote_is_a_new_page() {
     );
     assert_eq!(pages_titled(&fx, "Alpha").await, [alpha]);
     assert_eq!(pages_titled(&fx, "Beta").await, [beta]);
+}
+
+// ── Reading back off (#5363 setting 1) ──────────────────────────────────
+
+use crate::commands::mirror::set_mirror_read_back_inner;
+
+async fn op_count(fx: &Fx) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&fx.pool)
+        .await
+        .unwrap()
+}
+
+async fn read_back(fx: &Fx, on: bool, read_pending: bool) -> Result<MirrorStatus, AppError> {
+    set_mirror_read_back_inner(&fx.pool, DEV, &fx.state, on, read_pending).await
+}
+
+/// Alpha and Beta mirrored, reading back turned off, then the folder changed
+/// the four ways an outside tool changes it: Alpha edited, Beta renamed to
+/// Gamma, and a new Delta. Returns Alpha's page, what was written to it, and
+/// the op count when reading back was turned off.
+async fn changed_while_off(fx: &mut Fx) -> (String, String, i64) {
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.page("Beta", &["two"]).await;
+    fx.tick().await;
+    read_back(fx, false, false).await.unwrap();
+    let ops = op_count(fx).await;
+    let edited = fx.read().replace("one", "uno");
+    fx.write(&edited);
+    rename_at(fx, "TestSpace/Beta.md", "TestSpace/Gamma.md");
+    write_at(fx, "TestSpace/Delta.md", "new\n");
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+    (alpha, edited, ops)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn with_reading_back_off_no_outside_change_reaches_agaric() {
+    let mut fx = Fx::new().await;
+    let (alpha, edited, ops) = changed_while_off(&mut fx).await;
+
+    assert_eq!(op_count(&fx).await, ops);
+    assert_eq!(fx.contents(&alpha).await, ["one"]);
+    assert_eq!(fx.read(), edited, "the edited file is not written over");
+    assert!(pages_titled(&fx, "Gamma").await.is_empty());
+    assert!(pages_titled(&fx, "Delta").await.is_empty());
+    assert_eq!(pages_titled(&fx, "Beta").await.len(), 1);
+    let beta = std::fs::read_to_string(fx.root.join("TestSpace/Beta.md")).unwrap();
+    assert!(
+        beta.contains("two"),
+        "a vanished file is written again: {beta}"
+    );
+    let status = fx.status().await;
+    assert!(!status.read_back);
+    assert_eq!(status.diverged.len(), 1, "{:?}", status.diverged);
+    assert_eq!(
+        status.pending,
+        [
+            "TestSpace/Alpha.md",
+            "TestSpace/Delta.md",
+            "TestSpace/Gamma.md"
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reading_back_turned_on_reads_nothing_until_the_user_chooses_to() {
+    let mut fx = Fx::new().await;
+    let (alpha, _, ops) = changed_while_off(&mut fx).await;
+
+    let refused = read_back(&fx, true, false).await;
+    assert!(
+        matches!(&refused, Err(e) if e.to_string().contains("3 files")),
+        "{refused:?}"
+    );
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+    assert_eq!(op_count(&fx).await, ops, "nothing read in");
+    assert!(!fx.status().await.read_back);
+
+    let status = read_back(&fx, true, true).await.unwrap();
+    assert!(status.read_back);
+    assert!(status.pending.is_empty());
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+    assert_eq!(fx.contents(&alpha).await, ["uno"], "now read in");
+    assert_eq!(pages_titled(&fx, "Delta").await.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reading_back_turns_on_without_a_choice_when_nothing_changed() {
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    read_back(&fx, false, false).await.unwrap();
+    fx.tick().await;
+
+    let status = read_back(&fx, true, false).await.unwrap();
+    assert!(status.read_back);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reading_back_is_not_turned_on_while_the_folder_cannot_be_read() {
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    read_back(&fx, false, false).await.unwrap();
+    std::fs::remove_file(fx.root.join(store::MARKER_NAME)).unwrap();
+
+    let refused = read_back(&fx, true, false).await;
+    assert!(
+        matches!(&refused, Err(e) if e.to_string().contains("marker")),
+        "{refused:?}"
+    );
+    assert!(!fx.status().await.read_back);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_chosen_with_reading_back_off_reads_nothing_from_the_first_tick() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    let folder = fx.root.to_str().unwrap().to_owned();
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, None, true)
+        .await
+        .unwrap();
+    fx.write(fx.read().replace("one", "uno"));
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(folder), false)
+        .await
+        .unwrap();
+
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+    assert_eq!(fx.contents(&page).await, ["one"]);
+    assert_eq!(fx.status().await.pending, [ALPHA]);
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 8, ..ProptestConfig::default() })]
+
+    /// Whatever an outside tool does to the folder while reading back is
+    /// off, and whether or not reading back is then asked to turn on
+    /// without the user's choice, no op is appended and no file the tool
+    /// wrote is written over.
+    #[test]
+    fn with_reading_back_off_outside_changes_append_no_op_and_are_never_written_over(
+        changes in prop::collection::vec((0usize..3, 0u8..3, "[a-z]{1,6}"), 1..6),
+        ask_to_turn_on in any::<bool>(),
+    ) {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let mut fx = Fx::new().await;
+                for title in ["P0", "P1", "P2"] {
+                    fx.page(title, &["line"]).await;
+                }
+                fx.tick().await;
+                read_back(&fx, false, false).await.unwrap();
+                let ops = op_count(&fx).await;
+                let mut written: HashMap<String, String> = HashMap::new();
+                for (page, kind, word) in &changes {
+                    let path = format!("TestSpace/P{page}.md");
+                    match kind {
+                        0 => {
+                            let text = format!("{word}\n");
+                            write_at(&fx, &path, &text);
+                            written.insert(path, text);
+                        }
+                        1 => {
+                            let new = format!("TestSpace/{word}.md");
+                            if fx.root.join(&path).exists() && !fx.root.join(&new).exists() {
+                                rename_at(&fx, &path, &new);
+                                written.insert(new.clone(), std::fs::read_to_string(fx.root.join(&new)).unwrap());
+                                written.remove(&path);
+                            }
+                        }
+                        _ => {
+                            let text = format!("{word} new\n");
+                            write_at(&fx, &format!("TestSpace/new-{word}.md"), &text);
+                            written.insert(format!("TestSpace/new-{word}.md"), text);
+                        }
+                    }
+                    fx.tick().await;
+                }
+                if ask_to_turn_on {
+                    prop_assert!(read_back(&fx, true, false).await.is_err());
+                }
+                for _ in 0..3 {
+                    fx.tick().await;
+                }
+                prop_assert_eq!(op_count(&fx).await, ops);
+                for (path, text) in &written {
+                    let now = std::fs::read_to_string(fx.root.join(path)).ok();
+                    prop_assert_eq!(now.as_deref(), Some(text.as_str()), "{}", path);
+                }
+                Ok(())
+            })?;
+    }
+}
+
+/// #6506: an editor saves an empty page's empty file with a final newline or
+/// a BOM. A page with no blocks has nothing such a file could delete.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_empty_pages_file_saved_with_only_a_newline_or_bom_keeps_mirroring() {
+    for saved in ["\n", "\u{feff}", "\u{feff}\r\n"] {
+        let mut fx = Fx::new().await;
+        let (page, _) = fx.page("Alpha", &[]).await;
+        fx.tick().await;
+        assert_eq!(fx.read(), "", "an empty page writes an empty file");
+
+        fx.write(saved);
+        fx.settle_file().await;
+        let status = fx.status().await;
+        assert!(status.failed.is_empty(), "{saved:?}: {:?}", status.failed);
+        assert!(
+            status.diverged.is_empty(),
+            "{saved:?}: {:?}",
+            status.diverged
+        );
+
+        let row = create_block_inner(
+            &fx.pool,
+            DEV,
+            &fx.mat,
+            "content".into(),
+            "later".into(),
+            Some(BlockId::from_trusted(&page)),
+            None,
+        )
+        .await
+        .unwrap();
+        fx.tick().await;
+        assert!(fx.read().contains("later"), "{saved:?}: {}", fx.read());
+        assert_eq!(
+            fx.blocks(&page).await,
+            [(row.id.into_string(), "later".to_owned())]
+        );
+    }
+}
+
+/// A refused rename leaves the renamed file where it is and the page's old
+/// file gone, so one page has one file; renamed again, it is read as a rename.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_rename_writes_no_second_file_and_a_retry_renames_the_page() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    space_b(&fx).await;
+    let (page, ids) = fx.page("Alpha", &["one"]).await;
+    refer_to(&fx, &ids[0]).await;
+    create_page_in_space_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        None,
+        "ALPHA".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    fx.tick().await;
+    fx.tick().await;
+
+    rename_at(&fx, ALPHA, "TestSpaceB/Alpha.md");
+    for _ in 0..5 {
+        fx.tick().await;
+    }
+    assert!(!fx.root.join(ALPHA).exists(), "no second file for the page");
+    assert_eq!(fx.status().await.failed.len(), 1);
+
+    rename_at(&fx, "TestSpaceB/Alpha.md", "TestSpace/Gamma.md");
+    fx.settle_file().await;
+    fx.tick().await;
+    assert_eq!(pages_titled(&fx, "Gamma").await, [page]);
+    assert!(
+        fx.status().await.failed.is_empty(),
+        "{:?}",
+        fx.status().await.failed
+    );
+}
+
+/// Choosing a folder while the mirror is on keeps reading back as it is: the
+/// choice made when turning the mirror on would otherwise turn it on with
+/// no question asked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn choosing_a_folder_while_mirroring_keeps_reading_back_off() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    read_back(&fx, false, false).await.unwrap();
+    fx.write(fx.read().replace("one", "uno"));
+    let folder = fx.root.to_str().unwrap().to_owned();
+
+    let status = set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(folder), true)
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+
+    assert!(!status.read_back);
+    assert_eq!(fx.contents(&page).await, ["one"], "nothing read in");
 }

@@ -131,6 +131,8 @@ beforeEach(() => {
       diverged: [],
       failed: [],
       last_pass_ms: null,
+      read_back: true,
+      pending: [],
     }),
   })
 })
@@ -1731,6 +1733,8 @@ describe('DataTab', () => {
             diverged: [],
             failed: [],
             last_pass_ms: null,
+            read_back: true,
+            pending: [],
           }),
         })
       }

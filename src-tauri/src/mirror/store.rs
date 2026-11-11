@@ -16,6 +16,10 @@ use agaric_core::error::AppError;
 /// mirror is off.
 const FOLDER_KEY: &str = "mirror.folder";
 
+/// `app_settings` key: `"false"` when files changed outside Agaric are not
+/// read back. Absent, they are.
+const READ_BACK_KEY: &str = "mirror.read_back";
+
 /// The file in the mirror's folder that names the device writing it, so a
 /// second device refuses the folder.
 pub const MARKER_NAME: &str = ".agaric-mirror";
@@ -48,6 +52,52 @@ pub async fn set_folder(pool: &SqlitePool, folder: Option<&str>) -> Result<(), A
              updated_at = excluded.updated_at",
         FOLDER_KEY,
         folder,
+        now,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The mirror's settings, read once per tick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settings {
+    /// `None` when the mirror is off.
+    pub folder: Option<String>,
+    /// Whether files changed outside Agaric are read back into Agaric.
+    pub read_back: bool,
+}
+
+pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
+    let rows = sqlx::query!(
+        "SELECT key, value FROM app_settings WHERE key IN (?, ?)",
+        FOLDER_KEY,
+        READ_BACK_KEY,
+    )
+    .fetch_all(pool)
+    .await?;
+    let value = |key: &str| {
+        rows.iter()
+            .find(|row| row.key == key)
+            .map(|row| row.value.clone())
+    };
+    Ok(Settings {
+        folder: value(FOLDER_KEY),
+        read_back: value(READ_BACK_KEY).as_deref() != Some("false"),
+    })
+}
+
+pub async fn set_read_back(pool: &SqlitePool, read_back: bool) -> Result<(), AppError> {
+    let value = if read_back { "true" } else { "false" };
+    let now = crate::db::now_ms();
+    sqlx::query!(
+        "INSERT INTO app_settings (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             updated_at = excluded.updated_at",
+        READ_BACK_KEY,
+        value,
         now,
     )
     .execute(pool)

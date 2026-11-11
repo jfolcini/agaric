@@ -730,7 +730,8 @@ export const commands = {
 	 */
 	setReminderSettings: (settings: ReminderSettings) => typedError<null, AppError>(__TAURI_INVOKE("set_reminder_settings", { settings })),
 	pickMirrorFolder: () => typedError<string | null, AppError>(__TAURI_INVOKE("pick_mirror_folder")),
-	setMirrorFolder: (path: string | null) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path })),
+	setMirrorFolder: (path: string | null, readBack: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path, readBack })),
+	setMirrorReadBack: (on: boolean, readPending: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_read_back", { on, readPending })),
 	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
 	getSpeechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("get_speech_status")),
 	/**  Whether the backend engine can speak now (see [`SpeechEngine::available`]). */
@@ -2956,6 +2957,13 @@ export type MirrorStatus = {
 	failed: MirrorFailure[],
 	/**  When the last pass ended, in ms since the epoch. */
 	last_pass_ms: number | null,
+	/**  Whether files changed outside Agaric are read back into it. */
+	read_back: boolean,
+	/**
+	 *  While reading back is off, the files turning it on would read in
+	 *  ([`read_back::pending`]); empty while it is on.
+	 */
+	pending: string[],
 };
 
 export type MoveResponse = {

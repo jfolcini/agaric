@@ -18,8 +18,8 @@
  * plus a relative "last checked" time, and calls `checkForUpdatesNow()` when
  * the user clicks the manual button (which also re-surfaces the install toast
  * when an update exists). Mobile builds replace the button with a hint
- * pointing at the Play Store / App Store distribution path, since the Tauri
- * updater plugin is desktop-only.
+ * to install the newest APK from the releases page, since the Tauri updater
+ * plugin is desktop-only.
  */
 
 import type { TFunction } from 'i18next'

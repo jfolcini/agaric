@@ -57,7 +57,7 @@ describe('Agaric real-backend inbound Markdown mirror (#5363) @markdown', () => 
 
   it('reads a file edited outside into its page, keeps the file, and one Ctrl+Z reverts it', async () => {
     await waitForAppReady()
-    await invoke('set_mirror_folder', { path: folder })
+    await invoke('set_mirror_folder', { path: folder, readBack: true })
     await browser.waitUntil(
       async () => (await invoke<MirrorStatus>('get_mirror_status')).last_pass_ms !== null,
       { timeout: ACTION_TIMEOUT, timeoutMsg: 'the mirror never finished a pass in the new folder' },

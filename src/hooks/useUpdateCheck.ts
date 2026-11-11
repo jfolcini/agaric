@@ -11,8 +11,8 @@
  *   - **Later** — dismisses the toast (sonner handles this via the
  *     `cancel` field).
  *
- * Desktop-only — mobile platforms route through the Play Store / App Store
- * and have no Tauri updater plugin; the boot check short-circuits on the
+ * Desktop-only — Android updates by installing a newer APK from the releases
+ * page, and has no Tauri updater plugin; the boot check short-circuits on the
  * shared `isMobilePlatform()` capability check from `../lib/platform`.
  *
  * Flatpak builds are also skipped: Flathub requires apps NOT to

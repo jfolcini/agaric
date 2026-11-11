@@ -6,6 +6,11 @@
  * separate commands, so a cancelled OS dialog changes nothing. A file edited
  * outside Agaric is never overwritten; the backend lists it under `diverged`.
  *
+ * Reading changes back is chosen with the folder and changeable later. While
+ * it is off, the backend lists the files turning it on would read in under
+ * `pending`; turning it on with any asks first, and the backend refuses the
+ * plain turn-on if files changed since this card last read the status.
+ *
  * Where the backend cannot mirror (`supported: false`, the mobile builds) the
  * card renders nothing.
  */
@@ -16,11 +21,13 @@ import { useCallback, useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { SettingRow } from '@/components/ui/setting-row'
+import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { Spinner } from '@/components/ui/spinner'
+import { Switch } from '@/components/ui/switch'
 import { unwrap } from '@/lib/app-error'
 import { commands, type MirrorStatus } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
@@ -29,14 +36,26 @@ import { notify } from '@/lib/notify'
 
 const MODULE = 'MirrorSection'
 
-type Action = 'choose' | 'off'
+type Action = 'choose' | 'off' | 'readBack'
 
 export function MirrorSection(): React.ReactElement | null {
   const { t } = useTranslation()
   const divergedHeadingId = useId()
   const failedHeadingId = useId()
+  const readBackId = useId()
   const [status, setStatus] = useState<MirrorStatus | null>(null)
   const [pending, setPending] = useState<Action | null>(null)
+  // Reading back for the next folder chosen, while the mirror is off.
+  const [readBackChoice, setReadBackChoice] = useState(true)
+  const [askToReadPending, setAskToReadPending] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(unwrap(await commands.getMirrorStatus()))
+    } catch (err) {
+      logger.warn(MODULE, 'failed to load the mirror status; hiding the card', undefined, err)
+    }
+  }, [])
 
   useEffect(() => {
     commands
@@ -54,7 +73,10 @@ export function MirrorSection(): React.ReactElement | null {
       try {
         const path = action === 'choose' ? unwrap(await commands.pickMirrorFolder()) : null
         if (action === 'choose' && path === null) return
-        setStatus(unwrap(await commands.setMirrorFolder(path)))
+        // While the mirror is on, the choice made when turning it on does not
+        // apply: reading back changes only through its switch, which asks.
+        const readBack = status?.folder != null ? status.read_back : readBackChoice
+        setStatus(unwrap(await commands.setMirrorFolder(path, readBack)))
       } catch (err) {
         logger.error(MODULE, 'failed to change the mirror folder', undefined, err)
         notify.error(t('data.mirrorFailed', { reason: formatErrorForDisplay(err) }))
@@ -62,8 +84,34 @@ export function MirrorSection(): React.ReactElement | null {
         setPending(null)
       }
     },
-    [t],
+    [t, readBackChoice, status],
   )
+
+  const setReadBack = useCallback(
+    async (on: boolean, readPending: boolean) => {
+      setPending('readBack')
+      try {
+        setStatus(unwrap(await commands.setMirrorReadBack(on, readPending)))
+      } catch (err) {
+        logger.error(MODULE, 'failed to change reading changes back', undefined, err)
+        notify.error(t('data.mirrorReadBackFailed', { reason: formatErrorForDisplay(err) }))
+        await load()
+      } finally {
+        setPending(null)
+      }
+    },
+    [t, load],
+  )
+
+  const onReadBackChange = (on: boolean): void => {
+    if (status?.folder == null) {
+      setReadBackChoice(on)
+    } else if (on && status.pending.length > 0) {
+      setAskToReadPending(true)
+    } else {
+      void setReadBack(on, false)
+    }
+  }
 
   if (status === null || !status.supported) return null
 
@@ -115,6 +163,41 @@ export function MirrorSection(): React.ReactElement | null {
             )}
           </div>
         </SettingRow>
+
+        <SettingRow
+          label={t('data.mirrorReadBackLabel')}
+          description={t('data.mirrorReadBackDesc')}
+          controlId={readBackId}
+        >
+          <Switch
+            id={readBackId}
+            aria-describedby={settingDescriptionId(readBackId)}
+            checked={on ? status.read_back : readBackChoice}
+            disabled={pending !== null}
+            onCheckedChange={onReadBackChange}
+          />
+        </SettingRow>
+
+        <ConfirmDialog
+          open={askToReadPending}
+          onOpenChange={setAskToReadPending}
+          titleKey="data.mirrorReadPendingTitle"
+          descriptionKey="data.mirrorReadPendingDesc"
+          values={{ count: status.pending.length }}
+          confirmKey="data.mirrorReadPendingConfirm"
+          cancelKey="data.mirrorReadPendingCancel"
+          onConfirm={() => setReadBack(true, true)}
+        >
+          <ScrollArea className="max-h-56 rounded-md border" viewportClassName="p-3">
+            <ul className="space-y-1 text-sm">
+              {status.pending.map((path) => (
+                <li key={path} className="font-mono break-all">
+                  {path}
+                </li>
+              ))}
+            </ul>
+          </ScrollArea>
+        </ConfirmDialog>
 
         {status.paused !== null && (
           <output className="block text-sm text-status-pending-foreground">

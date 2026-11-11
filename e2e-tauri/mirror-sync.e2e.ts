@@ -100,7 +100,7 @@ describe('Agaric real-backend Markdown mirror after a sync (#5363) @markdown @sy
     if (peer === undefined) throw new Error('the sync peer never started')
     await waitForAppReady()
 
-    const set = await invoke<MirrorStatus>('set_mirror_folder', { path: folder })
+    const set = await invoke<MirrorStatus>('set_mirror_folder', { path: folder, readBack: true })
     expect(set.folder).toBe(folder)
     await browser.waitUntil(
       async () => (await invoke<MirrorStatus>('get_mirror_status')).last_pass_ms !== null,
