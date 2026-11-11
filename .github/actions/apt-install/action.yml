@@ -7,7 +7,8 @@ description: >-
   INSTALL decides the step's exit status, and an install that fails after a
   never-completed update exits 75 (not 1) so "this job could not run" is
   distinguishable from "this job failed". The install is bounded too and gets
-  one retry; an install that runs out its bound both times also exits 75.
+  one retry; an install that runs out its bound both times, or cannot download
+  its packages from the mirror both times, also exits 75.
 inputs:
   packages:
     description: >-
@@ -171,24 +172,46 @@ runs:
           echo "::warning::#4163: apt-get update did not complete in 2 attempts; installing from the package lists already on the image. The install below, not the refresh, decides this step."
         fi
 
+        # apt exits 100 both for a mirror it could not reach and for a package
+        # that does not exist; only its `E:` lines tell the two apart, so the
+        # install's stderr is kept and printed after each attempt.
+        apt_err="${RUNNER_TEMP}/apt-install.err"
+        fetch_failed() {
+          grep -qE 'Temporary failure resolving|Could not resolve|Failed to fetch|Unable to fetch some archives' "${apt_err}"
+        }
+
         install_status=0
         for attempt in 1 2; do
           install_status=0
           : >"${apt_log}"
+          : >"${apt_err}"
           # shellcheck disable=SC2024 # as above
           sudo timeout -k 30 "${APT_INSTALL_TIMEOUT}" \
-            apt-get install -y -qq "${pkgs[@]}" >>"${apt_log}" || install_status=$?
+            apt-get install -y -qq "${pkgs[@]}" >>"${apt_log}" 2>>"${apt_err}" || install_status=$?
+          cat "${apt_err}" >&2
 
+          if [ "${install_status}" -eq 0 ]; then
+            break
+          fi
           case "${install_status}" in
-            124|137) ;;
-            *) break ;;
+            124|137)
+              # The log's `Get:` lines name the mirror that was trickling.
+              print_apt_log
+              echo "::warning::apt-get install attempt ${attempt} exceeded ${APT_INSTALL_TIMEOUT}s (exit ${install_status}); the Ubuntu mirror is slow, this is not the diff"
+              reap_apt
+              wait_for_apt_locks
+              ;;
+            *)
+              fetch_failed || break
+              print_apt_log
+              echo "::warning::apt-get install attempt ${attempt} could not download its packages (exit ${install_status}); the Ubuntu mirror is unreachable, this is not the diff"
+              # A DNS or mirror outage often clears within a minute; the retry
+              # reuses every .deb this attempt finished.
+              if [ "${attempt}" -eq 1 ]; then
+                sleep 60
+              fi
+              ;;
           esac
-
-          # The log's `Get:` lines name the mirror that was trickling.
-          print_apt_log
-          echo "::warning::apt-get install attempt ${attempt} exceeded ${APT_INSTALL_TIMEOUT}s (exit ${install_status}); the Ubuntu mirror is slow, this is not the diff"
-          reap_apt
-          wait_for_apt_locks
         done
 
         # A stalled update already raised a `::warning::` above; the install
@@ -211,6 +234,17 @@ runs:
         esac
 
         print_apt_log
+
+        if fetch_failed; then
+          echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: apt-get install could not download its packages twice (exit ${install_status}). Ubuntu mirror problem — rerun the job."
+          {
+            echo "### apt could not run (infra, not this diff)"
+            echo
+            echo '`apt-get install` could not download its packages in 2 attempts (exit `'"${install_status}"'`).'
+            echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          exit 75
+        fi
 
         if [ "${update_status}" -ne 0 ]; then
           # Distinct code, distinct marker — the #4163 ask, and the same
