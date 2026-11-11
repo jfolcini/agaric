@@ -23,6 +23,7 @@ import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
 import { DiffDisplay } from '@/components/rendering/DiffDisplay'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { listRowVariants } from '@/components/ui/list-item'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
@@ -120,8 +121,8 @@ function HistoryListItemInner({
       role="row"
       aria-selected={isSelected}
       className={cn(
-        'history-item flex flex-col gap-2 rounded-lg border p-4 cursor-pointer transition-colors',
-        isSelected ? 'bg-accent/50 border-accent' : 'bg-card hover:bg-accent/30',
+        listRowVariants({ className: 'history-item flex-col items-stretch gap-2 cursor-pointer' }),
+        isSelected ? 'bg-accent/50' : 'hover:bg-accent/30',
         isFocused && 'list-cursor',
         isNonReversible && 'opacity-50',
       )}
@@ -137,13 +138,10 @@ function HistoryListItemInner({
       tabIndex={isFocused ? 0 : -1}
       aria-disabled={isNonReversible || undefined}
     >
-      {/* Below `sm` the text takes the first line and Diff / Reset wrap under it,
-          indented past the checkbox: the 4rem the text leaves free is less than
-          the checkbox plus a button at either pointer size. */}
       <div
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in an aria grid; <td> requires table ancestry and breaks the flex layout
         role="gridcell"
-        className="flex items-center gap-3 w-full max-sm:flex-wrap max-sm:gap-y-1 max-sm:[&>.history-item-main]:basis-[calc(100%-4rem)] max-sm:[&>.history-item-main+*]:ml-7 max-sm:pointer-coarse:[&>.history-item-main+*]:ml-14"
+        className="history-row-cell w-full"
       >
         {/* Checkbox.
              sub-fix 5: keep both row-click and checkbox-click as active

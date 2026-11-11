@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ListItem } from '@/components/ui/list-item'
+import { ListItem, listCardVariants } from '@/components/ui/list-item'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -299,7 +299,7 @@ export function TemplatesView(): React.ReactElement {
 
             {/* Template list */}
             {filtered.length > 0 && (
-              <ul className="space-y-1">
+              <ul className={listCardVariants()}>
                 {filtered.map((tpl) => (
                   <ListItem key={tpl.id} className="active:bg-accent/70 cursor-pointer">
                     <Tooltip>

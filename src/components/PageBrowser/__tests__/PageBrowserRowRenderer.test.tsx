@@ -103,7 +103,6 @@ function baseProps(
     row,
     measureElement: vi.fn(),
     focusedIndex: -1,
-    hasStarred: false,
     sectionLabelId: 'section-label',
     filterText: '',
     isFiltering: false,
@@ -149,7 +148,7 @@ describe('PageBrowserRowRenderer — page leaf (PageRow)', () => {
 describe('PageBrowserRowRenderer — header rows', () => {
   it('renders the Starred section header (not a page leaf)', () => {
     const headerRow: PageBrowserRow = { kind: 'header', section: 'starred', count: 3 }
-    const { container } = renderRow(baseProps(headerRow, { hasStarred: true }))
+    const { container } = renderRow(baseProps(headerRow))
     const section = container.querySelector('[data-page-section="starred"]')
     expect(section).not.toBeNull()
     // Visible label + count.
@@ -162,20 +161,15 @@ describe('PageBrowserRowRenderer — header rows', () => {
     expect(container.querySelector('[data-page-tree-row]')).toBeNull()
   })
 
-  it('renders the Pages section header with a divider when starred precedes it', () => {
+  // The section break is the row divider of the row above (`list-row`); the
+  // header adding its own top border stacked a second line on it.
+  it('renders the Pages section header as a header row with no top border of its own', () => {
     const headerRow: PageBrowserRow = { kind: 'header', section: 'pages', count: 7 }
-    const { container } = renderRow(baseProps(headerRow, { hasStarred: true }))
+    const { container } = renderRow(baseProps(headerRow))
     const section = container.querySelector('[data-page-section="pages"]')
     expect(section).not.toBeNull()
     expect(screen.getByText('Pages')).toBeInTheDocument()
-    // `hasStarred` adds a top border to separate the two groups.
-    expect(section?.className).toContain('border-t')
-  })
-
-  it('omits the divider on the Pages header when there is no Starred section', () => {
-    const headerRow: PageBrowserRow = { kind: 'header', section: 'pages', count: 2 }
-    const { container } = renderRow(baseProps(headerRow, { hasStarred: false }))
-    const section = container.querySelector('[data-page-section="pages"]')
+    expect(section).toHaveClass('list-row')
     expect(section?.className).not.toContain('border-t')
   })
 })
@@ -226,7 +220,7 @@ describe('PageBrowserRowRenderer — tree-page rows', () => {
     expect(screen.getByRole('button', { name: /create.*projects/i })).toBeInTheDocument()
   })
 
-  // `list-cursor` is a tint at rest whose ring is gated in CSS on the grid
+  // `list-cursor` is a tint and edge bar at rest whose ring is gated in CSS on the grid
   // holding keyboard focus; jsdom cannot evaluate that gate, so the class
   // contract is the assertion: the cursor never carries an inline ring.
   it('marks the focused tree-page row with list-cursor, not an inline ring', () => {

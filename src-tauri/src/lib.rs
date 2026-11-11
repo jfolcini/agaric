@@ -268,6 +268,9 @@ macro_rules! agaric_commands {
             $crate::commands::mirror::get_mirror_status,
             // Read aloud (#5745)
             $crate::commands::speech::get_speech_status,
+            $crate::commands::speech::get_speech_engine_available,
+            $crate::commands::speech::speak_text,
+            $crate::commands::speech::stop_speaking,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown,
             // The pages an import merges its files into (#6277 G5).
@@ -324,6 +327,7 @@ macro_rules! agaric_commands {
             $crate::commands::bug_report::read_logs_for_report,
             // Reconciliation oracle against the live vault (#4886)
             $crate::commands::reconciliation::compute_reconciliation_report,
+            $crate::commands::reconciliation::rebuild_derived_state,
             // MCP — Settings "Agent access" tab
             $crate::commands::mcp::get_mcp_status,
             $crate::commands::mcp::mcp_set_enabled,
@@ -1456,7 +1460,6 @@ async fn schedule_fts_rebuild_if_empty(
 ) {
     use materializer::MaterializeTask;
 
-    // Rebuild FTS index if the table is empty (post-migration 0006).
     let fts_empty = log_or_zero(
         sqlx::query_scalar::<_, i64>("SELECT EXISTS (SELECT 1 FROM fts_blocks)")
             .fetch_one(read_pool)
@@ -1482,6 +1485,66 @@ async fn schedule_fts_rebuild_if_empty(
                     error = %e,
                     "failed to enqueue FTS rebuild at boot",
                 );
+            }
+        }
+    }
+}
+
+/// [`boot_cache_gating`]'s version check (#6488): rebuild every cache whose
+/// rule's version is not the one its last vault-wide rebuild recorded
+/// (`agaric_store::derivations`). The queued rebuilds record it themselves;
+/// the two passes with no task run here, on the writer, each in one
+/// transaction that records it.
+async fn rebuild_stale_derivations(
+    write_pool: &sqlx::SqlitePool,
+    read_pool: &sqlx::SqlitePool,
+    materializer_handle: &materializer::Materializer,
+) {
+    use agaric_store::derivations::Derivation;
+    use materializer::MaterializeTask;
+
+    let stale = match agaric_store::derivations::stale(read_pool).await {
+        Ok(stale) => stale,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the derivation versions at boot");
+            return;
+        }
+    };
+    for derivation in stale {
+        tracing::info!(
+            ?derivation,
+            "rebuilding a cache its rule's version left behind"
+        );
+        let tasks = match derivation {
+            Derivation::FtsStrip => vec![MaterializeTask::RebuildFtsIndex],
+            Derivation::TagRefTokens => vec![
+                MaterializeTask::RebuildBlockTagRefsCache,
+                MaterializeTask::RebuildTagsCache,
+            ],
+            Derivation::Agenda => vec![MaterializeTask::RebuildAgendaCache],
+            Derivation::PageLink => vec![MaterializeTask::RebuildPageLinkCache],
+            Derivation::LinkTokens => {
+                match agaric_store::cache::rederive_block_links(write_pool).await {
+                    Ok(()) => vec![
+                        MaterializeTask::RebuildPageLinkCache,
+                        MaterializeTask::RebuildPagesCacheCounts,
+                    ],
+                    Err(e) => {
+                        tracing::error!(error = %e, "link re-derive failed; the next boot retries it");
+                        Vec::new()
+                    }
+                }
+            }
+            Derivation::TitleSortKey => {
+                if let Err(e) = agaric_store::cache::rekey_title_sort_keys(write_pool).await {
+                    tracing::error!(error = %e, "title re-key failed; the next boot retries it");
+                }
+                Vec::new()
+            }
+        };
+        for task in tasks {
+            if let Err(e) = materializer_handle.try_enqueue_background(task) {
+                tracing::warn!(error = %e, "failed to enqueue a derivation rebuild at boot");
             }
         }
     }
@@ -1572,8 +1635,8 @@ async fn schedule_pages_cache_rebuild_if_stale(
 }
 
 /// [`spawn_boot_maintenance`]'s off-critical-path work: link-metadata GC on
-/// the writer, then the FTS, `block_tag_refs` and `pages_cache` gating on the
-/// reader, in that order.
+/// the writer, the derivation version check, then the FTS, `block_tag_refs`
+/// and `pages_cache` gating on the reader, in that order.
 async fn boot_cache_gating(
     write_pool: sqlx::SqlitePool,
     read_pool: sqlx::SqlitePool,
@@ -1591,6 +1654,7 @@ async fn boot_cache_gating(
         }
     }
 
+    rebuild_stale_derivations(&write_pool, &read_pool, &materializer_handle).await;
     schedule_fts_rebuild_if_empty(&read_pool, &materializer_handle).await;
     schedule_block_tag_refs_rebuild_if_empty(&read_pool, &materializer_handle).await;
     schedule_pages_cache_rebuild_if_stale(&read_pool, &materializer_handle).await;
@@ -1614,7 +1678,8 @@ fn spawn_boot_maintenance(
     // any user IPC — link-metadata GC is purely cleanup and the
     // FTS / `block_tag_refs` gating is a one-shot "schedule the
     // rebuild if the table is empty" check (the rebuild itself
-    // is already a background materializer task). Releasing the
+    // is already a background materializer task), and the derivation
+    // version check queues rebuilds the same way. Releasing the
     // foreground queue earlier means the first user action (a
     // `list_blocks` for the journal) doesn't compete with these
     // maintenance reads.
@@ -2642,7 +2707,10 @@ fn build_tauri_builder() -> tauri::Builder<tauri::Wry> {
         // (desktop + mobile), so no `#[cfg(desktop)]` gate.  Part of the
         // Tauri plugin coupled stack per AGENTS.md §"Coupled Dependency
         // Updates" — move in lockstep with the other tauri-plugin-* crates.
-        .plugin(tauri_plugin_notification::init());
+        .plugin(tauri_plugin_notification::init())
+        // Read aloud's engine (#5745): Android's `TextToSpeech` plugin, and
+        // the state the speech commands read on every build.
+        .plugin(commands::speech::plugin());
 
     // Remember window size / position / monitor / maximized
     // state across launches.  Operates entirely Rust-side (no frontend
@@ -4191,6 +4259,68 @@ mod boot_cache_gating_tests {
             load() - before,
             1,
             "populated tables must schedule no rebuild: only the flush barrier runs"
+        );
+        mat.shutdown();
+    }
+
+    /// #6488 — a vault upgrading past a change to the FTS strip holds rows the
+    /// old rule wrote. The first boot re-strips them and leaves the marker; the
+    /// next boot schedules nothing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_row_stripped_by_an_older_rule_is_restripped_once_6488() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pools = db::init_pools(&dir.path().join("test.db")).await.unwrap();
+        seed_tag_and_source(&pools.write, format!("note #[{TAG}]")).await;
+        for (id, stripped) in [(TAG, "tag-name"), (SOURCE, "an older strip")] {
+            sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+                .bind(id)
+                .bind(stripped)
+                .execute(&pools.write)
+                .await
+                .unwrap();
+        }
+        let stale_rows = || async {
+            crate::reconciliation_oracle::reconcile_all(
+                &pools.read,
+                &agaric_engine::loro::shared::LoroState::new(),
+                None,
+                chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap(),
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|d| d.artefact == "fts_blocks.stripped")
+            .map(|d| d.key)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            stale_rows().await,
+            vec![SOURCE.to_owned()],
+            "the seed is stale"
+        );
+        let mat =
+            materializer::Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the first boot");
+        assert_eq!(
+            stale_rows().await,
+            Vec::<String>::new(),
+            "boot re-strips the row"
+        );
+
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        let before = load();
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the second boot");
+        assert_eq!(
+            load() - before,
+            1,
+            "the marker retires the re-strip: only the flush barrier runs"
         );
         mat.shutdown();
     }

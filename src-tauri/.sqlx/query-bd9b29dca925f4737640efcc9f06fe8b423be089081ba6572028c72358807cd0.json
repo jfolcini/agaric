@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE pages_cache SET child_block_count = child_block_count + 5, title_sort_key = 'zzz'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "bd9b29dca925f4737640efcc9f06fe8b423be089081ba6572028c72358807cd0"
+}

@@ -37,7 +37,9 @@ import { CollapsibleGroupList } from '@/components/common/CollapsibleGroupList'
 import { ResultCountSummary } from '@/components/search/ResultCountSummary'
 import { SearchResultBlockRow } from '@/components/search/SearchResultBlockRow'
 import { VirtualizedResultListbox } from '@/components/search/VirtualizedResultListbox'
+import { listCardVariants, listHeaderVariants } from '@/components/ui/list-item'
 import type { SearchBlockRow } from '@/lib/bindings'
+import { cn } from '@/lib/utils'
 
 /** A page-bucketed group of matching block rows. */
 export interface SearchResultGroup {
@@ -136,7 +138,13 @@ export function SearchResultGroups({
         {...(onPageTitleClick ? { onPageTitleClick } : {})}
         untitledLabel={t('common.untitled') as string}
         defaultExpanded
-        groupClassName="search-result-group"
+        groupClassName={listCardVariants({ className: 'search-result-group' })}
+        // The page title is the group's name, not a section label: it keeps
+        // the foreground colour and the row text size inside the header row.
+        headerClassName={cn(
+          listHeaderVariants(),
+          'w-full text-sm text-foreground hover:bg-accent/50 transition-colors',
+        )}
         formatCount={(g) => {
           // Recommendation: page-name-only hits show as
           // "1 match (in name)" so the user understands why the group

@@ -106,6 +106,14 @@ beforeEach(() => {
 describe('HistoryListItem', () => {
   // -- Rendering different op types ------------------------------------------
 
+  it('is a flush list row with a divider, not a card', () => {
+    renderInListbox(defaultProps())
+    const row = screen.getByTestId('history-item-0')
+    expect(row).toHaveClass('list-row')
+    expect(row).not.toHaveClass('border')
+    expect(row).not.toHaveClass('rounded-lg')
+  })
+
   it('renders edit_block op type badge', () => {
     renderInListbox(defaultProps())
 
@@ -221,11 +229,14 @@ describe('HistoryListItem', () => {
     expect(item).toHaveClass('bg-accent/50')
   })
 
-  it('unselected row has bg-card class', () => {
+  // The row sits inside the list's card, which carries `bg-card`; an
+  // unselected row paints no fill of its own.
+  it('unselected row paints no fill of its own', () => {
     renderInListbox(defaultProps({ isSelected: false }))
 
     const item = screen.getByTestId('history-item-0')
-    expect(item).toHaveClass('bg-card')
+    expect(item).not.toHaveClass('bg-card')
+    expect(item).not.toHaveClass('bg-accent/50')
   })
 
   // -- Non-reversible ops ----------------------------------------------------
@@ -389,7 +400,7 @@ describe('HistoryListItem', () => {
 
   // -- Focus state -----------------------------------------------------------
 
-  // `list-cursor` is a tint at rest whose ring is gated in CSS on keyboard
+  // `list-cursor` is a tint and edge bar at rest whose ring is gated in CSS on keyboard
   // focus being in the list; jsdom cannot evaluate that gate, so the class
   // contract is the assertion: the cursor never carries an inline ring.
   it('marks the cursor row with list-cursor and no inline ring when isFocused is true', () => {
@@ -1159,9 +1170,10 @@ describe('BlockHistoryItem', () => {
 
   it('shows device_id with full opacity (not /60)', () => {
     renderInList(blockDefaultProps())
-    const deviceEl = screen.getByText('dev:DEVICE01')
+    // The label inherits its colour from the group it sits in.
+    const deviceEl = screen.getByText('dev:DEVICE01').closest('.history-item-device-group')
     expect(deviceEl).toHaveClass('text-muted-foreground')
-    expect(deviceEl.className).not.toContain('/60')
+    expect(deviceEl?.className).not.toContain('/60')
   })
 
   it('renders relative timestamp', () => {

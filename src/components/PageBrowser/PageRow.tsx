@@ -21,6 +21,7 @@ import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { listRowVariants } from '@/components/ui/list-item'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useLongPress } from '@/hooks/useLongPress'
@@ -348,7 +349,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
       onMouseLeave={prefetchIntent.cancel}
       {...longPressProps}
       className={cn(
-        'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
+        listRowVariants({ className: 'w-full text-left text-sm' }),
         touchSelect && 'select-none [-webkit-touch-callout:none]',
         focused && 'list-cursor',
       )}

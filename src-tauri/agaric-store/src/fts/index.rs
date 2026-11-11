@@ -609,6 +609,7 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
         total += chunk.len() as u64;
     }
 
+    crate::derivations::record(pool, crate::derivations::Derivation::FtsStrip).await?;
     Ok(total)
 }
 
@@ -685,6 +686,7 @@ async fn rebuild_fts_index_split_impl(
         tx.commit().await?;
         total += chunk.len() as u64;
     }
+    crate::derivations::record(write_pool, crate::derivations::Derivation::FtsStrip).await?;
     Ok(total)
 }
 

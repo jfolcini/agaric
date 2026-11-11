@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT title_sort_key FROM pages_cache",
+  "describe": {
+    "columns": [
+      {
+        "name": "title_sort_key",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "title_sort_key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c27a5542f5decc222898ab7db54f2fc78d8b8a2c97a9799bc7428b93a85c8200"
+}

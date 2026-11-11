@@ -733,6 +733,12 @@ export const commands = {
 	setMirrorFolder: (path: string | null) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path })),
 	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
 	getSpeechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("get_speech_status")),
+	/**  Whether the backend engine can speak now (see [`SpeechEngine::available`]). */
+	getSpeechEngineAvailable: () => typedError<boolean, AppError>(__TAURI_INVOKE("get_speech_engine_available")),
+	/**  Speaks one utterance through the backend engine and settles when it ends. */
+	speakText: (text: string) => typedError<SpeakOutcome, AppError>(__TAURI_INVOKE("speak_text", { text })),
+	/**  Cuts off the utterance the backend engine is speaking, if any. */
+	stopSpeaking: () => typedError<null, AppError>(__TAURI_INVOKE("stop_speaking")),
 	/**
 	 *  Tauri command: import a Markdown, Logseq or Org file, in the `dialect` its
 	 *  front end read it as, as a page with block hierarchy. Delegates to
@@ -965,11 +971,17 @@ export const commands = {
 	 */
 	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppError>(__TAURI_INVOKE("read_logs_for_report", { redact })),
 	/**
-	 *  Tauri command: rebuild every derived artefact from base tables, compare
-	 *  `blocks` with the Loro engine, and report where the live vault disagrees.
-	 *  Reader pool and engine exports; writes nothing.
+	 *  Tauri command: let the materializer settle, rebuild every derived artefact
+	 *  from base tables, compare `blocks` with the Loro engine, and report where
+	 *  the live vault disagrees. Reads through the reader pool and engine exports;
+	 *  the only writes are the queued work it waits for.
 	 */
-	computeReconciliationReport: () => typedError<ReconciliationReport, AppError>(__TAURI_INVOKE("compute_reconciliation_report")),
+	computeReconciliationReport: () => typedError<ReconciliationReport_Serialize, AppError>(__TAURI_INVOKE("compute_reconciliation_report")),
+	/**
+	 *  Tauri command: rebuild every derived cache, then return a fresh
+	 *  integrity report.
+	 */
+	rebuildDerivedState: () => typedError<ReconciliationReport_Serialize, AppError>(__TAURI_INVOKE("rebuild_derived_state")),
 	/**  Tauri command: return the current MCP status for the Settings tab. */
 	getMcpStatus: () => typedError<McpStatus, AppError>(__TAURI_INVOKE("get_mcp_status")),
 	/**
@@ -2168,6 +2180,17 @@ export type DistinctUnfitValue = {
 	/**  The value as [`list_unfit_property_values_inner`] shows it. */
 	value: string,
 } & PropertyUnfitCounts;
+
+/**  One divergence as the screen shows it (#6488). */
+export type DivergenceSample = {
+	/**  The artefact it belongs to, as in [`ArtefactDivergences::artefact`]. */
+	artefact: string,
+	key: string,
+	/**  What the rebuild from the base tables computed. */
+	expected: string,
+	/**  What the maintained state holds. */
+	actual: string,
+};
 
 /**  A single draft row from `block_drafts`. */
 export type Draft = {
@@ -3891,7 +3914,10 @@ export type QueryResultRow = {
 } & ActiveBlockRow;
 
 /**  What [`compute_reconciliation_report`] returns. */
-export type ReconciliationReport = {
+export type ReconciliationReport = ReconciliationReport_Serialize | ReconciliationReport_Deserialize;
+
+/**  What [`compute_reconciliation_report`] returns. */
+export type ReconciliationReport_Deserialize = {
 	/**
 	 *  Rows in `blocks` — live and tombstoned — at the time of the run: what
 	 *  every rebuild folded. The non-vacuity figure: zero divergences over
@@ -3913,6 +3939,43 @@ export type ReconciliationReport = {
 	 *  An artefact that agreed with its rebuild is absent.
 	 */
 	artefacts: ArtefactDivergences[],
+	/**
+	 *  The first divergence of each artefact, `artefacts` order, its values
+	 *  cut to [`SAMPLE_CHARS`]. For the screen only: the copied report and the
+	 *  bug report never carry it (module docs).
+	 */
+	samples?: DivergenceSample[] | null,
+};
+
+/**  What [`compute_reconciliation_report`] returns. */
+export type ReconciliationReport_Serialize = {
+	/**
+	 *  Rows in `blocks` — live and tombstoned — at the time of the run: what
+	 *  every rebuild folded. The non-vacuity figure: zero divergences over
+	 *  zero blocks describes an empty vault, not a clean one.
+	 */
+	blocks_scanned: number,
+	/**
+	 *  The local calendar date (`YYYY-MM-DD`) the projected-agenda rebuild
+	 *  was pinned to — the one artefact that is not a pure function of the
+	 *  database (`reconciliation_oracle::rebuild_projected_agenda_from_base`).
+	 *  Recorded so a run that straddled local midnight is diagnosable.
+	 */
+	today: string,
+	/**  Sum of `count` over `artefacts`. */
+	total_divergences: number,
+	/**
+	 *  One entry per artefact that diverged, in the oracle's root-cause-first
+	 *  order (`blocks.page_id` before the `pages_cache` counts keyed on it).
+	 *  An artefact that agreed with its rebuild is absent.
+	 */
+	artefacts: ArtefactDivergences[],
+	/**
+	 *  The first divergence of each artefact, `artefacts` order, its values
+	 *  cut to [`SAMPLE_CHARS`]. For the screen only: the copied report and the
+	 *  bug report never carry it (module docs).
+	 */
+	samples?: DivergenceSample[] | null,
 };
 
 /**
@@ -4489,6 +4552,13 @@ export type SpaceRow = {
  */
 export type SpaceScope = { kind: "active"; space_id: SpaceId };
 
+/**  How an utterance ended. */
+export type SpeakOutcome = 
+/**  It was spoken to the end. */
+"Done" | 
+/**  [`stop_speaking`], or a newer utterance, cut it off. */
+"Stopped";
+
 /**
  *  Which engine speaks on this build, so the frontend can hide *Read aloud*
  *  where there is none.
@@ -4497,7 +4567,12 @@ export type SpeechStatus =
 /**  No engine: *Read aloud* is hidden. */
 "Unsupported" | 
 /**  The frontend speaks through the webview's `speechSynthesis`. */
-"Webview";
+"Webview" | 
+/**
+ *  The backend speaks (Android): ask [`get_speech_engine_available`] before
+ *  offering *Read aloud*, then speak with [`speak_text`].
+ */
+"Native";
 
 /**
  *  Snapshot of materializer + sync observability fields exposed to the

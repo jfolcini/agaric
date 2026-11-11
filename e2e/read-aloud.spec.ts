@@ -239,3 +239,23 @@ test.describe('Read aloud without an engine @attachments @editor @pages @search'
     await expect(page.getByTestId('palette-cmd-read-page-aloud')).toHaveCount(0)
   })
 })
+
+test.describe('Read aloud through the backend engine @attachments @editor @pages', () => {
+  // Stands in for Android: `get_speech_status` answers `Native`, and the mock's `speak_text`
+  // records each utterance and ends it at once.
+  test('reads a block aloud through speak_text', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('__mockSpeechStatus', 'Native'))
+    await waitForBoot(page)
+    await openPage(page, PAGE)
+    const [gs1] = await blockIds(page)
+
+    await readBlockAloud(page, gs1 as string)
+
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as { __mockSpokenText?: string[] }).__mockSpokenText ?? []),
+      )
+      .toEqual([GS_1])
+    await expect(readingRows(page)).toHaveCount(0)
+  })
+})

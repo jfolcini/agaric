@@ -29,6 +29,14 @@
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
+    <!-- Read aloud (#5745): from API 30 an app sees a text-to-speech engine only
+         through this query; without it SpeechPlugin.kt's TextToSpeech finds none. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"

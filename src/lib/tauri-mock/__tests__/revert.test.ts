@@ -54,9 +54,9 @@ describe('applyRevertForOp', () => {
 
     applyRevertForOp(op, blocks)
 
-    expect(typeof b['deleted_at']).toBe('string')
-    // Not a truthy-checked assertion — verify it's an ISO date-like string.
-    expect((b['deleted_at'] as string).length).toBeGreaterThan(0)
+    // An epoch-ms marker, the backend's type, not a truthy placeholder.
+    expect(typeof b['deleted_at']).toBe('number')
+    expect(b['deleted_at'] as number).toBeGreaterThan(0)
     // Other fields untouched
     expect(b['content']).toBe('hello')
     expect(b['parent_id']).toBe('PARENT_A')
@@ -197,8 +197,8 @@ describe('applyRevertForOp', () => {
 
     applyRevertForOp(op, blocks)
 
-    expect(typeof b['deleted_at']).toBe('string')
-    expect((b['deleted_at'] as string).length).toBeGreaterThan(0)
+    expect(typeof b['deleted_at']).toBe('number')
+    expect(b['deleted_at'] as number).toBeGreaterThan(0)
   })
 
   it('is a no-op for unknown op types', () => {

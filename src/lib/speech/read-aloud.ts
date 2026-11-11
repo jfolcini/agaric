@@ -1,7 +1,7 @@
 /**
- * *Read aloud*'s one active reading (#5745): a queue of utterances spoken one at a time through
- * the webview's `speechSynthesis`, the block being spoken, and whether *Read aloud* can speak
- * here at all. Rows, menus and the palette read it through `useSyncExternalStore`.
+ * *Read aloud*'s one active reading (#5745): a queue of utterances spoken one at a time, the
+ * block being spoken, and whether *Read aloud* can speak here at all. Rows, menus and the palette
+ * read it through `useSyncExternalStore`.
  *
  * Store-shaped, but a plain module: AGENTS.md admits no new Zustand store without approval.
  *
@@ -10,17 +10,21 @@
  *   a toast explains; an engine with no voice points to the OS speech settings.
  * - While it reads, a persistent toast offers Stop, and closing it stops too. The toast says it
  *   started (toasts are a live region); the announcer says when it ends.
- * - It speaks where the backend reports `Webview` (macOS, Windows) and the webview has
- *   `speechSynthesis`; elsewhere *Read aloud* is hidden. The backend is asked once, the first
- *   time something offers *Read aloud* ({@link checkReadAloudSupport}), never at boot.
+ * - It speaks through the webview's `speechSynthesis` where the backend reports `Webview`
+ *   (macOS, Windows) and the webview has it, and through the backend's engine (`speak_text`)
+ *   where the backend reports `Native` (Android) and that engine says it can speak. Elsewhere
+ *   *Read aloud* is hidden. The backend is asked once, the first time something offers
+ *   *Read aloud* ({@link checkReadAloudSupport}), never at boot; that first ask is what starts
+ *   Android's engine.
  */
 
 import { announce } from '@/lib/announcer'
-import { unwrap } from '@/lib/app-error'
+import { isAppError, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { isAndroid } from '@/lib/platform'
 import type { SpokenUtterance } from '@/lib/speech/spoken-text'
 
 export interface ReadAloudSnapshot {
@@ -53,6 +57,14 @@ const NO_VOICE_ERRORS: ReadonlySet<string> = new Set([
 
 let readings = 0
 
+/** Whether the backend's engine speaks, rather than the webview's `speechSynthesis`. */
+let native = false
+/**
+ * The last `stop_speaking` sent. A native utterance waits for it, so a stop sent for the
+ * reading before cannot reach the engine after the next reading's first utterance and cut it.
+ */
+let nativeStop: Promise<unknown> = Promise.resolve()
+
 let snapshot: ReadAloudSnapshot = { supported: false, reading: false, currentBlockId: null }
 let active: Reading | null = null
 let supportAsked = false
@@ -76,12 +88,18 @@ function publish(next: Partial<ReadAloudSnapshot>): void {
 export function checkReadAloudSupport(): void {
   if (supportAsked) return
   supportAsked = true
-  if (!('speechSynthesis' in window)) return
+  // Android's webview has no `speechSynthesis`, and speaks through the backend instead.
+  if (!('speechSynthesis' in window) && !isAndroid()) return
   void commands
     .getSpeechStatus()
     .then(unwrap)
-    .then((status) => {
-      if (status === 'Webview') publish({ supported: true })
+    .then(async (status) => {
+      if (status === 'Webview' && 'speechSynthesis' in window) {
+        publish({ supported: true })
+      } else if (status === 'Native' && unwrap(await commands.getSpeechEngineAvailable())) {
+        native = true
+        publish({ supported: true })
+      }
     })
     .catch((err: unknown) => {
       logger.warn('read-aloud', 'get_speech_status failed; Read aloud stays hidden', undefined, err)
@@ -97,7 +115,8 @@ export function startReading(utterances: readonly SpokenUtterance[], owner: obje
     notify.info(t('readAloud.nothingToRead'))
     return
   }
-  if (active !== null) finish(active, null)
+  // The engine cuts the replaced reading's utterance off when this one's first starts.
+  if (active !== null) finish(active, null, false)
   readings += 1
   const reading: Reading = {
     queue: [...utterances],
@@ -132,6 +151,13 @@ function speakNext(reading: Reading): void {
     finish(reading, 'announce.readAloudFinished')
     return
   }
+  publish({ reading: true, currentBlockId: next.blockId })
+  if (native) {
+    speakNative(reading, next.text).catch((err: unknown) => {
+      if (active === reading) fail(reading, isAppError(err) ? err.message : String(err))
+    })
+    return
+  }
   const utterance = new SpeechSynthesisUtterance(next.text)
   utterance.addEventListener('end', () => {
     if (active === reading) speakNext(reading)
@@ -140,8 +166,17 @@ function speakNext(reading: Reading): void {
     if (active === reading) fail(reading, event.error)
   })
   reading.utterance = utterance
-  publish({ reading: true, currentBlockId: next.blockId })
   window.speechSynthesis.speak(utterance)
+}
+
+async function speakNative(reading: Reading, text: string): Promise<void> {
+  await nativeStop
+  if (active !== reading) return
+  const outcome = unwrap(await commands.speakText(text))
+  if (active !== reading) return
+  // A `Stopped` this reading did not ask for (another app took the engine) ends it quietly.
+  if (outcome === 'Done') speakNext(reading)
+  else finish(reading, null)
 }
 
 function fail(reading: Reading, error: string): void {
@@ -150,21 +185,37 @@ function fail(reading: Reading, error: string): void {
   notify.error(t(NO_VOICE_ERRORS.has(error) ? 'readAloud.noVoice' : 'readAloud.failed'))
 }
 
-function finish(reading: Reading, announcement: string | null): void {
+/** `silence: false` leaves a native utterance to be cut off by the next reading's first. */
+function finish(reading: Reading, announcement: string | null, silence = true): void {
   // Cleared first: `cancel()` makes the engine report the cut utterance as an `interrupted` or
   // `canceled` error, which must find no reading.
   active = null
   reading.queue.length = 0
   reading.utterance = null
-  window.speechSynthesis.cancel()
+  if (native) {
+    if (silence) nativeStop = stopNative()
+  } else {
+    window.speechSynthesis.cancel()
+  }
   notify.dismiss(reading.toastId)
   publish({ reading: false, currentBlockId: null })
   if (announcement !== null) announce(t(announcement))
 }
 
+function stopNative(): Promise<unknown> {
+  return commands
+    .stopSpeaking()
+    .then(unwrap)
+    .catch((err: unknown) => {
+      logger.warn('read-aloud', 'stop_speaking failed', undefined, err)
+    })
+}
+
 /** Test-only: forget the reading and the support answer. */
 export function __resetReadAloudForTests(): void {
   active = null
+  native = false
+  nativeStop = Promise.resolve()
   supportAsked = false
   snapshot = { supported: false, reading: false, currentBlockId: null }
 }

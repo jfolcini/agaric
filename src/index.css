@@ -2449,20 +2449,109 @@
   @apply ring-2 ring-inset ring-ring bg-ring/15;
 }
 
+/* ── List rows ──────────────────────────────────────────────────────────
+ * The row of a table-like list (`listRowVariants`, `src/components/ui/
+ * list-item.tsx`). The list is one card (`listCardVariants`); rows inside
+ * it sit flush, separated by a full-width hairline, and the last row of a
+ * run draws none against the card's own border. A virtualized row is
+ * absolutely positioned inline, which wins over `relative`, so the divider
+ * anchors either way. */
+@utility list-row {
+  position: relative;
+  &::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: 1px;
+    background-color: color-mix(in oklab, var(--border) 70%, transparent);
+    pointer-events: none;
+  }
+  &:last-child::after {
+    content: none;
+  }
+}
+
+/* A History row's cell below `sm`: the meta line shares the first line with
+ * the labelled Diff / Reset actions; the content takes the second line,
+ * indented past the checkbox, and the device id trails it under the actions.
+ * Wrapping the actions onto a line of their own made every row three lines
+ * tall on a phone. From `sm` up it is a
+ * single flex line. The utility owns `display` at both widths: a separate
+ * `flex` class would come later in the sheet and override the grid. */
+@utility history-row-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  @media (width < 40rem) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    column-gap: 0.5rem;
+    row-gap: 0.125rem;
+    & > :first-child {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    & > .history-item-main {
+      display: contents;
+    }
+    & > .history-item-main > :first-child {
+      grid-column: 2;
+      grid-row: 1;
+      min-width: 0;
+    }
+    & > .history-item-main > :not(:first-child, .history-item-device-group) {
+      grid-column: 2;
+      grid-row: 2;
+    }
+    & > .history-item-main > .history-item-device-group {
+      grid-column: 3 / -1;
+      grid-row: 2;
+      justify-self: end;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    & > .diff-toggle-btn {
+      grid-column: 3;
+      grid-row: 1;
+    }
+    & > :last-child:not(.history-item-main, .diff-toggle-btn) {
+      grid-column: 4;
+      grid-row: 1;
+    }
+  }
+}
+
 /* Keyboard cursor of a navigable list row. The cursor rests on row 0 before any
- * key is pressed, so at rest it is only a tint (History's touch ↑/↓ and the
- * document-level Space/Enter shortcuts act on it without focus); the ring shows
- * while keyboard focus is on this row or a sibling row, or on the composite
- * container (document-level lists move focus there on a navigation key). Not
- * keyed off focus deeper in the container (Pages rows hold their own tabbable
- * buttons) nor off any ancestor: the Journal container
- * and #main-content take programmatic focus at boot and match :focus-visible
- * then. The tint is an image layer so it sits over a row's own background. */
+ * key is pressed, so at rest it is a tint plus a 2px edge bar in the ring
+ * colour, which keeps the row legible where a tint alone washes out (dark,
+ * high contrast); History's touch ↑/↓ and the document-level Space/Enter
+ * shortcuts act on it without focus. The ring shows while keyboard focus is on
+ * this row or a sibling row, or on the composite container (document-level
+ * lists move focus there on a navigation key). Not keyed off focus deeper in
+ * the container (Pages rows hold their own tabbable buttons) nor off any
+ * ancestor: the Journal container and #main-content take programmatic focus at
+ * boot and match :focus-visible then. The tint is an image layer so it sits
+ * over a row's own background. The accent bar runs the row's full height and
+ * is square-ended; a card squares its corner on the bar's side while the
+ * cursor row sits in it (`listCardVariants`), so the bar meets the corner at a
+ * right angle. */
 @utility list-cursor {
   background-image: linear-gradient(
     color-mix(in oklab, var(--accent) 30%, transparent),
     color-mix(in oklab, var(--accent) 30%, transparent)
   );
+  position: relative;
+  &::before {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 2px;
+    background-color: var(--ring);
+    pointer-events: none;
+  }
   :where(:has(> :focus-visible)) > &,
   :where([role='grid'], [aria-activedescendant]):focus-visible & {
     @apply outline-hidden ring-2 ring-inset ring-ring;
@@ -2511,7 +2600,9 @@
  * Mirrors PageRow's leading run — px-3 + checkbox + gap-3 + star
  * button + gap-3 — at both pointer sizes (`size-4` / `size-6` fine,
  * `min-w-11` / `size-11` coarse). A touch phone's row hides both, so
- * `TreePageRow` drops the gutter there on the same predicate.
+ * `TreePageRow` drops the gutter there on the same predicate, and in
+ * selection mode, where the phone row shows its checkbox cell again but not
+ * the star, takes `page-tree-gutter-phone-select`.
  * `pages-namespace-indent.spec.ts`
  * measures the two shapes against each other, so drift on either side
  * reddens. */
@@ -2521,6 +2612,10 @@
   @media (pointer: coarse) {
     padding-left: calc(0.75rem + 2.75rem + 0.75rem + 2.75rem + 0.75rem);
   }
+}
+
+@utility page-tree-gutter-phone-select {
+  padding-left: calc(0.75rem + 2.75rem + 0.75rem);
 }
 
 /* ── ScrollArea / list scrollbars (WebKitGTK overlap fix) ───────────────

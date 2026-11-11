@@ -349,7 +349,10 @@ export const MODULES = {
   'read-aloud': {
     setup: true,
     src: 'src/lib/speech/read-aloud.ts',
-    tests: ['src/lib/speech/__tests__/read-aloud.test.ts'],
+    tests: [
+      'src/lib/speech/__tests__/read-aloud.test.ts',
+      'src/lib/speech/__tests__/read-aloud-native.test.ts',
+    ],
   },
   // The text Read aloud speaks (#5745): a survivor is an id read out, part of
   // a note never read, or an utterance too long for Android to take.

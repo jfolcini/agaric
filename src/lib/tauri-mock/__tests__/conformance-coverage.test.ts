@@ -218,6 +218,12 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'back, where the mock upserts a constant row and skips the seven-day freshness ' +
     'short-circuit entirely (handlers/links.ts)',
 
+  // ── Integrity check (#6488) ──
+  rebuild_derived_state:
+    'the report it returns is the input problem: it carries `today` from ' +
+    '`chrono::Local::now()`, like `compute_reconciliation_report`, and the rebuild rewrites ' +
+    'derived tables the mock keeps no copy of',
+
   // ── Quick capture ──
   quick_capture_block:
     'the local DATE is the input, not the scope: `chrono::Local::now()` names the journal ' +
@@ -248,6 +254,8 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   ingest_otel_spans: 'no persistent state — telemetry export',
   set_trace_sampling: 'no persistent state — runtime tracing toggle',
   notify_task: 'no persistent state — OS notification side effect',
+  speak_text: 'no persistent state — speaks through the OS text-to-speech engine (#5745)',
+  stop_speaking: 'no persistent state — silences the OS text-to-speech engine (#5745)',
   mcp_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_disconnect_all: 'no persistent domain state — MCP transport reset',
 
@@ -425,6 +433,8 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   get_mcp_recent_activity: 'no domain state — in-memory MCP activity ring buffer',
   get_speech_status:
     'no domain state — a `cfg`-picked constant per OS (#5745), fixed on the Linux backend a fixture is authored from, so a step would pin one constant against another',
+  get_speech_engine_available:
+    'no domain state — whether the OS text-to-speech engine can speak (#5745); the Linux backend a fixture is authored from has none',
 
   // ── Markdown mirror (#5363) ──
   get_mirror_status:
@@ -513,6 +523,8 @@ const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
   'ingest_otel_spans',
   'set_trace_sampling',
   'notify_task',
+  'speak_text',
+  'stop_speaking',
   'mcp_set_enabled',
   'mcp_disconnect_all',
   // An OS folder dialog (#5363).
@@ -533,6 +545,7 @@ const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
   'get_mcp_status',
   'get_mcp_recent_activity',
   'get_speech_status',
+  'get_speech_engine_available',
 ])
 
 /**
@@ -601,6 +614,8 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
   // bucket. Seeding the page is no escape: `seed.blocks[].content` is a
   // literal, and the harness has no clock seam.
   'quick_capture_block',
+  // Returns the integrity report, which carries `today` (#6488).
+  'rebuild_derived_state',
   // Not an input problem but an observation one, and permanent for a different
   // reason than its neighbours: its only durable write is the `pending_pairing`
   // row in `app_settings`, and NO command in `bindings.ts` reads that key on

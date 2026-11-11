@@ -51,3 +51,47 @@ test("Ctrl+Shift+Y lists the focused block's edits and none of another block's @
   await expect(rows.nth(1)).toContainText('Alpha first edit')
   await expect(sheet).not.toContainText('Bravo')
 })
+
+// #6495 review note — in this sheet the row's meta line and its device label
+// share one grid row, so at phone width the longest per-block op type pushed
+// the label past the row's edge, cut mid-character. It must end inside the row.
+test.describe('the device label at phone width @editor', () => {
+  test('stays inside its row beside the longest op type @editor', async ({ page }) => {
+    await page.evaluate(() => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const invoke = internals.invoke.bind(internals)
+      internals.invoke = (c, a) =>
+        c === 'get_block_history'
+          ? Promise.resolve({
+              items: [
+                {
+                  device_id: 'a1b2c3d4e5f60718',
+                  seq: 1,
+                  op_type: 'remove_page_alias',
+                  payload: '{}',
+                  created_at: Date.now(),
+                  is_replicated: false,
+                },
+              ],
+              next_cursor: null,
+              has_more: false,
+            })
+          : invoke(c, a)
+    })
+    await openPage(page, 'Getting Started')
+    await focusBlockById(page, GS_1)
+    await page.setViewportSize({ width: 320, height: 640 })
+    await page.keyboard.press('Control+Shift+Y')
+
+    const row = page
+      .getByRole('dialog', { name: 'Block History' })
+      .locator('[data-testid^="block-history-item-"]')
+    await expect(row).toHaveCount(1)
+    const overflow = await row.evaluate((el) => el.scrollWidth - el.clientWidth)
+    expect(overflow).toBe(0)
+  })
+})

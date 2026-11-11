@@ -463,7 +463,8 @@ async fn read_touched_targets_for_rollup_key(
 /// `materializer::handlers::handle_background_task::ReindexBlockLinks`.
 #[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_page_link_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("page_links", || rebuild_page_link_cache_impl(pool)).await
+    super::rebuild_with_timing("page_links", || rebuild_page_link_cache_impl(pool)).await?;
+    crate::derivations::record(pool, crate::derivations::Derivation::PageLink).await
 }
 
 async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
@@ -593,7 +594,8 @@ pub async fn rebuild_page_link_cache_split(
     super::rebuild_with_timing("page_links", || {
         rebuild_page_link_cache_split_impl(write_pool, read_pool)
     })
-    .await
+    .await?;
+    crate::derivations::record(write_pool, crate::derivations::Derivation::PageLink).await
 }
 
 async fn rebuild_page_link_cache_split_impl(

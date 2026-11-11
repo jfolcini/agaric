@@ -219,7 +219,7 @@ export function HistoryItemCore({
 
   return (
     <>
-      <div className="history-item-main flex flex-col gap-0.5 min-w-0 flex-1">
+      <div className="history-item-main grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-0.5 min-w-0 flex-1 [&>:not(:first-child,.history-item-device-group)]:col-span-full">
         {/* Op type badge */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <Badge
@@ -246,10 +246,6 @@ export function HistoryItemCore({
               <p>{formatTimestamp(entry.created_at, 'full')}</p>
             </TooltipContent>
           </Tooltip>
-          <span className="text-xs text-muted-foreground"> · </span>
-          <span className="history-item-device text-xs text-muted-foreground">
-            dev:{entry.device_id.slice(0, 8)}
-          </span>
           {/* #2481: a foreign op replicated from another device (audit-only,
               not revertible here). */}
           {entry.is_replicated && (
@@ -273,6 +269,15 @@ export function HistoryItemCore({
             </Tooltip>
           )}
         </div>
+        {/* Its own grid cell, not part of the meta line: beside it on a wide
+            row, and under a phone row's actions (`history-row-cell`), so a
+            real device id never takes a line of its own. The separator stays
+            with the id. It truncates rather than overflow: in the block
+            history sheet it shares the row with the op type and the time. */}
+        <span className="history-item-device-group min-w-0 truncate text-xs text-muted-foreground">
+          <span aria-hidden="true">· </span>
+          <span className="history-item-device">dev:{entry.device_id.slice(0, 8)}</span>
+        </span>
         {/* Content preview */}
         {propPayload && (
           <span className="history-item-preview text-sm line-clamp-2">

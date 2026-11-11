@@ -14,9 +14,11 @@ import { useTranslation } from 'react-i18next'
 
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { HistoryListItem } from '@/components/HistoryListItem'
+import { listCardVariants } from '@/components/ui/list-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { entryKey, isRevertible } from '@/hooks/useHistorySelection'
 import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
+import { cn } from '@/lib/utils'
 
 export interface HistoryListViewProps {
   entries: HistoryEntry[]
@@ -71,18 +73,15 @@ export function HistoryListView({
   // virtualizer's scroll element.
   // HistoryListItem renders an op-summary row plus an optional inline
   // diff section that swells the row height when expanded. Estimated
-  // collapsed height (~80px = p-4 + 2 lines) is a starting point;
+  // collapsed height (~64px = a `listRowVariants` row with 2 lines) is a starting point;
   // `measureElement` corrects to actual height after first paint, so
   // expanded rows do not push subsequent rows out of view.
-  const estimateSize = useCallback(() => 80, [])
+  const estimateSize = useCallback(() => 64, [])
   // oxlint-disable-next-line react/incompatible-library -- The Compiler skips memoizing a component that calls this API, so nothing virtualizer-derived is cached inside this component; the residual hazard the diagnostic names is such a value reaching a MEMOIZED consumer. `HistoryListItem` IS `React.memo`, so this crossing is worth spelling out: what reaches it is `rowRef={virtualizer.measureElement}` — assigned once in the Virtualizer constructor (virtual-core 3.17.8), so its identity never changes and there is nothing that can go stale — and `virtualRow.start`, baked into a FRESH `style` object literal every render, which makes the shallow compare miss unconditionally and repaint the row at the current offset. `getVirtualItems()`/`getTotalSize()` are read in this render body. (#4409)
   const virtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => listRef.current,
     estimateSize,
-    // The rows are bordered cards; without a gap their borders doubled into
-    // 2px seams.
-    gap: 8,
     overscan: 5,
     getItemKey: (index) => {
       const entry = entries[index]
@@ -124,8 +123,14 @@ export function HistoryListView({
     <>
       {entries.length > 0 && (
         <ScrollArea
+          // The touch padding keeps the last row off the bottom corner, so that
+          // corner stays round under the cursor.
+          className={cn(
+            listCardVariants(),
+            '[@media(pointer:coarse)]:[&:has(.list-cursor:last-child)]:rounded-es-lg',
+          )}
           viewportRef={listRef}
-          viewportClassName="history-list p-0 m-0 focus:outline-none max-h-[calc(100dvh-220px)]"
+          viewportClassName="history-list p-0 m-0 focus:outline-none max-h-[calc(100dvh-220px)] [@media(pointer:coarse)]:pb-16"
           // ARIA grid pattern for history list — no semantic HTML
           // equivalent for a non-tabular interactive grid. Lives on the
           // scroll viewport (the focusable element keyboard nav drives).

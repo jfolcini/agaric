@@ -376,6 +376,43 @@ async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     Ok(changed)
 }
 
+/// Rewrite every `pages_cache.title_sort_key` from its row's title in one
+/// transaction, and record
+/// [`Derivation::TitleSortKey`](crate::derivations::Derivation). The page-row
+/// rebuild keys only a row whose title changed, so a change to
+/// `title_sort_key` reaches the rows already cached only through this pass
+/// (#6488). Returns the rows rewritten.
+///
+/// # Errors
+/// Returns [`AppError`] if any statement fails; nothing is recorded then.
+pub async fn rekey_title_sort_keys(pool: &SqlitePool) -> Result<u64, AppError> {
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_pages_rekey").await?;
+    let rows = sqlx::query!(r#"SELECT page_id AS "page_id!", title AS "title!" FROM pages_cache"#)
+        .fetch_all(&mut *tx)
+        .await?;
+    let keyed: Vec<(String, String)> = rows
+        .into_iter()
+        .map(|r| {
+            let key = agaric_core::title_sort::title_sort_key(&r.title);
+            (r.page_id, key)
+        })
+        .collect();
+    let keyed_json = serde_json::to_string(&keyed)?;
+    let rewritten = sqlx::query!(
+        "UPDATE pages_cache SET title_sort_key = json_extract(j.value, '$[1]') \
+         FROM json_each(?) AS j \
+         WHERE pages_cache.page_id = json_extract(j.value, '$[0]') \
+           AND pages_cache.title_sort_key != json_extract(j.value, '$[1]')",
+        keyed_json,
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    crate::derivations::record(&mut *tx, crate::derivations::Derivation::TitleSortKey).await?;
+    tx.commit().await?;
+    Ok(rewritten)
+}
+
 // ---------------------------------------------------------------------------
 // rebuild_pages_cache_counts (#417 — RESET-only full count recompute)
 // ---------------------------------------------------------------------------

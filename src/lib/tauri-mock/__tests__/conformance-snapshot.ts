@@ -148,7 +148,10 @@ export function buildSnapshot(
       parent_id: relabelOpt(b['parent_id'] as string | null | undefined),
       page_id: relabelOpt(b['page_id'] as string | null | undefined),
       position: (b['position'] as number | null | undefined) ?? null,
-      deleted_at: b['deleted_at'] == null ? null : 'DELETED',
+      // Only an epoch-ms number is the backend's type; anything else stays raw
+      // so it fails the comparison instead of passing as a sentinel.
+      deleted_at:
+        typeof b['deleted_at'] === 'number' ? 'DELETED' : ((b['deleted_at'] as unknown) ?? null),
       todo_state: (b['todo_state'] as string | null | undefined) ?? null,
       priority: (b['priority'] as string | null | undefined) ?? null,
       due_date: (b['due_date'] as string | null | undefined) ?? null,

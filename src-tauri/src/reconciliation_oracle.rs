@@ -49,10 +49,14 @@
 //! [`reconcile_all`]) so the oracle can be pointed at a real vault — years of
 //! op history no fixture can manufacture. That command reads through the
 //! reader pool and an export of each engine, and writes nothing: a divergence
-//! is data to return, never a panic and never a repair. Repair stays out on
-//! purpose (#5628): rebuilding on a non-empty report erases the evidence the
-//! check exists to produce, and no rebuild repairs SQL that has drifted from
-//! the engine. Everything that WRITES (the `settle_*` helpers
+//! is data to return, never a panic and never a repair. Repair stays out of
+//! this module on purpose (#5628): rebuilding on a non-empty report erases the
+//! evidence the check exists to produce, and no rebuild repairs SQL that has
+//! drifted from the engine. The separate Rebuild command
+//! (`commands::reconciliation::rebuild_derived_state`, #6488) rebuilds the
+//! caches only, after the user has had the report to copy.
+//!
+//! Everything that WRITES (the `settle_*` helpers
 //! that run production's deferred maintainers) or exists to fail a test loudly
 //! (`assert_*`, the `*_reconciliation_failure` formatters, the coverage
 //! counters) lives in `harness.rs` under `cfg(test)` and is re-exported from
@@ -260,6 +264,9 @@ pub struct BaseBlock {
     /// The dense sibling rank the engine's tree order projects to. Read only
     /// to compare against the engine.
     position: Option<i64>,
+    /// In `sync_deferred_purges` (#5712): a sync import took the block out of
+    /// its doc and the next completed pull purges it.
+    awaiting_purge: bool,
 }
 
 /// One `attachments` row: the columns the blob store depends on, and the ones
@@ -290,9 +297,11 @@ async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
     )
     .fetch_all(pool)
     .await?;
+    let awaiting_purge = dump_deferred_purges(pool).await?;
     Ok(rows
         .into_iter()
         .map(|r| BaseBlock {
+            awaiting_purge: awaiting_purge.contains(&r.id),
             id: r.id,
             parent_id: r.parent_id,
             page_id: r.page_id,
@@ -1950,9 +1959,7 @@ const ENGINE_ROW_MISSING_OWNER: &str = "the block's ops took the SQL-only fallba
      resolved) and nothing replayed them into the engine: since #5418 a snapshot pass advances \
      the apply cursor, so boot replays only the ops after it. The engine is what syncs and what \
      an engine-first recovery reprojects, so this block reaches no peer and does not survive \
-     that recovery. Expected, not a defect, while the block is in sync_deferred_purges: a sync \
-     import took it out of its doc and the next completed pull purges it, or keeps it if \
-     another space's doc claims it (#5712)";
+     that recovery";
 
 const ENGINE_ROW_EXTRA_OWNER: &str = "a purge or projection cleared SQL without the engine, or \
      an inbound import's projection never committed: a peer importing this doc, or an \
@@ -1974,13 +1981,18 @@ const ENGINE_LIVENESS_OWNER: &str = "a delete that reached SQL but not the engin
 /// a LIVE SQL block whose resolved space has a doc that lacks it. A block
 /// whose space resolves to nothing, or to a space with no engine, is expected
 /// in no doc; a tombstone is left out the way `resolve_block_space` leaves it
-/// out when routing an op.
+/// out when routing an op. So is a block in `sync_deferred_purges`: a sync
+/// import took it out of its doc, and the next completed pull purges it, or
+/// keeps it if another space's doc claims it (#5712).
 fn diff_engine_membership(
     view: &EngineView,
     by_id: &BTreeMap<&str, &BaseBlock>,
     out: &mut Vec<Divergence>,
 ) {
-    for block_id in by_id.keys() {
+    for (block_id, block) in by_id {
+        if block.awaiting_purge {
+            continue;
+        }
         let Some(space_id) = fold_block_space(by_id, block_id) else {
             continue;
         };
@@ -3702,9 +3714,10 @@ fn fold_ref_maps(blocks: &[BaseBlock]) -> agaric_store::fts::strip::RefMaps {
 /// a row it still has is reported.
 ///
 /// The rows earlier deletes had ALREADY stranded are swept once by migration
-/// 0118 (#4904). Nothing else reached them: the only pass that would,
-/// `RebuildFtsIndex`, is enqueued at boot solely when `fts_blocks` is entirely
-/// empty, which a vault carrying residue is not.
+/// 0118 (#4904). Nothing else reached them then: the only pass that would,
+/// `RebuildFtsIndex`, was enqueued at boot solely when `fts_blocks` was
+/// entirely empty, which a vault carrying residue is not. Boot now also runs
+/// it while `FTS_STRIP_MARKER` is unset (#6488).
 ///
 /// The reference maps ARE folded independently (see [`fold_ref_maps`]) and
 /// re-read on every call, which is what makes a stale row after a tag rename,
@@ -4408,8 +4421,10 @@ pub async fn reconcile_all(
     today: chrono::NaiveDate,
 ) -> Result<Vec<Divergence>, AppError> {
     let blocks = dump_blocks(pool).await?;
-    let (mut out, (expected_inherited, stored_inherited)) =
+    let mut out = reconcile_block_id_form(&blocks);
+    let (cache_divergences, (expected_inherited, stored_inherited)) =
         reconcile_keeping_inherited(pool, &blocks, app_data_dir).await?;
+    out.extend(cache_divergences);
     out.extend(reconcile_block_links(pool, &blocks).await?);
     out.extend(reconcile_block_links_unresolved(pool, &blocks).await?);
     out.extend(reconcile_block_tag_refs(pool, &blocks).await?);
@@ -4431,6 +4446,48 @@ pub async fn reconcile_all(
         &dump_property_definitions(pool).await?,
     )?);
     Ok(out)
+}
+
+const ID_FORM_OWNER: &str = "older data: no current writer stores a lowercase id. `BlockId` \
+     uppercases an id on read, so a bulk command that resolves ids it was given (Empty trash, \
+     Restore all) looks for a row that is not there and skips it. Not rebuildable: the id is \
+     the row's identity, and rewriting it is a repair someone decides on";
+
+/// #6488 — blocks whose `id`, `parent_id` or `page_id` is not in the
+/// uppercase form `BlockId` reads it as (invariant 8). One divergence per
+/// block, keyed by its stored id; `actual` names the columns.
+pub fn reconcile_block_id_form(blocks: &[BaseBlock]) -> Vec<Divergence> {
+    blocks
+        .iter()
+        .filter_map(|block| {
+            let odd: Vec<String> = [
+                ("id", Some(block.id.as_str())),
+                ("parent_id", block.parent_id.as_deref()),
+                ("page_id", block.page_id.as_deref()),
+            ]
+            .into_iter()
+            .filter_map(|(column, value)| {
+                let value = value?;
+                (value != value.to_ascii_uppercase()).then(|| format!("{column} = {value}"))
+            })
+            .collect();
+            (!odd.is_empty()).then(|| Divergence {
+                artefact: "blocks.id_form",
+                key: block.id.clone(),
+                expected: "uppercase ids".to_owned(),
+                actual: odd.join(", "),
+                owner: ID_FORM_OWNER,
+            })
+        })
+        .collect()
+}
+
+/// The blocks a sync import left awaiting their purge (#5712).
+async fn dump_deferred_purges(pool: &SqlitePool) -> Result<BTreeSet<String>, AppError> {
+    let rows = sqlx::query_scalar!("SELECT block_id FROM sync_deferred_purges")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().collect())
 }
 
 #[cfg(test)]

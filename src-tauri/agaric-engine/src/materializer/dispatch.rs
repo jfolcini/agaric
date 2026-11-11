@@ -45,7 +45,7 @@ fn sender_or_closed(
 /// ## Ordering semantics
 ///
 /// Each arm is enqueued in this order via `try_enqueue_background`, then
-/// the background queue's [`super::dedup::dedup_tasks`] pass collapses
+/// the background queue's `dedup_tasks` (`materializer/dedup.rs`) pass collapses
 /// duplicate rebuild tasks across the *entire* drained batch — not just
 /// adjacent ones (the per-key sets are allocated once before the loop, so
 /// the first occurrence of each key wins and later duplicates anywhere in
@@ -76,7 +76,7 @@ fn sender_or_closed(
 /// is enqueued one task at a time and the consumer drains what has
 /// arrived, so it can split across drains, where `dedup_tasks` cannot
 /// reorder it (#6216). So `RebuildBlockTagRefsCache` comes first.
-pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
+pub const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
     // #6216: before `RebuildTagsCache`, whose `usage_count` counts these rows.
     MaterializeTask::RebuildBlockTagRefsCache,
     MaterializeTask::RebuildTagsCache,
