@@ -148,10 +148,7 @@ export async function restoreSpaceFile(
   files: readonly File[],
   spaceId: string,
 ): Promise<{ titles: ReadonlyMap<string, string>; warnings: string[] }> {
-  const file = files.find(
-    (f) =>
-      f.webkitRelativePath !== '' && vaultRelativePath(f.webkitRelativePath) === SPACE_FILE_PATH,
-  )
+  const file = files.find((f) => vaultRelativePath(f.webkitRelativePath) === SPACE_FILE_PATH)
   if (file === undefined) return { titles: new Map(), warnings: [] }
   let space: SpaceFile
   try {
