@@ -5,8 +5,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import yaml from 'js-yaml'
-
 const ACTION_PATH = join(
   import.meta.dirname,
   '..',
@@ -19,12 +17,24 @@ const ACTION_PATH = join(
 // Every `test()` below is `void`-ed: node:test's returned promise fulfils even
 // when the test fails — the runner owns the failure report and the exit code.
 
-/** The composite action's one `run:` script, as the runner executes it. */
+/**
+ * The composite action's one `run: |` script, as the runner executes it. Read
+ * line by line because scripts/ carries no YAML dependency (the reason is in
+ * `check-mutants-scope.mjs`).
+ */
 function actionScript() {
-  const action = yaml.load(readFileSync(ACTION_PATH, 'utf8'))
-  const steps = action.runs.steps.filter((step) => typeof step.run === 'string')
-  assert.equal(steps.length, 1, 'apt-install has exactly one run step')
-  return steps[0].run
+  const lines = readFileSync(ACTION_PATH, 'utf8').split('\n')
+  const starts = lines.flatMap((line, i) => (/^\s*run: \|$/.test(line) ? [i] : []))
+  assert.equal(starts.length, 1, 'apt-install has exactly one run step')
+  const indentOf = (line) => line.search(/\S/)
+  const keyIndent = indentOf(lines[starts[0]])
+  const body = []
+  for (const line of lines.slice(starts[0] + 1)) {
+    if (line.trim() !== '' && indentOf(line) <= keyIndent) break
+    body.push(line)
+  }
+  const blockIndent = Math.min(...body.filter((line) => line.trim()).map(indentOf))
+  return body.map((line) => line.slice(blockIndent)).join('\n')
 }
 
 const FETCH_ERRORS = [
