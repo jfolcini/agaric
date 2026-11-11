@@ -106,6 +106,14 @@ beforeEach(() => {
 describe('HistoryListItem', () => {
   // -- Rendering different op types ------------------------------------------
 
+  it('is a flush list row with a divider, not a card', () => {
+    renderInListbox(defaultProps())
+    const row = screen.getByTestId('history-item-0')
+    expect(row).toHaveClass('list-row', 'rounded-sm')
+    expect(row).not.toHaveClass('border')
+    expect(row).not.toHaveClass('rounded-lg')
+  })
+
   it('renders edit_block op type badge', () => {
     renderInListbox(defaultProps())
 

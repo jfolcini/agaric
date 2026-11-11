@@ -124,4 +124,29 @@ test.describe('Pages view — namespace indentation on a phone @pages @mobile', 
     expect(nestedInset).toBeGreaterThan(0)
     expect(nestedInset).toBeLessThanOrEqual(MAX_ONE_LEVEL_INSET_PX)
   })
+
+  // In selection mode the phone row shows its checkbox again, so the tree
+  // must step in by that cell too, or a top-level page reads as a child.
+  test('a namespace root stays aligned with top-level pages in selection mode', async ({
+    page,
+  }) => {
+    await openPagesView(page)
+    await createPageFromPagesView(page, NAMESPACED_PAGE)
+    await openPagesView(page)
+
+    const flatRow = page.locator(`[data-page-item]:has-text("${FLAT_PAGE}")`)
+    const flatContent = flatRow.locator('.page-browser-item')
+    const namespaceRoot = page.getByRole('button', { name: 'Toggle work namespace' })
+    await expect(flatContent).toBeVisible()
+
+    // A long press is the phone's way into selection mode.
+    await flatRow.dispatchEvent('pointerdown', { pointerType: 'touch', isPrimary: true, button: 0 })
+    await expect(flatRow).toHaveAttribute('data-selected', 'true')
+    await flatRow.dispatchEvent('pointerup', { pointerType: 'touch', isPrimary: true, button: 0 })
+    await expect(flatRow.getByRole('checkbox')).toBeVisible()
+
+    expect(
+      Math.abs((await leftEdge(namespaceRoot)) - (await leftEdge(flatContent))),
+    ).toBeLessThanOrEqual(1)
+  })
 })

@@ -148,6 +148,7 @@ function TreePageRow({
   onPageSelect,
   onCreateUnder,
   onDeleteRequest,
+  selectedIds,
 }: TreePageRowProps): React.ReactElement {
   const { node, pageIndex, depth } = row
   // A touch phone's `PageRow` hides its checkbox and star, so the gutter
@@ -155,6 +156,13 @@ function TreePageRow({
   const isTouch = useIsTouch()
   const isMobile = useIsMobile()
   const touchSelect = isTouch && isMobile
+  // In selection mode a phone's row shows its checkbox again (no star), so
+  // the tree steps in by that one cell.
+  const gutter = !touchSelect
+    ? 'page-tree-gutter'
+    : selectedIds.size > 0
+      ? 'page-tree-gutter-phone-select'
+      : 'pl-3'
   // Tree-page rows wrap a recursive `PageTreeItem` whose own
   // Buttons handle activation/expand. Under the page-list
   // viewport is `role="grid"`, so each tree-page wrapper is a
@@ -189,7 +197,7 @@ function TreePageRow({
       style={rowStyle(virtualRow.start)}
     >
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner button controls; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className={touchSelect ? 'pl-3' : 'page-tree-gutter'}>
+      <div role="gridcell" className={gutter}>
         <PageTreeItem
           node={node}
           depth={depth}

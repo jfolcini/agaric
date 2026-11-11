@@ -412,6 +412,31 @@ describe('ListItem', () => {
     expect(li.className).toContain('hover:bg-accent/50')
   })
 
+  it('is a flush, divided row with the chip radius and a 44px touch height', () => {
+    const { container } = render(
+      <ul>
+        <ListItem>Row</ListItem>
+      </ul>,
+    )
+    const li = q(container, 'li')
+    expect(li).toHaveClass('list-row', 'rounded-sm', 'py-2.5', '[@media(pointer:coarse)]:min-h-11')
+    expect(li).not.toHaveClass('rounded-lg')
+  })
+
+  it('takes the compact density and drops hover chrome when not interactive', () => {
+    const { container } = render(
+      <ul>
+        <ListItem density="compact" interactive={false}>
+          Row
+        </ListItem>
+      </ul>,
+    )
+    const li = q(container, 'li')
+    expect(li).toHaveClass('list-row', 'py-1.5')
+    expect(li).not.toHaveClass('py-2.5')
+    expect(li).not.toHaveClass('hover:bg-accent/50')
+  })
+
   it('merges custom className', () => {
     const { container } = render(
       <ul>

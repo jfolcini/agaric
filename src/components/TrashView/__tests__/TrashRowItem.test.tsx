@@ -161,6 +161,15 @@ describe('TrashRowItem', () => {
   // `list-cursor` is a tint at rest whose ring is gated in CSS on keyboard
   // focus being in the grid; jsdom cannot evaluate that gate, so the class
   // contract is the assertion: the cursor never carries an inline ring.
+  it('is a flush list row with a divider, not a card', () => {
+    renderRow()
+    const row = screen.getByTestId('trash-item')
+    expect(row).toHaveClass('list-row', 'rounded-sm')
+    expect(row).not.toHaveClass('border')
+    expect(row).not.toHaveClass('bg-card')
+    expect(row).not.toHaveClass('rounded-lg')
+  })
+
   it('marks the cursor row with list-cursor and no inline ring', () => {
     const { rerender } = renderRow({ isFocused: true })
     const row = screen.getByTestId('trash-item')
