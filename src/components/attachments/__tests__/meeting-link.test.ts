@@ -62,3 +62,20 @@ describe('reloadMeetingLink', () => {
     expect(logger.warn).toHaveBeenCalledOnce()
   })
 })
+
+describe('reloadMeetingLink — the reason it logs', () => {
+  it('names itself and the missing link, with the error it got', async () => {
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({ get_block: () => Promise.reject(new Error('backend down')) }),
+    )
+
+    await reloadMeetingLink(meeting('LINK'))
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'reloadMeetingLink',
+      'could not find the meeting’s link',
+      undefined,
+      expect.anything(),
+    )
+  })
+})

@@ -889,3 +889,16 @@ describe('computeSelectionRoots', () => {
     expect(computeSelectionRoots(items, ['A', 'GHOST'])).toEqual(['A'])
   })
 })
+
+describe('countTasksAtOrAbove — a list whose first block is not a root', () => {
+  it('counts no tasks above a block whose parent is not in the list', () => {
+    const items = [
+      { id: 'C', depth: 1 },
+      { id: 'TC', depth: 2 },
+    ]
+    expect(Object.fromEntries(countTasksAtOrAbove(items, ({ id }) => id === 'TC'))).toEqual({
+      C: 0,
+      TC: 1,
+    })
+  })
+})

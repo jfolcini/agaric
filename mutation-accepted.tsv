@@ -393,3 +393,7 @@ frontend	src/lib/jex-import.ts	StringLiteral	37	1	const noteId = (props['note_id
 frontend	src/lib/jex-import.ts	ArrayDeclaration	41	1	const tags = (noteTagIds.get(raw.id) ?? []).flatMap((id) => tagTitles.get(id) ?? [])
 # #3766 vault-import: the null guard only narrows the type; every byPath key is a string, so byPath.get(null) is undefined too
 frontend	src/lib/vault-import.ts	ConditionalExpression	14	1	const file = path === null ? undefined : index.byPath.get(path)
+frontend	src/lib/inline-property-parse.ts	ConditionalExpression	5	1	if (fence !== null) continue
+frontend	src/lib/template-utils.ts	OptionalChaining	8	1	return m?.[1]?.trim().toLowerCase() === 'recording'
+frontend	src/lib/template-utils.ts	StringLiteral	45	1	if (isRecordingPlaceholder(child.content ?? '')) {
+frontend	src/lib/speech/read-aloud.ts	AssignmentOperator	1	1	readings += 1

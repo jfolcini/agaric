@@ -466,3 +466,17 @@ describe('the grip', () => {
     expect(fireEvent.mouseDown(chevron(container, A) as HTMLElement)).toBe(false)
   })
 })
+
+describe('the grip’s first line', () => {
+  it('takes the first line box of the block under the pointer, a heading’s differing', async () => {
+    const { container } = mount(TREE)
+    blockEl(container, A).style.setProperty('--block-first-line', '2.25rem')
+    blockEl(container, C).style.setProperty('--block-first-line', '1.5rem')
+
+    await point(textOf(container, A))
+    expect(frame(container).style.getPropertyValue('--block-first-line')).toBe('2.25rem')
+
+    await point(textOf(container, C))
+    expect(frame(container).style.getPropertyValue('--block-first-line')).toBe('1.5rem')
+  })
+})

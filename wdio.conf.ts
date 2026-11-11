@@ -941,15 +941,52 @@ function installShutdownGuard(): void {
   }
 }
 
-// `--shard i/n` runs the i-th contiguous slice of `specs`. In name order the
-// slow neighbours (`sync-*`, `reminder-*`) shared one slice, which made it the
-// lane's long pole; dealt round-robin, slice i is every n-th file instead. The
-// order only decides which shard runs a file: the slices still cover the list.
+/**
+ * Order `specs` so that wdio's `--shard i/n`, which runs the i-th contiguous
+ * slice and sizes the slices by count alone, gives every shard about the same
+ * time. Each slice keeps wdio's size; the longest spec goes first, each into
+ * the slice with the least time so far. A spec `seconds` does not know counts
+ * as the median of those it does.
+ */
+export function dealSpecs(
+  specs: readonly string[],
+  total: number,
+  seconds: Readonly<Record<string, number>>,
+): string[] {
+  if (total <= 1) return [...specs]
+  const known = specs.flatMap((spec) => seconds[spec] ?? []).toSorted((a, b) => a - b)
+  const fallback = known[Math.floor(known.length / 2)] ?? 1
+  const cost = (spec: string) => seconds[spec] ?? fallback
+  // ConfigParser.filterSpecsByShard in @wdio/config: round(N / n) per slice,
+  // the rest to the last.
+  const per = Math.max(Math.round(specs.length / total), 1)
+  const slices = Array.from({ length: total }, (_unused, i) => ({
+    size:
+      (i === total - 1 ? specs.length : Math.min((i + 1) * per, specs.length)) -
+      Math.min(i * per, specs.length),
+    specs: [] as string[],
+    time: 0,
+  }))
+  for (const spec of specs.toSorted((a, b) => cost(b) - cost(a) || a.localeCompare(b))) {
+    const open = slices.filter((slice) => slice.specs.length < slice.size)
+    const target = open.reduce((least, slice) => (slice.time < least.time ? slice : least))
+    target.specs.push(spec)
+    target.time += cost(spec)
+  }
+  return slices.flatMap((slice) => slice.specs)
+}
+
+// Each spec's mean seconds on CI; `node scripts/e2e-tauri-durations.mjs` rewrites the file.
+const specSeconds = JSON.parse(
+  readFileSync(path.join(rootDir, 'e2e-tauri/spec-durations.json'), 'utf8'),
+) as Record<string, number>
+
 const shardTotal = Number(/--shard[= ]\d+\/(\d+)/.exec(process.argv.join(' '))?.[1] ?? 1)
-const specFiles = globSync('e2e-tauri/**/*.e2e.ts', { cwd: rootDir }).toSorted()
-const dealtSpecs = Array.from({ length: shardTotal }, (_unused, shard) =>
-  specFiles.filter((_file, i) => i % shardTotal === shard),
-).flat()
+const dealtSpecs = dealSpecs(
+  globSync('e2e-tauri/**/*.e2e.ts', { cwd: rootDir }).toSorted(),
+  shardTotal,
+  specSeconds,
+)
 
 export const config: WebdriverIO.Config = {
   runner: 'local',

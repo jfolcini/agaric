@@ -98,3 +98,31 @@ describe('PageLists with tasks', () => {
     expect(rowsOf(editor.state.doc).map(([id]) => lists.styleOf(id))).toEqual(['bullet', 'none'])
   })
 })
+
+describe('PageLists — the tasks above a block', () => {
+  it('a parent made a task, or one no longer, tells the block under it alone, whose text moves past its checkbox', () => {
+    const tasks = new Set<string>()
+    const lists = new PageLists(
+      {},
+      [
+        { id: A, depth: 0 },
+        { id: B, depth: 1 },
+      ],
+      (id) => tasks.has(id),
+    )
+    const onA = vi.fn()
+    const onB = vi.fn()
+    lists.subscribe(A, onA)
+    lists.subscribe(B, onB)
+
+    tasks.add(A)
+    lists.tasksChanged()
+    expect([lists.tasksOf(A), lists.tasksOf(B)]).toEqual([0, 1])
+    expect([onA.mock.calls.length, onB.mock.calls.length]).toEqual([0, 1])
+
+    tasks.delete(A)
+    lists.tasksChanged()
+    expect([lists.tasksOf(A), lists.tasksOf(B)]).toEqual([0, 0])
+    expect([onA.mock.calls.length, onB.mock.calls.length]).toEqual([0, 2])
+  })
+})
