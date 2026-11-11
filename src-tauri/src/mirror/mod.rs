@@ -526,6 +526,38 @@ impl Mirror {
         self
     }
 
+    /// Why the mirror writes nothing to `root` although its marker is there:
+    /// it holds nothing else while pages were written to it, as a drive
+    /// unmounted under a marker kept elsewhere or a folder emptied by hand.
+    /// Writing would put every file back; reading would trash every page.
+    fn emptied(&self, root: &Path) -> Option<String> {
+        if self.pages.is_empty() {
+            return None;
+        }
+        let holds_something = std::fs::read_dir(root).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        });
+        (!holds_something).then(|| format!("the folder {} is empty", root.display()))
+    }
+
+    /// Start over in a folder the states were not written to: nothing it
+    /// lacks is a file that vanished from it.
+    fn forget_folder(&mut self) {
+        self.pages.clear();
+        self.layout.clear();
+        self.stats.clear();
+        self.settling.clear();
+        self.refused.clear();
+        self.folders.clear();
+        self.settling_new.clear();
+        self.refused_new.clear();
+        self.missing.clear();
+        self.refused_renames.clear();
+        self.full_due = true;
+    }
+
     /// What writes an outside edit into Agaric, unless reading back is off.
     fn ingest(&self) -> Option<Ingest> {
         self.ingest.clone().filter(|_| self.read_back)
@@ -564,8 +596,11 @@ impl Mirror {
             self.full_due = true;
             return Ok(());
         };
+        if self.store.bind(&folder)? {
+            self.forget_folder();
+        }
         let root = PathBuf::from(folder);
-        let paused = pause_reason(&root, &self.device_id);
+        let paused = pause_reason(&root, &self.device_id).or_else(|| self.emptied(&root));
         let resumed = paused.is_none();
         self.state.set_paused(paused);
         if !resumed {
@@ -1122,6 +1157,11 @@ impl Mirror {
                 if vanished && self.still_missing(page_id) {
                     return Ok(Wrote::Missing);
                 }
+                if vanished && let Some(ingest) = self.ingest() {
+                    if let Some(trashed) = self.trash(root, &ingest, page_id, path).await {
+                        return trashed;
+                    }
+                }
                 if let Some(why) = pause_reason(root, &self.device_id) {
                     return Ok(Wrote::Paused(why));
                 }
@@ -1151,6 +1191,37 @@ impl Mirror {
         }
         self.missing.remove(page_id);
         false
+    }
+
+    /// Move the page whose file at `path` was deleted outside Agaric to the
+    /// Trash ([`ingest::trash`]), once nothing says the folder only looks
+    /// empty: its marker is there, it holds other files, and so does the
+    /// page's space folder, which an `rm -r` of one space or an unmounted
+    /// link does not. `None` when one of these does not hold: the file is
+    /// then written again.
+    async fn trash(
+        &mut self,
+        root: &Path,
+        ingest: &Ingest,
+        page_id: &str,
+        path: &str,
+    ) -> Option<Result<Wrote, AppError>> {
+        if let Some(why) = pause_reason(root, &self.device_id).or_else(|| self.emptied(root)) {
+            return Some(Ok(Wrote::Paused(why)));
+        }
+        let space_folder = path.split_once('/').map(|(folder, _)| root.join(folder));
+        if !space_folder.is_some_and(|folder| folder.is_dir()) {
+            return None;
+        }
+        Some(
+            match ingest::trash(ingest, &self.device_id, page_id, path).await {
+                Ok(event) => {
+                    (ingest.notify)(event);
+                    Ok(Wrote::Done)
+                }
+                Err(why) => Ok(Wrote::Refused(why)),
+            },
+        )
     }
 
     /// Keep `shadow` as the text last written for the page at `path`.
