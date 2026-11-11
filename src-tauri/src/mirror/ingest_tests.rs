@@ -910,3 +910,29 @@ async fn a_vanished_file_nothing_claims_is_written_again_once_it_counts_as_gone(
 
     assert_eq!(fx.read(), written);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_that_two_vanished_pages_last_wrote_is_a_new_page() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["same"]).await;
+    let (beta, _) = fx.page("Beta", &["same"]).await;
+    fx.tick().await;
+    let written = fx.read();
+    assert_eq!(
+        std::fs::read_to_string(fx.root.join("TestSpace/Beta.md")).unwrap(),
+        written
+    );
+
+    std::fs::remove_file(fx.root.join(ALPHA)).unwrap();
+    rename_at(&fx, "TestSpace/Beta.md", "TestSpace/Gamma.md");
+    fx.settle_file().await;
+
+    let gamma = pages_titled(&fx, "Gamma").await;
+    assert_eq!(gamma.len(), 1);
+    assert!(
+        gamma[0] != alpha && gamma[0] != beta,
+        "neither page is taken for it"
+    );
+    assert_eq!(pages_titled(&fx, "Alpha").await, [alpha]);
+    assert_eq!(pages_titled(&fx, "Beta").await, [beta]);
+}

@@ -730,11 +730,14 @@ impl Mirror {
     }
 
     /// The page whose file vanished that `bytes`, a new file, is that file
-    /// renamed: the one holding most of the file's anchors (#5363 Decide 4).
+    /// renamed: the page that last wrote these bytes, or that holds most of
+    /// the file's anchors (#5363 Decide 4). None when several pages match.
     fn renamed_from(&self, bytes: &[u8]) -> Option<String> {
         let anchors = ingest::anchors(bytes);
-        self.missing.keys().find_map(|page_id| {
-            let state = self.pages.get(page_id)?;
+        let mut matched = self.missing.keys().filter(|page_id| {
+            let Some(state) = self.pages.get(*page_id) else {
+                return false;
+            };
             let held = anchors
                 .iter()
                 .filter(|id| {
@@ -744,8 +747,14 @@ impl Mirror {
                         .any(|shadow| shadow.line_ids.iter().flatten().any(|line| line == *id))
                 })
                 .count();
-            (2 * held > anchors.len()).then(|| page_id.clone())
-        })
+            2 * held > anchors.len()
+                || state
+                    .shadows
+                    .iter()
+                    .any(|shadow| shadow.text.as_bytes() == bytes)
+        });
+        let page_id = matched.next()?;
+        matched.next().is_none().then(|| page_id.clone())
     }
 
     /// Give `page_id` the place of its file renamed to `path` outside Agaric,
