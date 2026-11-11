@@ -26,7 +26,10 @@ use crate::commands::pages::{
     PageFile, PageSourceReport, SourceSaveFlags, anchor_free_kept, apply_page_source_inner,
     get_page_buffer_inner, get_page_file_inner, pair_unanchored_lines,
 };
-use crate::commands::{WithOps, capture_op_refs, create_page_in_space_inner, delete_block_inner};
+use crate::commands::{
+    WithOps, capture_op_refs, create_page_in_space_inner, delete_block_inner, edit_block_inner,
+    move_blocks_to_space_inner, undo_ops_inner,
+};
 use crate::materializer::Materializer;
 use agaric_core::ulid::BlockId;
 
@@ -262,6 +265,79 @@ pub async fn create(
         }
     };
     Ok((page_id, Ingested { shadow, event }))
+}
+
+/// The ids the anchors in `bytes`, a file, give its lines; none when it
+/// cannot be read.
+pub fn anchors(bytes: &[u8]) -> Vec<String> {
+    file_text(bytes).map_or_else(
+        |_| Vec::new(),
+        |text| anchor_free_kept(&text).1.into_iter().flatten().collect(),
+    )
+}
+
+/// Give `page_id`, whose file was renamed to `path` outside Agaric, the
+/// place that path names (#5363 slice 3): moved to `space_id` with no
+/// property loss acknowledged, then titled `title`, each only when it
+/// differs. Refused, with the page as it was, when either is: a loss to
+/// acknowledge or a title the space holds. The event carries both commands'
+/// ops, so one undo puts the page back.
+pub async fn rename(
+    read_pool: &SqlitePool,
+    ingest: &Ingest,
+    device_id: &str,
+    page_id: &str,
+    space_id: &str,
+    title: &str,
+    path: &str,
+) -> Result<MirrorIngested, NotIngested> {
+    let refused = |e: AppError| NotIngested::Refused(e.to_string());
+    let page = BlockId::from_trusted(page_id);
+    let now = sqlx::query!("SELECT content, space_id FROM blocks WHERE id = ?", page_id)
+        .fetch_one(read_pool)
+        .await
+        .map_err(|e| refused(e.into()))?;
+    let mut op_refs = Vec::new();
+    if now.space_id.as_deref() != Some(space_id) {
+        let moved = capture_op_refs(Box::pin(move_blocks_to_space_inner(
+            &ingest.pool,
+            device_id,
+            &ingest.materializer,
+            vec![page.clone()],
+            space_id.to_owned(),
+            &[],
+        )))
+        .await
+        .map_err(refused)?;
+        op_refs = moved.op_refs;
+    }
+    if now.content.as_deref() != Some(title) {
+        let renamed = capture_op_refs(Box::pin(edit_block_inner(
+            &ingest.pool,
+            device_id,
+            &ingest.materializer,
+            page,
+            title.to_owned(),
+        )))
+        .await;
+        match renamed {
+            Ok(renamed) => op_refs.extend(renamed.op_refs),
+            Err(e) => {
+                if let Err(back) =
+                    undo_ops_inner(&ingest.pool, device_id, &ingest.materializer, op_refs).await
+                {
+                    tracing::warn!(page_id, error = %back, "cannot move back a page whose rename was refused");
+                }
+                return Err(refused(e));
+            }
+        }
+    }
+    Ok(MirrorIngested {
+        page_id: page_id.to_owned(),
+        path: path.to_owned(),
+        op_refs,
+        report: PageSourceReport::default(),
+    })
 }
 
 /// The file `text` (`edited` its anchor-free form, `kept` the line of `text`

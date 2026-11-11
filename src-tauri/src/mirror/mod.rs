@@ -45,6 +45,10 @@ const TICK: Duration = Duration::from_secs(2);
 /// How often a full pass runs when nothing else asks for one.
 const BACKSTOP: Duration = Duration::from_secs(3600);
 
+/// The ticks a page's file may be missing before it counts as gone: a file
+/// renamed outside Agaric is found at its new path within them.
+const MISSING_TICKS: u8 = 2;
+
 /// A page's file, by its path below the mirror's folder, `/`-separated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 pub struct MirrorFile {
@@ -407,6 +411,8 @@ pub struct Mirror {
     /// As `settling` and `refused`, for new files no page owns, by path.
     settling_new: HashMap<String, Vec<u8>>,
     refused_new: HashMap<String, (Vec<u8>, String)>,
+    /// The pages whose file vanished, by the ticks it has been missing.
+    missing: HashMap<String, u8>,
 }
 
 /// A folder's listing: its modification time, its `.md` files as paths below
@@ -492,6 +498,7 @@ impl Mirror {
             folders: HashMap::new(),
             settling_new: HashMap::new(),
             refused_new: HashMap::new(),
+            missing: HashMap::new(),
         })
     }
 
@@ -552,6 +559,7 @@ impl Mirror {
         let (mut dirty, full_requested) = self.state.take_synced();
         self.full_due |= full_requested;
         dirty.extend(self.state.retried());
+        dirty.extend(self.missing.keys().cloned());
         dirty.extend(self.changed_files(&root));
         let full = self.full_due || self.last_full.is_none_or(|at| at.elapsed() >= BACKSTOP);
         if full {
@@ -682,6 +690,11 @@ impl Mirror {
             self.state.set_paused(Some(why));
             return Ok(false);
         }
+        if let Some(page_id) = self.renamed_from(&bytes) {
+            self.read_renamed_file(ingest, &page_id, space_id, title, path, bytes)
+                .await;
+            return Ok(true);
+        }
         let created = ingest::create(
             &self.pool,
             ingest,
@@ -714,6 +727,70 @@ impl Mirror {
             self.record(&page_id, path, shadow)?;
         }
         Ok(true)
+    }
+
+    /// The page whose file vanished that `bytes`, a new file, is that file
+    /// renamed: the one holding most of the file's anchors (#5363 Decide 4).
+    fn renamed_from(&self, bytes: &[u8]) -> Option<String> {
+        let anchors = ingest::anchors(bytes);
+        self.missing.keys().find_map(|page_id| {
+            let state = self.pages.get(page_id)?;
+            let held = anchors
+                .iter()
+                .filter(|id| {
+                    state
+                        .shadows
+                        .iter()
+                        .any(|shadow| shadow.line_ids.iter().flatten().any(|line| line == *id))
+                })
+                .count();
+            (2 * held > anchors.len()).then(|| page_id.clone())
+        })
+    }
+
+    /// Give `page_id` the place of its file renamed to `path` outside Agaric,
+    /// a page of `space_id` titled `title` ([`ingest::rename`]), and keep the
+    /// file as its own: an edit made with the rename is read on a later tick.
+    /// One refused stays listed as failed until it changes.
+    async fn read_renamed_file(
+        &mut self,
+        ingest: &Ingest,
+        page_id: &str,
+        space_id: &str,
+        title: &str,
+        path: &str,
+        bytes: Vec<u8>,
+    ) {
+        self.settling_new.remove(path);
+        let renamed = ingest::rename(
+            &self.pool,
+            ingest,
+            &self.device_id,
+            page_id,
+            space_id,
+            title,
+            path,
+        )
+        .await;
+        let event = match renamed {
+            Ok(event) => event,
+            Err(NotIngested::Refused(why)) => {
+                self.state.file_failed(path, &why);
+                self.refused_new.insert(path.to_owned(), (bytes, why));
+                return;
+            }
+            Err(NotIngested::NoBase) => return,
+        };
+        (ingest.notify)(event);
+        self.missing.remove(page_id);
+        let Some(mut state) = self.pages.get(page_id).cloned() else {
+            return;
+        };
+        path.clone_into(&mut state.path);
+        if let Err(e) = self.store.save(page_id, &state) {
+            tracing::warn!(page_id, error = %e, "cannot save a mirror state file");
+        }
+        self.pages.insert(page_id.to_owned(), state);
     }
 
     /// The pages this device's ops since the watermark touched, the source
@@ -928,6 +1005,7 @@ impl Mirror {
 
     fn forget(&mut self, page_id: &str) {
         self.pages.remove(page_id);
+        self.missing.remove(page_id);
         self.state.page_ok(page_id);
         if let Err(e) = self.store.delete(page_id) {
             tracing::warn!(page_id, error = %e, "cannot delete a mirror state file");
@@ -937,8 +1015,13 @@ impl Mirror {
     /// Write the page and list it by the outcome; `false` when the mirror
     /// paused, which ends the pass.
     async fn write_page(&mut self, root: &Path, page_id: &str, path: &str) -> bool {
-        match self.try_write_page(root, page_id, path).await {
+        let wrote = self.try_write_page(root, page_id, path).await;
+        if !matches!(wrote, Ok(Wrote::Missing)) {
+            self.missing.remove(page_id);
+        }
+        match wrote {
             Ok(Wrote::Done) => self.state.page_ok(page_id),
+            Ok(Wrote::Missing) => {}
             Ok(Wrote::Diverged) => self.state.page_diverged(page_id, path),
             Ok(Wrote::Paused(why)) => {
                 self.state.set_paused(Some(why));
@@ -989,7 +1072,9 @@ impl Mirror {
             line_ids,
             buffer: Some(file.buffer.clone()),
         };
-        match store::read_optional(&target)? {
+        let found = store::read_optional(&target)?;
+        let vanished = found.is_none() && newest.is_some();
+        match found {
             Some(bytes) if bytes == shadow.text.as_bytes() => {}
             Some(bytes) if bytes == file.text.as_bytes() => {
                 shadow.text.clone_from(&file.text);
@@ -999,6 +1084,9 @@ impl Mirror {
                 return self.read_edit(root, page_id, path, bytes, &file).await;
             }
             _ => {
+                if vanished && self.still_missing(page_id) {
+                    return Ok(Wrote::Missing);
+                }
                 if let Some(why) = pause_reason(root, &self.device_id) {
                     return Ok(Wrote::Paused(why));
                 }
@@ -1007,6 +1095,18 @@ impl Mirror {
             }
         }
         self.record(page_id, path, shadow)
+    }
+
+    /// Count one more tick the page's file is missing; `false` once it has
+    /// been missing for `MISSING_TICKS`, and counts as gone.
+    fn still_missing(&mut self, page_id: &str) -> bool {
+        let ticks = self.missing.entry(page_id.to_owned()).or_default();
+        *ticks += 1;
+        if *ticks <= MISSING_TICKS {
+            return true;
+        }
+        self.missing.remove(page_id);
+        false
     }
 
     /// Keep `shadow` as the text last written for the page at `path`.
@@ -1106,6 +1206,8 @@ impl Mirror {
 /// How [`Mirror::try_write_page`] left a page.
 enum Wrote {
     Done,
+    /// The file vanished, and may yet be found renamed; nothing was written.
+    Missing,
     Diverged,
     /// The folder lost its marker; nothing was written.
     Paused(String),

@@ -741,3 +741,172 @@ async fn a_new_file_that_cannot_be_read_stops_no_write() {
 
     assert!(fx.read().contains("uno"), "{}", fx.read());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_renamed_and_edited_is_matched_by_its_anchors() {
+    let mut fx = Fx::new().await;
+    let (page, ids) = fx.page("Alpha", &["one", "two"]).await;
+    refer_to(&fx, &ids[0]).await;
+    fx.tick().await;
+    fx.tick().await;
+    let written = fx.read();
+    assert!(written.contains(&format!("^{}", ids[0])), "{written}");
+
+    rename_at(&fx, ALPHA, "TestSpace/Gamma.md");
+    write_at(&fx, "TestSpace/Gamma.md", written.replace("two", "dos"));
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert_eq!(
+        pages_titled(&fx, "Gamma").await,
+        [page.clone()],
+        "no second page"
+    );
+    assert_eq!(
+        fx.blocks(&page).await,
+        [
+            (ids[0].clone(), "one".to_owned()),
+            (ids[1].clone(), "dos".to_owned())
+        ],
+        "the edit is read into the renamed page"
+    );
+    assert!(!fx.root.join(ALPHA).exists());
+}
+
+/// A second space, `TestSpaceB`, mirrored to its folder of that name.
+async fn space_b(fx: &Fx) {
+    use crate::commands::tests::common::{TEST_SPACE_B_ID, ensure_test_space_b};
+    ensure_test_space_b(&fx.pool).await;
+    mark_block_as_space(&fx.pool, TEST_SPACE_B_ID).await;
+}
+
+async fn space_of(fx: &Fx, page: &str) -> String {
+    sqlx::query_scalar::<_, String>("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(page)
+        .fetch_one(&fx.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_moved_into_another_space_folder_moves_its_page_one_undo_moves_it_back() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    space_b(&fx).await;
+    let (page, ids) = fx.page("Alpha", &["one"]).await;
+    refer_to(&fx, &ids[0]).await;
+    fx.tick().await;
+    fx.tick().await;
+
+    rename_at(&fx, ALPHA, "TestSpaceB/Alpha.md");
+    fx.settle_file().await;
+    fx.tick().await;
+
+    assert_eq!(space_of(&fx, &page).await, TEST_SPACE_B_ID);
+    assert_eq!(
+        pages_titled(&fx, "Alpha").await,
+        [page.clone()],
+        "no second page"
+    );
+    assert!(
+        !fx.root.join(ALPHA).exists(),
+        "the old file is not written again"
+    );
+    assert!(
+        fx.status().await.failed.is_empty(),
+        "{:?}",
+        fx.status().await.failed
+    );
+
+    let event = fx.events().pop().unwrap();
+    assert_eq!(event.page_id, page);
+    undo_ops_inner(&fx.pool, DEV, &fx.mat, event.op_refs)
+        .await
+        .unwrap();
+    settle(&fx.mat).await;
+    assert_eq!(space_of(&fx, &page).await, TEST_SPACE_ID);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_move_into_a_space_holding_the_title_is_refused_and_the_file_left_alone() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    space_b(&fx).await;
+    let (page, ids) = fx.page("Alpha", &["one"]).await;
+    refer_to(&fx, &ids[0]).await;
+    create_page_in_space_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        None,
+        "ALPHA".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    fx.tick().await;
+    fx.tick().await;
+    let moved = std::fs::read(fx.root.join(ALPHA)).unwrap();
+
+    rename_at(&fx, ALPHA, "TestSpaceB/Alpha.md");
+    fx.settle_file().await;
+
+    assert_eq!(space_of(&fx, &page).await, TEST_SPACE_ID);
+    let failed = fx.status().await.failed;
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].path, "TestSpaceB/Alpha.md");
+    assert_eq!(
+        std::fs::read(fx.root.join("TestSpaceB/Alpha.md")).unwrap(),
+        moved
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_move_whose_new_title_the_space_holds_leaves_the_page_where_it_was() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    space_b(&fx).await;
+    let (page, ids) = fx.page("Alpha", &["one"]).await;
+    refer_to(&fx, &ids[0]).await;
+    create_page_in_space_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        None,
+        "GAMMA".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    fx.tick().await;
+    fx.tick().await;
+
+    rename_at(&fx, ALPHA, "TestSpaceB/Gamma.md");
+    fx.settle_file().await;
+
+    assert_eq!(space_of(&fx, &page).await, TEST_SPACE_ID, "moved back");
+    assert_eq!(pages_titled(&fx, "Alpha").await, [page]);
+    let failed = fx.status().await.failed;
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].path, "TestSpaceB/Gamma.md");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_vanished_file_nothing_claims_is_written_again_once_it_counts_as_gone() {
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    let written = fx.read();
+
+    std::fs::remove_file(fx.root.join(ALPHA)).unwrap();
+    fx.tick().await;
+    fx.tick().await;
+    assert!(
+        !fx.root.join(ALPHA).exists(),
+        "held while it may yet be found renamed"
+    );
+    fx.tick().await;
+
+    assert_eq!(fx.read(), written);
+}
