@@ -135,6 +135,9 @@ pub(super) struct LinkMatches {
     /// The page a render's snapshot was read for, whose blocks an anchor-only
     /// `[[#^id]]` names.
     pub(super) own_page: Option<String>,
+    /// The headings a render's block refs name, each by id with the text a
+    /// link names it by ([`unique_headings`], #6277 F4).
+    pub(super) headings: HashMap<String, String>,
 }
 
 impl LinkMatches {
@@ -170,19 +173,38 @@ impl LinkMatches {
             .map(String::as_str)
     }
 
-    /// The page and block a link's `name` names by its `^id` anchor, as a
-    /// buffer save reads it: the block of that id on the page the base names,
-    /// or, for an anchor-only `#^id`, on [`Self::own_page`]. A page titled
-    /// with the whole name is a page link instead ([`Self::find`]).
+    /// The page and block a link's `name` names by its anchor, as a buffer
+    /// save reads it: the block of a `^id` on the page the base names, or, for
+    /// an anchor-only `#^id`, on [`Self::own_page`]; or the heading of
+    /// [`Self::headings`] whose text the anchor is on the page the base names,
+    /// compared as [`anchor_block`] compares it (#6277 F4). A page titled with
+    /// the whole name is a page link instead ([`Self::find`]).
     pub(super) fn anchored_block(&self, name: &str) -> Option<(&str, &str)> {
         let (base, anchor) = split_wikilink_anchor(name);
-        let id = obsidian_block_anchor_id(anchor?)?;
+        let anchor = anchor?;
         let page = match base {
             "" => self.own_page.as_deref()?,
             base => self.find(base)?,
         };
+        let id = match obsidian_block_anchor_id(anchor) {
+            Some(id) => id,
+            None if !base.is_empty() => self.heading_on(page, anchor)?,
+            None => return None,
+        };
         let (block, on) = self.blocks.get_key_value(id)?;
         (on == page).then_some((page, block.as_str()))
+    }
+
+    /// The block of [`Self::headings`] on `page` whose text is `anchor`.
+    fn heading_on(&self, page: &str, anchor: &str) -> Option<&str> {
+        let norm = normalize_heading_anchor(anchor);
+        self.headings
+            .iter()
+            .find(|(id, text)| {
+                self.blocks.get(*id).is_some_and(|on| on == page)
+                    && normalize_heading_anchor(text) == norm
+            })
+            .map(|(id, _)| id.as_str())
     }
 }
 

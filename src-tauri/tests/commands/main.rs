@@ -24,6 +24,7 @@ mod compaction_cmd_tests;
 mod edge_case_tests;
 mod engine_parity_tests;
 mod glob_filter_tests;
+mod heading_link_tests;
 mod history_cmd_tests;
 mod import_stored_construct_tests;
 mod list_pages_with_metadata_tests;
