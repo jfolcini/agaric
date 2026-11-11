@@ -20,6 +20,9 @@ use agaric_core::ulid::BlockId;
 
 const ALPHA: &str = "TestSpace/Alpha.md";
 
+/// What a test runs when an ingest's event is sent.
+type Hook = Arc<Mutex<Option<Box<dyn FnMut() + Send>>>>;
+
 struct Fx {
     pool: SqlitePool,
     mat: Materializer,
@@ -28,7 +31,7 @@ struct Fx {
     root: PathBuf,
     events: Arc<Mutex<Vec<MirrorIngested>>>,
     /// Run when an ingest's event is sent, before the file is written back.
-    on_event: Arc<Mutex<Option<Box<dyn FnMut() + Send>>>>,
+    on_event: Hook,
     _dirs: [TempDir; 3],
 }
 
@@ -50,7 +53,7 @@ impl Fx {
             .unwrap();
         let events = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&events);
-        let on_event: Arc<Mutex<Option<Box<dyn FnMut() + Send>>>> = Arc::default();
+        let on_event: Hook = Arc::default();
         let hook = Arc::clone(&on_event);
         let ingest = Ingest {
             pool: pool.clone(),
@@ -254,7 +257,11 @@ async fn a_new_line_is_a_new_block_and_saving_the_file_again_adds_no_twin() {
     fx.write(&added);
     fx.settle_file().await;
     assert_eq!(fx.contents(&page).await, ["one", "new"]);
-    assert_eq!(fx.read(), added, "a new block keeps its own line, with no anchor");
+    assert_eq!(
+        fx.read(),
+        added,
+        "a new block keeps its own line, with no anchor"
+    );
     let new = fx.blocks(&page).await[1].0.clone();
 
     fx.write(added.replace("one", "ONE"));

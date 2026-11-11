@@ -51,6 +51,28 @@ pub struct Ingest {
     pub notify: Arc<dyn Fn(MirrorIngested) + Send + Sync>,
 }
 
+impl Ingest {
+    /// The app's: each ingest is sent to the webview as
+    /// [`EVENT_MIRROR_INGESTED`], and its page as changed.
+    pub fn for_app<R: tauri::Runtime>(
+        handle: tauri::AppHandle<R>,
+        pool: SqlitePool,
+        materializer: Materializer,
+    ) -> Self {
+        use crate::mcp::view_notify::{TauriViewChangeEmitter, ViewChangeEmitter};
+        let notify = move |event: MirrorIngested| {
+            let page_id = event.page_id.clone();
+            crate::main_thread::emit(&handle, EVENT_MIRROR_INGESTED, event);
+            TauriViewChangeEmitter::new(handle.clone()).emit_blocks_changed(vec![page_id]);
+        };
+        Self {
+            pool,
+            materializer,
+            notify: Arc::new(notify),
+        }
+    }
+}
+
 /// Why a file was not ingested.
 #[derive(Debug)]
 pub enum NotIngested {
