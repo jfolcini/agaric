@@ -1353,26 +1353,22 @@ export const blocksHandlers = {
     return { blocks: out, op_refs: opRefs }
   },
 
-  // #5140 Phase 3b — paste clipboard text (an HTML paste's too, written as
-  // Document text, #6277 E5) right after the anchor: the k-th top-level block at the anchor's slot + 1 + k, deeper ones
-  // under the block the outline nests them in. Returns the created rows in
-  // document order. With a `splice` (#5160 D4) the anchor becomes the first
-  // block (`before` + its content, one `edit_block`), the first block's
-  // children follow the anchor's own, `after` ends the last block or follows a
-  // code block as its own (`joinSplice`), and the anchor is returned first.
-  // `[[Title]]` / `#tag` names resolve in the anchor's space through
-  // `resolveInboundNames` (#5160 N4), the created pages and tags reported
-  // ahead of the content rows as the backend does; with no space every name
-  // stays text. Text reads as the backend reads it (`plannedFromText`, #6190):
-  // a list marker is the row's `listStyle` (`-` and `*` a bullet, `N.`
-  // numbered, `+` none), and a checkbox after it its `todo_state` (#5160 D6);
-  // after text the first
-  // block's marker and checkbox are written back as text, as the backend's
-  // `pasted_as_text` does. The backend also reads property lines (keeping a
-  // value a definition refuses as text, named in the reply's `warnings`),
-  // stamps a task, and refuses an over-deep or oversized paste; the mock
-  // models none of that, so its `warnings` holds only the text reader's
-  // (`readPastedText`), and tests must not rely on it for the rest.
+  // #5140 Phase 3b — paste clipboard text (an HTML paste's too, written as Document text, #6277 E5)
+  // right after the anchor: the k-th top-level block at the anchor's slot + 1 + k, deeper ones
+  // under the block the outline nests them in. Returns the created rows in document order. With a
+  // `splice` (#5160 D4) the anchor becomes the first block (`before` + its content, one
+  // `edit_block`), the first block's children follow the anchor's own, `after` ends the last block
+  // or follows a code block as its own (`joinSplice`), and the anchor is returned first.
+  // `[[Title]]` / `#tag` names resolve in the anchor's space through `resolveInboundNames` (#5160
+  // N4), the created pages and tags reported ahead of the content rows as the backend does; with no
+  // space every name stays text. Text reads as the backend reads it (`plannedFromText`, #6190): a
+  // list marker is the row's `listStyle` (`-` and `*` a bullet, `N.` numbered, `+` none), and a
+  // checkbox after it its `todo_state` (#5160 D6); after text the first block's marker and checkbox
+  // are written back as text, as the backend's `pasted_as_text` does. The backend also reads
+  // property lines (keeping a value a definition refuses as text, named in the reply's `warnings`),
+  // stamps a task, and refuses an over-deep or oversized paste; the mock models none of that, so
+  // its `warnings` holds only the text reader's (`readPastedText`), and tests must not rely on it
+  // for the rest.
   paste_blocks: (args) => {
     const a = args as Record<string, unknown>
     const anchorId = a['anchorBlockId'] as string

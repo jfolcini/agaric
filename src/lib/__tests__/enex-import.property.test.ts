@@ -33,7 +33,7 @@ describe('parseEnex (property)', () => {
     fc.assert(
       fc.property(fc.string(), (xml) => {
         try {
-          const result = parseEnex(xml)
+          const result = parseEnex(xml, 'Notes.enex')
           expect(Array.isArray(result)).toBe(true)
         } catch (err) {
           // The only sanctioned failure mode is the explicit malformed-XML throw.
@@ -56,7 +56,7 @@ describe('parseEnex (property)', () => {
 
     fc.assert(
       fc.property(fc.array(arbNote, { maxLength: 6 }), (notes) => {
-        const parsed = parseEnex(buildEnex(notes))
+        const parsed = parseEnex(buildEnex(notes), 'Notes.enex')
         expect(parsed).toHaveLength(notes.length)
         parsed.forEach((p, i) => {
           expect(p.title).toBe(notes[i]?.title)

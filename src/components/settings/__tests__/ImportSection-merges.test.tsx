@@ -86,7 +86,7 @@ describe('ImportSection merge question', () => {
 
     await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalledOnce())
     expect(
-      await screen.findByText(t('data.importResultUpdated', { count: 1 }), { exact: false }),
+      await screen.findByText(t('data.importResultUpToDate', { count: 1 }), { exact: false }),
     ).toBeInTheDocument()
   })
 
@@ -137,9 +137,77 @@ describe('ImportSection merge question', () => {
     await user.click(within(dialog).getByRole('button', { name: t('data.importMergeConfirm') }))
 
     const result = await screen.findByTestId('import-result')
-    expect(result).toHaveTextContent(t('data.importResultUpdated', { count: 1 }))
+    expect(result).toHaveTextContent(t('data.importResultUpToDate', { count: 1 }))
     expect(screen.queryByTestId('import-result-error')).not.toBeInTheDocument()
     expect(screen.getByTestId('import-failures-heading')).toBeInTheDocument()
+  })
+
+  it('reports a re-import that changed nothing as already up to date', async () => {
+    const user = userEvent.setup()
+    listImportMerges.mockReturnValue([{ page_id: 'PLAN', title: 'Plan' }])
+    mockImportMarkdown.mockResolvedValueOnce({
+      page_title: 'Plan',
+      page_id: 'PLAN',
+      blocks_created: 0,
+      properties_set: 0,
+      collapsed: [],
+      warnings: [],
+      anchors: [],
+      deferred: [],
+      merged: [],
+    })
+    render(<ImportSection />)
+
+    await pick('Plan.md')
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: t('data.importMergeConfirm') }))
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledOnce())
+    expect(vi.mocked(toast.success).mock.calls[0]?.[0]).toBe(t('data.importUpToDate'))
+    expect(toast.error).not.toHaveBeenCalled()
+    const result = await screen.findByTestId('import-result')
+    expect(result).toHaveTextContent(t('data.importResultUpToDate', { count: 1 }))
+    expect(result).not.toHaveTextContent(t('data.importResultUpdated', { count: 1 }))
+  })
+
+  it('reports the pages a run updated apart from those already up to date', async () => {
+    const user = userEvent.setup()
+    listImportMerges.mockReturnValue([
+      { page_id: 'PLAN', title: 'Plan' },
+      { page_id: 'LOG', title: 'Log' },
+    ])
+    mockImportMarkdown
+      .mockResolvedValueOnce({
+        page_title: 'Plan',
+        page_id: 'PLAN',
+        blocks_created: 1,
+        properties_set: 0,
+        collapsed: [],
+        warnings: [],
+        anchors: [],
+        deferred: [],
+        merged: [{ device_id: 'D', seq: 1 }],
+      })
+      .mockResolvedValueOnce({
+        page_title: 'Log',
+        page_id: 'LOG',
+        blocks_created: 0,
+        properties_set: 0,
+        collapsed: [],
+        warnings: [],
+        anchors: [],
+        deferred: [],
+        merged: [],
+      })
+    render(<ImportSection />)
+
+    await pick('Plan.md', 'Log.md')
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: t('data.importMergeConfirm') }))
+
+    const result = await screen.findByTestId('import-result')
+    expect(result).toHaveTextContent(t('data.importResultUpdated', { count: 1 }))
+    expect(result).toHaveTextContent(t('data.importResultUpToDate', { count: 1 }))
   })
 
   it('imports nothing when the user declines', async () => {

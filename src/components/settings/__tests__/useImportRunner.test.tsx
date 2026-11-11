@@ -132,6 +132,7 @@ describe('useImportRunner', () => {
     expect(outcome).toEqual({
       totalBlocks: 3,
       pagesUpdated: 0,
+      upToDate: false,
       succeededFiles: 1,
       failedFiles: [{ name: 'bad.md', reason: 'bad' }],
       cancelled: false,

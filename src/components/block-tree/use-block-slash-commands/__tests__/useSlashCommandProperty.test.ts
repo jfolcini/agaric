@@ -743,15 +743,4 @@ describe('useSlashCommandProperty — /meeting (#5364)', () => {
     )
     expect(openMeetingDialog).toHaveBeenCalledWith('BLOCK_1')
   })
-
-  it('warns in a tree that offers no meeting dialog', async () => {
-    const { result } = renderHook(() => useSlashCommandProperty())
-    const { ctx } = makeSyntheticCtx()
-    await result.current.exact['meeting']?.(ctx, { id: 'meeting', label: 'MEETING' })
-    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
-      'useSlashCommandProperty',
-      '/meeting has no dialog to open',
-      { blockId: 'BLOCK_1' },
-    )
-  })
 })

@@ -207,6 +207,8 @@ export function usePageSlashCommands({
       openTablePicker: () => setTableOpen(true),
       openPropertyDrawer,
       openVoiceNoteRecorder: setVoiceBlockId,
+      // Not offered in page mode (`NOT_IN_PAGE_MODE`).
+      openMeetingDialog: () => {},
       blockText: blockText(editor, id),
       attachFiles: (files) => attach(id, files),
       clearListStyle: () => clearListStyle(id),

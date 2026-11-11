@@ -80,7 +80,7 @@ describe('parseEnex', () => {
       </note>`,
     )
 
-    const notes = parseEnex(xml)
+    const notes = parseEnex(xml, 'Notes.enex')
     expect(notes).toHaveLength(1)
     const note = at(notes)
     expect(note.title).toBe('My Note')
@@ -103,7 +103,10 @@ describe('parseEnex', () => {
       </note>`,
     )
 
-    expect(parseEnex(xml).map((n) => n.sourceUrl)).toEqual(['https://example.com/a?b=1&c=2', null])
+    expect(parseEnex(xml, 'Notes.enex').map((n) => n.sourceUrl)).toEqual([
+      'https://example.com/a?b=1&c=2',
+      null,
+    ])
   })
 
   it('converts common ENML (headings, lists, bold, links, pre) to markdown', () => {
@@ -114,7 +117,7 @@ describe('parseEnex', () => {
       '<pre><code>const x = 1;</code></pre>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.markdown).toContain('# Heading')
     expect(note.markdown).toContain('**bold**')
     expect(note.markdown).toContain('[link](https://example.com)')
@@ -132,7 +135,7 @@ describe('parseEnex', () => {
       `<note><title>Third</title><content>${content('<p>c</p>')}</content></note>`,
     )
 
-    const notes = parseEnex(xml)
+    const notes = parseEnex(xml, 'Notes.enex')
     expect(notes.map((n) => n.title)).toEqual(['First', 'Second', 'Third'])
   })
 
@@ -142,7 +145,7 @@ describe('parseEnex', () => {
       `<note><content>${content('<p>b</p>')}</content></note>`,
     )
 
-    const notes = parseEnex(xml)
+    const notes = parseEnex(xml, 'Notes.enex')
     // The literal, not the constant: the placeholder becomes the imported page
     // NAME, so an empty one would leave the note unnamed.
     expect(at(notes, 0).title).toBe('Untitled')
@@ -155,7 +158,7 @@ describe('parseEnex', () => {
         <created>not-a-date</created></note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.createdMs).toBeNull()
     expect(note.updatedMs).toBeNull()
   })
@@ -173,7 +176,7 @@ describe('parseEnex', () => {
       ),
     )
 
-    expect(parseEnex(xml).map((n) => n.createdMs)).toEqual([null, null, null])
+    expect(parseEnex(xml, 'Notes.enex').map((n) => n.createdMs)).toEqual([null, null, null])
   })
 
   it('imports a pretty-printed note the same as a compact one', () => {
@@ -196,18 +199,20 @@ describe('parseEnex', () => {
       </note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.title).toBe('My Note')
     expect(note.tags).toEqual(['work'])
     expect(note.createdMs).toBe(Date.UTC(2021, 0, 2, 3, 4, 5))
   })
 
   it('throws a clear error on malformed XML', () => {
-    expect(() => parseEnex('<en-export><note><title>oops</note></en-export>')).toThrow(/ENEX/i)
+    expect(() =>
+      parseEnex('<en-export><note><title>oops</note></en-export>', 'Notes.enex'),
+    ).toThrow(/ENEX/i)
   })
 
   it('handles an empty export with no notes', () => {
-    expect(parseEnex(enex())).toEqual([])
+    expect(parseEnex(enex(), 'Notes.enex')).toEqual([])
   })
 })
 
@@ -237,7 +242,7 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
         `${resource(HELLO_B64, 'image/png', 'pic.png')}</note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     // The en-media reference became a standard markdown image whose path is the
     // resource file-name; the raw en-media markup and hash are gone.
     expect(note.markdown).toContain('![](pic.png)')
@@ -264,7 +269,7 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
         `${resource(HELLO_B64, 'image/png', 'pic.png')}</note>`,
     )
 
-    expect(at(parseEnex(xml)).markdown).toBe('Step 2 of 3![](pic.png)4 done')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('Step 2 of 3![](pic.png)4 done')
   })
 
   it('decodes a resource whose base64 is wrapped across lines', () => {
@@ -279,7 +284,7 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
         `${resource(wrapped, 'image/png', 'wrapped.png')}</note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments.map((a) => a.path)).toEqual(['wrapped.png'])
     expect(Array.from(note.attachments[0]?.bytes ?? [])).toEqual(HELLO_BYTES)
   })
@@ -298,7 +303,7 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
         `${resource(b64, 'application/pdf', 'block.pdf')}</note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments.map((a) => a.path)).toEqual(['block.pdf'])
     expect(note.attachments[0]?.bytes).toHaveLength(56)
   })
@@ -309,7 +314,7 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
     const enml = '<div>Before <en-media type="image/png"/> after</div>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments).toHaveLength(0)
     expect(note.markdown).toBe('Before after')
   })
@@ -325,7 +330,7 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
         `${resource(HELLO_B64, 'image/png')}</note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     const expectedPath = `${HELLO_MD5}.png`
     expect(note.attachments).toHaveLength(1)
     expect(note.attachments[0]?.path).toBe(expectedPath)
@@ -337,7 +342,7 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
     const enml = `<div>Before <en-media hash="deadbeefdeadbeefdeadbeefdeadbeef" type="image/png"/> after</div>`
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     // No attachment, no leaked markup, and the surrounding text closes over
     // the dropped reference.
     expect(note.attachments).toHaveLength(0)
@@ -352,7 +357,7 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
       '<code>x = 1</code></pre>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    expect(at(parseEnex(xml)).markdown).toBe('```\nx = 1\n```')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('```\nx = 1\n```')
   })
 
   it('does not orphan-crash on a resource that no en-media references', () => {
@@ -364,7 +369,7 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
         `${resource(HELLO_B64, 'image/png', 'unused.png')}</note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments).toHaveLength(0)
     expect(note.markdown).toContain('just text')
   })
@@ -378,7 +383,7 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
         `${resource('@@@not-base64@@@', 'image/png', 'bad.png')}</note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments).toHaveLength(0)
     expect(note.markdown).toContain('tail')
   })
@@ -455,7 +460,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
       ...cases.map((c) => res({ b64: c.byte.b64, mime: c.mime })),
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments.map((a) => a.path)).toEqual(cases.map((c) => `${c.byte.md5}.${c.ext}`))
   })
 
@@ -478,7 +483,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
       ...cases.map((c) => res({ b64: c.byte.b64, mime: c.mime })),
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments.map((a) => a.path)).toEqual(cases.map((c) => `${c.byte.md5}.${c.ext}`))
     // The mime is passed through verbatim for the caller to ship.
     expect(note.attachments.map((a) => a.mime)).toEqual(cases.map((c) => c.mime))
@@ -493,7 +498,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
       res({ b64: BYTE.f.b64, mime: 'image/png', fileName: 'already.png' }),
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments.map((a) => a.path)).toEqual(['photo.png', 'already.png'])
     expect(note.markdown).toContain('![](photo.png)')
     expect(note.markdown).toContain('![](already.png)')
@@ -511,7 +516,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
       res({ b64: BYTE.c.b64, mime: 'image/png', fileName: '\n      spaced.png\n    ' }),
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments.map((a) => a.path)).toEqual([
       'my_report.png',
       'passwd.png',
@@ -532,7 +537,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
       res({ b64: BYTE.c.b64, mime: 'image/png', fileName: 'Screenshot_2024.png' }),
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     const paths = [
       'Screenshot_2024.png',
       'chart_final_.png',
@@ -553,7 +558,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
       res({ b64: BYTE.d.b64, mime: 'image/png', fileName: 'second.png' }),
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments.map((a) => a.path)).toEqual(['first.png'])
     expect(note.markdown).toBe('![](first.png)')
   })
@@ -570,7 +575,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
       res({ b64: BYTE.h.b64, mime: 'image/png', fileName: 'a.png' }),
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments.map((a) => a.path)).toEqual([
       'a.png',
       `a-${BYTE.h.md5.slice(0, 8)}.png`,
@@ -587,7 +592,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
       res({ b64: BYTE.a.b64, mime: 'image/png', fileName: 'x.png' }),
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments).toHaveLength(1)
     expect(note.attachments[0]?.path).toBe('x.png')
   })
@@ -595,7 +600,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
   it('defaults a resource with no <mime> to application/octet-stream', () => {
     const xml = noteWith(ref(BYTE.b.md5), res({ b64: BYTE.b.b64 }))
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments).toHaveLength(1)
     expect(note.attachments[0]?.mime).toBe('application/octet-stream')
     // `octetstream` is longer than the 5-char subtype cap ⇒ the `.bin` fallback.
@@ -608,7 +613,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
     // content type, so it must be the trimmed mime, not the raw run.
     const xml = noteWith(ref(BYTE.f.md5), res({ b64: BYTE.f.b64, mime: '\n      image/png\n    ' }))
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments[0]?.mime).toBe('image/png')
   })
 
@@ -618,7 +623,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
       res({ b64: BYTE.c.b64, mime: 'image/png', fileName: 'twice.png' }),
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     // Shipped once (the caller writes one vault file)…
     expect(note.attachments.map((a) => a.path)).toEqual(['twice.png'])
     // …but both references become embeds.
@@ -632,7 +637,7 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
       res({ b64: BYTE.e.b64, mime: 'image/png', fileName: 'two.png' }),
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.attachments.map((a) => a.path)).toEqual(['one.png', 'two.png'])
   })
 })
@@ -644,7 +649,7 @@ describe('parseEnex — notes whose <content> yields no body', () => {
       `<note><title>Missing</title></note>`,
     )
 
-    const notes = parseEnex(xml)
+    const notes = parseEnex(xml, 'Notes.enex')
     expect(notes.map((n) => n.title)).toEqual(['Empty', 'Missing'])
     expect(notes.map((n) => n.markdown)).toEqual(['', ''])
   })
@@ -657,7 +662,7 @@ describe('parseEnex — notes whose <content> yields no body', () => {
       `<note><title>T</title><content><![CDATA[<div><p>rootless body</p></div>]]></content></note>`,
     )
 
-    expect(at(parseEnex(xml)).markdown).toBe('rootless body')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('rootless body')
   })
 
   it('imports a note whose ENML is malformed with its text', () => {
@@ -670,7 +675,7 @@ describe('parseEnex — notes whose <content> yields no body', () => {
         `<tag>work</tag></note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.title).toBe('Broken')
     expect(note.tags).toEqual(['work'])
     expect(note.markdown).toBe('unclosed')
@@ -681,7 +686,7 @@ describe('parseEnex — notes whose <content> yields no body', () => {
       `<note><title>T</title><content><![CDATA[<div><p>unclosed</div>]]></content></note>`,
     )
 
-    expect(at(parseEnex(xml)).markdown).toBe('unclosed')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('unclosed')
   })
 })
 
@@ -696,7 +701,7 @@ describe('parseEnex — ENML an XML parse rejects', () => {
     const enml = '<div>caf&eacute;&nbsp;au lait &copy; Evernote</div>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    expect(at(parseEnex(xml)).markdown).toBe('caf\u00E9\u00A0au lait \u00A9 Evernote')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('caf\u00E9\u00A0au lait \u00A9 Evernote')
   })
 
   it('keeps the text after a self-closing checkbox or embed in a note read as HTML', () => {
@@ -715,7 +720,7 @@ describe('parseEnex — ENML an XML parse rejects', () => {
         `</note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.markdown).toBe('x\u00A0y\n\n- [x] done\n\nSee ![](pic.png) here\n\nGone but kept')
     expect(note.attachments.map((a) => a.path)).toEqual(['pic.png'])
   })
@@ -725,7 +730,7 @@ describe('parseEnex — ENML an XML parse rejects', () => {
     const enml = '<div><b/>plain</div>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    expect(at(parseEnex(xml)).markdown).toBe('plain')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('plain')
   })
 })
 
@@ -745,7 +750,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       '</ul>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     // Exactly, so a bullet wrapping a task or an over-indented marker fails
     // here rather than needing its own negative assertion.
     expect(note.markdown).toBe('intro\n\n- [ ] pending\n- [x] done')
@@ -761,7 +766,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       '<div><en-todo checked="false"/>Pending twice</div>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.markdown).toBe(
       '- [x] Done thing\n\n- [x] Done twice\n\n- [ ] Pending thing\n\n- [ ] Pending twice',
     )
@@ -773,7 +778,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     const enml = '<div>text</div><div><en-todo checked="true"/></div>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    expect(at(parseEnex(xml)).markdown).toBe('text\n\n- [x]')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('text\n\n- [x]')
   })
 
   it('unescapes the entities a CDATA body carries into the markdown', () => {
@@ -784,7 +789,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       `<note><title>T</title><content><![CDATA[<en-note><p>Tom &amp; Jerry &lt;3</p></en-note>]]></content></note>`,
     )
 
-    expect(at(parseEnex(xml)).markdown).toBe('Tom & Jerry <3')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('Tom & Jerry <3')
   })
 
   it('renders a nested <table> as inline text without corrupting the outer table', () => {
@@ -809,7 +814,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       '</td></tr></tbody></table>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     const lines = note.markdown.split('\n').filter((l) => l.trim().length > 0)
     // Outer table: header row, separator row, one data row — intact.
     expect(lines[0]).toBe('| H1 | H2 |')
@@ -836,7 +841,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       '</td></tr></tbody></table>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    const lines = at(parseEnex(xml))
+    const lines = at(parseEnex(xml, 'Notes.enex'))
       .markdown.split('\n')
       .filter((l) => l.trim().length > 0)
     expect(lines).toEqual(['| H |', '| --- |', '| m1 / i1 / i2 |'])
@@ -851,7 +856,9 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
 
     const callout =
       '> [!warning] Encrypted content was omitted during import (Evernote en-crypt block).'
-    expect(at(parseEnex(xml)).markdown).toBe(`a\n\n${callout}\n\nb\n\n${callout}\n\nc`)
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe(
+      `a\n\n${callout}\n\nb\n\n${callout}\n\nc`,
+    )
   })
 
   it('replaces an <en-crypt> block with a callout and never leaks the ciphertext', () => {
@@ -859,7 +866,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     const enml = `<div>Before<en-crypt cipher="RC2" length="64" hint="a hint">${cipher}</en-crypt>After</div>`
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     // A clear, non-destructive callout marker stands in for the encrypted block.
     expect(note.markdown).toContain('> [!warning]')
     expect(note.markdown.toLowerCase()).toContain('encrypted content')
@@ -883,7 +890,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       '<div>after</div>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    expect(at(parseEnex(xml)).markdown).toBe(
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe(
       '```\ndef f():\n    return 1\n\n# not a tag\n```\n\nafter',
     )
   })
@@ -895,7 +902,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       '<div>if x:</div><div>&nbsp;&nbsp;TODO later</div><div>```</div></div>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    expect(at(parseEnex(xml)).markdown).toBe('````\nif x:\n  TODO later\n```\n````')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('````\nif x:\n  TODO later\n```\n````')
   })
 
   it('renders a table with no header row as a pipe table headed by its first row', () => {
@@ -909,7 +916,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       '</tbody></table>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    expect(at(parseEnex(xml)).markdown).toBe(
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe(
       '| Name | Qty |\n| --- | --- |\n| Apple green | **3** \\| 4 |',
     )
   })
@@ -920,7 +927,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     const enml = '<table><tbody><tr><td><div>Apple<br/>green</div></td></tr></tbody></table>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    expect(at(parseEnex(xml)).markdown).toBe('| Apple green |\n| --- |')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('| Apple green |\n| --- |')
   })
 
   it('keeps a web clip table’s caption above it and its header row first', () => {
@@ -929,7 +936,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       '<thead><tr><th>Name</th></tr></thead><tbody><tr><td>Apple</td></tr></tbody></table>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    expect(at(parseEnex(xml)).markdown).toBe('Fruit\n| Name |\n| --- |\n| Apple |')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('Fruit\n| Name |\n| --- |\n| Apple |')
   })
 
   it('keeps a web clip’s <th> header cell on one line, its pipe escaped', () => {
@@ -937,7 +944,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       '<table><tr><th><div>Name</div><div>a|b</div></th></tr><tr><td>Apple</td></tr></table>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    expect(at(parseEnex(xml)).markdown).toBe('| Name a\\|b |\n| --- |\n| Apple |')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('| Name a\\|b |\n| --- |\n| Apple |')
   })
 
   it('keeps a pipe after a backslash in inline code inside its cell', () => {
@@ -953,7 +960,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       type: 'tableHeader',
       content: [{ type: 'paragraph', content: [{ type: 'text', text, ...(marks && { marks }) }] }],
     })
-    expect(parse(at(parseEnex(xml)).markdown)).toEqual({
+    expect(parse(at(parseEnex(xml, 'Notes.enex')).markdown)).toEqual({
       type: 'doc',
       content: [
         {
@@ -975,7 +982,7 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
       `<note><title>B</title><content>${content('<p>b</p>')}</content></note>`,
     )
 
-    expect(parseEnex(xml).map((n) => n.markdown)).toEqual(['x\n\ny', 'b'])
+    expect(parseEnex(xml, 'Notes.enex').map((n) => n.markdown)).toEqual(['x\n\ny', 'b'])
   })
 
   it('does not crash on malformed nested-fidelity ENML (empty en-crypt, empty nested table)', () => {
@@ -986,8 +993,8 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
     // Graceful degradation: parses without throwing and still emits the callout.
-    expect(() => parseEnex(xml)).not.toThrow()
-    const note = at(parseEnex(xml))
+    expect(() => parseEnex(xml, 'Notes.enex')).not.toThrow()
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.markdown).toContain('> [!warning]')
   })
 })
@@ -1132,7 +1139,7 @@ describe('parseEnex — Evernote tasks (#6032)', () => {
       </note>`,
     )
 
-    expect(at(parseEnex(xml)).markdown).toBe(
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe(
       'before\n\n' +
         '- [ ] Simple\n- [x] Due\n  due_date:: 2022-05-28\n- [ ] Flagged\n\n' +
         'after',
@@ -1156,7 +1163,7 @@ describe('parseEnex — Evernote tasks (#6032)', () => {
       </note>`,
     )
 
-    expect(at(parseEnex(xml)).markdown).toBe(
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe(
       '- [ ] West\n  scheduled_date:: 2022-05-22\n  due_date:: 2022-05-28',
     )
   })
@@ -1180,7 +1187,7 @@ describe('parseEnex — Evernote tasks (#6032)', () => {
     )
 
     const dueDay = formatDate(new Date(due))
-    expect(at(parseEnex(xml)).markdown).toBe(
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe(
       `- [ ] Bare\n  due_date:: ${dueDay}\n` +
         `- [ ] Odd\n  scheduled_date:: ${formatDate(new Date(remind))}\n  due_date:: ${dueDay}\n` +
         '- [ ] Garbled',
@@ -1198,7 +1205,7 @@ describe('parseEnex — Evernote tasks (#6032)', () => {
       `<note><title>No body</title>${task('Only', 'open', 'A', 'g')}</note>`,
     )
 
-    expect(parseEnex(xml).map((n) => n.markdown)).toEqual([
+    expect(parseEnex(xml, 'Notes.enex').map((n) => n.markdown)).toEqual([
       'body\n\nend\n\n- [x] Other\n\n- [ ] First\n- [ ] Second',
       '- [ ] Only',
     ])
@@ -1209,7 +1216,7 @@ describe('parseEnex — Evernote tasks (#6032)', () => {
       `<note><content>${content('<p>body</p>')}</content>${task('Task title', 'open', 'A', 'g')}</note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.title).toBe(UNTITLED_PLACEHOLDER)
     expect(note.createdMs).toBeNull()
     expect(note.updatedMs).toBeNull()
@@ -1224,7 +1231,7 @@ describe('parseEnex — Evernote tasks (#6032)', () => {
       </note>`,
     )
 
-    expect(at(parseEnex(xml)).markdown).toBe('- [ ] First\n\nbetween\n\n- [ ] Second')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('- [ ] First\n\nbetween\n\n- [ ] Second')
   })
 
   it("dates a reminder with no zone of its own in the task's zone", () => {
@@ -1242,7 +1249,9 @@ describe('parseEnex — Evernote tasks (#6032)', () => {
       </note>`,
     )
 
-    expect(at(parseEnex(xml)).markdown).toBe('- [ ] West\n  scheduled_date:: 2022-05-22')
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe(
+      '- [ ] West\n  scheduled_date:: 2022-05-22',
+    )
   })
 })
 
@@ -1273,7 +1282,7 @@ describe('parseEnex — note reminders (#6032)', () => {
     )
 
     const day = formatDate(new Date(at12))
-    expect(parseEnex(xml).map((n) => n.markdown)).toEqual([
+    expect(parseEnex(xml, 'Notes.enex').map((n) => n.markdown)).toEqual([
       `- [ ] Call\n  due_date:: ${day}\n\nbody`,
       `- [x] Called\n  due_date:: ${day}\n\nbody`,
       '- [ ] Pinned\n\nbody',
@@ -1288,7 +1297,7 @@ describe('parseEnex — note reminders (#6032)', () => {
     )
 
     const day = formatDate(new Date(Date.UTC(2024, 4, 1, 12, 0, 0)))
-    expect(parseEnex(xml).map((n) => n.markdown)).toEqual([
+    expect(parseEnex(xml, 'Notes.enex').map((n) => n.markdown)).toEqual([
       `- [ ] Timed\n  due_date:: ${day}\n\nbody`,
       '- [x] Done\n\nbody',
     ])
@@ -1300,7 +1309,7 @@ describe('parseEnex — note reminders (#6032)', () => {
         <note-attributes><reminder-order>1</reminder-order></note-attributes></note>`,
     )
 
-    expect(enexNoteToMarkdown(at(parseEnex(xml)))).toBe(
+    expect(enexNoteToMarkdown(at(parseEnex(xml, 'Notes.enex')))).toBe(
       '---\ntags:\n  - "work"\nsource: evernote\n---\n\n- [ ] Call\n\nbody\n',
     )
   })
@@ -1312,7 +1321,7 @@ describe('parseEnex — rules and strikethrough Agaric reads (#6032)', () => {
       `<note><title>T</title><content>${content('<hr/><p>a</p><hr/><p>b</p>')}</content></note>`,
     )
 
-    const note = at(parseEnex(xml))
+    const note = at(parseEnex(xml, 'Notes.enex'))
     expect(note.markdown).toBe('---\n\na\n\n---\n\nb')
     // The front matter closes before the body's rule opens.
     expect(enexNoteToMarkdown(note)).toBe('---\nsource: evernote\n---\n\n---\n\na\n\n---\n\nb\n')
@@ -1322,7 +1331,7 @@ describe('parseEnex — rules and strikethrough Agaric reads (#6032)', () => {
     const enml = '<p><s>one</s> <del>two</del> <strike>three</strike></p>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
-    const markdown = at(parseEnex(xml)).markdown
+    const markdown = at(parseEnex(xml, 'Notes.enex')).markdown
     expect(markdown).toBe('~~one~~ ~~two~~ ~~three~~')
     const strike = (text: string) => ({ type: 'text', text, marks: [{ type: 'strike' }] })
     expect(parse(markdown)).toEqual({
@@ -1390,7 +1399,6 @@ describe('parseEnex — links between notes (#6032)', () => {
     expect(at(parseEnex(xml, 'Work.enex')).markdown).toBe(
       'See [[Work/Meeting|Meeting]] and [[Work/Meeting|meeting]].',
     )
-    expect(at(parseEnex(xml)).markdown).toBe('See [[Meeting]] and [[Meeting|meeting]].')
   })
 
   it('keeps a link whose text names no note of the file, and counts it', () => {

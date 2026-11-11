@@ -290,7 +290,7 @@ export function expandTemplateVariables(content: string, context: LegacyTemplate
 
 /** A block reading `<% recording %>`, as `is_recording_placeholder` (Rust) reads it. */
 function isRecordingPlaceholder(content: string): boolean {
-  const m = /^<%(.*)%>$/.exec(content.trim())
+  const m = /^<%([\s\S]*)%>$/.exec(content.trim())
   return m?.[1]?.trim().toLowerCase() === 'recording'
 }
 
