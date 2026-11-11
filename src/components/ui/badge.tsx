@@ -16,9 +16,9 @@ import { cn } from '@/lib/utils'
  *             size, `xs` is the very-dense priority-badge sm size, `compact`
  *             matches the legacy `StatusBadge` chrome (no fixed height), and
  *             `lg` mirrors the priority-badge `lg` header chip.
- *  - `shape`: `pill` (rounded-full, the original Badge shape) or `rounded`
- *             (square-corner rounded, matching the old `StatusBadge` /
- *             `PriorityBadge` chrome).
+ *  - `shape`: `rounded` only (`--radius-sm`). A badge carries text, and text
+ *             never sits in a pill: see the radius rule in `src/index.css`.
+ *             The axis stays so callers can name the shape explicitly.
  *
  * Tone-specific colour data passes through the dedicated props:
  *  - `tone="priority"` → reads `priorityLevel` and delegates to
@@ -66,11 +66,10 @@ const badgeVariants = cva(BASE, {
       lg: 'h-6 min-w-6 px-2 py-0 text-sm',
     },
     shape: {
-      pill: 'rounded-full',
-      rounded: 'rounded',
+      rounded: 'rounded-sm',
     },
   },
-  defaultVariants: { tone: 'default', size: 'default', shape: 'pill' },
+  defaultVariants: { tone: 'default', size: 'default', shape: 'rounded' },
 })
 
 /**

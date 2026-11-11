@@ -244,6 +244,40 @@ frontend	src/lib/enex-import.ts	StringLiteral	59	1	const base = name.replace(/\\
 frontend	src/lib/enex-import.ts	StringLiteral	60	1	const htmlDoc = document.implementation.createHTMLDocument('')
 frontend	src/lib/enex-import.ts	StringLiteral	66	1	const hash = media.getAttribute('hash')?.trim().toLowerCase() ?? ''
 frontend	src/lib/enex-import.ts	StringLiteral	69	1	const texts = cells.map((c) => normalizeInlineCell(c.textContent ?? ''))
+# #4815 enex-import: an element's `textContent` is never null
+frontend	src/lib/enex-import.ts	StringLiteral	77	1	code.textContent = Array.from(block.children, (line) => line.textContent ?? '')
+frontend	src/lib/enex-import.ts	StringLiteral	41	1	? pages.get(nameKey(node.textContent ?? ''))
+frontend	src/lib/enex-import.ts	StringLiteral	42	1	return `[[${page}|${(node.textContent ?? '').trim()}]]`
+frontend	src/lib/enex-import.ts	OptionalChaining	8	1	return parent.querySelector(`:scope > ${path}`)?.textContent?.trim() ?? ''
+# #4815 enex-import: every task-group sentinel index is one `placeTaskGroups` pushed
+frontend	src/lib/enex-import.ts	StringLiteral	55	1	(_match, index: string) => taskRefs[Number(index)] ?? '',
+# #4815 enex-import: the `div[style*=…]` selector matched only divs that carry a `style`
+frontend	src/lib/enex-import.ts	StringLiteral	67	1	const id = /--en-id:\s*([^;]+)/.exec(div.getAttribute('style') ?? '')?.[1]?.trim() ?? ''
+# #4815 enex-import: any fallback href that is not an `evernote:///view/` link is read the same
+frontend	src/lib/enex-import.ts	StringLiteral	56	1	node.nodeName === 'A' && (node.getAttribute('href') ?? '').startsWith(EVERNOTE_NOTE_LINK)
+# #4815 enex-import: the rule's filter ran only when `pageOf` found a page
+frontend	src/lib/enex-import.ts	StringLiteral	45	1	const page = pageOf(node as HTMLElement) ?? ''
+# #4815 enex-import: a sentinel holds `refs.length` at its push, so an extra first entry shifts the index and its lookup alike
+frontend	src/lib/enex-import.ts	ArrayDeclaration	24	1	const refs: string[] = []
+# #4815 enex-import: a match always sets group 1, so the chain only short-circuits at `exec`'s null
+frontend	src/lib/enex-import.ts	OptionalChaining	12	1	const id = /--en-id:\s*([^;]+)/.exec(div.getAttribute('style') ?? '')?.[1]?.trim() ?? ''
+# #4815 enex-import: ENML's only other `href` element, `<area>`, is empty, so its text names no note
+frontend	src/lib/enex-import.ts	ConditionalExpression	1	1	node.nodeName === 'A' && (node.getAttribute('href') ?? '').startsWith(EVERNOTE_NOTE_LINK)
+# #4815 enex-import: Turndown's `addRule` never reads its key (`Rules.add` unshifts the rule alone), so the name changes nothing
+frontend	src/lib/enex-import.ts	StringLiteral	12	1	td.addRule('evernoteNoteLink', {
+# #4815 enex-import: an unknown zone throws a RangeError, as `''` does, and both fall to the local day
+frontend	src/lib/enex-import.ts	StringLiteral	50	1	export function localDate(ms: number, timeZone = ''): string | null {
+frontend	src/lib/enex-import.ts	StringLiteral	42	1	function enexDay(raw: string, timeZone = ''): string | null {
+# #4815 enex-import: `formatToParts` with a year, month and day always returns those three parts
+frontend	src/lib/enex-import.ts	OptionalChaining	32	1	const part = (type: string) => parts.find((p) => p.type === type)?.value
+# #4815 enex-import: `localDate(null)` is null too: `null > 0` is false
+frontend	src/lib/enex-import.ts	ConditionalExpression	8	1	return ms === null ? null : localDate(ms, timeZone)
+# #4815 enex-import: V8's sort reads only whether the comparator is below 0, so the `>` branch's 1 or 0 never changes the order vitest sees
+frontend	src/lib/enex-import.ts	ConditionalExpression	50	1	tasks.sort((a, b) => (a.weight < b.weight ? -1 : a.weight > b.weight ? 1 : 0))
+frontend	src/lib/enex-import.ts	EqualityOperator	50	1	tasks.sort((a, b) => (a.weight < b.weight ? -1 : a.weight > b.weight ? 1 : 0))
+# #4815 enex-import: a task-group sentinel sits alone in its own `<p>`, which Turndown pads with blank lines, so no digit of the text ever touches it
+frontend	src/lib/enex-import.ts	StringLiteral	34	1	const TASK_GROUP_SENTINEL_OPEN = '\uE005'
+frontend	src/lib/enex-import.ts	StringLiteral	35	1	const TASK_GROUP_SENTINEL_CLOSE = '\uE006'
 frontend	src/lib/export-graph.ts	CallExpression	1	1	resolved.set(id, null)
 frontend	src/lib/export-graph.ts	ConditionalExpression	5	1	if (cleaned.length === 0 || /^\.+$/.test(cleaned)) return 'Untitled'
 frontend	src/lib/export-graph.ts	ConditionalExpression	5	1	if (id == null) return alt
@@ -434,3 +468,7 @@ frontend	src/components/attachments/MeetingDialog.tsx	OptionalChaining	32	1	onCh
 frontend	src/components/attachments/MeetingDialog.tsx	OptionalChaining	33	1	onChange={(e) => setSummaryFile(e.target.files?.[0] ?? null)}
 # #6435 meeting-dialog: a null page title and the stand-in both fail the journal-day regex, so the date is today either way
 frontend	src/components/attachments/MeetingDialog.tsx	StringLiteral	31	1	const title = page.content ?? ''
+# #3766 vault-import: a null fileId only adds a null key to ids, which org-import reads only with string ids taken from a link
+frontend	src/lib/vault-import.ts	ConditionalExpression	5	1	if (org.fileId !== null) ids.set(org.fileId, title)
+# #3766 vault-import: orgTitles.get(null) is undefined, as the null branch is; every key is a string
+frontend	src/lib/vault-import.ts	ConditionalExpression	8	1	return target === null ? undefined : orgTitles.get(target)

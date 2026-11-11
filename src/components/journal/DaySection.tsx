@@ -355,7 +355,7 @@ function DaySectionInner({
                     key={source}
                     type="button"
                     className={cn(
-                      'inline-flex items-center rounded-full px-1.5 py-0.5 text-xs font-medium',
+                      'inline-flex items-center rounded-sm px-1.5 py-0.5 text-xs font-medium',
                       color.light,
                       color.dark,
                       'hover:opacity-80',
@@ -370,7 +370,7 @@ function DaySectionInner({
               {entry.pageId && (backlinkCounts[entry.pageId] ?? 0) > 0 && (
                 <button
                   type="button"
-                  className="inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 active:bg-primary/30"
+                  className="inline-flex items-center rounded-sm bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 active:bg-primary/30"
                   onClick={() => goToDateAndPanel(entry.date, 'references')}
                   aria-label={t('journal.backlinkCountBadge', {
                     count: backlinkCounts[entry.pageId],

@@ -190,7 +190,7 @@ export function SearchHistoryDropdown({
                   e.stopPropagation()
                 }}
                 className={cn(
-                  'inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full p-1',
+                  'inline-flex shrink-0 cursor-pointer items-center justify-center rounded-sm p-1',
                   'text-muted-foreground hover:bg-muted hover:text-foreground',
                   '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
                 )}

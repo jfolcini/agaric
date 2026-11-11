@@ -482,7 +482,7 @@ export function AgendaFilterBuilder({
                     </EditFilterPopover>
                     <button
                       type="button"
-                      className="ml-0.5 inline-flex items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px] touch-target"
+                      className="ml-0.5 inline-flex items-center justify-center rounded-sm p-1 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px] touch-target"
                       onClick={() => handleRemove(idx)}
                       aria-label={t('agendaFilter.removeFilterLabel', {
                         label: isProperty ? pillLabel : dimensionLabel(filter.dimension),
