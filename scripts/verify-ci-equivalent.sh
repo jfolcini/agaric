@@ -2524,7 +2524,7 @@ if [ "$HAS_MCP" = "1" ]; then
     echo "→ Phase F: MCP UDS smoke + externalBin verify (MCP paths touched)"
 
     smoke_log="$(mktemp -t pre-push-mcp-smoke.XXXXXX)"
-    if ! ( cd src-tauri && cargo nextest run --features ci-smoke --profile ci \
+    if ! ( cd src-tauri && cargo nextest run --lib --features ci-smoke --profile ci \
             -E 'test(stub_binary_)' ) > "$smoke_log" 2>&1; then
         echo "  ✗ MCP UDS smoke test failed"
         tail -100 "$smoke_log" | sed 's/^/      /'
