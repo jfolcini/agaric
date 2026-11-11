@@ -547,6 +547,17 @@ export const common: Record<string, string> = {
   'data.mirrorIngestedWarnings_one': '{{path}} was read in with a warning: {{first}}',
   'data.mirrorIngestedWarnings_other': '{{path}} was read in with {{count}} warnings: {{first}}',
   'data.mirrorFailedItem': '{{path}}: {{message}}',
+  'data.mirrorReadBackLabel': 'Read changes back',
+  'data.mirrorReadBackDesc':
+    'Edits, new files, renames and moves made to the files outside Agaric are read back into Agaric. Off, Agaric still writes the files and never overwrites one changed elsewhere.',
+  'data.mirrorReadBackFailed': 'Reading changes back was not changed: {{reason}}',
+  'data.mirrorReadPendingTitle': 'Read in what changed?',
+  'data.mirrorReadPendingDesc_one':
+    'This file changed outside Agaric while reading back was off. Turning it on reads it in.',
+  'data.mirrorReadPendingDesc_other':
+    'These {{count}} files changed outside Agaric while reading back was off. Turning it on reads them in.',
+  'data.mirrorReadPendingConfirm': 'Read them in',
+  'data.mirrorReadPendingCancel': 'Keep it off',
   // The vault genuinely has no spaces at all — distinct from a space that
   // simply has no pages, so an empty ZIP is never downloaded silently.
   'data.exportAllSpacesNoSpaces': 'No spaces to export',

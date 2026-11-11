@@ -57,7 +57,7 @@ describe('Agaric real-backend Markdown mirror, a new file (#5363) @markdown @pag
 
   it('reads a new file in a space folder onto a new page and keeps the file', async () => {
     await waitForAppReady()
-    await invoke('set_mirror_folder', { path: folder })
+    await invoke('set_mirror_folder', { path: folder, readBack: true })
     await browser.waitUntil(
       async () => (await invoke<MirrorStatus>('get_mirror_status')).last_pass_ms !== null,
       { timeout: ACTION_TIMEOUT, timeoutMsg: 'the mirror never finished a pass in the new folder' },

@@ -26,9 +26,16 @@ vi.mock('@/lib/logger', () => ({
 
 const PICKED = '/home/me/Notes mirror'
 
+const refusedTurnOn: AppError = {
+  kind: 'validation',
+  message: '1 files changed outside Agaric while reading back was off',
+}
+
 /** The device-local state the stubbed commands read and write. */
 let folder: string | null
 let picked: string | null
+let readBack: boolean
+let pendingFiles: string[]
 let extra: Partial<MirrorStatus>
 
 function status(): MirrorStatus {
@@ -39,6 +46,8 @@ function status(): MirrorStatus {
     diverged: [],
     failed: [],
     last_pass_ms: null,
+    read_back: readBack,
+    pending: readBack ? [] : pendingFiles,
     ...extra,
   }
 }
@@ -53,12 +62,23 @@ beforeEach(() => {
   vi.clearAllMocks()
   folder = null
   picked = PICKED
+  readBack = true
+  pendingFiles = []
   extra = {}
   stubInvoke(vi.mocked(invoke), {
     get_mirror_status: () => status(),
     pick_mirror_folder: () => picked,
     set_mirror_folder: (args) => {
       folder = args['path'] as string | null
+      if (folder !== null) readBack = args['readBack'] as boolean
+      return status()
+    },
+    set_mirror_read_back: (args) => {
+      if (args['on'] === true && args['readPending'] !== true && pendingFiles.length > 0) {
+        return Promise.reject(refusedTurnOn)
+      }
+      readBack = args['on'] as boolean
+      if (readBack) pendingFiles = []
       return status()
     },
   })
@@ -115,7 +135,10 @@ describe('MirrorSection', () => {
     await user.click(screen.getByRole('button', { name: t('data.mirrorTurnOffButton') }))
 
     expect(await screen.findByText(t('data.mirrorOff'))).toBeInTheDocument()
-    expect(vi.mocked(invoke)).toHaveBeenCalledWith('set_mirror_folder', { path: null })
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('set_mirror_folder', {
+      path: null,
+      readBack: true,
+    })
     expect((await storedStatus()).folder).toBeNull()
   })
 
@@ -187,6 +210,106 @@ describe('MirrorSection', () => {
     expect(screen.getByText(t('data.mirrorOff'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: t('data.mirrorChooseButton') })).toBeEnabled()
     expect((await storedStatus()).folder).toBeNull()
+  })
+
+  it('a folder chosen with reading back unticked is mirrored without reading back', async () => {
+    const user = userEvent.setup()
+    await renderLoaded()
+    const toggle = screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })
+    expect(toggle).toBeChecked()
+
+    await user.click(toggle)
+    await user.click(screen.getByRole('button', { name: t('data.mirrorChooseButton') }))
+
+    expect(await screen.findByText(PICKED)).toBeInTheDocument()
+    const stored = await storedStatus()
+    expect(stored.folder).toBe(PICKED)
+    expect(stored.read_back).toBe(false)
+    expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
+  })
+
+  it('turning reading back off and on again with nothing pending asks nothing', async () => {
+    folder = PICKED
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+    await waitFor(async () => {
+      expect((await storedStatus()).read_back).toBe(false)
+    })
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+
+    await waitFor(async () => {
+      expect((await storedStatus()).read_back).toBe(true)
+    })
+    expect(screen.queryByText(t('data.mirrorReadPendingTitle'))).toBeNull()
+  })
+
+  it('turning reading back on with files pending lists them and reads them in only on confirm', async () => {
+    folder = PICKED
+    readBack = false
+    pendingFiles = ['Personal/Projects.md']
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog).toHaveTextContent('Personal/Projects.md')
+    expect(dialog).toHaveTextContent(t('data.mirrorReadPendingDesc', { count: 1 }))
+    await user.click(screen.getByRole('button', { name: t('data.mirrorReadPendingCancel') }))
+    expect((await storedStatus()).read_back).toBe(false)
+
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+    await user.click(
+      await screen.findByRole('button', { name: t('data.mirrorReadPendingConfirm') }),
+    )
+
+    await waitFor(async () => {
+      expect((await storedStatus()).read_back).toBe(true)
+    })
+    expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).toBeChecked()
+  })
+
+  it('a turn-on the backend refuses, as files changed since the card loaded, says why', async () => {
+    folder = PICKED
+    readBack = false
+    const user = userEvent.setup()
+    await renderLoaded()
+    pendingFiles = ['Personal/Projects.md']
+
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        t('data.mirrorReadBackFailed', { reason: refusedTurnOn.message }),
+      )
+    })
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'MirrorSection',
+      'failed to change reading changes back',
+      undefined,
+      refusedTurnOn,
+    )
+    expect((await storedStatus()).read_back).toBe(false)
+    expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
+
+    // The card read the status again, so the next try asks about the file.
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Personal/Projects.md')
+  })
+
+  it('has no a11y violations with the read-in question open', async () => {
+    folder = PICKED
+    readBack = false
+    pendingFiles = ['Personal/Projects.md']
+    const user = userEvent.setup()
+    const { baseElement } = await renderLoaded()
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+    await screen.findByRole('alertdialog')
+
+    await waitFor(async () => {
+      expect(await axe(baseElement)).toHaveNoViolations()
+    })
   })
 
   it('has no a11y violations, off and on', async () => {

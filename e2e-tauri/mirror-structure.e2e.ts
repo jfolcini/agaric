@@ -75,7 +75,7 @@ async function mirroredPage(title: string, block: string): Promise<string> {
 describe('Agaric real-backend Markdown mirror, renamed and moved files (#5363) @markdown @pages', () => {
   before(async () => {
     await waitForAppReady()
-    await invoke('set_mirror_folder', { path: folder })
+    await invoke('set_mirror_folder', { path: folder, readBack: true })
     await browser.waitUntil(
       async () => (await invoke<MirrorStatus>('get_mirror_status')).last_pass_ms !== null,
       { timeout: ACTION_TIMEOUT, timeoutMsg: 'the mirror never finished a pass in the new folder' },

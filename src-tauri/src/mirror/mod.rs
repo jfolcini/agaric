@@ -20,6 +20,7 @@
 
 pub mod ingest;
 pub mod paths;
+pub mod read_back;
 pub mod splice;
 pub mod store;
 
@@ -79,6 +80,11 @@ pub struct MirrorStatus {
     pub failed: Vec<MirrorFailure>,
     /// When the last pass ended, in ms since the epoch.
     pub last_pass_ms: Option<i64>,
+    /// Whether files changed outside Agaric are read back into it.
+    pub read_back: bool,
+    /// While reading back is off, the files turning it on would read in
+    /// ([`read_back::pending`]); empty while it is on.
+    pub pending: Vec<String>,
 }
 
 /// What the mirror's task shares with the commands and the sync sink.
@@ -147,9 +153,10 @@ impl MirrorState {
         inner.failed_files.clear();
     }
 
-    /// The status, for `folder`, the mirror's folder setting.
-    pub fn status(&self, folder: Option<String>) -> MirrorStatus {
+    /// The status, for `settings`, with `pending` from [`read_back::pending`].
+    pub fn status(&self, settings: store::Settings, pending: Vec<String>) -> MirrorStatus {
         let inner = self.lock();
+        let store::Settings { folder, read_back } = settings;
         let on = folder.is_some();
         MirrorStatus {
             supported: cfg!(desktop),
@@ -190,6 +197,8 @@ impl MirrorState {
                 )
                 .collect(),
             last_pass_ms: inner.last_pass_ms,
+            read_back,
+            pending,
         }
     }
 
@@ -395,6 +404,8 @@ pub struct Mirror {
     /// Writes a file's outside edit into its page; without it such a file
     /// is only left alone.
     ingest: Option<Ingest>,
+    /// Whether files changed outside Agaric are read back, as of this tick.
+    read_back: bool,
     /// Each page's file as last seen: a change outside Agaric makes the page
     /// dirty.
     stats: HashMap<String, FileStat>,
@@ -492,6 +503,7 @@ impl Mirror {
             full_due: true,
             last_full: None,
             ingest: None,
+            read_back: true,
             stats: HashMap::new(),
             settling: HashMap::new(),
             refused: HashMap::new(),
@@ -508,6 +520,11 @@ impl Mirror {
     pub fn with_ingest(mut self, ingest: Ingest) -> Self {
         self.ingest = Some(ingest);
         self
+    }
+
+    /// What writes an outside edit into Agaric, unless reading back is off.
+    fn ingest(&self) -> Option<Ingest> {
+        self.ingest.clone().filter(|_| self.read_back)
     }
 
     /// The pages whose file changed since the mirror last saw it. One stat per
@@ -536,7 +553,9 @@ impl Mirror {
     pub async fn tick(&mut self) -> Result<(), AppError> {
         // Off or paused, the watermark stays put: the pass that resumes is a
         // full one.
-        let Some(folder) = store::folder(&self.pool).await? else {
+        let settings = store::settings(&self.pool).await?;
+        self.read_back = settings.read_back;
+        let Some(folder) = settings.folder else {
             self.state.set_paused(None);
             self.full_due = true;
             return Ok(());
@@ -614,7 +633,7 @@ impl Mirror {
     /// bytes ([`ingest::create`]). A file outside every space's folder is
     /// left alone; one refused stays listed as failed until it changes.
     async fn read_new_files(&mut self, root: &Path) -> Result<(), AppError> {
-        let Some(ingest) = self.ingest.clone() else {
+        let Some(ingest) = self.ingest() else {
             return Ok(());
         };
         let found = self.scan(root);
@@ -863,7 +882,7 @@ impl Mirror {
         let frozen = self.vacate(root, &layout, &dirty);
         // A file left at its old path because it was edited outside Agaric
         // is read into its page there first, then moved by a later pass.
-        if self.ingest.is_some() {
+        if self.ingest().is_some() {
             let edited: Vec<(String, String)> = frozen
                 .iter()
                 .filter(|id| layout.contains_key(*id) && self.state.is_diverged(id))
@@ -1156,7 +1175,7 @@ impl Mirror {
         bytes: Vec<u8>,
         render: &PageFile,
     ) -> Result<Wrote, AppError> {
-        let Some(ingest) = self.ingest.clone() else {
+        let Some(ingest) = self.ingest() else {
             return Ok(Wrote::Diverged);
         };
         if let Some((refused, why)) = self.refused.get(page_id)

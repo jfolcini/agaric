@@ -264,6 +264,9 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   set_mirror_folder:
     'device-local file I/O: validates a folder on disk and writes a marker file into it, ' +
     'which a fixture seed cannot express',
+  set_mirror_read_back:
+    'device-local file I/O: turning it on reads the mirror folder to find the files changed ' +
+    'outside Agaric, which a fixture seed cannot express',
 }
 
 // ---------------------------------------------------------------------------
@@ -627,6 +630,9 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
   // existing, empty or carrying its marker) and writes a marker file into it,
   // and a fixture seed has no way to name a directory on either stack.
   'set_mirror_folder',
+  // Turning it on reads that folder to find what changed outside Agaric
+  // (#5363), and a refusal depends on those files: same input problem.
+  'set_mirror_read_back',
 ])
 
 /**
