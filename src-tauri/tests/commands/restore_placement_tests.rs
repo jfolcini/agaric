@@ -307,3 +307,65 @@ async fn an_attachments_line_saved_from_edit_as_markdown_stays_text() {
         ["columns todo=None priority=None scheduled=None due=None"]
     );
 }
+
+/// #6277 G6 — a ref value naming a note the same folder pick imports later
+/// names that note's page, as a link to it does: the note adopts the page the
+/// value made, so the order a pick imports in loses no ref and makes no twin.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_ref_value_naming_a_later_note_names_its_page() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "owner".into(),
+        "ref".into(),
+        None,
+    )
+    .await
+    .unwrap();
+    let notes = [
+        ("Alpha.md", "milk\n  owner:: [[Ns/Beta]]\n"),
+        ("Ns/Beta.md", "eggs\n"),
+    ];
+    let paths: Vec<String> = notes.iter().map(|(path, _)| (*path).to_string()).collect();
+    let mut warnings = Vec::new();
+    for (path, md) in notes {
+        let result = import_markdown_with_progress(
+            &pool,
+            DEV,
+            &mat,
+            dir.path(),
+            md.into(),
+            Some(path.into()),
+            TEST_SPACE_ID.into(),
+            ImportDialect::Markdown,
+            Some(Vec::new()),
+            Some(paths.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+        warnings.extend(result.warnings);
+    }
+
+    assert_eq!(warnings, Vec::<String>::new());
+    let (beta, beta_blocks) = restored(&pool, "Ns/Beta").await;
+    let texts: Vec<&str> = beta_blocks.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(texts, ["eggs"], "the note adopted the page its ref made");
+    let (_, alpha_blocks) = restored(&pool, "Alpha").await;
+    let owner: Option<String> = sqlx::query_scalar(
+        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'owner'",
+    )
+    .bind(&alpha_blocks[0].0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(owner, Some(beta));
+    mat.shutdown();
+}

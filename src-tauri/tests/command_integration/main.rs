@@ -27,6 +27,7 @@ mod conformance_snapshot;
 mod draft_flush_integration;
 mod lifecycle_integration;
 mod mirror_convergence;
+mod mirror_round_trip;
 mod page_integration;
 mod pages_cache_counts;
 mod property_integration;
