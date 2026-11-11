@@ -4,15 +4,22 @@
  * attachment resolver/collector, and the per-format `*ToUnits` producers.
  */
 
-import { describe, expect, it } from 'vitest'
+import { invoke } from '@tauri-apps/api/core'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { withOps } from '@/__tests__/fixtures'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import type { PropertyDefinition } from '@/lib/bindings'
 import { enexNoteToMarkdown, type EnexNote } from '@/lib/enex-import'
 import { t } from '@/lib/i18n'
 import { jexNoteToMarkdown, type JexNote } from '@/lib/jex-import'
+import { logger } from '@/lib/logger'
+import { listAllPropertyDefs } from '@/lib/property-save-utils'
 import {
   basename,
   collectVaultFiles,
   enexNotesToUnits,
+  type ImportUnit,
   importErrorReason,
   indexVaultFiles,
   inferBibliographyFormat,
@@ -404,6 +411,49 @@ describe('mdFilesToUnits', () => {
 
     expect((await homeUnit?.load())?.vaultNotes).toBeNull()
   })
+
+  // #6277 decision 7 — only a note sent with no vault may merge into the page of its title.
+  it("names the page a plain pick's note may merge into, and none for a folder's, an Org or a Logseq note", () => {
+    const plain = [
+      new File(['- a'], 'note.md', { type: 'text/markdown' }),
+      new File(['- b'], 'plain.txt', { type: 'text/plain' }),
+      new File(['* c'], 'tasks.org'),
+    ]
+    const folder = [folderFile(['- d'], 'note.md', 'Vault/note.md')]
+    const graph = [
+      folderFile(['- e'], 'page.md', 'Graph/pages/page.md'),
+      folderFile(['- f'], '2026_10_21.md', 'Graph/journals/2026_10_21.md'),
+    ]
+
+    expect(mdFilesToUnits(plain, null, false).map((u) => u.merges)).toEqual([
+      'note.md',
+      'plain.md',
+      undefined,
+    ])
+    expect(mdFilesToUnits(folder, indexVaultFiles(folder), false).map((u) => u.merges)).toEqual([
+      undefined,
+    ])
+    expect(mdFilesToUnits(graph, null, false).map((u) => u.merges)).toEqual([undefined, undefined])
+  })
+
+  it('reads a Markdown note as Markdown, and an Org file or a Logseq page as Logseq', async () => {
+    const plain = [new File(['- a'], 'note.md'), new File(['* b'], 'tasks.org')]
+    const graph = [
+      folderFile(['- c'], 'page.md', 'Graph/pages/page.md'),
+      folderFile(['- d'], '2026_10_21.md', 'Graph/journals/2026_10_21.md'),
+    ]
+    const dialects = (units: ImportUnit[]) =>
+      Promise.all(units.map(async (u) => (await u.load()).dialect))
+
+    expect(await dialects(mdFilesToUnits(plain, null, false))).toEqual(['Markdown', 'LogseqOrg'])
+    expect(await dialects(mdFilesToUnits(graph, null, false))).toEqual(['LogseqOrg', 'LogseqOrg'])
+  })
+
+  it('keeps the file name of a note outside a Logseq graph that holds a `title::` line', async () => {
+    const files = [folderFile(['title:: Other\n\n- body'], 'note.md', 'Vault/note.md')]
+
+    expect(await loadAll(files)).toEqual([{ path: 'note.md', content: 'title:: Other\n\n- body' }])
+  })
 })
 
 /** The content and path each unit of a pick loads, in pick order. */
@@ -490,6 +540,225 @@ describe('restoring an export', () => {
     expect(pathTitle(' a / /b .md')).toBe('a/b')
     expect(pathTitle('a_b.md')).toBe('a_b')
     expect(pathTitle('Notes.MD')).toBe('Notes.MD')
+  })
+
+  it('reads a backslash in a path as a folder separator', () => {
+    expect(pathTitle('a\\b.md')).toBe('a/b')
+  })
+})
+
+describe('restoring a space file', () => {
+  const CREATED_AT = '2026-01-01T00:00:00Z'
+
+  /**
+   * Serve the space's `stored` definitions as the backend keeps them: a create
+   * of a key the space holds writes nothing, one of a built-in key or a key in
+   * `refused` is refused. `stored` is the state the test re-queries.
+   */
+  function serveDefinitions(stored: PropertyDefinition[], refused: readonly string[] = []): void {
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        list_property_defs: () => ({
+          items: [...stored],
+          next_cursor: null,
+          has_more: false,
+          total_count: stored.length,
+        }),
+        create_property_def: (args) => {
+          const key = args['key'] as string
+          const held = stored.find((def) => def.key === key)
+          if (held?.builtin === true || refused.includes(key)) {
+            return Promise.reject({ kind: 'validation', message: `cannot define ${key}` })
+          }
+          if (held !== undefined) return withOps(held)
+          const def: PropertyDefinition = {
+            key,
+            value_type: args['valueType'] as string,
+            options: args['options'] as string | null,
+            created_at: CREATED_AT,
+            builtin: false,
+          }
+          stored.push(def)
+          return withOps(def)
+        },
+      }),
+    )
+  }
+
+  const userDef = (
+    key: string,
+    value_type: string,
+    options: string | null,
+  ): PropertyDefinition => ({
+    key,
+    value_type,
+    options,
+    created_at: CREATED_AT,
+    builtin: false,
+  })
+
+  /** The space's definitions, re-queried, without their bookkeeping. */
+  async function definitions(): Promise<
+    Array<Pick<PropertyDefinition, 'key' | 'value_type' | 'options'>>
+  > {
+    return (await listAllPropertyDefs('SPACE')).map(({ key, value_type, options }) => ({
+      key,
+      value_type,
+      options,
+    }))
+  }
+
+  const spaceFile = (space: unknown) => [
+    folderFile([JSON.stringify(space)], 'space.json', 'Export/.agaric/space.json', ''),
+  ]
+
+  afterEach(() => {
+    vi.mocked(invoke).mockReset()
+    vi.restoreAllMocks()
+  })
+
+  it('creates each definition of the space file and answers its titles by path', async () => {
+    const stored: PropertyDefinition[] = []
+    serveDefinitions(stored)
+
+    const restored = await restoreSpaceFile(
+      spaceFile({
+        propertyDefinitions: [
+          { key: 'status', value_type: 'select', options: '["open","done"]' },
+          { key: 'due', value_type: 'date', options: null },
+        ],
+        titles: { 'a_b.md': 'a:b', 'q.md': 'q?' },
+      }),
+      'SPACE',
+    )
+
+    expect(restored).toEqual({
+      titles: new Map([
+        ['a_b.md', 'a:b'],
+        ['q.md', 'q?'],
+      ]),
+      warnings: [],
+    })
+    expect(await definitions()).toEqual([
+      { key: 'status', value_type: 'select', options: '["open","done"]' },
+      { key: 'due', value_type: 'date', options: null },
+    ])
+  })
+
+  // An export from before a key became built-in still lists it.
+  it('leaves alone each definition the space holds, a built-in one included, and warns of none', async () => {
+    const stored = [
+      userDef('status', 'select', '["mine"]'),
+      { ...userDef('repeat', 'text', null), builtin: true },
+    ]
+    serveDefinitions(stored)
+
+    const restored = await restoreSpaceFile(
+      spaceFile({
+        propertyDefinitions: [
+          { key: 'status', value_type: 'select', options: '["theirs"]' },
+          { key: 'repeat', value_type: 'text', options: null },
+          { key: 'owner', value_type: 'text', options: null },
+        ],
+        titles: {},
+      }),
+      'SPACE',
+    )
+
+    expect(restored.warnings).toEqual([])
+    expect(await definitions()).toEqual([
+      { key: 'status', value_type: 'select', options: '["mine"]' },
+      { key: 'repeat', value_type: 'text', options: null },
+      { key: 'owner', value_type: 'text', options: null },
+    ])
+  })
+
+  it('warns of and logs a definition the space refuses, and restores the others', async () => {
+    const stored: PropertyDefinition[] = []
+    serveDefinitions(stored, ['bad'])
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const restored = await restoreSpaceFile(
+      spaceFile({
+        propertyDefinitions: [
+          { key: 'bad', value_type: 'text', options: null },
+          { key: 'good', value_type: 'number', options: null },
+        ],
+        titles: { 'a.md': 'b' },
+      }),
+      'SPACE',
+    )
+
+    expect(restored).toEqual({
+      titles: new Map([['a.md', 'b']]),
+      warnings: [t('data.importPropertyDefFailed', { key: 'bad', reason: 'cannot define bad' })],
+    })
+    expect(await definitions()).toEqual([{ key: 'good', value_type: 'number', options: null }])
+    expect(warn).toHaveBeenCalledWith(
+      'vault-import',
+      'property definition restore failed',
+      { key: 'bad' },
+      { kind: 'validation', message: 'cannot define bad' },
+    )
+  })
+
+  it("warns of and logs a space whose definitions cannot be read, still answering the file's titles", async () => {
+    const failure = { kind: 'database', message: 'list failed' }
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({ list_property_defs: () => Promise.reject(failure) }),
+    )
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const restored = await restoreSpaceFile(
+      spaceFile({
+        propertyDefinitions: [{ key: 'k', value_type: 'text', options: null }],
+        titles: { 'a.md': 'b' },
+      }),
+      'SPACE',
+    )
+
+    expect(restored).toEqual({
+      titles: new Map([['a.md', 'b']]),
+      warnings: [t('data.importSpaceFileFailed', { reason: 'list failed' })],
+    })
+    expect(warn).toHaveBeenCalledWith(
+      'vault-import',
+      'property definitions unreadable',
+      undefined,
+      failure,
+    )
+  })
+
+  it('logs a space file it cannot read', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    await restoreSpaceFile(spaceFile({ titles: {} }), 'SPACE')
+
+    expect(warn).toHaveBeenCalledWith(
+      'vault-import',
+      'space file unreadable',
+      undefined,
+      new TypeError('not a space file'),
+    )
+  })
+
+  it.each([
+    ['titles that are a string', { propertyDefinitions: [], titles: 'ab' }, 'not a space file'],
+    [
+      'one title that is no string among others',
+      { propertyDefinitions: [], titles: { 'a.md': 'b', 'c.md': 1 } },
+      'not a space file',
+    ],
+    ['a null definition', { propertyDefinitions: [null], titles: {} }, 'not a property definition'],
+  ])('says a space file with %s, and restores nothing from it', async (_, space, reason) => {
+    serveDefinitions([])
+
+    const restored = await restoreSpaceFile(spaceFile(space), 'SPACE')
+
+    expect(restored).toEqual({
+      titles: new Map(),
+      warnings: [t('data.importSpaceFileFailed', { reason })],
+    })
   })
 })
 
@@ -977,6 +1246,15 @@ describe('Org files (#6032)', () => {
     )
   })
 
+  it('leaves a `file:` link to a Markdown note of the pick a relative link, for the backend to resolve', async () => {
+    const [linking] = await loadAll([
+      folderFile(['* See [[file:notes.md][the notes]]'], 'a.org', 'Vault/a.org', ''),
+      folderFile(['- body'], 'notes.md', 'Vault/notes.md'),
+    ])
+
+    expect(linking?.content).toBe('- See [the notes](notes.md)\n')
+  })
+
   it('#6032 N7 — keeps a headline tag whole in NFD, its accent a combining mark', async () => {
     const nfd = 'cafe\u0301'
 
@@ -1016,6 +1294,21 @@ describe('Logseq graph (#6033)', () => {
     expect((await namespaced?.load())?.vaultNotes).toEqual(['2026-10-21.md'])
     expect((await leaf?.load())?.vaultNotes).toEqual([])
     expect((await c?.load())?.vaultNotes).toEqual([])
+  })
+
+  it('reads the file names its config sets, wherever the config falls in the pick', async () => {
+    const files = [
+      folderFile(['- legacy'], 'a.b.md', 'Graph/pages/a.b.md'),
+      folderFile(['- day'], '2026_10_21.md', 'Graph/journals/2026_10_21.md'),
+      folderFile(
+        ['{:journal/page-title-format "MMM do, yyyy"}'],
+        'config.edn',
+        'Graph/logseq/config.edn',
+        '',
+      ),
+    ]
+
+    expect((await loadAll(files)).map((l) => l.path)).toEqual(['a/b.md', '2026-10-21.md'])
   })
 
   it('reads a pick with `pages/` and `journals/` but no config as a graph of the defaults', async () => {
@@ -1075,6 +1368,17 @@ describe('enexNotesToUnits', () => {
 
   it('returns an empty list for no notes', () => {
     expect(enexNotesToUnits([], 'export.enex')).toEqual([])
+  })
+
+  it('names the page a note without attachments may merge into, and reads each as Markdown', async () => {
+    const pic = { path: 'pic.png', bytes: new Uint8Array([1]), mime: 'image/png' }
+    const units = enexNotesToUnits([note('Plain'), note('Pic', [pic])], 'export.enex')
+
+    expect(units.map((u) => u.merges)).toEqual(['export/Plain.md', undefined])
+    expect(await Promise.all(units.map(async (u) => (await u.load()).dialect))).toEqual([
+      'Markdown',
+      'Markdown',
+    ])
   })
 
   it('#2899 — converts attachment bytes lazily inside load(), not up front for every note', async () => {
@@ -1158,6 +1462,17 @@ describe('jexNotesToUnits', () => {
       'A|B.md',
       'Links.md',
       'Other.md',
+    ])
+  })
+
+  it('names the page a note without resources may merge into, and reads each as Markdown', async () => {
+    const pic = { path: 'pic.png', bytes: new Uint8Array([1]), mime: 'image/png' }
+    const units = jexNotesToUnits([note('Plain'), note('Pic', [pic])])
+
+    expect(units.map((u) => u.merges)).toEqual(['Plain.md', undefined])
+    expect(await Promise.all(units.map(async (u) => (await u.load()).dialect))).toEqual([
+      'Markdown',
+      'Markdown',
     ])
   })
 

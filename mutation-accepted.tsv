@@ -434,3 +434,7 @@ frontend	src/components/attachments/MeetingDialog.tsx	OptionalChaining	32	1	onCh
 frontend	src/components/attachments/MeetingDialog.tsx	OptionalChaining	33	1	onChange={(e) => setSummaryFile(e.target.files?.[0] ?? null)}
 # #6435 meeting-dialog: a null page title and the stand-in both fail the journal-day regex, so the date is today either way
 frontend	src/components/attachments/MeetingDialog.tsx	StringLiteral	31	1	const title = page.content ?? ''
+# #3766 vault-import: a null fileId only adds a null key to ids, which org-import reads only with string ids taken from a link
+frontend	src/lib/vault-import.ts	ConditionalExpression	5	1	if (org.fileId !== null) ids.set(org.fileId, title)
+# #3766 vault-import: orgTitles.get(null) is undefined, as the null branch is; every key is a string
+frontend	src/lib/vault-import.ts	ConditionalExpression	8	1	return target === null ? undefined : orgTitles.get(target)
