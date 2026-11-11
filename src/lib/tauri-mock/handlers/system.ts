@@ -82,11 +82,23 @@ export const systemHandlers = {
   log_frontend: returnNull,
 
   // Read aloud (#5745): the Chromium mock stands in for Linux, which has no engine. A spec
-  // stands in for macOS or Windows with `localStorage['__mockSpeechStatus'] = 'Webview'`.
-  get_speech_status: () =>
-    globalThis.localStorage?.getItem('__mockSpeechStatus') === 'Webview'
-      ? 'Webview'
-      : 'Unsupported',
+  // stands in for macOS or Windows with `localStorage['__mockSpeechStatus'] = 'Webview'`, and
+  // for Android, whose backend speaks, with `'Native'`; the mock engine ends each utterance at
+  // once and records its text in `__mockSpokenText`.
+  get_speech_status: () => {
+    const status = globalThis.localStorage?.getItem('__mockSpeechStatus')
+    return status === 'Webview' || status === 'Native' ? status : 'Unsupported'
+  },
+  get_speech_engine_available: () => true,
+  speak_text: (args) => {
+    const scope = globalThis as { __mockSpokenText?: string[] }
+    scope.__mockSpokenText = [
+      ...(scope.__mockSpokenText ?? []),
+      String((args as { text?: unknown }).text),
+    ]
+    return 'Done'
+  },
+  stop_speaking: returnNull,
 
   // ---------------------------------------------------------------------------
   // Bug report
@@ -149,6 +161,9 @@ export const systemHandlers = {
   | 'get_recovery_status'
   | 'log_frontend'
   | 'get_speech_status'
+  | 'get_speech_engine_available'
+  | 'speak_text'
+  | 'stop_speaking'
   | 'collect_bug_report_metadata'
   | 'read_logs_for_report'
   | 'compute_reconciliation_report'
