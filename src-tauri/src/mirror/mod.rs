@@ -20,6 +20,7 @@
 
 pub mod ingest;
 pub mod paths;
+pub mod read_back;
 pub mod splice;
 pub mod store;
 
@@ -79,6 +80,11 @@ pub struct MirrorStatus {
     pub failed: Vec<MirrorFailure>,
     /// When the last pass ended, in ms since the epoch.
     pub last_pass_ms: Option<i64>,
+    /// Whether files changed outside Agaric are read back into it.
+    pub read_back: bool,
+    /// While reading back is off, the files turning it on would read in
+    /// ([`read_back::pending`]); empty while it is on.
+    pub pending: Vec<String>,
 }
 
 /// What the mirror's task shares with the commands and the sync sink.
@@ -147,9 +153,10 @@ impl MirrorState {
         inner.failed_files.clear();
     }
 
-    /// The status, for `folder`, the mirror's folder setting.
-    pub fn status(&self, folder: Option<String>) -> MirrorStatus {
+    /// The status, for `settings`, with `pending` from [`read_back::pending`].
+    pub fn status(&self, settings: store::Settings, pending: Vec<String>) -> MirrorStatus {
         let inner = self.lock();
+        let store::Settings { folder, read_back } = settings;
         let on = folder.is_some();
         MirrorStatus {
             supported: cfg!(desktop),
@@ -190,6 +197,8 @@ impl MirrorState {
                 )
                 .collect(),
             last_pass_ms: inner.last_pass_ms,
+            read_back,
+            pending,
         }
     }
 
@@ -395,6 +404,8 @@ pub struct Mirror {
     /// Writes a file's outside edit into its page; without it such a file
     /// is only left alone.
     ingest: Option<Ingest>,
+    /// Whether files changed outside Agaric are read back, as of this tick.
+    read_back: bool,
     /// Each page's file as last seen: a change outside Agaric makes the page
     /// dirty.
     stats: HashMap<String, FileStat>,
@@ -413,6 +424,9 @@ pub struct Mirror {
     refused_new: HashMap<String, (Vec<u8>, String)>,
     /// The pages whose file vanished, by the ticks it has been missing.
     missing: HashMap<String, u8>,
+    /// The pages whose file was renamed to a path a refusal keeps, by that
+    /// path: held as missing while the refused file stays as it was.
+    refused_renames: HashMap<String, String>,
 }
 
 /// A folder's listing: its modification time, its `.md` files as paths below
@@ -492,6 +506,7 @@ impl Mirror {
             full_due: true,
             last_full: None,
             ingest: None,
+            read_back: true,
             stats: HashMap::new(),
             settling: HashMap::new(),
             refused: HashMap::new(),
@@ -499,6 +514,7 @@ impl Mirror {
             settling_new: HashMap::new(),
             refused_new: HashMap::new(),
             missing: HashMap::new(),
+            refused_renames: HashMap::new(),
         })
     }
 
@@ -508,6 +524,11 @@ impl Mirror {
     pub fn with_ingest(mut self, ingest: Ingest) -> Self {
         self.ingest = Some(ingest);
         self
+    }
+
+    /// What writes an outside edit into Agaric, unless reading back is off.
+    fn ingest(&self) -> Option<Ingest> {
+        self.ingest.clone().filter(|_| self.read_back)
     }
 
     /// The pages whose file changed since the mirror last saw it. One stat per
@@ -536,7 +557,9 @@ impl Mirror {
     pub async fn tick(&mut self) -> Result<(), AppError> {
         // Off or paused, the watermark stays put: the pass that resumes is a
         // full one.
-        let Some(folder) = store::folder(&self.pool).await? else {
+        let settings = store::settings(&self.pool).await?;
+        self.read_back = settings.read_back;
+        let Some(folder) = settings.folder else {
             self.state.set_paused(None);
             self.full_due = true;
             return Ok(());
@@ -614,7 +637,7 @@ impl Mirror {
     /// bytes ([`ingest::create`]). A file outside every space's folder is
     /// left alone; one refused stays listed as failed until it changes.
     async fn read_new_files(&mut self, root: &Path) -> Result<(), AppError> {
-        let Some(ingest) = self.ingest.clone() else {
+        let Some(ingest) = self.ingest() else {
             return Ok(());
         };
         let found = self.scan(root);
@@ -783,15 +806,17 @@ impl Mirror {
         .await;
         let event = match renamed {
             Ok(event) => event,
-            Err(NotIngested::Refused(why)) => {
+            Err(why) => {
                 self.state.file_failed(path, &why);
                 self.refused_new.insert(path.to_owned(), (bytes, why));
+                self.refused_renames
+                    .insert(page_id.to_owned(), path.to_owned());
                 return;
             }
-            Err(NotIngested::NoBase) => return,
         };
         (ingest.notify)(event);
         self.missing.remove(page_id);
+        self.refused_renames.remove(page_id);
         let Some(mut state) = self.pages.get(page_id).cloned() else {
             return;
         };
@@ -863,7 +888,7 @@ impl Mirror {
         let frozen = self.vacate(root, &layout, &dirty);
         // A file left at its old path because it was edited outside Agaric
         // is read into its page there first, then moved by a later pass.
-        if self.ingest.is_some() {
+        if self.ingest().is_some() {
             let edited: Vec<(String, String)> = frozen
                 .iter()
                 .filter(|id| layout.contains_key(*id) && self.state.is_diverged(id))
@@ -1015,6 +1040,7 @@ impl Mirror {
     fn forget(&mut self, page_id: &str) {
         self.pages.remove(page_id);
         self.missing.remove(page_id);
+        self.refused_renames.remove(page_id);
         self.state.page_ok(page_id);
         if let Err(e) = self.store.delete(page_id) {
             tracing::warn!(page_id, error = %e, "cannot delete a mirror state file");
@@ -1107,8 +1133,17 @@ impl Mirror {
     }
 
     /// Count one more tick the page's file is missing; `false` once it has
-    /// been missing for `MISSING_TICKS`, and counts as gone.
+    /// been missing for `MISSING_TICKS`, and counts as gone. Never while its
+    /// file is a renamed one whose rename was refused.
     fn still_missing(&mut self, page_id: &str) -> bool {
+        // The page's file is the refused one, not gone: a second file would
+        // make two for one page.
+        if let Some(path) = self.refused_renames.get(page_id) {
+            if self.refused_new.contains_key(path) {
+                return true;
+            }
+            self.refused_renames.remove(page_id);
+        }
         let ticks = self.missing.entry(page_id.to_owned()).or_default();
         *ticks += 1;
         if *ticks <= MISSING_TICKS {
@@ -1156,7 +1191,23 @@ impl Mirror {
         bytes: Vec<u8>,
         render: &PageFile,
     ) -> Result<Wrote, AppError> {
-        let Some(ingest) = self.ingest.clone() else {
+        // A page with no blocks has nothing a blank file could delete, so an
+        // editor's final newline or BOM on its empty file changes nothing
+        // (#6506).
+        if render.text.trim().is_empty() && is_blank(&bytes) {
+            if let Some(why) = pause_reason(root, &self.device_id) {
+                return Ok(Wrote::Paused(why));
+            }
+            // Written back as the render, as an ingest writes back LF and no BOM.
+            store::write_atomic(&root.join(path), render.text.as_bytes())?;
+            let shadow = Shadow {
+                text: render.text.clone(),
+                line_ids: render.line_ids.clone(),
+                buffer: Some(render.buffer.clone()),
+            };
+            return self.record(page_id, path, shadow);
+        }
+        let Some(ingest) = self.ingest() else {
             return Ok(Wrote::Diverged);
         };
         if let Some((refused, why)) = self.refused.get(page_id)
@@ -1222,6 +1273,12 @@ enum Wrote {
     Paused(String),
     /// The file's edit was refused, and why; nothing was written.
     Refused(String),
+}
+
+/// Whether `bytes` hold nothing but whitespace and a BOM.
+fn is_blank(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes)
+        .is_ok_and(|text| text.trim_start_matches('\u{feff}').trim().is_empty())
 }
 
 /// This device's last op `seq`, `0` before its first.

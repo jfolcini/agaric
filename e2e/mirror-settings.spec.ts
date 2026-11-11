@@ -41,4 +41,24 @@ test.describe('Settings › Data: Markdown mirror @settings @markdown', () => {
     await openMirrorCard(page)
     await expect(page.getByText('Off. No folder chosen.')).toBeVisible()
   })
+
+  test('reading changes back is chosen with the folder and changed later', async ({ page }) => {
+    await openMirrorCard(page)
+    const readBack = page.getByRole('switch', { name: 'Read changes back' })
+    await expect(readBack).toBeChecked()
+
+    await readBack.click()
+    await page.getByRole('button', { name: 'Choose folder…' }).click()
+    await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
+
+    await navigateToView(page, 'Journal')
+    await openMirrorCard(page)
+    await expect(readBack).not.toBeChecked()
+
+    await readBack.click()
+    await expect(readBack).toBeChecked()
+    await navigateToView(page, 'Journal')
+    await openMirrorCard(page)
+    await expect(readBack).toBeChecked()
+  })
 })

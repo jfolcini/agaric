@@ -155,7 +155,7 @@ async fn round_trip(specs: Vec<Spec>, encoding: (bool, bool)) -> Result<(), Test
 
     let state = MirrorState::new(data.path().to_path_buf());
     let root = folder.path().to_path_buf();
-    set_mirror_folder_inner(&pool, DEV, &state, Some(root.display().to_string()))
+    set_mirror_folder_inner(&pool, DEV, &state, Some(root.display().to_string()), true)
         .await
         .unwrap();
     let events: Arc<Mutex<Vec<MirrorIngested>>> = Arc::default();
@@ -173,13 +173,12 @@ async fn round_trip(specs: Vec<Spec>, encoding: (bool, bool)) -> Result<(), Test
     settle(&mat).await;
     let all = files(&root);
     prop_assert!(all.len() > 1, "every page is written: {all:?}");
-    // An empty page writes an empty file, which `ingest::file_text` refuses
-    // as an emptied save; left out until #6506 is fixed.
-    let written: Vec<_> = all
+    let written = all.clone();
+    // An empty page's file re-saved blank changes nothing to read in (#6506).
+    let read_in = written
         .iter()
         .filter(|(_, bytes)| !bytes.is_empty())
-        .cloned()
-        .collect();
+        .count();
 
     let before = op_count(&pool).await;
     for (path, bytes) in &written {
@@ -194,7 +193,7 @@ async fn round_trip(specs: Vec<Spec>, encoding: (bool, bool)) -> Result<(), Test
     let events = events.lock().unwrap().clone();
     prop_assert_eq!(
         events.len(),
-        written.len(),
+        read_in,
         "every file is read back: {:?}",
         events.iter().map(|e| &e.path).collect::<Vec<_>>()
     );
@@ -214,7 +213,7 @@ async fn round_trip(specs: Vec<Spec>, encoding: (bool, bool)) -> Result<(), Test
         );
     }
     prop_assert_eq!(op_count(&pool).await, before, "no op is appended");
-    let status = get_mirror_status_inner(&pool, &state).await.unwrap();
+    let status = get_mirror_status_inner(&pool, DEV, &state).await.unwrap();
     prop_assert!(status.diverged.is_empty(), "{:?}", status.diverged);
     prop_assert!(status.failed.is_empty(), "{:?}", status.failed);
     prop_assert_eq!(files(&root), all, "each file is written back as it was");

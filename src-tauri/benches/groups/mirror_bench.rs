@@ -123,6 +123,7 @@ async fn vault(pages: usize, blocks_per_page: usize) -> Vault {
         DEV,
         &state,
         Some(folder.path().display().to_string()),
+        true,
     )
     .await
     .unwrap();
@@ -180,7 +181,11 @@ async fn mirrored(pages: usize, blocks_per_page: usize) -> (Vault, Mirror) {
         pages,
         "the first pass writes one file per page"
     );
-    let status = vault.state.status(Some(String::new()));
+    let settings = agaric_lib::mirror::store::Settings {
+        folder: Some(String::new()),
+        read_back: true,
+    };
+    let status = vault.state.status(settings, Vec::new());
     assert!(
         status.diverged.is_empty() && status.failed.is_empty(),
         "{status:?}"

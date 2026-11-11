@@ -98,7 +98,7 @@ describe('Agaric real-backend outbound Markdown mirror (#5363) @markdown @boot',
 
     // 1. Turn the mirror on and let its first full pass finish before the page
     //    exists, so the page's file can only come from the pass an edit asks for.
-    const set = await invoke<MirrorStatus>('set_mirror_folder', { path: folder })
+    const set = await invoke<MirrorStatus>('set_mirror_folder', { path: folder, readBack: true })
     expect(set.folder).toBe(folder)
     await browser.waitUntil(
       async () => (await invoke<MirrorStatus>('get_mirror_status')).last_pass_ms !== null,

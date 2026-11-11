@@ -48,7 +48,7 @@ impl Fx {
         let folder = TempDir::new().unwrap();
         let state = MirrorState::new(data.path().to_path_buf());
         let root = folder.path().to_path_buf();
-        set_mirror_folder_inner(&pool, DEV, &state, Some(path_string(&root)))
+        set_mirror_folder_inner(&pool, DEV, &state, Some(path_string(&root)), true)
             .await
             .unwrap();
         let mirror = Mirror::open(pool.clone(), DEV.to_owned(), state.clone())
@@ -123,7 +123,7 @@ impl Fx {
     }
 
     async fn status(&self) -> MirrorStatus {
-        get_mirror_status_inner(&self.pool, &self.state)
+        get_mirror_status_inner(&self.pool, DEV, &self.state)
             .await
             .unwrap()
     }
@@ -311,7 +311,7 @@ async fn set_mirror_folder_refuses_a_folder_it_must_not_write_in() {
     let refusal = |path: &Path| {
         let path = path_string(path);
         let fx = &fx;
-        async move { set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(path)).await }
+        async move { set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(path), true).await }
     };
     let foreign = TempDir::new().unwrap();
     store::write_marker(foreign.path(), "another-device").unwrap();
@@ -361,7 +361,7 @@ async fn turning_the_mirror_off_leaves_its_files_and_writes_no_more() {
     fx.tick().await;
     let written = fx.read(ALPHA);
 
-    let status = set_mirror_folder_inner(&fx.pool, DEV, &fx.state, None)
+    let status = set_mirror_folder_inner(&fx.pool, DEV, &fx.state, None, true)
         .await
         .unwrap();
     fx.edit(&blocks[0], "changed").await;

@@ -15,6 +15,8 @@ import { appSettings, blocks } from '@/lib/tauri-mock/seed'
 
 /** The `app_settings` key the backend keeps this device's mirror folder under (#5363). */
 const MIRROR_FOLDER_KEY = 'mirror.folder'
+/** The `app_settings` key holding `'false'` while outside changes are not read back. */
+const MIRROR_READ_BACK_KEY = 'mirror.read_back'
 /** What the mock's folder dialog answers: there is no OS dialog to drive. */
 const MOCK_MIRROR_FOLDER = '/home/mock/Agaric mirror'
 
@@ -26,6 +28,8 @@ function mirrorStatus(): MirrorStatus {
     diverged: [],
     failed: [],
     last_pass_ms: null,
+    read_back: appSettings.get(MIRROR_READ_BACK_KEY) !== 'false',
+    pending: [],
   }
 }
 
@@ -145,12 +149,19 @@ export const systemHandlers = {
   rebuild_derived_state: cleanReport,
 
   // #5363 — the Markdown mirror. The mock has no disk: the folder is only the
-  // `app_settings` row, so nothing is validated, written or ever diverges.
+  // `app_settings` rows, so nothing is validated, written, ever diverges or
+  // is pending.
   pick_mirror_folder: () => MOCK_MIRROR_FOLDER,
   set_mirror_folder: (args) => {
-    const path = (args as { path?: unknown }).path
-    if (typeof path === 'string') appSettings.set(MIRROR_FOLDER_KEY, path)
-    else appSettings.delete(MIRROR_FOLDER_KEY)
+    const { path, readBack } = args as { path?: unknown; readBack?: unknown }
+    if (typeof path === 'string') {
+      appSettings.set(MIRROR_READ_BACK_KEY, String(readBack !== false))
+      appSettings.set(MIRROR_FOLDER_KEY, path)
+    } else appSettings.delete(MIRROR_FOLDER_KEY)
+    return mirrorStatus()
+  },
+  set_mirror_read_back: (args) => {
+    appSettings.set(MIRROR_READ_BACK_KEY, String((args as { on?: unknown }).on === true))
     return mirrorStatus()
   },
   get_mirror_status: mirrorStatus,
@@ -176,5 +187,6 @@ export const systemHandlers = {
   | 'rebuild_derived_state'
   | 'pick_mirror_folder'
   | 'set_mirror_folder'
+  | 'set_mirror_read_back'
   | 'get_mirror_status'
 >
