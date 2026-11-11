@@ -557,6 +557,7 @@ fn a_state_keeps_the_last_three_texts_written_once_each() {
     let shadow = |n: usize| Shadow {
         text: format!("v{n}"),
         line_ids: vec![None],
+        buffer: None,
     };
     let mut state = PageState {
         path: ALPHA.to_owned(),

@@ -187,6 +187,9 @@ impl RenderMode {
 pub struct PageFile {
     pub text: String,
     pub line_ids: Vec<Option<String>>,
+    /// The page's buffer from the same read, every block anchored: the base
+    /// an ingest of this text saves against.
+    pub buffer: String,
 }
 
 /// The page's file: its front matter and block tree, with
@@ -200,7 +203,12 @@ pub(super) fn render_page_file(data: &PageExportData) -> PageFile {
     render_frontmatter(&mut text, data, mode.names);
     let starts = render_block_tree(&mut text, data.page.id.as_str(), data, mode);
     let line_ids = block_start_lines(&text, &starts);
-    PageFile { text, line_ids }
+    let (buffer, _) = render_page_document(data);
+    PageFile {
+        text,
+        line_ids,
+        buffer,
+    }
 }
 
 /// One entry per line of `text`, each block's id, from `starts`, on the line
@@ -816,6 +824,14 @@ pub(super) fn agent_markdown_stretch(
 /// ends, as some clients send text, are read as the parser reads them, or a
 /// line keeps its anchor behind a `\r` (#6277 B1); the parser drops a BOM.
 pub fn anchor_free(source: &str) -> (String, Vec<Option<String>>) {
+    let (text, ids, _) = anchor_free_kept(source);
+    (text, ids)
+}
+
+/// [`anchor_free`], with the line of `source`, line ends normalised, that each
+/// line of the text was kept from: the mirror maps the ids of one onto the
+/// lines of the other (#5363).
+pub fn anchor_free_kept(source: &str) -> (String, Vec<Option<String>>, Vec<usize>) {
     let source = source.replace("\r\n", "\n").replace('\r', "\n");
     let mut lines: Vec<(&str, Option<String>)> =
         source.split('\n').map(|line| (line, None)).collect();
@@ -841,13 +857,17 @@ pub fn anchor_free(source: &str) -> (String, Vec<Option<String>>) {
             *carried = Some(id.into_string());
         }
     }
+    let mut kept = Vec::new();
     let (text, ids): (Vec<&str>, Vec<Option<String>>) = lines
         .into_iter()
         .enumerate()
         .filter(|(i, _)| !own_lines.contains(i))
-        .map(|(_, line)| line)
+        .map(|(i, line)| {
+            kept.push(i);
+            line
+        })
         .unzip();
-    (text.join("\n"), ids)
+    (text.join("\n"), ids, kept)
 }
 
 /// Every descendant of `page_id`, depth-first in sibling order, each through
