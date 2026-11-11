@@ -23,6 +23,7 @@ mod block_ref_link_tests;
 mod compaction_cmd_tests;
 mod edge_case_tests;
 mod engine_parity_tests;
+mod export_import_proptest;
 mod glob_filter_tests;
 mod heading_link_tests;
 mod history_cmd_tests;
