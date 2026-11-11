@@ -93,7 +93,7 @@ describe('Agaric real-backend outbound Markdown mirror (#5363) @markdown @boot',
     rmSync(folder, { recursive: true, force: true })
   })
 
-  it('writes an edited page, rewrites it after a restart, and leaves a file edited outside alone', async () => {
+  it('writes an edited page, rewrites it after a restart, and reads a file edited outside back in', async () => {
     await waitForAppReady()
 
     // 1. Turn the mirror on and let its first full pass finish before the page
