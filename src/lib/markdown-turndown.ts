@@ -22,6 +22,23 @@ export function createMarkdownTurndown(plugin: TurndownService.Plugin): Turndown
     // Turndown's `* * *` would land as a list item.
     hr: '---',
   })
+  // Turndown pads a marker to four columns (`-   x`, `1.  x`), and the readers
+  // keep spacing past a marker's one space as the item's text.
+  service.addRule('listItem', {
+    filter: 'li',
+    replacement: (content, node) => {
+      const list = node.parentNode as Element
+      const index = Array.prototype.indexOf.call(list.children, node)
+      const start = Number(list.getAttribute('start') || 1)
+      const prefix = list.nodeName === 'OL' ? `${start + index}. ` : '- '
+      const text = content.replace(/^\n+/, '').replace(/\n+$/, '\n')
+      return (
+        prefix +
+        text.replace(/\n/g, `\n${' '.repeat(prefix.length)}`) +
+        (node.nextSibling ? '\n' : '')
+      )
+    },
+  })
   service.use(plugin)
   // The GFM plugin writes `~x~`, and the editor strikes only `~~x~~`.
   service.addRule('strikethrough', {

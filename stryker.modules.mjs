@@ -167,8 +167,10 @@ export const MODULES = {
     tests: ['src/lib/__tests__/tagExpr.test.ts'],
   },
   // Importer: parses a foreign vault into blocks. Untrusted input, and the
-  // result is written to the user's database.
+  // result is written to the user's database. `setup`: restoring a space file
+  // is tested through test-setup's `invoke` mock.
   'vault-import': {
+    setup: true,
     src: 'src/lib/vault-import.ts',
     tests: ['src/lib/vault-import.test.ts'],
   },

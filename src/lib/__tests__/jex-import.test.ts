@@ -1341,3 +1341,13 @@ describe('parseJex HTML note rules and strikethrough (#6032)', () => {
     )
   })
 })
+
+describe('parseJex HTML note list markers (#6032)', () => {
+  it("writes an HTML note's list items with one space after the marker", () => {
+    const body = '<ul><li>one</li></ul><ol><li>first</li></ol>'
+    const { notes } = parseJex(
+      buildTar([noteMember('c7'.repeat(16), 'Listed', body, { markup_language: '2' })]),
+    )
+    expect(noteTitled(notes, 'Listed').markdown).toBe('- one\n\n1. first')
+  })
+})
