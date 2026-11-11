@@ -298,3 +298,21 @@ proptest! {
         Runtime::new().unwrap().block_on(converges(steps))?;
     }
 }
+
+/// The case the proptest shrank to: two blocks added in Agaric, a tick, then
+/// three paragraphs deleted from the file in a row.
+#[test]
+fn deleting_paragraphs_after_two_added_blocks_duplicates_none() {
+    Runtime::new()
+        .unwrap()
+        .block_on(converges(vec![
+            Step::EditBlock(16_094_957_617_744_931_308),
+            Step::AddBlock,
+            Step::AddBlock,
+            Step::Tick { undo: false },
+            Step::DeleteFromFile(871_752_782_241_211_427),
+            Step::DeleteFromFile(39_931_202_784_980_681),
+            Step::DeleteFromFile(385_241_135_033_025_694),
+        ]))
+        .unwrap();
+}
