@@ -148,16 +148,23 @@ export function ImportSection(): React.ReactElement {
         return warnings
       }
 
-      const { totalBlocks, pagesUpdated, succeededFiles, failedFiles, cancelled, navTitle } =
-        await run({
-          event: e,
-          activeSpaceId,
-          units,
-          notes: false,
-          loggerFailLabel: 'file import failed',
-          initialWarnings: restored.warnings,
-          finalWarnings: skippedWarnings,
-        })
+      const {
+        totalBlocks,
+        pagesUpdated,
+        upToDate,
+        succeededFiles,
+        failedFiles,
+        cancelled,
+        navTitle,
+      } = await run({
+        event: e,
+        activeSpaceId,
+        units,
+        notes: false,
+        loggerFailLabel: 'file import failed',
+        initialWarnings: restored.warnings,
+        finalWarnings: skippedWarnings,
+      })
 
       const viewAction =
         navTitle != null
@@ -173,7 +180,7 @@ export function ImportSection(): React.ReactElement {
         // #1927 — user aborted mid-loop. Report how many imported before
         // cancel rather than a generic success/error.
         notify(t('data.importCancelled', { count: succeededFiles }))
-      } else if (totalBlocks === 0 && pagesUpdated === 0) {
+      } else if (totalBlocks === 0 && pagesUpdated === 0 && !upToDate) {
         // Nothing imported — either every file failed or all files were
         // empty. Never fire a success toast here (#1928); surface an error.
         notify.error(
@@ -188,9 +195,12 @@ export function ImportSection(): React.ReactElement {
           fileInputRef.current?.click(),
         )
       } else {
-        notify.success(t('data.importedMessage', { totalBlocks, count: succeededFiles }), {
-          action: viewAction,
-        })
+        notify.success(
+          upToDate
+            ? t('data.importUpToDate')
+            : t('data.importedMessage', { totalBlocks, count: succeededFiles }),
+          { action: viewAction },
+        )
       }
     },
     [t, begin, run, goToImportedPage],
@@ -237,17 +247,23 @@ export function ImportSection(): React.ReactElement {
         }
       }
 
-      const { totalBlocks, pagesUpdated, succeededFiles, failedFiles, cancelled, navTitle } =
-        await run({
-          event: e,
-          activeSpaceId,
-          units,
-          notes: true,
-          loggerFailLabel: 'enex note failed',
-          initialWarnings:
-            noteLinks > 0 ? [t('data.importEnexNoteLinks', { count: noteLinks })] : [],
-          initialFailures: parseFailures,
-        })
+      const {
+        totalBlocks,
+        pagesUpdated,
+        upToDate,
+        succeededFiles,
+        failedFiles,
+        cancelled,
+        navTitle,
+      } = await run({
+        event: e,
+        activeSpaceId,
+        units,
+        notes: true,
+        loggerFailLabel: 'enex note failed',
+        initialWarnings: noteLinks > 0 ? [t('data.importEnexNoteLinks', { count: noteLinks })] : [],
+        initialFailures: parseFailures,
+      })
 
       const viewAction =
         navTitle != null
@@ -261,7 +277,7 @@ export function ImportSection(): React.ReactElement {
 
       if (cancelled) {
         notify(t('data.importCancelled', { count: succeededFiles }))
-      } else if (totalBlocks === 0 && pagesUpdated === 0) {
+      } else if (totalBlocks === 0 && pagesUpdated === 0 && !upToDate) {
         // #2513 — nothing imported. Each PARSE failure already fired its own
         // per-file error toast above (`importEnexParseFailed`), so the summary
         // fallback must only fire when there is MORE to say: a note that PARSED
@@ -281,9 +297,12 @@ export function ImportSection(): React.ReactElement {
       } else {
         // #2513 — each unit is a NOTE (not a file), so label the aggregate
         // toast "notes" rather than reusing the file-worded `.md` string.
-        notify.success(t('data.importedNotesMessage', { totalBlocks, count: succeededFiles }), {
-          action: viewAction,
-        })
+        notify.success(
+          upToDate
+            ? t('data.importUpToDate')
+            : t('data.importedNotesMessage', { totalBlocks, count: succeededFiles }),
+          { action: viewAction },
+        )
       }
     },
     [t, begin, run, goToImportedPage],
@@ -339,16 +358,23 @@ export function ImportSection(): React.ReactElement {
         }
       }
 
-      const { totalBlocks, pagesUpdated, succeededFiles, failedFiles, cancelled, navTitle } =
-        await run({
-          event: e,
-          activeSpaceId,
-          units,
-          notes: true,
-          loggerFailLabel: 'jex note import failed',
-          initialWarnings: preWarnings,
-          initialFailures: parseFailures,
-        })
+      const {
+        totalBlocks,
+        pagesUpdated,
+        upToDate,
+        succeededFiles,
+        failedFiles,
+        cancelled,
+        navTitle,
+      } = await run({
+        event: e,
+        activeSpaceId,
+        units,
+        notes: true,
+        loggerFailLabel: 'jex note import failed',
+        initialWarnings: preWarnings,
+        initialFailures: parseFailures,
+      })
 
       const viewAction =
         navTitle != null
@@ -362,7 +388,7 @@ export function ImportSection(): React.ReactElement {
 
       if (cancelled) {
         notify(t('data.importCancelled', { count: succeededFiles }))
-      } else if (totalBlocks === 0 && pagesUpdated === 0) {
+      } else if (totalBlocks === 0 && pagesUpdated === 0 && !upToDate) {
         // #2513 — nothing imported. Each PARSE failure already fired its own
         // per-file toast, so the summary fallback only fires when there is MORE
         // to say (a note that PARSED but failed to import, or an empty
@@ -379,9 +405,12 @@ export function ImportSection(): React.ReactElement {
         )
       } else {
         // Each unit is a NOTE (one page per note), so label it "notes".
-        notify.success(t('data.importedNotesMessage', { totalBlocks, count: succeededFiles }), {
-          action: viewAction,
-        })
+        notify.success(
+          upToDate
+            ? t('data.importUpToDate')
+            : t('data.importedNotesMessage', { totalBlocks, count: succeededFiles }),
+          { action: viewAction },
+        )
       }
     },
     [t, begin, run, goToImportedPage],
@@ -704,13 +733,18 @@ export function ImportSection(): React.ReactElement {
               blocksCreated,
               propertiesSet,
               pagesUpdated,
+              pagesUnchanged,
               importedCount,
               cancelled,
               pageTitle,
               navTitle,
               notes,
             } = importResult
-            const allFailed = blocksCreated === 0 && pagesUpdated === 0 && failures.length > 0
+            const allFailed =
+              blocksCreated === 0 &&
+              pagesUpdated === 0 &&
+              pagesUnchanged === 0 &&
+              failures.length > 0
             const hasDetail = failures.length > 0 || warnings.length > 0
             // Cap the at-rest list; the toggle reveals the rest.
             const PREVIEW = 5
@@ -751,6 +785,8 @@ export function ImportSection(): React.ReactElement {
                       `, ${t('data.importResultProperties', { count: propertiesSet })}`}
                     {pagesUpdated > 0 &&
                       `, ${t('data.importResultUpdated', { count: pagesUpdated })}`}
+                    {pagesUnchanged > 0 &&
+                      `, ${t('data.importResultUpToDate', { count: pagesUnchanged })}`}
                   </p>
                 )}
                 {/* #1927 — post-import navigation: jump to what was

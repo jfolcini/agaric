@@ -263,6 +263,20 @@ function nearestNestedLists(li: Element): Element[] {
   return lists
 }
 
+function isList(el: Element): boolean {
+  return el.tagName === 'UL' || el.tagName === 'OL'
+}
+
+/**
+ * Walk any `<ul>`/`<ol>`, a task list or a plain one. A list written directly
+ * inside another, as Google Docs and Word write a sub-list, nests under the
+ * item before it.
+ */
+function walkAnyList(list: Element, depth: number, inline: InlineToMarkdown, out: OutlineBlock[]) {
+  if (isTaskList(list)) walkTaskList(list, depth, inline, out)
+  else walkList(list, list.tagName === 'OL', depth, inline, out)
+}
+
 /**
  * Detect whether a `<ul>`/`<ol>` is a GFM task list — at least one `<li>`
  * directly containing a `<input type="checkbox">`. Such lists emit task blocks
@@ -292,6 +306,10 @@ function walkTaskList(
   for (const node of Array.from(list.childNodes)) {
     if (node.nodeType !== node.ELEMENT_NODE) continue
     const el = node as Element
+    if (isList(el)) {
+      walkAnyList(el, depth + 1, inline, out)
+      continue
+    }
     if (el.tagName !== 'LI') continue
 
     const checkbox = el.querySelector(':scope > input[type="checkbox"]')
@@ -307,13 +325,7 @@ function walkTaskList(
     // Recurse into the NEAREST nested lists inside this `<li>` (including ones
     // wrapped in a non-list element) so they match the lists stripped from the
     // item's text — see {@link nearestNestedLists} (#2024).
-    for (const childList of nearestNestedLists(el)) {
-      if (isTaskList(childList)) {
-        walkTaskList(childList, depth + 1, inline, out)
-      } else {
-        walkList(childList, childList.tagName === 'OL', depth + 1, inline, out)
-      }
-    }
+    for (const childList of nearestNestedLists(el)) walkAnyList(childList, depth + 1, inline, out)
   }
 }
 
@@ -372,8 +384,7 @@ function walkChildren(
 
     if (tag === 'UL' || tag === 'OL') {
       flushInline()
-      if (isTaskList(el)) walkTaskList(el, depth, inline, out)
-      else walkList(el, tag === 'OL', depth, inline, out)
+      walkAnyList(el, depth, inline, out)
       continue
     }
 
@@ -445,6 +456,10 @@ function walkList(
   for (const node of Array.from(list.childNodes)) {
     if (node.nodeType !== node.ELEMENT_NODE) continue
     const el = node as Element
+    if (isList(el)) {
+      walkAnyList(el, depth + 1, inline, out)
+      continue
+    }
     if (el.tagName !== 'LI') continue
 
     // The item's OWN inline text excludes any nested list — clone the `<li>`,
@@ -463,9 +478,7 @@ function walkList(
     // `el.children` — keeps the recursion symmetric with the
     // `querySelectorAll('ul, ol')` removal above, so a WRAPPED nested list is
     // not silently dropped (#2024).
-    for (const childList of nearestNestedLists(el)) {
-      walkList(childList, childList.tagName === 'OL', depth + 1, inline, out)
-    }
+    for (const childList of nearestNestedLists(el)) walkAnyList(childList, depth + 1, inline, out)
   }
 }
 

@@ -415,6 +415,32 @@ describe('htmlBodyToOutline — task lists (Phase 2)', () => {
     ])
   })
 
+  it('keeps the checkboxes of a task list nested under a plain item', () => {
+    const html =
+      '<ul><li>plain parent<ul>' +
+      '<li><input type="checkbox"> todo child</li>' +
+      '<li><input type="checkbox" checked> done child</li>' +
+      '</ul></li></ul>'
+    expect(convert(html)).toEqual([
+      { content: 'plain parent', depth: 0, listMarker: '- ' },
+      { content: 'todo child', depth: 1, listMarker: '- ', todoState: 'TODO' },
+      { content: 'done child', depth: 1, listMarker: '- ', todoState: 'DONE' },
+    ])
+  })
+
+  it('nests a list written directly inside a list under the item before it', () => {
+    // Google Docs and Word write a sub-list as a sibling of its parent item.
+    expect(convert('<ul><li>a</li><ul><li>b</li></ul><li>c</li></ul>')).toEqual([
+      { content: 'a', depth: 0, listMarker: '- ' },
+      { content: 'b', depth: 1, listMarker: '- ' },
+      { content: 'c', depth: 0, listMarker: '- ' },
+    ])
+    expect(convert('<ul><li><input type="checkbox"> a</li><ol><li>b</li></ol></ul>')).toEqual([
+      { content: 'a', depth: 0, listMarker: '- ', todoState: 'TODO' },
+      { content: 'b', depth: 1, listMarker: '1. ' },
+    ])
+  })
+
   it('a non-task <ul> still produces plain bullets (no regression)', () => {
     expect(convert('<ul><li>a</li><li>b</li></ul>')).toEqual([
       { content: 'a', depth: 0, listMarker: '- ' },

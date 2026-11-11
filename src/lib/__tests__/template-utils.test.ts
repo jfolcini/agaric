@@ -1107,6 +1107,26 @@ describe('insertTemplateBlocks — the `<% recording %>` placeholder (#5364)', (
     ])
   })
 
+  it('drops a placeholder written over several lines, as the backend does', async () => {
+    stubTemplates({
+      load_page_subtree: () => ({
+        blocks: [
+          makeBlockRow({ id: 'P', content: '<%\nrecording\n%>', parent_id: 'TMPL', position: 0 }),
+          makeBlockRow({ id: 'TC2', content: '## Notes', parent_id: 'TMPL', position: 1 }),
+        ],
+        truncated: false,
+        total: 2,
+      }),
+      create_blocks_batch: () =>
+        withOps({ blocks: [makeBlockRow({ id: 'NEW1', content: '## Notes' })] }),
+    })
+
+    expect(await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')).toEqual(['NEW1'])
+    const batch = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'create_blocks_batch')
+    const args = batch?.[1] as { specs: Array<{ content: string }> } | undefined
+    expect(args?.specs.map((s) => s.content)).toEqual(['## Notes'])
+  })
+
   it('copies a block that only mentions the placeholder', async () => {
     stubTemplates({
       load_page_subtree: () => ({
