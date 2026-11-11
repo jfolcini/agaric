@@ -701,24 +701,19 @@ pub async fn import_markdown_in_run(
         space_id: &space_id,
         title: &page_title,
         content: &content,
-        rule: MergeRule::new(
-            dialect,
-            vault_files.as_deref(),
-            vault_notes.is_some(),
-            run_pages,
-        ),
+        rule: MergeRule::new(dialect, run_pages),
+        vault_files: vault_files.as_deref().unwrap_or_default(),
+        vault_notes: vault_notes.as_deref(),
     };
-    let page = create_import_page(
-        pool,
-        materializer,
-        device_id,
-        &file,
-        progress,
-        &mut parse_output,
-    );
+    let page = create_import_page(pool, materializer, device_id, &file, &mut parse_output);
     let page = match Box::pin(page).await? {
         ImportPage::Write(page) => *page,
-        ImportPage::Merged(result) => return Ok(result),
+        ImportPage::Merged(merged) => {
+            let handles = (pool, device_id, materializer, app_data_dir, progress);
+            let ctx = merge_ctx(handles, space_id, &merged).await?;
+            let finish = finish_merged_import(ctx, *merged, vault_files.unwrap_or_default());
+            return Box::pin(finish).await;
+        }
     };
 
     // Bundle the read-only handles + derived identity + the running `warnings`
@@ -743,6 +738,67 @@ pub async fn import_markdown_in_run(
         deferred: Vec::new(),
     };
     write_import(ctx, page.tx, &parse_output, vault_files).await
+}
+
+/// The handles an import runs with: its pool, device, materializer, app data
+/// directory and progress sink.
+type ImportHandles<'a> = (
+    &'a SqlitePool,
+    &'a str,
+    &'a Materializer,
+    &'a std::path::Path,
+    Option<&'a dyn ImportProgressSink>,
+);
+
+/// The context [`finish_merged_import`] attaches a merged file's files in.
+async fn merge_ctx<'a>(
+    (pool, device_id, materializer, app_data_dir, progress): ImportHandles<'a>,
+    space_id: String,
+    merged: &MergedPage,
+) -> Result<ImportCtx<'a>, AppError> {
+    let lines = PropertyLines::load(
+        &mut *pool.acquire().await?,
+        Some(&space_id),
+        PropertyWrite::Import,
+    )
+    .await?;
+    Ok(ImportCtx {
+        pool,
+        device_id,
+        materializer,
+        app_data_dir,
+        progress,
+        started_at: std::time::Instant::now(),
+        space_id,
+        page_id: merged.page_id.clone(),
+        page_title: merged.title.clone(),
+        blocks_total: 0,
+        lines,
+        warnings: Vec::new(),
+        folder: false,
+        deferred: Vec::new(),
+    })
+}
+
+/// The end of an import that merged into the page of its file's title: what
+/// the file says that the save did not read ([`finish_merge`]), its ops
+/// undone with the merge's, then the merge's result.
+async fn finish_merged_import(
+    mut ctx: ImportCtx<'_>,
+    merged: MergedPage,
+    vault_files: Vec<VaultFile>,
+) -> Result<ImportResult, AppError> {
+    let MergedPage {
+        page_id,
+        title,
+        mut saved,
+        source,
+    } = merged;
+    let ops = finish_merge(&mut ctx, &source, vault_files).await?;
+    saved.op_refs.extend(ops);
+    let mut result = merged_result(ctx.progress, page_id, title, saved);
+    result.warnings.extend(ctx.warnings);
+    Ok(result)
 }
 
 /// The import's phases once its page is open in `tx` (#662): the document's
@@ -1063,6 +1119,10 @@ pub use import_core::*;
 #[path = "markdown_import_merge.rs"]
 mod import_merge;
 pub use import_merge::*;
+
+#[path = "markdown_import_merge_source.rs"]
+mod import_merge_source;
+use import_merge_source::*;
 
 #[path = "markdown_import_front_matter.rs"]
 mod import_front_matter;

@@ -172,7 +172,7 @@ pub(super) fn normalize_foreign_forms(
 /// in the vault, as Obsidian reads it (#5740). Of two notes of one name the one
 /// nearer the vault root wins, then the one whose title sorts first, so every
 /// file of the pick reads a name alike whichever order the files import in.
-fn vault_note_titles(paths: &[String]) -> HashMap<String, String> {
+pub(super) fn vault_note_titles(paths: &[String]) -> HashMap<String, String> {
     let depth = |title: &str| title.matches('/').count();
     let mut notes: HashMap<String, String> = HashMap::new();
     for path in paths {
@@ -196,7 +196,7 @@ fn vault_note_titles(paths: &[String]) -> HashMap<String, String> {
 /// the page the note's own import then fills (#5160 D12). The name is the text
 /// before the first `|` or `#`, which an Obsidian note name never holds. Tokens
 /// in code, tags, embeds and escaped links are untouched.
-fn rewrite_vault_wikilinks(content: &str, notes: &HashMap<String, String>) -> String {
+pub(super) fn rewrite_vault_wikilinks(content: &str, notes: &HashMap<String, String>) -> String {
     if !content.contains("[[") {
         return content.to_string();
     }
@@ -357,7 +357,6 @@ pub(super) async fn create_import_page(
     materializer: &Materializer,
     device_id: &str,
     file: &ImportFile<'_>,
-    progress: Option<&dyn ImportProgressSink>,
     parse_output: &mut import::ParseOutput,
 ) -> Result<ImportPage, AppError> {
     let mut tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
@@ -374,10 +373,13 @@ pub(super) async fn create_import_page(
         ImportTarget::Merge { page_id, title } => {
             tx.rollback().await?;
             let merge = merge_into_page(pool, device_id, materializer, &page_id, file);
-            let merged = Box::pin(merge).await?;
-            return Ok(ImportPage::Merged(merged_result(
-                progress, page_id, title, merged,
-            )));
+            let (saved, source) = Box::pin(merge).await?;
+            return Ok(ImportPage::Merged(Box::new(MergedPage {
+                page_id,
+                title,
+                saved,
+                source,
+            })));
         }
         ImportTarget::Create(title) => {
             let (page, page_op) = create_block_in_tx(
@@ -760,7 +762,7 @@ pub(super) fn rewrite_block_content_for_import(
 /// content, to be ingested + rewritten AFTER the import tx commits. A code block
 /// keeps its `![[...]]` / `![](...)` text literal (mirroring the inline-tag
 /// skip), and with no supplied vault files detection is a no-op.
-fn detect_import_attachment_refs(
+pub(super) fn detect_import_attachment_refs(
     content: &str,
     is_code: bool,
     vault_files: &[VaultFile],
@@ -801,7 +803,7 @@ impl PendingAttachments {
 
     /// Queue a created block's `linked` refs and the files its
     /// `attachments::` lines name, returning its other properties.
-    fn queue_block(
+    pub(super) fn queue_block(
         &mut self,
         block_id: &str,
         linked: Vec<import::AttachmentRef>,

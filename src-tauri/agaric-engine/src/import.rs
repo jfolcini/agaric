@@ -3595,7 +3595,7 @@ fn strip_frontmatter<'a>(
 /// The YAML of a front matter fence opening `slice`, and the bytes the fence
 /// takes through its closing `---` line, or `None` when no `---` line closes
 /// it.
-fn front_matter_fence(slice: &str) -> Option<(&str, usize)> {
+pub fn front_matter_fence(slice: &str) -> Option<(&str, usize)> {
     let after_open = slice.strip_prefix("---")?;
     let end = after_open.find("\n---")?;
     // Through the rest of the closing line, its line break included, so what
