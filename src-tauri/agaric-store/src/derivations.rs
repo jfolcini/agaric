@@ -287,7 +287,9 @@ mod tests {
                 stale.push(format!(
                     "{derivation:?}: output hash {now} (golden {golden}), version {} \
                      (golden {version}). If the output changed, bump `Derivation::version` \
-                     and set GOLDEN to ({derivation:?}, <new version>, {now}).",
+                     and set GOLDEN to ({derivation:?}, <new version>, {now}). A pure \
+                     reformat of the hashed source changes no output: set only the new \
+                     golden and keep the version, so no vault rebuilds for it.",
                     derivation.version()
                 ));
             }

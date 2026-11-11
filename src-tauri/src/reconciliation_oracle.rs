@@ -54,7 +54,9 @@
 //! evidence the check exists to produce, and no rebuild repairs SQL that has
 //! drifted from the engine. The separate Rebuild command
 //! (`commands::reconciliation::rebuild_derived_state`, #6488) rebuilds the
-//! caches only, after the user has had the report to copy. Everything that WRITES (the `settle_*` helpers
+//! caches only, after the user has had the report to copy.
+//!
+//! Everything that WRITES (the `settle_*` helpers
 //! that run production's deferred maintainers) or exists to fail a test loudly
 //! (`assert_*`, the `*_reconciliation_failure` formatters, the coverage
 //! counters) lives in `harness.rs` under `cfg(test)` and is re-exported from

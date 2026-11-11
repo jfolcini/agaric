@@ -272,12 +272,11 @@ export function HistoryItemCore({
         {/* Its own grid cell, not part of the meta line: beside it on a wide
             row, and under a phone row's actions (`history-row-cell`), so a
             real device id never takes a line of its own. The separator stays
-            with the id. */}
-        <span className="history-item-device-group whitespace-nowrap text-xs text-muted-foreground">
+            with the id. It truncates rather than overflow: in the block
+            history sheet it shares the row with the op type and the time. */}
+        <span className="history-item-device-group min-w-0 truncate text-xs text-muted-foreground">
           <span aria-hidden="true">· </span>
-          <span className="history-item-device text-xs text-muted-foreground">
-            dev:{entry.device_id.slice(0, 8)}
-          </span>
+          <span className="history-item-device">dev:{entry.device_id.slice(0, 8)}</span>
         </span>
         {/* Content preview */}
         {propPayload && (
