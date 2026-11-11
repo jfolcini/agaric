@@ -1,4 +1,4 @@
-# Session 3673 — #6277 H2: the mirror reads edited files back
+# Session 3693 — #6277 H2: the mirror reads edited files back
 
 #5363 slice 2. A page's file edited outside Agaric is read back into the page, and the file keeps its own bytes.
 
