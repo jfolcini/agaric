@@ -1,0 +1,413 @@
+{
+  "description": "#5364 — a journal day leaves the template's `<% recording %>` block out and keeps its children in its place, as `/template` does: a day has no recording to put there, and a literal placeholder in every new day is noise. The placeholder reads in any case and with spaces inside the delimiters (`is_recording_placeholder`), the same matcher `/meeting` uses to find where a meeting's recording goes. Its child takes its place at the top level, and that child's own child stays under it. What the mock approximates is the same as `journal_template_day`'s: content and nesting only.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Daily template",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Agenda",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "<%  Recording %>",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Under it",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B3",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Deeper",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B3",
+        "parent_id": "B6",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "2031-01-02",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B9",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Agenda",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B9",
+        "parent_id": "B9",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Under it",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B9",
+        "parent_id": "B9",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Deeper",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B12",
+        "page_id": "B9",
+        "parent_id": "B11",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B9",
+        "parent_id": "B9",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 21,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "journal-template",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "journal-template",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space_with_a_journal_template",
+      "returns": ["create_space#space_id=B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_template_page",
+      "returns": ["create_page_in_space#page_id=B3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_day_without_the_placeholder",
+      "returns": ["create_page_in_space#page_id=B9"]
+    }
+  ],
+  "name": "journal_template_recording",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The space whose journal template the day inherits, `C1`.",
+      "name": "a_space_with_a_journal_template",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Daily template",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "The template page, `C2`.",
+      "name": "the_template_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C2",
+        "key": "journal-template",
+        "value": {
+          "value_text": "true"
+        }
+      },
+      "command": "set_property",
+      "comment": "`C2` is the space's journal template."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "Agenda",
+        "index": 0,
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "First top-level template block, `C3`."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "<%  Recording %>",
+        "index": 1,
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "The placeholder, `C4`, in another case and with inner spaces."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "Under it",
+        "index": 0,
+        "parentId": "C4",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "`C5`, under the placeholder: the day holds it at the top level, in the placeholder's place."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "Deeper",
+        "index": 0,
+        "parentId": "C5",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "`C6`, under `C5`: it stays under `C5`'s copy."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "Notes",
+        "index": 2,
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "Last top-level template block, `C7`."
+    },
+    {
+      "args": {
+        "content": "2031-01-02",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "The day, `C8`, born with four copies and no placeholder: `C9` (Agenda), `C10` (Under it), `C11` (Deeper, under `C10`), `C12` (Notes).",
+      "name": "a_day_without_the_placeholder",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -431,3 +431,69 @@ test.describe('The recording placeholder @editor @pages', () => {
     expect(contents).not.toContain('<% recording %>')
   })
 })
+
+test.describe('The recording placeholder in a journal day @editor @pages @journal', () => {
+  const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+  const UNDER = 'Under the placeholder'
+
+  interface Row {
+    id: string
+    parent_id: string | null
+    content: string | null
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('a new day leaves out a `<% recording %>` block and keeps its child in its place', async ({
+    page,
+  }) => {
+    const placeholder = await ipc<{ id: string }>(page, 'create_block', {
+      blockType: 'content',
+      content: '<% Recording %>',
+      parentId: '00000000000000000000PAGE06',
+      index: null,
+      scope: SCOPE,
+      blockId: null,
+    })
+    await ipc(page, 'create_block', {
+      blockType: 'content',
+      content: UNDER,
+      parentId: placeholder.id,
+      index: null,
+      scope: SCOPE,
+      blockId: null,
+    })
+
+    await navigateToView(page, 'Journal')
+    await page.getByRole('button', { name: 'Configure journal template' }).click()
+    await activePopover(page).getByRole('button', { name: 'Meeting Notes Template' }).click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Meeting Notes Template')
+
+    await navigateToView(page, 'Journal')
+    await page.getByRole('button', { name: 'Next day' }).click()
+    await page.getByRole('button', { name: 'Add your first block' }).click()
+    await expect(page.locator('[data-testid="sortable-block"]', { hasText: UNDER })).toBeVisible()
+
+    await navigateToView(page, 'Pages')
+    await navigateToView(page, 'Journal')
+    const tomorrow = await page.evaluate(() => {
+      const d = new Date()
+      d.setDate(d.getDate() + 1)
+      const mm = String(d.getMonth() + 1).padStart(2, '0')
+      const dd = String(d.getDate()).padStart(2, '0')
+      return `${d.getFullYear()}-${mm}-${dd}`
+    })
+    const dayPage = await ipc<Row | null>(page, 'get_journal_page_by_date', {
+      date: tomorrow,
+      scope: SCOPE,
+    })
+    const { blocks } = await ipc<{ blocks: Row[] }>(page, 'load_page_subtree', {
+      rootBlockId: dayPage?.id,
+      scope: SCOPE,
+    })
+    expect(blocks.map((b) => b.content)).not.toContain('<% Recording %>')
+    expect(blocks.find((b) => b.content === UNDER)?.parent_id).toBe(dayPage?.id)
+  })
+})

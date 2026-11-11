@@ -9,7 +9,8 @@ use super::*;
 /// subtree (#5395): rendered as a Document buffer and parsed back, so the copy
 /// carries content with its raw refs, list markers, task states, dates and
 /// custom properties, nesting included; a nested page is not copied. `expand`
-/// rewrites each block's content before it is written. Every op rides the
+/// rewrites each block's content before it is written, or drops the block
+/// with `None`, its children taking its place. Every op rides the
 /// caller's transaction, so the copy lands or rolls back with whatever the
 /// caller writes, and one undo reverts both. Returns the created rows,
 /// depth-first.
@@ -33,7 +34,7 @@ pub(crate) async fn copy_page_blocks_in_tx(
     device_id: &str,
     source_page_id: &str,
     dest_page_id: &str,
-    expand: impl Fn(&str) -> String,
+    expand: impl Fn(&str) -> Option<String>,
 ) -> Result<Result<Vec<BlockRow>, String>, AppError> {
     let data = load_page_export_data(tx, source_page_id, PageRead::Duplicate).await?;
     let mut source = String::new();
@@ -45,7 +46,7 @@ pub(crate) async fn copy_page_blocks_in_tx(
     if ids.is_empty() {
         return Ok(Ok(Vec::new()));
     }
-    let mut parsed = import::parse_document_outline(&source);
+    let parsed = import::parse_document_outline(&source);
     let anchors = parsed.blocks.iter().map(|b| b.block_anchor.as_deref());
     if !anchors.eq(ids.iter().map(|id| Some(id.as_str()))) {
         return Ok(Err(format!(
@@ -60,9 +61,7 @@ pub(crate) async fn copy_page_blocks_in_tx(
     if let Err(e) = crate::commands::ensure_batch_within_cap("ops", tx.pending_len() + ops) {
         return Ok(Err(e.to_string()));
     }
-    for block in &mut parsed.blocks {
-        block.content = expand(&block.content);
-    }
+    let blocks = expand_or_drop(parsed.blocks, expand);
     let dest = BlockId::from_trusted(dest_page_id);
     let lines = PropertyLines::load_for_block(tx, &dest, PropertyWrite::Copy).await?;
     Box::pin(create_parsed_blocks(
@@ -71,11 +70,36 @@ pub(crate) async fn copy_page_blocks_in_tx(
         device_id,
         Some(dest_page_id.to_owned()),
         None,
-        &parsed.blocks,
+        &blocks,
         &lines,
     ))
     .await
     .map(Ok)
+}
+
+/// `blocks` with each content rewritten by `expand`, and each block it answers
+/// `None` for dropped, its descendants lifted one level into its place.
+fn expand_or_drop(
+    blocks: Vec<import::ParsedBlock>,
+    expand: impl Fn(&str) -> Option<String>,
+) -> Vec<import::ParsedBlock> {
+    // The source depths of the dropped blocks the current block sits under.
+    let mut dropped: Vec<usize> = Vec::new();
+    let mut kept = Vec::with_capacity(blocks.len());
+    for mut block in blocks {
+        while dropped.last().is_some_and(|&depth| block.depth <= depth) {
+            dropped.pop();
+        }
+        match expand(&block.content) {
+            Some(content) => {
+                block.content = content;
+                block.depth -= dropped.len();
+                kept.push(block);
+            }
+            None => dropped.push(block.depth),
+        }
+    }
+    kept
 }
 
 /// What a paste carries: clipboard text, an HTML paste's written as Document
