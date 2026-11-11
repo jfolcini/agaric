@@ -1148,3 +1148,36 @@ proptest! {
             })?;
     }
 }
+
+/// #6506: an editor saves an empty page's empty file with a final newline or
+/// a BOM. A page with no blocks has nothing such a file could delete.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_empty_pages_file_saved_with_only_a_newline_or_bom_keeps_mirroring() {
+    for saved in ["\n", "\u{feff}", "\u{feff}\r\n"] {
+        let mut fx = Fx::new().await;
+        let (page, _) = fx.page("Alpha", &[]).await;
+        fx.tick().await;
+        assert_eq!(fx.read(), "", "an empty page writes an empty file");
+
+        fx.write(saved);
+        fx.settle_file().await;
+        let status = fx.status().await;
+        assert!(status.failed.is_empty(), "{saved:?}: {:?}", status.failed);
+        assert!(status.diverged.is_empty(), "{saved:?}: {:?}", status.diverged);
+
+        let row = create_block_inner(
+            &fx.pool,
+            DEV,
+            &fx.mat,
+            "content".into(),
+            "later".into(),
+            Some(BlockId::from_trusted(&page)),
+            None,
+        )
+        .await
+        .unwrap();
+        fx.tick().await;
+        assert!(fx.read().contains("later"), "{saved:?}: {}", fx.read());
+        assert_eq!(fx.blocks(&page).await, [(row.id.into_string(), "later".to_owned())]);
+    }
+}
