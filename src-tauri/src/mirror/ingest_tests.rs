@@ -643,7 +643,7 @@ async fn a_file_renamed_outside_agaric_renames_its_page() {
 
     assert_eq!(
         pages_titled(&fx, "Gamma").await,
-        [page.clone()],
+        std::slice::from_ref(&page),
         "no second page"
     );
     assert!(pages_titled(&fx, "Alpha").await.is_empty());
@@ -694,7 +694,7 @@ async fn a_rename_and_the_links_rewritten_with_it_keep_one_page_and_its_backlink
 
     assert_eq!(
         pages_titled(&fx, "Gamma").await,
-        [alpha.clone()],
+        std::slice::from_ref(&alpha),
         "one page"
     );
     assert_eq!(linked_from(&fx, &beta).await, [alpha]);
@@ -760,7 +760,7 @@ async fn a_file_renamed_and_edited_is_matched_by_its_anchors() {
 
     assert_eq!(
         pages_titled(&fx, "Gamma").await,
-        [page.clone()],
+        std::slice::from_ref(&page),
         "no second page"
     );
     assert_eq!(
@@ -806,7 +806,7 @@ async fn a_file_moved_into_another_space_folder_moves_its_page_one_undo_moves_it
     assert_eq!(space_of(&fx, &page).await, TEST_SPACE_B_ID);
     assert_eq!(
         pages_titled(&fx, "Alpha").await,
-        [page.clone()],
+        std::slice::from_ref(&page),
         "no second page"
     );
     assert!(
