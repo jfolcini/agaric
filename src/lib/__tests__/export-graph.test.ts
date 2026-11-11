@@ -12,6 +12,7 @@ import {
   downloadBlob,
   exportAllSpacesAsZip,
   exportGraphAsZip,
+  pageMarkdownForCopy,
   resolveAttachmentRefsForCopy,
   sanitizeSegment,
 } from '@/lib/export-graph'
@@ -1740,3 +1741,32 @@ describe('downloadBlob', () => {
  *    `|| 'attachment'` fallback (554) is kept as explicit intent for the same
  *    reason as line 105 (finding 2). Both mutants are permanently accepted.
  */
+
+describe('pageMarkdownForCopy', () => {
+  it('commits the focused draft, then copies the page with its attachment refs resolved', async () => {
+    const attId = '01HZX9P3QABCDEF0123456789'
+    const order: string[] = []
+    mockedFlushActiveDraft.mockImplementation(async () => {
+      order.push('flush')
+    })
+    stubExport({
+      export_page_markdown: (args) => {
+        order.push(`export ${args['pageId'] as string}`)
+        return `# Notes\n\n![shot](attachment:${attId})`
+      },
+      read_attachment_meta: () => ({
+        id: attId,
+        block_id: 'B1',
+        filename: 'shot.png',
+        mime_type: 'image/png',
+        size_bytes: 1,
+        fs_path: 'x',
+        created_at: 0,
+        content_hash: null,
+      }),
+    })
+
+    expect(await pageMarkdownForCopy('P1')).toBe('# Notes\n\n![shot](shot.png)')
+    expect(order).toEqual(['flush', 'export P1'])
+  })
+})
