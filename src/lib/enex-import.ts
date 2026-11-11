@@ -131,12 +131,11 @@ const ENEX_TIMESTAMP_RE = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/
 
 /**
  * Parse an Evernote `YYYYMMDDTHHMMSSZ` timestamp to epoch milliseconds.
- * Returns null for an absent (`null`/empty) or malformed value — the caller
+ * Returns null for an empty or malformed value — the caller
  * treats a null date as "unknown" rather than defaulting to now.
  */
-function parseEnexTimestamp(raw: string | null | undefined): number | null {
-  if (raw == null) return null
-  const m = ENEX_TIMESTAMP_RE.exec(raw.trim())
+function parseEnexTimestamp(raw: string): number | null {
+  const m = ENEX_TIMESTAMP_RE.exec(raw)
   if (m === null) return null
   const [, y, mo, d, h, mi, s] = m
   const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s))
@@ -781,8 +780,8 @@ function addNoteLinkRule(td: TurndownService, titles: string[], fileName: string
     filter: (node) => pageOf(node) !== undefined,
     replacement: (_content, node) => {
       const page = pageOf(node as HTMLElement) ?? ''
-      const text = (node.textContent ?? '').trim()
-      return page === text ? `[[${page}]]` : `[[${page}|${text}]]`
+      // The page is always `<file stem>/<title>`, so it never equals the text.
+      return `[[${page}|${(node.textContent ?? '').trim()}]]`
     },
   })
 }
@@ -825,19 +824,17 @@ export function todoBlock(title: string, task: TaskBlock): string {
 export function localDate(ms: number, timeZone = ''): string | null {
   const date = new Date(ms)
   if (!(ms > 0) || Number.isNaN(date.getTime())) return null
-  if (timeZone.length > 0) {
-    try {
-      const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      }).formatToParts(date)
-      const part = (type: string) => parts.find((p) => p.type === type)?.value
-      return `${part('year')}-${part('month')}-${part('day')}`
-    } catch {
-      // An unknown zone throws a RangeError: fall through to the local day.
-    }
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date)
+    const part = (type: string) => parts.find((p) => p.type === type)?.value
+    return `${part('year')}-${part('month')}-${part('day')}`
+  } catch {
+    // No zone (`''`) or an unknown one throws a RangeError: use the local day.
   }
   return formatDate(date)
 }

@@ -42,6 +42,8 @@ import {
   countEvernoteNoteLinks,
   type EnexNote,
   enexNoteToMarkdown,
+  enexPageName,
+  localDate,
   parseEnex,
   sanitizeNoteTitleToFilename,
   UNTITLED_PLACEHOLDER,
@@ -1447,5 +1449,62 @@ describe('parseEnex — links between notes (#6032)', () => {
     )
 
     expect(countEvernoteNoteLinks(notes)).toBe(3)
+  })
+
+  it('links a note by the first of two titles that match as page names, as the import does', () => {
+    const xml = file(['Plan', `<p>${link('plan')}</p>`], ['Plan', '<p>a</p>'], ['PLAN', '<p>b</p>'])
+
+    expect(at(parseEnex(xml, 'Work.enex')).markdown).toBe('[[Work/Plan|plan]]')
+  })
+
+  it("keeps a web link whose text is a note's title as a web link", () => {
+    const xml = file(
+      ['Plan', '<p><a href="https://x.org/">Meeting</a></p>'],
+      ['Meeting', '<p>m</p>'],
+    )
+
+    expect(at(parseEnex(xml, 'Work.enex')).markdown).toBe('[Meeting](https://x.org/)')
+  })
+
+  it('labels a note link with its text without the no-break space Evernote leaves after it', () => {
+    const xml = file(['Plan', `<p>${link('Meeting&#160;')}next</p>`], ['Meeting', '<p>m</p>'])
+
+    expect(at(parseEnex(xml, 'Work.enex')).markdown).toBe('[[Work/Meeting|Meeting]]\u00A0next')
+  })
+})
+
+describe('parseEnex — task groups and dates (#4815)', () => {
+  it('puts the tasks with no group where a placeholder with no id stood', () => {
+    const placeholder = taskGroupDiv('x').replace(' --en-id:x;', '')
+    const xml = enex(
+      `<note><title>T</title><content>${content(`<p>before</p>${placeholder}<p>after</p>`)}</content>
+        ${task('Loose', 'open', 'A', '')}
+      </note>`,
+    )
+
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('before\n\n- [ ] Loose\n\nafter')
+  })
+
+  it("reads a placeholder's id without the spaces around it", () => {
+    const placeholder = taskGroupDiv('g1').replace('--en-id:g1;', '--en-id: g1 ;')
+    const xml = enex(
+      `<note><title>T</title><content>${content(`<p>before</p>${placeholder}<p>after</p>`)}</content>
+        ${task('Grouped', 'open', 'A', 'g1')}
+      </note>`,
+    )
+
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe('before\n\n- [ ] Grouped\n\nafter')
+  })
+
+  it('reads no day for an unset (0) or negative instant', () => {
+    expect(localDate(0)).toBeNull()
+    expect(localDate(-1, 'UTC')).toBeNull()
+    expect(localDate(Date.UTC(2024, 0, 2, 12), 'UTC')).toBe('2024-01-02')
+  })
+})
+
+describe('enexPageName (#4815)', () => {
+  it('drops only the trailing .enex of the file name', () => {
+    expect(enexPageName('My.enexes.enex', 'T')).toBe('My.enexes/T')
   })
 })
