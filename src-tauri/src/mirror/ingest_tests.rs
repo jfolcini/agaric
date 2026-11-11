@@ -596,3 +596,29 @@ async fn a_save_landing_while_a_new_file_is_read_is_not_written_over() {
     let file = std::fs::read_to_string(fx.root.join("TestSpace/Delta.md")).unwrap();
     assert_eq!(file, "newer\n", "the newer save is kept, to be read next");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn choosing_another_folder_forgets_the_old_folders_new_file_failures() {
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    write_at(&fx, "TestSpace/alpha.md", "other\n");
+    fx.settle_file().await;
+    assert_eq!(fx.status().await.failed.len(), 1);
+
+    let other = TempDir::new().unwrap();
+    set_mirror_folder_inner(
+        &fx.pool,
+        DEV,
+        &fx.state,
+        Some(other.path().to_str().unwrap().to_owned()),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        fx.status().await.failed.is_empty(),
+        "{:?}",
+        fx.status().await.failed
+    );
+}

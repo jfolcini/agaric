@@ -140,6 +140,7 @@ impl MirrorState {
         inner.paused = None;
         inner.diverged.clear();
         inner.failed.clear();
+        inner.failed_files.clear();
     }
 
     /// The status, for `folder`, the mirror's folder setting.
