@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content, space_id FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "content",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "space_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "43c89b04345cce22ad3d710dcf06b4c4a8b9f4c431ffce4b177097a2872dff95"
+}
