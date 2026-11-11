@@ -900,10 +900,11 @@ async fn a_move_whose_new_title_the_space_holds_leaves_the_page_where_it_was() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_vanished_file_nothing_claims_is_written_again_once_it_counts_as_gone() {
+async fn with_reading_back_off_a_vanished_file_is_written_again_once_it_counts_as_gone() {
     let mut fx = Fx::new().await;
     fx.page("Alpha", &["one"]).await;
     fx.tick().await;
+    read_back(&fx, false, false).await.unwrap();
     let written = fx.read();
 
     std::fs::remove_file(fx.root.join(ALPHA)).unwrap();
@@ -1250,4 +1251,128 @@ async fn choosing_a_folder_while_mirroring_keeps_reading_back_off() {
 
     assert!(!status.read_back);
     assert_eq!(fx.contents(&page).await, ["one"], "nothing read in");
+}
+
+// ── External deletes (#5363 slice 3, PR 2) ──────────────────────────────
+
+async fn is_trashed(fx: &Fx, page: &str) -> bool {
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(page)
+        .fetch_one(&fx.pool)
+        .await
+        .unwrap()
+        .is_some()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_deleted_outside_agaric_trashes_its_page_and_one_undo_restores_it() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    let (beta, _) = fx.page("Beta", &["two"]).await;
+    fx.tick().await;
+
+    std::fs::remove_file(fx.root.join(ALPHA)).unwrap();
+    fx.tick().await;
+    fx.tick().await;
+    assert!(
+        !is_trashed(&fx, &alpha).await,
+        "held while it may yet turn up renamed"
+    );
+    fx.tick().await;
+    fx.tick().await;
+
+    assert!(is_trashed(&fx, &alpha).await, "to the Trash");
+    assert!(!is_trashed(&fx, &beta).await);
+    assert!(!fx.root.join(ALPHA).exists(), "not written again");
+    let event = fx.events().pop().unwrap();
+    assert_eq!(event.page_id, alpha);
+    undo_ops_inner(&fx.pool, DEV, &fx.mat, event.op_refs)
+        .await
+        .unwrap();
+    settle(&fx.mat).await;
+    assert!(!is_trashed(&fx, &alpha).await, "one undo restores it");
+    fx.tick().await;
+    assert!(
+        fx.root.join(ALPHA).exists(),
+        "and its file is written again"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_emptied_folder_trashes_nothing_and_pauses_the_mirror() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+
+    std::fs::remove_dir_all(fx.root.join("TestSpace")).unwrap();
+    for _ in 0..5 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await);
+    let status = fx.status().await;
+    assert!(
+        status
+            .paused
+            .as_ref()
+            .is_some_and(|why| why.contains("empty")),
+        "{status:?}"
+    );
+    assert!(
+        !fx.root.join("TestSpace").exists(),
+        "nothing written into it either"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_folder_removed_trashes_none_of_its_pages() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    space_b(&fx).await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    create_page_in_space_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        None,
+        "Other".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    fx.tick().await;
+
+    std::fs::remove_dir_all(fx.root.join("TestSpace")).unwrap();
+    for _ in 0..5 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mirror_moved_to_a_new_folder_trashes_nothing_and_writes_every_page() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+
+    let other = TempDir::new().unwrap();
+    set_mirror_folder_inner(
+        &fx.pool,
+        DEV,
+        &fx.state,
+        Some(other.path().to_str().unwrap().to_owned()),
+        true,
+    )
+    .await
+    .unwrap();
+    for _ in 0..5 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await);
+    assert!(
+        other.path().join(ALPHA).exists(),
+        "the new folder holds the page"
+    );
 }

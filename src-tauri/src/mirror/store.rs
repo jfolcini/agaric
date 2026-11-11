@@ -242,4 +242,35 @@ impl StateDir {
             _ => Ok(()),
         }
     }
+
+    /// The file beside the states naming the folder their paths are below.
+    fn folder_file(&self) -> PathBuf {
+        self.0.with_file_name("folder")
+    }
+
+    /// Bind the states to `folder`: when they were written below another
+    /// folder, they are dropped, so a page whose file that folder held is not
+    /// read as one whose file vanished from this one. Returns whether they
+    /// were dropped. States that name no folder, as those written before
+    /// the binding, are taken as `folder`'s.
+    pub fn bind(&self, folder: &str) -> std::io::Result<bool> {
+        let bound = match std::fs::read_to_string(self.folder_file()) {
+            Ok(bound) => Some(bound),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e),
+        };
+        if bound.as_deref() == Some(folder) {
+            return Ok(false);
+        }
+        let other = bound.is_some();
+        if other {
+            match std::fs::remove_dir_all(&self.0) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
+        }
+        std::fs::create_dir_all(&self.0)?;
+        write_atomic(&self.folder_file(), folder.as_bytes())?;
+        Ok(other)
+    }
 }
