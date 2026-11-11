@@ -883,19 +883,72 @@ async fn an_export_merged_into_another_page_of_its_title_attaches_its_files_ther
         .unwrap();
 
     assert_eq!(result.page_id, page.as_str());
-    let after = attachments(&pool).await;
+    assert_files_came_to(&pool, page.as_str(), &before).await;
+    mat.shutdown();
+}
+
+/// Red (#6277 G5): an export of one space merged into another space's page of
+/// its title attaches its files there, the first space's blocks unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_export_merged_into_another_spaces_page_attaches_its_files_there() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (_, md, files) = exported_page_with_files(&pool, &mat, dir.path()).await;
+    let work = create_space_inner(&pool, DEV, &mat, "Work".into(), None)
+        .await
+        .unwrap();
+    let page = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Review".into(),
+        work.as_str().into(),
+    )
+    .await
+    .unwrap();
+    dup_child(&pool, &mat, &page, "Elsewhere").await;
+    settle(&mat).await;
+    let before = attachments(&pool).await;
+
+    let result = import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        dir.path(),
+        md,
+        Some("Review.md".into()),
+        work.as_str().into(),
+        ImportDialect::Markdown,
+        Some(files),
+        Some(vec!["Review.md".into()]),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(result.page_id, page.as_str());
+    assert_files_came_to(&pool, page.as_str(), &before).await;
+    mat.shutdown();
+}
+
+/// The attachments `before` a merge are as they were, and the merge added the
+/// export's three files, each onto `page` or one of its blocks.
+async fn assert_files_came_to(pool: &SqlitePool, page: &str, before: &[(String, String)]) {
+    let after = attachments(pool).await;
     let kept: Vec<_> = after
         .iter()
         .filter(|row| before.contains(row))
         .cloned()
         .collect();
     assert_eq!(kept, before);
-    let mut owners: Vec<String> = children(&pool, page.as_str())
+    let mut owners: Vec<String> = children(pool, page)
         .await
         .into_iter()
         .map(|(id, _)| id)
         .collect();
-    owners.push(page.as_str().to_owned());
+    owners.push(page.to_owned());
     let mut added: Vec<(bool, String)> = after
         .into_iter()
         .filter(|row| !before.contains(row))
@@ -910,5 +963,4 @@ async fn an_export_merged_into_another_page_of_its_title_attaches_its_files_ther
             (true, "report.pdf".to_owned())
         ]
     );
-    mat.shutdown();
 }

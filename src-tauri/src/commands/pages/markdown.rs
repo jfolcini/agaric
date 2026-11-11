@@ -715,8 +715,16 @@ pub async fn import_markdown_in_run(
     let page = match Box::pin(page).await? {
         ImportPage::Write(page) => *page,
         ImportPage::Merged(merged) => {
-            let handles = (pool, device_id, materializer, app_data_dir, progress);
-            let ctx = merge_ctx(handles, space_id, &merged).await?;
+            let ctx = merge_ctx(
+                pool,
+                device_id,
+                materializer,
+                app_data_dir,
+                progress,
+                space_id,
+                &merged,
+            );
+            let ctx = ctx.await?;
             let finish = finish_merged_import(ctx, *merged, vault_files.unwrap_or_default());
             return Box::pin(finish).await;
         }
@@ -746,19 +754,13 @@ pub async fn import_markdown_in_run(
     write_import(ctx, page.tx, &parse_output, vault_files).await
 }
 
-/// The handles an import runs with: its pool, device, materializer, app data
-/// directory and progress sink.
-type ImportHandles<'a> = (
-    &'a SqlitePool,
-    &'a str,
-    &'a Materializer,
-    &'a std::path::Path,
-    Option<&'a dyn ImportProgressSink>,
-);
-
 /// The context [`finish_merged_import`] attaches a merged file's files in.
 async fn merge_ctx<'a>(
-    (pool, device_id, materializer, app_data_dir, progress): ImportHandles<'a>,
+    pool: &'a SqlitePool,
+    device_id: &'a str,
+    materializer: &'a Materializer,
+    app_data_dir: &'a std::path::Path,
+    progress: Option<&'a dyn ImportProgressSink>,
     space_id: String,
     merged: &MergedPage,
 ) -> Result<ImportCtx<'a>, AppError> {
