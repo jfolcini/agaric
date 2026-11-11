@@ -4238,13 +4238,21 @@ mod boot_cache_gating_tests {
             .map(|d| d.key)
             .collect::<Vec<_>>()
         };
-        assert_eq!(stale_rows().await, vec![SOURCE.to_owned()], "the seed is stale");
+        assert_eq!(
+            stale_rows().await,
+            vec![SOURCE.to_owned()],
+            "the seed is stale"
+        );
         let mat =
             materializer::Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
 
         boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
         mat.flush_background().await.expect("drain the first boot");
-        assert_eq!(stale_rows().await, Vec::<String>::new(), "boot re-strips the row");
+        assert_eq!(
+            stale_rows().await,
+            Vec::<String>::new(),
+            "boot re-strips the row"
+        );
 
         let load = || {
             mat.metrics()

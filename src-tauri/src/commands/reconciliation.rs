@@ -137,6 +137,7 @@ pub async fn compute_reconciliation_report_inner(
 /// run, or an inbound-sync rebuild waiting out its debounce leaves a cache
 /// behind its base tables for a moment, and reporting that moment names a
 /// divergence a second run would not reproduce.
+#[instrument(skip(pool, materializer), err)]
 pub async fn settled_reconciliation_report(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -296,7 +297,11 @@ mod tests {
             .await
             .expect("report");
 
-        assert_eq!(report.artefacts, Vec::new(), "the pending rebuild landed first");
+        assert_eq!(
+            report.artefacts,
+            Vec::new(),
+            "the pending rebuild landed first"
+        );
         mat.shutdown();
     }
 
