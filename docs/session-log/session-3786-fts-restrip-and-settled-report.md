@@ -1,4 +1,4 @@
-# Session 3767 — Re-strip stale FTS rows once, and let the integrity check settle
+# Session 3786 — Re-strip stale FTS rows once, and let the integrity check settle
 
 The maintainer's integrity check reported 27 `fts_blocks.stripped` divergences after the 0.23.0 upgrade (#6488). The strip changed in #6330, #6348 and #6421, the oracle folds with the new strip, and boot rebuilt the index only when it was empty, so every row indexed before the upgrade kept the old text.
 
