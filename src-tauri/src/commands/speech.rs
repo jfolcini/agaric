@@ -473,6 +473,42 @@ mod tests {
         stop_speaking_inner(None).await.unwrap();
     }
 
+    /// The commands read the engine from the managed `SpeechState`.
+    fn app_with(engine: Option<Arc<dyn SpeechEngine>>) -> tauri::App<tauri::test::MockRuntime> {
+        let app = tauri::test::mock_app();
+        app.manage(SpeechState::new(engine));
+        app
+    }
+
+    #[tokio::test]
+    async fn the_commands_reach_the_managed_engine() {
+        let engine = Arc::new(available_engine());
+        let app = app_with(Some(engine.clone() as Arc<dyn SpeechEngine>));
+
+        assert!(get_speech_engine_available(app.state()).await.unwrap());
+        assert_eq!(
+            speak_text(app.state(), "Hello".into()).await.unwrap(),
+            SpeakOutcome::Done
+        );
+        stop_speaking(app.state()).await.unwrap();
+        assert_eq!(*engine.spoken.lock().unwrap(), vec!["Hello".to_owned()]);
+        assert_eq!(*engine.stops.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_commands_report_no_engine_and_surface_its_errors() {
+        let app = app_with(None);
+        assert!(!get_speech_engine_available(app.state()).await.unwrap());
+
+        let failing = FakeEngine {
+            stop_error: Some(EngineError("not bound".into())),
+            ..available_engine()
+        };
+        let app = app_with(Some(Arc::new(failing)));
+        let err = stop_speaking(app.state()).await.unwrap_err();
+        assert!(matches!(err, AppError::InvalidOperation(_)), "{err:?}");
+    }
+
     /// The shapes `SpeechPlugin.kt` resolves with, which nothing compiles on
     /// Linux to check.
     #[test]
