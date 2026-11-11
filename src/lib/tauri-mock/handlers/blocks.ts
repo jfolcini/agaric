@@ -1037,7 +1037,7 @@ export const blocksHandlers = {
     })
     return paginateKeyset(
       roots,
-      (b) => [String(b['deleted_at']), String(b['id'])],
+      (b) => [b['deleted_at'] as number, String(b['id'])],
       limit,
       a['cursor'],
       null,
@@ -1532,8 +1532,7 @@ export const blocksHandlers = {
       throw validationRejection('block_ids list cannot be empty')
     }
     // The same monotonic marker `delete_block` mints: `list_trash` orders on
-    // it, and a bare ISO stamp sorts BELOW an earlier `ISO#seq` in the same
-    // millisecond.
+    // it, and two deletes in one millisecond must not share it.
     const now = nextCohortMarker()
     // Resolve live roots (skip missing or already-deleted).
     const liveRoots = inputIds.filter((id) => {

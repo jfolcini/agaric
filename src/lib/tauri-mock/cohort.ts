@@ -41,22 +41,22 @@ type BlockRow = Record<string, unknown>
 /** The mock's `blocks` store (id → row). */
 export type CohortBlocks = Map<string, BlockRow>
 
-let cohortSeq = 0
+let lastCohortMarker = 0
 
 /**
  * Mint a fresh, unique soft-delete cohort marker.
  *
- * The backend stamps `deleted_at` with the delete op's `created_at` (epoch ms)
- * and relies on it being distinct per delete — `RestoreBlock`'s
- * `deleted_at_ref` guard matches on equality, so two deletes that shared a
- * marker would restore each other's rows. `Date.now()` alone is not distinct
- * at mock speed (two deletes in the same millisecond collide), hence the
- * monotonic suffix. Still ISO-shaped, so it sorts and stays a truthy string
- * the rest of the mock reads as "deleted".
+ * The backend stamps `deleted_at` with the delete op's `created_at`, an
+ * epoch-ms integer, and relies on it being distinct per delete —
+ * `RestoreBlock`'s `deleted_at_ref` guard matches on equality, so two deletes
+ * that shared a marker would restore each other's rows. `Date.now()` alone is
+ * not distinct at mock speed (two deletes in the same millisecond collide), so
+ * a marker is at least one past the last. It is a number, as the backend's is,
+ * because the frontend formats it as a time.
  */
-export function nextCohortMarker(): string {
-  cohortSeq += 1
-  return `${new Date().toISOString()}#${cohortSeq.toString().padStart(6, '0')}`
+export function nextCohortMarker(): number {
+  lastCohortMarker = Math.max(Date.now(), lastCohortMarker + 1)
+  return lastCohortMarker
 }
 
 /**
@@ -79,7 +79,7 @@ export function nextCohortMarker(): string {
  * untouched. A missing or already-deleted target is a no-op (matching the
  * CTE seed's `WHERE deleted_at IS NULL` filter) and returns `[]`.
  */
-export function deleteCohort(blocks: CohortBlocks, blockId: string, marker: string): string[] {
+export function deleteCohort(blocks: CohortBlocks, blockId: string, marker: number): string[] {
   const target = blocks.get(blockId)
   if (!target || target['deleted_at']) return []
   const affected: string[] = []
