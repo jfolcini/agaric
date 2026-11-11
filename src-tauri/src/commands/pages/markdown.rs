@@ -697,10 +697,16 @@ pub async fn import_markdown_in_run(
         parse_output.warnings.len(),
     );
 
+    let notes: Vec<String> = vault_notes
+        .iter()
+        .flatten()
+        .map(|path| import_title(Some(path.clone())))
+        .collect();
     let file = ImportFile {
         space_id: &space_id,
         title: &page_title,
         content: &content,
+        notes: &notes,
         rule: MergeRule::new(
             dialect,
             vault_files.as_deref(),
