@@ -27,72 +27,38 @@ function actionScript() {
   return steps[0].run
 }
 
-const MISSING_PACKAGE_ERRORS = ['E: Unable to locate package libdoesnotexist']
-
-const AZURE = 'azure.archive.ubuntu.com'
-const AZURE_LINE = `http://${AZURE}/ubuntu/\tpriority:1`
-const ARCHIVE_LINE = 'https://archive.ubuntu.com/ubuntu/\tpriority:2'
-const SECURITY_LINE = 'https://security.ubuntu.com/ubuntu/\tpriority:3'
-/** `lines` as the mirror list holds them, one per line. */
-const mirrorList = (...lines) => lines.map((line) => `${line}\n`).join('')
-const IMAGE_MIRRORS = mirrorList(AZURE_LINE, ARCHIVE_LINE, SECURITY_LINE)
-/** What `apt-get install` prints when `host` does not resolve. */
-const unresolvableErrors = (host) => [
-  `E: Failed to fetch mirror+file:/etc/apt/apt-mirrors.txt/pool/main/b/brotli/libbrotli-dev_1.1.0-2ubuntu0.1_amd64.deb  Temporary failure resolving '${host}'`,
+const FETCH_ERRORS = [
+  "E: Failed to fetch mirror+file:/etc/apt/apt-mirrors.txt/pool/main/b/brotli/libbrotli-dev_1.1.0-2ubuntu0.1_amd64.deb  Temporary failure resolving 'azure.archive.ubuntu.com'",
   'E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?',
 ]
-const UNRESOLVABLE_AZURE = unresolvableErrors(AZURE)
+const MISSING_PACKAGE_ERRORS = ['E: Unable to locate package libdoesnotexist']
 
 /**
  * Run the action's script against stubbed `sudo`, `apt-get`, `sleep` and the
  * lock tools, all first on PATH. `apt-get update` always succeeds; `apt-get
  * install` fails `failures` times with `errors` on stderr and exit 100 (what
  * apt exits when a download or a lookup fails), then succeeds.
- *
- * With `mirrors`, the image's `/etc/apt/apt-mirrors.txt` holds that text (the
- * `sudo` stub points every use of that path at a temp copy), and the install
- * instead fails with a resolve error for `unresolvable` (Azure unless given)
- * for as long as the list still names that host: the outage the image's own
- * mirror failover does not ride out.
- *
- * @param {{ failures?: number, errors?: string[], mirrors?: string | null, unresolvable?: string }} options
  */
-function runAction({ failures = 0, errors = [], mirrors = null, unresolvable = AZURE }) {
+function runAction({ failures, errors }) {
   const dir = mkdtempSync(join(tmpdir(), 'apt-install-action-'))
   try {
     const installs = join(dir, 'installs')
-    const updates = join(dir, 'updates')
     const sleeps = join(dir, 'sleeps')
-    const mirrorFile = join(dir, 'apt-mirrors.txt')
     writeFileSync(installs, '')
-    writeFileSync(updates, '')
     writeFileSync(sleeps, '')
-    if (mirrors !== null) writeFileSync(mirrorFile, mirrors)
     const stub = (name, body) => {
       const path = join(dir, name)
       writeFileSync(path, `#!/usr/bin/env bash\n${body}\n`)
       chmodSync(path, 0o755)
     }
-    stub(
-      'sudo',
-      [
-        "from='/etc/apt/apt-mirrors.txt'",
-        `to=${JSON.stringify(mirrorFile)}`,
-        'exec "${@//"$from"/"$to"}"',
-      ].join('\n'),
-    )
-    const failing =
-      mirrors === null
-        ? `[ "$(wc -l < ${JSON.stringify(installs)})" -le ${failures === Infinity ? 999 : failures} ]`
-        : `grep -qF ${JSON.stringify(`//${unresolvable}/`)} ${JSON.stringify(mirrorFile)}`
-    const failingErrors = mirrors === null ? errors : unresolvableErrors(unresolvable)
+    stub('sudo', 'exec "$@"')
     stub(
       'apt-get',
       [
-        `[ "$1" = update ] && { echo update >> ${JSON.stringify(updates)}; exit 0; }`,
+        '[ "$1" = update ] && exit 0',
         `echo "$@" >> ${JSON.stringify(installs)}`,
-        `if ${failing}; then`,
-        ...failingErrors.map((line) => `  echo ${JSON.stringify(line)} >&2`),
+        `if [ "$(wc -l < ${JSON.stringify(installs)})" -le ${failures === Infinity ? 999 : failures} ]; then`,
+        ...errors.map((line) => `  echo ${JSON.stringify(line)} >&2`),
         '  exit 100',
         'fi',
         'echo "Setting up libfoo (1.0) ..."',
@@ -123,9 +89,7 @@ function runAction({ failures = 0, errors = [], mirrors = null, unresolvable = A
       stdout: result.stdout,
       stderr: result.stderr,
       installs: lines(installs).length,
-      updates: lines(updates).length,
       sleeps: lines(sleeps).length,
-      mirrors: mirrors === null ? null : readFileSync(mirrorFile, 'utf8'),
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -133,7 +97,7 @@ function runAction({ failures = 0, errors = [], mirrors = null, unresolvable = A
 }
 
 void test('a download the mirror cannot serve twice is an infra failure, exit 75', () => {
-  const run = runAction({ failures: Infinity, errors: UNRESOLVABLE_AZURE })
+  const run = runAction({ failures: Infinity, errors: FETCH_ERRORS })
   assert.equal(run.status, 75, run.stdout + run.stderr)
   assert.match(run.stdout, /AGARIC_APT_INFRA/)
   assert.equal(run.installs, 2)
@@ -141,7 +105,7 @@ void test('a download the mirror cannot serve twice is an infra failure, exit 75
 })
 
 void test('a download that fails once is retried and the step passes', () => {
-  const run = runAction({ failures: 1, errors: UNRESOLVABLE_AZURE })
+  const run = runAction({ failures: 1, errors: FETCH_ERRORS })
   assert.equal(run.status, 0, run.stdout + run.stderr)
   assert.equal(run.installs, 2)
 })
@@ -159,28 +123,4 @@ void test('an install that works the first time passes with no retry', () => {
   assert.equal(run.status, 0, run.stdout + run.stderr)
   assert.equal(run.installs, 1)
   assert.equal(run.sleeps, 0)
-})
-
-void test('a mirror that does not resolve is dropped and the retry installs from the next one', () => {
-  const run = runAction({ mirrors: IMAGE_MIRRORS })
-  assert.equal(run.status, 0, run.stdout + run.stderr)
-  assert.equal(run.installs, 2)
-  assert.equal(run.updates, 2, 'the package lists are refreshed from the mirrors left')
-  assert.equal(run.sleeps, 0)
-  assert.equal(run.mirrors, mirrorList(ARCHIVE_LINE, SECURITY_LINE))
-})
-
-void test('the last mirror in the list is never dropped', () => {
-  const run = runAction({ mirrors: mirrorList(AZURE_LINE) })
-  assert.equal(run.status, 75, run.stdout + run.stderr)
-  assert.equal(run.mirrors, mirrorList(AZURE_LINE))
-  assert.equal(run.installs, 2)
-  assert.equal(run.updates, 1)
-  assert.equal(run.sleeps, 1)
-})
-
-void test('only the mirror named as unresolvable is dropped, not one whose name contains it', () => {
-  const run = runAction({ mirrors: IMAGE_MIRRORS, unresolvable: 'archive.ubuntu.com' })
-  assert.equal(run.status, 0, run.stdout + run.stderr)
-  assert.equal(run.mirrors, mirrorList(AZURE_LINE, SECURITY_LINE))
 })

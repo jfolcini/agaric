@@ -8,8 +8,7 @@ description: >-
   never-completed update exits 75 (not 1) so "this job could not run" is
   distinguishable from "this job failed". The install is bounded too and gets
   one retry; an install that runs out its bound both times, or cannot download
-  its packages from the mirror both times, also exits 75. Before that retry, a
-  mirror whose name did not resolve is dropped from the image's mirror list.
+  its packages from the mirror both times, also exits 75.
 inputs:
   packages:
     description: >-
@@ -182,32 +181,6 @@ runs:
           grep -qE 'Temporary failure resolving|Could not resolve|Failed to fetch|Unable to fetch some archives' "${apt_err}"
         }
 
-        # The image's `mirror+file` failover rides out a stalled mirror, but
-        # not one whose name does not resolve: with `azure.archive.ubuntu.com`
-        # unresolvable, every fetch failed for hours and apt never tried
-        # `archive.ubuntu.com`, next in the list. So each mirror apt could not
-        # resolve is dropped from the list, while another remains, and the
-        # package lists are refreshed from the rest. Every access goes through
-        # `sudo`: the file is root's. True when a mirror was dropped.
-        drop_unresolvable_mirrors() {
-          local mirrors=/etc/apt/apt-mirrors.txt kept="${RUNNER_TEMP}/apt-mirrors.kept"
-          local host dropped=1
-          sudo test -r "${mirrors}" || return 1
-          for host in $(grep -oE "Temporary failure resolving '[^']+'" "${apt_err}" | cut -d"'" -f2 | sort -u); do
-            # `//host/`, so `archive.ubuntu.com` never matches the Azure line.
-            sudo grep -vF "//${host}/" "${mirrors}" >"${kept}" || true
-            [ -s "${kept}" ] || continue
-            echo "::warning::apt-install: ${host} does not resolve; retrying with the other mirrors in ${mirrors}"
-            sudo cp "${kept}" "${mirrors}"
-            dropped=0
-          done
-          if [ "${dropped}" -eq 0 ]; then
-            # shellcheck disable=SC2024 # as above
-            sudo timeout -k 30 "${APT_UPDATE_TIMEOUT}" apt-get update >>"${apt_log}" || true
-          fi
-          return "${dropped}"
-        }
-
         install_status=0
         for attempt in 1 2; do
           install_status=0
@@ -233,10 +206,9 @@ runs:
               fetch_failed || break
               print_apt_log
               echo "::warning::apt-get install attempt ${attempt} could not download its packages (exit ${install_status}); the Ubuntu mirror is unreachable, this is not the diff"
-              # Without a mirror to drop, wait: a DNS or mirror blip often
-              # clears within a minute. The retry reuses every .deb this
-              # attempt finished.
-              if [ "${attempt}" -eq 1 ] && ! drop_unresolvable_mirrors; then
+              # A DNS or mirror outage often clears within a minute; the retry
+              # reuses every .deb this attempt finished.
+              if [ "${attempt}" -eq 1 ]; then
                 sleep 60
               fi
               ;;
