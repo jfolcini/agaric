@@ -30,11 +30,12 @@ function actionScript() {
 const MISSING_PACKAGE_ERRORS = ['E: Unable to locate package libdoesnotexist']
 
 const AZURE = 'azure.archive.ubuntu.com'
-const IMAGE_MIRRORS = [
-  `http://${AZURE}/ubuntu/\tpriority:1`,
-  'https://archive.ubuntu.com/ubuntu/\tpriority:2',
-  'https://security.ubuntu.com/ubuntu/\tpriority:3',
-].join('\n')
+const AZURE_LINE = `http://${AZURE}/ubuntu/\tpriority:1`
+const ARCHIVE_LINE = 'https://archive.ubuntu.com/ubuntu/\tpriority:2'
+const SECURITY_LINE = 'https://security.ubuntu.com/ubuntu/\tpriority:3'
+/** `lines` as the mirror list holds them, one per line. */
+const mirrorList = (...lines) => lines.map((line) => `${line}\n`).join('')
+const IMAGE_MIRRORS = mirrorList(AZURE_LINE, ARCHIVE_LINE, SECURITY_LINE)
 /** What `apt-get install` prints when `host` does not resolve. */
 const unresolvableErrors = (host) => [
   `E: Failed to fetch mirror+file:/etc/apt/apt-mirrors.txt/pool/main/b/brotli/libbrotli-dev_1.1.0-2ubuntu0.1_amd64.deb  Temporary failure resolving '${host}'`,
@@ -62,11 +63,11 @@ function runAction({ failures = 0, errors = [], mirrors = null, unresolvable = A
     const installs = join(dir, 'installs')
     const updates = join(dir, 'updates')
     const sleeps = join(dir, 'sleeps')
-    const mirrorList = join(dir, 'apt-mirrors.txt')
+    const mirrorFile = join(dir, 'apt-mirrors.txt')
     writeFileSync(installs, '')
     writeFileSync(updates, '')
     writeFileSync(sleeps, '')
-    if (mirrors !== null) writeFileSync(mirrorList, `${mirrors}\n`)
+    if (mirrors !== null) writeFileSync(mirrorFile, mirrors)
     const stub = (name, body) => {
       const path = join(dir, name)
       writeFileSync(path, `#!/usr/bin/env bash\n${body}\n`)
@@ -76,14 +77,14 @@ function runAction({ failures = 0, errors = [], mirrors = null, unresolvable = A
       'sudo',
       [
         "from='/etc/apt/apt-mirrors.txt'",
-        `to=${JSON.stringify(mirrorList)}`,
+        `to=${JSON.stringify(mirrorFile)}`,
         'exec "${@//"$from"/"$to"}"',
       ].join('\n'),
     )
     const failing =
       mirrors === null
         ? `[ "$(wc -l < ${JSON.stringify(installs)})" -le ${failures === Infinity ? 999 : failures} ]`
-        : `grep -qF ${JSON.stringify(`//${unresolvable}/`)} ${JSON.stringify(mirrorList)}`
+        : `grep -qF ${JSON.stringify(`//${unresolvable}/`)} ${JSON.stringify(mirrorFile)}`
     const failingErrors = mirrors === null ? errors : unresolvableErrors(unresolvable)
     stub(
       'apt-get',
@@ -124,7 +125,7 @@ function runAction({ failures = 0, errors = [], mirrors = null, unresolvable = A
       installs: lines(installs).length,
       updates: lines(updates).length,
       sleeps: lines(sleeps).length,
-      mirrors: mirrors === null ? null : readFileSync(mirrorList, 'utf8'),
+      mirrors: mirrors === null ? null : readFileSync(mirrorFile, 'utf8'),
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -166,15 +167,13 @@ void test('a mirror that does not resolve is dropped and the retry installs from
   assert.equal(run.installs, 2)
   assert.equal(run.updates, 2, 'the package lists are refreshed from the mirrors left')
   assert.equal(run.sleeps, 0)
-  assert.equal(run.mirrors.includes(AZURE), false, 'the Azure line is gone')
-  assert.match(run.mirrors, /^https:\/\/archive\.ubuntu\.com\/ubuntu\/\tpriority:2$/m)
-  assert.match(run.mirrors, /^https:\/\/security\.ubuntu\.com\/ubuntu\/\tpriority:3$/m)
+  assert.equal(run.mirrors, mirrorList(ARCHIVE_LINE, SECURITY_LINE))
 })
 
 void test('the last mirror in the list is never dropped', () => {
-  const run = runAction({ mirrors: `http://${AZURE}/ubuntu/\tpriority:1` })
+  const run = runAction({ mirrors: mirrorList(AZURE_LINE) })
   assert.equal(run.status, 75, run.stdout + run.stderr)
-  assert.match(run.mirrors, /^http:\/\/azure\.archive\.ubuntu\.com\/ubuntu\/\tpriority:1$/m)
+  assert.equal(run.mirrors, mirrorList(AZURE_LINE))
   assert.equal(run.installs, 2)
   assert.equal(run.updates, 1)
   assert.equal(run.sleeps, 1)
@@ -183,7 +182,5 @@ void test('the last mirror in the list is never dropped', () => {
 void test('only the mirror named as unresolvable is dropped, not one whose name contains it', () => {
   const run = runAction({ mirrors: IMAGE_MIRRORS, unresolvable: 'archive.ubuntu.com' })
   assert.equal(run.status, 0, run.stdout + run.stderr)
-  assert.doesNotMatch(run.mirrors, /^https:\/\/archive\.ubuntu\.com\//m)
-  assert.match(run.mirrors, /^http:\/\/azure\.archive\.ubuntu\.com\/ubuntu\/\tpriority:1$/m)
-  assert.match(run.mirrors, /^https:\/\/security\.ubuntu\.com\/ubuntu\/\tpriority:3$/m)
+  assert.equal(run.mirrors, mirrorList(AZURE_LINE, SECURITY_LINE))
 })
