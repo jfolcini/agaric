@@ -1,4 +1,4 @@
-# Session 3820 — A fuzz target for the Markdown mirror's ingest
+# Session 3821 — A fuzz target for the Markdown mirror's ingest
 
 #5363's Testing box "cargo-fuzz target in `src-tauri/fuzz` for the ingest path (file bytes with arbitrary `^ID` anchors through `parse_source_outline` and the apply plan)".
 

@@ -63,7 +63,8 @@ fuzz_target!(|data: &[u8]| {
     let line_ids = pair_unanchored_lines(&free, &free_ids, &edited, &anchors);
     assert_eq!(line_ids.len(), anchors.len(), "one id slot per edited line");
 
-    // As the ingest writes the file back: its lines, spliced with the render.
+    // The write-back's splice, over the ingest's ids: `write_back` pairs them
+    // again against the render first, which needs the save this target skips.
     let mut ids = vec![None; text.split('\n').count()];
     for (line, id) in kept_lines.iter().zip(line_ids) {
         if let Some(slot) = ids.get_mut(*line) {
