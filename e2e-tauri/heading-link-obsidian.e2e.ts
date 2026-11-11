@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
 // Real-backend heading link (#6277 F4): Edit as Markdown writes a `((ULID))`
 // to a heading whose text is unique on its page as `[[Title#Heading]]`, and
-// the buffer, edited and saved, stores the ref to the same heading.
+// the buffer, edited and saved, stores the ref to the same heading; the
+// heading's page exports its line bare, with no `^ULID`.
 //
 // Only the real backend writes names in the buffer and reads them back on save
 // (`get_page_buffer` / `apply_page_source`); the mock's buffer keeps raw ids.
@@ -61,7 +62,7 @@ async function saveLine(
 }
 
 describe('Agaric real-backend heading link (#6277 F4) @editor @markdown', () => {
-  it('writes a ref to a unique heading as [[Title#Heading]] and saves it back as that ref', async () => {
+  it('writes a ref to a unique heading as [[Title#Heading]], saves it back as that ref and exports the heading bare', async () => {
     await waitForAppReady()
     await openNewPage(TITLE)
     await typeMarkerVerified(HEADING)
@@ -91,5 +92,11 @@ describe('Agaric real-backend heading link (#6277 F4) @editor @markdown', () => 
     await row(REF).$('[data-testid="block-ref-chip"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
     const stored = await invoke<{ content: string }>('get_block', { blockId: refId })
     expect(stored.content).toBe(`${REF} ((${headingId})) edited`)
+
+    // The export, which Obsidian reads, names the heading by its text, so the
+    // heading's line carries no block id.
+    const heading = await invoke<{ page_id: string }>('get_block', { blockId: headingId })
+    const exported = await invoke<string>('export_page_markdown', { pageId: heading.page_id })
+    expect(exported.split('\n')).toContain(`## ${HEADING}`)
   })
 })
