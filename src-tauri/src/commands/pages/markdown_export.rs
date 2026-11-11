@@ -1165,6 +1165,9 @@ async fn load_addressed_blocks(
 ) -> Result<(HashSet<String>, HashSet<String>), AppError> {
     let ids: Vec<&str> = descendants.iter().map(|b| b.id.as_str()).collect();
     let ids_json = serde_json::to_string(&ids)?;
+    // `held` is written out again in the WHERE below and in
+    // `resolve_heading_refs`: `query!` takes one literal, so the copies stay
+    // and change together.
     let rows = sqlx::query!(
         r#"SELECT b.id AS "id!",
                   (EXISTS (SELECT 1 FROM block_properties p JOIN blocks s ON s.id = p.block_id

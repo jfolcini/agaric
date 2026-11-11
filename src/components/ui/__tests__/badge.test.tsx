@@ -2,11 +2,11 @@
  * Tests for the Badge component.
  *
  * Validates:
- *  - Renders with default tone/size/shape
+ *  - Renders with default tone/size
  *  - Legacy `variant` prop still works as an alias for `tone`
  *  - `tone="status"` + statusState produces the right token colours
  *  - `tone="priority"` + priorityLevel delegates to priorityColor()
- *  - `size` and `shape` variants render the expected utility classes
+ *  - `size` variants render the expected utility classes
  *  - Ref forwarding
  *  - a11y compliance via axe audit
  */
@@ -77,15 +77,6 @@ describe('Badge', () => {
     expect(results).toHaveNoViolations()
   })
 
-  describe('shape variant', () => {
-    it('renders rounded shape with flat-corner radius', () => {
-      render(<Badge shape="rounded">Rounded</Badge>)
-      const badge = screen.getByText('Rounded')
-      expect(badge.className).toContain('rounded')
-      expect(badge.className).not.toContain('rounded-full')
-    })
-  })
-
   describe('size variant', () => {
     it('renders xs size with tiny padding', () => {
       render(<Badge size="xs">x</Badge>)
@@ -120,7 +111,7 @@ describe('Badge', () => {
   describe('tone="status"', () => {
     it('applies DONE status colours', () => {
       render(
-        <Badge tone="status" statusState="DONE" shape="rounded">
+        <Badge tone="status" statusState="DONE">
           DONE
         </Badge>,
       )
@@ -131,7 +122,7 @@ describe('Badge', () => {
 
     it('applies DOING status colours', () => {
       render(
-        <Badge tone="status" statusState="DOING" shape="rounded">
+        <Badge tone="status" statusState="DOING">
           DOING
         </Badge>,
       )
@@ -142,7 +133,7 @@ describe('Badge', () => {
 
     it('applies TODO status colours', () => {
       render(
-        <Badge tone="status" statusState="TODO" shape="rounded">
+        <Badge tone="status" statusState="TODO">
           TODO
         </Badge>,
       )
@@ -153,7 +144,7 @@ describe('Badge', () => {
 
     it('applies overdue status colours', () => {
       render(
-        <Badge tone="status" statusState="overdue" shape="rounded">
+        <Badge tone="status" statusState="overdue">
           TODO
         </Badge>,
       )
@@ -163,11 +154,7 @@ describe('Badge', () => {
     })
 
     it('defaults statusState to "default" when omitted', () => {
-      render(
-        <Badge tone="status" shape="rounded">
-          LATER
-        </Badge>,
-      )
+      render(<Badge tone="status">LATER</Badge>)
       const badge = screen.getByText('LATER')
       expect(badge.className).toContain('bg-status-pending')
     })
@@ -176,7 +163,7 @@ describe('Badge', () => {
   describe('tone="priority"', () => {
     it('applies urgent colour for priority "1"', () => {
       render(
-        <Badge tone="priority" priorityLevel="1" size="sm" shape="rounded">
+        <Badge tone="priority" priorityLevel="1" size="sm">
           P1
         </Badge>,
       )
@@ -187,7 +174,7 @@ describe('Badge', () => {
 
     it('applies high colour for priority "2"', () => {
       render(
-        <Badge tone="priority" priorityLevel="2" size="sm" shape="rounded">
+        <Badge tone="priority" priorityLevel="2" size="sm">
           P2
         </Badge>,
       )
@@ -197,7 +184,7 @@ describe('Badge', () => {
 
     it('applies normal colour for priority "3"', () => {
       render(
-        <Badge tone="priority" priorityLevel="3" size="sm" shape="rounded">
+        <Badge tone="priority" priorityLevel="3" size="sm">
           P3
         </Badge>,
       )
@@ -207,7 +194,7 @@ describe('Badge', () => {
 
     it('applies the neutral colour for an out-of-range level', () => {
       render(
-        <Badge tone="priority" priorityLevel="P0" size="sm" shape="rounded">
+        <Badge tone="priority" priorityLevel="P0" size="sm">
           PP0
         </Badge>,
       )
@@ -218,7 +205,7 @@ describe('Badge', () => {
 
     it('a11y: no violations for priority tone', async () => {
       const { container } = render(
-        <Badge tone="priority" priorityLevel="1" size="sm" shape="rounded">
+        <Badge tone="priority" priorityLevel="1" size="sm">
           P1
         </Badge>,
       )
