@@ -99,6 +99,7 @@ ignore = [
     # (absent from Cargo.lock), so the advisory is no longer reachable from any
     # target and both cargo-deny and cargo-audit confirm it as not-present. If a
     # future sqlx bump reintroduces `rsa`, re-add it with the SQLite-only rationale.
+    { id = "RUSTSEC-2026-0459", reason = "Agaric opens only its own notes.db and its own backups, never a database or -wal another party wrote; the fix (libsqlite3-sys 0.39) is outside sqlx 0.9.0's <0.38 range" },
     # rand: deprecated `rand::thread_rng` is unsound on freshly-spawned threads.
     # Transitive via Tauri / Loro stack; Agaric's own code uses `rand::rngs::OsRng`.
     { id = "RUSTSEC-2026-0097", reason = "Transitive (Tauri/Loro stack); Agaric's own code uses OsRng, the deprecated thread_rng path is not exercised" },
