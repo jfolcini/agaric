@@ -5292,10 +5292,9 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     );
 
     // #602: NO op is hand-seeded into the responder's op_log for the
-    // initiator's device any more. Post-#490-M1 the op_log is strictly
-    // device-local (only `append_local_op*` writes it; inbound sync
-    // lands remote state via the Loro engine + SQL projection, never
-    // the op_log), so a responder NEVER holds rows for the initiator's
+    // initiator's device any more. Post-#490-M1 inbound sync lands remote
+    // state via the Loro engine + SQL projection, never as applied op_log
+    // rows, so a responder holds no applied row for the initiator's
     // device — the old hand-seed here ("delivered via a prior sync
     // session", a flow that no longer exists) masked exactly the #602
     // bug.

@@ -11,10 +11,10 @@
 //!
 //! [`insert_remote_op`](crate::dag::insert_remote_op) and
 //! [`append_merge_op`](crate::dag::append_merge_op) have **no production
-//! callers today**. Post-#490-M1 the local `op_log` is strictly
-//! device-local (see `sync_protocol::operations::check_reset_required`):
-//! inbound sync lands remote state via the Loro CRDT engine import + SQL
-//! projection and never inserts a peer's ops into this table. The only
+//! callers today**. Inbound sync lands remote state via the Loro CRDT engine
+//! import + SQL projection; a peer's op records reach this table only as
+//! `is_replicated = 1` audit rows, through `insert_replicated_op` in
+//! `sync_protocol::operations`, not through this module. The only
 //! current callers of this module's remote-ingest functions are tests
 //! (`dag/tests.rs`, `op_log/tests/origin.rs`).
 //!
