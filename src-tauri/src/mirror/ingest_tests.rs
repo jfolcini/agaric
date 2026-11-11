@@ -641,11 +641,23 @@ async fn a_file_renamed_outside_agaric_renames_its_page() {
     fx.settle_file().await;
     fx.tick().await;
 
-    assert_eq!(pages_titled(&fx, "Gamma").await, [page.clone()], "no second page");
+    assert_eq!(
+        pages_titled(&fx, "Gamma").await,
+        [page.clone()],
+        "no second page"
+    );
     assert!(pages_titled(&fx, "Alpha").await.is_empty());
-    let kept: Vec<String> = fx.blocks(&page).await.into_iter().map(|(id, _)| id).collect();
+    let kept: Vec<String> = fx
+        .blocks(&page)
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
     assert_eq!(kept, ids, "every block keeps its id");
-    assert!(!fx.root.join(ALPHA).exists(), "the old file is not written again");
+    assert!(
+        !fx.root.join(ALPHA).exists(),
+        "the old file is not written again"
+    );
     assert!(fx.status().await.failed.is_empty());
 }
 
@@ -672,11 +684,19 @@ async fn a_rename_and_the_links_rewritten_with_it_keep_one_page_and_its_backlink
     assert!(linking.contains("[[Alpha]]"), "{linking}");
 
     rename_at(&fx, ALPHA, "TestSpace/Gamma.md");
-    write_at(&fx, "TestSpace/Beta.md", linking.replace("[[Alpha]]", "[[Gamma]]"));
+    write_at(
+        &fx,
+        "TestSpace/Beta.md",
+        linking.replace("[[Alpha]]", "[[Gamma]]"),
+    );
     fx.settle_file().await;
     fx.tick().await;
 
-    assert_eq!(pages_titled(&fx, "Gamma").await, [alpha.clone()], "one page");
+    assert_eq!(
+        pages_titled(&fx, "Gamma").await,
+        [alpha.clone()],
+        "one page"
+    );
     assert_eq!(linked_from(&fx, &beta).await, [alpha]);
 }
 
@@ -689,7 +709,11 @@ async fn a_new_file_and_a_link_to_it_written_together_make_one_page() {
     let linking = std::fs::read_to_string(fx.root.join("TestSpace/Beta.md")).unwrap();
 
     write_at(&fx, "TestSpace/Gamma.md", "written\n");
-    write_at(&fx, "TestSpace/Beta.md", linking.replace("see", "see [[Gamma]]"));
+    write_at(
+        &fx,
+        "TestSpace/Beta.md",
+        linking.replace("see", "see [[Gamma]]"),
+    );
     fx.settle_file().await;
     fx.tick().await;
 
@@ -697,5 +721,23 @@ async fn a_new_file_and_a_link_to_it_written_together_make_one_page() {
     assert_eq!(gamma.len(), 1, "one page");
     assert_eq!(fx.contents(&gamma[0]).await, ["written"], "the file's");
     assert_eq!(linked_from(&fx, &beta).await, gamma);
-    assert!(fx.status().await.failed.is_empty(), "{:?}", fx.status().await.failed);
+    assert!(
+        fx.status().await.failed.is_empty(),
+        "{:?}",
+        fx.status().await.failed
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_that_cannot_be_read_stops_no_write() {
+    let mut fx = Fx::new().await;
+    let (_, ids) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    let unreadable = fx.root.join("TestSpace/Loop.md");
+    std::os::unix::fs::symlink(&unreadable, &unreadable).unwrap();
+
+    fx.edit(&ids[0], "uno").await;
+    fx.tick().await;
+
+    assert!(fx.read().contains("uno"), "{}", fx.read());
 }

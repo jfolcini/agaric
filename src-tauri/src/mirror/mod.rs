@@ -542,6 +542,12 @@ impl Mirror {
             self.full_due = true;
             return Ok(());
         }
+        // New files first: an edit naming one, as Obsidian writes a link to a
+        // note with the note, would otherwise make an empty page of that name.
+        // A file that cannot be read stops no write.
+        if let Err(e) = self.read_new_files(&root).await {
+            tracing::warn!(error = %e, "the Markdown mirror cannot read its new files");
+        }
         let touched = self.touched_since_watermark().await?;
         let (mut dirty, full_requested) = self.state.take_synced();
         self.full_due |= full_requested;
@@ -561,7 +567,7 @@ impl Mirror {
                 return Err(e);
             }
         }
-        self.read_new_files(&root).await
+        Ok(())
     }
 
     /// Every `.md` file below the mirror's folder, as paths below it. One stat
