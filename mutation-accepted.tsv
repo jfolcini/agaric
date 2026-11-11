@@ -393,7 +393,33 @@ frontend	src/lib/jex-import.ts	StringLiteral	37	1	const noteId = (props['note_id
 frontend	src/lib/jex-import.ts	ArrayDeclaration	41	1	const tags = (noteTagIds.get(raw.id) ?? []).flatMap((id) => tagTitles.get(id) ?? [])
 # #3766 vault-import: the null guard only narrows the type; every byPath key is a string, so byPath.get(null) is undefined too
 frontend	src/lib/vault-import.ts	ConditionalExpression	14	1	const file = path === null ? undefined : index.byPath.get(path)
+# #3758 inline-property-parse: a fence opener starts with a backtick or tilde run, which isInlinePropertyKey's alphabet already rejects, so the line is skipped either way
 frontend	src/lib/inline-property-parse.ts	ConditionalExpression	5	1	if (fence !== null) continue
+# #5965 template-utils: group 1 always exists once the placeholder regex matches
 frontend	src/lib/template-utils.ts	OptionalChaining	8	1	return m?.[1]?.trim().toLowerCase() === 'recording'
+# #5965 template-utils: neither '' nor the stand-in string is a placeholder
 frontend	src/lib/template-utils.ts	StringLiteral	45	1	if (isRecordingPlaceholder(child.content ?? '')) {
+# #6437 read-aloud: the counter feeds only the toast id, which stays unique counting down
 frontend	src/lib/speech/read-aloud.ts	AssignmentOperator	1	1	readings += 1
+# #6439 spoken-text: parse() gives every doc, blockquote, list, list item, table and row its content, so each `?? []` fallback here only types an optional field
+frontend	src/lib/speech/spoken-text.ts	ArrayDeclaration	17	1	(row.content ?? [])
+frontend	src/lib/speech/spoken-text.ts	ArrayDeclaration	24	1	return (doc.content ?? [])
+frontend	src/lib/speech/spoken-text.ts	ArrayDeclaration	25	1	return (item.content ?? []).flatMap((child) => blockLines(child, ctx))
+frontend	src/lib/speech/spoken-text.ts	ArrayDeclaration	25	1	return (node.content ?? []).flatMap((child) => blockLines(child, ctx))
+frontend	src/lib/speech/spoken-text.ts	ArrayDeclaration	25	1	return (node.content ?? []).flatMap((item, index) => {
+frontend	src/lib/speech/spoken-text.ts	ArrayDeclaration	25	1	return (node.content ?? []).flatMap((item) => listItemLines(item, ctx))
+frontend	src/lib/speech/spoken-text.ts	ArrayDeclaration	26	1	return (table.content ?? []).map((row) =>
+# #6439 spoken-text: a cell holds at most one paragraph, so neither its `?? []` nor its join separator shows
+frontend	src/lib/speech/spoken-text.ts	ArrayDeclaration	33	1	.map((cell) => (cell.content ?? []).map((p) => inlineText(p.content, ctx)).join(' '))
+frontend	src/lib/speech/spoken-text.ts	StringLiteral	81	1	.map((cell) => (cell.content ?? []).map((p) => inlineText(p.content, ctx)).join(' '))
+# #6439 spoken-text: the stand-in string put in place of the nodes matches no case and returns undefined, which join('') reads as '', as [] does
+frontend	src/lib/speech/spoken-text.ts	ArrayDeclaration	18	1	return (nodes ?? []).map((node) => inlineNodeText(node, ctx)).join('')
+# #6439 spoken-text: an emptied horizontalRule case falls through to blockquote, which gives a node with no content [], as the case does
+frontend	src/lib/speech/spoken-text.ts	BlockStatement	24	1	case 'horizontalRule': {
+frontend	src/lib/speech/spoken-text.ts	ConditionalExpression	1	1	case 'horizontalRule': {
+# #6439 spoken-text: an emptied or unmatched footnote_ref returns undefined, which join('') reads as '', as the case's '' does
+frontend	src/lib/speech/spoken-text.ts	BlockStatement	22	1	case 'footnote_ref': {
+frontend	src/lib/speech/spoken-text.ts	ConditionalExpression	1	1	case 'footnote_ref': {
+frontend	src/lib/speech/spoken-text.ts	StringLiteral	6	1	case 'footnote_ref': {
+# #6439 spoken-text: getPageDisplayName's label is the leaf for an unknown mode as for 'leaf'; only the label is read
+frontend	src/lib/speech/spoken-text.ts	StringLiteral	80	1	return title === null ? t('readAloud.missingPage') : getPageDisplayName(title, 'leaf').label
