@@ -94,6 +94,7 @@ impl Fx {
             DEV,
             &state,
             Some(folder.path().display().to_string()),
+            true,
         )
         .await
         .unwrap();
@@ -264,7 +265,9 @@ async fn converges(steps: Vec<Step>) -> Result<(), TestCaseError> {
         }
     }
     prop_assert_eq!(quiet, 2, "the mirror settles");
-    let status = get_mirror_status_inner(&fx.pool, &fx.state).await.unwrap();
+    let status = get_mirror_status_inner(&fx.pool, DEV, &fx.state)
+        .await
+        .unwrap();
     prop_assert!(status.diverged.is_empty(), "{:?}", status.diverged);
     prop_assert!(status.failed.is_empty(), "{:?}", status.failed);
     let contents: Vec<String> = fx.blocks().await.into_iter().map(|(_, c)| c).collect();
