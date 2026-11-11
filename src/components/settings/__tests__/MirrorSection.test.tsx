@@ -76,7 +76,8 @@ beforeEach(() => {
       return status()
     },
     set_mirror_read_back: (args) => {
-      if (args['on'] === true && args['readPending'] !== true && pendingFiles.length > 0) {
+      const confirmed = args['confirmed'] as string[]
+      if (args['on'] === true && pendingFiles.some((path) => !confirmed.includes(path))) {
         return Promise.reject(refusedTurnOn)
       }
       readBack = args['on'] as boolean
@@ -239,10 +240,7 @@ describe('MirrorSection', () => {
     await user.click(screen.getByRole('button', { name: t('data.mirrorChooseButton') }))
 
     await waitFor(() => {
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith('set_mirror_folder', {
-        path: PICKED,
-        readBack: false,
-      })
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('set_mirror_folder', expect.anything())
     })
     expect((await storedStatus()).read_back).toBe(false)
     expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
@@ -316,6 +314,33 @@ describe('MirrorSection', () => {
     // The card read the status again, so the next try asks about the file.
     await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
     expect(await screen.findByRole('alertdialog')).toHaveTextContent('Personal/Projects.md')
+  })
+
+  it('confirming a list a later change made stale reads nothing in and asks again', async () => {
+    folder = PICKED
+    readBack = false
+    pendingFiles = ['Personal/Projects.md']
+    const user = userEvent.setup()
+    await renderLoaded()
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+    await screen.findByRole('alertdialog')
+    pendingFiles = ['Personal/Projects.md', 'Personal/Unseen.md']
+
+    await user.click(screen.getByRole('button', { name: t('data.mirrorReadPendingConfirm') }))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        t('data.mirrorReadBackFailed', { reason: refusedTurnOn.message }),
+      )
+    })
+    // It confirmed what it showed, not whatever is pending by now.
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('set_mirror_read_back', {
+      on: true,
+      confirmed: ['Personal/Projects.md'],
+    })
+    expect((await storedStatus()).read_back).toBe(false)
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Personal/Unseen.md')
   })
 
   it('has no a11y violations with the read-in question open', async () => {

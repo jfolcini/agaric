@@ -98,31 +98,36 @@ pub async fn set_mirror_folder_inner(
 }
 
 /// Read files changed outside Agaric back into it, or with `on: false` stop.
-/// Turning it on while files changed meanwhile ([`MirrorStatus::pending`],
-/// derived again here, not taken from the caller) is refused unless
-/// `read_pending` says the user chose to read them in.
+/// Turning it on is refused while any file changed meanwhile
+/// ([`MirrorStatus::pending`], derived again here) is not among `confirmed`,
+/// the files the user was shown and chose to read in: a file that changed
+/// after the list was shown is never read in unseen. A plain turn-on
+/// confirms none.
 ///
 /// # Errors
 ///
-/// [`AppError::Validation`] when files are pending and `read_pending` is
-/// `false`, or when which files changed cannot be told.
+/// [`AppError::Validation`] when a pending file is not confirmed, or when
+/// which files changed cannot be told.
 pub async fn set_mirror_read_back_inner(
     pool: &SqlitePool,
     device_id: &str,
     mirror: &MirrorState,
     on: bool,
-    read_pending: bool,
+    confirmed: &[String],
 ) -> Result<MirrorStatus, AppError> {
-    if on && !read_pending {
+    if on {
         let changed = match mirror::store::folder(pool).await? {
             Some(folder) => pending(pool, device_id, mirror, Path::new(&folder)).await?,
             None => Vec::new(),
         };
-        if !changed.is_empty() {
+        let unseen = changed
+            .iter()
+            .filter(|path| !confirmed.contains(path))
+            .count();
+        if unseen > 0 {
             return Err(AppError::validation(format!(
-                "{} files changed outside Agaric while reading back was off; \
-                 choose to read them in to turn it on",
-                changed.len()
+                "{unseen} files changed outside Agaric while reading back was off \
+                 and have not been shown; choose to read them in to turn it on"
             )));
         }
     }
@@ -207,9 +212,9 @@ pub async fn set_mirror_read_back(
     device_id: State<'_, DeviceId>,
     mirror: State<'_, MirrorState>,
     on: bool,
-    read_pending: bool,
+    confirmed: Vec<String>,
 ) -> Result<MirrorStatus, AppError> {
-    set_mirror_read_back_inner(&pool.0, device_id.as_str(), &mirror, on, read_pending)
+    set_mirror_read_back_inner(&pool.0, device_id.as_str(), &mirror, on, &confirmed)
         .await
         .map_err(sanitize_internal_error)
 }

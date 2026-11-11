@@ -956,8 +956,15 @@ async fn op_count(fx: &Fx) -> i64 {
         .unwrap()
 }
 
+/// Turn reading back on or off; `read_pending` confirms what the status
+/// lists as pending now, as the dialog does.
 async fn read_back(fx: &Fx, on: bool, read_pending: bool) -> Result<MirrorStatus, AppError> {
-    set_mirror_read_back_inner(&fx.pool, DEV, &fx.state, on, read_pending).await
+    let shown = if read_pending {
+        fx.status().await.pending
+    } else {
+        Vec::new()
+    };
+    set_mirror_read_back_inner(&fx.pool, DEV, &fx.state, on, &shown).await
 }
 
 /// Alpha and Beta mirrored, reading back turned off, then the folder changed
@@ -1410,4 +1417,45 @@ async fn a_mirror_moved_away_and_back_finds_its_files_as_it_left_them() {
     let status = fx.status().await;
     assert!(status.diverged.is_empty(), "{:?}", status.diverged);
     assert!(status.failed.is_empty(), "{:?}", status.failed);
+}
+
+/// Turn reading back on, confirming the files `shown` were listed to the user.
+async fn confirm(fx: &Fx, shown: Vec<String>) -> Result<MirrorStatus, AppError> {
+    set_mirror_read_back_inner(&fx.pool, DEV, &fx.state, true, &shown).await
+}
+
+/// The dialog's list goes stale when a file changes after it was read: the
+/// confirm reads in only what the user saw.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_changed_after_the_list_was_shown_is_not_read_in_by_its_confirm() {
+    let mut fx = Fx::new().await;
+    let (alpha, _, ops) = changed_while_off(&mut fx).await;
+    let shown = fx.status().await.pending;
+    write_at(&fx, "TestSpace/Epsilon.md", "unseen\n");
+
+    let refused = confirm(&fx, shown).await;
+    assert!(
+        matches!(&refused, Err(e) if e.to_string().contains("changed")),
+        "{refused:?}"
+    );
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+    assert_eq!(op_count(&fx).await, ops, "nothing read in");
+    assert_eq!(fx.contents(&alpha).await, ["one"]);
+
+    let shown = fx.status().await.pending;
+    assert!(
+        shown.contains(&"TestSpace/Epsilon.md".to_owned()),
+        "{shown:?}"
+    );
+    confirm(&fx, shown).await.unwrap();
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+    assert_eq!(
+        pages_titled(&fx, "Epsilon").await.len(),
+        1,
+        "read in once shown"
+    );
 }
