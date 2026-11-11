@@ -13761,3 +13761,113 @@ async fn a_synced_purge_of_a_contested_alias_holder_hands_it_to_the_other_claima
     a.flush_and_shutdown().await;
     b.flush_and_shutdown().await;
 }
+
+/// #6451: a peer that does not answer the first pairing-window dial (its user is
+/// still typing the passphrase) and is listening a few seconds later is redialled
+/// by the periodic round, with no mDNS event or local change to prompt it.
+///
+/// The round is driven directly: the daemon reaches it every `RESYNC_TICK`, which
+/// is too long to wait for here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_resync_round_redials_a_pairing_peer_that_was_not_listening_yet_6451() {
+    const HOST: &str = "HOST6451";
+    const JOINER: &str = "JOIN6451";
+    const PROOF: &str = "proof-6451";
+
+    // Where the joiner will listen, and as whom. Nothing holds the port yet.
+    let addr = std::net::UdpSocket::bind("127.0.0.1:0")
+        .and_then(|s| s.local_addr())
+        .expect("a free loopback port");
+    let joiner_secret = SecretKey::generate();
+    let joiner_key = joiner_secret.public();
+
+    let (host_pool, _host_dir) = test_pool().await;
+    let host_mat = Materializer::new(host_pool.clone());
+    let host_apply: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(host_mat.clone());
+    let host_sched = Arc::new(SyncScheduler::new().with_connect_timeout(UNANSWERED_DIAL_BUDGET));
+    let host_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let host_cancel = AtomicBool::new(false);
+    peer_refs::set_pending_pairing(&host_pool, PROOF)
+        .await
+        .unwrap();
+    let dialler = ServiceHarness::new().await;
+    let ctx = SyncSessionContext {
+        pool: &host_pool,
+        device_id: HOST,
+        materializer: &host_apply,
+        scheduler: &host_sched,
+        event_sink: &host_sink,
+        cancel: &host_cancel,
+        endpoint: &dialler.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    let mut discovered: DiscoveredPeers = [(
+        JOINER.to_string(),
+        (
+            mdns::DiscoveredPeer {
+                device_id: JOINER.to_string(),
+                endpoint_id: Some(joiner_key),
+                addresses: vec![addr.ip()],
+                port: addr.port(),
+            },
+            tokio::time::Instant::now(),
+        ),
+    )]
+    .into_iter()
+    .collect();
+    let mut ticks = 0;
+
+    // The joiner has not confirmed yet: nothing answers.
+    session_supervisor::run_resync_round(&ctx, &mut discovered, &mut ticks).await;
+    assert_eq!(
+        host_sched.failure_count(JOINER),
+        1,
+        "the round must dial the unpaired pairing candidate, and that dial must time out"
+    );
+
+    // The joiner confirms and starts listening, at the address and key announced.
+    let (joiner_pool, _joiner_dir) = test_pool().await;
+    let joiner_mat = Materializer::new(joiner_pool.clone());
+    peer_refs::set_pending_pairing(&joiner_pool, PROOF)
+        .await
+        .unwrap();
+    let joiner = ServiceHarness::at(addr, joiner_secret).await;
+    let joiner_task = spawn_responder(
+        &joiner,
+        joiner_pool.clone(),
+        JOINER,
+        joiner_mat.clone(),
+        Arc::new(SyncScheduler::new()),
+        Arc::new(RecordingEventSink::new()),
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    {
+        let sched = host_sched.clone();
+        wait_for(
+            move || sched.may_retry(JOINER),
+            std::time::Duration::from_secs(10),
+            "#6451: the first failure's backoff elapses",
+        )
+        .await;
+    }
+    session_supervisor::run_resync_round(&ctx, &mut discovered, &mut ticks).await;
+
+    tokio::time::timeout(std::time::Duration::from_secs(40), joiner_task)
+        .await
+        .expect("the joiner's responder resolves once the host's session ends")
+        .expect("the responder task must not panic")
+        .expect("the joiner admits the host's pairing session");
+    let row = peer_refs::get_peer_ref(&host_pool, JOINER)
+        .await
+        .unwrap()
+        .expect("#6451: the redial must pair the host with the joiner");
+    assert_eq!(
+        row.endpoint_id.as_deref(),
+        Some(joiner_key.to_string().as_str())
+    );
+
+    host_mat.shutdown();
+    joiner_mat.shutdown();
+}

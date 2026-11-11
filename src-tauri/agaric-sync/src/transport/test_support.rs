@@ -187,14 +187,27 @@ impl ServiceHarness {
     /// # Panics
     /// If either bind fails — a fixture failure, not an assertion.
     pub async fn new() -> Self {
-        let service = crate::transport::service::SyncService::bind(
+        Self::at(
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)),
+            SecretKey::generate(),
+        )
+        .await
+    }
+
+    /// [`Self::new`] at a chosen loopback address and key: a peer that comes up where
+    /// a dial was already aimed (#6451).
+    ///
+    /// # Panics
+    /// If either bind fails — a fixture failure, not an assertion.
+    pub async fn at(addr: SocketAddr, secret: SecretKey) -> Self {
+        let service = crate::transport::service::SyncService::bind(
+            addr,
             LOOPBACK_PREFIX,
             // Loopback is never publicly routable, so the locality gate has nothing to
             // vouch for and an empty list is the honest input here (#3869).
             &[],
             DnsResolver::custom(RecordingResolver::new()),
-            SecretKey::generate(),
+            secret,
             None,
         )
         .await
