@@ -1097,7 +1097,7 @@ proptest! {
     /// wrote is written over.
     #[test]
     fn with_reading_back_off_outside_changes_append_no_op_and_are_never_written_over(
-        changes in prop::collection::vec((0usize..3, 0u8..3, "[a-z]{1,6}"), 1..6),
+        changes in prop::collection::vec((0usize..3, 0u8..5, "[a-z]{1,6}"), 1..6),
         ask_to_turn_on in any::<bool>(),
     ) {
         tokio::runtime::Builder::new_multi_thread()
@@ -1107,6 +1107,7 @@ proptest! {
             .unwrap()
             .block_on(async {
                 let mut fx = Fx::new().await;
+                space_b(&fx).await;
                 for title in ["P0", "P1", "P2"] {
                     fx.page(title, &["line"]).await;
                 }
@@ -1114,6 +1115,7 @@ proptest! {
                 read_back(&fx, false, false).await.unwrap();
                 let ops = op_count(&fx).await;
                 let mut written: HashMap<String, String> = HashMap::new();
+                let mut deleted: Vec<String> = Vec::new();
                 for (page, kind, word) in &changes {
                     let path = format!("TestSpace/P{page}.md");
                     match kind {
@@ -1130,10 +1132,26 @@ proptest! {
                                 written.remove(&path);
                             }
                         }
-                        _ => {
+                        2 => {
                             let text = format!("{word} new\n");
                             write_at(&fx, &format!("TestSpace/new-{word}.md"), &text);
                             written.insert(format!("TestSpace/new-{word}.md"), text);
+                        }
+                        3 => {
+                            // Moved into another space's folder.
+                            let new = format!("TestSpaceB/P{page}.md");
+                            if fx.root.join(&path).exists() && !fx.root.join(&new).exists() {
+                                rename_at(&fx, &path, &new);
+                                written.insert(new.clone(), std::fs::read_to_string(fx.root.join(&new)).unwrap());
+                                written.remove(&path);
+                            }
+                        }
+                        _ => {
+                            if fx.root.join(&path).exists() {
+                                std::fs::remove_file(fx.root.join(&path)).unwrap();
+                                written.remove(&path);
+                                deleted.push(path);
+                            }
                         }
                     }
                     fx.tick().await;
@@ -1148,6 +1166,11 @@ proptest! {
                 for (path, text) in &written {
                     let now = std::fs::read_to_string(fx.root.join(path)).ok();
                     prop_assert_eq!(now.as_deref(), Some(text.as_str()), "{}", path);
+                }
+                for path in &deleted {
+                    if !written.contains_key(path) {
+                        prop_assert!(!fx.root.join(path).exists(), "{} is not written again", path);
+                    }
                 }
                 Ok(())
             })?;
