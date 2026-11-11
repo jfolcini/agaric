@@ -166,7 +166,7 @@ void test('a mirror that does not resolve is dropped and the retry installs from
   assert.equal(run.installs, 2)
   assert.equal(run.updates, 2, 'the package lists are refreshed from the mirrors left')
   assert.equal(run.sleeps, 0)
-  assert.doesNotMatch(run.mirrors, /azure\.archive\.ubuntu\.com/)
+  assert.equal(run.mirrors.includes(AZURE), false, 'the Azure line is gone')
   assert.match(run.mirrors, /^https:\/\/archive\.ubuntu\.com\/ubuntu\/\tpriority:2$/m)
   assert.match(run.mirrors, /^https:\/\/security\.ubuntu\.com\/ubuntu\/\tpriority:3$/m)
 })
@@ -174,7 +174,7 @@ void test('a mirror that does not resolve is dropped and the retry installs from
 void test('the last mirror in the list is never dropped', () => {
   const run = runAction({ mirrors: `http://${AZURE}/ubuntu/\tpriority:1` })
   assert.equal(run.status, 75, run.stdout + run.stderr)
-  assert.match(run.mirrors, /azure\.archive\.ubuntu\.com/)
+  assert.match(run.mirrors, /^http:\/\/azure\.archive\.ubuntu\.com\/ubuntu\/\tpriority:1$/m)
   assert.equal(run.installs, 2)
   assert.equal(run.updates, 1)
   assert.equal(run.sleeps, 1)
