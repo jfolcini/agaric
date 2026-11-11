@@ -4,8 +4,9 @@
 //! derived artefact, diffed against the incrementally-maintained state — at
 //! the live vault, and reports what diverged in a shape a user can paste into
 //! a bug report. Read-and-compare only: every read goes through the reader
-//! pool or an export of the engines and nothing is written, so a divergence is
-//! data in the return value, never a panic and never a repair. Rebuilding every
+//! pool or an export of the engines, and the only writes are the queued work
+//! it waits for, so a divergence is data in the return value, never a panic
+//! and never a repair. Rebuilding every
 //! artefact whole-table is not a boot cost; this runs when the user asks (an
 //! opt-in setting, the follow-up commit), and the command lets the materializer
 //! settle first ([`settled_reconciliation_report`]) — a run that overlaps a
@@ -142,6 +143,8 @@ pub async fn settled_reconciliation_report(
     app_data_dir: Option<&std::path::Path>,
     today: chrono::NaiveDate,
 ) -> Result<ReconciliationReport, AppError> {
+    materializer.flush_foreground().await?;
+    materializer.flush_inbound_rebuilds().await?;
     compute_reconciliation_report_inner(pool, materializer.loro_state(), app_data_dir, today).await
 }
 
