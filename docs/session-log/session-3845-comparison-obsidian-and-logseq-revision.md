@@ -26,3 +26,11 @@ Part of a whole-application audit. The app is meant to compete with both Logseq 
 ## Verification
 
 `markdownlint-cli2`, `scripts/check-doc-code-paths.mjs` and `scripts/check-md-link-targets.mjs` pass on both files; `typos` passes on the new one. No app or test suite was run: these are documents, and every runtime claim in them is labelled unverified.
+
+## The audit waivers, in the same PR
+
+The audit found that all three `.nsprc` waivers lapsed on 2026-11-12, after which `npm audit` fails `lint` on the minimatch advisory. It rides this PR because the session may push to one branch.
+
+- minimatch (GHSA-g3hv-75wg-m249): still unfixed for the 10.x consumers. `mocha` 12.0.3 declares `^10.2.2` and `@stryker-mutator/core` 10.1.1 declares `~10.2.4`. Both keys extended to 2026-12-10.
+- braces (GHSA-vfj7-8cjw-p6xm): dropped. `npm audit` no longer reports it and OSV returns nothing for `braces@3.0.3`.
+- `npx better-npm-audit audit` passes; `osv-scanner.toml` regenerated with `scripts/sync-audit-from-deny.mjs`.
