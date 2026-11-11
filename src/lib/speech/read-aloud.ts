@@ -1,6 +1,7 @@
 /**
  * *Read aloud*'s one active reading (#5745): a queue of utterances spoken one at a time, the
- * block being spoken, and whether *Read aloud* can speak here at all. Rows, menus and the palette read it through `useSyncExternalStore`.
+ * block being spoken, and whether *Read aloud* can speak here at all. Rows, menus and the palette
+ * read it through `useSyncExternalStore`.
  *
  * Store-shaped, but a plain module: AGENTS.md admits no new Zustand store without approval.
  *
@@ -18,7 +19,7 @@
  */
 
 import { announce } from '@/lib/announcer'
-import { unwrap } from '@/lib/app-error'
+import { isAppError, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -56,8 +57,8 @@ const NO_VOICE_ERRORS: ReadonlySet<string> = new Set([
 
 let readings = 0
 
-/** What speaks, once {@link checkReadAloudSupport} found an engine. */
-let engine: 'webview' | 'native' | null = null
+/** Whether the backend's engine speaks, rather than the webview's `speechSynthesis`. */
+let native = false
 /**
  * The last `stop_speaking` sent. A native utterance waits for it, so a stop sent for the
  * reading before cannot reach the engine after the next reading's first utterance and cut it.
@@ -93,14 +94,12 @@ export function checkReadAloudSupport(): void {
     .getSpeechStatus()
     .then(unwrap)
     .then(async (status) => {
-      if (status === 'Webview' && 'speechSynthesis' in window) return 'webview'
-      if (status === 'Native' && unwrap(await commands.getSpeechEngineAvailable())) return 'native'
-      return null
-    })
-    .then((found) => {
-      if (found === null) return
-      engine = found
-      publish({ supported: true })
+      if (status === 'Webview' && 'speechSynthesis' in window) {
+        publish({ supported: true })
+      } else if (status === 'Native' && unwrap(await commands.getSpeechEngineAvailable())) {
+        native = true
+        publish({ supported: true })
+      }
     })
     .catch((err: unknown) => {
       logger.warn('read-aloud', 'get_speech_status failed; Read aloud stays hidden', undefined, err)
@@ -153,8 +152,10 @@ function speakNext(reading: Reading): void {
     return
   }
   publish({ reading: true, currentBlockId: next.blockId })
-  if (engine === 'native') {
-    speakNative(reading, next.text)
+  if (native) {
+    speakNative(reading, next.text).catch((err: unknown) => {
+      if (active === reading) fail(reading, isAppError(err) ? err.message : String(err))
+    })
     return
   }
   const utterance = new SpeechSynthesisUtterance(next.text)
@@ -168,18 +169,14 @@ function speakNext(reading: Reading): void {
   window.speechSynthesis.speak(utterance)
 }
 
-function speakNative(reading: Reading, text: string): void {
-  void nativeStop
-    .then(() => (active === reading ? commands.speakText(text) : null))
-    .then((result) => {
-      if (result === null || active !== reading) return
-      // A `Stopped` this reading did not ask for (another app took the engine) ends it quietly.
-      if (unwrap(result) === 'Done') speakNext(reading)
-      else finish(reading, null)
-    })
-    .catch((err: unknown) => {
-      if (active === reading) fail(reading, err instanceof Error ? err.message : String(err))
-    })
+async function speakNative(reading: Reading, text: string): Promise<void> {
+  await nativeStop
+  if (active !== reading) return
+  const outcome = unwrap(await commands.speakText(text))
+  if (active !== reading) return
+  // A `Stopped` this reading did not ask for (another app took the engine) ends it quietly.
+  if (outcome === 'Done') speakNext(reading)
+  else finish(reading, null)
 }
 
 function fail(reading: Reading, error: string): void {
@@ -195,7 +192,7 @@ function finish(reading: Reading, announcement: string | null, silence = true): 
   active = null
   reading.queue.length = 0
   reading.utterance = null
-  if (engine === 'native') {
+  if (native) {
     if (silence) nativeStop = stopNative()
   } else {
     window.speechSynthesis.cancel()
@@ -217,7 +214,7 @@ function stopNative(): Promise<unknown> {
 /** Test-only: forget the reading and the support answer. */
 export function __resetReadAloudForTests(): void {
   active = null
-  engine = null
+  native = false
   nativeStop = Promise.resolve()
   supportAsked = false
   snapshot = { supported: false, reading: false, currentBlockId: null }

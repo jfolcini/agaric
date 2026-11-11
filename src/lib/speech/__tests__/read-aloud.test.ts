@@ -283,6 +283,21 @@ describe('support', () => {
     await vi.waitFor(() => expect(fresh.getReadAloudSnapshot().supported).toBe(true))
   })
 
+  it('speaks through speechSynthesis in a freshly loaded module on the webview route', async () => {
+    vi.resetModules()
+    const fresh = await import('@/lib/speech/read-aloud')
+    const { invoke: freshInvoke } = await import('@tauri-apps/api/core')
+    vi.mocked(freshInvoke).mockImplementation(
+      mockInvokeCommands({ get_speech_status: () => 'Webview' }),
+    )
+    fresh.checkReadAloudSupport()
+    await vi.waitFor(() => expect(fresh.getReadAloudSnapshot().supported).toBe(true))
+
+    fresh.startReading(UTTERANCES.slice(0, 1), PAGE)
+    expect(speech.spoken.map((u) => u.text)).toEqual(['first'])
+    fresh.stopReading()
+  })
+
   it('asks the backend once', async () => {
     const status = vi.fn((): SpeechStatus => 'Webview')
     vi.mocked(invoke).mockImplementation(mockInvokeCommands({ get_speech_status: status }))

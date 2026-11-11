@@ -71,7 +71,14 @@ class SpeechPlugin(private val activity: Activity) : Plugin(activity) {
     ) { engine ->
       val id = UUID.randomUUID().toString()
       pending[id] = invoke
-      if (engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) {
+      val queued = try {
+        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+      } catch (e: Exception) {
+        // `withEngine` rejects it; a later `stop` must not settle it again.
+        pending.remove(id)
+        throw e
+      }
+      if (queued != TextToSpeech.SUCCESS) {
         pending.remove(id)?.reject("the text-to-speech engine refused the utterance")
       }
     }
