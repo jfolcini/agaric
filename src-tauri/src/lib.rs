@@ -1451,23 +1451,34 @@ fn surface_recovery_status<R: tauri::Runtime>(
     });
 }
 
-/// [`boot_cache_gating`]'s FTS check. An empty index with rows to index
-/// is the post-migration-0006 state, not a fresh install.
-async fn schedule_fts_rebuild_if_empty(
+/// [`boot_cache_gating`]'s FTS check. Rebuilds when the index carries no
+/// [`agaric_store::fts::FTS_STRIP_MARKER`] — rows an older strip wrote (#6488),
+/// or a rebuild that never finished — or when it is empty with rows to index,
+/// the post-migration-0006 state, not a fresh install.
+async fn schedule_fts_rebuild_if_due(
     read_pool: &sqlx::SqlitePool,
     materializer_handle: &materializer::Materializer,
 ) {
     use materializer::MaterializeTask;
 
-    // Rebuild FTS index if the table is empty (post-migration 0006).
+    let marker = agaric_store::fts::FTS_STRIP_MARKER;
+    let stripped_by_older_rule = log_or_zero(
+        sqlx::query_scalar!(
+            r#"SELECT NOT EXISTS (SELECT 1 FROM app_settings WHERE key = ?) AS "due!: i64""#,
+            marker,
+        )
+        .fetch_one(read_pool)
+        .await,
+        "fts_strip_marker_absent",
+    ) != 0;
     let fts_empty = log_or_zero(
         sqlx::query_scalar::<_, i64>("SELECT EXISTS (SELECT 1 FROM fts_blocks)")
             .fetch_one(read_pool)
             .await,
         "fts_blocks_exists",
     ) == 0;
-    if fts_empty {
-        let indexable = log_or_zero(
+    let empty_with_rows_to_index = fts_empty
+        && log_or_zero(
             sqlx::query_scalar::<_, i64>(
                 "SELECT EXISTS (SELECT 1 FROM blocks WHERE deleted_at IS NULL \
                  AND content IS NOT NULL)",
@@ -1476,16 +1487,18 @@ async fn schedule_fts_rebuild_if_empty(
             .await,
             "fts_indexable_block_exists",
         ) != 0;
-        if indexable {
-            tracing::info!("FTS index empty — scheduling rebuild");
-            if let Err(e) =
-                materializer_handle.try_enqueue_background(MaterializeTask::RebuildFtsIndex)
-            {
-                tracing::warn!(
-                    error = %e,
-                    "failed to enqueue FTS rebuild at boot",
-                );
-            }
+    if stripped_by_older_rule || empty_with_rows_to_index {
+        tracing::info!(
+            stripped_by_older_rule,
+            empty_with_rows_to_index,
+            "scheduling FTS rebuild at boot"
+        );
+        if let Err(e) = materializer_handle.try_enqueue_background(MaterializeTask::RebuildFtsIndex)
+        {
+            tracing::warn!(
+                error = %e,
+                "failed to enqueue FTS rebuild at boot",
+            );
         }
     }
 }
@@ -1594,7 +1607,7 @@ async fn boot_cache_gating(
         }
     }
 
-    schedule_fts_rebuild_if_empty(&read_pool, &materializer_handle).await;
+    schedule_fts_rebuild_if_due(&read_pool, &materializer_handle).await;
     schedule_block_tag_refs_rebuild_if_empty(&read_pool, &materializer_handle).await;
     schedule_pages_cache_rebuild_if_stale(&read_pool, &materializer_handle).await;
 }
@@ -1616,7 +1629,7 @@ fn spawn_boot_maintenance(
     // items off the synchronous critical path. These don't gate
     // any user IPC — link-metadata GC is purely cleanup and the
     // FTS / `block_tag_refs` gating is a one-shot "schedule the
-    // rebuild if the table is empty" check (the rebuild itself
+    // rebuild if the table is stale or empty" check (the rebuild itself
     // is already a background materializer task). Releasing the
     // foreground queue earlier means the first user action (a
     // `list_blocks` for the journal) doesn't compete with these
@@ -4197,6 +4210,68 @@ mod boot_cache_gating_tests {
             load() - before,
             1,
             "populated tables must schedule no rebuild: only the flush barrier runs"
+        );
+        mat.shutdown();
+    }
+
+    /// #6488 — a vault upgrading past a change to the FTS strip holds rows the
+    /// old rule wrote. The first boot re-strips them and leaves the marker; the
+    /// next boot schedules nothing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_row_stripped_by_an_older_rule_is_restripped_once_6488() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pools = db::init_pools(&dir.path().join("test.db")).await.unwrap();
+        seed_tag_and_source(&pools.write, format!("note #[{TAG}]")).await;
+        for (id, stripped) in [(TAG, "tag-name"), (SOURCE, "an older strip")] {
+            sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+                .bind(id)
+                .bind(stripped)
+                .execute(&pools.write)
+                .await
+                .unwrap();
+        }
+        let stale_rows = || async {
+            crate::reconciliation_oracle::reconcile_all(
+                &pools.read,
+                &agaric_engine::loro::shared::LoroState::new(),
+                None,
+                chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap(),
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|d| d.artefact == "fts_blocks.stripped")
+            .map(|d| d.key)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            stale_rows().await,
+            vec![SOURCE.to_owned()],
+            "the seed is stale"
+        );
+        let mat =
+            materializer::Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the first boot");
+        assert_eq!(
+            stale_rows().await,
+            Vec::<String>::new(),
+            "boot re-strips the row"
+        );
+
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        let before = load();
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the second boot");
+        assert_eq!(
+            load() - before,
+            1,
+            "the marker retires the re-strip: only the flush barrier runs"
         );
         mat.shutdown();
     }

@@ -4,14 +4,15 @@
 //! derived artefact, diffed against the incrementally-maintained state — at
 //! the live vault, and reports what diverged in a shape a user can paste into
 //! a bug report. Read-and-compare only: every read goes through the reader
-//! pool or an export of the engines and nothing is written, so a divergence is
-//! data in the return value, never a panic and never a repair. Rebuilding every
+//! pool or an export of the engines, and the only writes are the queued work
+//! it waits for, so a divergence is data in the return value, never a panic
+//! and never a repair. Rebuilding every
 //! artefact whole-table is not a boot cost; this runs when the user asks (an
-//! opt-in setting, the follow-up commit), and the caller should let the app
-//! settle first — a run that
-//! overlaps a background rebuild or an inbound sync can see a state one
-//! maintainer has left and the next has not yet reached, which reads as a
-//! divergence a second run will not reproduce.
+//! opt-in setting, the follow-up commit), and the command lets the materializer
+//! settle first ([`settled_reconciliation_report`]) — a run that overlaps a
+//! background rebuild or an inbound sync can see a state one maintainer has
+//! left and the next has not yet reached, which reads as a divergence a second
+//! run will not reproduce.
 //!
 //! # Counts and keys, never values
 //!
@@ -131,9 +132,27 @@ pub async fn compute_reconciliation_report_inner(
     })
 }
 
-/// Tauri command: rebuild every derived artefact from base tables, compare
-/// `blocks` with the Loro engine, and report where the live vault disagrees.
-/// Reader pool and engine exports; writes nothing.
+/// [`compute_reconciliation_report_inner`] once the materializer has settled
+/// (#6488): an op still in the foreground queue, a background reindex not yet
+/// run, or an inbound-sync rebuild waiting out its debounce leaves a cache
+/// behind its base tables for a moment, and reporting that moment names a
+/// divergence a second run would not reproduce.
+#[instrument(skip(pool, materializer), err)]
+pub async fn settled_reconciliation_report(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    app_data_dir: Option<&std::path::Path>,
+    today: chrono::NaiveDate,
+) -> Result<ReconciliationReport, AppError> {
+    materializer.flush_foreground().await?;
+    materializer.flush_inbound_rebuilds().await?;
+    compute_reconciliation_report_inner(pool, materializer.loro_state(), app_data_dir, today).await
+}
+
+/// Tauri command: let the materializer settle, rebuild every derived artefact
+/// from base tables, compare `blocks` with the Loro engine, and report where
+/// the live vault disagrees. Reads through the reader pool and engine exports;
+/// the only writes are the queued work it waits for.
 #[tauri::command]
 #[specta::specta]
 pub async fn compute_reconciliation_report(
@@ -143,9 +162,9 @@ pub async fn compute_reconciliation_report(
     // The clock production's `rebuild_projected_agenda_cache` reads, so the
     // rebuild is pinned to the same day the cache was built for.
     let today = chrono::Local::now().date_naive();
-    compute_reconciliation_report_inner(
+    settled_reconciliation_report(
         &pool.0,
-        materializer.loro_state(),
+        &materializer,
         materializer.app_data_dir().as_deref(),
         today,
     )
@@ -253,6 +272,36 @@ mod tests {
         assert_eq!(report.today, "2026-01-15", "the pinned date is recorded");
         assert_eq!(report.total_divergences, 0, "a settled vault reconciles");
         assert_eq!(report.artefacts, Vec::new(), "no artefact diverged");
+        mat.shutdown();
+    }
+
+    /// #6488 — an inbound-sync rebuild still waiting out its debounce is work
+    /// in flight, not a divergence: the report waits for it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_pending_inbound_rebuild_lands_before_the_report_6488() {
+        let (pool, _dir, mat, page_id) = settled_vault().await;
+        // dynamic-sql: test-only corruption of one derived row, which the
+        // armed inbound rebuild's `RebuildPagesCacheCounts` rewrites.
+        sqlx::query(
+            "UPDATE pages_cache SET child_block_count = child_block_count + 5 WHERE page_id = ?",
+        )
+        .bind(&page_id)
+        .execute(&pool)
+        .await
+        .expect("corrupt the count");
+        mat.enqueue_inbound_sync_rebuilds(&[BlockId::from_trusted(page_id.as_str())], &[])
+            .await
+            .expect("arm the inbound rebuild");
+
+        let report = settled_reconciliation_report(&pool, &mat, None, pinned_today())
+            .await
+            .expect("report");
+
+        assert_eq!(
+            report.artefacts,
+            Vec::new(),
+            "the pending rebuild landed first"
+        );
         mat.shutdown();
     }
 

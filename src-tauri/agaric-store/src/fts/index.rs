@@ -541,6 +541,29 @@ pub async fn reindex_fts_for_ids(pool: &SqlitePool, ids: &[String]) -> Result<()
 /// commits do publish intermediate state to readers, but the rebuild is
 /// understood to be a transient inconsistent window — search results
 /// are eventually-consistent during a rebuild).
+/// `app_settings` key a completed full rebuild writes (#6488). Boot rebuilds
+/// the index while it is absent, so a change to what `strip_for_fts_with_maps`
+/// emits bumps the suffix and every vault re-strips once: rows already in the
+/// index keep the text the old rule wrote until something rewrites them.
+pub const FTS_STRIP_MARKER: &str = "repair.fts_strip.v1";
+
+/// Record that every row now carries the current strip. Written after the
+/// last chunk commits, so a rebuild that fails or is cut short leaves the
+/// marker unset and the next boot runs it again.
+async fn stamp_fts_strip_marker(pool: &SqlitePool, rows: u64) -> Result<(), AppError> {
+    let rows = rows.to_string();
+    let now = crate::db::now_ms();
+    sqlx::query!(
+        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        FTS_STRIP_MARKER,
+        rows,
+        now,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 #[tracing::instrument(skip_all, err)]
 pub async fn rebuild_fts_index(pool: &SqlitePool) -> Result<(), AppError> {
     tracing::info!("rebuilding fts_blocks cache");
@@ -609,6 +632,7 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
         total += chunk.len() as u64;
     }
 
+    stamp_fts_strip_marker(pool, total).await?;
     Ok(total)
 }
 
@@ -685,6 +709,7 @@ async fn rebuild_fts_index_split_impl(
         tx.commit().await?;
         total += chunk.len() as u64;
     }
+    stamp_fts_strip_marker(write_pool, total).await?;
     Ok(total)
 }
 

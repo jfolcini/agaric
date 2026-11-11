@@ -3702,9 +3702,10 @@ fn fold_ref_maps(blocks: &[BaseBlock]) -> agaric_store::fts::strip::RefMaps {
 /// a row it still has is reported.
 ///
 /// The rows earlier deletes had ALREADY stranded are swept once by migration
-/// 0118 (#4904). Nothing else reached them: the only pass that would,
-/// `RebuildFtsIndex`, is enqueued at boot solely when `fts_blocks` is entirely
-/// empty, which a vault carrying residue is not.
+/// 0118 (#4904). Nothing else reached them then: the only pass that would,
+/// `RebuildFtsIndex`, was enqueued at boot solely when `fts_blocks` was
+/// entirely empty, which a vault carrying residue is not. Boot now also runs
+/// it while `FTS_STRIP_MARKER` is unset (#6488).
 ///
 /// The reference maps ARE folded independently (see [`fold_ref_maps`]) and
 /// re-read on every call, which is what makes a stale row after a tag rename,
