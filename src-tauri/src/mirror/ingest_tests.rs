@@ -1188,3 +1188,43 @@ async fn an_empty_pages_file_saved_with_only_a_newline_or_bom_keeps_mirroring() 
         );
     }
 }
+
+/// A refused rename leaves the renamed file where it is and the page's old
+/// file gone, so one page has one file; renamed again, it is read as a rename.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_rename_writes_no_second_file_and_a_retry_renames_the_page() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    space_b(&fx).await;
+    let (page, ids) = fx.page("Alpha", &["one"]).await;
+    refer_to(&fx, &ids[0]).await;
+    create_page_in_space_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        None,
+        "ALPHA".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    fx.tick().await;
+    fx.tick().await;
+
+    rename_at(&fx, ALPHA, "TestSpaceB/Alpha.md");
+    for _ in 0..5 {
+        fx.tick().await;
+    }
+    assert!(!fx.root.join(ALPHA).exists(), "no second file for the page");
+    assert_eq!(fx.status().await.failed.len(), 1);
+
+    rename_at(&fx, "TestSpaceB/Alpha.md", "TestSpace/Gamma.md");
+    fx.settle_file().await;
+    fx.tick().await;
+    assert_eq!(pages_titled(&fx, "Gamma").await, [page]);
+    assert!(
+        fx.status().await.failed.is_empty(),
+        "{:?}",
+        fx.status().await.failed
+    );
+}

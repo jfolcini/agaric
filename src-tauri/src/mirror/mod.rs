@@ -424,6 +424,9 @@ pub struct Mirror {
     refused_new: HashMap<String, (Vec<u8>, String)>,
     /// The pages whose file vanished, by the ticks it has been missing.
     missing: HashMap<String, u8>,
+    /// The pages whose file was renamed to a path a refusal keeps, by that
+    /// path: held as missing while the refused file stays as it was.
+    refused_renames: HashMap<String, String>,
 }
 
 /// A folder's listing: its modification time, its `.md` files as paths below
@@ -511,6 +514,7 @@ impl Mirror {
             settling_new: HashMap::new(),
             refused_new: HashMap::new(),
             missing: HashMap::new(),
+            refused_renames: HashMap::new(),
         })
     }
 
@@ -805,11 +809,14 @@ impl Mirror {
             Err(why) => {
                 self.state.file_failed(path, &why);
                 self.refused_new.insert(path.to_owned(), (bytes, why));
+                self.refused_renames
+                    .insert(page_id.to_owned(), path.to_owned());
                 return;
             }
         };
         (ingest.notify)(event);
         self.missing.remove(page_id);
+        self.refused_renames.remove(page_id);
         let Some(mut state) = self.pages.get(page_id).cloned() else {
             return;
         };
@@ -1033,6 +1040,7 @@ impl Mirror {
     fn forget(&mut self, page_id: &str) {
         self.pages.remove(page_id);
         self.missing.remove(page_id);
+        self.refused_renames.remove(page_id);
         self.state.page_ok(page_id);
         if let Err(e) = self.store.delete(page_id) {
             tracing::warn!(page_id, error = %e, "cannot delete a mirror state file");
@@ -1125,8 +1133,17 @@ impl Mirror {
     }
 
     /// Count one more tick the page's file is missing; `false` once it has
-    /// been missing for `MISSING_TICKS`, and counts as gone.
+    /// been missing for `MISSING_TICKS`, and counts as gone. Never while its
+    /// file is a renamed one whose rename was refused.
     fn still_missing(&mut self, page_id: &str) -> bool {
+        // The page's file is the refused one, not gone: a second file would
+        // make two for one page.
+        if let Some(path) = self.refused_renames.get(page_id) {
+            if self.refused_new.contains_key(path) {
+                return true;
+            }
+            self.refused_renames.remove(page_id);
+        }
         let ticks = self.missing.entry(page_id.to_owned()).or_default();
         *ticks += 1;
         if *ticks <= MISSING_TICKS {
