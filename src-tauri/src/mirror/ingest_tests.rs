@@ -622,3 +622,29 @@ async fn choosing_another_folder_forgets_the_old_folders_new_file_failures() {
         fx.status().await.failed
     );
 }
+
+/// Rename the file at `from` to `to` below the mirror's folder, as a file
+/// manager does.
+fn rename_at(fx: &Fx, from: &str, to: &str) {
+    let to = fx.root.join(to);
+    std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+    std::fs::rename(fx.root.join(from), to).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_renamed_outside_agaric_renames_its_page() {
+    let mut fx = Fx::new().await;
+    let (page, ids) = fx.page("Alpha", &["one", "two"]).await;
+    fx.tick().await;
+
+    rename_at(&fx, ALPHA, "TestSpace/Gamma.md");
+    fx.settle_file().await;
+    fx.tick().await;
+
+    assert_eq!(pages_titled(&fx, "Gamma").await, [page.clone()], "no second page");
+    assert!(pages_titled(&fx, "Alpha").await.is_empty());
+    let kept: Vec<String> = fx.blocks(&page).await.into_iter().map(|(id, _)| id).collect();
+    assert_eq!(kept, ids, "every block keeps its id");
+    assert!(!fx.root.join(ALPHA).exists(), "the old file is not written again");
+    assert!(fx.status().await.failed.is_empty());
+}
