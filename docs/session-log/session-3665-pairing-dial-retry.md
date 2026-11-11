@@ -1,4 +1,4 @@
-# Session 3680 — the pairing window redials a peer that was not listening yet
+# Session 3665 — the pairing window redials a peer that was not listening yet
 
 #6451: on a first pair, the desktop (host) found the phone over mDNS and dialled it right away. The dial ran out its 10 s `CONNECT_TIMEOUT` while the phone's user was still typing the passphrase, and nothing dialled again inside the 5-minute window.
 
