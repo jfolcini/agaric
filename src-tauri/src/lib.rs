@@ -2852,7 +2852,19 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let mirror_state = mirror::MirrorState::new(app_data_dir.clone());
     app.manage(mirror_state.clone());
     if cfg!(desktop) {
-        mirror::spawn(pools.read.clone(), device_id.clone(), mirror_state);
+        let handle = app.handle().clone();
+        let ingest = mirror::ingest::Ingest {
+            pool: pools.write.clone(),
+            materializer: materializer.clone(),
+            notify: std::sync::Arc::new(move |event: mirror::ingest::MirrorIngested| {
+                use crate::mcp::view_notify::ViewChangeEmitter;
+                let page_id = event.page_id.clone();
+                crate::main_thread::emit(&handle, mirror::ingest::EVENT_MIRROR_INGESTED, event);
+                crate::mcp::view_notify::TauriViewChangeEmitter::new(handle.clone())
+                    .emit_blocks_changed(vec![page_id]);
+            }),
+        };
+        mirror::spawn(pools.read.clone(), device_id.clone(), mirror_state, ingest);
     }
 
     // Long-running background tasks: sweepers, maintenance daemon,

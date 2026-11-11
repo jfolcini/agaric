@@ -530,20 +530,22 @@ export const common: Record<string, string> = {
   'data.exportAllSpacesSuccess_one': 'Exported {{count}} space',
   'data.exportAllSpacesSuccess_other': 'Exported {{count}} spaces',
   'data.exportAllSpacesFailed': 'Export failed',
-  // #5363 — the outbound Markdown mirror: one `.md` file per page in a folder
-  // this device writes to. Files edited elsewhere are listed, not overwritten.
+  // #5363 — the Markdown mirror: one `.md` file per page in a folder this
+  // device writes to. A file edited elsewhere is read back into its page.
   'data.mirrorTitle': 'Markdown mirror',
   'data.mirrorDesc':
-    'Agaric writes every page as a .md file into a folder you choose and keeps it up to date. A file you edit elsewhere is not overwritten.',
+    'Agaric writes every page as a .md file into a folder you choose and keeps it up to date. A file you edit elsewhere is read back into its page, and one Undo reverts that.',
   'data.mirrorFolderLabel': 'Mirror folder',
   'data.mirrorOff': 'Off. No folder chosen.',
   'data.mirrorChooseButton': 'Choose folder…',
   'data.mirrorTurnOffButton': 'Turn off',
   'data.mirrorFailed': 'The mirror folder was not changed: {{reason}}',
   'data.mirrorPaused': 'Paused: {{reason}}',
-  'data.mirrorDivergedHeading': 'Changed outside Agaric; not overwritten',
+  'data.mirrorDivergedHeading': 'Changed outside Agaric; not read in yet',
   'data.mirrorDivergedNone': 'No file has changed outside Agaric.',
-  'data.mirrorFailedHeading': 'Could not be written',
+  'data.mirrorFailedHeading': 'Could not be written or read',
+  'data.mirrorIngestedWarnings_one': '{{path}} was read in with a warning: {{first}}',
+  'data.mirrorIngestedWarnings_other': '{{path}} was read in with {{count}} warnings: {{first}}',
   'data.mirrorFailedItem': '{{path}}: {{message}}',
   // The vault genuinely has no spaces at all — distinct from a space that
   // simply has no pages, so an empty ZIP is never downloaded silently.

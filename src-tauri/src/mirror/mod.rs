@@ -18,13 +18,15 @@
 //! when the page is gone, each only while it is unchanged. While the folder or
 //! its marker is missing, the mirror writes nothing and creates nothing.
 
+pub mod ingest;
 pub mod paths;
+pub mod splice;
 pub mod store;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::Serialize;
 use specta::Type;
@@ -33,7 +35,8 @@ use sqlx::SqlitePool;
 use agaric_core::error::AppError;
 use agaric_sync::sync_events::SyncEvent;
 
-use crate::commands::pages::get_page_file_inner;
+use crate::commands::pages::{PageFile, get_page_file_inner};
+use ingest::{Ingest, NotIngested};
 use store::{PageState, Shadow, StateDir};
 
 /// How often the mirror looks for pages to write.
@@ -199,6 +202,10 @@ impl MirrorState {
             .collect()
     }
 
+    fn is_diverged(&self, page_id: &str) -> bool {
+        self.lock().diverged.contains_key(page_id)
+    }
+
     fn page_ok(&self, page_id: &str) {
         let mut inner = self.lock();
         inner.diverged.remove(page_id);
@@ -303,7 +310,7 @@ pub fn check_folder(folder: &Path, device_id: &str, app_data_dir: &Path) -> Resu
 }
 
 /// Run the mirror's task on Tauri's runtime for the life of the app.
-pub fn spawn(pool: SqlitePool, device_id: String, state: MirrorState) {
+pub fn spawn(pool: SqlitePool, device_id: String, state: MirrorState, ingest: Ingest) {
     tauri::async_runtime::spawn(async move {
         let mut mirror = None;
         loop {
@@ -313,7 +320,7 @@ pub fn spawn(pool: SqlitePool, device_id: String, state: MirrorState) {
                 None => match Mirror::open(pool.clone(), device_id.clone(), state.clone()).await {
                     Ok(opened) => {
                         state.set_start_error(None);
-                        mirror.insert(opened)
+                        mirror.insert(opened.with_ingest(ingest.clone()))
                     }
                     Err(e) => {
                         let why = format!("the mirror could not start: {e}");
@@ -349,6 +356,27 @@ pub struct Mirror {
     watermark: i64,
     full_due: bool,
     last_full: Option<Instant>,
+    /// Writes a file's outside edit into its page; without it such a file
+    /// is only left alone.
+    ingest: Option<Ingest>,
+    /// Each page's file as last seen: a change outside Agaric makes the page
+    /// dirty.
+    stats: HashMap<String, FileStat>,
+    /// The bytes of each file changed outside Agaric as the last tick read
+    /// them: one is ingested only once two reads agree, so a save still
+    /// being written is not.
+    settling: HashMap<String, Vec<u8>>,
+    /// The bytes an ingest refused, and why: refused again without a try
+    /// until they change.
+    refused: HashMap<String, (Vec<u8>, String)>,
+}
+
+/// A file's length and modification time, `None` while there is no file.
+type FileStat = Option<(u64, Option<SystemTime>)>;
+
+fn file_stat(path: &Path) -> FileStat {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()))
 }
 
 impl Mirror {
@@ -376,7 +404,32 @@ impl Mirror {
             watermark,
             full_due: true,
             last_full: None,
+            ingest: None,
+            stats: HashMap::new(),
+            settling: HashMap::new(),
+            refused: HashMap::new(),
         })
+    }
+
+    /// The task, writing what a file is edited to outside Agaric into its
+    /// page (#5363 slice 2).
+    #[must_use]
+    pub fn with_ingest(mut self, ingest: Ingest) -> Self {
+        self.ingest = Some(ingest);
+        self
+    }
+
+    /// The pages whose file changed since the mirror last saw it.
+    fn changed_files(&self, root: &Path) -> Vec<String> {
+        self.pages
+            .iter()
+            .filter(|(id, state)| {
+                self.stats
+                    .get(*id)
+                    .is_some_and(|seen| *seen != file_stat(&root.join(&state.path)))
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
     }
 
     /// Write what changed since the last tick, or every page when a full pass
@@ -407,6 +460,7 @@ impl Mirror {
         let (mut dirty, full_requested) = self.state.take_synced();
         self.full_due |= full_requested;
         dirty.extend(self.state.retried());
+        dirty.extend(self.changed_files(&root));
         let full = self.full_due || self.last_full.is_none_or(|at| at.elapsed() >= BACKSTOP);
         if !full && touched.is_none() && dirty.is_empty() {
             return Ok(());
@@ -479,6 +533,21 @@ impl Mirror {
         let mut dirty: Vec<String> = dirty.into_iter().collect();
         dirty.sort_unstable();
         let frozen = self.vacate(root, &layout, &dirty);
+        // A file left at its old path because it was edited outside Agaric
+        // is read into its page there first, then moved by a later pass.
+        if self.ingest.is_some() {
+            let edited: Vec<(String, String)> = frozen
+                .iter()
+                .filter(|id| layout.contains_key(*id) && self.state.is_diverged(id))
+                .filter_map(|id| Some((id.clone(), self.pages.get(id)?.path.clone())))
+                .collect();
+            for (id, old) in edited {
+                if !self.write_page(root, &id, &old).await {
+                    self.full_due = true;
+                    return Ok(());
+                }
+            }
+        }
         for id in &dirty {
             if let Some((path, _)) = layout.get(id)
                 && !frozen.contains(id)
@@ -633,17 +702,23 @@ impl Mirror {
                 self.state.set_paused(Some(why));
                 return false;
             }
+            Ok(Wrote::Refused(why)) => self.state.page_failed(page_id, path, &why),
             Err(e) => self.state.page_failed(page_id, path, &e),
         }
+        self.stats
+            .insert(page_id.to_owned(), file_stat(&root.join(path)));
         true
     }
 
-    /// Write the page's render at `path`, unless a file there differs from
-    /// both the render and the text last written at `path`: then leave it. A
-    /// file that already holds the render is adopted. Nothing is created
-    /// unless the folder still holds this device's marker, which a drive
-    /// unmounted mid-pass does not. The file is written before the state, so
-    /// a crash between the two leaves a file the next pass adopts.
+    /// Write the page's render at `path` over the text last written there,
+    /// keeping the lines of every block the render did not change
+    /// ([`splice`]), unless a file there differs from both the render and
+    /// that text: then it was edited outside Agaric, and is read into the
+    /// page ([`Mirror::read_edit`]) or left alone. A file that already holds
+    /// the render is adopted. Nothing is created unless the folder still
+    /// holds this device's marker, which a drive unmounted mid-pass does not.
+    /// The file is written before the state, so a crash between the two
+    /// leaves a file the next pass adopts.
     async fn try_write_page(
         &mut self,
         root: &Path,
@@ -656,28 +731,46 @@ impl Mirror {
             Err(e) => return Err(e),
         };
         let target = root.join(path);
-        let state = self.pages.get(page_id).filter(|state| state.path == path);
-        let newest = state.and_then(PageState::newest);
+        let newest = self
+            .pages
+            .get(page_id)
+            .filter(|state| state.path == path)
+            .and_then(PageState::newest);
+        let (text, line_ids) = match newest {
+            Some(shadow) => {
+                splice::splice(&shadow.text, &shadow.line_ids, &file.text, &file.line_ids)
+            }
+            None => (file.text.clone(), file.line_ids.clone()),
+        };
+        let mut shadow = Shadow {
+            text,
+            line_ids,
+            buffer: Some(file.buffer.clone()),
+        };
         match store::read_optional(&target)? {
-            Some(bytes) if bytes == file.text.as_bytes() => {}
+            Some(bytes) if bytes == shadow.text.as_bytes() => {}
+            Some(bytes) if bytes == file.text.as_bytes() => {
+                shadow.text.clone_from(&file.text);
+                shadow.line_ids.clone_from(&file.line_ids);
+            }
             Some(bytes) if newest.is_none_or(|shadow| shadow.text.as_bytes() != bytes) => {
-                return Ok(Wrote::Diverged);
+                return self.read_edit(root, page_id, path, bytes, &file).await;
             }
             _ => {
                 if let Some(why) = pause_reason(root, &self.device_id) {
                     return Ok(Wrote::Paused(why));
                 }
                 create_folders_below(root, path)?;
-                store::write_atomic(&target, file.text.as_bytes())?;
+                store::write_atomic(&target, shadow.text.as_bytes())?;
             }
         }
-        let shadow = Shadow {
-            text: file.text,
-            line_ids: file.line_ids,
-        };
-        if newest == Some(&shadow) {
-            return Ok(Wrote::Done);
-        }
+        self.record(page_id, path, shadow)
+    }
+
+    /// Keep `shadow` as the text last written for the page at `path`.
+    fn record(&mut self, page_id: &str, path: &str, shadow: Shadow) -> Result<Wrote, AppError> {
+        self.settling.remove(page_id);
+        self.refused.remove(page_id);
         let mut state = self
             .pages
             .get(page_id)
@@ -686,11 +779,83 @@ impl Mirror {
                 path: path.to_owned(),
                 shadows: Vec::new(),
             });
+        if state.path == path && state.newest() == Some(&shadow) {
+            return Ok(Wrote::Done);
+        }
         state.record(path.to_owned(), shadow);
         // Saved first, so a failed save leaves memory with the disk's state.
         self.store.save(page_id, &state)?;
         self.pages.insert(page_id.to_owned(), state);
         Ok(Wrote::Done)
+    }
+
+    /// `bytes`, the page's file at `path` as edited outside Agaric, read into
+    /// the page once two ticks read the same bytes, then written back with
+    /// only the anchors the page now needs added or dropped
+    /// ([`ingest::ingest`]). Left alone, as diverged, while it settles, when
+    /// the mirror cannot ingest, or when no text written can be its base;
+    /// refused, as failed, when it or its save is refused, until it changes.
+    async fn read_edit(
+        &mut self,
+        root: &Path,
+        page_id: &str,
+        path: &str,
+        bytes: Vec<u8>,
+        render: &PageFile,
+    ) -> Result<Wrote, AppError> {
+        let Some(ingest) = self.ingest.clone() else {
+            return Ok(Wrote::Diverged);
+        };
+        if let Some((refused, why)) = self.refused.get(page_id)
+            && *refused == bytes
+        {
+            return Ok(Wrote::Refused(why.clone()));
+        }
+        if self.settling.get(page_id) != Some(&bytes) {
+            self.settling.insert(page_id.to_owned(), bytes);
+            return Ok(Wrote::Diverged);
+        }
+        let Some(state) = self.pages.get(page_id).filter(|state| state.path == path) else {
+            return Ok(Wrote::Diverged);
+        };
+        let ingested = ingest::ingest(
+            &self.pool,
+            &ingest,
+            &self.device_id,
+            page_id,
+            path,
+            state,
+            &bytes,
+            render,
+        )
+        .await;
+        let ingested = match ingested {
+            Ok(ingested) => ingested,
+            Err(NotIngested::NoBase) => return Ok(Wrote::Diverged),
+            Err(NotIngested::Refused(why)) => {
+                self.settling.remove(page_id);
+                self.refused
+                    .insert(page_id.to_owned(), (bytes, why.clone()));
+                return Ok(Wrote::Refused(why));
+            }
+        };
+        (ingest.notify)(ingested.event);
+        let target = root.join(path);
+        let Some(shadow) = ingested.shadow else {
+            return Ok(Wrote::Diverged);
+        };
+        // Written back only over the bytes ingested; a newer save is read on
+        // a later tick.
+        if store::read_optional(&target)?.as_deref() != Some(bytes.as_slice()) {
+            return Ok(Wrote::Diverged);
+        }
+        if shadow.text.as_bytes() != bytes {
+            if let Some(why) = pause_reason(root, &self.device_id) {
+                return Ok(Wrote::Paused(why));
+            }
+            store::write_atomic(&target, shadow.text.as_bytes())?;
+        }
+        self.record(page_id, path, shadow)
     }
 }
 
@@ -700,6 +865,8 @@ enum Wrote {
     Diverged,
     /// The folder lost its marker; nothing was written.
     Paused(String),
+    /// The file's edit was refused, and why; nothing was written.
+    Refused(String),
 }
 
 /// This device's last op `seq`, `0` before its first.
