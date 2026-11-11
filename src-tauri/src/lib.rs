@@ -4195,6 +4195,60 @@ mod boot_cache_gating_tests {
         mat.shutdown();
     }
 
+    /// #6488 — a vault upgrading past a change to the FTS strip holds rows the
+    /// old rule wrote. The first boot re-strips them and leaves the marker; the
+    /// next boot schedules nothing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_row_stripped_by_an_older_rule_is_restripped_once_6488() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pools = db::init_pools(&dir.path().join("test.db")).await.unwrap();
+        seed_tag_and_source(&pools.write, format!("note #[{TAG}]")).await;
+        for (id, stripped) in [(TAG, "tag-name"), (SOURCE, "an older strip")] {
+            sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+                .bind(id)
+                .bind(stripped)
+                .execute(&pools.write)
+                .await
+                .unwrap();
+        }
+        let stale_rows = || async {
+            crate::reconciliation_oracle::reconcile_all(
+                &pools.read,
+                &agaric_engine::loro::shared::LoroState::new(),
+                None,
+                chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap(),
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|d| d.artefact == "fts_blocks.stripped")
+            .map(|d| d.key)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(stale_rows().await, vec![SOURCE.to_owned()], "the seed is stale");
+        let mat =
+            materializer::Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the first boot");
+        assert_eq!(stale_rows().await, Vec::<String>::new(), "boot re-strips the row");
+
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        let before = load();
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the second boot");
+        assert_eq!(
+            load() - before,
+            1,
+            "the marker retires the re-strip: only the flush barrier runs"
+        );
+        mat.shutdown();
+    }
+
     /// #5420 — content with no inline `#[` token keeps `block_tag_refs` empty
     /// for good, so once the first boot has built the FTS index, a boot
     /// schedules nothing at all.
