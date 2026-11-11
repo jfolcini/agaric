@@ -74,6 +74,8 @@ pub(super) struct MergeSource {
     /// block whose `^id` anchor it follows: taken out of the text, which the
     /// anchor must end.
     pub(super) block_files: Vec<(String, String)>,
+    /// The `^name` blocks the save creates, which its links refer to.
+    pub(super) named: Vec<NewNamedBlock>,
 }
 
 /// `text`, a file's lines less its title, as a buffer save reads what an
@@ -94,6 +96,7 @@ pub(super) fn merge_source(
         template: None,
         page_files: Vec::new(),
         block_files: Vec::new(),
+        named: Vec::new(),
     };
     let body = match import::front_matter_fence(text) {
         Some((yaml, len)) => {
@@ -217,14 +220,16 @@ fn merged_line(line: &str, vault: &MergeVault<'_>, held: &[HeldFile]) -> Merged 
 /// once the save is done: the page's template flag as the file sets it, and
 /// the files it names that the page does not hold yet, attached as an import
 /// attaches them, onto the page for its `attachments:` front matter and onto
-/// the block a link or an `attachments::` line is in. Returns the ops the flag
-/// appended, which undo with the merge.
+/// the block a link or an `attachments::` line is in; and the links to a
+/// `^name` block the save created made refs to it. Returns the ops the flag
+/// and those links appended, which undo with the merge.
 pub(super) async fn finish_merge(
     ctx: &mut ImportCtx<'_>,
     source: &MergeSource,
     vault_files: Vec<VaultFile>,
 ) -> Result<Vec<agaric_store::op::OpRef>, AppError> {
-    let op_refs = sync_template(ctx, source.template.as_deref()).await?;
+    let mut op_refs = sync_template(ctx, source.template.as_deref()).await?;
+    op_refs.extend(link_new_named_blocks(ctx, &source.named).await?);
     if vault_files.is_empty() {
         return Ok(op_refs);
     }

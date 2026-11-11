@@ -964,3 +964,72 @@ async fn assert_files_came_to(pool: &SqlitePool, page: &str, before: &[(String, 
         ]
     );
 }
+
+/// Red (#6277 G5): a file with an Obsidian `^name` marker and a link to it,
+/// imported twice, leaves its page as the first import wrote it: the marker
+/// out of the text and the link a ref to its block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_with_an_obsidian_anchor_reimports_unchanged() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    dup_page(&pool, &mat, "Elsewhere").await;
+    let md = "- first ^one\n- see [[#^one]]\n- then [[Notes#^one]]\n";
+    let first = import(&pool, &mat, dir.path(), "Notes.md", md)
+        .await
+        .unwrap();
+    let before = page_state(&pool, &first.page_id).await;
+
+    let second = import(&pool, &mat, dir.path(), "Notes.md", md)
+        .await
+        .unwrap();
+
+    assert_eq!(second.page_id, first.page_id);
+    assert_eq!(second.warnings, Vec::<String>::new());
+    assert_eq!(page_state(&pool, &first.page_id).await, before);
+    mat.shutdown();
+}
+
+/// Red (#6277 G5): a merged file's `^name` marker on a new block leaves its
+/// text, and the file's links to it become refs to that block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_merged_files_obsidian_anchor_on_a_new_block_is_its_ref() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Notes").await;
+    dup_child(&pool, &mat, &page, "old").await;
+
+    let md = "- old\n- fresh ^two\n- see [[Notes#^two]]\n";
+    let result = import(&pool, &mat, dir.path(), "Notes.md", md)
+        .await
+        .unwrap();
+
+    assert_eq!(result.page_id, page.as_str());
+    assert_eq!(result.warnings, Vec::<String>::new());
+    let kids = children(&pool, page.as_str()).await;
+    let fresh = &kids[1].0;
+    let texts: Vec<&str> = kids.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(texts, ["old", "fresh", &format!("see (({fresh}))")]);
+    mat.shutdown();
+}
+
+/// A `^name` on a new block whose text another new block repeats names no
+/// one block the save made: its link is a link to the page, with a warning.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_merged_files_obsidian_anchor_on_a_repeated_new_block_links_its_page() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Notes").await;
+    dup_child(&pool, &mat, &page, "old").await;
+
+    let md = "- old\n- twin ^two\n- twin\n- see [[#^two]]\n";
+    let result = import(&pool, &mat, dir.path(), "Notes.md", md)
+        .await
+        .unwrap();
+
+    assert_eq!(result.warnings.len(), 1, "{:?}", result.warnings);
+    assert_eq!(
+        contents(&pool, page.as_str()).await,
+        ["old", "twin", "twin", &format!("see [[{page}]]")]
+    );
+    mat.shutdown();
+}
