@@ -1,4 +1,4 @@
-# Session 3652 — npm minor-and-patch group, without d3-selection 3.0.1
+# Session 3688 — npm minor-and-patch group, without d3-selection 3.0.1
 
 Takes Dependabot's #6450 (16 npm minor and patch updates) onto a branch off `main`. It holds one package back and re-vendors the pdf.js worker.
 
