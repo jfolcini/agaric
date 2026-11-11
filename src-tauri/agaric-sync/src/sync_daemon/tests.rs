@@ -4225,6 +4225,10 @@ async fn daemon_branch_b_dials_discovered_unpaired_peer_while_pairing_pending_35
 
     let discovered: DiscoveredPeers = [discovered_entry(SEEDED_PEER)].into_iter().collect();
 
+    // Backgrounded, so Branch C's body never runs and only Branch B can dial.
+    let lifecycle = crate::foreground::LifecycleHooks::new();
+    lifecycle.mark_backgrounded();
+
     let daemon = SyncDaemon::start_with_lifecycle_seeded(
         SyncDaemonContext {
             pool: pool.clone(),
@@ -4234,7 +4238,7 @@ async fn daemon_branch_b_dials_discovered_unpaired_peer_while_pairing_pending_35
             endpoint_secret: SecretKey::generate(),
             event_sink: sink_dyn,
             cancel,
-            lifecycle: crate::foreground::LifecycleHooks::new(),
+            lifecycle,
             internet_relay: false,
         },
         discovered,
@@ -4242,9 +4246,9 @@ async fn daemon_branch_b_dials_discovered_unpaired_peer_while_pairing_pending_35
     .await
     .expect("the seeded daemon must start");
 
-    // The wake both pairing commands end with. Branch C cannot be the thing
-    // that dials here: its round is `peers_due_for_resync(&refs)` and `refs` is
-    // empty, so Branch B is the only branch that can produce this peer.
+    // The wake both pairing commands end with. The daemon is backgrounded, so
+    // Branch C's body never runs, and Branch B is the only branch that can
+    // produce this peer.
     {
         let sink = sink.clone();
         scheduler.notify_change();
@@ -4306,6 +4310,10 @@ async fn daemon_branch_b_dials_the_scanned_host_with_an_empty_discovered_map_403
         .unwrap();
     scheduler.publish_scanned_peer(discovered_peer(SCANNED_HOST));
 
+    // Backgrounded, so Branch C's body never runs and only Branch B can dial.
+    let lifecycle = crate::foreground::LifecycleHooks::new();
+    lifecycle.mark_backgrounded();
+
     let daemon = SyncDaemon::start_with_lifecycle_seeded(
         SyncDaemonContext {
             pool: pool.clone(),
@@ -4315,7 +4323,7 @@ async fn daemon_branch_b_dials_the_scanned_host_with_an_empty_discovered_map_403
             endpoint_secret: SecretKey::generate(),
             event_sink: sink_dyn,
             cancel,
-            lifecycle: crate::foreground::LifecycleHooks::new(),
+            lifecycle,
             internet_relay: false,
         },
         // No mDNS ever reached this device — the whole point.
