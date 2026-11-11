@@ -96,6 +96,8 @@ struct Inner {
     start_error: Option<String>,
     diverged: BTreeMap<String, String>,
     failed: BTreeMap<String, (String, String)>,
+    /// New files no page owns that could not be read onto a page, by path.
+    failed_files: BTreeMap<String, String>,
     last_pass_ms: Option<i64>,
 }
 
@@ -170,8 +172,37 @@ impl MirrorState {
                     path: path.clone(),
                     message: message.clone(),
                 })
+                .chain(
+                    inner
+                        .failed_files
+                        .iter()
+                        .filter(|_| on)
+                        .map(|(path, message)| MirrorFailure {
+                            page_id: String::new(),
+                            path: path.clone(),
+                            message: message.clone(),
+                        }),
+                )
                 .collect(),
             last_pass_ms: inner.last_pass_ms,
+        }
+    }
+
+    /// Keep the new files' failures listed only for `paths`, those still new.
+    fn new_files_are(&self, paths: &[String]) {
+        self.lock()
+            .failed_files
+            .retain(|path, _| paths.contains(path));
+    }
+
+    fn file_failed(&self, path: &str, why: &str) {
+        let mut inner = self.lock();
+        if inner
+            .failed_files
+            .insert(path.to_owned(), why.to_owned())
+            .is_none()
+        {
+            tracing::warn!(path, why, "the Markdown mirror cannot read a new file");
         }
     }
 
@@ -369,6 +400,55 @@ pub struct Mirror {
     /// The bytes an ingest refused, and why: refused again without a try
     /// until they change.
     refused: HashMap<String, (Vec<u8>, String)>,
+    /// Each folder below the mirror's as last listed, re-listed only when
+    /// its modification time changes.
+    folders: HashMap<PathBuf, Listing>,
+    /// As `settling` and `refused`, for new files no page owns, by path.
+    settling_new: HashMap<String, Vec<u8>>,
+    refused_new: HashMap<String, (Vec<u8>, String)>,
+}
+
+/// A folder's listing: its modification time, its `.md` files as paths below
+/// the mirror's folder, `/`-separated, and its folders. Hidden entries, the
+/// marker and temporary files among them, are left out.
+struct Listing {
+    modified: Option<SystemTime>,
+    files: Vec<String>,
+    folders: Vec<PathBuf>,
+}
+
+impl Listing {
+    fn of(root: &Path, folder: &Path, modified: Option<SystemTime>) -> Self {
+        let mut listing = Self {
+            modified,
+            files: Vec::new(),
+            folders: Vec::new(),
+        };
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return listing;
+        };
+        for entry in entries.flatten() {
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                listing.folders.push(path);
+            } else if name.ends_with(".md")
+                && let Ok(below) = path.strip_prefix(root)
+            {
+                let parts: Vec<String> = below
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                listing.files.push(parts.join("/"));
+            }
+        }
+        listing
+    }
 }
 
 /// A file's length and modification time, `None` while there is no file.
@@ -408,6 +488,9 @@ impl Mirror {
             stats: HashMap::new(),
             settling: HashMap::new(),
             refused: HashMap::new(),
+            folders: HashMap::new(),
+            settling_new: HashMap::new(),
+            refused_new: HashMap::new(),
         })
     }
 
@@ -462,16 +545,163 @@ impl Mirror {
         dirty.extend(self.state.retried());
         dirty.extend(self.changed_files(&root));
         let full = self.full_due || self.last_full.is_none_or(|at| at.elapsed() >= BACKSTOP);
-        if !full && touched.is_none() && dirty.is_empty() {
+        if full {
+            // A file made within a folder's timestamp resolution of its last
+            // listing is found here at the latest.
+            self.folders.clear();
+        }
+        if full || touched.is_some() || !dirty.is_empty() {
+            dirty.extend(touched.unwrap_or_default());
+            if let Err(e) = self.pass(&root, full, dirty).await {
+                // The watermark moved and the synced pages were taken.
+                self.full_due = true;
+                return Err(e);
+            }
+        }
+        self.read_new_files(&root).await
+    }
+
+    /// Every `.md` file below the mirror's folder, as paths below it.
+    fn scan(&mut self, root: &Path) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut seen = HashSet::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(folder) = stack.pop() {
+            let modified = std::fs::metadata(&folder)
+                .and_then(|meta| meta.modified())
+                .ok();
+            let fresh = self
+                .folders
+                .get(&folder)
+                .is_some_and(|listing| modified.is_some() && listing.modified == modified);
+            if !fresh {
+                let listing = Listing::of(root, &folder, modified);
+                self.folders.insert(folder.clone(), listing);
+            }
+            if let Some(listing) = self.folders.get(&folder) {
+                found.extend(listing.files.iter().cloned());
+                stack.extend(listing.folders.iter().cloned());
+            }
+            seen.insert(folder);
+        }
+        self.folders.retain(|folder, _| seen.contains(folder));
+        found
+    }
+
+    /// Read each new `.md` file in a space's folder, one no page's file is
+    /// or is to be, onto a new page of that space titled by its path below
+    /// the space's folder (#5363 slice 3a), once two ticks read the same
+    /// bytes ([`ingest::create`]). A file outside every space's folder is
+    /// left alone; one refused stays listed as failed until it changes.
+    async fn read_new_files(&mut self, root: &Path) -> Result<(), AppError> {
+        let Some(ingest) = self.ingest.clone() else {
+            return Ok(());
+        };
+        let found = self.scan(root);
+        let owned: HashSet<&str> = self
+            .pages
+            .values()
+            .map(|state| state.path.as_str())
+            .chain(self.layout.values().map(|(path, _)| path.as_str()))
+            .collect();
+        let new: Vec<String> = found
+            .into_iter()
+            .filter(|path| !owned.contains(path.as_str()))
+            .collect();
+        self.settling_new.retain(|path, _| new.contains(path));
+        self.refused_new.retain(|path, _| new.contains(path));
+        self.state.new_files_are(&new);
+        if new.is_empty() {
             return Ok(());
         }
-        dirty.extend(touched.unwrap_or_default());
-        let passed = self.pass(&root, full, dirty).await;
-        if passed.is_err() {
-            // The watermark moved and the synced pages were taken.
-            self.full_due = true;
+        let spaces: Vec<(String, String)> = crate::commands::spaces::list_spaces_inner(&self.pool)
+            .await?
+            .into_iter()
+            .map(|space| (space.id, space.name))
+            .collect();
+        let by_folder: HashMap<String, String> = paths::space_folders(&spaces)
+            .into_iter()
+            .map(|(space, folder)| (folder, space))
+            .collect();
+        for path in new {
+            let Some((folder, below)) = path.split_once('/') else {
+                continue;
+            };
+            let title = crate::commands::pages::folder_path_to_namespace_title(below);
+            let Some(space_id) = by_folder.get(folder).filter(|_| !title.is_empty()) else {
+                continue;
+            };
+            if !self
+                .read_new_file(root, &ingest, space_id, &title, &path)
+                .await?
+            {
+                return Ok(());
+            }
         }
-        passed
+        Ok(())
+    }
+
+    /// [`Mirror::read_new_files`] for one file; `false` when the mirror
+    /// paused, which ends the tick.
+    async fn read_new_file(
+        &mut self,
+        root: &Path,
+        ingest: &Ingest,
+        space_id: &str,
+        title: &str,
+        path: &str,
+    ) -> Result<bool, AppError> {
+        let target = root.join(path);
+        let Some(bytes) = store::read_optional(&target)? else {
+            return Ok(true);
+        };
+        if self
+            .refused_new
+            .get(path)
+            .is_some_and(|(refused, _)| *refused == bytes)
+        {
+            return Ok(true);
+        }
+        if self.settling_new.get(path) != Some(&bytes) {
+            self.settling_new.insert(path.to_owned(), bytes);
+            return Ok(true);
+        }
+        if let Some(why) = pause_reason(root, &self.device_id) {
+            self.state.set_paused(Some(why));
+            return Ok(false);
+        }
+        let created = ingest::create(
+            &self.pool,
+            ingest,
+            &self.device_id,
+            space_id,
+            title,
+            path,
+            &bytes,
+        )
+        .await;
+        self.settling_new.remove(path);
+        let (page_id, ingested) = match created {
+            Ok(created) => created,
+            Err(NotIngested::Refused(why)) => {
+                self.state.file_failed(path, &why);
+                self.refused_new.insert(path.to_owned(), (bytes, why));
+                return Ok(true);
+            }
+            Err(NotIngested::NoBase) => return Ok(true),
+        };
+        (ingest.notify)(ingested.event);
+        if let Some(shadow) = ingested.shadow {
+            // Written back only over the bytes read; either way the page's
+            // file is this one now, and a newer save is read as its edit.
+            if shadow.text.as_bytes() != bytes
+                && store::read_optional(&target)?.as_deref() == Some(bytes.as_slice())
+            {
+                store::write_atomic(&target, shadow.text.as_bytes())?;
+            }
+            self.record(&page_id, path, shadow)?;
+        }
+        Ok(true)
     }
 
     /// The pages this device's ops since the watermark touched, the source
