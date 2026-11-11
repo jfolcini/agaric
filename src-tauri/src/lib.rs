@@ -2852,7 +2852,12 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let mirror_state = mirror::MirrorState::new(app_data_dir.clone());
     app.manage(mirror_state.clone());
     if cfg!(desktop) {
-        mirror::spawn(pools.read.clone(), device_id.clone(), mirror_state);
+        let ingest = mirror::ingest::Ingest::for_app(
+            app.handle().clone(),
+            pools.write.clone(),
+            materializer.clone(),
+        );
+        mirror::spawn(pools.read.clone(), device_id.clone(), mirror_state, ingest);
     }
 
     // Long-running background tasks: sweepers, maintenance daemon,

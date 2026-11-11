@@ -1450,7 +1450,11 @@ jobs:
             # shellcheck disable=SC2086
             npx playwright test $SPECS
           else
-            npx playwright test --shard "$SHARD/4"
+            # Dealt by each file's measured time (scripts/playwright-shard.mjs):
+            # `--shard` cuts equal test counts, and the slow files sort together.
+            files=$(node scripts/playwright-shard.mjs "$SHARD/4")
+            # shellcheck disable=SC2086
+            npx playwright test $files
           fi
 
       - name: Upload Playwright report (on failure)
@@ -1885,7 +1889,9 @@ jobs:
 
       - name: MCP stub-binary smoke test (I-MCP-9)
         working-directory: src-tauri
-        run: cargo nextest run --features ci-smoke --profile ci -E 'test(stub_binary_)'
+        # `--lib`: the `stub_binary_` tests live in the lib target, so the
+        # package's integration-test binaries need no `ci-smoke` rebuild.
+        run: cargo nextest run --lib --features ci-smoke --profile ci -E 'test(stub_binary_)'
 
       - name: Verify agaric-mcp smoke (--version)
         run: src-tauri/target/debug/agaric-mcp --version

@@ -86,10 +86,12 @@ Two rows: **Export this space** and **Export all spaces** (the whole vault, one 
 Off by default, desktop only, and set per device: *Choose folder…* turns it on and *Turn off* stops it.
 
 - Every page in every space is written as a `.md` file under the chosen folder, one folder per space with the namespace hierarchy as subfolders, and kept up to date as pages change.
-- Each file holds the page's *Edit as Markdown* buffer: its front matter, then its blocks, each carrying its block id.
+- Each file holds the page's front matter, then its blocks, as *Edit as Markdown* writes them, with a block id only on a block that a reference, an embed, a ref-typed property or an attachment addresses.
 - The folder must be empty or one this device's mirror created. A folder another device mirrors to, a non-empty folder Agaric did not create, and the app's own data folder are refused, with the reason shown.
-- A file edited outside Agaric is not overwritten. Settings lists it under *Changed outside Agaric; not overwritten*, with any file that could not be written.
-- The mirror only writes: edits made to the files are not read back into Agaric yet.
+- A file edited outside Agaric is read back into its page once it stops changing (two reads two seconds apart agree), as an *Edit as Markdown* save over a page that changed meanwhile: what Agaric changed since the file was last written is kept, and a block both sides changed is kept twice, with a warning. One Undo on the page reverts it. Until it is read, Settings lists it under *Changed outside Agaric; not read in yet*.
+- A line the file edit leaves without its block id is matched to its block by its text, so a line edited in place or moved keeps its block; a line matching none is a new block, and a block whose line is gone goes to the Trash.
+- The file keeps its own form: Agaric writes back only to add or drop the id of a block something refers to, and a later edit in Agaric rewrites only the lines of the blocks it changed, so `*` bullets, `1)` numbers and indents written elsewhere stay.
+- A file that is empty or not UTF-8, or whose edit is more than one undo can revert, is not read: the page is unchanged, and Settings lists the file under *Could not be written or read* until it changes. A file saved with CRLF line ends or a byte-order mark is read, and written back with LF and none.
 
 ## Pitfalls to know
 

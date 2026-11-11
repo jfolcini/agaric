@@ -102,6 +102,10 @@ pub fn read_optional(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
 pub struct Shadow {
     pub text: String,
     pub line_ids: Vec<Option<String>>,
+    /// The page's buffer from the read `text` was written from, the base an
+    /// ingest saves against; `None` in a state written before ingests.
+    #[serde(default)]
+    pub buffer: Option<String>,
 }
 
 /// A page's file as the mirror last wrote it: the path below the folder,

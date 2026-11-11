@@ -32,6 +32,7 @@ import { useInterfaceZoom } from '@/hooks/useInterfaceZoom'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useLanguage } from '@/hooks/useLanguage'
+import { useMirrorIngestEvents } from '@/hooks/useMirrorIngestEvents'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 import { usePageRenameNotices } from '@/hooks/usePageRenameNotices'
@@ -429,6 +430,9 @@ function App() {
 
   // ── Sync event listeners (Tauri → store) ───────────────────────────
   useSyncEvents()
+
+  // ── Markdown mirror ingests (#5363): onto the page's undo stack ────
+  useMirrorIngestEvents()
 
   // ── Deep-link router ─────────────────────────────────────
   // Listens for `deeplink:navigate-to-{block,page}` / `deeplink:open-settings`
