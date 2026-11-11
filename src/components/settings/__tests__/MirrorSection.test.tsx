@@ -69,8 +69,10 @@ beforeEach(() => {
     get_mirror_status: () => status(),
     pick_mirror_folder: () => picked,
     set_mirror_folder: (args) => {
+      const wasOn = folder !== null
       folder = args['path'] as string | null
-      if (folder !== null) readBack = args['readBack'] as boolean
+      // Taken only when the mirror turns on, as the backend takes it.
+      if (folder !== null && !wasOn) readBack = args['readBack'] as boolean
       return status()
     },
     set_mirror_read_back: (args) => {
@@ -225,6 +227,24 @@ describe('MirrorSection', () => {
     const stored = await storedStatus()
     expect(stored.folder).toBe(PICKED)
     expect(stored.read_back).toBe(false)
+    expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
+  })
+
+  it('choosing a folder while mirroring with reading back off keeps it off', async () => {
+    folder = PICKED
+    readBack = false
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('button', { name: t('data.mirrorChooseButton') }))
+
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('set_mirror_folder', {
+        path: PICKED,
+        readBack: false,
+      })
+    })
+    expect((await storedStatus()).read_back).toBe(false)
     expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
   })
 

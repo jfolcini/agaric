@@ -57,7 +57,8 @@ pub async fn pick_mirror_folder_inner<R: tauri::Runtime>(
 }
 
 /// Turn the mirror on in `path`, reading files changed outside Agaric back
-/// in when `read_back`, or off with `None`. On, the folder is checked
+/// in when `read_back` (ignored while the mirror is already on), or off with
+/// `None`. On, the folder is checked
 /// ([`mirror::check_folder`]), marked as this device's and stored, after
 /// `read_back`, so the first tick already follows it, and the next tick
 /// writes every page. Off, the setting goes and the files and the marker
@@ -85,7 +86,11 @@ pub async fn set_mirror_folder_inner(
                 folder.display()
             ))
         })?;
-        mirror::store::set_read_back(pool, read_back).await?;
+        // Only when the mirror turns on: while it is on, reading back is
+        // turned on by `set_mirror_read_back` alone, which asks first.
+        if mirror::store::folder(pool).await?.is_none() {
+            mirror::store::set_read_back(pool, read_back).await?;
+        }
     }
     mirror::store::set_folder(pool, path.as_deref()).await?;
     mirror.restart();

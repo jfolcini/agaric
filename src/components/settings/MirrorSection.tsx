@@ -73,7 +73,10 @@ export function MirrorSection(): React.ReactElement | null {
       try {
         const path = action === 'choose' ? unwrap(await commands.pickMirrorFolder()) : null
         if (action === 'choose' && path === null) return
-        setStatus(unwrap(await commands.setMirrorFolder(path, readBackChoice)))
+        // While the mirror is on, the choice made when turning it on does not
+        // apply: reading back changes only through its switch, which asks.
+        const readBack = status?.folder != null ? status.read_back : readBackChoice
+        setStatus(unwrap(await commands.setMirrorFolder(path, readBack)))
       } catch (err) {
         logger.error(MODULE, 'failed to change the mirror folder', undefined, err)
         notify.error(t('data.mirrorFailed', { reason: formatErrorForDisplay(err) }))
@@ -81,7 +84,7 @@ export function MirrorSection(): React.ReactElement | null {
         setPending(null)
       }
     },
-    [t, readBackChoice],
+    [t, readBackChoice, status],
   )
 
   const setReadBack = useCallback(

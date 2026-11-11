@@ -1228,3 +1228,26 @@ async fn a_refused_rename_writes_no_second_file_and_a_retry_renames_the_page() {
         fx.status().await.failed
     );
 }
+
+/// Choosing a folder while the mirror is on keeps reading back as it is: the
+/// choice made when turning the mirror on would otherwise turn it on with
+/// no question asked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn choosing_a_folder_while_mirroring_keeps_reading_back_off() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    read_back(&fx, false, false).await.unwrap();
+    fx.write(fx.read().replace("one", "uno"));
+    let folder = fx.root.to_str().unwrap().to_owned();
+
+    let status = set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(folder), true)
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+
+    assert!(!status.read_back);
+    assert_eq!(fx.contents(&page).await, ["one"], "nothing read in");
+}

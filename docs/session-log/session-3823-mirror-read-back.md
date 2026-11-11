@@ -1,4 +1,4 @@
-# Session 3822 — the mirror's read-back setting, and #6504's review notes
+# Session 3823 — the mirror's read-back setting, and #6504's review notes
 
 #5363 slice 4, setting 1, with #6506 and the two review notes from #6504.
 
