@@ -31,17 +31,18 @@
 //
 // ─── Baseline (shrink-only) ────────────────────────────────────────────
 //
-// 102 of this repo's 111 migrations predate the `_<NNNN>_` naming
+// Most of this repo's migrations predate the `_<NNNN>_` naming
 // convention entirely — AGENTS.md's own "Older batch, pinned by issue
 // number" paragraph documents exactly this: `_376`/`_606`/`_708` tests
 // cover an unspecified set of early migrations by ISSUE number, not by
 // migration number, because they predate the migration-number convention.
-// Retrofitting 102 tests to carry a `_<NNNN>_` tag is a content sweep, not
-// a guard's job, so — following the same shrink-only-baseline convention as
+// Retrofitting a test per migration to carry a `_<NNNN>_` tag is a content
+// sweep, not a guard's job, so — following the same shrink-only-baseline convention as
 // `scripts/doc-code-paths-baseline.json` and
 // `src-tauri/table-ownership-baseline.txt` — those migration numbers are
-// grandfathered in `src-tauri/migrations-test-coverage-baseline.txt`. #4182
-// tracks burning that list down.
+// grandfathered in `src-tauri/migrations-test-coverage-baseline.txt`. The
+// burn-down issue (#4182) was closed without the sweep, so the list shrinks
+// only as a migration gains a test.
 //
 // A migration number is exempt ONLY if it is already listed in that file.
 // Nothing is grandfathered automatically: migration 0112 (or any migration
@@ -80,7 +81,7 @@
 //     them, and both numbers sit in the baseline as a result. That direction
 //     is the safe one — the guard is stricter than the filter, never looser
 //     — but it is a real divergence and it is why those two baseline entries
-//     are not quite "no test exists". #4182 tracks the sweep.
+//     are not quite "no test exists".
 //
 // Falsification: rename an existing, non-grandfathered migration's covering
 // test to drop its `_<NNNN>_` tag, and this guard goes red on that

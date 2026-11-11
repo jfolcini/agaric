@@ -21,8 +21,9 @@
 //!   false`, so boot replay (`recovery::replay`) re-applies the ones committed
 //!   after the last snapshot pass idempotently → self-healing. The pass moves
 //!   the cursor past the rest once the engine snapshots hold them (#5418).
-//! - **REMOTE** ops never land in the local op_log (#490-M1) and advance the
-//!   apply cursor (`advance_cursor = true`), so boot replay cannot see them. The
+//! - **REMOTE** ops reach the local op_log only as audit records
+//!   (`is_replicated = 1`, #2481) and advance the apply cursor
+//!   (`advance_cursor = true`), so boot replay cannot see them. The
 //!   only net is the #2504 disaster-recovery reprojection
 //!   (`reproject_blocks_from_engine`), which rebuilds SQL from the persisted
 //!   engine snapshot.

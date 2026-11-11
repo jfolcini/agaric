@@ -44,10 +44,13 @@
 //! write lock: while one tx sits between its `BEGIN IMMEDIATE` and its
 //! commit/rollback, no other writer can be in its engine-apply phase. Arming
 //! (step 1) to detaching (step 3) both happen inside that lock-held window, so a
-//! concurrent writer never observes an armed log that isn't its own. In
-//! production [`for_space`](crate::loro::registry::LoroEngineRegistry::for_space) is exclusively a MUTATION chokepoint (every non-test
-//! caller is a write handler), so an armed log never records a concurrent
-//! reader either. Arming a log that is already armed is a bug (nested write tx)
+//! concurrent writer never observes an armed log that isn't its own. The log
+//! records only through
+//! [`for_space_recording`](crate::loro::registry::LoroEngineRegistry::for_space_recording),
+//! whose callers are write handlers; a reader (the sync export) goes through
+//! plain [`for_space`](crate::loro::registry::LoroEngineRegistry::for_space),
+//! which never records, so an armed log never records a concurrent reader
+//! either. Arming a log that is already armed is a bug (nested write tx)
 //! and panics in every build: the un-keyed log would silently merge two txs'
 //! checkpoints and rewind the wrong one on abort.
 //!

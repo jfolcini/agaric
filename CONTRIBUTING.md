@@ -51,8 +51,6 @@ just                          # list every recipe (alias for `just --list`)
 
 The hooks shell out to a handful of host-installed binaries (lychee, typos-cli, shellcheck, zizmor, taplo-cli, …). Install them once via [`docs/BUILD.md` → Developer tools (prek hook host-binaries)](docs/BUILD.md#developer-tools-prek-hook-host-binaries) so a local `prek run --all-files` is green; otherwise individual hooks fail with `command not found`.
 
-**If you cannot install prek locally** (e.g., contributor without Rust toolchain): your patch is welcome anyway; CI will run the same gate on the PR. Open the PR and iterate based on CI feedback.
-
 ### Editor setup (VS Code)
 
 Opening the repo in VS Code prompts you to install the workspace-recommended extensions (declared in the tracked [`.vscode/extensions.json`](.vscode/extensions.json)): the OXC extension (`oxc.oxc-vscode`) for oxlint/oxfmt, rust-analyzer (`rust-lang.rust-analyzer`), and Even Better TOML (`tamasfe.even-better-toml`) for taplo. These match the project's toolchain — installing the default Prettier/ESLint extensions instead will fight the repo's formatters. Per-user `.vscode/settings.json` stays local (gitignored).
@@ -77,14 +75,14 @@ so once `uv` is on your `PATH` no extra setup is required. The server must be **
 ```bash
 cargo tauri dev              # Dev mode with hot reload
 npm run test                 # Vitest (frontend)
-npm run typecheck            # TypeScript (all four tsconfig projects) — NOT `npx tsc --noEmit`
+npm run typecheck            # TypeScript (every tsconfig project) — NOT `npx tsc --noEmit`
 cd src-tauri && cargo nextest run --workspace   # Rust tests (bare form is package-scoped only, #3212)
 prek run --all-files         # Full local gate (mirror of CI's `validate` job)
 ```
 
 With the optional [`just`](#optional-just-task-runner) runner installed, the same commands are `just dev`, `just test-fe`, `just typecheck`, `just test-be`, and `just check` (and `just test` runs both test suites plus the Rust doc-tests); run `just --list` for the rest.
 
-**Use `npm run typecheck`, not `npx tsc --noEmit`.** The root `tsconfig.json` is solution-style (`"files": []` + four `references`), and `--noEmit` does not follow project references — only `--build`/`-b` does. So `npx tsc --noEmit` checks an empty program and **always exits 0**, however broken the code is (#3805). `npm run typecheck` is `tsc -b --noEmit`, the same command the pre-commit hook runs, so a local green means the hook will be green too.
+**Use `npm run typecheck`, not `npx tsc --noEmit`.** The root `tsconfig.json` is solution-style (`"files": []` plus `references` to every project), and `--noEmit` does not follow project references — only `--build`/`-b` does. So `npx tsc --noEmit` checks an empty program and **always exits 0**, however broken the code is (#3805). `npm run typecheck` is `tsc -b --noEmit`, the same command the pre-commit hook runs, so a local green means the hook will be green too.
 
 ### Fixing a format check failure
 
@@ -196,4 +194,4 @@ The maintainer uses a PLAN → BUILD → REVIEW → MERGE → COMMIT → LOG pip
 
 ## Asking questions
 
-Open a GitHub Discussion or a draft PR with `[WIP]` in the title. Please do not ping the maintainer privately for code-review questions — keeping them in the open lets future contributors benefit.
+Open a draft PR with `[WIP]` in the title (Discussions are not enabled on this repo). Please do not ping the maintainer privately for code-review questions — keeping them in the open lets future contributors benefit.

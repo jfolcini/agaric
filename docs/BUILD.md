@@ -420,7 +420,7 @@ There is **no Play Store upload step** in the release pipeline. The `android-bui
 ## Signing posture
 
 - **Updater signing**: active. `bundle.createUpdaterArtifacts` stays unset in `tauri.conf.json`; instead `release.yml` signs each platform's updater payload with `cargo tauri signer sign` in a dedicated step whose env holds only the `TAURI_SIGNING_PRIVATE_KEY` secret, then re-verifies every `.sig` with `minisign` against the `plugins.updater.pubkey` pinned in `tauri.conf.json` before stitching `latest.json` (#2971) — so a rotated-but-unsynced key reddens the release instead of silently breaking auto-update on installed clients. Key-rotation procedure (cadence, revocation, user notification): [`../SECURITY.md`](../SECURITY.md#updater-signing-key-rotation) § "Updater signing-key rotation".
-- **Desktop code signing**: not enabled. macOS bundles trip Gatekeeper's first-launch warning (right-click → *Open*); Windows bundles trip SmartScreen (*More info* → *Run anyway*). User-facing install steps live in the [README § Install](../README.md#install).
+- **Desktop code signing**: not enabled. macOS bundles trip Gatekeeper's first-launch warning (*System Settings* → *Privacy & Security* → *Open Anyway*); Windows bundles trip SmartScreen (*More info* → *Run anyway*). User-facing install steps live in the [README § Install](../README.md#install).
 - **Linux** `.deb` / `.AppImage`: intentionally not signed.
 
 ## sqlx compile-time queries

@@ -23,9 +23,10 @@ asymmetric (pinned by #2603's crash-injection test):
 - **LOCAL** ops (`advance_cursor = false`) self-heal on boot replay until a
   snapshot pass moves the cursor past them (#5418) — the op is in the local
   `op_log`, replayed idempotently.
-- **REMOTE** ops (`advance_cursor = true`) never land in the local `op_log`
-  (#490-M1), so boot replay can't see them; the only net is the #2504
-  disaster-recovery `reproject_blocks_from_engine`.
+- **REMOTE** ops (`advance_cursor = true`) reach the local `op_log` only as
+  audit records (`is_replicated = 1`, #2481), which boot replay skips, so it
+  can't see them; the only net is the #2504 disaster-recovery
+  `reproject_blocks_from_engine`.
 
 The #2604 goal: make the engine apply **transactional-by-construction** so that
 no engine-ahead-of-SQL state is reachable, eliminating the divergence axis
