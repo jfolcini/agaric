@@ -423,3 +423,14 @@ frontend	src/lib/speech/spoken-text.ts	ConditionalExpression	1	1	case 'footnote_
 frontend	src/lib/speech/spoken-text.ts	StringLiteral	6	1	case 'footnote_ref': {
 # #6439 spoken-text: getPageDisplayName's label is the leaf for an unknown mode as for 'leaf'; only the label is read
 frontend	src/lib/speech/spoken-text.ts	StringLiteral	80	1	return title === null ? t('readAloud.missingPage') : getPageDisplayName(title, 'leaf').label
+# #6435 meeting-dialog: with no space, loadTemplatePages(null) lists nothing, so no stored id can match; the ternary only types readPreference's argument
+frontend	src/components/attachments/MeetingDialog.tsx	ConditionalExpression	14	1	const last = spaceId === null ? '' : readPreference(PREFERENCES.meetingTemplate, spaceId)
+frontend	src/components/attachments/MeetingDialog.tsx	StringLiteral	33	1	const last = spaceId === null ? '' : readPreference(PREFERENCES.meetingTemplate, spaceId)
+# #6435 meeting-dialog: create is reached only through the submit button, disabled while no space is chosen; the guard narrows space_id's type
+frontend	src/components/attachments/MeetingDialog.tsx	ConditionalExpression	5	1	if (spaceId === null) return
+# #6435 meeting-dialog: a file input's `files` is never null; the `?.` is for the DOM type
+frontend	src/components/attachments/MeetingDialog.tsx	OptionalChaining	27	1	onChange={(e) => setAudio(e.target.files?.[0] ?? null)}
+frontend	src/components/attachments/MeetingDialog.tsx	OptionalChaining	32	1	onChange={(e) => setTranscript(e.target.files?.[0] ?? null)}
+frontend	src/components/attachments/MeetingDialog.tsx	OptionalChaining	33	1	onChange={(e) => setSummaryFile(e.target.files?.[0] ?? null)}
+# #6435 meeting-dialog: a null page title and the stand-in both fail the journal-day regex, so the date is today either way
+frontend	src/components/attachments/MeetingDialog.tsx	StringLiteral	31	1	const title = page.content ?? ''
