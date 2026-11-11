@@ -620,38 +620,48 @@ function SortableBlockInner({
   const touchGestureClaimedRef = useRef(false)
 
   // Id of the page this block belongs to (the per-page store's root). Used by
-  // the swipe-delete toast Undo to pin the undo to THIS page's op log. Empty /
+  // the delete toast's Undo to pin the undo to THIS page's op log. Empty /
   // null outside a provider (isolated renders) — the toast then falls back.
   const pageId = usePageBlockStoreOptional((s) => s.rootParentId)
 
-  // ── Swipe-to-delete (mobile only) ─────────────────────────────
+  // ── Delete with an Undo toast (swipe, context menu) ──────────
   // #927 f7: a 200 px left-swipe deletes immediately — best on mobile, where
   // a blocking confirm dialog is worse — but that makes a silent 200 px drag
-  // destructive. Surface a Gmail-style "Undo" toast as the recoverability net.
+  // destructive. Surface a Gmail-style "Undo" toast as the recoverability net;
+  // the context menu's Delete, which removes a whole subtree, takes the same
+  // toast (#6547).
   // Finding 42: the toast's Undo is pinned to the delete op it promises to
   // reverse (`useUndoStore.getState().undoDeleteOf`, #2901) — a positional
   // depth-0 undo could instead revert the edit op that the tap's own editor
   // blur-flush lands on top of the delete. Outside a page store (no pageId)
   // it falls back to the shared active-page undo the keyboard Ctrl+Z uses.
-  const handleSwipeDelete = useCallback(() => {
-    if (!onDelete) return
-    onDelete(blockId)
-    notify(t('block.swipe.deleted'), {
-      duration: 5000,
-      action: {
-        label: t('action.undo'),
-        onClick: () => {
-          if (pageId) {
-            void useUndoStore
-              .getState()
-              .undoDeleteOf(pageId, blockId, () => getPageStore(pageId)?.getState().load())
-          } else {
-            void performActivePageUndo()
-          }
+  const deleteWithUndo = useCallback(
+    (id: string) => {
+      if (!onDelete) return
+      onDelete(id)
+      notify(t('block.swipe.deleted'), {
+        duration: 5000,
+        action: {
+          label: t('action.undo'),
+          onClick: () => {
+            if (pageId) {
+              void useUndoStore
+                .getState()
+                .undoDeleteOf(pageId, id, () => getPageStore(pageId)?.getState().load())
+            } else {
+              void performActivePageUndo()
+            }
+          },
         },
-      },
-    })
-  }, [onDelete, blockId, t, pageId])
+      })
+    },
+    [onDelete, t, pageId],
+  )
+  const handleSwipeDelete = useCallback(() => deleteWithUndo(blockId), [deleteWithUndo, blockId])
+  const menuActions = useMemo(
+    () => (onDelete ? { ...actions, onDelete: deleteWithUndo } : actions),
+    [actions, onDelete, deleteWithUndo],
+  )
 
   const {
     translateX: swipeTranslateX,
@@ -898,7 +908,7 @@ function SortableBlockInner({
           // each callback. `onZoomIn` flows through ungated: zoom is now a
           // menu-only action available for every block, including leaves
           // (2026-06-20, replacing the removed any-block zoom bullet).
-          actions={actions}
+          actions={menuActions}
           // Fix 6 / #1018 — the menu reads the active multi-selection from the
           // store itself (it's the only consumer and only mounts while open),
           // so we no longer thread `selectedBlockIds` through here. Bulk mode

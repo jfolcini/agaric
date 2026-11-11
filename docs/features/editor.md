@@ -74,7 +74,7 @@ Settings › Editor › *Show Markdown syntax around the cursor* (on by default,
 | Set a due / scheduled date | Toolbar (no default keyboard binding) |
 | Cycle task state | `Ctrl+Enter` or `Ctrl+L` |
 | Multi-select adjacent blocks | `Shift+Click`, `Ctrl+Click`, `Ctrl+A` (within page) |
-| Delete block | Toolbar → *Delete*, or `Ctrl+Backspace` on an empty block |
+| Delete block | Toolbar → *Delete*, the block menu's *Delete* (its toast offers *Undo*, as a swipe's does), or `Ctrl+Backspace` on an empty block |
 | Drag to reorder | Drag the gutter handle; on touch, hold a block, then drag it |
 | Block menu (touch) | Hold a block and let go |
 | Swipe-to-delete (touch) | Swipe left on a block |

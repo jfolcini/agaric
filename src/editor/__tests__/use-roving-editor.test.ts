@@ -1411,6 +1411,44 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
+  // #6547 — the empty heading or quote `doc.cut` leaves at the end serialises
+  // as `# ` / `> `, which made every sibling created by Enter a heading.
+  it.each([
+    ['heading', '# Title'],
+    ['blockquote', '> quoted'],
+  ])('splitAtCaret() at the end of a %s returns an empty tail', async (_kind, md) => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-split-end-styled', md)
+    })
+    act(() => {
+      ;(result.current.editor as Editor).commands.focus('end')
+    })
+
+    expect(result.current.splitAtCaret()).toEqual({ before: md, after: '' })
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('splitAtCaret() mid-heading keeps the heading on both halves', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-split-mid-heading', '# Headline')
+    })
+    // Heading opens at 0, text begins at 1: "Head" ends at 5.
+    act(() => {
+      ;(result.current.editor as Editor).commands.setTextSelection(5)
+    })
+
+    expect(result.current.splitAtCaret()).toEqual({ before: '# Head', after: '# line' })
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
   it('splitAtCaret() returns null for a non-collapsed (range) selection', async () => {
     const { result, unmount: unmountHook } = await setup()
 
