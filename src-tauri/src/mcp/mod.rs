@@ -1253,7 +1253,7 @@ mod tests {
     }
 
     // The mcp-tests CI lane runs these after `cargo build --bin agaric-mcp`:
-    //   cargo nextest run --features ci-smoke -E 'test(stub_binary_)'
+    //   cargo nextest run --lib --features ci-smoke -E 'test(stub_binary_)'
     #[cfg(all(unix, feature = "ci-smoke"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn stub_binary_roundtrips_initialize_over_uds() {

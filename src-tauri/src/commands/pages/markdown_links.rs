@@ -244,6 +244,17 @@ pub(super) fn obsidian_heading_text(content: &str) -> Option<&str> {
     Some(text)
 }
 
+/// The text a link names the heading `content` by (#6277 F4): its
+/// [`obsidian_heading_text`], where `[[Title#text]]` carries it as written;
+/// none for a text holding link, anchor, escape or inline markup syntax, or a
+/// `:`, which Obsidian leaves out of the heading links it writes.
+pub(super) fn heading_link_text(content: &str) -> Option<&str> {
+    const SYNTAX: &[char] = &[
+        '[', ']', '|', '#', '^', '\\', '`', '*', '_', '~', '=', '$', '<', '>', '%', '{', '}', ':',
+    ];
+    obsidian_heading_text(content).filter(|text| !text.contains(SYNTAX) && !text.contains("(("))
+}
+
 /// #2567 — normalize an Obsidian heading label for anchor matching. Obsidian
 /// `[[Page#Some Heading]]` links match the heading TEXT; matching is made robust
 /// to incidental whitespace/case differences by trimming, collapsing internal
@@ -778,7 +789,8 @@ pub(super) fn tag_reads_back_bare(before: &str, name: &str, after: &str) -> bool
 /// created. A name can be the page's own and still not come back: `[[Foo|Bar]]`
 /// reads as the page `Foo|Bar` when one exists (#5160 D10), and `#v1.2` as the
 /// tag `v1`. A block that is one embed whose name reads back is written as
-/// Obsidian's `![[Page]]`, `![[Page#^id]]` or `![[#^id]]` ([`as_obsidian_embed`]).
+/// Obsidian's `![[Page]]`, `![[Page#Heading]]`, `![[Page#^id]]` or `![[#^id]]`
+/// ([`as_obsidian_embed`]).
 pub(super) fn humanise_refs_for_source(
     content: &str,
     is_code: bool,
@@ -816,9 +828,11 @@ pub(super) fn humanise_refs_for_source(
 }
 
 /// `content` with each `((ULID))` whose block `names` holds written as the
-/// Obsidian block link a save reads back (#6277 F2): `[[#^ULID]]` for a block
-/// of [`LinkMatches::own_page`] when `own_page`, the text being that page's,
-/// else `[[Title#^ULID]]` naming its page. A ref whose block `names` does not
+/// Obsidian block link a save reads back (#6277 F2): `[[Title#Heading]]` for a
+/// heading `names` holds by its text (F4), on any page, since a paste
+/// elsewhere has no page to read an anchor-only heading on; `[[#^ULID]]` for
+/// a block of [`LinkMatches::own_page`] when `own_page`, the text being that
+/// page's; else `[[Title#^ULID]]` naming its page. A ref whose block `names` does not
 /// hold, as one to another space, a deleted block or a page, and an escaped
 /// one stay raw; [`humanise_refs_for_source`] checks the rest read back.
 fn name_block_refs(content: &str, names: &LinkMatches, own_page: bool) -> String {
@@ -830,15 +844,14 @@ fn name_block_refs(content: &str, names: &LinkMatches, own_page: bool) -> String
                 .blocks
                 .get(id)
                 .filter(|_| !is_escaped(content, m.start()));
-            match page {
-                Some(page) if own_page && names.own_page.as_ref() == Some(page) => {
-                    format!("[[#^{id}]]")
-                }
-                Some(page) => names
-                    .titles
-                    .get(page)
-                    .map_or_else(|| m.as_str().to_owned(), |t| format!("[[{t}#^{id}]]")),
-                None => m.as_str().to_owned(),
+            let Some(page) = page else {
+                return m.as_str().to_owned();
+            };
+            match (names.headings.get(id), names.titles.get(page)) {
+                (Some(heading), Some(title)) => format!("[[{title}#{heading}]]"),
+                _ if own_page && names.own_page.as_ref() == Some(page) => format!("[[#^{id}]]"),
+                (_, Some(title)) => format!("[[{title}#^{id}]]"),
+                (_, None) => m.as_str().to_owned(),
             }
         })
         .into_owned()

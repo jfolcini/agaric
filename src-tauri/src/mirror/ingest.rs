@@ -14,7 +14,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde::Serialize;
-use specta::Type;
 use sqlx::SqlitePool;
 
 use agaric_core::error::AppError;
@@ -35,7 +34,9 @@ use agaric_core::ulid::BlockId;
 /// what it wrote.
 pub const EVENT_MIRROR_INGESTED: &str = "mirror:ingested";
 
-#[derive(Debug, Clone, Serialize, Type)]
+/// Typed by hand in `useMirrorIngestEvents.ts`: the bindings carry commands,
+/// not event payloads.
+#[derive(Debug, Clone, Serialize)]
 pub struct MirrorIngested {
     pub page_id: String,
     pub path: String,

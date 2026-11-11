@@ -503,7 +503,9 @@ impl Mirror {
         self
     }
 
-    /// The pages whose file changed since the mirror last saw it.
+    /// The pages whose file changed since the mirror last saw it. One stat per
+    /// mirrored file every tick, dirty or not: cheap at today's vault sizes. A
+    /// vault large enough to feel it would gate this scan on a slower cadence.
     fn changed_files(&self, root: &Path) -> Vec<String> {
         self.pages
             .iter()
