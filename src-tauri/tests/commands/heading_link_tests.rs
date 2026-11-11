@@ -265,7 +265,7 @@ async fn held_headings(pool: &SqlitePool, mat: &Materializer, h: &Headings) -> [
         .unwrap();
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, \
-         created_at) VALUES ('01J000000000000000000ATTCH', ?, 'text/plain', 'a.txt', 1, \
+         created_at) VALUES ('01J000000000000000000000A7', ?, 'text/plain', 'a.txt', 1, \
          'attachments/a.txt', 1)",
     )
     .bind(owned.as_str())
