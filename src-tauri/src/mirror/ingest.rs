@@ -24,10 +24,11 @@ use super::splice::splice;
 use super::store::{PageState, Shadow};
 use crate::commands::pages::{
     PageFile, PageSourceReport, SourceSaveFlags, anchor_free_kept, apply_page_source_inner,
-    get_page_file_inner, pair_unanchored_lines,
+    get_page_buffer_inner, get_page_file_inner, pair_unanchored_lines,
 };
-use crate::commands::{WithOps, capture_op_refs};
+use crate::commands::{WithOps, capture_op_refs, create_page_in_space_inner, delete_block_inner};
 use crate::materializer::Materializer;
+use agaric_core::ulid::BlockId;
 
 /// The event an ingest emits: the ops it appended, for the page's undo, and
 /// what it wrote.
@@ -177,6 +178,91 @@ pub async fn ingest(
         }
     };
     Ok(Ingested { shadow, event })
+}
+
+/// Read `bytes`, a new file at `path` that no page owns, onto a new page of
+/// `space_id` titled `title` (#5363 slice 3a): the page is created, then its
+/// blocks saved through [`apply_page_source_inner`] over its empty buffer, as
+/// Edit as Markdown saves a buffer, so the file is read in the dialect the
+/// mirror writes and every line is a new block, an anchor naming no block of
+/// the page as any other. Returns the page and the file to write back, the
+/// event carrying both commands' ops, so one undo removes the page. A title
+/// the space already holds is refused, and so is a save the op cap or the
+/// grammar refuses, which deletes the page it created, to the Trash.
+#[allow(clippy::too_many_arguments)]
+pub async fn create(
+    read_pool: &SqlitePool,
+    ingest: &Ingest,
+    device_id: &str,
+    space_id: &str,
+    title: &str,
+    path: &str,
+    bytes: &[u8],
+) -> Result<(String, Ingested), NotIngested> {
+    let refused = |e: AppError| NotIngested::Refused(e.to_string());
+    let text = file_text(bytes)?;
+    let (edited, _, kept) = anchor_free_kept(&text);
+    let line_ids = vec![None; edited.split('\n').count()];
+    let created = capture_op_refs(Box::pin(create_page_in_space_inner(
+        &ingest.pool,
+        device_id,
+        &ingest.materializer,
+        None,
+        title.to_owned(),
+        space_id.to_owned(),
+    )))
+    .await
+    .map_err(refused)?;
+    let page_id = created.inner.into_string();
+    if created.op_refs.is_empty() {
+        return Err(NotIngested::Refused(format!(
+            "the space already has a page titled \"{title}\""
+        )));
+    }
+    let empty = get_page_buffer_inner(&ingest.pool, &page_id)
+        .await
+        .map_err(refused)?;
+    let saved = capture_op_refs(Box::pin(apply_page_source_inner(
+        &ingest.pool,
+        device_id,
+        &ingest.materializer,
+        &page_id,
+        edited.clone(),
+        empty.source,
+        SourceSaveFlags {
+            merge: false,
+            line_ids: line_ids.clone(),
+        },
+    )))
+    .await;
+    let saved = match saved {
+        Ok(saved) => saved,
+        Err(e) => {
+            let page = BlockId::from_trusted(&page_id);
+            if let Err(gone) =
+                delete_block_inner(&ingest.pool, device_id, &ingest.materializer, page).await
+            {
+                tracing::warn!(page_id, error = %gone, "cannot delete a page whose file was refused");
+            }
+            return Err(refused(e));
+        }
+    };
+    let mut op_refs = created.op_refs;
+    op_refs.extend(saved.op_refs);
+    let event = MirrorIngested {
+        page_id: page_id.clone(),
+        path: path.to_owned(),
+        op_refs,
+        report: saved.inner,
+    };
+    let shadow = match get_page_file_inner(read_pool, &page_id).await {
+        Ok(now) => Some(write_back(&text, &edited, &kept, &line_ids, &now)),
+        Err(e) => {
+            tracing::warn!(page_id, error = %e, "cannot render a page after its file was read");
+            None
+        }
+    };
+    Ok((page_id, Ingested { shadow, event }))
 }
 
 /// The file `text` (`edited` its anchor-free form, `kept` the line of `text`
