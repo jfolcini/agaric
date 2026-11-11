@@ -58,16 +58,6 @@ import { requireActiveScope } from '@/lib/space-scope'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
-/**
- * A confirmed bulk action that changed nothing while rows were listed. The
- * backend matches ids byte for byte after canonicalising them, so a stored id
- * that is not canonical uppercase is listed but never matched, and the call
- * resolves with a count of 0 instead of failing.
- */
-function reportNothingChanged(action: string, listed: number): void {
-  logger.warn('TrashView', `${action} changed nothing`, { listed })
-}
-
 export function TrashView(): React.ReactElement {
   const { t } = useTranslation()
   const callbacks = useRichContentCallbacks()
@@ -354,7 +344,15 @@ export function TrashView(): React.ReactElement {
       notify.success(t('trash.batchRestored', { count: restored }))
       announce(t('announce.batchRestored', { count: restored }))
     } else {
-      reportNothingChanged('batch restore', selectedBlocks.length)
+      // A confirmed bulk action that changed nothing while rows were listed.
+      // The backend matches ids byte for byte after canonicalising them, so a
+      // stored id that is not canonical uppercase is listed but never matched,
+      // and the call resolves with a count of 0 instead of failing. `sample`
+      // shows a listed id's shape; never its content.
+      logger.warn('TrashView', 'batch restore changed nothing', {
+        listed: selectedBlocks.length,
+        sample: selectedBlocks[0]?.id,
+      })
       notify.error(t('trash.batchRestoreFailed'))
       announce(t('announce.batchRestoreFailed'))
     }
@@ -431,7 +429,10 @@ export function TrashView(): React.ReactElement {
       notify.success(t('trash.batchPurged', { count: purged }))
       announce(t('announce.batchPurged', { count: purged }))
     } else {
-      reportNothingChanged('batch purge', selectedIds.length)
+      logger.warn('TrashView', 'batch purge changed nothing', {
+        listed: selectedIds.length,
+        sample: selectedIds[0],
+      })
       notify.error(t('trash.batchPurgeFailed'))
       announce(t('announce.batchPurgeFailed'))
     }
@@ -454,7 +455,10 @@ export function TrashView(): React.ReactElement {
         notify.success(t('trash.allPurged', { count: result.affected_count }))
         announce(t('announce.trashEmptied', { count: result.affected_count }))
       } else if (blocks.length > 0) {
-        reportNothingChanged('empty trash', blocks.length)
+        logger.warn('TrashView', 'empty trash changed nothing', {
+          listed: blocks.length,
+          sample: blocks[0]?.id,
+        })
         notify.error(t('trash.emptyTrashFailed'))
         announce(t('announce.emptyTrashFailed'))
       }
@@ -477,7 +481,7 @@ export function TrashView(): React.ReactElement {
       notify.error(t('trash.emptyTrashFailed'))
       announce(t('announce.emptyTrashFailed'))
     }
-  }, [blocks.length, currentSpaceId, reload, clearSelection, t])
+  }, [blocks, currentSpaceId, reload, clearSelection, t])
 
   // #2544 — same space-scoping as handleEmptyTrash: "Restore all" must not
   // resurrect trashed blocks in spaces other than the one this view shows.
@@ -499,7 +503,10 @@ export function TrashView(): React.ReactElement {
         notify.success(t('trash.allRestored', { count: result.affected_count }))
         announce(t('announce.allRestored', { count: result.affected_count }))
       } else if (blocks.length > 0) {
-        reportNothingChanged('restore all', blocks.length)
+        logger.warn('TrashView', 'restore all changed nothing', {
+          listed: blocks.length,
+          sample: blocks[0]?.id,
+        })
         notify.error(t('trash.restoreAllFailed'))
         announce(t('announce.restoreAllFailed'))
       }
@@ -526,7 +533,7 @@ export function TrashView(): React.ReactElement {
       )
       announce(t('announce.restoreAllFailed'))
     }
-  }, [blocks.length, currentSpaceId, reload, clearSelection, t])
+  }, [blocks, currentSpaceId, reload, clearSelection, t])
 
   // ── Scroll focused item into view ────────────────────────────────
   // #740 — the list is virtualized inside `TrashListView`, which now owns
