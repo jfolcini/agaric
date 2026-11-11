@@ -1,4 +1,4 @@
-# Session 3695 — Text never sits in a pill
+# Session 3721 — Text never sits in a pill
 
 The maintainer saw strongly rounded controls on mobile: the "Exclude journal pages" filter pill in the graph filter bar first, and the same shape across the app. This makes the radius rule part of the design system and sweeps every text-bearing pill.
 
