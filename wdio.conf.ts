@@ -976,24 +976,16 @@ export function dealSpecs(
   return slices.flatMap((slice) => slice.specs)
 }
 
-/** Each spec's mean seconds on CI; `node scripts/e2e-tauri-durations.mjs` rewrites the file. */
-function readSpecSeconds(): Record<string, number> {
-  const file = 'e2e-tauri/spec-durations.json'
-  const parsed: unknown = JSON.parse(readFileSync(path.join(rootDir, file), 'utf8'))
-  if (typeof parsed !== 'object' || parsed === null) throw new Error(`${file} is not an object`)
-  const seconds: Record<string, number> = {}
-  for (const [spec, value] of Object.entries(parsed)) {
-    if (typeof value !== 'number') throw new Error(`${file}: ${spec} is not a number of seconds`)
-    seconds[spec] = value
-  }
-  return seconds
-}
+// Each spec's mean seconds on CI; `node scripts/e2e-tauri-durations.mjs` rewrites the file.
+const specSeconds = JSON.parse(
+  readFileSync(path.join(rootDir, 'e2e-tauri/spec-durations.json'), 'utf8'),
+) as Record<string, number>
 
 const shardTotal = Number(/--shard[= ]\d+\/(\d+)/.exec(process.argv.join(' '))?.[1] ?? 1)
 const dealtSpecs = dealSpecs(
   globSync('e2e-tauri/**/*.e2e.ts', { cwd: rootDir }).toSorted(),
   shardTotal,
-  readSpecSeconds(),
+  specSeconds,
 )
 
 export const config: WebdriverIO.Config = {
