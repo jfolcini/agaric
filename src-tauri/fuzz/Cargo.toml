@@ -122,3 +122,10 @@ path = "fuzz_targets/pagination_cursor_decode.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "mirror_ingest"
+path = "fuzz_targets/mirror_ingest.rs"
+test = false
+doc = false
+bench = false
