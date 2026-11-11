@@ -1,4 +1,4 @@
-# Session 3692 — the Markdown generators stop spelling foreign math (#6277)
+# Session 3700 — the Markdown generators stop spelling foreign math (#6277)
 
 The round-trip proptests in `markdown_source_tests.rs` and `markdown_document_tests.rs` could generate stored text holding `\(` or `\[` with its closer later on the line, e.g. `SCHEDULED: <2026-10-01> \(a \)`. A foreign read takes that as math (`normalize_foreign_inline`, #6033 S4) and reads `$a$`, so the round trip failed at random on unrelated PRs: Dependabot #6467's `cargo-tests (1)`, at `an_export_with_every_block_anchored_imports_as_its_tree`.
 
