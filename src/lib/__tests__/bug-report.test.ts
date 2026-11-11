@@ -376,8 +376,10 @@ describe('formatIntegrityReport', () => {
 
       13 divergences over 1200 blocks scanned, 2026-09-09.
 
-      - \`pages_cache.child_block_count\` — 12 rows: 01ARZ, 01BX5
-      - \`block_tag_inherited\` — 1 row"
+      ### Out-of-date caches (rebuildable)
+
+      - \`pages_cache.child_block_count\` — 12 rows: 01ARZ, 01BX5 — Pages list: counts out of date
+      - \`block_tag_inherited\` — 1 row — Inherited tags: values out of date"
     `)
   })
 

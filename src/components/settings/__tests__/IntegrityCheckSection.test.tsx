@@ -152,7 +152,7 @@ describe('IntegrityCheckSection', () => {
     await user.click(screen.getByTestId('integrity-run-button'))
 
     expect(await screen.findByTestId('integrity-summary')).toHaveTextContent(
-      '17 rows do not match a fresh rebuild (1200 blocks checked, 2026-09-09).',
+      '17 rows in 2 caches are out of date (rebuildable). 1200 blocks checked on 2026-09-09.',
     )
     expect(
       screen.getByText('12 rows diverged in pages_cache.child_block_count'),
@@ -427,5 +427,27 @@ describe('IntegrityCheckSection in plain words (#6488)', () => {
     await screen.findByTestId('integrity-rebuild-button')
 
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+describe('IntegrityCheckSection non-standard ids (#6488)', () => {
+  it('says how many blocks bulk Trash actions skip, and offers no rebuild for them', async () => {
+    mockReport({
+      blocks_scanned: 2441,
+      today: '2026-11-11',
+      total_divergences: 2,
+      artefacts: [{ artefact: 'blocks.id_form', count: 2, sample_keys: ['01lower', '01other'] }],
+    })
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByTestId('integrity-run-button'))
+
+    expect(await screen.findByTestId('integrity-summary')).toHaveTextContent(
+      '2 blocks have ids in a non-standard form (bulk Trash actions skip them). 2441 blocks checked on 2026-11-11.',
+    )
+    const ids = within(screen.getByTestId('integrity-group-ids'))
+    expect(ids.getByRole('heading', { name: t('integrity.groupIdsTitle') })).toBeInTheDocument()
+    expect(ids.getByText('Blocks: ids in a non-standard form')).toBeInTheDocument()
+    expect(screen.queryByTestId('integrity-rebuild-button')).not.toBeInTheDocument()
   })
 })

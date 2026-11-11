@@ -73,3 +73,23 @@ describe('groupByKind', () => {
     expect(groupByKind({ ...REPORT, total_divergences: 0, artefacts: [] })).toEqual([])
   })
 })
+
+describe('the non-standard id group (#6488)', () => {
+  it('is its own kind, named Blocks, last after the engine', () => {
+    expect(divergenceKind('blocks.id_form')).toBe('ids')
+    expect(tableId('blocks.id_form')).toBe('blocks')
+    expect(problemId('blocks.id_form')).toBe('idForm')
+    const report: ReconciliationReport = {
+      ...REPORT,
+      artefacts: [
+        { artefact: 'blocks.id_form', count: 2, sample_keys: ['01lower'] },
+        ...REPORT.artefacts,
+      ],
+    }
+    expect(groupByKind(report).map((g) => [g.kind, g.rows])).toEqual([
+      ['rebuildable', 28],
+      ['engine', 3],
+      ['ids', 2],
+    ])
+  })
+})

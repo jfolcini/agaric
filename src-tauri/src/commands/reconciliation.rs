@@ -970,4 +970,61 @@ mod tests {
         assert_eq!(after.artefacts, Vec::new(), "nothing is left stale");
         mat.shutdown();
     }
+
+    /// #6488 — a block stored under a lowercase id, or naming a lowercase
+    /// parent, is reported under its own artefact, by its stored id.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_block_id_in_a_non_standard_form_is_reported_6488() {
+        let (pool, _dir, mat, page_id) = settled_vault().await;
+        let lower = page_id.to_ascii_lowercase();
+        // Older data predates the parent foreign key it would fail now; one
+        // connection, so the pragma covers the insert.
+        let mut conn = pool.acquire().await.expect("a connection");
+        // dynamic-sql: a pragma, which sqlx-macros cannot describe.
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .expect("let a lowercase parent stand");
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+             VALUES ('01lowercase000000000000000', 'content', NULL, ?, ?)",
+            lower,
+            page_id,
+        )
+        .execute(&mut *conn)
+        .await
+        .expect("a row from older data");
+        drop(conn);
+
+        let report =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
+
+        let id_form: Vec<&ArtefactDivergences> = report
+            .artefacts
+            .iter()
+            .filter(|a| a.artefact == "blocks.id_form")
+            .collect();
+        assert_eq!(
+            id_form,
+            vec![&ArtefactDivergences {
+                artefact: "blocks.id_form".to_owned(),
+                count: 1,
+                sample_keys: vec!["01lowercase000000000000000".to_owned()],
+            }],
+            "one block, by its stored id"
+        );
+        let sample = report
+            .samples
+            .unwrap_or_default()
+            .into_iter()
+            .find(|s| s.artefact == "blocks.id_form")
+            .expect("its sample");
+        assert_eq!(
+            sample.actual,
+            format!("id = 01lowercase000000000000000, parent_id = {lower}")
+        );
+        mat.shutdown();
+    }
 }

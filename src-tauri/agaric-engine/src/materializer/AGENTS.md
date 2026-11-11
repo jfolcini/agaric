@@ -17,6 +17,7 @@ One PR carries the whole lifecycle, or existing vaults never get the rows:
 - a full rebuild task, in `FULL_CACHE_REBUILD_TASKS` and `INBOUND_SYNC_CACHE_REBUILD_TASKS` when those paths can stale it (inbound sync and snapshot restore bypass `invalidations_for_op`);
 - a `rebuild_*_from_base` arm in the reconciliation oracle (`src-tauri/src/reconciliation_oracle.rs`), folded in Rust from base tables, sharing no code with the maintenance path;
 - a durable retry obligation: a failed rebuild must reach `materializer_retry_queue`, never live only in memory.
+- a `Derivation` (`agaric-store/src/derivations.rs`) when its rows are the output of a rule that can change: the full rebuild records the version, boot rebuilds a vault that recorded another, and the golden test fails a rule change without a bump (#6488).
 
 Write a durable obligation (`retry_queue::record_failure`) before retiring the record it replaces, and a repair's marker only after its effect is saved: a crash between the two otherwise loses the only evidence of an op that never applied. Pin the order with a mutation that swaps it.
 

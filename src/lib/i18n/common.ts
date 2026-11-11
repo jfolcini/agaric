@@ -601,6 +601,15 @@ export const common: Record<string, string> = {
   'integrity.groupEngineDetail':
     'Your notes database and the sync engine hold different versions of these rows. A rebuild does not fix this, and syncing can spread either version.',
   'integrity.groupEngineAction': 'Copy the report and file a bug before you sync again.',
+  'integrity.summaryIds_one':
+    '{{count}} block has an id in a non-standard form (bulk Trash actions skip it).',
+  'integrity.summaryIds_other':
+    '{{count}} blocks have ids in a non-standard form (bulk Trash actions skip them).',
+  'integrity.groupIdsTitle': 'Blocks with ids in a non-standard form',
+  'integrity.groupIdsDetail':
+    'These blocks were stored under an id written differently from the standard form, likely by an older version. Bulk Trash actions such as Empty trash and Restore all skip them. A rebuild does not change ids.',
+  'integrity.groupIdsAction': 'Copy the report and file a bug so the repair can be decided.',
+  'integrity.problem.idForm': 'ids in a non-standard form',
   'integrity.table.search': 'Search index',
   'integrity.table.pages': 'Pages list',
   'integrity.table.pageLinks': 'Links between pages',

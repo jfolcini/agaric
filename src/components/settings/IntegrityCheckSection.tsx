@@ -8,9 +8,9 @@
  * O(pages × blocks), so the button is the opt-in.
  *
  * The result is written for someone who is not us (#6488). Each divergence
- * falls in one of two groups (`@/lib/integrity-report`): caches the app can
- * rebuild from the notes, and rows where the database disagrees with the sync
- * engine. Each group says what it is, whether it is harmless, and what to do;
+ * falls in one of three groups (`@/lib/integrity-report`): caches the app can
+ * rebuild from the notes, rows where the database disagrees with the sync
+ * engine, and blocks stored under a non-standard id. Each group says what it is, whether it is harmless, and what to do;
  * each table under it gets its plain name and its problem, then the internal
  * artefact name, its sample keys and one truncated rebuilt-versus-stored
  * pair, for a bug report. Copy produces the Markdown section a GitHub issue
@@ -39,7 +39,7 @@ import { formatIntegrityReport } from '@/lib/bug-report'
 import { dispatchBugReport } from '@/lib/bug-report-events'
 import { writeText } from '@/lib/clipboard'
 import type { IntegrityGroup } from '@/lib/integrity-report'
-import { groupByKind, problemId, tableId } from '@/lib/integrity-report'
+import { GROUP_KEYS, groupByKind, problemId, tableId } from '@/lib/integrity-report'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
@@ -51,6 +51,7 @@ const groupVariants = cva('space-y-2 rounded-lg border p-3 text-sm', {
     kind: {
       rebuildable: 'border-alert-warning-border bg-alert-warning text-alert-warning-foreground',
       engine: 'border-alert-error-border bg-alert-error text-alert-error-foreground',
+      ids: 'border-alert-note-border bg-alert-note text-alert-note-foreground',
     },
   },
 })
@@ -60,6 +61,7 @@ function useSummary(report: ReconciliationReport, groups: IntegrityGroup[]): str
   const { t } = useTranslation()
   const parts = groups.map((group) => {
     if (group.kind === 'engine') return t('integrity.summaryEngine', { count: group.rows })
+    if (group.kind === 'ids') return t('integrity.summaryIds', { count: group.rows })
     const tables = new Set(group.artefacts.map((a) => tableId(a.artefact) ?? a.artefact))
     const only = group.artefacts.length > 0 ? tableId(group.artefacts[0].artefact) : null
     if (tables.size === 1 && only !== null) {
@@ -118,7 +120,7 @@ function GroupSection({
 }): React.ReactElement {
   const { t } = useTranslation()
   const headingId = useId()
-  const engine = group.kind === 'engine'
+  const keys = GROUP_KEYS[group.kind]
   return (
     <section
       aria-labelledby={headingId}
@@ -126,12 +128,10 @@ function GroupSection({
       data-testid={`integrity-group-${group.kind}`}
     >
       <h3 id={headingId} className="font-semibold">
-        {t(engine ? 'integrity.groupEngineTitle' : 'integrity.groupRebuildableTitle')}
+        {t(keys.title)}
       </h3>
-      <p>{t(engine ? 'integrity.groupEngineDetail' : 'integrity.groupRebuildableDetail')}</p>
-      <p className="font-medium">
-        {t(engine ? 'integrity.groupEngineAction' : 'integrity.groupRebuildableAction')}
-      </p>
+      <p>{t(keys.detail)}</p>
+      <p className="font-medium">{t(keys.action)}</p>
       <ul className="space-y-3 pt-1">
         {group.artefacts.map((artefact) => (
           <ArtefactItem

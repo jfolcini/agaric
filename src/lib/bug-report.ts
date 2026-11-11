@@ -9,7 +9,7 @@
 
 import type { BugReport, ReconciliationReport } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
-import { groupByKind, problemId, tableId } from '@/lib/integrity-report'
+import { GROUP_KEYS, groupByKind, problemId, tableId } from '@/lib/integrity-report'
 
 /** Cap the URL-encoded body at this many characters. GitHub silently drops
  *  prefill bodies past ~8 KB in the wild; 7000 keeps us well below even the
@@ -174,9 +174,7 @@ export function formatIntegrityReport(report: ReconciliationReport): string {
       const table = id === null ? a.artefact : en(`integrity.table.${id}`)
       return `- \`${a.artefact}\` — ${rows}${keys} — ${table}: ${en(`integrity.problem.${problemId(a.artefact)}`)}`
     })
-    const title = en(
-      group.kind === 'engine' ? 'integrity.groupEngineTitle' : 'integrity.groupRebuildableTitle',
-    )
+    const title = en(GROUP_KEYS[group.kind].title)
     return `### ${title}\n\n${lines.join('\n')}`
   })
   return [
