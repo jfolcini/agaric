@@ -179,7 +179,7 @@ function ProjectedEntryRowInner({
         )}
       </span>
       {entry.block.priority && (
-        <Badge tone="priority" shape="rounded" size="sm" priorityLevel={entry.block.priority}>
+        <Badge tone="priority" size="sm" priorityLevel={entry.block.priority}>
           P{entry.block.priority}
         </Badge>
       )}

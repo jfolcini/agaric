@@ -16,9 +16,9 @@ import { cn } from '@/lib/utils'
  *             size, `xs` is the very-dense priority-badge sm size, `compact`
  *             matches the legacy `StatusBadge` chrome (no fixed height), and
  *             `lg` mirrors the priority-badge `lg` header chip.
- *  - `shape`: `rounded` only (`--radius-sm`). A badge carries text, and text
- *             never sits in a pill: see the radius rule in `src/index.css`.
- *             The axis stays so callers can name the shape explicitly.
+ *
+ * Every badge takes `rounded-sm` (`--radius-sm`): a badge carries text, and
+ * text never sits in a pill (the radius rule in `src/index.css`).
  *
  * Tone-specific colour data passes through the dedicated props:
  *  - `tone="priority"` → reads `priorityLevel` and delegates to
@@ -32,7 +32,7 @@ import { cn } from '@/lib/utils'
  */
 
 const BASE =
-  'inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-visible border border-transparent font-medium tabular-nums whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-ring-visible aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3'
+  'inline-flex w-fit rounded-sm shrink-0 items-center justify-center gap-1 overflow-visible border border-transparent font-medium tabular-nums whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-ring-visible aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3'
 
 const badgeVariants = cva(BASE, {
   variants: {
@@ -65,11 +65,8 @@ const badgeVariants = cva(BASE, {
       // `lg` mirrors the priority-badge `lg` variant (header chip).
       lg: 'h-6 min-w-6 px-2 py-0 text-sm',
     },
-    shape: {
-      rounded: 'rounded-sm',
-    },
   },
-  defaultVariants: { tone: 'default', size: 'default', shape: 'rounded' },
+  defaultVariants: { tone: 'default', size: 'default' },
 })
 
 /**
@@ -103,7 +100,6 @@ const Badge = ({
   className,
   tone,
   size,
-  shape,
   priorityLevel,
   statusState,
   asChild = false,
@@ -129,7 +125,7 @@ const Badge = ({
       // Retains the legacy `data-variant` attribute name (the prop is `tone`)
       // for test/CSS-selector stability; see badge.test.tsx and PageHeader.test.tsx.
       data-variant={resolvedTone}
-      className={cn(badgeVariants({ tone: resolvedTone, size, shape }), toneColor, className)}
+      className={cn(badgeVariants({ tone: resolvedTone, size }), toneColor, className)}
       {...props}
     >
       {children}

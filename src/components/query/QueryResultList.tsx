@@ -114,7 +114,6 @@ export function QueryResultList({
               {block.todo_state && (
                 <Badge
                   tone="status"
-                  shape="rounded"
                   size="compact"
                   statusState={
                     block.todo_state === 'DONE'

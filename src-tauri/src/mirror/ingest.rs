@@ -189,7 +189,6 @@ pub async fn ingest(
 /// event carrying both commands' ops, so one undo removes the page. A title
 /// the space already holds is refused, and so is a save the op cap or the
 /// grammar refuses, which deletes the page it created, to the Trash.
-#[allow(clippy::too_many_arguments)]
 pub async fn create(
     read_pool: &SqlitePool,
     ingest: &Ingest,
