@@ -70,6 +70,35 @@ test.describe('List rows on a phone @pages @mobile', () => {
     await expectFlushTouchRows(page.locator('[data-history-item]'), 3)
   })
 
+  // Reset used to wrap onto a line of its own under the content, making every
+  // row three lines tall; it now shares the meta line, the content under it.
+  test('a History row keeps its Reset action on the meta line, above the content', async ({
+    page,
+  }) => {
+    await openPagesView(page)
+    await createPageFromPagesView(page, 'Row one')
+    await navigateToView(page, 'History')
+    const row = page.locator('[data-history-item]').filter({ hasText: 'Row one' }).first()
+    const badge = row.getByTestId('history-type-badge')
+    const reset = row.getByRole('button', { name: 'Reset to this point' })
+    const content = row.locator('.history-item-preview')
+    await expect(content).toBeVisible()
+    const [badgeBox, resetBox, contentBox] = await Promise.all([
+      badge.boundingBox(),
+      reset.boundingBox(),
+      content.boundingBox(),
+    ])
+    if (!badgeBox || !resetBox || !contentBox) throw new Error('row parts are not laid out')
+    // Reset sits on the badge's line, and the content takes a line of its own
+    // below it, starting at the badge's left edge.
+    expect(resetBox.y).toBeLessThan(contentBox.y)
+    expect(contentBox.y).toBeGreaterThanOrEqual(badgeBox.y + badgeBox.height - 1)
+    expect(Math.abs(contentBox.x - badgeBox.x)).toBeLessThanOrEqual(1)
+    expect(
+      Math.abs(resetBox.y + resetBox.height / 2 - (badgeBox.y + badgeBox.height / 2)),
+    ).toBeLessThanOrEqual(resetBox.height / 2)
+  })
+
   test('Tags rows sit flush and are touch-sized', async ({ page }) => {
     await navigateToView(page, 'Tags')
     await expectFlushTouchRows(page.locator('[data-slot="list-item"]'), 3)

@@ -124,7 +124,7 @@ export function HistoryListView({
         <ScrollArea
           className={listCardVariants()}
           viewportRef={listRef}
-          viewportClassName="history-list p-0 m-0 focus:outline-none max-h-[calc(100dvh-220px)]"
+          viewportClassName="history-list p-0 m-0 focus:outline-none max-h-[calc(100dvh-220px)] [@media(pointer:coarse)]:pb-16"
           // ARIA grid pattern for history list — no semantic HTML
           // equivalent for a non-tabular interactive grid. Lives on the
           // scroll viewport (the focusable element keyboard nav drives).

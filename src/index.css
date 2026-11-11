@@ -2472,6 +2472,48 @@
   }
 }
 
+/* A History row's cell below `sm`: the meta line shares the first line with
+ * the labelled Diff / Reset actions, and the content takes the full width
+ * under it, indented past the checkbox. Wrapping the actions onto a line of
+ * their own made every row three lines tall on a phone. From `sm` up it is a
+ * single flex line. The utility owns `display` at both widths: a separate
+ * `flex` class would come later in the sheet and override the grid. */
+@utility history-row-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  @media (width < 40rem) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    column-gap: 0.5rem;
+    row-gap: 0.125rem;
+    & > :first-child {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    & > .history-item-main {
+      display: contents;
+    }
+    & > .history-item-main > :first-child {
+      grid-column: 2;
+      grid-row: 1;
+      min-width: 0;
+    }
+    & > .history-item-main > :not(:first-child) {
+      grid-column: 2 / -1;
+      grid-row: 2;
+    }
+    & > .diff-toggle-btn {
+      grid-column: 3;
+      grid-row: 1;
+    }
+    & > :last-child:not(.history-item-main, .diff-toggle-btn) {
+      grid-column: 4;
+      grid-row: 1;
+    }
+  }
+}
+
 /* Keyboard cursor of a navigable list row. The cursor rests on row 0 before any
  * key is pressed, so at rest it is a tint plus a 2px edge bar in the ring
  * colour, which keeps the row legible where a tint alone washes out (dark,

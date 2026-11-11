@@ -246,9 +246,12 @@ export function HistoryItemCore({
               <p>{formatTimestamp(entry.created_at, 'full')}</p>
             </TooltipContent>
           </Tooltip>
-          <span className="text-xs text-muted-foreground"> · </span>
-          <span className="history-item-device text-xs text-muted-foreground">
-            dev:{entry.device_id.slice(0, 8)}
+          {/* The separator wraps with the device id, never alone at a line end. */}
+          <span className="whitespace-nowrap text-xs text-muted-foreground">
+            <span> · </span>
+            <span className="history-item-device text-xs text-muted-foreground">
+              dev:{entry.device_id.slice(0, 8)}
+            </span>
           </span>
           {/* #2481: a foreign op replicated from another device (audit-only,
               not revertible here). */}
