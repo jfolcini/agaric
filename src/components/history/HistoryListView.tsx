@@ -72,7 +72,7 @@ export function HistoryListView({
   // virtualizer's scroll element.
   // HistoryListItem renders an op-summary row plus an optional inline
   // diff section that swells the row height when expanded. Estimated
-  // collapsed height (~80px = p-4 + 2 lines) is a starting point;
+  // collapsed height (~64px = a `listRowVariants` row with 2 lines) is a starting point;
   // `measureElement` corrects to actual height after first paint, so
   // expanded rows do not push subsequent rows out of view.
   const estimateSize = useCallback(() => 64, [])

@@ -1,4 +1,4 @@
-# Session 3767 — One card for every table-like list
+# Session 3785 — One card for every table-like list
 
 The maintainer found the Pages list's rows odd on mobile: each row read as its own rounded card, and the rows sat too close. A survey of every table-like list at phone and desktop width, light and dark, found three row styles for one kind of list:
 - a bordered card per row (Trash, History);

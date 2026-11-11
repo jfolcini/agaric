@@ -40,7 +40,7 @@ import type { BlockRow } from '@/lib/bindings'
 // Estimated row height in CSS px. A trash row is a `listRowVariants` row
 // with content + relative-date + optional breadcrumb; ~72px is the common
 // single-line case. Like DonePanel / PageBrowser, the absolutely-positioned
-// virtual rows render flush, told apart by the row's inset divider (a margin
+// virtual rows render flush, told apart by the row's divider (a margin
 // would be excluded from `measureElement`'s `offsetHeight`, drifting the
 // offsets). `measureElement` corrects this estimate to the actual height
 // after first paint (wrapped content / breadcrumb grow it).

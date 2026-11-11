@@ -476,9 +476,6 @@ function BlockListItemInner({
           className:
             'gap-2 cursor-pointer max-sm:flex-wrap max-sm:gap-y-1 max-sm:[&>svg]:order-first',
         }),
-        // Touch: ensure 44px minimum height so embedded pills (priority, date chip)
-        // With touch-device padding don't get clipped at the bottom.
-        '[@media(pointer:coarse)]:min-h-11',
         blockId && 'cursor-grab',
         isFocused && 'list-cursor',
         className,
