@@ -19,3 +19,7 @@ The cost: a peer that comes up after a failed dial waits for the next tick, up t
 - **`the_resync_round_redials_a_pairing_peer_that_was_not_listening_yet_6451`** (`sync_daemon/tests.rs`): the host's round dials a discovered unpaired peer at an address nothing holds yet, and the dial times out. Then a responder comes up at that address and key, and the next round pairs the two: the host's `peer_refs` row is pinned to the joiner's key. Red on main at the first assertion, because the round never dials an unpaired peer.
 - `ServiceHarness::at` (test support) binds the service at a chosen address and key.
 - No e2e-tauri spec: that lane pairs through the QR, with the peer dialling the app, because a CI runner cannot rely on mDNS. The failure needs the app to find the joiner over mDNS and dial it.
+
+### Existing-test edits (approved by the maintainer)
+
+Branch C's first tick runs as soon as the daemon starts. So `daemon_branch_b_dials_discovered_unpaired_peer_while_pairing_pending_3533` and `daemon_branch_b_dials_the_scanned_host_with_an_empty_discovered_map_4037` passed with Branch B's pairing round removed. Both now start their daemon backgrounded, as their negative sibling does, so only Branch B can dial. The #3533 test's "Branch C cannot be the thing that dials here" comment now says why. Both pass as edited and go red with Branch B reverted, at their `wait_for` on the connecting event.
