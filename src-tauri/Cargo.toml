@@ -114,7 +114,7 @@ if_not_else = "warn"
 # Opt-in feature for end-to-end smoke tests that require the
 # `agaric-mcp` binary to be built first. CI enables this; local
 # `cargo nextest run` does not. Local devs can still run the test
-# manually: `cargo build --bin agaric-mcp && cargo nextest run --features ci-smoke -E 'test(stub_binary)'`.
+# manually: `cargo build --bin agaric-mcp && cargo nextest run --lib --features ci-smoke -E 'test(stub_binary)'`.
 ci-smoke = []
 # #4499 — `test-util` widens the in-crate test seams (agenda `_on_the_fly` /
 # `_with_today`, the attachment GC pass, the spaces bootstrap shim, the

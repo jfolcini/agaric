@@ -1889,7 +1889,9 @@ jobs:
 
       - name: MCP stub-binary smoke test (I-MCP-9)
         working-directory: src-tauri
-        run: cargo nextest run --features ci-smoke --profile ci -E 'test(stub_binary_)'
+        # `--lib`: the `stub_binary_` tests live in the lib target, so the
+        # package's integration-test binaries need no `ci-smoke` rebuild.
+        run: cargo nextest run --lib --features ci-smoke --profile ci -E 'test(stub_binary_)'
 
       - name: Verify agaric-mcp smoke (--version)
         run: src-tauri/target/debug/agaric-mcp --version
