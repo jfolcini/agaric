@@ -22,6 +22,7 @@ import { PageLink } from '@/components/pages/PageLink'
 import { DateChipEditor } from '@/components/properties/DateChipEditor'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
+import { listRowVariants } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Sheet,
@@ -470,10 +471,10 @@ function BlockListItemInner({
       style={style}
       data-index={dataIndex}
       className={cn(
-        'flex items-center gap-2 rounded-md px-3 py-2 cursor-pointer transition-colors max-sm:flex-wrap max-sm:gap-y-1 max-sm:[&>svg]:order-first',
-        // Touch: ensure 44px minimum height so embedded pills (priority, date chip)
-        // With touch-device padding don't get clipped at the bottom.
-        '[@media(pointer:coarse)]:min-h-11',
+        listRowVariants({
+          className:
+            'gap-2 cursor-pointer max-sm:flex-wrap max-sm:gap-y-1 max-sm:[&>svg]:order-first',
+        }),
         blockId && 'cursor-grab',
         isFocused && 'list-cursor',
         className,

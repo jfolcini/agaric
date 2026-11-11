@@ -23,6 +23,7 @@ import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
 import { DiffDisplay } from '@/components/rendering/DiffDisplay'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { listRowVariants } from '@/components/ui/list-item'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
@@ -120,8 +121,8 @@ function HistoryListItemInner({
       role="row"
       aria-selected={isSelected}
       className={cn(
-        'history-item flex flex-col gap-2 rounded-lg border p-4 cursor-pointer transition-colors',
-        isSelected ? 'bg-accent/50 border-accent' : 'bg-card hover:bg-accent/30',
+        listRowVariants({ className: 'history-item flex-col items-stretch gap-2 cursor-pointer' }),
+        isSelected ? 'bg-accent/50' : 'hover:bg-accent/30',
         isFocused && 'list-cursor',
         isNonReversible && 'opacity-50',
       )}

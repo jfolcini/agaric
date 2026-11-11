@@ -243,6 +243,19 @@ describe('SearchResultGroups (virtualized)', () => {
     expect(screen.getByTestId('search-result-count-summary')).toBeInTheDocument()
   })
 
+  it('each group is a card whose header keeps the page title in the foreground colour', () => {
+    setup({
+      groups: [
+        { pageId: 'PAGE_A', title: 'Alpha', rows: [makeRow({ id: 'A1', page_id: 'PAGE_A' })] },
+      ],
+    })
+    const header = screen.getByRole('button', { name: /Alpha/ })
+    expect(header).toHaveClass('text-foreground', 'text-sm', 'list-row')
+    expect(header).not.toHaveClass('text-muted-foreground')
+    expect(header).not.toHaveClass('text-xs')
+    expect(header.parentElement).toHaveClass('rounded-lg', 'border', 'bg-card')
+  })
+
   it('collapsed groups render no listbox', () => {
     setup({
       groups: [

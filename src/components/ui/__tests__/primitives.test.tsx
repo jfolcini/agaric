@@ -22,7 +22,7 @@ import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ListItem } from '@/components/ui/list-item'
+import { ListItem, listCardVariants, listHeaderVariants } from '@/components/ui/list-item'
 import { MetricCard } from '@/components/ui/metric-card'
 import { RecentPageChip } from '@/components/ui/recent-page-chip'
 import { SectionGroupHeader } from '@/components/ui/section-group-header'
@@ -379,6 +379,22 @@ describe('Label', () => {
 // ListItem
 // ---------------------------------------------------------------------------
 
+describe('listCardVariants / listHeaderVariants', () => {
+  it('the card is one bordered surface with the card radius, and never clips its rows', () => {
+    const classes = listCardVariants().split(' ')
+    expect(classes).toEqual(
+      expect.arrayContaining(['rounded-lg', 'border', 'border-border', 'bg-card']),
+    )
+    expect(classes).not.toContain('overflow-hidden')
+  })
+
+  it('a section header is a divided header row on a muted fill', () => {
+    expect(listHeaderVariants().split(' ')).toEqual(
+      expect.arrayContaining(['list-row', 'bg-muted/50', 'text-muted-foreground']),
+    )
+  })
+})
+
 describe('ListItem', () => {
   it('renders as li element', () => {
     const { container } = render(
@@ -410,6 +426,31 @@ describe('ListItem', () => {
     expect(li.className).toContain('group')
     expect(li.className).toContain('flex')
     expect(li.className).toContain('hover:bg-accent/50')
+  })
+
+  it('is a flush, divided, square row with a 44px touch height', () => {
+    const { container } = render(
+      <ul>
+        <ListItem>Row</ListItem>
+      </ul>,
+    )
+    const li = q(container, 'li')
+    expect(li).toHaveClass('list-row', 'py-2.5', '[@media(pointer:coarse)]:min-h-11')
+    expect(li.className).not.toMatch(/\brounded/)
+  })
+
+  it('takes the compact density and drops hover chrome when not interactive', () => {
+    const { container } = render(
+      <ul>
+        <ListItem density="compact" interactive={false}>
+          Row
+        </ListItem>
+      </ul>,
+    )
+    const li = q(container, 'li')
+    expect(li).toHaveClass('list-row', 'py-1.5')
+    expect(li).not.toHaveClass('py-2.5')
+    expect(li).not.toHaveClass('hover:bg-accent/50')
   })
 
   it('merges custom className', () => {
