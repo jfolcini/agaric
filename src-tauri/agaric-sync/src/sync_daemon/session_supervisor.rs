@@ -465,9 +465,17 @@ async fn run_change_round(
     }
 }
 
-/// Branch C's round: GC the peer-lock map, evict stale mDNS peers, then sync every
-/// peer the scheduler reports due, sequentially.
-async fn run_resync_round(
+/// Branch C's round: GC the peer-lock map, evict stale mDNS peers, sync every
+/// peer the scheduler reports due, then, while a pairing window is open, redial
+/// its unpaired candidates — all sequentially.
+///
+/// #6451: the pairing tail is the window's only retry. Branch A dials an unpaired
+/// peer on an mDNS event and Branch B on a local change; a peer that did not
+/// answer that dial (its user still typing the passphrase) produces neither
+/// again, so without this tick the window ran out with nothing redialling.
+/// Ordinary sync keeps its connect budget; the scheduler's backoff paces these
+/// retries like any other failed dial.
+pub(super) async fn run_resync_round(
     ctx: &SyncSessionContext<'_>,
     discovered: &mut DiscoveredPeers,
     resync_ticks_since_gc: &mut u64,
@@ -502,7 +510,7 @@ async fn run_resync_round(
     // and breaks as soon as any peer reports cancellation, so a
     // "stop this round" cancel is honoured for every subsequent
     // peer, not just the one currently syncing.
-    run_sequential_sync_round(&due, |pid| {
+    let cancelled = run_sequential_sync_round(&due, |pid| {
         // Rebind environment borrows as shared references so
         // the async block can capture them without moving the
         // underlying data (references are Copy).
@@ -527,6 +535,25 @@ async fn run_resync_round(
         }
     })
     .await;
+    if cancelled
+        || !peer_refs::is_pending_pairing(ctx.pool)
+            .await
+            .unwrap_or(false)
+    {
+        return;
+    }
+    // Empty `peer_refs`, so the composition yields only the window's tail
+    // (discovered peers plus the scanned host); the paired ones were the round above.
+    let scanned = ctx.scheduler.scanned_peer();
+    for peer in peers_for_change_round(&[], discovered, true, scanned.as_ref()) {
+        if refs.iter().any(|r| r.peer_id == peer.device_id) {
+            continue;
+        }
+        let seen_at = mdns_last_seen(discovered, &peer.device_id);
+        if try_sync_with_peer(ctx, &peer, &refs, seen_at).await {
+            return;
+        }
+    }
 }
 
 /// The daemon's `tokio::select!` loop, driven until the shutdown branch breaks it.

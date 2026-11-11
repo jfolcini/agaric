@@ -454,3 +454,18 @@ describe('buildInlinePropertySetParams', () => {
     })
   })
 })
+
+describe('parseInlineProperties — what opens a fence', () => {
+  it('a backtick run inside a value opens no fence: only a line starting with one can', () => {
+    expect(parseInlineProperties('cmd:: run ```make\nstatus:: active')).toEqual([
+      { key: 'cmd', value: 'run ```make', lineIndex: 0 },
+      { key: 'status', value: 'active', lineIndex: 1 },
+    ])
+  })
+
+  it('a backtick run whose info holds a backtick, past a space, opens no fence', () => {
+    expect(parseInlineProperties('``` a`b\nstatus:: active')).toEqual([
+      { key: 'status', value: 'active', lineIndex: 1 },
+    ])
+  })
+})

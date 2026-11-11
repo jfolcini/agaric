@@ -111,3 +111,16 @@ describe('groupRecording', () => {
     })
   })
 })
+
+describe('groupRecording — an audio named only by its extension', () => {
+  it('takes the whole name as its stem, so of several audios it pairs with the transcript that names it', () => {
+    const dotted = audio('.ogg')
+    const other = audio('other.ogg')
+    const dottedTranscript = markdown('.ogg.transcript.md')
+    expect(groupRecording([other, dotted, dottedTranscript])).toEqual({
+      audio: dotted,
+      transcript: dottedTranscript,
+      rest: [other],
+    })
+  })
+})
