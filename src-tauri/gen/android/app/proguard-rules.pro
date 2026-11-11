@@ -36,3 +36,11 @@
 -keepclasseswithmembernames class * {
     native <methods>;
 }
+
+# Tauri finds a plugin's commands by reflection on their annotations
+# (SpeechPlugin.kt, #5745), so R8 must keep the annotations and the methods.
+-keepattributes RuntimeVisibleAnnotations
+-keep @app.tauri.annotation.TauriPlugin class * {
+    @app.tauri.annotation.Command <methods>;
+    <init>(android.app.Activity);
+}

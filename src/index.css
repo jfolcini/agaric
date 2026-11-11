@@ -2449,20 +2449,46 @@
   @apply ring-2 ring-inset ring-ring bg-ring/15;
 }
 
+/* ── List rows ──────────────────────────────────────────────────────────
+ * The row of a table-like list (`listRowVariants`, `src/components/ui/
+ * list-item.tsx`). The list is one card (`listCardVariants`); rows inside
+ * it sit flush, separated by a full-width hairline, and the last row of a
+ * run draws none against the card's own border. A virtualized row is
+ * absolutely positioned inline, which wins over `relative`, so the divider
+ * anchors either way. */
+@utility list-row {
+  position: relative;
+  &::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: 1px;
+    background-color: color-mix(in oklab, var(--border) 70%, transparent);
+    pointer-events: none;
+  }
+  &:last-child::after {
+    content: none;
+  }
+}
+
 /* Keyboard cursor of a navigable list row. The cursor rests on row 0 before any
- * key is pressed, so at rest it is only a tint (History's touch ↑/↓ and the
- * document-level Space/Enter shortcuts act on it without focus); the ring shows
- * while keyboard focus is on this row or a sibling row, or on the composite
- * container (document-level lists move focus there on a navigation key). Not
- * keyed off focus deeper in the container (Pages rows hold their own tabbable
- * buttons) nor off any ancestor: the Journal container
- * and #main-content take programmatic focus at boot and match :focus-visible
- * then. The tint is an image layer so it sits over a row's own background. */
+ * key is pressed, so at rest it is a tint plus a 2px edge bar in the ring
+ * colour, which keeps the row legible where a tint alone washes out (dark,
+ * high contrast); History's touch ↑/↓ and the document-level Space/Enter
+ * shortcuts act on it without focus. The ring shows while keyboard focus is on
+ * this row or a sibling row, or on the composite container (document-level
+ * lists move focus there on a navigation key). Not keyed off focus deeper in
+ * the container (Pages rows hold their own tabbable buttons) nor off any
+ * ancestor: the Journal container and #main-content take programmatic focus at
+ * boot and match :focus-visible then. The tint is an image layer so it sits
+ * over a row's own background. */
 @utility list-cursor {
   background-image: linear-gradient(
     color-mix(in oklab, var(--accent) 30%, transparent),
     color-mix(in oklab, var(--accent) 30%, transparent)
   );
+  box-shadow: inset 2px 0 0 var(--ring);
   :where(:has(> :focus-visible)) > &,
   :where([role='grid'], [aria-activedescendant]):focus-visible & {
     @apply outline-hidden ring-2 ring-inset ring-ring;
@@ -2511,7 +2537,9 @@
  * Mirrors PageRow's leading run — px-3 + checkbox + gap-3 + star
  * button + gap-3 — at both pointer sizes (`size-4` / `size-6` fine,
  * `min-w-11` / `size-11` coarse). A touch phone's row hides both, so
- * `TreePageRow` drops the gutter there on the same predicate.
+ * `TreePageRow` drops the gutter there on the same predicate, and in
+ * selection mode, where the phone row shows its checkbox cell again but not
+ * the star, takes `page-tree-gutter-phone-select`.
  * `pages-namespace-indent.spec.ts`
  * measures the two shapes against each other, so drift on either side
  * reddens. */
@@ -2521,6 +2549,10 @@
   @media (pointer: coarse) {
     padding-left: calc(0.75rem + 2.75rem + 0.75rem + 2.75rem + 0.75rem);
   }
+}
+
+@utility page-tree-gutter-phone-select {
+  padding-left: calc(0.75rem + 2.75rem + 0.75rem);
 }
 
 /* ── ScrollArea / list scrollbars (WebKitGTK overlap fix) ───────────────

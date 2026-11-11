@@ -733,6 +733,12 @@ export const commands = {
 	setMirrorFolder: (path: string | null) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path })),
 	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
 	getSpeechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("get_speech_status")),
+	/**  Whether the backend engine can speak now (see [`SpeechEngine::available`]). */
+	getSpeechEngineAvailable: () => typedError<boolean, AppError>(__TAURI_INVOKE("get_speech_engine_available")),
+	/**  Speaks one utterance through the backend engine and settles when it ends. */
+	speakText: (text: string) => typedError<SpeakOutcome, AppError>(__TAURI_INVOKE("speak_text", { text })),
+	/**  Cuts off the utterance the backend engine is speaking, if any. */
+	stopSpeaking: () => typedError<null, AppError>(__TAURI_INVOKE("stop_speaking")),
 	/**
 	 *  Tauri command: import a Markdown, Logseq or Org file, in the `dialect` its
 	 *  front end read it as, as a page with block hierarchy. Delegates to
@@ -4490,6 +4496,13 @@ export type SpaceRow = {
  */
 export type SpaceScope = { kind: "active"; space_id: SpaceId };
 
+/**  How an utterance ended. */
+export type SpeakOutcome = 
+/**  It was spoken to the end. */
+"Done" | 
+/**  [`stop_speaking`], or a newer utterance, cut it off. */
+"Stopped";
+
 /**
  *  Which engine speaks on this build, so the frontend can hide *Read aloud*
  *  where there is none.
@@ -4498,7 +4511,12 @@ export type SpeechStatus =
 /**  No engine: *Read aloud* is hidden. */
 "Unsupported" | 
 /**  The frontend speaks through the webview's `speechSynthesis`. */
-"Webview";
+"Webview" | 
+/**
+ *  The backend speaks (Android): ask [`get_speech_engine_available`] before
+ *  offering *Read aloud*, then speak with [`speak_text`].
+ */
+"Native";
 
 /**
  *  Snapshot of materializer + sync observability fields exposed to the

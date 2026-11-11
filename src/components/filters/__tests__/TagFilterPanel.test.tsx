@@ -173,7 +173,7 @@ describe('TagFilterPanel', () => {
     expect(findTagSpan(/work\/meeting/)).toBeInTheDocument()
   })
 
-  // `list-cursor` is a tint at rest whose ring is gated in CSS on the grid
+  // `list-cursor` is a tint and edge bar at rest whose ring is gated in CSS on the grid
   // holding keyboard focus; jsdom cannot evaluate that gate, so the class
   // contract is the assertion: the cursor never carries an inline ring.
   it('marks the matching-tag cursor with list-cursor and moves it with ArrowDown', async () => {

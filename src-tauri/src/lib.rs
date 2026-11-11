@@ -268,6 +268,9 @@ macro_rules! agaric_commands {
             $crate::commands::mirror::get_mirror_status,
             // Read aloud (#5745)
             $crate::commands::speech::get_speech_status,
+            $crate::commands::speech::get_speech_engine_available,
+            $crate::commands::speech::speak_text,
+            $crate::commands::speech::stop_speaking,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown,
             // The pages an import merges its files into (#6277 G5).
@@ -2655,7 +2658,10 @@ fn build_tauri_builder() -> tauri::Builder<tauri::Wry> {
         // (desktop + mobile), so no `#[cfg(desktop)]` gate.  Part of the
         // Tauri plugin coupled stack per AGENTS.md §"Coupled Dependency
         // Updates" — move in lockstep with the other tauri-plugin-* crates.
-        .plugin(tauri_plugin_notification::init());
+        .plugin(tauri_plugin_notification::init())
+        // Read aloud's engine (#5745): Android's `TextToSpeech` plugin, and
+        // the state the speech commands read on every build.
+        .plugin(commands::speech::plugin());
 
     // Remember window size / position / monitor / maximized
     // state across launches.  Operates entirely Rust-side (no frontend

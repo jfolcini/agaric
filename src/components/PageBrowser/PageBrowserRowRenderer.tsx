@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 
 import { PageRow } from '@/components/PageBrowser/PageRow'
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
+import { listHeaderVariants } from '@/components/ui/list-item'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
@@ -109,13 +110,16 @@ function HeaderRow({
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid row inside role="grid"; a real <tr> needs a <table> and breaks the flex/grid layout
       role="row"
       aria-labelledby={labelId}
-      className={cn('page-browser-section', showDivider && 'border-t border-border mt-1')}
+      className={cn(
+        listHeaderVariants({ className: 'page-browser-section' }),
+        showDivider && 'border-t border-border',
+      )}
       style={rowStyle(virtualRow.start)}
     >
       <div
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid cell inside role="row"; a real <td> needs a <table> and breaks the flex layout
         role="gridcell"
-        className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground"
+        className="flex items-center gap-2"
       >
         {isStarredHeader ? (
           <Bookmark className="h-3.5 w-3.5 text-star" aria-hidden="true" fill="currentColor" />
@@ -148,6 +152,7 @@ function TreePageRow({
   onPageSelect,
   onCreateUnder,
   onDeleteRequest,
+  selectedIds,
 }: TreePageRowProps): React.ReactElement {
   const { node, pageIndex, depth } = row
   // A touch phone's `PageRow` hides its checkbox and star, so the gutter
@@ -155,6 +160,13 @@ function TreePageRow({
   const isTouch = useIsTouch()
   const isMobile = useIsMobile()
   const touchSelect = isTouch && isMobile
+  // In selection mode a phone's row shows its checkbox again (no star), so
+  // the tree steps in by that one cell.
+  const gutter = !touchSelect
+    ? 'page-tree-gutter'
+    : selectedIds.size > 0
+      ? 'page-tree-gutter-phone-select'
+      : 'pl-3'
   // Tree-page rows wrap a recursive `PageTreeItem` whose own
   // Buttons handle activation/expand. Under the page-list
   // viewport is `role="grid"`, so each tree-page wrapper is a
@@ -185,11 +197,11 @@ function TreePageRow({
       data-page-index={pageIndex}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid row inside role="grid"; a real <tr> needs a <table> and breaks the flex/grid layout
       role="row"
-      className={cn(focusedIndex === pageIndex && 'rounded-lg list-cursor')}
+      className={cn('list-row', focusedIndex === pageIndex && 'list-cursor')}
       style={rowStyle(virtualRow.start)}
     >
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner button controls; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className={touchSelect ? 'pl-3' : 'page-tree-gutter'}>
+      <div role="gridcell" className={gutter}>
         <PageTreeItem
           node={node}
           depth={depth}

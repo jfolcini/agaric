@@ -474,7 +474,7 @@ describe('UnlinkedReferences', () => {
     expect(container).toHaveAttribute('aria-activedescendant', 'unlinked-ref-row-B1')
     expect(row1).toHaveAttribute('aria-current', 'true')
     expect(row2).not.toHaveAttribute('aria-current')
-    // The cursor is `list-cursor` (tint at rest, ring gated in CSS on the
+    // The cursor is `list-cursor` (tint and edge bar at rest, ring gated in CSS on the
     // container's keyboard focus — not evaluable in jsdom), never an inline ring.
     expect(row1).toHaveClass('list-cursor')
     expect(row1).not.toHaveClass('ring-2')

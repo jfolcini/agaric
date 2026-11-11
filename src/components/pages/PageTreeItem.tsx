@@ -45,7 +45,7 @@ export function PageTreeItem({
     const leafId = node.pageId
     return (
       <div
-        className="group flex w-full items-center gap-3 rounded-lg py-1 text-left text-sm transition-colors hover:bg-accent/50 active:bg-accent/70"
+        className="group flex w-full items-center gap-3 rounded-sm py-1 text-left text-sm transition-colors hover:bg-accent/50 active:bg-accent/70"
         style={{ paddingLeft: `${depth * 16 + 12}px` }}
       >
         <NewTabTarget pageId={leafId} title={node.fullPath}>

@@ -30,7 +30,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
-import { ListItem } from '@/components/ui/list-item'
+import { ListItem, listCardVariants } from '@/components/ui/list-item'
 import { SearchInput } from '@/components/ui/search-input'
 import {
   Select,
@@ -320,7 +320,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       >
         {() =>
           filteredDefs.length > 0 ? (
-            <ul className="space-y-1">
+            <ul className={listCardVariants()}>
               {filteredDefs.map((def) => {
                 // A built-in's options are fixed (#5841); `todo_state` keeps the cell for
                 // its cycle help.

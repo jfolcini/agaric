@@ -32,19 +32,19 @@ import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { TrashRowItem } from '@/components/TrashView/TrashRowItem'
 import { Button } from '@/components/ui/button'
+import { listCardVariants } from '@/components/ui/list-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { RichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import type { BlockRow } from '@/lib/bindings'
 
-// Estimated row height in CSS px. A trash row is a bordered card with
-// content + relative-date + optional breadcrumb (`p-4` padding); ~96px is
-// the common single-line case. Like DonePanel / PageBrowser, the
-// absolutely-positioned virtual rows render flush (the card border keeps
-// them visually distinct — `space-y-2` can't apply to absolute siblings
-// and a margin would be excluded from `measureElement`'s `offsetHeight`,
-// drifting the offsets). `measureElement` corrects this estimate to the
-// actual height after first paint (wrapped content / breadcrumb grow it).
-const ESTIMATED_ROW_HEIGHT = 96
+// Estimated row height in CSS px. A trash row is a `listRowVariants` row
+// with content + relative-date + optional breadcrumb; ~72px is the common
+// single-line case. Like DonePanel / PageBrowser, the absolutely-positioned
+// virtual rows render flush, told apart by the row's divider (a margin
+// would be excluded from `measureElement`'s `offsetHeight`, drifting the
+// offsets). `measureElement` corrects this estimate to the actual height
+// after first paint (wrapped content / breadcrumb grow it).
+const ESTIMATED_ROW_HEIGHT = 72
 
 interface TrashListViewProps {
   blocks: BlockRow[]
@@ -177,6 +177,7 @@ export function TrashListView({
         ) : (
           <>
             <ScrollArea
+              className={listCardVariants()}
               viewportRef={(node: HTMLDivElement | null) => {
                 scrollParentRef.current = node
                 if (typeof ref === 'function') ref(node)
