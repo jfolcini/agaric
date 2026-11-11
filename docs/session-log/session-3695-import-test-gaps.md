@@ -1,4 +1,4 @@
-# Session 3693 — #6032 import test gaps: Evernote and Joplin payloads, front matter, setext
+# Session 3695 — #6032 import test gaps: Evernote and Joplin payloads, front matter, setext
 
 Set out to close what was left of #6032 section 3: tests that read back what an import stores for TOML and JSON front matter, setext headings, and the Markdown the Evernote and Joplin converters hand the backend. Earlier passes had covered the rest; the JEX `./`-prefixed tar member was dropped, since nothing shows Joplin writes one.
 
