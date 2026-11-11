@@ -18,6 +18,7 @@ import { listCardVariants } from '@/components/ui/list-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { entryKey, isRevertible } from '@/hooks/useHistorySelection'
 import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
+import { cn } from '@/lib/utils'
 
 export interface HistoryListViewProps {
   entries: HistoryEntry[]
@@ -122,7 +123,12 @@ export function HistoryListView({
     <>
       {entries.length > 0 && (
         <ScrollArea
-          className={listCardVariants()}
+          // The touch padding keeps the last row off the bottom corner, so that
+          // corner stays round under the cursor.
+          className={cn(
+            listCardVariants(),
+            '[@media(pointer:coarse)]:[&:has(.list-cursor:last-child)]:rounded-es-lg',
+          )}
           viewportRef={listRef}
           viewportClassName="history-list p-0 m-0 focus:outline-none max-h-[calc(100dvh-220px)] [@media(pointer:coarse)]:pb-16"
           // ARIA grid pattern for history list — no semantic HTML

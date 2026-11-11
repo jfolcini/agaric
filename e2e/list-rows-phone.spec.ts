@@ -109,42 +109,39 @@ test.describe('List rows on a phone @pages @mobile', () => {
   })
 
   // The cursor's accent bar used to be an inset box-shadow, which the card's
-  // rounded corner bent into a curve on the first and last rows. The bar is
-  // inset at both ends alike, so the top corner row stands for both.
-  test("the cursor bar on the card's first row clears its rounded corner", async ({ page }) => {
+  // rounded corner bent into a curve on an end row. The bar now runs the row's
+  // full height, and the card squares that corner while the cursor sits in it.
+  test("the cursor bar meets the card's corner square on its first row", async ({ page }) => {
     await openPagesView(page)
     await createPageFromPagesView(page, 'Row one')
     await navigateToView(page, 'History')
     const grid = page.getByRole('grid')
     await expect(grid.locator('[data-history-item]').nth(2)).toBeVisible()
+    const card = page.locator('[data-slot="scroll-area"]').filter({ has: grid })
     await grid.focus()
     await page.keyboard.press('Home')
     const row = grid.locator('.list-cursor')
     await expect(row).toHaveCount(1)
     const m = await row.evaluate((el) => {
       const bar = getComputedStyle(el, '::before')
-      const card = el.closest('[data-slot="scroll-area"]') as HTMLElement
-      const cs = getComputedStyle(card)
+      const c = el.closest('[data-slot="scroll-area"]') as HTMLElement
       return {
         content: bar.content,
         width: bar.width,
-        top: parseFloat(bar.top),
-        bottom: parseFloat(bar.bottom),
+        top: bar.top,
+        bottom: bar.bottom,
         rowTop: el.getBoundingClientRect().top,
-        cardTop: card.getBoundingClientRect().top,
-        radius: parseFloat(cs.borderTopLeftRadius),
-        border: parseFloat(cs.borderTopWidth),
+        cardTop: c.getBoundingClientRect().top + parseFloat(getComputedStyle(c).borderTopWidth),
       }
     })
-    // The row sits in the card's corner, so the corner can clip it.
-    expect(Math.abs(m.rowTop - (m.cardTop + m.border))).toBeLessThanOrEqual(FLUSH_TOLERANCE_PX)
-    expect(m.content).not.toBe('none')
-    expect(m.width).toBe('2px')
-    // How far the inner corner curve reaches into a 2px-wide strip at the edge.
-    const r = m.radius - m.border
-    const clip = r - Math.sqrt(r * r - (r - 2) * (r - 2))
-    expect(m.top).toBeGreaterThanOrEqual(clip)
-    expect(m.bottom).toBeGreaterThanOrEqual(clip)
+    // The row sits in the card's corner, so the corner would clip the bar.
+    expect(Math.abs(m.rowTop - m.cardTop)).toBeLessThanOrEqual(FLUSH_TOLERANCE_PX)
+    expect([m.content, m.width, m.top, m.bottom]).toEqual(['""', '2px', '0px', '0px'])
+    await expect(card).toHaveCSS('border-top-left-radius', '0px')
+    await expect(card).toHaveCSS('border-top-right-radius', '8px')
+    // Off the end row, the corner is round again.
+    await page.keyboard.press('ArrowDown')
+    await expect(card).toHaveCSS('border-top-left-radius', '8px')
   })
 
   test('Tags rows sit flush and are touch-sized', async ({ page }) => {

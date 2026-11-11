@@ -41,10 +41,11 @@ const listRowVariants = cva(
 /**
  * The one card a list sits in. Goes on the scroll container, only while the list has rows.
  * It never clips: a row wider than the card (touch-sized actions at a narrow width) must
- * stay reachable, so the end rows round their own corners instead.
+ * stay reachable, so the end rows round their own corners instead. While the cursor
+ * (`list-cursor`) is on an end row, the corner on its bar's side goes square to meet it.
  */
 const listCardVariants = cva(
-  'rounded-lg border border-border bg-card [&>:first-child]:rounded-t-[inherit] [&>:last-child]:rounded-b-[inherit]',
+  'rounded-lg border border-border bg-card [&>:first-child]:rounded-t-[inherit] [&>:last-child]:rounded-b-[inherit] [&:has(.list-cursor:first-child)]:rounded-ss-none [&:has(.list-cursor:last-child)]:rounded-es-none',
 )
 
 /** A section header as the card's own header row: muted fill, divider below. */

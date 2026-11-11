@@ -2532,8 +2532,10 @@
  * the container (Pages rows hold their own tabbable buttons) nor off any
  * ancestor: the Journal container and #main-content take programmatic focus at
  * boot and match :focus-visible then. The tint is an image layer so it sits
- * over a row's own background. The accent bar stops short of the row's ends
- * so a card's rounded corner never clips it into a curve. */
+ * over a row's own background. The accent bar runs the row's full height and
+ * is square-ended; a card squares its corner on the bar's side while the
+ * cursor row sits in it (`listCardVariants`), so the bar meets the corner at a
+ * right angle. */
 @utility list-cursor {
   background-image: linear-gradient(
     color-mix(in oklab, var(--accent) 30%, transparent),
@@ -2543,7 +2545,7 @@
   &::before {
     content: '';
     position: absolute;
-    inset-block: 4px;
+    inset-block: 0;
     inset-inline-start: 0;
     width: 2px;
     background-color: var(--ring);
