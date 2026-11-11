@@ -1950,9 +1950,7 @@ const ENGINE_ROW_MISSING_OWNER: &str = "the block's ops took the SQL-only fallba
      resolved) and nothing replayed them into the engine: since #5418 a snapshot pass advances \
      the apply cursor, so boot replays only the ops after it. The engine is what syncs and what \
      an engine-first recovery reprojects, so this block reaches no peer and does not survive \
-     that recovery. Expected, not a defect, while the block is in sync_deferred_purges: a sync \
-     import took it out of its doc and the next completed pull purges it, or keeps it if \
-     another space's doc claims it (#5712)";
+     that recovery";
 
 const ENGINE_ROW_EXTRA_OWNER: &str = "a purge or projection cleared SQL without the engine, or \
      an inbound import's projection never committed: a peer importing this doc, or an \
@@ -1974,13 +1972,19 @@ const ENGINE_LIVENESS_OWNER: &str = "a delete that reached SQL but not the engin
 /// a LIVE SQL block whose resolved space has a doc that lacks it. A block
 /// whose space resolves to nothing, or to a space with no engine, is expected
 /// in no doc; a tombstone is left out the way `resolve_block_space` leaves it
-/// out when routing an op.
+/// out when routing an op. So is a block in `sync_deferred_purges`: a sync
+/// import took it out of its doc, and the next completed pull purges it, or
+/// keeps it if another space's doc claims it (#5712).
 fn diff_engine_membership(
     view: &EngineView,
     by_id: &BTreeMap<&str, &BaseBlock>,
+    deferred_purges: &BTreeSet<String>,
     out: &mut Vec<Divergence>,
 ) {
     for block_id in by_id.keys() {
+        if deferred_purges.contains(*block_id) {
+            continue;
+        }
         let Some(space_id) = fold_block_space(by_id, block_id) else {
             continue;
         };
@@ -2816,11 +2820,12 @@ pub fn reconcile_engine(
     page_aliases: &[(String, String)],
     properties: &[BaseProperty],
     definitions: &[BaseDefinition],
+    deferred_purges: &BTreeSet<String>,
 ) -> Result<Vec<Divergence>, AppError> {
     let view = read_engine_view(&state.registry)?;
     let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
     let mut out = Vec::new();
-    diff_engine_membership(&view, &by_id, &mut out);
+    diff_engine_membership(&view, &by_id, deferred_purges, &mut out);
     diff_engine_columns(&view, &by_id, &mut out);
     diff_engine_attachments(&view, &by_id, attachments, &mut out);
     diff_engine_tags_and_aliases(&view, &by_id, block_tags, page_aliases, &mut out);
@@ -4430,8 +4435,17 @@ pub async fn reconcile_all(
         &dump_page_aliases(pool).await?,
         &dump_block_properties(pool).await?,
         &dump_property_definitions(pool).await?,
+        &dump_deferred_purges(pool).await?,
     )?);
     Ok(out)
+}
+
+/// The blocks a sync import left awaiting their purge (#5712).
+async fn dump_deferred_purges(pool: &SqlitePool) -> Result<BTreeSet<String>, AppError> {
+    let rows = sqlx::query_scalar!("SELECT block_id FROM sync_deferred_purges")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().collect())
 }
 
 #[cfg(test)]

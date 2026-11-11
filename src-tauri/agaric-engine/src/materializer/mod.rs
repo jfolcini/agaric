@@ -85,6 +85,7 @@ pub use handlers::apply_op_projected;
 // production build.
 #[cfg(any(test, feature = "test-util"))]
 pub use dispatch::invalidations_for_op;
+pub use dispatch::FULL_CACHE_REBUILD_TASKS;
 // #4293: test-only for the same reason — the app-crate test that drives a
 // snapshot-sized import sizes its fixture from it.
 #[cfg(any(test, feature = "test-util"))]

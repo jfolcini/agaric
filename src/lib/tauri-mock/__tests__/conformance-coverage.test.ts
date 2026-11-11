@@ -369,6 +369,9 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
     'wall-clock dependent: the report carries `today` from `chrono::Local::now()` (the ' +
     'projected-agenda pin); and it diffs derived tables the mock has no copy of, so the ' +
     "mock's answer is a constant no query step could bind to the backend's",
+  rebuild_derived_state:
+    'wall-clock dependent like `compute_reconciliation_report`, whose report it returns: ' +
+    'the rebuild rewrites derived tables the mock has no copy of, then reports `today`',
 
   // ── Trash ──
   // Nothing is waived here either. `list_trash` and `count_trash` are steps in
@@ -601,6 +604,8 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
   // bucket. Seeding the page is no escape: `seed.blocks[].content` is a
   // literal, and the harness has no clock seam.
   'quick_capture_block',
+  // Returns the integrity report, which carries `today` (#6488).
+  'rebuild_derived_state',
   // Not an input problem but an observation one, and permanent for a different
   // reason than its neighbours: its only durable write is the `pending_pairing`
   // row in `app_settings`, and NO command in `bindings.ts` reads that key on

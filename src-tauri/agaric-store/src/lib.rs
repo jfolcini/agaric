@@ -87,6 +87,10 @@ pub mod recurrence_math;
 // (`cache_app_tests`).
 pub mod cache;
 
+// `derivations` — the version of each rule a cache stores the output of, and
+// the record a vault-wide rebuild leaves of it (#6488).
+pub mod derivations;
+
 // ── Wave S4d (#2621): the strongly-connected search/query cluster — `fts`,
 // `filters`, `backlink`, `query` — plus the shared `search_types` DTOs they
 // consume. These four modules form a dependency cycle (`fts ⇄ filters`,

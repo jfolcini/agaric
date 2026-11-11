@@ -542,7 +542,9 @@ async fn diff_against_current(
 /// [`reindex_block_tag_refs`] instead.
 #[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_block_tag_refs_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("block_tag_refs", || rebuild_block_tag_refs_cache_impl(pool)).await
+    super::rebuild_with_timing("block_tag_refs", || rebuild_block_tag_refs_cache_impl(pool))
+        .await?;
+    crate::derivations::record(pool, crate::derivations::Derivation::TagRefTokens).await
 }
 
 async fn rebuild_block_tag_refs_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
@@ -578,7 +580,8 @@ pub async fn rebuild_block_tag_refs_cache_split(
     super::rebuild_with_timing("block_tag_refs", || {
         rebuild_block_tag_refs_cache_split_impl(write_pool, read_pool)
     })
-    .await
+    .await?;
+    crate::derivations::record(write_pool, crate::derivations::Derivation::TagRefTokens).await
 }
 
 async fn rebuild_block_tag_refs_cache_split_impl(

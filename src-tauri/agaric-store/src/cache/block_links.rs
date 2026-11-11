@@ -417,23 +417,8 @@ pub async fn backfill_block_links(pool: &SqlitePool) -> Result<bool, AppError> {
     }
 
     let mut tx = crate::db::begin_immediate_logged(pool, "block_links_backfill").await?;
-
-    // The `LIKE` pair is a cheap prefilter, not the tokenizer: it only has to
-    // be a SUPERSET of what `ULID_LINK_RE` matches, and every token it can
-    // match opens with `[[` or `((`. `reindex_block_links_conn` decides what
-    // is actually a link.
-    let candidates: Vec<String> = sqlx::query_scalar!(
-        "SELECT id FROM blocks          WHERE deleted_at IS NULL            AND (content LIKE '%[[%' OR content LIKE '%((%')",
-    )
-    .fetch_all(&mut *tx)
-    .await?;
-
-    for id in &candidates {
-        reindex_block_links_conn(&mut tx, id).await?;
-    }
-
+    let scanned = reindex_every_linking_block(&mut tx).await?.to_string();
     let now = crate::db::now_ms();
-    let scanned = candidates.len().to_string();
     sqlx::query!(
         "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
         BLOCK_LINKS_BACKFILL_MARKER,
@@ -442,6 +427,7 @@ pub async fn backfill_block_links(pool: &SqlitePool) -> Result<bool, AppError> {
     )
     .execute(&mut *tx)
     .await?;
+    crate::derivations::record(&mut *tx, crate::derivations::Derivation::LinkTokens).await?;
 
     tx.commit().await?;
 
@@ -450,6 +436,40 @@ pub async fn backfill_block_links(pool: &SqlitePool) -> Result<bool, AppError> {
     // rebuild would leave the pass recorded as done and nothing to retry it.
     Ok(true)
 }
+/// Re-derive `block_links` for every block whose content can carry a link,
+/// and record [`Derivation::LinkTokens`](crate::derivations::Derivation): the
+/// pass boot runs when the link rule's version moved (#6488), and the one the
+/// integrity check's Rebuild runs. The rollups that read `block_links` are the
+/// caller's to rebuild, as for [`backfill_block_links`].
+///
+/// # Errors
+/// Returns [`AppError`] if any statement fails; nothing is recorded then.
+pub async fn rederive_block_links(pool: &SqlitePool) -> Result<(), AppError> {
+    let mut tx = crate::db::begin_immediate_logged(pool, "block_links_rederive").await?;
+    reindex_every_linking_block(&mut tx).await?;
+    crate::derivations::record(&mut *tx, crate::derivations::Derivation::LinkTokens).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Reindex every live block whose content can carry a link token. Returns how
+/// many it scanned.
+async fn reindex_every_linking_block(conn: &mut sqlx::SqliteConnection) -> Result<usize, AppError> {
+    // The `LIKE` pair is a cheap prefilter, not the tokenizer: it only has to
+    // be a SUPERSET of what `ULID_LINK_RE` matches, and every token it can
+    // match opens with `[[` or `((`. `reindex_block_links_conn` decides what
+    // is actually a link.
+    let candidates: Vec<String> = sqlx::query_scalar!(
+        "SELECT id FROM blocks          WHERE deleted_at IS NULL            AND (content LIKE '%[[%' OR content LIKE '%((%')",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    for id in &candidates {
+        reindex_block_links_conn(&mut *conn, id).await?;
+    }
+    Ok(candidates.len())
+}
+
 // ---------------------------------------------------------------------------
 // reindex_block_links (p1-t21)
 // ---------------------------------------------------------------------------

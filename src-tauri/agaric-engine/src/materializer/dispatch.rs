@@ -76,7 +76,7 @@ fn sender_or_closed(
 /// is enqueued one task at a time and the consumer drains what has
 /// arrived, so it can split across drains, where `dedup_tasks` cannot
 /// reorder it (#6216). So `RebuildBlockTagRefsCache` comes first.
-pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
+pub const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
     // #6216: before `RebuildTagsCache`, whose `usage_count` counts these rows.
     MaterializeTask::RebuildBlockTagRefsCache,
     MaterializeTask::RebuildTagsCache,

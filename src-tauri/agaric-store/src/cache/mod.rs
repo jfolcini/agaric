@@ -167,9 +167,12 @@ where
 
 pub use agenda::{rebuild_agenda_cache, rebuild_agenda_cache_split, rewrite_agenda_cache_once};
 #[cfg(test)]
+pub(crate) use agenda::DESIRED_AGENDA_SQL;
+#[cfg(test)]
 pub(crate) use block_links::rebuild_block_links_unresolved_conn;
 pub use block_links::{
-    backfill_block_links, classify_link_kind, rebuild_block_links_unresolved, reindex_block_links,
+    backfill_block_links, classify_link_kind, rebuild_block_links_unresolved, rederive_block_links,
+    reindex_block_links,
     reindex_block_links_conn, reindex_block_links_split, unresolved_link_sources,
 };
 pub use block_tag_refs::{
@@ -185,7 +188,8 @@ pub use page_links::{
 };
 pub use pages::{
     insert_missing_pages_cache_rows, raise_pages_last_edited_ms, rebuild_pages_cache,
-    rebuild_pages_cache_counts, rebuild_pages_cache_split, sync_pages_cache_space_ids,
+    rebuild_pages_cache_counts, rebuild_pages_cache_split, rekey_title_sort_keys,
+    sync_pages_cache_space_ids,
 };
 // #417: the production RESET path recomputes the two `pages_cache` count
 // columns full-table via the dedicated `rebuild_pages_cache_counts` entry

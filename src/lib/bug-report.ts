@@ -8,6 +8,8 @@
  */
 
 import type { BugReport, ReconciliationReport } from '@/lib/bindings'
+import { i18n } from '@/lib/i18n'
+import { groupByKind, problemId, tableId } from '@/lib/integrity-report'
 
 /** Cap the URL-encoded body at this many characters. GitHub silently drops
  *  prefill bodies past ~8 KB in the wild; 7000 keeps us well below even the
@@ -155,21 +157,32 @@ export function formatRetryQueue(summary: BugReport['retry_queue']): string {
  *  projected-agenda rebuild is the one artefact pinned to a calendar date.
  *
  *  Sample keys are the backend's — at most ten per artefact, ids and dates
- *  only, never the diverging values (#609: this body is public). */
+ *  only, never the diverging values (#609: this body is public), so the
+ *  report's `samples` stay on the screen. Each artefact carries its group and
+ *  its plain-words label, in English (#6488). */
 export function formatIntegrityReport(report: ReconciliationReport): string {
   const scanned = `${report.blocks_scanned} block${report.blocks_scanned === 1 ? '' : 's'} scanned`
   if (report.total_divergences === 0) {
     return `## Integrity check\n\nNo divergences — ${scanned}, ${report.today}.`
   }
-  const lines = report.artefacts.map((a) => {
-    const rows = `${a.count} row${a.count === 1 ? '' : 's'}`
-    const keys = a.sample_keys.length > 0 ? `: ${a.sample_keys.join(', ')}` : ''
-    return `- \`${a.artefact}\` — ${rows}${keys}`
+  const en = i18n.getFixedT('en')
+  const groups = groupByKind(report).map((group) => {
+    const lines = group.artefacts.map((a) => {
+      const rows = `${a.count} row${a.count === 1 ? '' : 's'}`
+      const keys = a.sample_keys.length > 0 ? `: ${a.sample_keys.join(', ')}` : ''
+      const id = tableId(a.artefact)
+      const table = id === null ? a.artefact : en(`integrity.table.${id}`)
+      return `- \`${a.artefact}\` — ${rows}${keys} — ${table}: ${en(`integrity.problem.${problemId(a.artefact)}`)}`
+    })
+    const title = en(
+      group.kind === 'engine' ? 'integrity.groupEngineTitle' : 'integrity.groupRebuildableTitle',
+    )
+    return `### ${title}\n\n${lines.join('\n')}`
   })
   return [
     '## Integrity check',
     `${report.total_divergences} divergence${report.total_divergences === 1 ? '' : 's'} over ${scanned}, ${report.today}.`,
-    lines.join('\n'),
+    ...groups,
   ].join('\n\n')
 }
 

@@ -15,7 +15,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -276,6 +276,155 @@ describe('IntegrityCheckSection', () => {
     const { container } = render(<Harness />)
     await user.click(screen.getByTestId('integrity-run-button'))
     await screen.findByTestId('integrity-report-bug-button')
+
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+// #6488 — the report in plain words: two groups, each table by its name and
+// problem, one rebuilt-versus-stored pair on the screen and never in the copy,
+// and a Rebuild that replaces the report with the one it leaves.
+const STALE_SEARCH_TEXT = 'Meeting notes with Ana about the budget'
+
+const MIXED: ReconciliationReport = {
+  blocks_scanned: 2441,
+  today: '2026-11-11',
+  total_divergences: 30,
+  artefacts: [
+    { artefact: 'fts_blocks.stripped', count: 27, sample_keys: ['01KNHVPXFE9T6SFZMNJXAYAPMJ'] },
+    { artefact: 'engine.blocks.content', count: 3, sample_keys: ['01SPACE / 01BLOCK'] },
+  ],
+  samples: [
+    {
+      artefact: 'fts_blocks.stripped',
+      key: '01KNHVPXFE9T6SFZMNJXAYAPMJ',
+      expected: STALE_SEARCH_TEXT,
+      actual: '**Meeting** notes with [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]',
+    },
+  ],
+}
+
+const STALE_SEARCH_ONLY: ReconciliationReport = {
+  ...MIXED,
+  total_divergences: 27,
+  artefacts: [MIXED.artefacts[0]],
+}
+
+describe('IntegrityCheckSection in plain words (#6488)', () => {
+  it('says how many search-index rows are out of date, in one sentence', async () => {
+    mockReport(STALE_SEARCH_ONLY)
+    const user = userEvent.setup()
+    render(<Harness />)
+
+    await user.click(screen.getByTestId('integrity-run-button'))
+
+    expect(await screen.findByTestId('integrity-summary')).toHaveTextContent(
+      '27 rows in the search index are out of date (rebuildable). 2441 blocks checked on 2026-11-11.',
+    )
+    expect(screen.queryByTestId('integrity-group-engine')).not.toBeInTheDocument()
+  })
+
+  it('groups caches apart from the engine, each saying what it is and what to do', async () => {
+    mockReport(MIXED)
+    const user = userEvent.setup()
+    render(<Harness />)
+
+    await user.click(screen.getByTestId('integrity-run-button'))
+
+    expect(await screen.findByTestId('integrity-summary')).toHaveTextContent(
+      '27 rows in the search index are out of date (rebuildable). 3 rows disagree with the sync engine. 2441 blocks checked on 2026-11-11.',
+    )
+    const caches = within(screen.getByTestId('integrity-group-rebuildable'))
+    expect(
+      caches.getByRole('heading', { name: t('integrity.groupRebuildableTitle') }),
+    ).toBeInTheDocument()
+    expect(caches.getByText(t('integrity.groupRebuildableAction'))).toBeInTheDocument()
+    expect(caches.getByText('Search index: text indexed with an older rule')).toBeInTheDocument()
+    expect(caches.getByText('27 rows diverged in fts_blocks.stripped')).toBeInTheDocument()
+
+    const engine = within(screen.getByTestId('integrity-group-engine'))
+    expect(engine.getByRole('heading', { name: t('integrity.groupEngineTitle') })).toBeInTheDocument()
+    expect(engine.getByText(t('integrity.groupEngineAction'))).toBeInTheDocument()
+    expect(
+      engine.getByText('Blocks: values that differ from the sync engine'),
+    ).toBeInTheDocument()
+  })
+
+  it('shows the rebuilt and stored text on screen and leaves both out of the copy', async () => {
+    mockReport(MIXED)
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByTestId('integrity-run-button'))
+
+    const sample = await screen.findByTestId('integrity-sample')
+    expect(sample).toHaveTextContent(`Rebuilt: ${STALE_SEARCH_TEXT}`)
+    expect(sample).toHaveTextContent('Stored: **Meeting** notes with')
+
+    await user.click(screen.getByTestId('integrity-copy-button'))
+    await waitFor(() => {
+      expect(mockedWriteText).toHaveBeenCalledTimes(1)
+    })
+    const copied = mockedWriteText.mock.calls[0]?.[0] ?? ''
+    expect(copied).toContain('`fts_blocks.stripped` — 27 rows: 01KNHVPXFE9T6SFZMNJXAYAPMJ')
+    expect(copied).not.toContain('Meeting')
+  })
+
+  it('rebuilds the caches and shows the report the rebuild leaves', async () => {
+    const rebuild = vi.fn(() => CLEAN)
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        compute_reconciliation_report: () => STALE_SEARCH_ONLY,
+        rebuild_derived_state: rebuild,
+      }),
+    )
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByTestId('integrity-run-button'))
+
+    await user.click(await screen.findByTestId('integrity-rebuild-button'))
+
+    expect(await screen.findByText(t('integrity.cleanTitle'))).toBeInTheDocument()
+    expect(rebuild).toHaveBeenCalledTimes(1)
+    expect(mockedToastSuccess).toHaveBeenCalledWith(t('integrity.rebuilt'))
+    expect(screen.queryByTestId('integrity-rebuild-button')).not.toBeInTheDocument()
+  })
+
+  it('offers no rebuild when only the engine disagrees', async () => {
+    mockReport({ ...MIXED, total_divergences: 3, artefacts: [MIXED.artefacts[1]] })
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByTestId('integrity-run-button'))
+
+    await screen.findByTestId('integrity-group-engine')
+    expect(screen.queryByTestId('integrity-rebuild-button')).not.toBeInTheDocument()
+  })
+
+  it('surfaces a rebuild rejection and keeps the report it had', async () => {
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        compute_reconciliation_report: () => STALE_SEARCH_ONLY,
+        rebuild_derived_state: () => Promise.reject({ kind: 'database', message: 'busy' }),
+      }),
+    )
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByTestId('integrity-run-button'))
+
+    await user.click(await screen.findByTestId('integrity-rebuild-button'))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('integrity.rebuildFailed'))
+    })
+    expect(screen.getByTestId('integrity-group-rebuildable')).toBeInTheDocument()
+    expect(screen.getByTestId('integrity-rebuild-button')).toBeEnabled()
+  })
+
+  it('has no a11y violations with both groups and the Rebuild button', async () => {
+    mockReport(MIXED)
+    const user = userEvent.setup()
+    const { container } = render(<Harness />)
+    await user.click(screen.getByTestId('integrity-run-button'))
+    await screen.findByTestId('integrity-rebuild-button')
 
     expect(await axe(container)).toHaveNoViolations()
   })
