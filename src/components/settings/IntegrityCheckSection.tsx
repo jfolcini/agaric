@@ -31,7 +31,6 @@ import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import type { UseReconciliationReportResult } from '@/hooks/useReconciliationReport'
 import type { ArtefactDivergences, DivergenceSample, ReconciliationReport } from '@/lib/bindings'
@@ -63,7 +62,8 @@ function useSummary(report: ReconciliationReport, groups: IntegrityGroup[]): str
     if (group.kind === 'engine') return t('integrity.summaryEngine', { count: group.rows })
     if (group.kind === 'ids') return t('integrity.summaryIds', { count: group.rows })
     const tables = new Set(group.artefacts.map((a) => tableId(a.artefact) ?? a.artefact))
-    const only = group.artefacts.length > 0 ? tableId(group.artefacts[0].artefact) : null
+    const first = group.artefacts[0]
+    const only = first === undefined ? null : tableId(first.artefact)
     if (tables.size === 1 && only !== null) {
       return t('integrity.summaryRebuildableOneTable', {
         count: group.rows,
@@ -72,9 +72,7 @@ function useSummary(report: ReconciliationReport, groups: IntegrityGroup[]): str
     }
     return t('integrity.summaryRebuildable', { count: group.rows, tables: tables.size })
   })
-  parts.push(
-    t('integrity.summaryScanned', { count: report.blocks_scanned, date: report.today }),
-  )
+  parts.push(t('integrity.summaryScanned', { count: report.blocks_scanned, date: report.today }))
   return parts.join(' ')
 }
 
@@ -154,13 +152,13 @@ function DivergedResult({ report }: { report: ReconciliationReport }): React.Rea
       <p className="text-sm font-medium" data-testid="integrity-summary">
         {summary}
       </p>
-      <ScrollArea className="max-h-96 rounded-md" viewportClassName="space-y-3">
-        <div className="space-y-3" data-testid="integrity-artefact-list">
-          {groups.map((group) => (
-            <GroupSection key={group.kind} group={group} samples={samples} />
-          ))}
-        </div>
-      </ScrollArea>
+      {/* No inner scroll: Settings already scrolls, and the list is bounded by
+          the oracle's artefacts and its ten sample keys each. */}
+      <div className="space-y-3" data-testid="integrity-artefact-list">
+        {groups.map((group) => (
+          <GroupSection key={group.kind} group={group} samples={samples} />
+        ))}
+      </div>
     </>
   )
 }

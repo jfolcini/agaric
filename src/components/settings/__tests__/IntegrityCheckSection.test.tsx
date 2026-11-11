@@ -26,7 +26,7 @@ import { BugReportDialog } from '@/components/dialogs/BugReportDialog'
 import { IntegrityCheckSection } from '@/components/settings/IntegrityCheckSection'
 import { useAppDialogs } from '@/hooks/useAppDialogs'
 import { useReconciliationReport } from '@/hooks/useReconciliationReport'
-import type { BugReport, ReconciliationReport } from '@/lib/bindings'
+import type { ArtefactDivergences, BugReport, ReconciliationReport } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 
@@ -286,14 +286,23 @@ describe('IntegrityCheckSection', () => {
 // and a Rebuild that replaces the report with the one it leaves.
 const STALE_SEARCH_TEXT = 'Meeting notes with Ana about the budget'
 
+const STALE_SEARCH_ROWS: ArtefactDivergences = {
+  artefact: 'fts_blocks.stripped',
+  count: 27,
+  sample_keys: ['01KNHVPXFE9T6SFZMNJXAYAPMJ'],
+}
+
+const ENGINE_ROWS: ArtefactDivergences = {
+  artefact: 'engine.blocks.content',
+  count: 3,
+  sample_keys: ['01SPACE / 01BLOCK'],
+}
+
 const MIXED: ReconciliationReport = {
   blocks_scanned: 2441,
   today: '2026-11-11',
   total_divergences: 30,
-  artefacts: [
-    { artefact: 'fts_blocks.stripped', count: 27, sample_keys: ['01KNHVPXFE9T6SFZMNJXAYAPMJ'] },
-    { artefact: 'engine.blocks.content', count: 3, sample_keys: ['01SPACE / 01BLOCK'] },
-  ],
+  artefacts: [STALE_SEARCH_ROWS, ENGINE_ROWS],
   samples: [
     {
       artefact: 'fts_blocks.stripped',
@@ -307,7 +316,7 @@ const MIXED: ReconciliationReport = {
 const STALE_SEARCH_ONLY: ReconciliationReport = {
   ...MIXED,
   total_divergences: 27,
-  artefacts: [MIXED.artefacts[0]],
+  artefacts: [STALE_SEARCH_ROWS],
 }
 
 describe('IntegrityCheckSection in plain words (#6488)', () => {
@@ -343,11 +352,11 @@ describe('IntegrityCheckSection in plain words (#6488)', () => {
     expect(caches.getByText('27 rows diverged in fts_blocks.stripped')).toBeInTheDocument()
 
     const engine = within(screen.getByTestId('integrity-group-engine'))
-    expect(engine.getByRole('heading', { name: t('integrity.groupEngineTitle') })).toBeInTheDocument()
-    expect(engine.getByText(t('integrity.groupEngineAction'))).toBeInTheDocument()
     expect(
-      engine.getByText('Blocks: values that differ from the sync engine'),
+      engine.getByRole('heading', { name: t('integrity.groupEngineTitle') }),
     ).toBeInTheDocument()
+    expect(engine.getByText(t('integrity.groupEngineAction'))).toBeInTheDocument()
+    expect(engine.getByText('Blocks: values that differ from the sync engine')).toBeInTheDocument()
   })
 
   it('shows the rebuilt and stored text on screen and leaves both out of the copy', async () => {
@@ -390,7 +399,7 @@ describe('IntegrityCheckSection in plain words (#6488)', () => {
   })
 
   it('offers no rebuild when only the engine disagrees', async () => {
-    mockReport({ ...MIXED, total_divergences: 3, artefacts: [MIXED.artefacts[1]] })
+    mockReport({ ...MIXED, total_divergences: 3, artefacts: [ENGINE_ROWS] })
     const user = userEvent.setup()
     render(<Harness />)
     await user.click(screen.getByTestId('integrity-run-button'))

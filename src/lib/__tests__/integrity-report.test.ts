@@ -4,18 +4,30 @@
 
 import { describe, expect, it } from 'vitest'
 
-import type { ReconciliationReport } from '@/lib/bindings'
+import type { ArtefactDivergences, ReconciliationReport } from '@/lib/bindings'
 import { divergenceKind, groupByKind, problemId, tableId } from '@/lib/integrity-report'
+
+const STALE_SEARCH: ArtefactDivergences = {
+  artefact: 'fts_blocks.stripped',
+  count: 27,
+  sample_keys: ['01KNHVPXFE9T6SFZMNJXAYAPMJ'],
+}
+const ENGINE_ROWS: ArtefactDivergences = {
+  artefact: 'engine.blocks.row',
+  count: 3,
+  sample_keys: [],
+}
+const STALE_SORT: ArtefactDivergences = {
+  artefact: 'pages_cache.title_sort_key',
+  count: 1,
+  sample_keys: [],
+}
 
 const REPORT: ReconciliationReport = {
   blocks_scanned: 2441,
   today: '2026-11-11',
   total_divergences: 31,
-  artefacts: [
-    { artefact: 'fts_blocks.stripped', count: 27, sample_keys: ['01KNHVPXFE9T6SFZMNJXAYAPMJ'] },
-    { artefact: 'engine.blocks.row', count: 3, sample_keys: [] },
-    { artefact: 'pages_cache.title_sort_key', count: 1, sample_keys: [] },
-  ],
+  artefacts: [STALE_SEARCH, ENGINE_ROWS, STALE_SORT],
 }
 
 describe('divergenceKind', () => {
@@ -59,17 +71,17 @@ describe('groupByKind', () => {
     expect(groupByKind(REPORT)).toEqual([
       {
         kind: 'rebuildable',
-        artefacts: [REPORT.artefacts[0], REPORT.artefacts[2]],
+        artefacts: [STALE_SEARCH, STALE_SORT],
         rows: 28,
       },
-      { kind: 'engine', artefacts: [REPORT.artefacts[1]], rows: 3 },
+      { kind: 'engine', artefacts: [ENGINE_ROWS], rows: 3 },
     ])
   })
 
   it('leaves out a kind with no rows, and a clean report has no group', () => {
-    expect(groupByKind({ ...REPORT, artefacts: [REPORT.artefacts[1]] }).map((g) => g.kind)).toEqual(
-      ['engine'],
-    )
+    expect(groupByKind({ ...REPORT, artefacts: [ENGINE_ROWS] }).map((g) => g.kind)).toEqual([
+      'engine',
+    ])
     expect(groupByKind({ ...REPORT, total_divergences: 0, artefacts: [] })).toEqual([])
   })
 })

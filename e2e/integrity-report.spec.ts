@@ -32,7 +32,7 @@ const STALE_SEARCH_INDEX = {
 }
 
 /** Answer the check with `report` and the rebuild with a clean report. */
-async function stubIntegrity(page: Page, report: unknown): Promise<void> {
+async function stubIntegrity(page: Page, report: Record<string, unknown>): Promise<void> {
   await page.evaluate((stale) => {
     const internals = (
       window as unknown as {

@@ -218,6 +218,12 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'back, where the mock upserts a constant row and skips the seven-day freshness ' +
     'short-circuit entirely (handlers/links.ts)',
 
+  // ── Integrity check (#6488) ──
+  rebuild_derived_state:
+    'the report it returns is the input problem: it carries `today` from ' +
+    '`chrono::Local::now()`, like `compute_reconciliation_report`, and the rebuild rewrites ' +
+    'derived tables the mock keeps no copy of',
+
   // ── Quick capture ──
   quick_capture_block:
     'the local DATE is the input, not the scope: `chrono::Local::now()` names the journal ' +
@@ -369,9 +375,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
     'wall-clock dependent: the report carries `today` from `chrono::Local::now()` (the ' +
     'projected-agenda pin); and it diffs derived tables the mock has no copy of, so the ' +
     "mock's answer is a constant no query step could bind to the backend's",
-  rebuild_derived_state:
-    'wall-clock dependent like `compute_reconciliation_report`, whose report it returns: ' +
-    'the rebuild rewrites derived tables the mock has no copy of, then reports `today`',
 
   // ── Trash ──
   // Nothing is waived here either. `list_trash` and `count_trash` are steps in

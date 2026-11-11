@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id FROM sync_deferred_purges",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "sync_deferred_purges",
+            "name": "block_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3583d1c2fcceedab3fe744b5e318eddcdbbcfa519522b41ab6a65a5c9bf3a8bf"
+}
