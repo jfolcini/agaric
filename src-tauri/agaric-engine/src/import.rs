@@ -4314,7 +4314,7 @@ fn is_property_key(s: &str) -> bool {
 /// tab (Logseq users write either) after a valid [`is_property_key`], so a
 /// `::` mid-sentence (`std::vector`) is content, or `::` ending the line, the
 /// value left empty (#5160 P7).
-fn split_property_line(line: &str) -> Option<(&str, &str)> {
+pub fn split_property_line(line: &str) -> Option<(&str, &str)> {
     let (key, rest) = line.split_once("::")?;
     let value = if rest.trim().is_empty() {
         ""

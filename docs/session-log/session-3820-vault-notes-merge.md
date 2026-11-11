@@ -20,8 +20,9 @@ What shipped:
     Evernote or Obsidian file.
   - `template:` and `attachments:` front matter and `attachments::` lines
     come out of the text. Only a file import reads them.
-- `finish_merge` runs after the save. It sets or clears the template flag,
-  whose ops undo with the merge, and attaches any new file. A new file goes
+- `finish_merge` runs after the save. It sets the template flag, or clears
+  it on `template: false`, whose ops undo with the merge; a file without the
+  key leaves the flag alone. It also attaches any new file. A new file goes
   onto the page for front matter, or onto the block whose `^id` an
   `attachments::` line follows. A link in a block's text goes onto that
   block, as an import attaches it.
@@ -35,6 +36,15 @@ export, re-importing a page's own export on its own had failed with "`template`
 is kept by the app". `reimporting_a_template_pages_export_leaves_it_as_it_was`
 and `reimporting_the_export_of_a_page_with_files_leaves_it_as_it_was` were red
 on main.
+
+Review fixes:
+
+- A plain file merged onto a template page had cleared its flag, which a
+  lone-file merge kept on main; only a `template:` key changes it now.
+- An `attachments::` line under a new, unanchored block went to the anchored
+  block above it, and attached the files the page held a second time. An
+  anchor now carries only over blank and `key:: value` lines, and held files
+  are filtered out.
 
 Traps:
 
@@ -63,5 +73,7 @@ Shown red:
   `attachments::` line, before the change. The template extraction and the
   held-file match were each mutated off as well.
 - The two-spellings test.
+- The two review-fix tests: the plain file clearing the flag (and the
+  `template: false` arm mutated), and the new block's line, under each fix.
 - The new e2e-tauri case, with merging turned off (a folder pick twins every
   page).

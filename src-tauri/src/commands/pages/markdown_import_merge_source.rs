@@ -66,7 +66,7 @@ impl MergeVault<'_> {
 pub(super) struct MergeSource {
     pub(super) text: String,
     /// The value of the file's `template:` front matter, `None` when it has
-    /// none.
+    /// none, which leaves the page's flag as it is.
     pub(super) template: Option<String>,
     /// The values of the file's `attachments:` front matter.
     pub(super) page_files: Vec<String>,
@@ -116,7 +116,7 @@ pub(super) fn merge_source(text: &str, vault: &MergeVault<'_>, held: &[HeldFile]
         }
         match merged_line(line, vault, held) {
             Merged::Line(line) => {
-                anchor = line_anchor(&line).or(anchor);
+                anchor = line_anchor(&line).or(anchor.filter(|_| block_tail(&line)));
                 source.text.push_str(&line);
             }
             Merged::Held => {}
@@ -127,6 +127,13 @@ pub(super) fn merge_source(text: &str, vault: &MergeVault<'_>, held: &[HeldFile]
         }
     }
     source
+}
+
+/// Whether `line` can follow a block's `^id` line inside that block: blank, or
+/// one of the `key:: value` lines an export writes between the anchor and the
+/// block's `attachments::` line.
+fn block_tail(line: &str) -> bool {
+    line.trim().is_empty() || import::split_property_line(line.trim()).is_some()
 }
 
 /// The block id a line's `^ULID` anchor ends it with.
@@ -200,7 +207,7 @@ fn merged_line(line: &str, vault: &MergeVault<'_>, held: &[HeldFile]) -> Merged 
 }
 
 /// Apply what a merged file says that its save did not read ([`MergeSource`]),
-/// once the save is done: the page's template flag as the file has it, and
+/// once the save is done: the page's template flag as the file sets it, and
 /// the files it names that the page does not hold yet, attached as an import
 /// attaches them, onto the page for its `attachments:` front matter and onto
 /// the block a link or an `attachments::` line is in. Returns the ops the flag
@@ -216,9 +223,14 @@ pub(super) async fn finish_merge(
     }
     let mut pending = PendingAttachments::default();
     let held = held_files(&mut *ctx.pool.acquire().await?, &ctx.page_id).await?;
+    let dir = ctx
+        .page_title
+        .rsplit_once('/')
+        .map_or("", |(dir, _)| dir)
+        .to_owned();
     let vault = MergeVault {
         files: &vault_files,
-        dir: ctx.page_title.rsplit_once('/').map_or("", |(dir, _)| dir),
+        dir: &dir,
         notes: None,
     };
     let new_files = |value: &str| -> Vec<import::AttachmentRef> {
@@ -234,17 +246,22 @@ pub(super) async fn finish_merge(
             pending.scoped.push((owner.clone(), new));
         }
     }
-    queue_block_files(ctx, &vault_files, &mut pending).await?;
+    queue_block_files(ctx, &vault_files, &mut pending, new_files).await?;
     ingest_attachments(ctx, vault_files, pending).await;
     Ok(op_refs)
 }
 
-/// Set or clear the page's `template` flag to `wanted`, the file's, when it
-/// differs from what the page holds; nothing when it does not.
+/// Set the page's `template` flag to the file's `template:` value, or clear
+/// it on `false`, when that differs from what the page holds. A file without
+/// the key leaves the flag alone: it is a plain file, not a page's export.
 async fn sync_template(
     ctx: &ImportCtx<'_>,
-    wanted: Option<&str>,
+    file: Option<&str>,
 ) -> Result<Vec<agaric_store::op::OpRef>, AppError> {
+    let Some(file) = file else {
+        return Ok(Vec::new());
+    };
+    let wanted = (file != "false").then_some(file);
     let page = ctx.page_id.as_str();
     let held: Option<String> = sqlx::query_scalar!(
         "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'template'",
@@ -284,13 +301,16 @@ async fn sync_template(
     Ok(capture_op_refs(set).await?.op_refs)
 }
 
-/// Queue each block of the page's `attachments::` line, which the save kept
-/// as text, and the links in its text to files the page does not hold, as an
-/// import queues them; the line is taken out of the block's text.
+/// Queue the files each block's `attachments::` line names that the page does
+/// not hold (`new_files`), the line the save kept as text, and the links in
+/// its text to such files, as an import queues them. The line is taken out of
+/// the block's text. Only a new block, which has no `^id`, keeps such a line,
+/// so undoing the merge removes the block and needs no undo of this edit.
 async fn queue_block_files(
     ctx: &mut ImportCtx<'_>,
     vault_files: &[VaultFile],
     pending: &mut PendingAttachments,
+    new_files: impl Fn(&str) -> Vec<import::AttachmentRef>,
 ) -> Result<(), AppError> {
     let page = ctx.page_id.clone();
     let blocks = sqlx::query!(
@@ -310,10 +330,12 @@ async fn queue_block_files(
             .partition(|line| line.trim_start().starts_with("attachments::"));
         for line in &lines {
             let value = line.trim_start().trim_start_matches("attachments::");
+            let new = new_files(value);
+            let new: Vec<&str> = new.iter().map(|att| att.full_match.as_str()).collect();
             pending.queue_block(
                 &id,
                 Vec::new(),
-                &[("attachments".into(), value.into())],
+                &[("attachments".into(), new.join(", "))],
                 vault_files,
                 &mut ctx.warnings,
             );

@@ -666,6 +666,38 @@ async fn reimporting_a_template_pages_export_leaves_it_as_it_was() {
     mat.shutdown();
 }
 
+/// A file with no `template:` front matter merged onto a template page
+/// leaves it a template; `template: false` makes it a page again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_merged_file_changes_the_template_flag_only_when_it_says_so() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, _, _) = exported_page_with_files(&pool, &mat, dir.path()).await;
+    let flag = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT value_text FROM block_properties WHERE block_id = ?1 AND key = 'template'",
+        )
+        .bind(&page)
+        .fetch_optional(&pool)
+        .await
+        .unwrap()
+        .flatten()
+    };
+    assert_eq!(flag().await.as_deref(), Some("true"));
+
+    import(&pool, &mat, dir.path(), "Review.md", "- See the report\n")
+        .await
+        .unwrap();
+    assert_eq!(flag().await.as_deref(), Some("true"));
+
+    let unflagged = "---\ntemplate: false\n---\n- See the report\n";
+    import(&pool, &mat, dir.path(), "Review.md", unflagged)
+        .await
+        .unwrap();
+    assert_eq!(flag().await, None);
+    mat.shutdown();
+}
+
 /// Red (#6277 G5): a page's own export re-imported as a lone file merges into
 /// it unchanged when the page holds files, whose `attachments:` front matter
 /// and `attachments::` lines a save reads as the app's.
@@ -780,5 +812,46 @@ async fn a_file_added_to_an_attachments_line_is_attached_to_its_block() {
         .collect();
     names.sort();
     assert_eq!(names, ["new.pdf", "pic.png", "report.pdf"]);
+    mat.shutdown();
+}
+
+/// An `attachments::` line under a new block, which has no `^id`, attaches
+/// to that block what the page does not hold yet, and nothing the page holds
+/// a second time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_attachments_line_under_a_new_block_attaches_only_its_new_file_to_it() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, md, mut files) = exported_page_with_files(&pool, &mat, dir.path()).await;
+    let held = attachments(&pool).await;
+    let line = md
+        .lines()
+        .find(|line| line.trim_start().starts_with("attachments::"))
+        .unwrap();
+    let md = md.replace(
+        line,
+        &format!("{line}\n- Fresh block\n{line}, [new.pdf](new.pdf)"),
+    );
+    files.push(VaultFile {
+        path: "new.pdf".into(),
+        bytes: b"new".to_vec(),
+    });
+
+    let result = import_note(&pool, &mat, dir.path(), &md, &files)
+        .await
+        .unwrap();
+
+    assert_eq!(result.warnings, Vec::<String>::new(), "file:\n{md}");
+    let kids = children(&pool, &page).await;
+    let fresh = kids
+        .iter()
+        .find(|(_, content)| content.starts_with("Fresh block"))
+        .unwrap_or_else(|| panic!("no Fresh block in {kids:?}"))
+        .0
+        .clone();
+    let mut expected = held;
+    expected.push((fresh, "new.pdf".into()));
+    expected.sort();
+    assert_eq!(attachments(&pool).await, expected);
     mat.shutdown();
 }
