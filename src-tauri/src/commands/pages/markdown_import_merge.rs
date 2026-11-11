@@ -195,17 +195,18 @@ pub(super) async fn merge_into_page(
         dir: file.title.rsplit_once('/').map_or("", |(dir, _)| dir),
         notes: file.vault_notes.map(vault_note_titles),
     };
-    let stripped = import::strip_title_heading(file.content, file.title);
-    let source = merge_source(&stripped, &vault, &held);
-    let (text, mut anchors) = anchor_free(&source.text);
     // An anchor naming no block of the page carries no identity here: the
-    // line pairs by its text, as an unanchored one does.
+    // line pairs by its text, as an unanchored one does, and its files are
+    // that new block's.
     let own: HashSet<&str> = buffer
         .line_ids
         .iter()
         .flatten()
         .map(String::as_str)
         .collect();
+    let stripped = import::strip_title_heading(file.content, file.title);
+    let source = merge_source(&stripped, &vault, &held, &own);
+    let (text, mut anchors) = anchor_free(&source.text);
     for anchor in &mut anchors {
         if anchor.as_deref().is_some_and(|id| !own.contains(id)) {
             *anchor = None;

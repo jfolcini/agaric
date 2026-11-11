@@ -855,3 +855,60 @@ async fn an_attachments_line_under_a_new_block_attaches_only_its_new_file_to_it(
     assert_eq!(attachments(&pool).await, expected);
     mat.shutdown();
 }
+
+/// Red (#6277 G5): an export merged into another page of its title, its
+/// anchors naming the blocks of the page it was exported from, attaches its
+/// files to the page it merges into and leaves the other page's as they are.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_export_merged_into_another_page_of_its_title_attaches_its_files_there() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (old, md, files) = exported_page_with_files(&pool, &mat, dir.path()).await;
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from_trusted(&old),
+        "Archived".into(),
+    )
+    .await
+    .unwrap();
+    let page = dup_page(&pool, &mat, "Review").await;
+    dup_child(&pool, &mat, &page, "Elsewhere").await;
+    settle(&mat).await;
+    let before = attachments(&pool).await;
+
+    let result = import_note(&pool, &mat, dir.path(), &md, &files)
+        .await
+        .unwrap();
+
+    assert_eq!(result.page_id, page.as_str());
+    let after = attachments(&pool).await;
+    let kept: Vec<_> = after
+        .iter()
+        .filter(|row| before.contains(row))
+        .cloned()
+        .collect();
+    assert_eq!(kept, before);
+    let mut owners: Vec<String> = children(&pool, page.as_str())
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    owners.push(page.as_str().to_owned());
+    let mut added: Vec<(bool, String)> = after
+        .into_iter()
+        .filter(|row| !before.contains(row))
+        .map(|(owner, name)| (owners.contains(&owner), name))
+        .collect();
+    added.sort();
+    assert_eq!(
+        added,
+        [
+            (true, "cover.pdf".to_owned()),
+            (true, "pic.png".to_owned()),
+            (true, "report.pdf".to_owned())
+        ]
+    );
+    mat.shutdown();
+}

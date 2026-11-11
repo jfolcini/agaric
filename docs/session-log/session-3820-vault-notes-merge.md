@@ -45,6 +45,10 @@ Review fixes:
   block above it, and attached the files the page held a second time. An
   anchor now carries only over blank and `key:: value` lines, and held files
   are filtered out.
+- An `attachments::` line following an `^id` of another page (an export
+  merged into another space's page of its title) attached its files to that
+  page's block a second time. An anchor now names a block only when the page
+  holds it.
 
 Traps:
 
@@ -75,5 +79,7 @@ Shown red:
 - The two-spellings test.
 - The two review-fix tests: the plain file clearing the flag (and the
   `template: false` arm mutated), and the new block's line, under each fix.
+- The export merged into another page of its title, and its own-block
+  filter mutated off.
 - The new e2e-tauri case, with merging turned off (a folder pick twins every
   page).

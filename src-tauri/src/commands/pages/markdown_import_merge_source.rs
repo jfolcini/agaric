@@ -81,8 +81,14 @@ pub(super) struct MergeSource {
 /// file it names that the page holds written as that attachment, an
 /// `attachments::` line every file of which the page holds dropped, and for a
 /// folder's note its links to other notes written as those notes' titles.
-/// Code is left as it is.
-pub(super) fn merge_source(text: &str, vault: &MergeVault<'_>, held: &[HeldFile]) -> MergeSource {
+/// Code is left as it is. An `attachments::` line goes to the block whose
+/// `^id` it follows only when that block is one of the page's (`own`).
+pub(super) fn merge_source(
+    text: &str,
+    vault: &MergeVault<'_>,
+    held: &[HeldFile],
+    own: &HashSet<&str>,
+) -> MergeSource {
     let mut source = MergeSource {
         text: String::with_capacity(text.len()),
         template: None,
@@ -116,7 +122,8 @@ pub(super) fn merge_source(text: &str, vault: &MergeVault<'_>, held: &[HeldFile]
         }
         match merged_line(line, vault, held) {
             Merged::Line(line) => {
-                anchor = line_anchor(&line).or(anchor.filter(|_| block_tail(&line)));
+                let named = line_anchor(&line).filter(|id| own.contains(id.as_str()));
+                anchor = named.or(anchor.filter(|_| block_tail(&line)));
                 source.text.push_str(&line);
             }
             Merged::Held => {}
