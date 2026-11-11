@@ -20,6 +20,10 @@ const FOLDER_KEY: &str = "mirror.folder";
 /// read back. Absent, they are.
 const READ_BACK_KEY: &str = "mirror.read_back";
 
+/// `app_settings` key: `"true"` when the attachments pages link are copied
+/// into the folder ([`super::assets`]). Absent, they are not.
+const COPY_FILES_KEY: &str = "mirror.copy_files";
+
 /// The file in the mirror's folder that names the device writing it, so a
 /// second device refuses the folder.
 pub const MARKER_NAME: &str = ".agaric-mirror";
@@ -66,13 +70,16 @@ pub struct Settings {
     pub folder: Option<String>,
     /// Whether files changed outside Agaric are read back into Agaric.
     pub read_back: bool,
+    /// Whether the attachments pages link are copied into the folder.
+    pub copy_files: bool,
 }
 
 pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
     let rows = sqlx::query!(
-        "SELECT key, value FROM app_settings WHERE key IN (?, ?)",
+        "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?)",
         FOLDER_KEY,
         READ_BACK_KEY,
+        COPY_FILES_KEY,
     )
     .fetch_all(pool)
     .await?;
@@ -84,11 +91,20 @@ pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
     Ok(Settings {
         folder: value(FOLDER_KEY),
         read_back: value(READ_BACK_KEY).as_deref() != Some("false"),
+        copy_files: value(COPY_FILES_KEY).as_deref() == Some("true"),
     })
 }
 
 pub async fn set_read_back(pool: &SqlitePool, read_back: bool) -> Result<(), AppError> {
-    let value = if read_back { "true" } else { "false" };
+    set_flag(pool, READ_BACK_KEY, read_back).await
+}
+
+pub async fn set_copy_files(pool: &SqlitePool, copy_files: bool) -> Result<(), AppError> {
+    set_flag(pool, COPY_FILES_KEY, copy_files).await
+}
+
+async fn set_flag(pool: &SqlitePool, key: &str, on: bool) -> Result<(), AppError> {
+    let value = if on { "true" } else { "false" };
     let now = crate::db::now_ms();
     sqlx::query!(
         "INSERT INTO app_settings (key, value, updated_at)
@@ -96,7 +112,7 @@ pub async fn set_read_back(pool: &SqlitePool, read_back: bool) -> Result<(), App
          ON CONFLICT(key) DO UPDATE SET
              value = excluded.value,
              updated_at = excluded.updated_at",
-        READ_BACK_KEY,
+        key,
         value,
         now,
     )

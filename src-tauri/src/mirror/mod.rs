@@ -18,6 +18,7 @@
 //! when the page is gone, each only while it is unchanged. While the folder or
 //! its marker is missing, the mirror writes nothing and creates nothing.
 
+pub mod assets;
 pub mod ingest;
 pub mod paths;
 pub mod read_back;
@@ -85,6 +86,9 @@ pub struct MirrorStatus {
     /// While reading back is off, the files turning it on would read in
     /// ([`read_back::pending`]); empty while it is on.
     pub pending: Vec<String>,
+    /// Whether the attachments pages link are copied into the folder
+    /// ([`assets`]).
+    pub copy_files: bool,
 }
 
 /// What the mirror's task shares with the commands and the sync sink.
@@ -108,6 +112,11 @@ struct Inner {
     failed: BTreeMap<String, (String, String)>,
     /// New files no page owns that could not be read onto a page, by path.
     failed_files: BTreeMap<String, String>,
+    /// Copies changed outside Agaric that are no longer wanted, left in
+    /// place, by path.
+    kept_copies: Vec<String>,
+    /// Copies that could not be written, and why, by path.
+    failed_copies: BTreeMap<String, String>,
     last_pass_ms: Option<i64>,
 }
 
@@ -151,12 +160,18 @@ impl MirrorState {
         inner.diverged.clear();
         inner.failed.clear();
         inner.failed_files.clear();
+        inner.kept_copies.clear();
+        inner.failed_copies.clear();
     }
 
     /// The status, for `settings`, with `pending` from [`read_back::pending`].
     pub fn status(&self, settings: store::Settings, pending: Vec<String>) -> MirrorStatus {
         let inner = self.lock();
-        let store::Settings { folder, read_back } = settings;
+        let store::Settings {
+            folder,
+            read_back,
+            copy_files,
+        } = settings;
         let on = folder.is_some();
         MirrorStatus {
             supported: cfg!(desktop),
@@ -174,6 +189,16 @@ impl MirrorState {
                     page_id: page_id.clone(),
                     path: path.clone(),
                 })
+                .chain(
+                    inner
+                        .kept_copies
+                        .iter()
+                        .filter(|_| on)
+                        .map(|path| MirrorFile {
+                            page_id: String::new(),
+                            path: path.clone(),
+                        }),
+                )
                 .collect(),
             failed: inner
                 .failed
@@ -189,6 +214,7 @@ impl MirrorState {
                         .failed_files
                         .iter()
                         .filter(|_| on)
+                        .chain(&inner.failed_copies)
                         .map(|(path, message)| MirrorFailure {
                             page_id: String::new(),
                             path: path.clone(),
@@ -199,6 +225,7 @@ impl MirrorState {
             last_pass_ms: inner.last_pass_ms,
             read_back,
             pending,
+            copy_files,
         }
     }
 
@@ -228,6 +255,12 @@ impl MirrorState {
 
     fn set_paused(&self, reason: Option<String>) {
         self.lock().paused = reason;
+    }
+
+    fn set_copies(&self, kept: Vec<String>, failed: BTreeMap<String, String>) {
+        let mut inner = self.lock();
+        inner.kept_copies = kept;
+        inner.failed_copies = failed;
     }
 
     fn set_start_error(&self, reason: Option<String>) {
@@ -406,6 +439,17 @@ pub struct Mirror {
     ingest: Option<Ingest>,
     /// Whether files changed outside Agaric are read back, as of this tick.
     read_back: bool,
+    /// Whether attachments are copied into the folder, as of this tick.
+    copy_files: bool,
+    /// The copies written ([`assets::Copies`]).
+    copies: assets::Copies,
+    /// The copies this pass's pages link, the ones a full pass keeps.
+    linked_copies: HashSet<String>,
+    /// Whether a page of this pass could not be rendered, so its copies are
+    /// unknown and a full pass removes none for being unlinked.
+    unrendered: bool,
+    /// Copies that could not be written, and why, by path.
+    copy_failed: BTreeMap<String, String>,
     /// Each page's file as last seen: a change outside Agaric makes the page
     /// dirty.
     stats: HashMap<String, FileStat>,
@@ -457,7 +501,9 @@ impl Listing {
             }
             let path = entry.path();
             if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                listing.folders.push(path);
+                if !path.strip_prefix(root).is_ok_and(assets::is_copy_dir) {
+                    listing.folders.push(path);
+                }
             } else if name.ends_with(".md")
                 && let Ok(below) = path.strip_prefix(root)
             {
@@ -493,6 +539,7 @@ impl Mirror {
         state: MirrorState,
     ) -> Result<Self, AppError> {
         let store = StateDir::new(state.app_data_dir());
+        let copies = assets::Copies::load(state.app_data_dir());
         let pages = store.load()?;
         let watermark = own_head(&pool, &device_id).await?;
         Ok(Self {
@@ -507,6 +554,11 @@ impl Mirror {
             last_full: None,
             ingest: None,
             read_back: true,
+            copy_files: false,
+            copies,
+            linked_copies: HashSet::new(),
+            unrendered: false,
+            copy_failed: BTreeMap::new(),
             stats: HashMap::new(),
             settling: HashMap::new(),
             refused: HashMap::new(),
@@ -559,6 +611,11 @@ impl Mirror {
         // full one.
         let settings = store::settings(&self.pool).await?;
         self.read_back = settings.read_back;
+        if settings.copy_files != self.copy_files {
+            // Every page's links change, and the copies go or come.
+            self.copy_files = settings.copy_files;
+            self.full_due = true;
+        }
         let Some(folder) = settings.folder else {
             self.state.set_paused(None);
             self.full_due = true;
@@ -726,6 +783,7 @@ impl Mirror {
             title,
             path,
             &bytes,
+            &self.links(path),
         )
         .await;
         self.settling_new.remove(path);
@@ -865,6 +923,8 @@ impl Mirror {
         full: bool,
         mut dirty: HashSet<String>,
     ) -> Result<(), AppError> {
+        self.linked_copies.clear();
+        self.unrendered = false;
         let layout = self.load_layout().await?;
         let renamed: Vec<String> = layout
             .iter()
@@ -911,6 +971,8 @@ impl Mirror {
             }
         }
         self.layout = layout;
+        let complete = full && frozen.is_empty() && !self.unrendered;
+        self.sweep_copies(root, complete).await?;
         if full {
             self.full_due = false;
             self.last_full = Some(Instant::now());
@@ -922,6 +984,29 @@ impl Mirror {
             .cloned()
             .collect();
         self.state.passed(full, &known);
+        Ok(())
+    }
+
+    /// Remove the copies no longer wanted, each only while unchanged
+    /// ([`assets::Copies::remove_except`]): every one while copying is off,
+    /// one whose attachment is gone, and, after a full pass that rendered
+    /// every page (`complete`), one no page of its space links.
+    async fn sweep_copies(&mut self, root: &Path, complete: bool) -> Result<(), AppError> {
+        let ids = self.copies.ids();
+        let live = if ids.is_empty() || !self.copy_files {
+            HashSet::new()
+        } else {
+            assets::Copies::live(&self.pool, ids).await?
+        };
+        if !self.copy_files {
+            self.copy_failed.clear();
+        }
+        let linked = std::mem::take(&mut self.linked_copies);
+        let copy_files = self.copy_files;
+        let kept = self.copies.remove_except(root, &|path, copy| {
+            copy_files && live.contains(&copy.id) && (!complete || linked.contains(path))
+        })?;
+        self.state.set_copies(kept, self.copy_failed.clone());
         Ok(())
     }
 
@@ -1063,7 +1148,10 @@ impl Mirror {
                 return false;
             }
             Ok(Wrote::Refused(why)) => self.state.page_failed(page_id, path, &why),
-            Err(e) => self.state.page_failed(page_id, path, &e),
+            Err(e) => {
+                self.unrendered = true;
+                self.state.page_failed(page_id, path, &e);
+            }
         }
         self.stats
             .insert(page_id.to_owned(), file_stat(&root.join(path)));
@@ -1090,6 +1178,7 @@ impl Mirror {
             Err(AppError::NotFound(_)) => return Ok(Wrote::Done),
             Err(e) => return Err(e),
         };
+        let file = self.localized(root, path, file).await?;
         let target = root.join(path);
         let newest = self
             .pages
@@ -1130,6 +1219,51 @@ impl Mirror {
             }
         }
         self.record(page_id, path, shadow)
+    }
+
+    /// `file`, the render of the page whose file is at `path`, linking each
+    /// attachment to its copy while copying is on, the copies it links
+    /// written first. A copy that cannot be written leaves its link as
+    /// rendered, and is listed as failed.
+    async fn localized(
+        &mut self,
+        root: &Path,
+        path: &str,
+        file: PageFile,
+    ) -> Result<PageFile, AppError> {
+        let ids = assets::linked(&file.text);
+        let Some((space, _)) = path.split_once('/').filter(|_| self.copy_files) else {
+            return Ok(file);
+        };
+        if ids.is_empty() || pause_reason(root, &self.device_id).is_some() {
+            return Ok(file);
+        }
+        let (placed, failed) = self.copies.ensure(&self.pool, root, space, ids).await?;
+        for copy in &placed {
+            self.copy_failed.remove(copy);
+        }
+        self.linked_copies.extend(placed);
+        for (copy, why) in failed {
+            if self.copy_failed.insert(copy.clone(), why.clone()).is_none() {
+                tracing::warn!(
+                    path = copy,
+                    why,
+                    "the Markdown mirror cannot copy an attachment"
+                );
+            }
+        }
+        Ok(self.links(path).localize(file))
+    }
+
+    /// How the file at `path` links its attachments' copies: not at all
+    /// while copying is off.
+    fn links(&self, path: &str) -> assets::Links {
+        match path.split_once('/') {
+            Some((space, _)) if self.copy_files => {
+                assets::Links::for_page(path, self.copies.in_space(space))
+            }
+            _ => assets::Links::default(),
+        }
     }
 
     /// Count one more tick the page's file is missing; `false` once it has
@@ -1219,6 +1353,7 @@ impl Mirror {
             self.settling.insert(page_id.to_owned(), bytes);
             return Ok(Wrote::Diverged);
         }
+        let links = self.links(path);
         let Some(state) = self.pages.get(page_id).filter(|state| state.path == path) else {
             return Ok(Wrote::Diverged);
         };
@@ -1231,6 +1366,7 @@ impl Mirror {
             state,
             &bytes,
             render,
+            &links,
         )
         .await;
         let ingested = match ingested {

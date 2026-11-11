@@ -266,6 +266,7 @@ macro_rules! agaric_commands {
             $crate::commands::mirror::pick_mirror_folder,
             $crate::commands::mirror::set_mirror_folder,
             $crate::commands::mirror::set_mirror_read_back,
+            $crate::commands::mirror::set_mirror_copy_files,
             $crate::commands::mirror::get_mirror_status,
             // Read aloud (#5745)
             $crate::commands::speech::get_speech_status,
