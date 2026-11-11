@@ -1,4 +1,4 @@
-# Session 3822 — The Markdown mirror after a sync
+# Session 3824 — The Markdown mirror after a sync
 
 #5363's Testing box "Sync spec with `e2e_sync_peer`: a remote change rewrites the file through `SyncEvent::Complete.changed_page_ids`, and a snapshot catch-up (empty set) re-scans the space".
 
