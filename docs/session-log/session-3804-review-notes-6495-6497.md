@@ -1,4 +1,4 @@
-# Session 3803 — Review notes from #6495 and #6497
+# Session 3804 — Review notes from #6495 and #6497
 
 The follow-up for the reviewer's non-blocking notes on #6497 (versioned derivations and the integrity report) and #6495 (the History phone layout).
 
