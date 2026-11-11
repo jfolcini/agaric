@@ -1352,6 +1352,21 @@ describe('parseEnex — rules and strikethrough Agaric reads (#6032)', () => {
   })
 })
 
+describe('parseEnex — list markers Agaric reads (#6032)', () => {
+  it('writes each list item with one space after its marker, nested under its parent item', () => {
+    // The import keeps any spacing past a marker's one space as text, so a
+    // marker padded to four columns would store each item with leading spaces.
+    const enml =
+      '<ul><li>one<ol><li>first</li><li>second</li></ol></li><li>two</li></ul>' +
+      '<ol start="3"><li>third</li></ol>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    expect(at(parseEnex(xml, 'Notes.enex')).markdown).toBe(
+      '- one\n  1. first\n  2. second\n- two\n\n3. third',
+    )
+  })
+})
+
 describe('Evernote notebooks (#6032)', () => {
   const note = (title: string): EnexNote => ({
     title,

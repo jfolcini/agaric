@@ -341,6 +341,41 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     )
   })
 
+  it('#6032 — imports an Evernote list item’s text with no spaces before it', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-enex-list')
+    const title = `${marker}-note`
+    const enml =
+      `<en-note><ul><li>${marker}-bullet</li></ul>` +
+      `<ol><li>${marker}-numbered</li></ol></en-note>`
+    const enex = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<en-export>',
+      `<note><title>${title}</title><content><![CDATA[${enml}]]></content></note>`,
+      '</en-export>',
+    ].join('\n')
+    await importFile('import-enex-input', 'export.enex', enex, `Imported “export/${title}”`)
+
+    await navigateTo('Journal')
+    await openPageTitled(`export/${title}`)
+    for (const item of ['bullet', 'numbered']) {
+      const block = blockStaticByMarker(`${marker}-${item}`)
+      await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
+      const id = await block.getAttribute('data-block-id')
+      if (id === null) throw new Error(`the ${item} block has no data-block-id`)
+      const text = await browser.execute((blockId: string) => {
+        const el = document.querySelector(
+          `[data-testid="block-static"][data-block-id="${blockId}"]`,
+        )
+        const copy = el?.cloneNode(true)
+        if (!(copy instanceof Element)) return ''
+        copy.querySelector('[data-testid="list-marker"]')?.remove()
+        return copy.textContent ?? ''
+      }, id)
+      expect(text).toBe(`${marker}-${item}`)
+    }
+  })
+
   it('imports a .jex with each note a page titled by its notebook path, a to-do a task, a tag a page tag', async () => {
     await waitForAppReady()
     const marker = runScopedMarker('wdio-jex')
