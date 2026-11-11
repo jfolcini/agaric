@@ -192,4 +192,87 @@ describe('a native reading', () => {
     )
     expect(getReadAloudSnapshot()).toMatchObject({ reading: false, currentBlockId: null })
   })
+
+  it('logs the engine’s own message when speak_text rejects with an AppError', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        get_speech_status: () => 'Native',
+        get_speech_engine_available: () => true,
+        speak_text: () =>
+          Promise.reject({
+            kind: 'invalid_operation',
+            message: 'the speech engine failed: synthesis error -3',
+          }),
+        stop_speaking: () => null,
+      }),
+    )
+    await supportNative()
+
+    startReading(UTTERANCES, PAGE)
+    await vi.waitFor(() =>
+      expect(warn).toHaveBeenCalledWith('read-aloud', 'the speech engine stopped the reading', {
+        error: 'the speech engine failed: synthesis error -3',
+      }),
+    )
+  })
+
+  it('sends nothing for a reading stopped while it waited on the last stop', async () => {
+    const engine = nativeEngine()
+    await supportNative()
+    startReading(UTTERANCES.slice(0, 1), PAGE)
+    await vi.waitFor(() => expect(engine.spoken()).toHaveLength(1))
+    stopReading()
+    startReading(UTTERANCES.slice(1), PAGE)
+    stopReading()
+
+    engine.finishStop(0)
+    engine.finishStop(1)
+    for (let hop = 0; hop < 5; hop += 1) await Promise.resolve()
+    expect(engine.spoken()).toEqual(['first'])
+  })
+
+  it('lets the reading that replaced it read on when the replaced utterance reports its stop', async () => {
+    const engine = nativeEngine()
+    await supportNative()
+    startReading(UTTERANCES.slice(0, 1), PAGE)
+    await vi.waitFor(() => expect(engine.spoken()).toHaveLength(1))
+    startReading(UTTERANCES.slice(1), PAGE)
+    await vi.waitFor(() => expect(engine.spoken()).toHaveLength(2))
+
+    // The engine reports the utterance the new reading's QUEUE_FLUSH cut off.
+    engine.end(0, 'Stopped')
+    for (let hop = 0; hop < 5; hop += 1) await Promise.resolve()
+    expect(getReadAloudSnapshot()).toMatchObject({ reading: true, currentBlockId: 'B' })
+  })
+
+  it('lets the reading that replaced it read on when the replaced utterance fails', async () => {
+    let rejectFirst: (err: unknown) => void = () => {}
+    let calls = 0
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        get_speech_status: () => 'Native',
+        get_speech_engine_available: () => true,
+        speak_text: () => {
+          calls += 1
+          return calls === 1
+            ? new Promise<SpeakOutcome>((_, reject) => {
+                rejectFirst = reject
+              })
+            : new Promise<SpeakOutcome>(() => {})
+        },
+        stop_speaking: () => null,
+      }),
+    )
+    await supportNative()
+    startReading(UTTERANCES.slice(0, 1), PAGE)
+    await vi.waitFor(() => expect(calls).toBe(1))
+    startReading(UTTERANCES.slice(1), PAGE)
+    await vi.waitFor(() => expect(calls).toBe(2))
+
+    rejectFirst({ kind: 'invalid_operation', message: 'the speech engine failed' })
+    for (let hop = 0; hop < 5; hop += 1) await Promise.resolve()
+    expect(getReadAloudSnapshot()).toMatchObject({ reading: true, currentBlockId: 'B' })
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
 })
