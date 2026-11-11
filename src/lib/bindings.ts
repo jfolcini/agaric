@@ -965,9 +965,10 @@ export const commands = {
 	 */
 	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppError>(__TAURI_INVOKE("read_logs_for_report", { redact })),
 	/**
-	 *  Tauri command: rebuild every derived artefact from base tables, compare
-	 *  `blocks` with the Loro engine, and report where the live vault disagrees.
-	 *  Reader pool and engine exports; writes nothing.
+	 *  Tauri command: let the materializer settle, rebuild every derived artefact
+	 *  from base tables, compare `blocks` with the Loro engine, and report where
+	 *  the live vault disagrees. Reads through the reader pool and engine exports;
+	 *  the only writes are the queued work it waits for.
 	 */
 	computeReconciliationReport: () => typedError<ReconciliationReport, AppError>(__TAURI_INVOKE("compute_reconciliation_report")),
 	/**  Tauri command: return the current MCP status for the Settings tab. */
