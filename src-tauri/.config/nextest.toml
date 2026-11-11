@@ -132,8 +132,10 @@ setup = "iroh-no-proxy-windows"
 #   * `space_move_cmd_tests::move_beyond_one_undo_is_refused` (#5841) — it
 #     writes `MAX_REVERT_OPS` property values, then drops one fewer through
 #     the engine, so it runs far longer than its neighbours.
+#   * `mirror_round_trip::` (#5363) — each case imports the whole
+#     `markdown-corpus` and mirrors every page through three ticks.
 [[profile.default.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/mock_matches_backend_on_generated_op_chains_4669/) | test(/conformance_fixtures_match_backend/) | test(/move_sync_proptest::/) | test(/move_beyond_one_undo_is_refused/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/mock_matches_backend_on_generated_op_chains_4669/) | test(/conformance_fixtures_match_backend/) | test(/move_sync_proptest::/) | test(/move_beyond_one_undo_is_refused/) | test(/mirror_round_trip::/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 # The weekly deep-checks lane (#4282). `scheduled-deep-checks.yml`'s `bench-slo`
@@ -223,11 +225,11 @@ final-status-level = "flaky"
 # a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761,
 # find_lca_terminates_on_any_graph,
 # n_way_concurrent_mixed_streams_all_to_all_converges (#4474), and
-# move_sync_proptest (#5712).
+# move_sync_proptest (#5712), and mirror_round_trip (#5363).
 # (perf26_draft_recovery dropped in #3612 — see the default-profile note above:
 # it runs in ~0.7s now, so even a 3× coverage build stays far under 30s.)
 [[profile.ci.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/move_sync_proptest::/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/move_sync_proptest::/) | test(/mirror_round_trip::/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 # The SQL-only-fallback / reproject / recompute observability counters
