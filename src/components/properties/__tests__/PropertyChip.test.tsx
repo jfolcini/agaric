@@ -42,15 +42,16 @@ describe('PropertyChip', () => {
     expect(chip?.className).toContain('text-muted-foreground')
   })
 
-  // #1678: the wrapper composes the shared Badge primitive's pill chrome via
-  // badgeVariants() (rounded-full shape + base flex layout) so it stays in the
-  // pill family, while keeping the chip-specific muted tone and tighter padding.
-  it('composes the shared Badge pill chrome (rounded-full + base layout)', () => {
+  // #1678: the wrapper composes the shared Badge primitive's chrome via
+  // badgeVariants() (badge radius + base flex layout) so it stays in the
+  // chip family, while keeping the chip-specific muted tone and tighter padding.
+  it('composes the shared Badge chrome (badge radius + base layout)', () => {
     const { container } = render(<PropertyChip propKey="effort" value="2h" />)
 
     const chip = container.querySelector('.property-chip')
-    // Pill shape comes from the Badge `shape="pill"` recipe.
-    expect(chip?.className).toContain('rounded-full')
+    // The subtle chip radius comes from the Badge recipe; a text chip is never a pill.
+    expect(chip?.className).toContain('rounded-sm')
+    expect(chip?.className).not.toContain('rounded-full')
     // Base flex layout from the Badge primitive.
     expect(chip?.className).toContain('inline-flex')
     expect(chip?.className).toContain('items-center')

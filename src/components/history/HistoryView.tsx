@@ -349,7 +349,7 @@ export function HistoryView(): React.ReactElement {
       {entries.length > 0 && (
         <div
           // `ml-auto w-fit`: the parent is a block, so it would stretch full width.
-          className="hidden [@media(pointer:coarse)]:flex sticky bottom-2 z-10 ml-auto w-fit gap-2 rounded-full border bg-background/95 p-1 shadow-(--shadow-resting) backdrop-blur"
+          className="hidden [@media(pointer:coarse)]:flex sticky bottom-2 z-10 ml-auto w-fit gap-2 rounded-md border bg-background/95 p-1 shadow-(--shadow-resting) backdrop-blur"
           role="toolbar"
           aria-label={t('history.touchNavLabel')}
           data-testid="history-touch-nav"

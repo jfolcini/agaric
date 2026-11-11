@@ -48,7 +48,10 @@ export function FilterPill({
       data-slot="filter-pill"
       tone="secondary"
       {...rest}
-      className={cn('filter-pill min-w-0 max-w-[16rem] shrink-0 gap-1 text-xs', className)}
+      className={cn(
+        'filter-pill rounded-md min-w-0 max-w-[16rem] shrink-0 gap-1 text-xs',
+        className,
+      )}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role is forwarded to a <Badge> wrapper grouping a label + remove button; <fieldset>/<optgroup> etc. would break the inline pill layout and carry form/list semantics
       role="group"
       aria-label={groupAriaLabel ?? label}
@@ -57,7 +60,7 @@ export function FilterPill({
       <span className="min-w-0 truncate">{label}</span>
       <button
         type="button"
-        className="ml-0.5 inline-flex shrink-0 items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px] touch-target"
+        className="ml-0.5 inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px] touch-target"
         onClick={onRemove}
         onKeyDown={(e: React.KeyboardEvent) => {
           if (e.key === 'Delete' || e.key === 'Backspace') {

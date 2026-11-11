@@ -144,7 +144,13 @@
    *   lg  (8px)  — in-flow cards (the default resting surface).
    *   xl  (12px) — modals that float above everything: dialog,
    *                alert-dialog, sheet.
-   * A contained card must never read rounder than the modal over it. */
+   * A contained card must never read rounder than the modal over it.
+   * Radius stays subtle: anything that carries text — button, input, chip,
+   * badge, filter pill, toggle, segmented control, row — takes sm (chips
+   * and badges, via `Badge`) or md (controls), never `rounded-full` or a
+   * tier above its own. Full rounding is for things round by nature only:
+   * dots, colour swatches, avatars, the switch, spinners, progress and
+   * scrollbar thumbs, the FAB, and icon-only buttons floating over media. */
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

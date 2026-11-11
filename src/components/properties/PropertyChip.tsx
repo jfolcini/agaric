@@ -146,10 +146,10 @@ export function PropertyChip({
       role="group"
       aria-label={groupLabel}
       className={cn(
-        // Compose the shared Badge primitive's pill chrome (base flex layout,
-        // rounded-full shape, font-medium, text-xs size, transition) so the
-        // chip stays in sync with the rest of the pill family (#1678).
-        badgeVariants({ size: 'default', shape: 'pill' }),
+        // Compose the shared Badge primitive's chrome (base flex layout,
+        // badge radius, font-medium, text-xs size, transition) so the
+        // chip stays in sync with the rest of the chip family (#1678).
+        badgeVariants({ size: 'default' }),
         'property-chip',
         // PropertyChip overrides: Badge has no `muted` tone, and the chip uses a
         // tighter gap/padding than the default Badge. twMerge (via `cn`) resolves

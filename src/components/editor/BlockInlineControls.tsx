@@ -56,7 +56,7 @@ export function DateChip({
     <button
       type="button"
       className={cn(
-        `${chipClass} touch-hit-area flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none cursor-pointer`,
+        `${chipClass} touch-hit-area flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none cursor-pointer`,
         colorClass,
       )}
       title={label}
@@ -397,7 +397,7 @@ function RepeatIndicator({ repeatValue }: { repeatValue: string }): React.ReactE
     <span
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- inline status chip rendered among sibling chips; native <output> carries an implicit "Output" semantic and is not a drop-in for this inline <span> badge
       role="status"
-      className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground max-sm:px-2.5 max-sm:py-1"
+      className="repeat-indicator flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground max-sm:px-2.5 max-sm:py-1"
       aria-label={t('block.repeats', { value: label })}
     >
       <Repeat className="size-[calc(var(--agaric-font-size,1rem)*0.75)] flex-shrink-0" />
@@ -445,7 +445,7 @@ function InlineProperties({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="property-overflow inline-flex items-center flex-shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-ring-visible active:scale-95 max-sm:px-2.5 max-sm:py-1"
+              className="property-overflow inline-flex items-center flex-shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-ring-visible active:scale-95 max-sm:px-2.5 max-sm:py-1"
               data-testid="property-overflow"
               aria-label={t('block.showAllProperties', { count: filteredProperties.length })}
               // #1498: keep editor focus on click (see collapse-toggle note).
@@ -491,7 +491,7 @@ function AttachmentBadge({
           key={animKey ?? 'initial'}
           type="button"
           className={cn(
-            'attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 touch-hit-area',
+            'attachment-badge flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 touch-hit-area',
             animKey !== null && 'animate-in fade-in-0 zoom-in-95 duration-normal',
           )}
           data-testid="attachment-badge"
