@@ -2,12 +2,13 @@
  * ListItem — the shared row of a table-like list (Pages, Trash, History,
  * Search results, Tags, Templates, Properties, Agenda).
  *
- * Rows sit flush and are told apart by a hairline divider inset to the text
- * column (`list-row`, `src/index.css`), not by a card per row: a list reads
- * as one table, the icon / checkbox gutter stays clean, and the hover and
- * keyboard-cursor fills take the subtle chip radius. 44px on a coarse
- * pointer. `listRowVariants` carries the same chrome for rows that cannot
- * be an `<li>` (grid rows, options).
+ * A list is one card (`listCardVariants`, on the list's scroll container,
+ * never per row) holding flush rows told apart by full-width hairlines
+ * (`list-row`, `src/index.css`), with none after the last row. A section
+ * header is a header row inside the same card (`listHeaderVariants`), never
+ * a heading above it. Rows are 44px on a coarse pointer. `listRowVariants`
+ * carries the row chrome for rows that cannot be an `<li>` (grid rows,
+ * options).
  *
  * Supports `asChild` polymorphism (Radix `Slot`) so consumers can render
  * the chrome as an `<a>` for navigable lists while keeping the default
@@ -21,7 +22,7 @@ import type * as React from 'react'
 import { cn } from '@/lib/utils'
 
 const listRowVariants = cva(
-  'list-row group flex items-center gap-3 rounded-sm px-3 transition-colors [@media(pointer:coarse)]:min-h-11',
+  'list-row group flex items-center gap-3 px-3 transition-colors [@media(pointer:coarse)]:min-h-11',
   {
     variants: {
       density: {
@@ -35,6 +36,14 @@ const listRowVariants = cva(
     },
     defaultVariants: { density: 'default', interactive: true },
   },
+)
+
+/** The one card a list sits in. Goes on the scroll container, only while the list has rows. */
+const listCardVariants = cva('overflow-hidden rounded-lg border border-border bg-card')
+
+/** A section header as the card's own header row: muted fill, divider below. */
+const listHeaderVariants = cva(
+  'list-row flex items-center gap-2 bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground',
 )
 
 type ListItemProps = React.ComponentProps<'li'> &
@@ -60,4 +69,4 @@ const ListItem = ({
 }
 ListItem.displayName = 'ListItem'
 
-export { ListItem, listRowVariants }
+export { ListItem, listCardVariants, listHeaderVariants, listRowVariants }

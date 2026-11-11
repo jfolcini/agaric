@@ -74,4 +74,16 @@ test.describe('List rows on a phone @pages @mobile', () => {
     await navigateToView(page, 'Tags')
     await expectFlushTouchRows(page.locator('[data-slot="list-item"]'), 3)
   })
+
+  test('a list is one card, and its last row draws no divider against it', async ({ page }) => {
+    await navigateToView(page, 'Tags')
+    const rows = page.locator('[data-slot="list-item"]')
+    await expect(rows.nth(2)).toBeVisible()
+    const card = page.locator('[data-slot="scroll-area"]').filter({ has: rows.first() })
+    await expect(card).toHaveCSS('border-top-width', '1px')
+    await expect(card).toHaveCSS('border-top-left-radius', '8px')
+    const divider = (el: Element) => getComputedStyle(el, '::after').content
+    expect(await rows.first().evaluate(divider)).not.toBe('none')
+    expect(await rows.last().evaluate(divider)).toBe('none')
+  })
 })

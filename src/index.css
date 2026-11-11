@@ -2460,16 +2460,17 @@
  * then. The tint is an image layer so it sits over a row's own background. */
 /* ── List rows ──────────────────────────────────────────────────────────
  * The row of a table-like list (`listRowVariants`, `src/components/ui/
- * list-item.tsx`). Rows sit flush, separated by a hairline inset to the
- * text column (the row's own `px-3`), never by a card per row; the last row
- * of a run draws none. A virtualized row is absolutely positioned inline,
- * which wins over `relative`, so the divider anchors either way. */
+ * list-item.tsx`). The list is one card (`listCardVariants`); rows inside
+ * it sit flush, separated by a full-width hairline, and the last row of a
+ * run draws none against the card's own border. A virtualized row is
+ * absolutely positioned inline, which wins over `relative`, so the divider
+ * anchors either way. */
 @utility list-row {
   position: relative;
   &::after {
     content: '';
     position: absolute;
-    inset-inline: 0.75rem 0;
+    inset-inline: 0;
     bottom: 0;
     height: 1px;
     background-color: color-mix(in oklab, var(--border) 70%, transparent);

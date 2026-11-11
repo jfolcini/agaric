@@ -25,7 +25,7 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ListItem } from '@/components/ui/list-item'
+import { ListItem, listCardVariants } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useTagColors } from '@/hooks/useTagColors'
@@ -327,6 +327,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       >
         {(items) => (
           <ScrollArea
+            className={listCardVariants()}
             viewportRef={listRef}
             // The cap lives on the viewport, the element that scrolls: a
             // `max-height` on the Root leaves the viewport growing to its

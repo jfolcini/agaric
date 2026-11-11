@@ -35,6 +35,7 @@ import {
 import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchToolbar'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { listCardVariants } from '@/components/ui/list-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '@/hooks/useListMultiSelect'
@@ -53,6 +54,7 @@ import { notify } from '@/lib/notify'
 import { openNewPageDialog } from '@/lib/overlay-events'
 import type { SavedPagesView } from '@/lib/preferences'
 import { dropOtherSpacesTagChips, type PagesViewTuple } from '@/lib/saved-pages-views'
+import { cn } from '@/lib/utils'
 import { isExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
@@ -620,7 +622,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
       <ScrollArea
         viewportRef={listRef}
-        className="page-browser-list"
+        className={cn('page-browser-list', !showNoMatch && listCardVariants())}
         // The height cap must live on the viewport (the actual scroller), not
         // the Root: a `max-height`-only Root has computed `height: auto`, so
         // the viewport's `h-full` can't resolve and grows to full content —

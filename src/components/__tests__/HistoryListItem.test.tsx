@@ -109,7 +109,7 @@ describe('HistoryListItem', () => {
   it('is a flush list row with a divider, not a card', () => {
     renderInListbox(defaultProps())
     const row = screen.getByTestId('history-item-0')
-    expect(row).toHaveClass('list-row', 'rounded-sm')
+    expect(row).toHaveClass('list-row')
     expect(row).not.toHaveClass('border')
     expect(row).not.toHaveClass('rounded-lg')
   })

@@ -32,6 +32,7 @@ import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { TrashRowItem } from '@/components/TrashView/TrashRowItem'
 import { Button } from '@/components/ui/button'
+import { listCardVariants } from '@/components/ui/list-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { RichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import type { BlockRow } from '@/lib/bindings'
@@ -176,6 +177,7 @@ export function TrashListView({
         ) : (
           <>
             <ScrollArea
+              className={listCardVariants()}
               viewportRef={(node: HTMLDivElement | null) => {
                 scrollParentRef.current = node
                 if (typeof ref === 'function') ref(node)

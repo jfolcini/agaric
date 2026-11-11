@@ -164,7 +164,7 @@ describe('TrashRowItem', () => {
   it('is a flush list row with a divider, not a card', () => {
     renderRow()
     const row = screen.getByTestId('trash-item')
-    expect(row).toHaveClass('list-row', 'rounded-sm')
+    expect(row).toHaveClass('list-row')
     expect(row).not.toHaveClass('border')
     expect(row).not.toHaveClass('bg-card')
     expect(row).not.toHaveClass('rounded-lg')

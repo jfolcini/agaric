@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { HistoryListItem } from '@/components/HistoryListItem'
+import { listCardVariants } from '@/components/ui/list-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { entryKey, isRevertible } from '@/hooks/useHistorySelection'
 import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
@@ -121,6 +122,7 @@ export function HistoryListView({
     <>
       {entries.length > 0 && (
         <ScrollArea
+          className={listCardVariants()}
           viewportRef={listRef}
           viewportClassName="history-list p-0 m-0 focus:outline-none max-h-[calc(100dvh-220px)]"
           // ARIA grid pattern for history list — no semantic HTML

@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 
 import { PageRow } from '@/components/PageBrowser/PageRow'
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
+import { listHeaderVariants } from '@/components/ui/list-item'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
@@ -109,13 +110,16 @@ function HeaderRow({
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid row inside role="grid"; a real <tr> needs a <table> and breaks the flex/grid layout
       role="row"
       aria-labelledby={labelId}
-      className={cn('page-browser-section', showDivider && 'border-t border-border mt-1')}
+      className={cn(
+        listHeaderVariants({ className: 'page-browser-section' }),
+        showDivider && 'border-t border-border',
+      )}
       style={rowStyle(virtualRow.start)}
     >
       <div
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid cell inside role="row"; a real <td> needs a <table> and breaks the flex layout
         role="gridcell"
-        className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground"
+        className="flex items-center gap-2"
       >
         {isStarredHeader ? (
           <Bookmark className="h-3.5 w-3.5 text-star" aria-hidden="true" fill="currentColor" />
@@ -193,7 +197,7 @@ function TreePageRow({
       data-page-index={pageIndex}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid row inside role="grid"; a real <tr> needs a <table> and breaks the flex/grid layout
       role="row"
-      className={cn('list-row rounded-sm', focusedIndex === pageIndex && 'list-cursor')}
+      className={cn('list-row', focusedIndex === pageIndex && 'list-cursor')}
       style={rowStyle(virtualRow.start)}
     >
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner button controls; CSS-grid cell would break as a <td> without a <table> */}

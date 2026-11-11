@@ -20,6 +20,7 @@ import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { listCardVariants } from '@/components/ui/list-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import type { AgendaProjectedEntries } from '@/hooks/useAgendaProjectedEntries'
@@ -449,7 +450,7 @@ export function AgendaResults({
   const resultsList = (
     <ul
       ref={setListEl}
-      className="agenda-results-list relative m-0 p-0 list-none"
+      className={listCardVariants({ className: 'agenda-results-list relative m-0 p-0 list-none' })}
       aria-label={t('agenda.agendaResults')}
       style={{ height: `${totalSize}px` }}
     >
@@ -480,7 +481,8 @@ export function AgendaResults({
               data-index={virtualRow.index}
               ref={virtualizer.measureElement}
               style={rowStyle}
-              className="agenda-group"
+              // The card's own header row: muted fill, divider below.
+              className="agenda-group list-row bg-muted/50"
             >
               <SectionGroupHeader
                 asChild
