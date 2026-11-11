@@ -1161,7 +1161,8 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
              line (`⏫ 🔁 every week ⏳ YYYY-MM-DD 📅 YYYY-MM-DD`). The title has no line. \
              A link or tag is written as its name where that name reads back as the same \
              page or tag, else as its ULID (`[[ULID]]`, `#[ULID]`); a block reference as \
-             `[[Title#Heading]]` to a heading unique on its page, else `[[#^ULID]]` to a block \
+             `[[Title#Heading]]` to a heading unique on its page whose text holds no link \
+             or markup syntax or `:`, else `[[#^ULID]]` to a block \
              of the page and `[[Title#^ULID]]` to another page's, where that reads back as the \
              same block, else as `((ULID))`; and a ref-typed value as \
              `[[Title]]` where that reads back as its page, else as its ULID. Each block ends \

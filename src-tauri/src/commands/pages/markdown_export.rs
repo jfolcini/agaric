@@ -1731,12 +1731,13 @@ pub(super) async fn load_page_export_data(
         HashMap::new()
     };
     let mut refs = resolve_references(conn, page_id, &descendants).await?;
-    let headings = resolve_heading_refs(
-        conn,
-        &mut refs.block_ref_replacement,
-        &refs.block_ref_titles,
-    )
-    .await?;
+    // A duplicate writes every id raw, so it names no heading.
+    let headings = if read == PageRead::Duplicate {
+        HashMap::new()
+    } else {
+        let replacement = &mut refs.block_ref_replacement;
+        resolve_heading_refs(conn, replacement, &refs.block_ref_titles).await?
+    };
     if export || read == PageRead::File {
         refs.addressed_blocks
             .extend(load_addressed_blocks(conn, &descendants).await?);
