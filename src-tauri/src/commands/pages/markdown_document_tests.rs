@@ -69,7 +69,9 @@ fn arb_own_block_line() -> impl Strategy<Value = String> {
         "\\---",
     ];
     let rest = prop_oneof![2 => Just(String::new()), 1 => arb_prose()];
-    (proptest::sample::select(&SHAPES[..]), rest).prop_map(|(shape, rest)| format!("{shape}{rest}"))
+    (proptest::sample::select(&SHAPES[..]), rest)
+        .prop_map(|(shape, rest)| format!("{shape}{rest}"))
+        .prop_filter("no foreign math", |line| !holds_foreign_math(line))
 }
 
 /// [`arb_block`] whose content mixes in [`arb_own_block_line`]s: at its start,

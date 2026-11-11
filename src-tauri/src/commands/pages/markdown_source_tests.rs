@@ -154,6 +154,17 @@ fn arb_prose() -> impl Strategy<Value = String> {
         })
 }
 
+/// Whether `line` holds a `\(` or `\[` with its closer later on the line,
+/// which a foreign read takes as math (#6033 S4). No writer stores one.
+fn holds_foreign_math(line: &str) -> bool {
+    [("\\(", "\\)"), ("\\[", "\\]")]
+        .iter()
+        .any(|(open, close)| {
+            line.find(open)
+                .is_some_and(|at| line[at + 2..].contains(close))
+        })
+}
+
 /// A prose line, often opening with something the grammar reads as a marker,
 /// an escape or a property.
 fn arb_line() -> impl Strategy<Value = String> {
@@ -170,6 +181,7 @@ fn arb_line() -> impl Strategy<Value = String> {
         1 => (proptest::sample::select(&PLANNING[..]), arb_prose())
             .prop_map(|(keyword, prose)| format!("{keyword}: <2026-10-01> {prose}")),
     ]
+    .prop_filter("no foreign math", |line| !holds_foreign_math(line))
 }
 
 /// A fenced code block of backticks or tildes, sometimes left open: its body
@@ -583,6 +595,24 @@ fn data_with_names(
             .collect(),
     };
     data
+}
+
+/// Stored text holding `\(a\)` reads back from the export as the math
+/// `$a$`, as a foreign file's would (#6033 S4): no writer stores it, so the
+/// round trip need not keep it.
+#[test]
+fn a_stored_latex_inline_span_reads_back_as_math() {
+    for (stored, read) in [("\\(a\\)", "$a$"), ("x \\(a\\)", "x $a$")] {
+        let data = page_data(vec![row(BLOCK, PAGE, 1, stored)]);
+        let export = render_page_markdown(PAGE, &data);
+        let blocks =
+            import::parse_logseq_markdown(&import::strip_title_heading(&export, "Title")).blocks;
+        let contents: Vec<String> = blocks
+            .iter()
+            .map(|block| import::normalize_foreign_inline(&block.content).into_owned())
+            .collect();
+        assert_eq!(contents, [read], "export:\n{export}");
+    }
 }
 
 #[test]
