@@ -1170,9 +1170,10 @@ describe('BlockHistoryItem', () => {
 
   it('shows device_id with full opacity (not /60)', () => {
     renderInList(blockDefaultProps())
-    const deviceEl = screen.getByText('dev:DEVICE01')
+    // The label inherits its colour from the group it sits in.
+    const deviceEl = screen.getByText('dev:DEVICE01').closest('.history-item-device-group')
     expect(deviceEl).toHaveClass('text-muted-foreground')
-    expect(deviceEl.className).not.toContain('/60')
+    expect(deviceEl?.className).not.toContain('/60')
   })
 
   it('renders relative timestamp', () => {
