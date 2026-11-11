@@ -2763,8 +2763,8 @@ fn build_tauri_builder() -> tauri::Builder<tauri::Wry> {
     // `releases/latest/download/latest.json` endpoint. The frontend
     // boot check (`src/hooks/useUpdateCheck.ts`) consumes this plugin
     // via the `updater:default` capability granted in
-    // `capabilities/default.json`. Android updates flow through the
-    // Play Store (or sideloaded APK) — not Tauri's updater path — so
+    // `capabilities/default.json`. Android updates by installing a
+    // newer sideloaded APK, not through Tauri's updater, so
     // gate registration behind `not(mobile)`.
     //
     // Flathub-packaged builds get an ADDITIONAL runtime guard on top of
