@@ -32,19 +32,8 @@
 // ─── The count was wrong: it is not three ───────────────────────────
 //
 // #3991 asked whether a FOURTH copy existed, on the grounds that nobody had
-// looked for the third. Two more do, and they are BYTE-IDENTICAL to
-// each other and to the `stripTsComments` this module just replaced — same
-// `/*…*/`-first `String.replace` pair, same absence of string awareness, same
-// fail-open:
-//
-//   scripts/check-raw-invoke.mjs             `stripComments`
-//   scripts/check-persist-hooks.mjs          `stripComments`
-//
-// Demonstrated, not inferred: a `const GLOB = './fixtures/**'` above a real
-// `invoke('listBlocks')` and any JSDoc block below it blanks the call, and
-// `check-raw-invoke` finds zero violations in a file that has one. They are
-// left in place here only because migrating the remaining guards is a change
-// with its own verification burden, not because they are sound — #3993.
+// looked for the third. One more did, in `check-persist-hooks.mjs`,
+// byte-identical with the same fail-open; it imports this module now (#3993).
 //
 // `scripts/check-bulk-equivalence.mjs`'s `blank(src, { blankStrings })` is a
 // SEPARATE case: a purpose-built lexer offering a structural-vs-content view

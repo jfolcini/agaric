@@ -26,7 +26,8 @@ const CLEAN = `check-baseline-paths: ${SETS} path(s) resolve, across ${SETS} bas
 const DYNAMIC_SQL = 'src-tauri/dynamic-sql-baseline.txt'
 const UNSAFE = 'src-tauri/unsafe-allowlist.txt'
 const CONTENT_REGEX = 'scripts/content-regex-baseline.json'
-const RAW_INVOKE = 'scripts/check-raw-invoke.mjs'
+const RAW_LOCAL_STORAGE = 'scripts/check-raw-local-storage.mjs'
+const IPC_ERROR_PATH = 'scripts/check-ipc-error-path.mjs'
 
 function dataBody(kind) {
   switch (kind) {
@@ -136,18 +137,14 @@ void test("an entry is resolved against its set's base directory, not the repo r
 void test('a dangling entry in an embedded set exits 1 naming the set', () => {
   withGuardRepo(
     {
-      edit: ({ write }) =>
-        write(
-          RAW_INVOKE,
-          "const EXEMPT_FILES = ['src/gone.ts']\nconst EXEMPT_DIR_PREFIXES = ['entry/']\n",
-        ),
+      edit: ({ write }) => write(RAW_LOCAL_STORAGE, "const EXEMPT_FILES = ['src/gone.ts']\n"),
     },
     (run) => {
       const r = run()
       assert.equal(r.status, 1, r.stderr)
       assert.match(
         r.stderr,
-        /\n {2}scripts\/check-raw-invoke\.mjs:EXEMPT_FILES: `src\/gone\.ts` names a path that does not exist\n/,
+        /\n {2}scripts\/check-raw-local-storage\.mjs:EXEMPT_FILES: `src\/gone\.ts` names a path that does not exist\n/,
       )
     },
   )
@@ -158,17 +155,17 @@ void test('the verbose listing counts only the entries that resolve, data file a
     {
       edit: ({ write }) => {
         write(DYNAMIC_SQL, `1 ${ENTRY}\n1 src-tauri/src/moved.rs\n`)
-        write(
-          RAW_INVOKE,
-          `const EXEMPT_FILES = ['${ENTRY}', 'src/gone.ts']\nconst EXEMPT_DIR_PREFIXES = ['entry/']\n`,
-        )
+        write(RAW_LOCAL_STORAGE, `const EXEMPT_FILES = ['${ENTRY}', 'src/gone.ts']\n`)
       },
     },
     (run) => {
       const r = run('-v')
       assert.equal(r.status, 1, r.stderr)
       assert.match(r.stdout, /^ {5}1 path\(s\) {14}src-tauri\/dynamic-sql-baseline\.txt$/m)
-      assert.match(r.stdout, /^ {5}1 path\(s\) {14}scripts\/check-raw-invoke\.mjs:EXEMPT_FILES$/m)
+      assert.match(
+        r.stdout,
+        /^ {5}1 path\(s\) {14}scripts\/check-raw-local-storage\.mjs:EXEMPT_FILES$/m,
+      )
     },
   )
 })
@@ -238,8 +235,8 @@ void test('a source that cannot be read, or yields nothing, fails closed', () =>
         write('scripts/doc-code-paths-baseline.json', Buffer.from([0xff, 0xfe]))
         write('scripts/bulk-equivalence-baseline.json', '[{"test": "x"}]')
         write(DYNAMIC_SQL, '# emptied\n')
-        write(RAW_INVOKE, "const RENAMED = ['entry/']\n")
-        write('scripts/check-raw-local-storage.mjs', Buffer.from([0xff, 0xfe]))
+        write(RAW_LOCAL_STORAGE, "const RENAMED = ['entry/']\n")
+        write(IPC_ERROR_PATH, Buffer.from([0xff, 0xfe]))
       },
     },
     (run) => {
@@ -260,15 +257,11 @@ void test('a source that cannot be read, or yields nothing, fails closed', () =>
       assert.match(r.stderr, /\n {2}src-tauri\/dynamic-sql-baseline\.txt: yielded ZERO entries\./)
       assert.match(
         r.stderr,
-        /\n {2}scripts\/check-raw-invoke\.mjs: `EXEMPT_FILES` yielded no entries/,
+        /\n {2}scripts\/check-raw-local-storage\.mjs: `EXEMPT_FILES` yielded no entries/,
       )
       assert.match(
         r.stderr,
-        /\n {2}scripts\/check-raw-invoke\.mjs: `EXEMPT_DIR_PREFIXES` yielded no entries/,
-      )
-      assert.match(
-        r.stderr,
-        /\n {2}scripts\/check-raw-local-storage\.mjs: could not be read for `EXEMPT_FILES` \(TypeError: /,
+        /\n {2}scripts\/check-ipc-error-path\.mjs: could not be read for `NO_TEST_ALLOWLIST` \(TypeError: /,
       )
     },
   )
@@ -277,19 +270,21 @@ void test('a source that cannot be read, or yields nothing, fails closed', () =>
 void test('an embedded set whose literal is present but empty fails closed', () => {
   withGuardRepo(
     {
-      edit: ({ write }) =>
-        write(RAW_INVOKE, 'const EXEMPT_FILES = []\nconst EXEMPT_DIR_PREFIXES = new Set([])\n'),
+      edit: ({ write }) => {
+        write(RAW_LOCAL_STORAGE, 'const EXEMPT_FILES = []\n')
+        write(IPC_ERROR_PATH, 'const NO_TEST_ALLOWLIST = new Set([])\n')
+      },
     },
     (run) => {
       const r = run()
       assert.equal(r.status, 1, r.stderr)
       assert.match(
         r.stderr,
-        /\n {2}scripts\/check-raw-invoke\.mjs: `EXEMPT_FILES` yielded no entries/,
+        /\n {2}scripts\/check-raw-local-storage\.mjs: `EXEMPT_FILES` yielded no entries/,
       )
       assert.match(
         r.stderr,
-        /\n {2}scripts\/check-raw-invoke\.mjs: `EXEMPT_DIR_PREFIXES` yielded no entries/,
+        /\n {2}scripts\/check-ipc-error-path\.mjs: `NO_TEST_ALLOWLIST` yielded no entries/,
       )
     },
   )

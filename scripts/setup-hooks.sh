@@ -281,8 +281,7 @@ ensure_uv() {
 # compatible. Keep in lockstep with the `tool:` pins above — bumping one
 # without the other reintroduces the exact drift this table exists to
 # prevent (there is no automated cross-check of *installability*, only of
-# the version strings agreeing — see scripts/check-prek-version-pin.mjs and
-# its caveat).
+# the version strings agreeing — see scripts/check-tool-pins.mjs).
 pinned_version_for() {
   case "$1" in
     sqruff) echo "0.38.0" ;;
@@ -477,8 +476,7 @@ SQRUFF_VERSION_AWK='NR == 1 { print $2 }'
 # `<name> <version>` on one line, same shape as sqruff (#3742). prek has no
 # wrapper of its own to source this from — it IS the hook runner, there is
 # nothing standing between it and the developer's shell the way
-# zizmor-hook.sh stands in front of zizmor — so scripts/check-prek-version-pin.mjs
-# reads this constant directly out of this file instead.
+# zizmor-hook.sh stands in front of zizmor.
 PREK_VERSION_AWK='NR == 1 { print $2 }'
 TAPLO_VERSION_AWK='NR == 1 { print $2 }'
 TYPOS_VERSION_AWK='NR == 1 { print $2 }'

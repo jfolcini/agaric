@@ -2974,8 +2974,7 @@ jobs:
 
       - name: Install npm dependencies
         # `npm ci` (not `npm install`): `oxlint-tsgolint` is a devDependency
-        # whose exact version is pinned in the lock and checked against the
-        # `typescript` it pairs with by the `tsgolint-version-pin` prek hook.
+        # whose exact version is pinned in the lock.
         run: npm ci
 
       - name: Run oxlint --type-aware
@@ -3103,7 +3102,7 @@ jobs:
           # prek/taplo-cli/typos-cli pinned (#3742) — must match
           # `pinned_version_for` in scripts/setup-hooks.sh and the other
           # tool: lists in this repo. Verified by
-          # scripts/check-prek-version-pin.mjs.
+          # scripts/check-tool-pins.mjs.
           tool: prek@0.3.8,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.46.0,sqruff@0.38.0
 
       - name: Install cargo plugins via prebuilt binaries

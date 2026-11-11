@@ -2,7 +2,8 @@
  * The central registry of traced interaction span names (#2110, M4).
  *
  * Every `traceInteraction` call MUST name its span with a member of this map —
- * enforced by `scripts/check-trace-interactions.mjs`. Centralising the names
+ * enforced by its `InteractionName` parameter type, which `as const` narrows to
+ * the literal values below. Centralising the names
  * is the M4 PII guarantee for the *name* dimension: a span name can only ever
  * be one of these reviewed, opaque labels, never an interpolated string that
  * could leak a page title, query text, or block content.
