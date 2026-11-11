@@ -2532,13 +2532,23 @@
  * the container (Pages rows hold their own tabbable buttons) nor off any
  * ancestor: the Journal container and #main-content take programmatic focus at
  * boot and match :focus-visible then. The tint is an image layer so it sits
- * over a row's own background. */
+ * over a row's own background. The accent bar stops short of the row's ends
+ * so a card's rounded corner never clips it into a curve. */
 @utility list-cursor {
   background-image: linear-gradient(
     color-mix(in oklab, var(--accent) 30%, transparent),
     color-mix(in oklab, var(--accent) 30%, transparent)
   );
-  box-shadow: inset 2px 0 0 var(--ring);
+  position: relative;
+  &::before {
+    content: '';
+    position: absolute;
+    inset-block: 4px;
+    inset-inline-start: 0;
+    width: 2px;
+    background-color: var(--ring);
+    pointer-events: none;
+  }
   :where(:has(> :focus-visible)) > &,
   :where([role='grid'], [aria-activedescendant]):focus-visible & {
     @apply outline-hidden ring-2 ring-inset ring-ring;

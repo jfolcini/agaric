@@ -108,6 +108,45 @@ test.describe('List rows on a phone @pages @mobile', () => {
     ).toBeLessThanOrEqual(resetBox.height / 2)
   })
 
+  // The cursor's accent bar used to be an inset box-shadow, which the card's
+  // rounded corner bent into a curve on the first and last rows. The bar is
+  // inset at both ends alike, so the top corner row stands for both.
+  test("the cursor bar on the card's first row clears its rounded corner", async ({ page }) => {
+    await openPagesView(page)
+    await createPageFromPagesView(page, 'Row one')
+    await navigateToView(page, 'History')
+    const grid = page.getByRole('grid')
+    await expect(grid.locator('[data-history-item]').nth(2)).toBeVisible()
+    await grid.focus()
+    await page.keyboard.press('Home')
+    const row = grid.locator('.list-cursor')
+    await expect(row).toHaveCount(1)
+    const m = await row.evaluate((el) => {
+      const bar = getComputedStyle(el, '::before')
+      const card = el.closest('[data-slot="scroll-area"]') as HTMLElement
+      const cs = getComputedStyle(card)
+      return {
+        content: bar.content,
+        width: bar.width,
+        top: parseFloat(bar.top),
+        bottom: parseFloat(bar.bottom),
+        rowTop: el.getBoundingClientRect().top,
+        cardTop: card.getBoundingClientRect().top,
+        radius: parseFloat(cs.borderTopLeftRadius),
+        border: parseFloat(cs.borderTopWidth),
+      }
+    })
+    // The row sits in the card's corner, so the corner can clip it.
+    expect(Math.abs(m.rowTop - (m.cardTop + m.border))).toBeLessThanOrEqual(FLUSH_TOLERANCE_PX)
+    expect(m.content).not.toBe('none')
+    expect(m.width).toBe('2px')
+    // How far the inner corner curve reaches into a 2px-wide strip at the edge.
+    const r = m.radius - m.border
+    const clip = r - Math.sqrt(r * r - (r - 2) * (r - 2))
+    expect(m.top).toBeGreaterThanOrEqual(clip)
+    expect(m.bottom).toBeGreaterThanOrEqual(clip)
+  })
+
   test('Tags rows sit flush and are touch-sized', async ({ page }) => {
     await navigateToView(page, 'Tags')
     await expectFlushTouchRows(page.locator('[data-slot="list-item"]'), 3)
