@@ -648,3 +648,54 @@ async fn a_file_renamed_outside_agaric_renames_its_page() {
     assert!(!fx.root.join(ALPHA).exists(), "the old file is not written again");
     assert!(fx.status().await.failed.is_empty());
 }
+
+/// The pages `source`'s blocks link to.
+async fn linked_from(fx: &Fx, source: &str) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT l.target_id FROM block_links l JOIN blocks s ON s.id = l.source_id
+          WHERE s.page_id = ? AND s.deleted_at IS NULL",
+    )
+    .bind(source)
+    .fetch_all(&fx.pool)
+    .await
+    .unwrap()
+}
+
+/// Obsidian rewrites the files linking to a file as it renames it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rename_and_the_links_rewritten_with_it_keep_one_page_and_its_backlinks() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    let (beta, _) = fx.page("Beta", &[&format!("see [[{alpha}]]")]).await;
+    fx.tick().await;
+    let linking = std::fs::read_to_string(fx.root.join("TestSpace/Beta.md")).unwrap();
+    assert!(linking.contains("[[Alpha]]"), "{linking}");
+
+    rename_at(&fx, ALPHA, "TestSpace/Gamma.md");
+    write_at(&fx, "TestSpace/Beta.md", linking.replace("[[Alpha]]", "[[Gamma]]"));
+    fx.settle_file().await;
+    fx.tick().await;
+
+    assert_eq!(pages_titled(&fx, "Gamma").await, [alpha.clone()], "one page");
+    assert_eq!(linked_from(&fx, &beta).await, [alpha]);
+}
+
+/// Obsidian makes a note from a link to a page nobody wrote yet.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_and_a_link_to_it_written_together_make_one_page() {
+    let mut fx = Fx::new().await;
+    let (beta, _) = fx.page("Beta", &["see"]).await;
+    fx.tick().await;
+    let linking = std::fs::read_to_string(fx.root.join("TestSpace/Beta.md")).unwrap();
+
+    write_at(&fx, "TestSpace/Gamma.md", "written\n");
+    write_at(&fx, "TestSpace/Beta.md", linking.replace("see", "see [[Gamma]]"));
+    fx.settle_file().await;
+    fx.tick().await;
+
+    let gamma = pages_titled(&fx, "Gamma").await;
+    assert_eq!(gamma.len(), 1, "one page");
+    assert_eq!(fx.contents(&gamma[0]).await, ["written"], "the file's");
+    assert_eq!(linked_from(&fx, &beta).await, gamma);
+    assert!(fx.status().await.failed.is_empty(), "{:?}", fx.status().await.failed);
+}
