@@ -4,6 +4,8 @@
 //! Criterion benchmarks for the Markdown mirror (#5363), the task that writes
 //! every page to a folder and reads back edits made there:
 //!   - `mirror_dirty_tick` — a tick writing N pages a sync named
+//!   - `mirror_large_page_tick` — a tick writing one page of 2K blocks, the
+//!     whole-page render each change of a large page costs
 //!   - `mirror_startup_pass` — the first tick after a restart over a vault the
 //!     mirror already wrote: a full pass that renders every page and compares
 //!     it with the text last written, writing nothing
@@ -191,10 +193,13 @@ fn bench_dirty_tick(c: &mut Criterion) {
     const PAGES: usize = 1000;
     let (vault, mut mirror) = rt.block_on(mirrored(PAGES, 10));
     let mut group = c.benchmark_group("mirror_dirty_tick");
+    // A name filter skips the timed loop but not the checks after it.
+    let timed = std::cell::Cell::new(0u64);
     group.sample_size(10);
     for dirty in [10usize, 100, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(dirty), &dirty, |b, &dirty| {
             b.iter_custom(|iters| {
+                timed.set(timed.get() + iters);
                 rt.block_on(async {
                     let mut total = Duration::ZERO;
                     for round in 0..iters {
@@ -222,8 +227,48 @@ fn bench_dirty_tick(c: &mut Criterion) {
     let file = vault.folder.path().join(SPACE_NAME).join("Page 0.md");
     let text = std::fs::read_to_string(&file).unwrap();
     assert!(
-        text.contains("Edited "),
+        timed.get() == 0 || text.contains("Edited "),
         "the dirty pages were written: {text}"
+    );
+    rt.block_on(async { vault.mat.shutdown() });
+}
+
+fn bench_large_page_tick(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    const BLOCKS: usize = 2_000;
+    let (vault, mut mirror) = rt.block_on(mirrored(1, BLOCKS));
+    let mut group = c.benchmark_group("mirror_large_page_tick");
+    // A name filter skips the timed loop but not the checks after it.
+    let timed = std::cell::Cell::new(0u64);
+    group.sample_size(10);
+    group.bench_function(BenchmarkId::from_parameter(BLOCKS), |b| {
+        b.iter_custom(|iters| {
+            timed.set(timed.get() + iters);
+            rt.block_on(async {
+                let mut total = Duration::ZERO;
+                for round in 0..iters {
+                    sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+                        .bind(format!("Edited {round}"))
+                        .bind(block_id(0, (round as usize) % BLOCKS))
+                        .execute(&vault.pool)
+                        .await
+                        .unwrap();
+                    vault.state.note_sync(&[page_id(0)], Some(1));
+                    let start = Instant::now();
+                    mirror.tick().await.unwrap();
+                    total += start.elapsed();
+                }
+                total
+            })
+        });
+    });
+    group.finish();
+    let file = vault.folder.path().join(SPACE_NAME).join("Page 0.md");
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        timed.get() == 0 || text.contains("Edited "),
+        "the page was written: {}",
+        text.len()
     );
     rt.block_on(async { vault.mat.shutdown() });
 }
@@ -303,10 +348,13 @@ fn bench_ingest_merge(c: &mut Criterion) {
         "the page renders every block: {lines} lines"
     );
     let mut group = c.benchmark_group("mirror_ingest_merge");
+    // A name filter skips the timed loop but not the checks after it.
+    let timed = std::cell::Cell::new(0u64);
     group.sample_size(10);
     group.bench_function(BenchmarkId::from_parameter(BLOCKS), |b| {
         let mut round = 0usize;
         b.iter_custom(|iters| {
+            timed.set(timed.get() + iters);
             rt.block_on(async {
                 let mut total = Duration::ZERO;
                 for _ in 0..iters {
@@ -346,13 +394,14 @@ fn bench_ingest_merge(c: &mut Criterion) {
                 .fetch_one(&vault.pool),
         )
         .unwrap();
-    assert!(edited > 0, "the saves landed");
+    assert!(timed.get() == 0 || edited > 0, "the saves landed");
     rt.block_on(async { vault.mat.shutdown() });
 }
 
 criterion_group!(
     mirror_benches,
     bench_dirty_tick,
+    bench_large_page_tick,
     bench_startup_pass,
     bench_idle_tick,
     bench_catchup_pass,
