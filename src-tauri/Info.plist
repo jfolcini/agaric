@@ -4,5 +4,7 @@
   <dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>Agaric records voice notes with the microphone.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Agaric uses the camera to scan the QR code that pairs another device.</string>
   </dict>
 </plist>
