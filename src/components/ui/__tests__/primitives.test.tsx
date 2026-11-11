@@ -380,16 +380,12 @@ describe('Label', () => {
 // ---------------------------------------------------------------------------
 
 describe('listCardVariants / listHeaderVariants', () => {
-  it('the card is one bordered surface with the card radius', () => {
-    expect(listCardVariants().split(' ')).toEqual(
-      expect.arrayContaining([
-        'rounded-lg',
-        'border',
-        'border-border',
-        'bg-card',
-        'overflow-hidden',
-      ]),
+  it('the card is one bordered surface with the card radius, and never clips its rows', () => {
+    const classes = listCardVariants().split(' ')
+    expect(classes).toEqual(
+      expect.arrayContaining(['rounded-lg', 'border', 'border-border', 'bg-card']),
     )
+    expect(classes).not.toContain('overflow-hidden')
   })
 
   it('a section header is a divided header row on a muted fill', () => {

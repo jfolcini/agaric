@@ -38,8 +38,14 @@ const listRowVariants = cva(
   },
 )
 
-/** The one card a list sits in. Goes on the scroll container, only while the list has rows. */
-const listCardVariants = cva('overflow-hidden rounded-lg border border-border bg-card')
+/**
+ * The one card a list sits in. Goes on the scroll container, only while the list has rows.
+ * It never clips: a row wider than the card (touch-sized actions at a narrow width) must
+ * stay reachable, so the end rows round their own corners instead.
+ */
+const listCardVariants = cva(
+  'rounded-lg border border-border bg-card [&>:first-child]:rounded-t-[inherit] [&>:last-child]:rounded-b-[inherit]',
+)
 
 /** A section header as the card's own header row: muted fill, divider below. */
 const listHeaderVariants = cva(
