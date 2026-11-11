@@ -19,9 +19,11 @@
 # slow prek hook-toolchain install (~10 cargo tools, some compiled from source)
 # is launched DETACHED by setup.sh under CLAUDE_CODE_REMOTE — it overran the
 # 600s budget when inline and got SIGKILLed mid-install, leaving the git hooks
-# unwired. Backgrounded, it finishes a couple of minutes after this hook
-# returns; until then commits still work and those checks run in CI. See the
-# retro in scripts/setup.sh for details.
+# unwired. Backgrounded, it wires the git hooks as soon as the pre-commit-stage
+# tools are installed (minutes with prebuilt binaries, far longer when binstall
+# has to compile them) and installs the pre-push-only tools
+# after that; until the hooks are wired, commits still work and those checks
+# run in CI. See the retro in scripts/setup.sh for details.
 #
 # Everything is idempotent and best-effort: re-running on each remote session
 # start only fills gaps — already-installed tools are skipped — so even if a

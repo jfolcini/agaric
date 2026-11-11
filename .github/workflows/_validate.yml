@@ -497,7 +497,7 @@ jobs:
           echo "Both Cargo.lock files are graph-consistent with their manifests."
 
   # ---------------------------------------------------------------------------
-  # lint — prek hook suite (excluding vitest/cargo-test/no-commit-to-branch),
+  # lint — prek hook suite (excluding no-commit-to-branch),
   # npm audit signatures (blocking), cargo audit (blocking — see PEND-41 R5), and the sqlx
   # offline-cache drift check. Needs the full Node + Rust + mold + cargo
   # plugins stack because prek's hooks invoke clippy, cargo-deny, sqruff,
@@ -798,10 +798,9 @@ jobs:
       - name: Run prek (same as `prek run --all-files` locally)
         env:
           # SKIP is computed by the preceding "Compute prek SKIP" step and
-          # exported via $GITHUB_ENV. It always carries the pre-push-only /
-          # sibling-job hooks (no-commit-to-branch, vitest, cargo-test) and
-          # appends a category's hooks only when that category is absent from
-          # the diff (`prek_skip_list` in scripts/verify-ci-equivalent.sh has
+          # exported via $GITHUB_ENV. It always carries the CI-only
+          # no-commit-to-branch and appends a category's hooks only when that
+          # category is absent from the diff (`prek_skip_list` in scripts/verify-ci-equivalent.sh has
           # the per-category + compound AND rules).
           # Security / hygiene hooks are never in it, so they always run here.
           SKIP: ${{ env.SKIP }}
