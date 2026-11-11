@@ -573,6 +573,7 @@ jobs:
           scripts/check-workflow-liveness.test.mjs
           scripts/file-fuzz-findings.test.mjs
           scripts/npm-audit-retry.test.mjs
+          scripts/apt-install-action.test.mjs
           scripts/lib/rust-scan.test.mjs
           scripts/check-table-ownership.test.mjs
           scripts/lib/check-dynamic-sql.test.mjs
