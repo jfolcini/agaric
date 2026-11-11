@@ -578,3 +578,21 @@ async fn a_new_file_one_undo_could_not_revert_leaves_no_page() {
     let file = std::fs::read_to_string(fx.root.join("TestSpace/Huge.md")).unwrap();
     assert_eq!(file, huge);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_landing_while_a_new_file_is_read_is_not_written_over() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    // CRLF, so the read has a write-back to make.
+    write_at(&fx, "TestSpace/Delta.md", "one\r\n");
+    let newer = fx.root.join("TestSpace/Delta.md");
+    *fx.on_event.lock().unwrap() =
+        Some(Box::new(move || std::fs::write(&newer, "newer\n").unwrap()));
+    fx.settle_file().await;
+
+    let pages = pages_titled(&fx, "Delta").await;
+    assert_eq!(pages.len(), 1);
+    assert_eq!(fx.contents(&pages[0]).await, ["one"]);
+    let file = std::fs::read_to_string(fx.root.join("TestSpace/Delta.md")).unwrap();
+    assert_eq!(file, "newer\n", "the newer save is kept, to be read next");
+}
