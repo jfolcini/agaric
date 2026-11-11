@@ -126,10 +126,11 @@ export function countTasksAtOrAbove<T extends Pick<TreeItem, 'id' | 'depth'>>(
 ): Map<string, number> {
   const counts = new Map<string, number>()
   // The count of the last block seen at each depth: the parent of the next block one deeper.
+  // A root reads `atDepth[-1]`, which is never set.
   const atDepth: number[] = []
   for (const item of items) {
     const { depth } = item
-    const count = (depth > 0 ? (atDepth[depth - 1] ?? 0) : 0) + (isTask(item) ? 1 : 0)
+    const count = (atDepth[depth - 1] ?? 0) + (isTask(item) ? 1 : 0)
     counts.set(item.id, count)
     atDepth[depth] = count
   }

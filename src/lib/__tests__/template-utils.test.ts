@@ -1148,3 +1148,24 @@ describe('insertTemplateBlocks — the `<% recording %>` placeholder (#5364)', (
     expect(await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')).toEqual(['NEW1'])
   })
 })
+
+describe('insertTemplateBlocks — text on one side of the placeholder (#5364)', () => {
+  it.each(['Play <% recording %>', '<% recording %> here'])(
+    'copies %j, which is more than the placeholder',
+    async (content) => {
+      stubTemplates({
+        load_page_subtree: () => ({
+          blocks: [makeBlockRow({ id: 'TC1', content, parent_id: 'TMPL', position: 0 })],
+          truncated: false,
+          total: 1,
+        }),
+        create_blocks_batch: () => withOps({ blocks: [makeBlockRow({ id: 'NEW1', content })] }),
+      })
+
+      expect(await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')).toEqual(['NEW1'])
+      const batch = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'create_blocks_batch')
+      const args = batch?.[1] as { specs: Array<{ content: string }> } | undefined
+      expect(args?.specs.map((s) => s.content)).toEqual([content])
+    },
+  )
+})
