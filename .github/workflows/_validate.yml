@@ -1450,7 +1450,11 @@ jobs:
             # shellcheck disable=SC2086
             npx playwright test $SPECS
           else
-            npx playwright test --shard "$SHARD/4"
+            # Dealt by each file's measured time (scripts/playwright-shard.mjs):
+            # `--shard` cuts equal test counts, and the slow files sort together.
+            files=$(node scripts/playwright-shard.mjs "$SHARD/4")
+            # shellcheck disable=SC2086
+            npx playwright test $files
           fi
 
       - name: Upload Playwright report (on failure)

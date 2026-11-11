@@ -2504,7 +2504,9 @@
  *
  * Mirrors PageRow's leading run — px-3 + checkbox + gap-3 + star
  * button + gap-3 — at both pointer sizes (`size-4` / `size-6` fine,
- * `min-w-11` / `size-11` coarse). `pages-namespace-indent.spec.ts`
+ * `min-w-11` / `size-11` coarse). A touch phone's row hides both, so
+ * `TreePageRow` drops the gutter there on the same predicate.
+ * `pages-namespace-indent.spec.ts`
  * measures the two shapes against each other, so drift on either side
  * reddens. */
 @utility page-tree-gutter {
