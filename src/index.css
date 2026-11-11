@@ -2473,8 +2473,8 @@
 }
 
 /* A History row's cell below `sm`: the meta line shares the first line with
- * the labelled Diff / Reset actions, and the content takes the full width
- * under it, indented past the checkbox. Wrapping the actions onto a line of
+ * the labelled Diff / Reset actions; the content takes the second line,
+ * indented past the checkbox, and the device id trails it under the actions. Wrapping the actions onto a line of
  * their own made every row three lines tall on a phone. From `sm` up it is a
  * single flex line. The utility owns `display` at both widths: a separate
  * `flex` class would come later in the sheet and override the grid. */
@@ -2499,9 +2499,17 @@
       grid-row: 1;
       min-width: 0;
     }
-    & > .history-item-main > :not(:first-child) {
-      grid-column: 2 / -1;
+    & > .history-item-main > :not(:first-child, .history-item-device-group) {
+      grid-column: 2;
       grid-row: 2;
+    }
+    & > .history-item-main > .history-item-device-group {
+      grid-column: 3 / -1;
+      grid-row: 2;
+      justify-self: end;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     & > .diff-toggle-btn {
       grid-column: 3;

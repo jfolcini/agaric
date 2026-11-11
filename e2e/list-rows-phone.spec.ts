@@ -82,18 +82,27 @@ test.describe('List rows on a phone @pages @mobile', () => {
     const badge = row.getByTestId('history-type-badge')
     const reset = row.getByRole('button', { name: 'Reset to this point' })
     const content = row.locator('.history-item-preview')
+    const device = row.locator('.history-item-device-group')
     await expect(content).toBeVisible()
-    const [badgeBox, resetBox, contentBox] = await Promise.all([
+    const [badgeBox, resetBox, contentBox, deviceBox] = await Promise.all([
       badge.boundingBox(),
       reset.boundingBox(),
       content.boundingBox(),
+      device.boundingBox(),
     ])
-    if (!badgeBox || !resetBox || !contentBox) throw new Error('row parts are not laid out')
+    if (!badgeBox || !resetBox || !contentBox || !deviceBox) {
+      throw new Error('row parts are not laid out')
+    }
     // Reset sits on the badge's line, and the content takes a line of its own
     // below it, starting at the badge's left edge.
     expect(resetBox.y).toBeLessThan(contentBox.y)
     expect(contentBox.y).toBeGreaterThanOrEqual(badgeBox.y + badgeBox.height - 1)
     expect(Math.abs(contentBox.x - badgeBox.x)).toBeLessThanOrEqual(1)
+    // Two lines, not three: the device id trails the content line instead of
+    // wrapping onto a line of its own under the badge.
+    const deviceCenter = deviceBox.y + deviceBox.height / 2
+    expect(deviceCenter).toBeGreaterThanOrEqual(contentBox.y)
+    expect(deviceCenter).toBeLessThanOrEqual(contentBox.y + contentBox.height)
     expect(
       Math.abs(resetBox.y + resetBox.height / 2 - (badgeBox.y + badgeBox.height / 2)),
     ).toBeLessThanOrEqual(resetBox.height / 2)
