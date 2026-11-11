@@ -2449,15 +2449,6 @@
   @apply ring-2 ring-inset ring-ring bg-ring/15;
 }
 
-/* Keyboard cursor of a navigable list row. The cursor rests on row 0 before any
- * key is pressed, so at rest it is only a tint (History's touch ↑/↓ and the
- * document-level Space/Enter shortcuts act on it without focus); the ring shows
- * while keyboard focus is on this row or a sibling row, or on the composite
- * container (document-level lists move focus there on a navigation key). Not
- * keyed off focus deeper in the container (Pages rows hold their own tabbable
- * buttons) nor off any ancestor: the Journal container
- * and #main-content take programmatic focus at boot and match :focus-visible
- * then. The tint is an image layer so it sits over a row's own background. */
 /* ── List rows ──────────────────────────────────────────────────────────
  * The row of a table-like list (`listRowVariants`, `src/components/ui/
  * list-item.tsx`). The list is one card (`listCardVariants`); rows inside
@@ -2481,9 +2472,17 @@
   }
 }
 
-/* The keyboard cursor on a list row: a fill plus a 2px edge bar in the
- * ring colour, so the row stays legible where a tint alone washes out
- * (dark, high contrast). */
+/* Keyboard cursor of a navigable list row. The cursor rests on row 0 before any
+ * key is pressed, so at rest it is a tint plus a 2px edge bar in the ring
+ * colour, which keeps the row legible where a tint alone washes out (dark,
+ * high contrast); History's touch ↑/↓ and the document-level Space/Enter
+ * shortcuts act on it without focus. The ring shows while keyboard focus is on
+ * this row or a sibling row, or on the composite container (document-level
+ * lists move focus there on a navigation key). Not keyed off focus deeper in
+ * the container (Pages rows hold their own tabbable buttons) nor off any
+ * ancestor: the Journal container and #main-content take programmatic focus at
+ * boot and match :focus-visible then. The tint is an image layer so it sits
+ * over a row's own background. */
 @utility list-cursor {
   background-image: linear-gradient(
     color-mix(in oklab, var(--accent) 30%, transparent),

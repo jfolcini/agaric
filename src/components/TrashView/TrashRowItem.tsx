@@ -123,7 +123,7 @@ export function TrashRowItem({
           className:
             'trash-item flex-col sm:flex-row items-start sm:items-center justify-between gap-2 cursor-pointer',
         }),
-        isSelected ? 'bg-accent/50 border-accent' : 'hover:bg-accent/50 active:bg-accent/70',
+        isSelected ? 'bg-accent/50' : 'hover:bg-accent/50 active:bg-accent/70',
         isFocused && 'list-cursor',
       )}
       data-testid="trash-item"

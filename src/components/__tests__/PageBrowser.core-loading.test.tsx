@@ -261,6 +261,29 @@ describe('PageBrowser', () => {
 
     expect(await screen.findByText(/No pages yet/)).toBeInTheDocument()
   })
+  // The list's card exists only while there are rows: an empty space, or the
+  // first load, must not show an empty bordered box under its empty state.
+  it('draws no list card around an empty or loading list', async () => {
+    stubInvoke({ list_pages_with_metadata: () => emptyPage })
+    const { container, unmount } = render(<PageBrowser />)
+    expect(await screen.findByText(/No pages yet/)).toBeInTheDocument()
+    expect(container.querySelector('.page-browser-list')).not.toHaveClass('border')
+    unmount()
+
+    stubInvoke({ list_pages_with_metadata: () => new Promise<PageList>(() => {}) })
+    const loading = render(<PageBrowser />)
+    expect(loading.container.querySelector('.page-browser-list')).not.toHaveClass('border')
+  })
+
+  it('draws the list card around rows', async () => {
+    stubInvoke({
+      list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'First page' })]),
+    })
+    const { container } = render(<PageBrowser />)
+    expect(await screen.findByText('First page')).toBeInTheDocument()
+    expect(container.querySelector('.page-browser-list')).toHaveClass('border', 'rounded-lg')
+  })
+
   it('under the default journal chip, the create-first state does not claim the space is empty (#5370)', async () => {
     usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
     stubInvoke({ list_pages_with_metadata: () => emptyPage })

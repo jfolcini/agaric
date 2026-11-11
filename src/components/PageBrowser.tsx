@@ -622,7 +622,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
       <ScrollArea
         viewportRef={listRef}
-        className={cn('page-browser-list', !showNoMatch && listCardVariants())}
+        className={cn('page-browser-list', !showNoMatch && pages.length > 0 && listCardVariants())}
         // The height cap must live on the viewport (the actual scroller), not
         // the Root: a `max-height`-only Root has computed `height: auto`, so
         // the viewport's `h-full` can't resolve and grows to full content —

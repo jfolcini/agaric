@@ -122,7 +122,7 @@ function HistoryListItemInner({
       aria-selected={isSelected}
       className={cn(
         listRowVariants({ className: 'history-item flex-col items-stretch gap-2 cursor-pointer' }),
-        isSelected ? 'bg-accent/50 border-accent' : 'bg-card hover:bg-accent/30',
+        isSelected ? 'bg-accent/50' : 'hover:bg-accent/30',
         isFocused && 'list-cursor',
         isNonReversible && 'opacity-50',
       )}

@@ -158,9 +158,6 @@ describe('TrashRowItem', () => {
     expect(onRequestPurge).toHaveBeenCalledWith(block.id)
   })
 
-  // `list-cursor` is a tint at rest whose ring is gated in CSS on keyboard
-  // focus being in the grid; jsdom cannot evaluate that gate, so the class
-  // contract is the assertion: the cursor never carries an inline ring.
   it('is a flush list row with a divider, not a card', () => {
     renderRow()
     const row = screen.getByTestId('trash-item')
@@ -170,6 +167,9 @@ describe('TrashRowItem', () => {
     expect(row).not.toHaveClass('rounded-lg')
   })
 
+  // `list-cursor` is a tint and edge bar at rest whose ring is gated in CSS on
+  // keyboard focus being in the grid; jsdom cannot evaluate that gate, so the class
+  // contract is the assertion: the cursor never carries an inline ring.
   it('marks the cursor row with list-cursor and no inline ring', () => {
     const { rerender } = renderRow({ isFocused: true })
     const row = screen.getByTestId('trash-item')

@@ -20,7 +20,7 @@ import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
-import { listCardVariants } from '@/components/ui/list-item'
+import { listCardVariants, listHeaderVariants } from '@/components/ui/list-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import type { AgendaProjectedEntries } from '@/hooks/useAgendaProjectedEntries'
@@ -481,8 +481,8 @@ export function AgendaResults({
               data-index={virtualRow.index}
               ref={virtualizer.measureElement}
               style={rowStyle}
-              // The card's own header row: muted fill, divider below.
-              className="agenda-group list-row bg-muted/50"
+              // The card's own header row; the inner header keeps its own padding.
+              className={cn(listHeaderVariants(), 'agenda-group block p-0')}
             >
               <SectionGroupHeader
                 asChild

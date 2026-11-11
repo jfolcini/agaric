@@ -226,7 +226,7 @@ describe('PageBrowserRowRenderer — tree-page rows', () => {
     expect(screen.getByRole('button', { name: /create.*projects/i })).toBeInTheDocument()
   })
 
-  // `list-cursor` is a tint at rest whose ring is gated in CSS on the grid
+  // `list-cursor` is a tint and edge bar at rest whose ring is gated in CSS on the grid
   // holding keyboard focus; jsdom cannot evaluate that gate, so the class
   // contract is the assertion: the cursor never carries an inline ring.
   it('marks the focused tree-page row with list-cursor, not an inline ring', () => {

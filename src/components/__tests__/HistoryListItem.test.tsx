@@ -229,11 +229,14 @@ describe('HistoryListItem', () => {
     expect(item).toHaveClass('bg-accent/50')
   })
 
-  it('unselected row has bg-card class', () => {
+  // The row sits inside the list's card, which carries `bg-card`; an
+  // unselected row paints no fill of its own.
+  it('unselected row paints no fill of its own', () => {
     renderInListbox(defaultProps({ isSelected: false }))
 
     const item = screen.getByTestId('history-item-0')
-    expect(item).toHaveClass('bg-card')
+    expect(item).not.toHaveClass('bg-card')
+    expect(item).not.toHaveClass('bg-accent/50')
   })
 
   // -- Non-reversible ops ----------------------------------------------------
@@ -397,7 +400,7 @@ describe('HistoryListItem', () => {
 
   // -- Focus state -----------------------------------------------------------
 
-  // `list-cursor` is a tint at rest whose ring is gated in CSS on keyboard
+  // `list-cursor` is a tint and edge bar at rest whose ring is gated in CSS on keyboard
   // focus being in the list; jsdom cannot evaluate that gate, so the class
   // contract is the assertion: the cursor never carries an inline ring.
   it('marks the cursor row with list-cursor and no inline ring when isFocused is true', () => {
