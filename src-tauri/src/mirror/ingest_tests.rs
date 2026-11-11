@@ -1163,7 +1163,11 @@ async fn an_empty_pages_file_saved_with_only_a_newline_or_bom_keeps_mirroring() 
         fx.settle_file().await;
         let status = fx.status().await;
         assert!(status.failed.is_empty(), "{saved:?}: {:?}", status.failed);
-        assert!(status.diverged.is_empty(), "{saved:?}: {:?}", status.diverged);
+        assert!(
+            status.diverged.is_empty(),
+            "{saved:?}: {:?}",
+            status.diverged
+        );
 
         let row = create_block_inner(
             &fx.pool,
@@ -1178,6 +1182,9 @@ async fn an_empty_pages_file_saved_with_only_a_newline_or_bom_keeps_mirroring() 
         .unwrap();
         fx.tick().await;
         assert!(fx.read().contains("later"), "{saved:?}: {}", fx.read());
-        assert_eq!(fx.blocks(&page).await, [(row.id.into_string(), "later".to_owned())]);
+        assert_eq!(
+            fx.blocks(&page).await,
+            [(row.id.into_string(), "later".to_owned())]
+        );
     }
 }
