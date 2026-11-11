@@ -26,6 +26,7 @@ import {
   assertValidDateFormat,
   comparePositionThenId,
   copyTemplateBlocks,
+  isRecordingPlaceholder,
   createPageInSpace,
   definitionSpaceOf,
   expandJournalTemplateVariables,
@@ -63,12 +64,6 @@ function roleFilename(filename: string, role: Role): string {
   if (lower.endsWith(suffix)) return name
   const ext = ['.markdown', '.md', '.txt'].find((e) => lower.endsWith(e))
   return `${ext === undefined ? name : name.slice(0, name.length - ext.length)}${suffix}`
-}
-
-/** `is_recording_placeholder`: a block reading `<% recording %>`. */
-function isRecordingPlaceholder(content: string): boolean {
-  const m = /^<%(.*)%>$/.exec(content.trim())
-  return m !== null && m[1]?.trim().toLowerCase() === 'recording'
 }
 
 /** `file_identity`: the stored name and type, audio refused unless it is audio. */

@@ -505,12 +505,12 @@ async fn create_meeting_page_in_tx(
                 template_id.as_str(),
                 page.as_str(),
                 |content| {
-                    crate::commands::journal::expand_template_variables(
+                    Some(crate::commands::journal::expand_template_variables(
                         content,
                         date,
                         time,
                         &page_title,
-                    )
+                    ))
                 },
             ))
             .await?
