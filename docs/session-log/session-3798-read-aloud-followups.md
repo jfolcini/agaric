@@ -2,12 +2,12 @@
 
 Review notes from #6484, plus the #5745 box "Mutation-test the speech module and the Read aloud text builder and control".
 
-- **Stale engine replies.** The mutation run on `read-aloud.ts` turned up three ways a reply meant for an old reading reached a new one:
+- **Stale engine replies.** The mutation run on `read-aloud.ts` left three guards no test covered. Each keeps a reply meant for an old reading from reaching a new one:
   - a speak still queued for a reading stopped while it waited on the last `stop_speaking`;
   - a replaced reading's late `Stopped`;
   - a replaced reading's late rejection.
 
-  Each could end the reading that replaced it. `speakNative` is now one async function that checks the reading is still active after each await, and each case has a test shown red against its break.
+  The code already guarded all three; nothing reached a user. Each guard now has a test, shown red against its break. `speakNative` is one async function with the same checks, which reads more plainly than the promise chain.
 - **Reviewer notes fixed:**
   - A rejected `speak_text` logged `[object Object]`, because `unwrap` throws the `AppError` object; it now logs the engine's message.
   - `SpeechPlugin.kt` left a pending utterance behind when `engine.speak` threw, so a later `stop` settled an already-rejected invoke; it now drops the entry.
