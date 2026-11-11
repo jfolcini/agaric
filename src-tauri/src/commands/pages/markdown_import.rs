@@ -435,10 +435,16 @@ async fn create_note_targets(
         .iter()
         .map(|title| (agaric_core::tag_norm::name_key(title), title))
         .collect();
+    let mut made: HashMap<String, String> = HashMap::new();
     for name in lines.missing_titles() {
-        let Some(title) = notes.get(&agaric_core::tag_norm::name_key(&name)) else {
+        let key = agaric_core::tag_norm::name_key(&name);
+        let Some(title) = notes.get(&key) else {
             continue;
         };
+        if let Some(page_id) = made.get(&key) {
+            lines.name_ref(name, page_id.clone());
+            continue;
+        }
         let (page, page_op) = create_block_in_tx(
             &mut *tx,
             materializer.loro_state(),
@@ -453,6 +459,7 @@ async fn create_note_targets(
         tx.enqueue_background(page_op);
         let page_id = page.id.into_string();
         stamp_space_property(tx, materializer, device_id, page_id.clone(), file.space_id).await?;
+        made.insert(key, page_id.clone());
         lines.name_ref(name, page_id);
     }
     Ok(())
