@@ -337,8 +337,8 @@ describe('exportGraphAsZip', () => {
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
-    // The attachment bytes land under assets/, id-prefixed to avoid collisions.
-    const assetName = `assets/${attId}__shot.png`
+    // The attachment bytes land under assets/<id>/, so they never collide (#6277 G3).
+    const assetName = `assets/${attId}/shot.png`
     expect(filenames).toContain(assetName)
     const assetFile = unzipped.file(assetName)
     expect(assetFile).not.toBeNull()
@@ -398,8 +398,8 @@ describe('exportGraphAsZip', () => {
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
-    // The attachment bytes land under assets/, id-prefixed to avoid collisions.
-    const assetName = `assets/${attId}__report.pdf`
+    // The attachment bytes land under assets/<id>/, so they never collide (#6277 G3).
+    const assetName = `assets/${attId}/report.pdf`
     expect(filenames).toContain(assetName)
     const assetFile = unzipped.file(assetName)
     expect(assetFile).not.toBeNull()
@@ -412,6 +412,38 @@ describe('exportGraphAsZip', () => {
     expect(md).toBe(`[report.pdf](../${assetName})`)
     expect(md).not.toContain('attachment:')
     expect(md?.startsWith('!')).toBe(false)
+  })
+
+  it('writes each file at assets/<id>/<name> and points an attachments value at it (#6277 G3)', async () => {
+    const attId = 'ATT_G3'
+    stubExport(
+      {
+        list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Project/Notes' })],
+        export_page_markdown: () =>
+          `---\nattachments: ["[report.pdf](attachment:${attId})"]\n---\n\n` +
+          `See it\n  attachments:: [report.pdf](attachment:${attId})\n`,
+        read_attachment_meta: () => ({
+          id: attId,
+          block_id: 'B1',
+          filename: 'report.pdf',
+          mime_type: 'application/pdf',
+          size_bytes: 3,
+          fs_path: 'x',
+          created_at: 0,
+          content_hash: null,
+        }),
+      },
+      new Uint8Array([9, 8, 7]),
+    )
+
+    const { blob } = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+    expect(Object.keys(unzipped.files)).toContain(`assets/${attId}/report.pdf`)
+    const md = await unzipped.file('Project/Notes.md')?.async('string')
+    expect(md).toBe(
+      `---\nattachments: ["[report.pdf](../assets/${attId}/report.pdf)"]\n---\n\n` +
+        `See it\n  attachments:: [report.pdf](../assets/${attId}/report.pdf)\n`,
+    )
   })
 
   it('writes a file link whose name holds a parenthesis so a folder import reads it (#6032)', async () => {
@@ -436,7 +468,7 @@ describe('exportGraphAsZip', () => {
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
-    const assetName = `assets/${attId}__paper(v2.pdf`
+    const assetName = `assets/${attId}/paper(v2.pdf`
     expect(Object.keys(unzipped.files)).toContain(assetName)
     const md = (await unzipped.file('Project/Notes.md')?.async('string')) ?? ''
     expect(scanAttachmentRefs(md)).toEqual([`../${assetName}`])
@@ -474,7 +506,7 @@ describe('exportGraphAsZip', () => {
       expect(name.startsWith('..')).toBe(false)
     }
     // The asset lands under assets/ with `/` collapsed to `_`.
-    expect(filenames).toContain(`assets/${attId}__.._.._evil.sh`)
+    expect(filenames).toContain(`assets/${attId}/.._.._evil.sh`)
   })
 
   it('leaves a block-scoped file link unchanged when its attachment cannot be read (#2961)', async () => {
@@ -529,8 +561,8 @@ describe('exportGraphAsZip', () => {
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const md = await unzipped.file('Mixed.md')?.async('string')
 
-    expect(md).toContain(`![shot](assets/${imgId}__shot.png)`)
-    expect(md).toContain(`- [report.pdf](assets/${fileId}__report.pdf)`)
+    expect(md).toContain(`![shot](assets/${imgId}/shot.png)`)
+    expect(md).toContain(`- [report.pdf](assets/${fileId}/report.pdf)`)
     expect(md).not.toContain('attachment:')
   })
 
@@ -656,7 +688,7 @@ describe('exportGraphAsZip', () => {
 
     // …and all three pages still link to the one shared asset.
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
-    const assetName = `assets/${attId}__logo.png`
+    const assetName = `assets/${attId}/logo.png`
     expect(Object.keys(unzipped.files)).toContain(assetName)
     for (const page of ['One.md', 'Two.md', 'Three.md']) {
       expect(await unzipped.file(page)?.async('string')).toBe(`![logo](${assetName})`)
@@ -701,7 +733,7 @@ describe('exportGraphAsZip', () => {
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
     expect(unzipped.file('.agaric/export-report.txt')).toBeNull()
     const md = await unzipped.file('Mixed.md')?.async('string')
-    expect(md).toBe(`![ok](assets/${goodId}__ok.png)\n\n![bad](attachment:../../etc)`)
+    expect(md).toBe(`![ok](assets/${goodId}/ok.png)\n\n![bad](attachment:../../etc)`)
   })
 
   // #2969 — the focused block's pending debounced content commit must be
@@ -822,7 +854,7 @@ describe('exportGraphAsZip skip accounting (#2965)', () => {
     expect(result.skippedAttachments).toBe(1)
 
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
-    expect(Object.keys(unzipped.files)).not.toContain(`assets/${attId}__logo.png`)
+    expect(Object.keys(unzipped.files)).not.toContain(`assets/${attId}/logo.png`)
     // Both pages keep the original ref — neither links to bytes the other
     // was told were unreadable.
     for (const page of ['Page One.md', 'Page Two.md']) {

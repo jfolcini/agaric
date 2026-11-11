@@ -364,9 +364,9 @@ async fn rewrite_block_attachment_refs(
 pub(super) async fn ingest_attachments(
     ctx: &mut ImportCtx<'_>,
     mut vault_files: Vec<VaultFile>,
-    pending_attachments: Vec<(String, Vec<import::AttachmentRef>)>,
+    pending: PendingAttachments,
 ) {
-    if pending_attachments.is_empty() {
+    if pending.linked.is_empty() && pending.scoped.is_empty() {
         return;
     }
     // The note's folder within the vault: its title's path below the picked
@@ -379,7 +379,10 @@ pub(super) async fn ingest_attachments(
     // #2724 — count how many INGEST ATTEMPTS will read each vault file so a
     // SINGLE-ATTEMPT file (the overwhelming common case) can have its bytes
     // MOVED out at ingest instead of cloned.
-    let mut ingest_counts = ingest_read_counts(&pending_attachments, &note_dir, &vault_files);
+    let mut ingest_counts = ingest_read_counts(&pending.linked, &note_dir, &vault_files);
+    for (idx, count) in ingest_read_counts(&pending.scoped, &note_dir, &vault_files) {
+        *ingest_counts.entry(idx).or_insert(0) += count;
+    }
     // Defence-in-depth for the move/clone decision: an index whose bytes were
     // taken (moved) is recorded here so the clone arm can never re-ingest an
     // emptied buffer as a 0-byte attachment, even if the count above were ever
@@ -387,7 +390,29 @@ pub(super) async fn ingest_attachments(
     // reachable path, but it makes "a moved buffer is never re-ingested" total.
     let mut moved_out: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-    for (block_id, refs) in &pending_attachments {
+    for (block_id, refs) in &pending.scoped {
+        // A text's link may point anywhere, but a file an `attachments`
+        // value names and the import does not bring is left out (#6277 G3).
+        for att in refs.iter().filter(|att| att.is_link()) {
+            if import::match_vault_file(&att.original_ref, &note_dir, &vault_files).is_none() {
+                ctx.warnings.push(format!(
+                    "attachment '{}' was not found among the imported files; left out",
+                    att.original_ref
+                ));
+            }
+        }
+        ingest_block_attachments(
+            ctx,
+            &note_dir,
+            &mut vault_files,
+            &mut ingest_counts,
+            &mut moved_out,
+            block_id,
+            refs,
+        )
+        .await;
+    }
+    for (block_id, refs) in &pending.linked {
         let block_rewrites = ingest_block_attachments(
             ctx,
             &note_dir,

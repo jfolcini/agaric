@@ -194,7 +194,9 @@ pub struct ParseOutput {
 /// `repeat-count`) is not reserved: it is a property line on every surface, so
 /// Duplicate, copy → paste and Export → Import keep a repeating task
 /// repeating (#5160 P4). `repeat-seq` and `repeat-origin` describe one
-/// occurrence and stay hidden.
+/// occurrence and stay hidden. A file reads the two an export writes so a
+/// restore keeps them ([`FILE_KEYS`], #6277 G3); every other reader keeps
+/// them the app's.
 const FRONTMATTER_RESERVED_KEYS: &[&str] = &[
     "space",
     "is_space",
@@ -203,7 +205,20 @@ const FRONTMATTER_RESERVED_KEYS: &[&str] = &[
     "repeat-seq",
     "repeat-origin",
     "template",
+    "attachments",
 ];
+
+/// The reserved keys a file import reads (#6277 G3): a page's `template`
+/// flag, in front matter only, and the `attachments` a page's front matter
+/// and a block's line name, which the import attaches rather than storing.
+const FILE_KEYS: &[&str] = &["template", "attachments"];
+
+/// Whether a file reads the reserved `key` ([`FILE_KEYS`]); `front_matter`,
+/// in its front matter, else on a block's line.
+fn file_reads(key: &str, front_matter: bool) -> bool {
+    let folded = fold_property_key(key);
+    FILE_KEYS.contains(&folded.as_str()) && (front_matter || folded != "template")
+}
 
 /// A property key as every surface matches it against the reserved keys and
 /// the property definitions (#5160 D13): ASCII case folded and `-` read as
@@ -2059,7 +2074,7 @@ fn parse_import(content: &str, mode: ParseMode, keep_refs: bool) -> ParseOutput 
     });
 
     let mut warnings = frontmatter_warnings;
-    let mut blocks = parse_outline(body, mode, true, None, keep_refs, &mut warnings);
+    let mut blocks = parse_outline(body, mode, (true, true), None, keep_refs, &mut warnings);
     let collapsed = match mode {
         ParseMode::Import => read_logseq_bookkeeping(&mut blocks),
         ParseMode::Document => Vec::new(),
@@ -2280,7 +2295,8 @@ fn source_outline(
     } else {
         read_page_properties(&normalized, &mut output)
     };
-    output.blocks = parse_outline(&body, mode, foreign, id_lines, false, &mut output.warnings);
+    let source = (foreign, false);
+    output.blocks = parse_outline(&body, mode, source, id_lines, false, &mut output.warnings);
     output
 }
 
@@ -2297,7 +2313,12 @@ fn read_page_properties(normalized: &str, output: &mut ParseOutput) -> String {
     let mut at = 0;
     if let Some((yaml, len)) = front_matter_fence(normalized) {
         let mut warnings = Vec::new();
-        let scan = scan_frontmatter(yaml, &mut output.frontmatter_list_items, &mut warnings);
+        let scan = scan_frontmatter(
+            yaml,
+            &mut output.frontmatter_list_items,
+            &mut warnings,
+            false,
+        );
         output.frontmatter = scan.pairs;
         let lines = scan.key_lines.into_iter();
         output.frontmatter_lines = lines.map(|(key, line)| (key, line + 1)).collect();
@@ -2427,13 +2448,13 @@ enum ParseMode {
 fn parse_outline(
     normalized: &str,
     mode: ParseMode,
-    foreign: bool,
+    (foreign, file): (bool, bool),
     id_lines: Option<&std::collections::HashSet<usize>>,
     keep_refs: bool,
     warnings: &mut Vec<String>,
 ) -> Vec<ParsedBlock> {
     let (mut blocks, ends_in_code, mut lossy) =
-        read_blocks(normalized, mode, foreign, id_lines, keep_refs);
+        read_blocks(normalized, mode, (foreign, file), id_lines, keep_refs);
     if id_lines.is_none() {
         extract_block_anchors(&mut blocks, &ends_in_code, mode);
     }
@@ -2451,7 +2472,7 @@ fn parse_outline(
 fn read_blocks(
     normalized: &str,
     mode: ParseMode,
-    foreign: bool,
+    foreign: (bool, bool),
     id_lines: Option<&std::collections::HashSet<usize>>,
     keep_refs: bool,
 ) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
@@ -2681,6 +2702,8 @@ struct Scan<'a> {
     /// Text from outside Agaric (an import or a paste): an unterminated fence
     /// ends with its list item, as CommonMark reads it (D5).
     foreign: bool,
+    /// A file import, which reads a block's `attachments::` line ([`file_reads`]).
+    file: bool,
     blocks: Vec<ParsedBlock>,
     ends_in_code: Vec<bool>,
     lossy: LossyCounts,
@@ -2714,13 +2737,14 @@ struct Scan<'a> {
 fn parse_block_lines(
     normalized: &str,
     mode: ParseMode,
-    foreign: bool,
+    (foreign, file): (bool, bool),
     kept_refs: &std::collections::HashSet<String>,
     id_lines: Option<&std::collections::HashSet<usize>>,
 ) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
     let mut scan = Scan {
         mode,
         foreign,
+        file,
         blocks: Vec::new(),
         ends_in_code: Vec::new(),
         lossy: LossyCounts::default(),
@@ -3138,12 +3162,18 @@ impl<'a> Scan<'a> {
     /// block editor reads it.
     fn property_line<'l>(&self, trimmed: &'l str, indent: usize) -> Option<(&'l str, &'l str)> {
         let (key, value) = split_property_line(trimmed)?;
-        let stored = !is_reserved_line_key(key) && self.owner_at(indent).is_some();
+        let stored = !self.reserved(key) && self.owner_at(indent).is_some();
         if value.trim().is_empty() {
             let clears = self.mode != ParseMode::Import && !self.foreign && stored;
             return clears.then_some((key, ""));
         }
         (self.mode == ParseMode::Import || stored).then_some((key, value))
+    }
+
+    /// Whether a block's `key::` line is the app's: a reserved key but one a
+    /// file reads ([`file_reads`]).
+    fn reserved(&self, key: &str) -> bool {
+        is_reserved_line_key(key) && !(self.file && file_reads(key, false))
     }
 
     /// The block a `key:: value` line at `indent` belongs to (#682): the
@@ -3167,7 +3197,7 @@ impl<'a> Scan<'a> {
         let value = read_source_property_value(value);
         // #1568: a reserved body property is dropped, never written, and the
         // surrounding good content imports, as the frontmatter path does.
-        if is_reserved_line_key(&key) {
+        if self.reserved(&key) {
             tracing::debug!(
                 key = %key,
                 "skipping reserved/column-backed body property during import (#1568)"
@@ -3762,12 +3792,15 @@ struct FrontmatterScan<'a> {
     /// The first line no page property is read from, and why: an import
     /// skips it, and a source buffer's save refuses it (#5160 S8).
     unread: Option<(usize, String)>,
+    /// A file's front matter, which reads the [`FILE_KEYS`] (#6277 G3).
+    file: bool,
 }
 
 impl<'a> FrontmatterScan<'a> {
     fn new(
         list_items: &'a mut std::collections::HashMap<String, Vec<String>>,
         warnings: &'a mut Vec<String>,
+        file: bool,
     ) -> Self {
         Self {
             pairs: Vec::new(),
@@ -3781,6 +3814,7 @@ impl<'a> FrontmatterScan<'a> {
             line: 0,
             key_lines: std::collections::HashMap::new(),
             unread: None,
+            file,
         }
     }
 
@@ -3887,7 +3921,7 @@ impl<'a> FrontmatterScan<'a> {
             self.note_unread(format!("`{line}` is not a `key: value` line"));
             return;
         }
-        if is_reserved_line_key(key) {
+        if is_reserved_line_key(key) && !(self.file && file_reads(key, true)) {
             // Exporter-managed key — silently filtered (it is never meant
             // to round-trip as a user property).
             self.note_unread(format!("`{key}` is kept by the app, not the front matter"));
@@ -4015,17 +4049,19 @@ fn parse_frontmatter(
     list_items: &mut std::collections::HashMap<String, Vec<String>>,
     warnings: &mut Vec<String>,
 ) -> Vec<(String, String)> {
-    scan_frontmatter(yaml, list_items, warnings).pairs
+    scan_frontmatter(yaml, list_items, warnings, true).pairs
 }
 
 /// [`parse_frontmatter`]'s scan, finished, so a source buffer can read which
-/// line each key came from and which line no key did.
+/// line each key came from and which line no key did; `file` reads a file's
+/// front matter, a buffer's otherwise.
 fn scan_frontmatter<'a>(
     yaml: &str,
     list_items: &'a mut std::collections::HashMap<String, Vec<String>>,
     warnings: &'a mut Vec<String>,
+    file: bool,
 ) -> FrontmatterScan<'a> {
-    let mut scan = FrontmatterScan::new(list_items, warnings);
+    let mut scan = FrontmatterScan::new(list_items, warnings, file);
     for (index, raw) in yaml.lines().enumerate() {
         scan.line = index;
         if scan.absorb_block_scalar_line(raw) {

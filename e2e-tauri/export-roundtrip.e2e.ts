@@ -218,7 +218,7 @@ describe('Agaric real-backend export (#5740) @markdown', () => {
     const assets = names.filter((name) => name.startsWith('assets/') && !zip.files[name]?.dir)
     expect(assets).toHaveLength(1)
     const [asset] = assets
-    expect(asset).toMatch(new RegExp(`^assets/[0-9A-Z]{26}__${filename.replace('.', '\\.')}$`))
+    expect(asset).toMatch(new RegExp(`^assets/[0-9A-Z]{26}/${filename.replace('.', '\\.')}$`))
     const bytes = await zip.file(asset ?? '')?.async('base64')
     expect(bytes).toBe(PNG_BASE64)
 

@@ -363,6 +363,40 @@ async fn append_markdown_lands_the_outline_at_its_position() {
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
+/// #6277 G3 — only a file import brings the files an `attachments::` line
+/// names, so an agent's append keeps the line as the block's text, never a
+/// property.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_keeps_an_attachments_line_as_text() {
+    let (tools, mat, pool, space, _emitter, _dir) = mk_tools_recording().await;
+    let page = mk_page(&pool, &mat, &space, "Page").await;
+
+    tools
+        .call_tool(
+            "append_markdown",
+            json!({
+                "parent_id": page,
+                "markdown": "- a\n  attachments:: [report.pdf](report.pdf)\n",
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("append");
+    settle(&mat).await;
+
+    assert_eq!(
+        child_contents(&pool, &page).await,
+        ["a\nattachments:: [report.pdf](report.pdf)"]
+    );
+    let stored: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE key = 'attachments'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, 0);
+}
+
 /// #6277 D2 — Obsidian Tasks signifiers at the end of a task line are its
 /// fields: a done task's `✅` date is its `completed_at`, not the day of the
 /// append, and one that cannot be read stays text, named in the warnings.

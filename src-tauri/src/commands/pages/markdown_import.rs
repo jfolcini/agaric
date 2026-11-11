@@ -772,6 +772,83 @@ fn detect_import_attachment_refs(
     import::detect_attachment_refs(content, &spans)
 }
 
+/// The attachment refs an import ingests once its blocks have committed
+/// (#1925), per block: `linked`, those its text links, which the ingest
+/// rewrites to `attachment:<id>` tokens, and `scoped`, the files a block's
+/// `attachments::` line or the page's `attachments:` front matter names
+/// (#6277 G3), which it attaches and writes nowhere in the text.
+#[derive(Default)]
+pub(super) struct PendingAttachments {
+    pub(super) linked: Vec<(String, Vec<import::AttachmentRef>)>,
+    pub(super) scoped: Vec<(String, Vec<import::AttachmentRef>)>,
+}
+
+impl PendingAttachments {
+    /// The page's own files, its front matter's `attachments:`.
+    fn of_page(
+        ctx: &mut ImportCtx<'_>,
+        parse_output: &import::ParseOutput,
+        vault_files: &[VaultFile],
+    ) -> Self {
+        let mut pending = Self::default();
+        for (key, value) in &parse_output.frontmatter {
+            if is_attachments_key(key) {
+                pending.queue_scoped(&ctx.page_id, value, vault_files, &mut ctx.warnings);
+            }
+        }
+        pending
+    }
+
+    /// Queue a created block's `linked` refs and the files its
+    /// `attachments::` lines name, returning its other properties.
+    fn queue_block(
+        &mut self,
+        block_id: &str,
+        linked: Vec<import::AttachmentRef>,
+        properties: &[(String, String)],
+        vault_files: &[VaultFile],
+        warnings: &mut Vec<String>,
+    ) -> Vec<(String, String)> {
+        if !linked.is_empty() {
+            self.linked.push((block_id.to_string(), linked));
+        }
+        let (scoped, rest): (Vec<_>, Vec<_>) = properties
+            .iter()
+            .cloned()
+            .partition(|(key, _)| is_attachments_key(key));
+        for (_, value) in &scoped {
+            self.queue_scoped(block_id, value, vault_files, warnings);
+        }
+        rest
+    }
+
+    /// Queue the files an `attachments` value names as `block_id`'s own,
+    /// never a property. A value naming no file this import brings is left
+    /// out, with a warning: the link points at nothing the space holds.
+    fn queue_scoped(
+        &mut self,
+        block_id: &str,
+        value: &str,
+        vault_files: &[VaultFile],
+        warnings: &mut Vec<String>,
+    ) {
+        let refs = import::detect_attachment_refs(value, &[]);
+        if refs.is_empty() || vault_files.is_empty() {
+            warnings.push(format!(
+                "`attachments:: {value}` names no file this import brings; left out"
+            ));
+            return;
+        }
+        self.scoped.push((block_id.to_string(), refs));
+    }
+}
+
+/// Whether `key` is the reserved `attachments` key (#6277 decision 9), in
+/// any spelling ([`import::fold_property_key`]).
+pub(super) fn is_attachments_key(key: &str) -> bool {
+    import::fold_property_key(key) == "attachments"
+}
+
 /// Create one imported block inside the current chunk's transaction, queueing
 /// its op for post-commit dispatch and returning its ULID.
 ///
@@ -916,7 +993,6 @@ pub(super) fn import_priority_value(value: &str) -> String {
 /// running counters and returns the per-block-index created ULIDs plus the
 /// pending attachment refs consumed by the post-commit phases. Consumes `tx` (it
 /// commits the final chunk).
-#[allow(clippy::type_complexity)]
 pub(super) async fn insert_blocks(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
@@ -924,13 +1000,7 @@ pub(super) async fn insert_blocks(
     refs: &DocumentRefs,
     vault_files: &[VaultFile],
     counters: &mut ImportCounters,
-) -> Result<
-    (
-        Vec<Option<String>>,
-        Vec<(String, Vec<import::AttachmentRef>)>,
-    ),
-    AppError,
-> {
+) -> Result<(Vec<Option<String>>, PendingAttachments), AppError> {
     let materializer = ctx.materializer;
     let device_id = ctx.device_id;
     let pool = ctx.pool;
@@ -954,7 +1024,7 @@ pub(super) async fn insert_blocks(
     // the held `import_markdown` IMMEDIATE tx — so NO attachment ingest runs
     // while any import chunk tx is open. `vault_files` empty/None ⇒ this stays
     // empty and the whole phase is a no-op.
-    let mut pending_attachments: Vec<(String, Vec<import::AttachmentRef>)> = Vec::new();
+    let mut pending_attachments = PendingAttachments::of_page(ctx, parse_output, vault_files);
     let mut parent_stack: Vec<(usize, String)> = vec![(0, page_id.clone())];
     // #2510 — index-aligned with `parse_output.blocks`: the created ULID of
     // each block, or `None` for one skipped by the #1918 recoverable-failure
@@ -1007,9 +1077,13 @@ pub(super) async fn insert_blocks(
 
         // #1925 — record this block's detected attachment refs against its now
         // committed-pending id. Ingested + rewritten in the post-commit phase.
-        if !detected_attachment_refs.is_empty() {
-            pending_attachments.push((new_block_id.clone(), detected_attachment_refs));
-        }
+        let properties = pending_attachments.queue_block(
+            &new_block_id,
+            detected_attachment_refs,
+            &block.properties,
+            vault_files,
+            &mut ctx.warnings,
+        );
 
         // #128 — per-block progress tick. Emitted inside the loop so a
         // large file shows forward motion; the rows are not yet committed
@@ -1028,7 +1102,7 @@ pub(super) async fn insert_blocks(
                 materializer,
                 device_id,
                 &new_block_id,
-                &block.properties,
+                &properties,
                 &ctx.lines,
             )
             .await?,

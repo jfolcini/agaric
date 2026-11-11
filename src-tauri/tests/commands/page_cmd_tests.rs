@@ -1477,8 +1477,8 @@ async fn insert_attachment(pool: &SqlitePool, id: &str, block_id: &str, filename
 
 /// A block-scoped (non-inline) attachment — a row with no matching
 /// `attachment:<id>` token in the owning block's content — must surface as
-/// a nested markdown link line `+ [filename](attachment:<id>)`, a plain child
-/// (decision 1, #6277). Pre-fix,
+/// an `attachments:: [filename](attachment:<id>)` line under its block
+/// (#6277 decision 9). Pre-fix,
 /// such attachments (PDFs/docs/any file dropped with no inline token) were
 /// entirely absent from the export.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1517,14 +1517,14 @@ async fn export_page_markdown_emits_block_scoped_attachment_link_2961() {
         .unwrap();
 
     assert!(
-        md.contains("+ [report.pdf](attachment:01ATT0000000000000000AT01)"),
-        "block-scoped attachment should emit a link line, got: {md}"
+        md.contains("attachments:: [report.pdf](attachment:01ATT0000000000000000AT01)"),
+        "block-scoped attachment should emit an attachments line, got: {md}"
     );
-    // Nested at the owning (depth-0) block's child column, a `+` item there
-    // (decision 1, #6277).
+    // At the owning (depth-0) block's text column, a property line of it
+    // (#6277 decision 9).
     assert!(
-        md.contains("\n  + [report.pdf](attachment:01ATT0000000000000000AT01)\n"),
-        "attachment link should be indented as a child of its owning block, got: {md}"
+        md.contains("\n  attachments:: [report.pdf](attachment:01ATT0000000000000000AT01)\n"),
+        "the attachments line should sit at its owning block's text column, got: {md}"
     );
 }
 
@@ -1685,7 +1685,7 @@ async fn export_page_markdown_emits_orphan_block_attachment_link_2961() {
         .unwrap();
 
     assert!(
-        md.contains("  + [orphan.bin](attachment:01ATT0000000000000000AT03)"),
+        md.contains("  attachments:: [orphan.bin](attachment:01ATT0000000000000000AT03)"),
         "orphan stray block's attachment must be emitted by the safety-net loop, got: {md}"
     );
 }
@@ -1739,14 +1739,14 @@ async fn export_page_markdown_emits_page_own_attachment_link_2991() {
 
     assert!(
         md.contains("[cover.png](attachment:01ATT0000000000000000AT04)"),
-        "the page block's own non-inline attachment should emit a link line, got: {md}"
+        "the page block's own non-inline attachment should emit a link, got: {md}"
     );
-    // Emitted at depth 0 (no indent) — right after frontmatter/title, not
-    // nested under any block (the page itself has none): a paragraph of its
-    // own (decision 1, #6277).
+    // In the front matter, the page's own `attachments:` (#6277 decision 9).
     assert!(
-        md.contains("\n\n[cover.png](attachment:01ATT0000000000000000AT04)\n\n"),
-        "the page's own attachment link should be top-level (no indent), got: {md}"
+        md.starts_with(
+            "---\nattachments: [\"[cover.png](attachment:01ATT0000000000000000AT04)\"]\n---\n"
+        ),
+        "the page's own attachment should be in its front matter, got: {md}"
     );
 }
 
@@ -2199,18 +2199,17 @@ async fn export_page_markdown_frontmatter_filters_internal_and_renders_ref_num()
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
     // Internal keys absent.
-    for internal in [
-        "space:",
-        "is_space:",
-        "template:",
-        "created_at:",
-        "repeat-seq:",
-    ] {
+    for internal in ["space:", "is_space:", "created_at:", "repeat-seq:"] {
         assert!(
             !md.contains(internal),
             "internal key {internal:?} must NOT appear in frontmatter, got:\n{md}"
         );
     }
+    // A template page's flag travels, so a restore is a template (#6277 G3).
+    assert!(
+        md.contains("template: weekly\n"),
+        "the template flag is exported, got:\n{md}"
+    );
     assert!(
         !md.contains("SPACEVAL"),
         "internal 'space' value must not leak, got:\n{md}"
@@ -2289,7 +2288,8 @@ async fn export_page_markdown_frontmatter_renders_bool_properties() {
 /// frontmatter). Exercises every typed shape the exporter can render: text,
 /// number, date, boolean, and ref (resolved to the target page title on
 /// export and reverse-resolved to a ULID on import). Internal/reserved keys
-/// (`is_space`, `template`, …) must NOT round-trip.
+/// (`is_space`, …) must NOT round-trip; a template page's `template` flag
+/// does, so a restore is a template (#6277 G3).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_markdown_frontmatter_round_trips_typed_page_properties_1432() {
     let (pool, _dir) = test_pool().await;
@@ -2363,7 +2363,7 @@ async fn import_markdown_frontmatter_round_trips_typed_page_properties_1432() {
     .execute(&pool)
     .await
     .unwrap();
-    // An internal/reserved key that must NOT round-trip.
+    // The template flag, which round-trips (#6277 G3).
     sqlx::query(
         "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'template', 'weekly')",
     )
@@ -2379,8 +2379,8 @@ async fn import_markdown_frontmatter_round_trips_typed_page_properties_1432() {
         "export must emit a frontmatter fence, got:\n{md}"
     );
     assert!(
-        !md.contains("template:"),
-        "internal key must not be exported, got:\n{md}"
+        md.contains("template: weekly\n"),
+        "the template flag is exported, got:\n{md}"
     );
 
     // Re-import the exported markdown as a NEW page.
@@ -2462,10 +2462,11 @@ async fn import_markdown_frontmatter_round_trips_typed_page_properties_1432() {
         Some(REF_TARGET),
         "ref prop must reverse-resolve the target title to its ULID; props={props:?}"
     );
-    // Internal key must NOT have round-tripped.
-    assert!(
-        !by_key.contains_key("template"),
-        "internal/reserved key must not re-import; props={props:?}"
+    // The template flag round-trips.
+    assert_eq!(
+        by_key.get("template").and_then(|p| p.value_text.as_deref()),
+        Some("weekly"),
+        "the template flag re-imports; props={props:?}"
     );
 
     mat.shutdown();

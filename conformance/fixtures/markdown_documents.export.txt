@@ -2,11 +2,10 @@
 aliases: [Notebook]
 tags: [research]
 season: autumn
+attachments: ["[map.png](attachment:ATT2)"]
 ---
 
 # Field Notes
-
-[map.png](attachment:ATT2)
 
 ## Findings
 
@@ -15,7 +14,7 @@ season: autumn
 
 first line
 second line ^000000000000000000000000S5
-  + [report.pdf](attachment:ATT1)
+  attachments:: [report.pdf](attachment:ATT1)
 
 see [[#^000000000000000000000000S3]]
 
