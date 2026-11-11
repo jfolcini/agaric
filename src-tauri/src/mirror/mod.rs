@@ -1165,10 +1165,11 @@ impl Mirror {
                 if vanished && self.still_missing(page_id) {
                     return Ok(Wrote::Missing);
                 }
-                if vanished && let Some(ingest) = self.ingest() {
-                    if let Some(trashed) = self.trash(root, &ingest, page_id, path).await {
-                        return trashed;
-                    }
+                if vanished
+                    && let Some(ingest) = self.ingest()
+                    && let Some(trashed) = self.trash(root, &ingest, page_id, path).await
+                {
+                    return trashed;
                 }
                 if let Some(why) = pause_reason(root, &self.device_id) {
                     return Ok(Wrote::Paused(why));

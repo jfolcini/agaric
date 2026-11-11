@@ -1390,8 +1390,6 @@ async fn a_mirror_moved_away_and_back_finds_its_files_as_it_left_them() {
     fx.write("* one\n");
     fx.settle_file().await;
     let home = fx.root.to_str().unwrap().to_owned();
-    let set =
-        |folder: String| set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(folder), true);
 
     let other = TempDir::new().unwrap();
     let away = other.path().to_str().unwrap().to_owned();
