@@ -794,7 +794,9 @@ impl Mirror {
     /// only the anchors the page now needs added or dropped
     /// ([`ingest::ingest`]). Left alone, as diverged, while it settles, when
     /// the mirror cannot ingest, or when no text written can be its base;
-    /// refused, as failed, when it or its save is refused, until it changes.
+    /// refused, as failed, when it or its save is refused, until it changes:
+    /// not tried again meanwhile, which only saves a save the op cap rolls
+    /// back each tick, so no test can tell.
     async fn read_edit(
         &mut self,
         root: &Path,

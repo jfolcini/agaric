@@ -27,6 +27,8 @@ struct Fx {
     mirror: Mirror,
     root: PathBuf,
     events: Arc<Mutex<Vec<MirrorIngested>>>,
+    /// Run when an ingest's event is sent, before the file is written back.
+    on_event: Arc<Mutex<Option<Box<dyn FnMut() + Send>>>>,
     _dirs: [TempDir; 3],
 }
 
@@ -48,10 +50,17 @@ impl Fx {
             .unwrap();
         let events = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&events);
+        let on_event: Arc<Mutex<Option<Box<dyn FnMut() + Send>>>> = Arc::default();
+        let hook = Arc::clone(&on_event);
         let ingest = Ingest {
             pool: pool.clone(),
             materializer: mat.clone(),
-            notify: Arc::new(move |event| seen.lock().unwrap().push(event)),
+            notify: Arc::new(move |event| {
+                seen.lock().unwrap().push(event);
+                if let Some(hook) = hook.lock().unwrap().as_mut() {
+                    hook();
+                }
+            }),
         };
         let mirror = Mirror::open(pool.clone(), DEV.to_owned(), state.clone())
             .await
@@ -64,6 +73,7 @@ impl Fx {
             mirror,
             root,
             events,
+            on_event,
             _dirs: [db, data, folder],
         }
     }
@@ -240,15 +250,21 @@ async fn a_new_line_is_a_new_block_and_saving_the_file_again_adds_no_twin() {
     let mut fx = Fx::new().await;
     let (page, _) = fx.page("Alpha", &["one"]).await;
     fx.tick().await;
-    let added = format!("{}\n\nnew\n", fx.read().trim_end());
+    let added = format!("{}\n\n* new\n", fx.read().trim_end());
     fx.write(&added);
     fx.settle_file().await;
     assert_eq!(fx.contents(&page).await, ["one", "new"]);
-    assert_eq!(fx.read(), added, "a new block needs no anchor");
+    assert_eq!(fx.read(), added, "a new block keeps its own line, with no anchor");
+    let new = fx.blocks(&page).await[1].0.clone();
 
     fx.write(added.replace("one", "ONE"));
     fx.settle_file().await;
     assert_eq!(fx.contents(&page).await, ["ONE", "new"]);
+    assert_eq!(
+        fx.blocks(&page).await[1].0,
+        new,
+        "the new block keeps its id"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -269,6 +285,26 @@ async fn a_file_saved_with_crlf_and_a_bom_reads_as_its_page() {
         ]
     );
     assert_eq!(fx.read(), written, "written back as UTF-8 with LF");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_landing_during_an_ingest_is_not_written_over() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    // CRLF, so the ingest has a write-back to make.
+    fx.write(fx.read().replace("one", "uno").replace('\n', "\r\n"));
+    let newer = fx.root.join(ALPHA);
+    *fx.on_event.lock().unwrap() =
+        Some(Box::new(move || std::fs::write(&newer, "newer\n").unwrap()));
+    fx.settle_file().await;
+
+    assert_eq!(fx.contents(&page).await, ["uno"]);
+    assert_eq!(
+        fx.read(),
+        "newer\n",
+        "the newer save is kept, to be read next"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
