@@ -806,20 +806,25 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
     // invisible until the user reloads by hand. The ids travel from
     // `apply_remote` through `merge_one_snapshot`'s return value, which is a
     // hop a split can silently drop (#4639).
-    let completed: Vec<Vec<String>> = init_recorder
+    // Its block count is `None`, never `Some(0)`: a sink reads `Some(0)` as
+    // "nothing changed" and skips its refresh, as the Markdown mirror's
+    // `note_sync` skips the full pass it runs for a sync naming no page.
+    let completed: Vec<(Vec<String>, Option<usize>)> = init_recorder
         .events()
         .into_iter()
         .filter_map(|e| match e {
             SyncEvent::Complete {
-                changed_page_ids, ..
-            } => Some(changed_page_ids),
+                changed_page_ids,
+                changed_blocks,
+                ..
+            } => Some((changed_page_ids, changed_blocks)),
             _ => None,
         })
         .collect();
     assert_eq!(
         completed,
-        vec![vec!["RESPPAGE0001".to_string()]],
-        "one Complete event, naming the page the merged block belongs to"
+        vec![(vec!["RESPPAGE0001".to_string()], None)],
+        "one Complete event, naming the page the merged block belongs to, its count unknown"
     );
 
     init_mat.flush_background().await.unwrap();
