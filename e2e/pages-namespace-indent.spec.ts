@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test'
+import { devices, type Locator, type Page } from '@playwright/test'
 
 import { createPageFromPagesView, expect, navigateToView, test, waitForBoot } from './helpers'
 
@@ -77,5 +77,51 @@ test.describe('Pages view — namespace indentation @pages', () => {
     // page, and must read that way. This is the assertion the bug broke:
     // the nested title used to sit ~48px LEFT of the flat one.
     expect(await leftEdge(nestedTitle)).toBeGreaterThan(await leftEdge(flatTitle))
+  })
+})
+
+const iPhone13 = devices['iPhone 13']
+
+/** One namespace level's step in `PageTreeItem` plus the leaf's own inset. */
+const MAX_ONE_LEVEL_INSET_PX = 48
+
+test.describe('Pages view — namespace indentation on a phone @pages @mobile', () => {
+  test.use({
+    viewport: iPhone13.viewport,
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+    deviceScaleFactor: iPhone13.deviceScaleFactor,
+    userAgent: iPhone13.userAgent,
+  })
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  // A phone's flat row hides its checkbox and star, so the tree must not
+  // reserve their width either: it once did, and a namespaced page sat a
+  // third of the screen in from the pages around it.
+  test('a namespaced page starts one level in from a top-level page', async ({ page }) => {
+    await openPagesView(page)
+    await createPageFromPagesView(page, NAMESPACED_PAGE)
+    await openPagesView(page)
+
+    const flatRow = page.locator(`[data-page-item]:has-text("${FLAT_PAGE}")`)
+    const flatContent = flatRow.locator('.page-browser-item')
+    const flatTitle = flatRow.locator('.page-browser-item-title')
+    const namespaceRoot = page.getByRole('button', { name: 'Toggle work namespace' })
+    const nestedTitle = page.locator(`[data-page-tree-row] span[title="${NAMESPACED_PAGE}"]`)
+
+    await expect(flatContent).toBeVisible()
+    await expect(namespaceRoot).toBeVisible()
+    await expect(nestedTitle).toBeVisible()
+
+    expect(
+      Math.abs((await leftEdge(namespaceRoot)) - (await leftEdge(flatContent))),
+    ).toBeLessThanOrEqual(1)
+
+    const nestedInset = (await leftEdge(nestedTitle)) - (await leftEdge(flatTitle))
+    expect(nestedInset).toBeGreaterThan(0)
+    expect(nestedInset).toBeLessThanOrEqual(MAX_ONE_LEVEL_INSET_PX)
   })
 })
