@@ -1155,6 +1155,13 @@ impl Mirror {
                 return self.read_edit(root, page_id, path, bytes, &file).await;
             }
             _ => {
+                // While reading back is off, a vanished file is not written
+                // again: it is listed as pending, and read in, as the rename or
+                // the delete it was, once the user chooses to.
+                if vanished && !self.read_back {
+                    self.missing.entry(page_id.to_owned()).or_insert(0);
+                    return Ok(Wrote::Missing);
+                }
                 if vanished && self.still_missing(page_id) {
                     return Ok(Wrote::Missing);
                 }

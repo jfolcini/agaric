@@ -900,23 +900,20 @@ async fn a_move_whose_new_title_the_space_holds_leaves_the_page_where_it_was() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn with_reading_back_off_a_vanished_file_is_written_again_once_it_counts_as_gone() {
+async fn with_reading_back_off_a_vanished_file_stays_gone_and_is_listed_as_pending() {
     let mut fx = Fx::new().await;
-    fx.page("Alpha", &["one"]).await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
     fx.tick().await;
     read_back(&fx, false, false).await.unwrap();
-    let written = fx.read();
 
     std::fs::remove_file(fx.root.join(ALPHA)).unwrap();
-    fx.tick().await;
-    fx.tick().await;
-    assert!(
-        !fx.root.join(ALPHA).exists(),
-        "held while it may yet be found renamed"
-    );
-    fx.tick().await;
+    for _ in 0..5 {
+        fx.tick().await;
+    }
 
-    assert_eq!(fx.read(), written);
+    assert!(!fx.root.join(ALPHA).exists(), "not written again");
+    assert!(!is_trashed(&fx, &page).await, "nor read in");
+    assert_eq!(fx.status().await.pending, [ALPHA]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -998,10 +995,9 @@ async fn with_reading_back_off_no_outside_change_reaches_agaric() {
     assert!(pages_titled(&fx, "Gamma").await.is_empty());
     assert!(pages_titled(&fx, "Delta").await.is_empty());
     assert_eq!(pages_titled(&fx, "Beta").await.len(), 1);
-    let beta = std::fs::read_to_string(fx.root.join("TestSpace/Beta.md")).unwrap();
     assert!(
-        beta.contains("two"),
-        "a vanished file is written again: {beta}"
+        !fx.root.join("TestSpace/Beta.md").exists(),
+        "a vanished file is not written again"
     );
     let status = fx.status().await;
     assert!(!status.read_back);
@@ -1010,6 +1006,7 @@ async fn with_reading_back_off_no_outside_change_reaches_agaric() {
         status.pending,
         [
             "TestSpace/Alpha.md",
+            "TestSpace/Beta.md",
             "TestSpace/Delta.md",
             "TestSpace/Gamma.md"
         ]
@@ -1023,7 +1020,7 @@ async fn reading_back_turned_on_reads_nothing_until_the_user_chooses_to() {
 
     let refused = read_back(&fx, true, false).await;
     assert!(
-        matches!(&refused, Err(e) if e.to_string().contains("3 files")),
+        matches!(&refused, Err(e) if e.to_string().contains("4 files")),
         "{refused:?}"
     );
     for _ in 0..3 {
@@ -1458,4 +1455,31 @@ async fn a_file_changed_after_the_list_was_shown_is_not_read_in_by_its_confirm()
         1,
         "read in once shown"
     );
+}
+
+/// A file renamed while reading back is off is read in as that rename once
+/// the user chooses to, not as a second page beside the first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rename_made_while_reading_back_was_off_is_read_in_as_a_rename() {
+    let mut fx = Fx::new().await;
+    changed_while_off(&mut fx).await;
+    let beta = pages_titled(&fx, "Beta").await;
+    assert_eq!(beta.len(), 1);
+    assert!(
+        !fx.root.join("TestSpace/Beta.md").exists(),
+        "the renamed file's old place stays empty while reading back is off"
+    );
+
+    read_back(&fx, true, true).await.unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert_eq!(
+        pages_titled(&fx, "Gamma").await,
+        beta,
+        "the same page, renamed"
+    );
+    assert!(pages_titled(&fx, "Beta").await.is_empty());
+    assert!(!fx.root.join("TestSpace/Beta.md").exists());
 }
