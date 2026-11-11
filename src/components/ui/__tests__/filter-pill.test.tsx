@@ -34,6 +34,19 @@ describe('FilterPill', () => {
     expect(screen.getByRole('group', { name: 'status = TODO' })).toBeInTheDocument()
   })
 
+  // A filter pill is a control: control radius, never a pill shape, and its
+  // remove button stays concentric inside it.
+  it('takes the control radius and a concentric remove button, never rounded-full', () => {
+    render(<FilterPill {...defaultProps} />)
+
+    const pill = screen.getByRole('group', { name: 'status = TODO' })
+    const remove = screen.getByRole('button', { name: 'Remove filter status = TODO' })
+    expect(pill).toHaveClass('rounded-md')
+    expect(pill).not.toHaveClass('rounded-full')
+    expect(remove).toHaveClass('rounded-sm')
+    expect(remove).not.toHaveClass('rounded-full')
+  })
+
   it('uses groupAriaLabel when provided (overrides label)', () => {
     render(<FilterPill {...defaultProps} groupAriaLabel="Filter: status = TODO" />)
 

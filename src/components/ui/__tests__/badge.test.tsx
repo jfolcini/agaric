@@ -25,7 +25,8 @@ describe('Badge', () => {
     expect(badge).toBeInTheDocument()
     expect(badge).toHaveAttribute('data-slot', 'badge')
     expect(badge).toHaveAttribute('data-variant', 'default')
-    expect(badge.className).toContain('rounded-full')
+    expect(badge.className).toContain('rounded-sm')
+    expect(badge.className).not.toContain('rounded-full')
     expect(badge.className).toContain('text-xs')
   })
 
