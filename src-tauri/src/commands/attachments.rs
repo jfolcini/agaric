@@ -216,6 +216,24 @@ pub(crate) struct StoredBytes {
     pub content_hash: String,
 }
 
+/// A new attachment id, later than every id this process minted before it.
+///
+/// `list_attachments` orders by `created_at, id`, and two attachments made in
+/// the same millisecond (a meeting's audio and transcript, #5364) tie on
+/// `created_at`; a random ULID would then list them in either order.
+fn new_attachment_id() -> String {
+    static GENERATOR: std::sync::Mutex<ulid::Generator> =
+        std::sync::Mutex::new(ulid::Generator::new());
+    let mut generator = GENERATOR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Overflow needs 2^80 ids in one millisecond.
+    generator
+        .generate()
+        .unwrap_or_else(|_| ulid::Ulid::generate())
+        .to_string()
+}
+
 /// [`persist_attachment`] inside the caller's rollback-armed transaction
 /// (`add_meeting_inner`, #5364), the op enqueued for the caller's commit.
 pub(crate) async fn persist_attachment_in_tx(
@@ -232,7 +250,7 @@ pub(crate) async fn persist_attachment_in_tx(
         fs_path,
         content_hash,
     } = stored;
-    let attachment_id = ulid::Ulid::generate().to_string().to_uppercase();
+    let attachment_id = new_attachment_id();
     let now = now_ms();
     let state = materializer.loro_state();
 
@@ -1156,6 +1174,23 @@ pub async fn list_attachments_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attachment_ids_follow_the_order_they_were_minted_in_5364() {
+        let ids: Vec<String> = (0..1000).map(|_| new_attachment_id()).collect();
+        for pair in ids.windows(2) {
+            assert!(
+                pair[0] < pair[1],
+                "{} was minted before {}",
+                pair[0],
+                pair[1]
+            );
+        }
+        assert!(
+            ids.iter()
+                .all(|id| id.len() == 26 && id.to_uppercase() == *id)
+        );
+    }
 
     #[test]
     fn mime_for_extension_reads_the_extension_in_any_case_5410() {

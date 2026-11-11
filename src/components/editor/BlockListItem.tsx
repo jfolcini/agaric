@@ -234,7 +234,6 @@ function BlockMetadataRowInner({
       {priority != null && priority !== '' && priorityVariant === 'default' && (
         <Badge
           tone="priority"
-          shape="rounded"
           size="sm"
           priorityLevel={priority}
           {...(priorityBadgeClassName !== undefined && { className: priorityBadgeClassName })}

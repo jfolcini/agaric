@@ -503,7 +503,9 @@ impl Mirror {
         self
     }
 
-    /// The pages whose file changed since the mirror last saw it.
+    /// The pages whose file changed since the mirror last saw it. One stat per
+    /// mirrored file every tick, dirty or not: cheap at today's vault sizes. A
+    /// vault large enough to feel it would gate this scan on a slower cadence.
     fn changed_files(&self, root: &Path) -> Vec<String> {
         self.pages
             .iter()
@@ -562,7 +564,10 @@ impl Mirror {
         self.read_new_files(&root).await
     }
 
-    /// Every `.md` file below the mirror's folder, as paths below it.
+    /// Every `.md` file below the mirror's folder, as paths below it. One stat
+    /// per folder every tick, its listing reread only when it changed: cheap at
+    /// today's vault sizes. A vault large enough to feel it would gate this scan
+    /// on a slower cadence.
     fn scan(&mut self, root: &Path) -> Vec<String> {
         let mut found = Vec::new();
         let mut seen = HashSet::new();

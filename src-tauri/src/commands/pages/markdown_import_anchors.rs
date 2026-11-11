@@ -1,6 +1,7 @@
 //! Linking block and heading anchors after an import:
-//! [`link_cross_page_anchors`], [`anchor_block`], [`resolve_anchor_links`],
-//! [`rewrite_anchor_tokens`] and [`link_deferred_links`].
+//! [`link_cross_page_anchors`], [`anchor_block`], [`unique_headings`],
+//! [`resolve_anchor_links`], [`rewrite_anchor_tokens`] and
+//! [`link_deferred_links`].
 
 use super::*;
 
@@ -73,6 +74,33 @@ pub(super) async fn load_anchor_candidates(
     .fetch_all(&mut *conn)
     .await?;
     Ok(candidates)
+}
+
+/// The blocks among `candidates` that pass `is_target` and that a link may name by heading
+/// (#6277 F4), each with its [`heading_link_text`]: a heading whose text no
+/// other heading of its page shares, compared as [`anchor_block`] compares
+/// it, so `[[Title#Heading]]` names that block whichever reader resolves it.
+pub(super) fn unique_headings(
+    candidates: &[AnchorCandidate],
+    is_target: impl Fn(&str) -> bool,
+) -> HashMap<String, String> {
+    let mut counts: HashMap<(&str, String), usize> = HashMap::new();
+    for c in candidates {
+        if let Some(text) = obsidian_heading_text(&c.content) {
+            let key = (c.page_id.as_str(), normalize_heading_anchor(text));
+            *counts.entry(key).or_default() += 1;
+        }
+    }
+    candidates
+        .iter()
+        .filter(|c| is_target(&c.id))
+        .filter_map(|c| {
+            let text = heading_link_text(&c.content)?;
+            let key = (c.page_id.as_str(), normalize_heading_anchor(text));
+            // Counted above: `heading_link_text` is `obsidian_heading_text` filtered.
+            (counts[&key] == 1).then(|| (c.id.clone(), text.to_owned()))
+        })
+        .collect()
 }
 
 /// Warn of `n` anchors whose links fell back to their page, when there are

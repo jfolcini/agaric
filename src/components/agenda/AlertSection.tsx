@@ -145,17 +145,12 @@ export function AlertSection({
                 }}
               >
                 {block.todo_state && (
-                  <Badge
-                    tone="status"
-                    shape="rounded"
-                    size="compact"
-                    statusState={config.badgeState}
-                  >
+                  <Badge tone="status" size="compact" statusState={config.badgeState}>
                     {block.todo_state}
                   </Badge>
                 )}
                 {showPriorityBadge && block.priority && (
-                  <Badge tone="priority" shape="rounded" size="sm" priorityLevel={block.priority}>
+                  <Badge tone="priority" size="sm" priorityLevel={block.priority}>
                     P{block.priority}
                   </Badge>
                 )}

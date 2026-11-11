@@ -14,7 +14,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde::Serialize;
-use specta::Type;
 use sqlx::SqlitePool;
 
 use agaric_core::error::AppError;
@@ -35,7 +34,9 @@ use agaric_core::ulid::BlockId;
 /// what it wrote.
 pub const EVENT_MIRROR_INGESTED: &str = "mirror:ingested";
 
-#[derive(Debug, Clone, Serialize, Type)]
+/// Typed by hand in `useMirrorIngestEvents.ts`: the bindings carry commands,
+/// not event payloads.
+#[derive(Debug, Clone, Serialize)]
 pub struct MirrorIngested {
     pub page_id: String,
     pub path: String,
@@ -188,7 +189,6 @@ pub async fn ingest(
 /// event carrying both commands' ops, so one undo removes the page. A title
 /// the space already holds is refused, and so is a save the op cap or the
 /// grammar refuses, which deletes the page it created, to the Trash.
-#[allow(clippy::too_many_arguments)]
 pub async fn create(
     read_pool: &SqlitePool,
     ingest: &Ingest,

@@ -1139,15 +1139,25 @@ async fn load_attachments(
 
 /// The page's blocks something addresses (#6277 decision 6): the target of a
 /// block ref or embed from any live block, a ref-typed property value of one,
-/// or an attachment's owner.
+/// or an attachment's owner. With them, those a value or an attachment holds,
+/// which no link names by heading ([`resolve_heading_refs`] reads the same).
 async fn load_addressed_blocks(
     conn: &mut sqlx::SqliteConnection,
     descendants: &[BlockRow],
-) -> Result<HashSet<String>, AppError> {
+) -> Result<(HashSet<String>, HashSet<String>), AppError> {
     let ids: Vec<&str> = descendants.iter().map(|b| b.id.as_str()).collect();
     let ids_json = serde_json::to_string(&ids)?;
-    let rows = sqlx::query_scalar!(
-        r#"SELECT b.id FROM blocks b
+    // `held` is written out again in the WHERE below and in
+    // `resolve_heading_refs`: `query!` takes one literal, so the copies stay
+    // and change together.
+    let rows = sqlx::query!(
+        r#"SELECT b.id AS "id!",
+                  (EXISTS (SELECT 1 FROM block_properties p JOIN blocks s ON s.id = p.block_id
+                           WHERE p.value_ref = b.id AND s.deleted_at IS NULL)
+                   OR EXISTS (SELECT 1 FROM attachments a
+                              WHERE a.block_id = b.id AND a.deleted_at IS NULL))
+                      AS "held!: bool"
+           FROM blocks b
            WHERE b.id IN (SELECT value FROM json_each(?1))
              AND (EXISTS (SELECT 1 FROM block_links l JOIN blocks s ON s.id = l.source_id
                           WHERE l.target_id = b.id AND l.kind = 'block_ref'
@@ -1160,7 +1170,12 @@ async fn load_addressed_blocks(
     )
     .fetch_all(&mut *conn)
     .await?;
-    Ok(rows.into_iter().collect())
+    let held = rows
+        .iter()
+        .filter(|r| r.held)
+        .map(|r| r.id.clone())
+        .collect();
+    Ok((rows.into_iter().map(|r| r.id).collect(), held))
 }
 
 /// The `#[…]`, `[[…]]` and `((…))` tokens found in a page's descendants,
@@ -1734,9 +1749,17 @@ pub(super) async fn load_page_export_data(
         HashMap::new()
     };
     let mut refs = resolve_references(conn, page_id, &descendants).await?;
+    // A duplicate writes every id raw, so it names no heading.
+    let headings = if read == PageRead::Duplicate {
+        HashMap::new()
+    } else {
+        let replacement = &mut refs.block_ref_replacement;
+        resolve_heading_refs(conn, replacement, &refs.block_ref_titles).await?
+    };
     if export || read == PageRead::File {
-        refs.addressed_blocks
-            .extend(load_addressed_blocks(conn, &descendants).await?);
+        let (addressed, held) = load_addressed_blocks(conn, &descendants).await?;
+        refs.addressed_blocks.extend(addressed);
+        drop_named_heading_anchors(&descendants, &mut refs.addressed_blocks, &held);
     }
     let mut properties = if front_matter {
         load_page_properties(conn, page_id).await?
@@ -1760,7 +1783,7 @@ pub(super) async fn load_page_export_data(
         (Vec::new(), Vec::new())
     };
     let name_snapshot = if matches!(read, PageRead::Buffer | PageRead::File) {
-        load_name_snapshot(conn, &page.id, &descendants, &refs, &ref_titles).await?
+        load_name_snapshot(conn, &page.id, &descendants, &refs, &ref_titles, headings).await?
     } else {
         NameSnapshot::default()
     };
@@ -1782,17 +1805,101 @@ pub(super) async fn load_page_export_data(
     })
 }
 
+/// The block refs among `titles`' targets a link may name by heading (#6277
+/// F4), each with its text ([`unique_headings`]), read through the anchor
+/// pass's own query for the pages holding a heading target. A target a
+/// ref-typed value or an attachment holds keeps its `^ULID` line, so it is
+/// named by id ([`load_addressed_blocks`] reads the same). Each one's export
+/// link in `replacement` becomes `[[Title#Heading]]`, its own page's too.
+async fn resolve_heading_refs(
+    conn: &mut sqlx::SqliteConnection,
+    replacement: &mut HashMap<String, String>,
+    titles: &HashMap<String, String>,
+) -> Result<HashMap<String, String>, AppError> {
+    if titles.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let ids = serde_json::to_string(&titles.keys().collect::<Vec<_>>())?;
+    let rows = sqlx::query!(
+        r#"SELECT b.id AS "id!", b.page_id AS "page_id!",
+                  (EXISTS (SELECT 1 FROM block_properties p JOIN blocks s ON s.id = p.block_id
+                           WHERE p.value_ref = b.id AND s.deleted_at IS NULL)
+                   OR EXISTS (SELECT 1 FROM attachments a
+                              WHERE a.block_id = b.id AND a.deleted_at IS NULL))
+                      AS "held!: bool"
+           FROM blocks b
+           WHERE b.id IN (SELECT value FROM json_each(?1))
+             AND b.block_type = 'content' AND b.deleted_at IS NULL
+             AND b.page_id IS NOT NULL AND ltrim(b.content) LIKE '#%'"#,
+        ids,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let named: HashSet<&str> = rows
+        .iter()
+        .filter(|r| !r.held)
+        .map(|r| r.id.as_str())
+        .collect();
+    if named.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let pages = rows.iter().map(|r| r.page_id.as_str()).collect();
+    let candidates = load_anchor_candidates(conn, &pages).await?;
+    let headings = unique_headings(&candidates, |id| named.contains(id));
+    for (id, heading) in &headings {
+        replacement.insert(id.clone(), format!("[[{}#{heading}]]", titles[id]));
+    }
+    Ok(headings)
+}
+
+/// Take out of `addressed` the headings of the page, its `descendants`, that
+/// every link names by text (#6277 F4): those [`resolve_heading_refs`] names,
+/// a heading no ref-typed value or attachment `held`s. Their lines are written
+/// bare, as Obsidian puts no block id on a heading, so no line both carries
+/// `^ULID` and is named `[[Title#Heading]]`. Read from the rows the render
+/// already holds, the set `load_anchor_candidates` would read for the page.
+fn drop_named_heading_anchors(
+    descendants: &[BlockRow],
+    addressed: &mut HashSet<String>,
+    held: &HashSet<String>,
+) {
+    let candidates: Vec<AnchorCandidate> = descendants
+        .iter()
+        .filter(|b| b.block_type == "content")
+        .filter_map(|b| {
+            let content = b.content.as_deref()?;
+            let page_id = b.page_id.as_ref()?;
+            content
+                .trim_start_matches(' ')
+                .starts_with('#')
+                .then(|| AnchorCandidate {
+                    id: b.id.to_string(),
+                    page_id: page_id.to_string(),
+                    parent_id: None,
+                    position: None,
+                    content: content.to_owned(),
+                })
+        })
+        .collect();
+    let named = unique_headings(&candidates, |id| {
+        addressed.contains(id) && !held.contains(id)
+    });
+    addressed.retain(|id| !named.contains_key(id));
+}
+
 /// What the importer would resolve the page's referenced names against: its
 /// space's pages the link bodies the render writes may name, the titles of
 /// ref-typed values among them, the blocks its block links may name
-/// ([`read_ref_blocks`]), and its space's tags. A page in no space gets the
-/// empty snapshot, so every name stays raw.
+/// ([`read_ref_blocks`]) and the `headings` they may name by text, and its
+/// space's tags. A page in no space gets the empty snapshot, so every name
+/// stays raw.
 async fn load_name_snapshot(
     conn: &mut sqlx::SqliteConnection,
     page_id: &BlockId,
     descendants: &[BlockRow],
     refs: &PageReferences,
     ref_titles: &HashMap<String, String>,
+    headings: HashMap<String, String>,
 ) -> Result<NameSnapshot, AppError> {
     let Some(space) = agaric_store::space::resolve_block_space(&mut *conn, page_id).await? else {
         return Ok(NameSnapshot::default());
@@ -1801,8 +1908,15 @@ async fn load_name_snapshot(
     bodies.extend(ref_titles.values().cloned());
     let block_links = refs.block_ref_titles.iter();
     bodies.extend(block_links.map(|(id, title)| format!("{title}#^{id}")));
+    let titles = &refs.block_ref_titles;
+    bodies.extend(
+        headings
+            .iter()
+            .map(|(id, text)| format!("{}#{text}", titles[id])),
+    );
     let mut pages = snapshot_page_link_matches(conn, space.as_str(), &bodies).await?;
     read_ref_blocks(conn, &mut pages, page_id.as_str(), &refs.block_ref_titles).await?;
+    pages.headings = headings;
     Ok(NameSnapshot {
         pages,
         tag_id_by_norm: snapshot_tags_by_norm(conn, space.as_str()).await?,
