@@ -19,8 +19,10 @@
   - `buffer: None,` in the `Shadow` literal of `a_state_keeps_the_last_three_texts_written_once_each`;
   - step 3 of `e2e-tauri/mirror-outbound.e2e.ts`, which now expects the file read in and the app's edit kept.
 - **Ran:**
-  - `cargo nextest run -p agaric --lib -E 'test(/mirror::/)'`: 60 passed. Each new test was shown red by its own break (session notes in the PR).
+  - `cargo nextest run -p agaric --lib -E 'test(/mirror::/)'`: 61 passed.
+  - 14 breaks of the new code, one at a time: 13 turn a test red, once two tests were added (a save landing during an ingest, and a new line keeping its own bytes).
+  - One break stays green: skipping the memo of a refused file's bytes. It only saves a rolled-back retry each tick, and `read_edit`'s doc says so.
   - The `useMirrorIngestEvents` vitest, red against two breaks.
   - `npm run typecheck`.
-  - The e2e-tauri specs did not run here (no `tauri-driver`); CI's `e2e-tauri-gate` is their first run.
+  - The e2e-tauri specs cannot run here (no `tauri-driver`). They were shown red on main in scratch PR #6461 (run 42958658181), each at its predicted wait.
 - **Left:** H3 (a new file becomes a page); a stat-scan measurement over 10K files.
