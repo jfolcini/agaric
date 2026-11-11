@@ -507,14 +507,24 @@ async fn a_file_whose_anchors_name_another_page_reimports_unchanged() {
     mat.shutdown();
 }
 
-/// A template page holding a block with a file of its own and an inline
-/// image, a file of the page's own and a done task, and its export as the ZIP
-/// writes it, with the files at `assets/<id>/<name>`. Returns the page and
-/// the export's note and files.
+/// [`exported_page_with_files_as`] for a template page.
 async fn exported_page_with_files(
     pool: &SqlitePool,
     mat: &Materializer,
     dir: &std::path::Path,
+) -> (String, String, Vec<VaultFile>) {
+    exported_page_with_files_as(pool, mat, dir, true).await
+}
+
+/// A page, a template one when `template`, holding a block with a file of
+/// its own and an inline image, a file of the page's own and a done task, and
+/// its export as the ZIP writes it, with the files at `assets/<id>/<name>`.
+/// Returns the page and the export's note and files.
+async fn exported_page_with_files_as(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    dir: &std::path::Path,
+    template: bool,
 ) -> (String, String, Vec<VaultFile>) {
     let page = dup_page(pool, mat, "Review").await;
     let holder = dup_child(pool, mat, &page, "See the report").await;
@@ -529,21 +539,23 @@ async fn exported_page_with_files(
     )
     .await
     .unwrap();
-    set_property_inner(
-        pool,
-        DEV,
-        mat,
-        page.as_str().to_string().into(),
-        "template".into(),
-        Some("true".into()),
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+    if template {
+        set_property_inner(
+            pool,
+            DEV,
+            mat,
+            page.as_str().to_string().into(),
+            "template".into(),
+            Some("true".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
     let attach = |owner: BlockId, name: &'static str, mime: &'static str| async move {
         add_attachment_with_bytes_inner(
             pool,
@@ -638,6 +650,32 @@ async fn reimporting_a_template_pages_export_leaves_it_as_it_was() {
     let mat = Materializer::new(pool.clone());
     let (page, _, _) = exported_page_with_files(&pool, &mat, dir.path()).await;
     let md = export_page_markdown_inner(&pool, &page).await.unwrap();
+    let before = (page_state(&pool, &page).await, attachments(&pool).await);
+
+    let result = import(&pool, &mat, dir.path(), "Review.md", &md)
+        .await
+        .unwrap();
+
+    assert_eq!(result.page_id, page);
+    assert_eq!(result.warnings, Vec::<String>::new());
+    assert_eq!(pages_titled(&pool, "Review").await, [page.as_str()]);
+    assert_eq!(
+        (page_state(&pool, &page).await, attachments(&pool).await),
+        before
+    );
+    mat.shutdown();
+}
+
+/// Red (#6277 G5): a page's own export re-imported as a lone file merges into
+/// it unchanged when the page holds files, whose `attachments:` front matter
+/// and `attachments::` lines a save reads as the app's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reimporting_the_export_of_a_page_with_files_leaves_it_as_it_was() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, _, _) = exported_page_with_files_as(&pool, &mat, dir.path(), false).await;
+    let md = export_page_markdown_inner(&pool, &page).await.unwrap();
+    assert!(md.contains("attachments: ["), "{md}");
     let before = (page_state(&pool, &page).await, attachments(&pool).await);
 
     let result = import(&pool, &mat, dir.path(), "Review.md", &md)
