@@ -585,13 +585,14 @@ async function rewriteAttachmentRefs(
     try {
       const meta = unwrap(await commands.readAttachmentMeta(id))
       const bytes = await readAttachment(id)
-      // Prefix the asset filename with the attachment id so two attachments
-      // sharing a filename (e.g. `image.png`) never collide in `assets/`.
+      // A folder per attachment id, so two attachments sharing a filename
+      // (e.g. `image.png`) never collide in `assets/`, and the file keeps its
+      // name, which an import attaches it under (#6277 G3).
       // #2961 — the asset name is a single FLAT segment, so collapse any path
       // separator in the stored filename to `_` BEFORE sanitizing. Without
       // this, a filename like `../../evil` (settable via `rename_attachment`,
       // which has no traversal check, and syncable from a peer device) would
-      // produce a ZIP entry `assets/<id>__../../evil` that escapes the assets
+      // produce a ZIP entry `assets/<id>/../../evil` that escapes the assets
       // root on naive extraction (Zip-Slip). `sanitizeSegment` strips `\` and
       // neutralizes dots-only segments but does NOT strip `/`; this widened as
       // a concern once #2961 began routing arbitrary uploaded files (not just
@@ -599,7 +600,7 @@ async function rewriteAttachmentRefs(
       // the backend rename-validation root cause.
       const flatName = meta.filename.replaceAll('/', '_')
       const safeName = sanitizeSegment(flatName) || 'attachment'
-      const assetName = `${id}__${safeName}`
+      const assetName = `${id}/${safeName}`
       zip.file(`${assetsPathPrefix}${ASSETS_DIR}/${assetName}`, bytes)
       emittedAssets.set(id, `${ASSETS_DIR}/${assetName}`)
     } catch (err) {

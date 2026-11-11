@@ -264,7 +264,6 @@ fn render_block(
     layout: &mut DocumentLayout,
 ) {
     let PageExportData {
-        attachments_by_block,
         descendant_properties,
         list_styles,
         ..
@@ -318,23 +317,31 @@ fn render_block(
         output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
     }
 
-    // #2961 — emit a link line for each block-scoped (non-inline)
-    // attachment, a plain `+` child of this block. Skips any
-    // attachment whose id already appears as an `attachment:<id>` token
-    // in `content` — that's an inline image, already rendered above by
-    // `push_bullet` — so only
-    // genuine file attachments (PDFs/docs/images with no inline token)
-    // get a line here. Only an export's read loads them: in the buffer,
-    // attachments have their own UI.
-    if let Some(atts) = attachments_by_block.get(&id) {
-        for (att_id, filename) in atts {
-            if content.contains(&format!("attachment:{att_id}")) {
-                continue;
-            }
-            let label = attachment_link_label(filename);
-            output.push_str(&format!("{prop_indent}+ [{label}](attachment:{att_id})\n"));
-        }
+    // #6277 G3 — the block's own files, those its text does not link, as
+    // one `attachments::` line (decision 9), which an import reads back as
+    // the block's attachments.
+    let links = scoped_attachment_links(&id, content, data);
+    if !links.is_empty() {
+        output.push_str(&format!(
+            "{prop_indent}attachments:: {}\n",
+            links.join(", ")
+        ));
     }
+}
+
+/// The block `id`'s attachments that `content` does not already link as an
+/// `attachment:<id>` token, each as a `[name](attachment:<id>)` link. Only
+/// an export's read loads them: in the buffer, attachments have their own UI.
+fn scoped_attachment_links(id: &str, content: &str, data: &PageExportData) -> Vec<String> {
+    data.attachments_by_block
+        .get(id)
+        .into_iter()
+        .flatten()
+        .filter(|(att_id, _)| !content.contains(&format!("attachment:{att_id}")))
+        .map(|(att_id, filename)| {
+            format!("[{}](attachment:{att_id})", attachment_link_label(filename))
+        })
+        .collect()
 }
 
 /// A block's reserved columns as `key:: value` lines at `indent`: its task
@@ -623,11 +630,18 @@ fn continuation_indent(indent: &str, list_marker: &str) -> String {
 /// writes its name ([`ref_link`]), else its id.
 fn render_frontmatter(output: &mut String, data: &PageExportData, names: Names) {
     let PageExportData {
+        page,
         properties,
         aliases,
         tag_names_fm,
         ..
     } = data;
+    // #6277 G3 — the page's own files, those its title does not link.
+    let attachments = scoped_attachment_links(
+        page.id.as_str(),
+        page.content.as_deref().unwrap_or(""),
+        data,
+    );
     // Frontmatter (if properties, aliases, or tags exist)
     //
     // (#1433) `aliases`/`tags` are emitted as YAML *flow sequences*
@@ -643,7 +657,11 @@ fn render_frontmatter(output: &mut String, data: &PageExportData, names: Names) 
     // the import side unquotes a flow item in `import::flow_item`.
     use super::markdown_yaml::{yaml_flow_sequence, yaml_scalar_emit};
 
-    if !properties.is_empty() || !aliases.is_empty() || !tag_names_fm.is_empty() {
+    if !properties.is_empty()
+        || !aliases.is_empty()
+        || !tag_names_fm.is_empty()
+        || !attachments.is_empty()
+    {
         output.push_str("---\n");
         if !aliases.is_empty() {
             output.push_str(&format!("aliases: {}\n", yaml_flow_sequence(aliases)));
@@ -661,48 +679,13 @@ fn render_frontmatter(output: &mut String, data: &PageExportData, names: Names) 
             // import-side `parse_frontmatter` re-parse.
             output.push_str(&yaml_scalar_emit(&prop.key, &value));
         }
-        output.push_str("---\n\n");
-    }
-}
-
-/// The page block's own non-inline attachments, which neither render loop
-/// below reaches (#2991).
-fn render_page_attachments(output: &mut String, page_id: &str, data: &PageExportData) {
-    let PageExportData {
-        page,
-        attachments_by_block,
-        ..
-    } = data;
-    // #2991 — emit the PAGE block's own non-inline attachments.
-    //
-    // `attachments_by_block` was batch-fetched above (2b) for the page id
-    // AND every descendant, but neither render loop below iterates the page
-    // block itself: the DFS loop only walks `descendants`, and the orphan
-    // safety net only walks entries of `descendants` not reached by the DFS.
-    // An attachment attached directly to the page/title block (rather than
-    // to one of its descendant blocks) was therefore fetched but never
-    // emitted — silently dropped from the export, the same data-loss class
-    // #2961 fixed for descendant blocks, just for the root block.
-    //
-    // Dedup mirrors the DFS/orphan loops EXACTLY: an attachment id already
-    // present as an `attachment:<id>` token in the page's own `content` (an
-    // inline image) is skipped here so it isn't double-emitted — it was
-    // already rendered inline as part of the `# {title}` line above.
-    //
-    // Emitted at depth 0 (no indent), right after the front matter and title
-    // and before the descendant blocks, each a paragraph of its own: these
-    // lines aren't nested under any block (the page has none — its content
-    // is the `# Title` heading), so they sit at the same top level as the
-    // first-level descendant blocks below.
-    if let Some(atts) = attachments_by_block.get(page_id) {
-        let page_content = page.content.as_deref().unwrap_or("");
-        for (att_id, filename) in atts {
-            if page_content.contains(&format!("attachment:{att_id}")) {
-                continue;
-            }
-            let label = attachment_link_label(filename);
-            output.push_str(&format!("[{label}](attachment:{att_id})\n\n"));
+        if !attachments.is_empty() {
+            output.push_str(&format!(
+                "attachments: {}\n",
+                yaml_flow_sequence(&attachments)
+            ));
         }
+        output.push_str("---\n\n");
     }
 }
 
@@ -760,7 +743,6 @@ pub(super) fn render_page_markdown(page_id: &str, data: &PageExportData) -> Stri
     render_frontmatter(&mut output, data, Names::Always);
     let title = data.page.content.as_deref().unwrap_or("Untitled");
     output.push_str(&format!("# {title}\n\n"));
-    render_page_attachments(&mut output, page_id, data);
     let mut blocks = String::new();
     let mode = RenderMode {
         names: Names::Always,
@@ -1406,9 +1388,9 @@ async fn load_page_properties(
     //
     // #384: exclude internal/system-managed keys so they don't leak into the
     // exported frontmatter. The explicit list is required because it is not
-    // `op::is_builtin_property_key`'s set: `template` is not built in, and
-    // the repeat rule is built in but exported. The list below is `space` /
-    // `is_space` / `template` plus the lifecycle keys that get stored in
+    // `op::is_builtin_property_key`'s set: the repeat rule is built in but
+    // exported, and so is `template`, which is not built in (#6277 G3). The
+    // list below is `space` / `is_space` plus the lifecycle keys stored in
     // `block_properties` (the reserved-column keys —
     // todo_state/priority/due_date/scheduled_date — live on the `blocks`
     // table, never in `block_properties`, so they never appear here).
@@ -1458,7 +1440,7 @@ async fn load_page_properties(
            WHERE block_id = ?1
              AND key NOT IN (
                 'space', 'is_space', 'created_at', 'completed_at',
-                'repeat-seq', 'repeat-origin', 'template', 'listStyle'
+                'repeat-seq', 'repeat-origin', 'attachments', 'listStyle'
              )"#,
         page_id,
     )
@@ -1509,7 +1491,8 @@ async fn load_descendant_properties(
     // `block_properties` row was invisible to the exporter even though
     // import faithfully parses and persists it).
     //
-    // The exclusion list is identical to the page-property query above: the
+    // The exclusion list is the page-property query's above, plus `template`,
+    // which only a page's front matter writes and reads (#6277 G3): the
     // import parser (`FRONTMATTER_RESERVED_KEYS` in
     // `agaric-engine::import::parse_logseq_markdown`) filters this exact key
     // set from EVERY block's body `key:: value` lines — page AND
@@ -1589,7 +1572,7 @@ async fn load_descendant_properties(
                WHERE block_id IN (SELECT value FROM json_each(?1))
                  AND key NOT IN (
                     'space', 'is_space', 'created_at',
-                    'repeat-seq', 'repeat-origin', 'template', 'listStyle'
+                    'repeat-seq', 'repeat-origin', 'template', 'attachments', 'listStyle'
                  )
                ORDER BY block_id ASC, key ASC"#,
             ids_json,
@@ -1778,11 +1761,16 @@ pub(super) async fn load_page_export_data(
         refs.addressed_blocks.extend(addressed);
         drop_named_heading_anchors(&descendants, &mut refs.addressed_blocks, &held);
     }
-    let properties = if front_matter {
+    let mut properties = if front_matter {
         load_page_properties(conn, page_id).await?
     } else {
         Vec::new()
     };
+    // Only an export writes the template flag, so a restore makes a template
+    // page again (#6277 G3); the buffer keeps it the app's.
+    if !export {
+        properties.retain(|prop| prop.key != "template");
+    }
     let descendant = load_descendant_properties(conn, &descendants).await?;
     let ref_titles = if front_matter {
         resolve_property_ref_titles(conn, &properties, &descendant.properties).await?

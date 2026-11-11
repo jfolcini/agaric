@@ -145,6 +145,7 @@ describe('INTERNAL_PROPERTY_KEYS', () => {
         'image_width',
         'image_alignment',
         'image_caption',
+        'attachments',
       ].toSorted(),
     )
   })

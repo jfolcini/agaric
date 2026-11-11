@@ -82,6 +82,7 @@ export const INLINE_PROPERTY_RESERVED_KEYS: ReadonlySet<string> = new Set([
   'repeat-seq',
   'repeat-origin',
   'template',
+  'attachments',
 ])
 
 /**

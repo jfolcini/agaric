@@ -37,6 +37,7 @@ export const INTERNAL_PROPERTY_KEYS: ReadonlySet<string> = new Set([
   'image_width',
   'image_alignment',
   'image_caption',
+  'attachments',
 ])
 
 /**

@@ -816,9 +816,10 @@ pub const BUILTIN_PROPERTY_DEFS: [BuiltinPropertyDef; 15] = [
 
 /// The keys the app writes for its own bookkeeping, which a user's rename or
 /// merge moves neither from nor onto (#5841): the built-ins the app sets itself,
-/// the template markers, the image layout and a migration marker. Mirrored by
-/// `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts`.
-pub const INTERNAL_PROPERTY_KEYS: [&str; 14] = [
+/// the template markers, the image layout, a migration marker and
+/// `attachments`, the key a file writes a block's files under (#6277
+/// decision 9). Mirrored by `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts`.
+pub const INTERNAL_PROPERTY_KEYS: [&str; 15] = [
     "repeat",
     "created_at",
     "completed_at",
@@ -833,6 +834,7 @@ pub const INTERNAL_PROPERTY_KEYS: [&str; 14] = [
     "image_width",
     "image_alignment",
     "image_caption",
+    "attachments",
 ];
 
 /// Whether `key` is one of the [`INTERNAL_PROPERTY_KEYS`].

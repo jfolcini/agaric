@@ -40,6 +40,7 @@ const EXPECTED_RESERVED_KEYS = [
   'repeat-seq',
   'repeat-origin',
   'template',
+  'attachments',
 ]
 
 function def(value_type: string, options: string | null = null): PropertyDefinition {

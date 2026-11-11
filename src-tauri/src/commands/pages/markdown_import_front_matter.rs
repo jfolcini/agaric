@@ -91,6 +91,11 @@ pub(super) async fn apply_frontmatter_properties(
                 .await?;
             continue;
         }
+        if is_attachments_key(key) {
+            // The page's own files, which `insert_blocks` queues for the
+            // post-commit ingest (#6277 G3).
+            continue;
+        }
         if key.as_str() == "tags" {
             // Handled by the frontmatter-tag pre-pass below (resolve-or-create
             // the tag block + write a real `block_tags` association). Skip it
