@@ -1,0 +1,5 @@
+:is(*:has(> [data-page-item]), *:has(> .trash-item), *:has(> .history-item), *:has(> [data-slot=list-item])) { gap: 0; row-gap: 0; border: 1px solid var(--border); border-radius: var(--radius-lg); background-color: var(--card); overflow: hidden; }
+:is(*:has(> [data-page-item]), *:has(> .trash-item), *:has(> .history-item), *:has(> [data-slot=list-item])) > * + * { margin-top: 0; }
+:is([data-page-item], .trash-item, .history-item, [data-slot=list-item]) { border: 0; border-radius: 0; background-color: transparent; border-bottom: 1px solid color-mix(in oklab, var(--border) 70%, transparent); padding-block: 10px; }
+:is([data-page-item], .trash-item, .history-item, [data-slot=list-item]):last-child { border-bottom: 0; }
+:is([data-page-item], .trash-item, .history-item, [data-slot=list-item]):hover { background-color: color-mix(in oklab, var(--accent) 50%, transparent); }

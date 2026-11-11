@@ -1,0 +1,6 @@
+:is(*:has(> [data-page-item]), *:has(> .trash-item), *:has(> .history-item), *:has(> [data-slot=list-item])) { gap: 0; row-gap: 0; }
+:is(*:has(> [data-page-item]), *:has(> .trash-item), *:has(> .history-item), *:has(> [data-slot=list-item])) > * + * { margin-top: 0; }
+:is([data-page-item], .trash-item, .history-item, [data-slot=list-item]) { border: 0; border-radius: var(--radius-sm); background-color: transparent; padding-block: 10px; }
+:is([data-page-item], .trash-item, .history-item, [data-slot=list-item]):not([style*=absolute]) { position: relative; }
+:is([data-page-item], .trash-item, .history-item, [data-slot=list-item])::after { content: ''; position: absolute; left: 12px; right: 0; bottom: 0; height: 1px; background: color-mix(in oklab, var(--border) 70%, transparent); pointer-events: none; }
+:is([data-page-item], .trash-item, .history-item, [data-slot=list-item]):hover { background-color: color-mix(in oklab, var(--accent) 50%, transparent); }

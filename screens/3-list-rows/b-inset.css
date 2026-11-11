@@ -1,0 +1,4 @@
+:is(*:has(> [data-page-item]), *:has(> .trash-item), *:has(> .history-item), *:has(> [data-slot=list-item])) { gap: 2px; row-gap: 2px; }
+:is(*:has(> [data-page-item]), *:has(> .trash-item), *:has(> .history-item), *:has(> [data-slot=list-item])) > * + * { margin-top: 2px; }
+:is([data-page-item], .trash-item, .history-item, [data-slot=list-item]) { border: 0; border-radius: var(--radius-sm); background-color: transparent; padding-block: 8px; }
+:is([data-page-item], .trash-item, .history-item, [data-slot=list-item]):hover { background-color: color-mix(in oklab, var(--accent) 50%, transparent); }

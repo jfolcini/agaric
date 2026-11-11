@@ -1,0 +1,3 @@
+[data-page-item], .trash-item, .history-item, [data-slot=list-item] { box-shadow: none; }
+:is([data-page-item], .trash-item, .history-item, [data-slot=list-item]):is(.list-cursor, [aria-selected=true], [data-selected=true]) { box-shadow: inset 2px 0 0 var(--ring); }
+@media (pointer: coarse) { :is([data-page-item], .trash-item, .history-item, [data-slot=list-item]) { min-height: 44px; } }
