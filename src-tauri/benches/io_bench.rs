@@ -16,6 +16,8 @@ mod draft_bench;
 mod export_bench;
 #[path = "groups/import_bench.rs"]
 mod import_bench;
+#[path = "groups/mirror_bench.rs"]
+mod mirror_bench;
 
 use criterion::criterion_main;
 
@@ -28,4 +30,5 @@ criterion_main!(
     draft_bench::flush_benches,
     draft_bench::scale_benches,
     draft_bench::crud_benches,
+    mirror_bench::mirror_benches,
 );
