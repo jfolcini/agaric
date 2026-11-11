@@ -97,6 +97,24 @@ impl PropertyLines {
         Ok(())
     }
 
+    /// The titles ref values name that no page holds, as [`Self::resolve_refs`]
+    /// found them.
+    pub(super) fn missing_titles(&self) -> Vec<String> {
+        let mut titles: Vec<String> = self
+            .refs
+            .iter()
+            .filter(|(name, found)| found.is_err() && BlockId::from_string(name.as_str()).is_err())
+            .map(|(name, _)| name.clone())
+            .collect();
+        titles.sort();
+        titles
+    }
+
+    /// Name `id` as what the ref value `name` refers to.
+    pub(super) fn name_ref(&mut self, name: String, id: String) {
+        self.refs.insert(name, Ok(id));
+    }
+
     /// The key `typed` names (D13): the one definition it folds to, the
     /// built-in ones included. Two that fold alike are never guessed
     /// between, and a key none folds to is a custom key: both stay as typed.
