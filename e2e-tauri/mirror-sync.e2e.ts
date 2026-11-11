@@ -15,7 +15,7 @@
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -58,8 +58,7 @@ function pageFile(): string {
     (entry) => entry.isFile() && entry.name === `${TITLE}.md`,
   )
   if (file === undefined) return ''
-  const full = path.join(file.parentPath, file.name)
-  return existsSync(full) ? readFileSync(full, 'utf8') : ''
+  return readFileSync(path.join(file.parentPath, file.name), 'utf8')
 }
 
 /**
