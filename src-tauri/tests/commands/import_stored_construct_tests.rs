@@ -617,3 +617,219 @@ async fn import_links_a_wiki_link_with_a_nested_heading_anchor_to_its_page_and_w
     );
     mat.shutdown();
 }
+
+// ======================================================================
+// Front matter and headings the import does not read
+// ======================================================================
+
+/// Only YAML front matter is read: TOML's `+++` fence and a JSON object at the
+/// top of the file are text, so they set no property and mint no tag.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_keeps_toml_and_json_front_matter_as_a_text_block() {
+    for (md, block) in [
+        (
+            "+++\ntitle = \"T\"\ntags = [\"a\"]\n+++\n\nbody\n",
+            r#""+++\ntitle = \"T\"\ntags = [\"a\"]\n+++""#,
+        ),
+        (
+            "{\n  \"title\": \"T\",\n  \"tags\": [\"a\"]\n}\n\nbody\n",
+            r#""{\n  \"title\": \"T\",\n  \"tags\": [\"a\"]\n}""#,
+        ),
+    ] {
+        let (pool, dir, mat) = fixture().await;
+        let result = import(&pool, &mat, dir.path(), "Note.md", md, MD, None).await;
+        assert_eq!(describe(&pool, &result.page_id).await, "\"Note\"", "{md:?}");
+        assert_eq!(
+            stored(&pool, &result.page_id).await,
+            [block, "\"body\""],
+            "{md:?}"
+        );
+        assert_eq!(tag_block_names(&pool).await, Vec::<String>::new(), "{md:?}");
+        assert_eq!(result.warnings, Vec::<String>::new(), "{md:?}");
+        mat.shutdown();
+    }
+}
+
+/// A setext heading is not read: `===` continues the paragraph above it, and
+/// `---` is a thematic break of its own after the paragraph.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_keeps_a_setext_heading_as_its_text_and_underline() {
+    assert_eq!(
+        import_stored("Title\n=====\n\nbody\n", MD).await,
+        (strings([r#""Title\n=====""#, "\"body\""]), vec![])
+    );
+    assert_eq!(
+        import_stored("intro\n\nSub\n---\nmore\n", MD).await,
+        (
+            strings(["\"intro\"", "\"Sub\"", "\"---\"", "\"more\""]),
+            vec![]
+        )
+    );
+}
+
+// ======================================================================
+// Evernote and Joplin notes, as their converters write them
+// ======================================================================
+
+/// The id of the live page titled `title`.
+async fn page_titled(pool: &SqlitePool, title: &str) -> String {
+    sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = ? AND deleted_at IS NULL",
+    )
+    .bind(title)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Every live attachment as `(filename, id)`, by filename.
+async fn attachment_ids(pool: &SqlitePool) -> Vec<(String, String)> {
+    sqlx::query_as(
+        "SELECT filename, id FROM attachments WHERE deleted_at IS NULL ORDER BY filename",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// What `enexNoteToMarkdown` writes for a note (`src/lib/enex-import.ts`): its
+/// dates, source URL and tags as front matter, then the Turndown body, whose
+/// `TODO`, `#word`, `[[x]]` and `key::` text goes through the same grammar as
+/// a Markdown file's.
+const ENEX_NOTE: &str = "---\ncreated: \"2021-01-02T03:04:05.000Z\"\n\
+    updated: \"2022-03-04T05:06:07.000Z\"\nsource-url: \"https://example.com/a?b=1&c=2\"\n\
+    tags:\n  - \"C++\"\n  - \"2024\"\nsource: evernote\n---\n\n\
+    # Head\n\n- one\n  1. first\n  2. second\n\n> quoted\n\n---\n\n~~gone~~ and `code`\n\n\
+    ```\n#notatag\n```\n\nTODO call Bob\n\nsee #word and [[Other]]\n\nstatus:: done\n\n\
+    - [ ] Simple\n- [x] Due\n  due_date:: 2022-05-28\n\n![](pic.png)\n";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_stores_an_evernote_note_as_its_converter_writes_it() {
+    let (pool, dir, mat) = fixture().await;
+    let vault = vec![VaultFile {
+        path: "pic.png".into(),
+        bytes: vec![0x89, b'P', b'N', b'G'],
+    }];
+    let result = import(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes/Meeting.md",
+        ENEX_NOTE,
+        MD,
+        Some(vault),
+    )
+    .await;
+    assert_eq!(
+        describe(&pool, &result.page_id).await,
+        "\"Notes/Meeting\" created=2021-01-02T03:04:05.000Z source=evernote \
+         source-url=https://example.com/a?b=1&c=2 updated=2022-03-04T05:06:07.000Z \
+         tags=[\"2024\", \"C++\"]"
+    );
+    let other = page_titled(&pool, "Other").await;
+    let attachments = attachment_ids(&pool).await;
+    let [(name, pic)] = attachments.as_slice() else {
+        panic!("one attachment, got {attachments:?}");
+    };
+    assert_eq!(name, "pic.png");
+    assert_eq!(
+        stored(&pool, &result.page_id).await,
+        [
+            "\"# Head\"".to_string(),
+            "\"one\" listStyle=bullet".into(),
+            "  \"first\" listStyle=ordered".into(),
+            "  \"second\" listStyle=ordered".into(),
+            "\"> quoted\"".into(),
+            "\"---\"".into(),
+            "\"~~gone~~ and `code`\"".into(),
+            r#""```\n#notatag\n```""#.into(),
+            "\"TODO call Bob\"".into(),
+            format!("\"see #[tag:word] and [[{other}]]\" status=done refs=[\"word\"]"),
+            "\"Simple\" todo=TODO".into(),
+            "\"Due\" todo=DONE due=2022-05-28".into(),
+            format!("\"![](attachment:{pic})\""),
+        ],
+        "a `key::` paragraph is a property of the block above it"
+    );
+    assert_eq!(tag_block_names(&pool).await, ["2024", "C++", "word"]);
+    assert_eq!(result.warnings, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// What `jexNoteToMarkdown` writes for a Joplin to-do whose body links another
+/// note and three resources (`src/lib/jex-import.ts`): a resource named like a
+/// note (`notes.txt`) is embedded, so it lands a file link, not a page link.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_stores_a_joplin_note_with_its_to_do_note_link_and_resources() {
+    let (pool, dir, mat) = fixture().await;
+    let linked = "---\nsource: joplin\n---\n\n- plan\n";
+    let other = import(
+        &pool,
+        &mat,
+        dir.path(),
+        "Work/Other note.md",
+        linked,
+        MD,
+        None,
+    )
+    .await;
+    let md = "---\ncreated: \"2024-01-02T03:04:05.000Z\"\nupdated: \"2024-01-03T03:04:05.000Z\"\n\
+              tags:\n  - \"C++\"\n  - \"v1.2\"\nsource: joplin\n---\n\n\
+              - [ ] Buy milk\n  due_date:: 2024-01-05\n\n\
+              See [[Work/Other note|the plan]] and [the paper](paper.pdf), \
+              ![notes](notes.txt), ![](pic.png).\n";
+    let vault = vec![
+        VaultFile {
+            path: "paper.pdf".into(),
+            bytes: b"%PDF-1.4".to_vec(),
+        },
+        VaultFile {
+            path: "notes.txt".into(),
+            bytes: b"hello".to_vec(),
+        },
+        VaultFile {
+            path: "pic.png".into(),
+            bytes: vec![0x89, b'P', b'N', b'G'],
+        },
+    ];
+    let result = import(
+        &pool,
+        &mat,
+        dir.path(),
+        "Work/Groceries.md",
+        md,
+        MD,
+        Some(vault),
+    )
+    .await;
+    assert_eq!(
+        describe(&pool, &result.page_id).await,
+        "\"Work/Groceries\" created=2024-01-02T03:04:05.000Z source=joplin \
+         updated=2024-01-03T03:04:05.000Z tags=[\"C++\", \"v1.2\"]"
+    );
+    let attachments = attachment_ids(&pool).await;
+    let [(_, notes), (_, paper), (_, pic)] = attachments.as_slice() else {
+        panic!("three attachments, got {attachments:?}");
+    };
+    assert_eq!(
+        attachments
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["notes.txt", "paper.pdf", "pic.png"]
+    );
+    assert_eq!(
+        stored(&pool, &result.page_id).await,
+        [
+            "\"Buy milk\" todo=TODO due=2024-01-05".to_string(),
+            format!(
+                "\"See [[{}|the plan]] and [the paper](attachment:{paper}), \
+                 [notes](attachment:{notes}), ![](attachment:{pic}).\"",
+                other.page_id
+            ),
+        ]
+    );
+    assert_eq!(tag_block_names(&pool).await, ["C++", "v1.2"]);
+    assert_eq!(result.warnings, Vec::<String>::new());
+    mat.shutdown();
+}
