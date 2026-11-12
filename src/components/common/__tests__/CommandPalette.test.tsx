@@ -346,6 +346,14 @@ describe('CommandPalette — empty state', () => {
     expect(screen.queryByTestId('palette-commands-navigate')).toBeNull()
   })
 
+  it('keeps the phone search sheet on the welcome copy alone', () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    render(<CommandPalette />)
+    openPalette()
+    expect(screen.getByTestId('palette-welcome-empty')).toBeInTheDocument()
+    expect(screen.queryByTestId('palette-commands-navigate')).toBeNull()
+  })
+
   it('runs a Navigate command from the welcome state', async () => {
     render(<CommandPalette />)
     openPalette()

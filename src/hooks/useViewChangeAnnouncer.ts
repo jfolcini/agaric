@@ -19,10 +19,9 @@
  * Skipped intentionally:
  * - The initial render (mounting into a view isn't a user-initiated
  *   "switch").
- * - Same-value `setView` calls (e.g. `GlobalDateControls`' handlers,
- *   which call `setView('journal')` while already on the journal view
- *   and have their own more specific announcements —
- *   `announce.jumpedToToday`, `announce.navigatedToNext`, etc.). These
+ * - Same-value `setView` calls (e.g. the palette's Go to today, which
+ *   calls `setView('journal')` while already on the journal view and
+ *   makes its own announcement, `announce.jumpedToToday`). These
  *   never change `currentView`, so the effect's dependency doesn't
  *   re-fire for them.
  * - `page-editor` — it isn't a `NAV_ITEMS` destination (opening a page

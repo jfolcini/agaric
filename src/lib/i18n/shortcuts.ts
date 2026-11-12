@@ -23,7 +23,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.essential.slash': 'Open the command menu',
   'keyboard.essential.link': 'Link to another page',
   'keyboard.essential.tag': 'Tag a block',
-  'keyboard.essential.search': 'Find in this page',
+  'keyboard.essential.search': 'Search your notes',
   'keyboard.category.navigation': 'Navigation',
   'keyboard.category.editing': 'Editing',
   'keyboard.category.blockTree': 'Block tree',

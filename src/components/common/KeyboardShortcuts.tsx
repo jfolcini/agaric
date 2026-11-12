@@ -84,7 +84,7 @@ function buildShortcutGroups(): { category: string; shortcuts: ShortcutDef[] }[]
 // catalog) so it is the first thing seen in the help sheet. It reads as a
 // quick-start cheat sheet.
 //
-// #1711 — chord entries (undo, find in page) carry a `shortcutId` so their keys
+// #1711 — chord entries (undo, search) carry a `shortcutId` so their keys
 // resolve live from the keybinding registry (`getShortcutKeys`), keeping the
 // cheat sheet in sync with user rebinds — exactly like the catalog list below
 // and like `CommandsModeBody`/`BlockContextMenu`. The platform mod key (⌘ vs
@@ -104,7 +104,7 @@ const ESSENTIAL_ENTRIES: EssentialEntry[] = [
   { keys: '/', description: 'keyboard.essential.slash' },
   { keys: '[[', description: 'keyboard.essential.link' },
   { keys: '@', description: 'keyboard.essential.tag' },
-  { shortcutId: 'findInPage', description: 'keyboard.essential.search' },
+  { shortcutId: 'focusSearch', description: 'keyboard.essential.search' },
 ]
 
 /** Resolve an Essential entry's display chord — live from the registry when

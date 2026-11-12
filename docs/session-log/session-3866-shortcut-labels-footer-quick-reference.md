@@ -9,18 +9,19 @@ The first two checkboxes of #6548: platform-correct shortcut chips everywhere th
   - **Settings input still parses glyphs.** `parse.ts` still accepts `⌘⌥⌃⇧` typed into Settings, because users copy them from macOS menus. Only its comment changed.
 - **The help says what the keys do.**
   - Enter reads "Save block and add a new block below", which is what it does (`use-block-keyboard.ts`).
-  - The Essential `findInPage` row (Ctrl+F) reads "Find in this page" instead of "Search your notes". The row stays bound to `findInPage`.
-  - Both keys keep their names, which tests look up.
+  - The Essential "Search your notes" row showed `findInPage` (Ctrl+F). It now shows `focusSearch` (Ctrl+Shift+F), the chord that searches the notes.
 - **The Quick Reference is no longer cramped.**
   - On desktop the sheet is `sm:max-w-lg` (512 px), and from `sm` up the chord column takes half its width.
   - The Shortcut / Action header row now appears once.
   - In `KbdChord`, each alternative sits in its own flex span. Below `sm` that span still wraps, because a phone's column is too narrow for `Ctrl + Shift + Arrow Right` on one line. Above `sm` it does not.
   - Widening alone was not enough: `Ctrl + Y / Ctrl + Shift + Z` still broke inside the second alternative.
-- **The first palette open is not empty.** Before any page is recent, desktop Ctrl+K lists the Navigate commands (`CommandsModeBody navigateOnly`) under the welcome sentence. The sentence moved above the list, because cmdk's `CommandEmpty` hides once the list has items. Mobile is unchanged.
+- **The first palette open is not empty.** Before any page is recent, desktop Ctrl+K lists the Navigate commands (`CommandsModeBody navigateOnly`) under the welcome sentence. The sentence moved above the list, because cmdk's `CommandEmpty` hides once the list has items. The phone search sheet is unchanged and keeps the sentence alone, which a vitest now pins.
 - **The header carries Today alone outside the journal.**
   - The `DATE_CONTROL_VIEWS` allowlist (#1740) gave Pages, Search, Tags and Query an Agenda button and a calendar that Graph, History, Templates and Trash lacked. #6548 replaces that allowlist, so `GlobalDateControls` is now the Today button and nothing else. The journal's own header keeps Agenda and the calendar.
   - The header-calendar tests in `GlobalDateControls.test.tsx` went with the behaviour. The dropdown keeps its own coverage in `JournalCalendarDropdown*.test.tsx` and `JournalControls.test.tsx`.
   - `journal.agenda` and `journal.goToAgenda` had no other user and are deleted.
+  - From Pages, Search, Tags or Query the Agenda is now two steps (Today or the sidebar's Journal, then the journal's Agenda tab), and a date picker is two (Today, then the journal's calendar).
+  - `phone-header-bar.spec.ts` no longer checks for Agenda and calendar buttons that no view renders any more, and the `useViewChangeAnnouncer.ts` comment names the palette's Go to today instead of `GlobalDateControls`, which never renders on the journal.
 - **Checks run:**
   - vitest on every changed test file, including `App`, `JournalPage`, `JournalControls`, `SpaceSwitcher`, `keyboard-config`, `kbd`, `ViewDispatcher` and the i18n tests. Each new or rewritten assertion was red first, or was shown red by putting the old code back.
   - `npm run typecheck`, `npx knip`, and oxfmt and oxlint on the changed files.
