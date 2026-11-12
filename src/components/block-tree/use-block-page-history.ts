@@ -62,7 +62,13 @@ export function useBlockPageHistory({
           rootParentId: pageId,
           pageStore,
         })
-        await flushed.outcome
+        if ((await flushed.outcome) === false) {
+          // The text did not save: put it back unsaved, and undo nothing over it.
+          useBlockStore.getState().setFocused(blockId)
+          handle.mount(blockId, changed)
+          handle.markCommitted(loaded)
+          return
+        }
       }
       await (redo ? performPageRedo(pageId) : performPageUndo(pageId))
       const { blocksById } = pageStore.getState()

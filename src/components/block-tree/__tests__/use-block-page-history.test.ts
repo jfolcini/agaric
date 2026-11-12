@@ -34,7 +34,10 @@ function makeHandle(blockId: string): RovingEditorHandle {
   }
 }
 
-function renderPageHistory(handle: RovingEditorHandle) {
+function renderPageHistory(
+  handle: RovingEditorHandle,
+  edit: (blockId: string, content: string) => Promise<boolean> = vi.fn(),
+) {
   const pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({ blocks: [makeBlock({ id: 'A', content: 'restored' })] })
   pageStore.setState({ blocksById: new Map(pageStore.getState().blocks.map((b) => [b.id, b])) })
@@ -45,7 +48,7 @@ function renderPageHistory(handle: RovingEditorHandle) {
       pageStore,
       visibleIdsRef: { current: ['A'] },
       preserveEmptyBlockIdsRef: { current: new Set<string>() },
-      edit: vi.fn(),
+      edit,
       splitBlock: vi.fn(),
     }),
   )
@@ -72,6 +75,24 @@ describe('useBlockPageHistory (#6556)', () => {
     await waitFor(() => expect(handle.mount).toHaveBeenCalledWith('A', 'restored'))
     expect(performPageUndo.mock.calls).toEqual([['PAGE_1']])
     expect(performPageRedo).not.toHaveBeenCalled()
+    expect(useBlockStore.getState().focusedBlockId).toBe('A')
+  })
+
+  it('keeps the typed text and undoes nothing when its save fails', async () => {
+    useNavigationStore.setState({ currentView: 'page-editor' })
+    const handle = makeHandle('A')
+    handle.originalMarkdown = 'loaded'
+    vi.mocked(handle.unmount).mockReturnValue('typed')
+    const pageHistory = renderPageHistory(handle, async () => false)
+
+    act(() => {
+      pageHistory.current('undo')
+    })
+
+    await waitFor(() => expect(handle.mount).toHaveBeenCalledWith('A', 'typed'))
+    // Baseline back to the loaded text, so the editor still counts the typing as unsaved.
+    expect(handle.markCommitted).toHaveBeenCalledWith('loaded')
+    expect(performPageUndo).not.toHaveBeenCalled()
     expect(useBlockStore.getState().focusedBlockId).toBe('A')
   })
 
