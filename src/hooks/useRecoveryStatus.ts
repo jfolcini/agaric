@@ -79,7 +79,6 @@ export function showRecoveryDegradedBanner(status: RecoveryStatus): void {
   })
 }
 
-/** Same navigation as `handleOpenSyncSettings` in `App.tsx`. */
 function openSyncSettings(): void {
   const navigation = useNavigationStore.getState()
   navigation.setPendingSettingsTab('sync')

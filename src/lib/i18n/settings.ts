@@ -195,9 +195,9 @@ export const settings: Record<string, string> = {
   'settings.tabAgentAccess': 'Agent access',
   'agentAccess.description':
     'Let agents on this computer (Claude Desktop, Cursor, Continue, …) connect over a local socket. Off by default.',
-  // #6520 — the socket is in the app's own storage, which no other app on a phone can reach.
+  // #6520 — the socket is in the app's own storage, which no other app on Android or iOS can reach.
   'agentAccess.descriptionMobile':
-    "No app on this phone can reach Agaric's agent socket yet, so agents cannot connect here. Set them up in Agaric on your computer; what they write reaches this phone by sync.",
+    "No app on this device can reach Agaric's agent socket yet, so agents cannot connect here. Set them up in Agaric on your computer; what they write reaches this device by sync.",
   'agentAccess.loadFailed': 'Failed to load MCP status',
   'agentAccess.toggleLabel': 'Let agents connect',
   'agentAccess.toggleDescription':

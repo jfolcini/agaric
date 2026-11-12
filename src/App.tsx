@@ -79,13 +79,14 @@ const WelcomeModal = lazy(() =>
 const GestureCoachMark = lazy(() =>
   import('@/components/mobile/GestureCoachMark').then((m) => ({ default: m.GestureCoachMark })),
 )
-// PERF (design-system review tier-2 #12): the three shell-level dialogs
+// PERF (design-system review tier-2 #12): the shell-level dialogs
 // below are mounted unconditionally near the bottom of `App` but only
 // render content when their `open` boolean flips true. Code-splitting
 // them keeps `BugReportDialog → bug-report-zip.ts → jszip` (≈96 KB
 // `export-graph` chunk) and the `QuickCaptureDialog` editor surface off
-// the critical path until the user actually triggers each one. Each component is a named export so
-// the dynamic-import re-export shape is required for `React.lazy`.
+// the critical path until the user actually triggers each one. Each
+// component is a named export, so the dynamic-import re-export shape is
+// required for `React.lazy`.
 const BugReportDialog = lazy(() =>
   import('@/components/dialogs/BugReportDialog').then((m) => ({ default: m.BugReportDialog })),
 )
