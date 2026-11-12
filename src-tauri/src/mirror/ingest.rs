@@ -179,19 +179,13 @@ pub async fn ingest(
         report,
     };
     // The ops are in: from here a failure still reports them.
-    let shadow = match get_page_file_inner(read_pool, page_id).await {
-        Ok(now) => Some(write_back(
-            &text,
-            &edited,
-            &kept,
-            &line_ids,
-            &links.localize(now),
-        )),
-        Err(e) => {
-            tracing::warn!(page_id, error = %e, "cannot render a page after its ingest");
-            None
-        }
-    };
+    let shadow = rendered_back(
+        read_pool,
+        page_id,
+        (&text, &edited, &kept, &line_ids),
+        links,
+    )
+    .await;
     Ok(Ingested { shadow, event })
 }
 
@@ -276,19 +270,13 @@ pub async fn create(
         op_refs,
         report: saved.inner,
     };
-    let shadow = match get_page_file_inner(read_pool, &page_id).await {
-        Ok(now) => Some(write_back(
-            &text,
-            &edited,
-            &kept,
-            &line_ids,
-            &links.localize(now),
-        )),
-        Err(e) => {
-            tracing::warn!(page_id, error = %e, "cannot render a page after its file was read");
-            None
-        }
-    };
+    let shadow = rendered_back(
+        read_pool,
+        &page_id,
+        (&text, &edited, &kept, &line_ids),
+        links,
+    )
+    .await;
     Ok((page_id, Ingested { shadow, event }))
 }
 
@@ -363,6 +351,31 @@ pub async fn rename(
         op_refs,
         report: PageSourceReport::default(),
     })
+}
+
+/// The file read, `(text, edited, kept, saved_ids)` as [`write_back`] takes
+/// them, written back over the page's render after its save, linking
+/// attachments as `links` does; `None` when the page cannot be rendered, and
+/// the file is left for the next pass.
+async fn rendered_back(
+    read_pool: &SqlitePool,
+    page_id: &str,
+    (text, edited, kept, saved_ids): (&str, &str, &[usize], &[Option<String>]),
+    links: &Links,
+) -> Option<Shadow> {
+    match get_page_file_inner(read_pool, page_id).await {
+        Ok(now) => Some(write_back(
+            text,
+            edited,
+            kept,
+            saved_ids,
+            &links.localize(now),
+        )),
+        Err(e) => {
+            tracing::warn!(page_id, error = %e, "cannot render a page after its file was read");
+            None
+        }
+    }
 }
 
 /// The file `text` (`edited` its anchor-free form, `kept` the line of `text`
