@@ -13,6 +13,7 @@ import {
   openPage,
   openPageMobile,
   openSettingsTab,
+  selectEditorRange,
   test,
   waitForBoot,
 } from './helpers'
@@ -86,6 +87,15 @@ async function clickRow(page: Page, text: string): Promise<void> {
     .click()
   await expect(editor(page)).toBeFocused()
   await expect(editor(page)).toContainText(text)
+}
+
+/**
+ * Put the caret at the end of the edited block's text: a click leaves it where it landed, and
+ * ProseMirror reads a native End too late for the next key.
+ */
+async function caretAtEnd(page: Page): Promise<void> {
+  const length = ((await editor(page).textContent()) ?? '').length
+  await selectEditorRange(page, length, length)
 }
 
 /** Watch the bar from now on: frames it was missing or hidden in, and whether it is still the same element. */
@@ -166,7 +176,7 @@ test.describe('block mode formatting toolbar, one per view (#6562) @editor @page
       await expect(toolbar(page)).toBeVisible()
       expect(await layout(page)).toEqual(atRest)
 
-      await page.keyboard.press('End')
+      await caretAtEnd(page)
       await page.keyboard.press('ArrowDown')
       await expect(editor(page)).toContainText('charlie three')
       expect(await layout(page)).toEqual(atRest)
@@ -194,12 +204,12 @@ test.describe('block mode formatting toolbar, one per view (#6562) @editor @page
     await clickRow(page, 'bravo two')
     await clickRow(page, 'charlie three')
     await clickRow(page, 'delta four')
-    await page.keyboard.press('End')
+    await caretAtEnd(page)
     await page.keyboard.press('ArrowDown')
     await expect(editor(page)).toContainText('echo five')
     await clickRow(page, 'alpha one')
     for (const next of ['bravo two', 'charlie three']) {
-      await page.keyboard.press('End')
+      await caretAtEnd(page)
       await page.keyboard.press('ArrowDown')
       await expect(editor(page)).toContainText(next)
     }
@@ -259,7 +269,7 @@ test.describe('block mode formatting toolbar, one per view (#6562) @editor @page
     await seedPage(page, 'Keys page', TEXTS)
     await openPage(page, 'Keys page')
     await clickRow(page, 'bravo two')
-    await page.keyboard.press('End')
+    await caretAtEnd(page)
     await page.keyboard.insertText(' edited')
 
     await page.keyboard.press('Shift+Tab')

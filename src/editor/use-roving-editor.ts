@@ -36,6 +36,7 @@ import { Selection } from '@tiptap/pm/state'
 import { type Editor, Extension, ReactNodeViewRenderer, useEditor } from '@tiptap/react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 
+import { posAtTextPoint, type TextPoint } from '@/editor/click-caret'
 import { computeContentDelta, computeLeaveDelta, shouldSplitOnBlur } from '@/editor/content-delta'
 import type { ContentDelta } from '@/editor/content-delta'
 import {
@@ -773,10 +774,11 @@ export interface MountOptions {
   /**
    * Where to place the caret after the mount focuses the editor.
    * `'end'` → end of the document (e.g. Backspace-delete landing in the
-   * previous block); `'start'` → start. Omitted → TipTap's default focus
-   * behaviour (restore previous selection / document start).
+   * previous block); `'start'` → start; a `TextPoint` → where a click on the
+   * static block landed (#6562). Omitted → TipTap's default focus behaviour
+   * (restore previous selection / document start).
    */
-  cursorPlacement?: 'start' | 'end' | undefined
+  cursorPlacement?: 'start' | 'end' | TextPoint | undefined
 }
 
 export interface RovingEditorHandle {
@@ -1258,7 +1260,12 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // `DeleteBlockOpts.cursorPlacement` contract was documented + passed
       // but silently dropped by this bare `focus()`).
       const hadFocus = editor.view.hasFocus()
-      editor.commands.focus(opts?.cursorPlacement ?? null)
+      const placement = opts?.cursorPlacement ?? null
+      editor.commands.focus(
+        typeof placement === 'object' && placement !== null
+          ? posAtTextPoint(editor.state.doc, placement)
+          : placement,
+      )
       // `focus()` skips a view that already has focus, but the commit that
       // shows the new block moves the view's DOM into its row, which drops it.
       if (hadFocus) {

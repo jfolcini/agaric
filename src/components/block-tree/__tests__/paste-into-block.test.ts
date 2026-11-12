@@ -72,7 +72,8 @@ function liveTarget(): { target: PasteIntoBlockTarget; handle: RovingEditorHandl
     mount: (blockId: string, markdown: string, opts?: MountOptions) => {
       handle.activeBlockId = blockId
       editor.commands.setContent(parse(markdown) as JSONContent)
-      editor.commands.focus(opts?.cursorPlacement ?? null)
+      const placement = opts?.cursorPlacement ?? null
+      editor.commands.focus(typeof placement === 'object' ? null : placement)
     },
   } as unknown as RovingEditorHandle
   return {

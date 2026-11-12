@@ -3,6 +3,8 @@
 
 The editor is a block-based outliner built on TipTap (ProseMirror). Only the focused block is editable at any moment — every other block renders as a read-only static block. This *roving editor* keeps memory bounded and undo history isolated per edit session.
 
+A click or tap on a static block starts editing it with the caret where it landed, in its text, its marks, a list, a table or code, and a double-click selects the word under it.
+
 ## Surfaces around the focused block
 
 While a block is edited the **FormattingToolbar** shows, one per view, pinned under the view header in room the view keeps for it, its buttons over the reading column, so showing it moves no text; it acts on the edited block and goes once no block is edited. With *Tab indents blocks* off in Settings → Editor, `Shift+Tab` from the text moves into it and `Tab` back. The journal's week and stream views show one bar for all their days. On touch it sits above the keyboard instead. It carries icon buttons grouped by purpose: refs+blocks, structure, metadata, history. Low-priority buttons collapse into a `MoreHorizontal` overflow popover when the container is narrow. On a phone *Toggle TODO state*, then *Indent* and *Outdent*, keep their places on the bar ahead of *Undo* and *Redo*.
