@@ -32,8 +32,8 @@
 // ─── The count was wrong: it is not three ───────────────────────────
 //
 // #3991 asked whether a FOURTH copy existed, on the grounds that nobody had
-// looked for the third. One more did, in `check-persist-hooks.mjs`,
-// byte-identical with the same fail-open; it imports this module now (#3993).
+// looked for the third. Two more did, byte-identical with the same
+// fail-open; both moved onto this module (#3993).
 //
 // `scripts/check-bulk-equivalence.mjs`'s `blank(src, { blankStrings })` is a
 // SEPARATE case: a purpose-built lexer offering a structural-vs-content view

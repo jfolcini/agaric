@@ -720,7 +720,8 @@ entry = "node scripts/check-strict-invoke-optout.mjs"
 language = "system"
 pass_filenames = false
 files = "^(src/.*\\.test\\.(ts|tsx)|scripts/check-strict-invoke-optout\\.mjs)$"
-stages = ["pre-commit"]
+# Manual (CI) stage: the whole-tree scan takes over 500 ms of CPU (#6566).
+stages = ["manual"]
 
 # axe-presence: every `*.test.tsx` under src/components/ and src/editor/
 # must include at least one axe(...) audit, per src/__tests__/AGENTS.md
