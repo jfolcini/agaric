@@ -52,8 +52,9 @@ export function BlockBatchActionMenu({
   const { t } = useTranslation()
   // The whole selection, not this tree's share: one block selected in each of
   // two journal days is a selection of two, and each day's bar acts on its own.
-  const selectionSize = useBlockStore((s) => s.selectedBlockIds.length)
-  if (selectedBlockIds.length === 0 || selectionSize < 2) return null
+  // A boolean, so a selection change re-renders every day's bar only when it flips.
+  const isMultiSelection = useBlockStore((s) => s.selectedBlockIds.length >= 2)
+  if (selectedBlockIds.length === 0 || !isMultiSelection) return null
 
   return (
     <>
