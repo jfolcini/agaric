@@ -463,7 +463,7 @@
   --alert-note-border: oklch(0.45 0 0);
   /* Task checkbox state colors */
   --task-done: oklch(0.74 0.17 149);
-  /* White on the lifted greens of every dark theme was under 3:1 (#6528). */
+  /* White fell under 3:1 on the lifted greens of Dark, Dracula and One Dark Pro (#6528). */
   --task-done-foreground: oklch(0.2 0.006 70);
   --task-doing: oklch(0.7 0.18 260);
   --task-cancelled: oklch(0.55 0.012 70);
@@ -2179,7 +2179,9 @@
   * {
     --border: oklch(0.7 0 0);
     /* Darker than --border: 3:1 or more on every theme's page and popover,
-     * so a field's outline shows where it begins. */
+     * so a field's outline shows where it begins. Input and Textarea drop
+     * their dark `bg-input/30` fill here: this grey would wash their
+     * placeholder under 4.5:1. */
     --input: oklch(0.62 0 0);
   }
 

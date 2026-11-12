@@ -102,6 +102,16 @@ test('the sidebar Sync icon shows idle, syncing, failed and offline, and when it
   })
   await expect(dot).toHaveAttribute('data-sync-state', 'error')
   await expect(dot).toContainClass('bg-destructive')
+  // The failure stays on the button after the toast, not only in the dot's hue (#6528).
+  // Blurred, so the open tooltip does not join the description.
+  await button.blur()
+  await expect(button).toHaveAccessibleDescription(
+    'Sync failed: Connection refused Last synced just now',
+  )
+  await expect(await syncTooltipLines(page)).toHaveText([
+    'Sync failed: Connection refused',
+    'Last synced just now',
+  ])
 
   await page.context().setOffline(true)
   await expect(button).toHaveAccessibleName('Offline')
