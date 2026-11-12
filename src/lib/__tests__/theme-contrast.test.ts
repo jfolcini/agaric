@@ -439,6 +439,12 @@ const THEME_PAIRS = [
   // The sidebar Sync button's status dot (#6528).
   { pair: 'sync dot, idle', fg: 'sync-idle', bg: 'sidebar', min: NON_TEXT },
   { pair: 'sync dot, syncing', fg: 'sync-active', bg: 'sidebar', min: NON_TEXT },
+  {
+    pair: 'sync dot, no devices paired',
+    fg: 'status-pending-foreground',
+    bg: 'sidebar',
+    min: NON_TEXT,
+  },
 ] as const
 
 const CASES = [false, true].flatMap((highContrast) =>

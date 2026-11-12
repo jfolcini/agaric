@@ -14,8 +14,9 @@ import {
 
 /**
  * E2E — sync happy paths the mock can show failing (#5739): the sidebar Sync
- * icon's states with its "last synced" tooltip, and the internet fallback
- * switch in Settings › Sync & devices.
+ * icon's states (no devices paired, idle, syncing, failed, offline) with its
+ * "last synced" tooltip, and the internet fallback switch in Settings › Sync &
+ * devices.
  *
  * The icon reads the sync store. `useSyncTrigger`'s own run writes syncing
  * (there is no `sync:started` event) and, when it finds no network, offline;
@@ -50,11 +51,19 @@ function releaseStartSync(page: Page): Promise<void> {
   return page.evaluate(() => (window as unknown as MockWindow).__releaseStartSync?.())
 }
 
-test('the sidebar Sync icon shows idle, syncing, failed and offline, and when it last synced @sync', async ({
+test('the sidebar Sync icon shows no devices paired, idle, syncing, failed and offline, and when it last synced @sync', async ({
   page,
 }) => {
   await page.clock.install()
   await waitForBoot(page)
+  const button = syncButton(page)
+  const dot = page.getByTestId('sync-button-status-dot')
+  // A fresh install has no paired device, and the button says so, not only the dot (#6528).
+  await expect(dot).toContainClass('bg-status-pending-foreground')
+  await expect(button).toHaveAccessibleDescription('No devices paired Never synced')
+  await expect(await syncTooltipLines(page)).toHaveText(['No devices paired', 'Never synced'])
+  await button.blur()
+
   await pairOnePeer(page)
   // The device list loads the peer into the store the icon's dot reads.
   await navigateToView(page, 'Settings')
@@ -64,8 +73,6 @@ test('the sidebar Sync icon shows idle, syncing, failed and offline, and when it
   )
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000)
 
-  const button = syncButton(page)
-  const dot = page.getByTestId('sync-button-status-dot')
   await expect(button).toHaveAccessibleName('Sync')
   await expect(dot).toHaveAttribute('data-sync-state', 'idle')
   await expect(dot).toContainClass('bg-sync-idle')

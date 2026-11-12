@@ -57,7 +57,7 @@ import { type SyncState, useSyncStore } from '@/stores/sync'
  */
 function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
   if (syncState === 'offline') return 'bg-muted-foreground'
-  if (!hasPeers) return 'bg-status-pending'
+  if (!hasPeers) return 'bg-status-pending-foreground'
   switch (syncState) {
     case 'idle': {
       return 'bg-sync-idle'
@@ -75,7 +75,7 @@ function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
 }
 
 const LAST_SYNCED_ID = 'sidebar-last-synced'
-const SYNC_ERROR_ID = 'sidebar-sync-error'
+const SYNC_STATUS_ID = 'sidebar-sync-status'
 
 function CollapseButton() {
   const { t } = useTranslation()
@@ -131,10 +131,15 @@ function AppSidebarInner({
     ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t, now) })
     : t('sidebar.lastSyncedNever')
   const syncUnavailable = syncing || !isOnline
-  // Offline wins, as it does for the dot; a running sync replaces the old error.
-  const syncErrorLabel =
-    isOnline && !syncing && syncState === 'error'
-      ? t('sync.failed', { message: syncError ?? '' })
+  // Offline wins, then no peers, as they do for the dot; a running sync
+  // replaces the old error.
+  const hasPeers = syncPeers.length > 0
+  const syncSettled = isOnline && !syncing
+  const syncFailed = syncSettled && hasPeers && syncState === 'error'
+  const syncStatusLabel = syncFailed
+    ? t('sync.failed', { message: syncError ?? '' })
+    : syncSettled && !hasPeers
+      ? t('sync.noPeersTitle')
       : null
 
   /**
@@ -253,10 +258,10 @@ function AppSidebarInner({
       </SidebarContent>
       <SidebarFooter>
         {/* One row of icons; it stacks in the 48px rail. The sync state is
-            the icon (spinner, offline, error) plus the dot, and the "last synced"
-            line lives in the tooltip and the button's description. Hover
-            paints the nav rows' lighter fill, so it never matches the active
-            Settings pill. */}
+            the icon (spinner, offline, error) plus the dot; the error or "no
+            devices paired" line and the "last synced" line live in the
+            tooltip and the button's description. Hover paints the nav rows'
+            lighter fill, so it never matches the active Settings pill. */}
         <div className="flex items-center gap-1 group-data-[collapsible=icon]:flex-col">
           <IconButton
             variant="ghost"
@@ -264,7 +269,7 @@ function AppSidebarInner({
             className="hover:bg-sidebar-accent/50 aria-disabled:opacity-50"
             ariaLabel={isOnline ? t('sidebar.sync') : t('sidebar.offline')}
             aria-describedby={
-              syncErrorLabel === null ? LAST_SYNCED_ID : `${SYNC_ERROR_ID} ${LAST_SYNCED_ID}`
+              syncStatusLabel === null ? LAST_SYNCED_ID : `${SYNC_STATUS_ID} ${LAST_SYNCED_ID}`
             }
             tooltip={
               <div className="flex flex-col gap-0.5">
@@ -273,7 +278,7 @@ function AppSidebarInner({
                     ? t('sidebar.offline')
                     : syncing
                       ? t('sidebar.syncing')
-                      : (syncErrorLabel ?? t('sidebar.syncTooltip'))}
+                      : (syncStatusLabel ?? t('sidebar.syncTooltip'))}
                 </span>
                 <span className="opacity-90">{lastSyncedLabel}</span>
               </div>
@@ -286,7 +291,7 @@ function AppSidebarInner({
             <span className="relative inline-flex">
               {!isOnline ? (
                 <WifiOff className="text-muted-foreground" />
-              ) : syncErrorLabel !== null ? (
+              ) : syncFailed ? (
                 <AlertCircle className="text-destructive" />
               ) : (
                 <RefreshCw className={syncing ? 'animate-spin' : ''} />
@@ -294,7 +299,7 @@ function AppSidebarInner({
               <span
                 className={cn(
                   'sync-button-status-dot absolute -top-1 -right-1 h-2 w-2 rounded-full',
-                  syncDotClass(syncState, syncPeers.length > 0),
+                  syncDotClass(syncState, hasPeers),
                 )}
                 data-testid="sync-button-status-dot"
                 data-sync-state={syncState}
@@ -302,9 +307,9 @@ function AppSidebarInner({
               />
             </span>
           </IconButton>
-          {syncErrorLabel !== null && (
-            <span id={SYNC_ERROR_ID} className="sr-only">
-              {syncErrorLabel}
+          {syncStatusLabel !== null && (
+            <span id={SYNC_STATUS_ID} className="sr-only">
+              {syncStatusLabel}
             </span>
           )}
           <span id={LAST_SYNCED_ID} className="sr-only" data-testid="last-synced">

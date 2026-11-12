@@ -255,7 +255,7 @@ describe('AppSidebar', () => {
       </SidebarProvider>,
     )
     const noPeersClass = screen.getByTestId('sync-button-status-dot').className
-    expect(noPeersClass).toContain('bg-status-pending')
+    expect(noPeersClass).toContain('bg-status-pending-foreground')
     expect(noPeersClass).not.toBe(offlineClass)
   })
 
@@ -282,13 +282,14 @@ describe('AppSidebar', () => {
       </SidebarProvider>,
     )
     const unpairedClass = screen.getByTestId('sync-button-status-dot').className
-    expect(unpairedClass).toContain('bg-status-pending')
+    expect(unpairedClass).toContain('bg-status-pending-foreground')
     expect(unpairedClass).not.toContain('bg-sync-idle')
   })
 
   // The footer is icons only, so the "last synced" line lives in the sync
-  // button's tooltip and, for screen readers, its description.
-  it('includes the last synced status in the sync button tooltip and description', async () => {
+  // button's tooltip and, for screen readers, its description. A fresh install
+  // has no paired device, and says so in both, not only in the dot (#6528).
+  it('includes the pairing and last synced status in the sync button tooltip and description', async () => {
     const user = userEvent.setup()
     // `lastSyncedAt` lives in the store now; the default
     // reset in `beforeEach` already leaves it as `null`, so no extra
@@ -300,13 +301,15 @@ describe('AppSidebar', () => {
     )
 
     const syncButton = screen.getByRole('button', { name: t('sidebar.sync') })
-    expect(syncButton).toHaveAccessibleDescription(t('sidebar.lastSyncedNever'))
+    expect(syncButton).toHaveAccessibleDescription(
+      `${t('sync.noPeersTitle')} ${t('sidebar.lastSyncedNever')}`,
+    )
 
     await user.hover(syncButton)
 
     await waitFor(() => {
       const tooltip = screen.getByRole('tooltip')
-      expect(tooltip.textContent).toContain(t('sidebar.syncTooltip'))
+      expect(tooltip.textContent).toContain(t('sync.noPeersTitle'))
       expect(tooltip.textContent).toContain(t('sidebar.lastSyncedNever'))
       // Dimmed on the inverted tooltip surface; opacity-80 drops below 4.5:1 in
       // solarized-dark and one-dark-pro.
@@ -329,14 +332,14 @@ describe('AppSidebar', () => {
 
       const syncButton = screen.getByRole('button', { name: t('sidebar.sync') })
       expect(syncButton).toHaveAccessibleDescription(
-        t('sidebar.lastSynced', { time: t('sidebar.justNow') }),
+        `${t('sync.noPeersTitle')} ${t('sidebar.lastSynced', { time: t('sidebar.justNow') })}`,
       )
 
       act(() => {
         vi.advanceTimersByTime(5 * 60_000)
       })
       expect(syncButton).toHaveAccessibleDescription(
-        t('sidebar.lastSynced', { time: t('sidebar.minutesAgo', { count: 5 }) }),
+        `${t('sync.noPeersTitle')} ${t('sidebar.lastSynced', { time: t('sidebar.minutesAgo', { count: 5 }) })}`,
       )
     })
   })
