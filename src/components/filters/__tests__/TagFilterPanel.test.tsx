@@ -131,16 +131,17 @@ describe('TagFilterPanel', () => {
     expect(screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))).toBeInTheDocument()
   })
 
-  it('renders Tag Filter heading', () => {
+  it('leads with its heading and a one-line explanation (#6548)', () => {
     render(<TagFilterPanel />)
-    expect(screen.getByText(t('tagFilter.title'))).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: t('tagFilter.title') })).toBeInTheDocument()
+    expect(screen.getByText(t('tagFilter.description'))).toBeInTheDocument()
   })
 
-  it('renders AND/OR/NOT mode toggle', () => {
+  it('renders the All/Any/None mode toggle', () => {
     render(<TagFilterPanel />)
-    expect(screen.getByRole('radio', { name: 'AND' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'OR' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'NOT' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: t('tagFilter.andMode') })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: t('tagFilter.orMode') })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: t('tagFilter.notMode') })).toBeInTheDocument()
   })
 
   it('searches tags by prefix with debounce', async () => {
@@ -299,9 +300,9 @@ describe('TagFilterPanel', () => {
   it('exposes a tooltip on each AND/OR/NOT mode segment', async () => {
     render(<TagFilterPanel />)
 
-    const andBtn = screen.getByRole('radio', { name: 'AND' })
-    const orBtn = screen.getByRole('radio', { name: 'OR' })
-    const notBtn = screen.getByRole('radio', { name: 'NOT' })
+    const andBtn = screen.getByRole('radio', { name: t('tagFilter.andMode') })
+    const orBtn = screen.getByRole('radio', { name: t('tagFilter.orMode') })
+    const notBtn = screen.getByRole('radio', { name: t('tagFilter.notMode') })
 
     expect(andBtn).toBeInTheDocument()
     expect(orBtn).toBeInTheDocument()
@@ -340,9 +341,9 @@ describe('TagFilterPanel', () => {
   it('toggles AND/OR/NOT mode', async () => {
     render(<TagFilterPanel />)
 
-    const andBtn = screen.getByRole('radio', { name: 'AND' })
-    const orBtn = screen.getByRole('radio', { name: 'OR' })
-    const notBtn = screen.getByRole('radio', { name: 'NOT' })
+    const andBtn = screen.getByRole('radio', { name: t('tagFilter.andMode') })
+    const orBtn = screen.getByRole('radio', { name: t('tagFilter.orMode') })
+    const notBtn = screen.getByRole('radio', { name: t('tagFilter.notMode') })
 
     // AND is default active
     expect(andBtn).toHaveAttribute('aria-checked', 'true')
@@ -374,15 +375,15 @@ describe('TagFilterPanel', () => {
   it('an arrow key moves the AND/OR/NOT mode, and only the checked mode is a tab stop', async () => {
     render(<TagFilterPanel />)
 
-    const andRadio = screen.getByRole('radio', { name: 'AND' })
+    const andRadio = screen.getByRole('radio', { name: t('tagFilter.andMode') })
     andRadio.focus()
     await user.keyboard('{ArrowRight}')
 
-    const orRadio = screen.getByRole('radio', { name: 'OR' })
+    const orRadio = screen.getByRole('radio', { name: t('tagFilter.orMode') })
     expect(orRadio).toHaveFocus()
     expect(orRadio).toHaveAttribute('aria-checked', 'true')
     expect(andRadio).toHaveAttribute('aria-checked', 'false')
-    const group = screen.getByRole('radiogroup', { name: 'Mode:' })
+    const group = screen.getByRole('radiogroup', { name: t('tagFilter.modeLabel') })
     expect(
       within(group)
         .getAllByRole('radio')
@@ -547,7 +548,7 @@ describe('TagFilterPanel', () => {
     stubTagQuery(() => pendingQuery.promise)
 
     // Switch from AND to OR → fires a new query that stays pending
-    await user.click(screen.getByRole('radio', { name: 'OR' }))
+    await user.click(screen.getByRole('radio', { name: t('tagFilter.orMode') }))
     await vi.advanceTimersByTimeAsync(0)
 
     // While the new query is in flight:
@@ -600,7 +601,7 @@ describe('TagFilterPanel', () => {
       await vi.advanceTimersByTimeAsync(0)
     })
     expect(feedback).toHaveAttribute('aria-busy', 'false')
-    expect(feedback).toHaveTextContent('2 blocks match 1 tag (AND)')
+    expect(feedback).toHaveTextContent('2 blocks match 1 tag (All)')
   })
 
   it('does not show results before any tag is selected', () => {
@@ -641,9 +642,9 @@ describe('TagFilterPanel', () => {
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
 
-    // Should show feedback: "2 blocks match 1 tag (AND)"
+    // Should show feedback: "2 blocks match 1 tag (All)"
     expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
-      '2 blocks match 1 tag (AND)',
+      '2 blocks match 1 tag (All)',
     )
   })
 
@@ -671,9 +672,9 @@ describe('TagFilterPanel', () => {
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
 
-    // Should show singular: "1 block matches 1 tag (AND)"
+    // Should show singular: "1 block matches 1 tag (All)"
     expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
-      '1 block matches 1 tag (AND)',
+      '1 block matches 1 tag (All)',
     )
   })
 
@@ -989,7 +990,7 @@ describe('TagFilterPanel', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     // Switch to NOT mode
-    const notBtn = screen.getByRole('radio', { name: 'NOT' })
+    const notBtn = screen.getByRole('radio', { name: t('tagFilter.notMode') })
     await user.click(notBtn)
     await vi.advanceTimersByTimeAsync(0)
 
@@ -1005,7 +1006,7 @@ describe('TagFilterPanel', () => {
     })
   })
 
-  it('shows match summary with (NOT) when mode is not', async () => {
+  it('shows match summary with (None) when mode is not', async () => {
     // list_tags_by_prefix response
     stubTagFilter({
       list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
@@ -1014,7 +1015,7 @@ describe('TagFilterPanel', () => {
     render(<TagFilterPanel />)
 
     // Switch to NOT mode first
-    const notBtn = screen.getByRole('radio', { name: 'NOT' })
+    const notBtn = screen.getByRole('radio', { name: t('tagFilter.notMode') })
     await user.click(notBtn)
 
     const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
@@ -1036,9 +1037,9 @@ describe('TagFilterPanel', () => {
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
 
-    // Should show feedback with (NOT)
+    // Should show feedback with (None)
     expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
-      '2 blocks match 1 tag (NOT)',
+      '2 blocks match 1 tag (None)',
     )
   })
 
@@ -1051,7 +1052,7 @@ describe('TagFilterPanel', () => {
     render(<TagFilterPanel />)
 
     // Switch to NOT mode first
-    const notBtn = screen.getByRole('radio', { name: 'NOT' })
+    const notBtn = screen.getByRole('radio', { name: t('tagFilter.notMode') })
     await user.click(notBtn)
 
     const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
@@ -1077,7 +1078,7 @@ describe('TagFilterPanel', () => {
     )
 
     // Switch to AND mode
-    const andBtn = screen.getByRole('radio', { name: 'AND' })
+    const andBtn = screen.getByRole('radio', { name: t('tagFilter.andMode') })
     await user.click(andBtn)
     await vi.advanceTimersByTimeAsync(0)
 
@@ -1097,7 +1098,7 @@ describe('TagFilterPanel', () => {
     render(<TagFilterPanel />)
 
     // Switch to NOT mode first
-    const notBtn = screen.getByRole('radio', { name: 'NOT' })
+    const notBtn = screen.getByRole('radio', { name: t('tagFilter.notMode') })
     await user.click(notBtn)
 
     const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
@@ -1117,7 +1118,7 @@ describe('TagFilterPanel', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     // Switch to OR mode
-    const orBtn = screen.getByRole('radio', { name: 'OR' })
+    const orBtn = screen.getByRole('radio', { name: t('tagFilter.orMode') })
     await user.click(orBtn)
     await vi.advanceTimersByTimeAsync(0)
 
@@ -1694,7 +1695,7 @@ describe('TagFilterPanel — nested composer (#1426)', () => {
   })
 })
 
-// ── #4548 — "Include inherited tags" switch ─────────────────────────────────
+// ── #4548 — "Include nested blocks" switch ──────────────────────────────────
 
 describe('TagFilterPanel — include inherited (#4548)', () => {
   const PARENT = makeBlock({ id: 'BLK_PARENT', content: 'tagged parent', parent_id: null })
@@ -1757,7 +1758,7 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
     expect(await screen.findByText('tagged parent')).toBeInTheDocument()
     expect(screen.queryByText('untagged child')).not.toBeInTheDocument()
     expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
-      '1 block matches 1 tag (AND)',
+      '1 block matches 1 tag (All)',
     )
     expect(screen.getByTestId('tag-filter-feedback')).not.toHaveTextContent(
       t('tagFilter.includingInherited'),
@@ -1785,7 +1786,7 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
     expect(screen.getByText('tagged parent')).toBeInTheDocument()
     const feedback = screen.getByTestId('tag-filter-feedback')
     expect(feedback).toHaveTextContent(
-      `2 blocks match 1 tag (AND) ${t('tagFilter.includingInherited')}`,
+      `2 blocks match 1 tag (All) ${t('tagFilter.includingInherited')}`,
     )
     expect(feedback).toHaveAttribute('aria-live', 'polite')
 
@@ -1800,7 +1801,7 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
       expect(screen.queryByText('untagged child')).not.toBeInTheDocument()
     })
     expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
-      '1 block matches 1 tag (AND)',
+      '1 block matches 1 tag (All)',
     )
   })
 
@@ -1820,10 +1821,12 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
     routeByInheritance()
     render(<TagFilterPanel />)
 
-    // The switch survives the composer swap (the AND/OR/NOT row does not).
+    // The switch survives the composer swap (the All/Any/None row does not).
     await user.click(screen.getByTestId('tag-filter-composer-toggle'))
     await vi.advanceTimersByTimeAsync(0)
-    expect(screen.queryByRole('radio', { name: 'AND' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('radiogroup', { name: t('tagFilter.modeLabel') }),
+    ).not.toBeInTheDocument()
     await user.click(inheritedSwitch())
 
     const group = screen.getByTestId('tag-composer-group')

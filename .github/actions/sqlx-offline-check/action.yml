@@ -4,7 +4,7 @@ description: >
   Creates + migrates a throwaway SQLite DB, then runs
   `cargo sqlx prepare --check` against it so query drift is caught in CI.
 
-  The weekly `scheduled-deep-checks.yml` lane uses it for `src-tauri/.sqlx`;
+  The nightly `full-suite` lane of `scheduled-deep-checks.yml` uses it for `src-tauri/.sqlx`;
   per-PR `lint` checks the same cache in one compile with
   `scripts/clippy-sqlx-check.sh`.
 

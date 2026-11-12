@@ -6,10 +6,9 @@
  * separately in `SelectionBubbleMenu.test.tsx`.
  *
  * Validates:
- *  - Renders all 18 always-visible buttons (Format, Internal link, Tag,
+ *  - Renders all always-visible buttons (Format, Internal link, Tag,
  *    Blockquote, Code block, Heading, Ordered list, Divider, Callout, Cycle
- *    priority, Date, Due Date, Scheduled Date, TODO, Properties, Undo, Redo,
- *    Discard)
+ *    priority, Date, Due Date, Scheduled Date, TODO, Properties, Undo, Redo)
  *  - Active states get aria-pressed=true + bg-accent
  *  - Undo/Redo disabled state reflects editor.can()
  *  - Clicking buttons calls the correct editor chain commands
@@ -266,7 +265,6 @@ describe('FormattingToolbar', () => {
         'toolbar.properties',
         'toolbar.undo',
         'toolbar.redo',
-        'toolbar.discard',
       ]) {
         expect(screen.getByRole('button', { name: t(key) })).toBeInTheDocument()
       }
@@ -671,7 +669,6 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: t('toolbar.todoToggle') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.undo') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.redo') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.discard') })).toBeInTheDocument()
     })
   })
 
@@ -746,22 +743,11 @@ describe('FormattingToolbar', () => {
       document.removeEventListener('toggle-todo-state', spy)
     })
   })
-  // ── #590-A4: Discard button ───────────────────────────────────────────
+  // ── #6541: no Discard button; Ctrl+Z undoes what was typed ────────────
 
-  describe('discard button', () => {
-    it('renders with aria-label "Discard changes"', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      expect(screen.getByRole('button', { name: t('toolbar.discard') })).toBeInTheDocument()
-    })
-
-    it('dispatches discard-block-edit custom event on pointerdown', () => {
-      const spy = vi.fn()
-      document.addEventListener('discard-block-edit', spy)
-      render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.discard') }))
-      expect(spy).toHaveBeenCalledOnce()
-      document.removeEventListener('discard-block-edit', spy)
-    })
+  it('has no Discard button', () => {
+    render(<FormattingToolbar editor={makeEditor()} />)
+    expect(screen.queryByRole('button', { name: t('toolbar.discard') })).toBeNull()
   })
 
   // ── #590-B7: Toolbar overflow handling ────────────────────────────────
@@ -786,14 +772,15 @@ describe('FormattingToolbar', () => {
       const sentinel = screen.getByTestId('toolbar-sentinel')
       expect(sentinel).toBeInTheDocument()
       expect(sentinel).toHaveAttribute('aria-hidden', 'true')
-      // Each item in the flattened list (18 buttons + 3 separators = 21) must
+      // Each item in the flattened list (17 buttons + 3 separators = 20) must
       // have a measurable child carrying its data-toolbar-item-key. #1960
       // replaced the 6 standalone block buttons (code/heading/blockquote/
       // ordered-list/divider/callout) with the single Format + Turn into pair,
       // dropping the count from 21 buttons to 16; #281 then added the emoji
-      // button, bringing it to 17; #5160 the New line button, 18.
+      // button, bringing it to 17; #5160 the New line button, 18; #6541 took
+      // Discard off, 17.
       const measurableChildren = sentinel.querySelectorAll('[data-toolbar-item-key]')
-      expect(measurableChildren.length).toBe(21)
+      expect(measurableChildren.length).toBe(20)
     })
   })
 
@@ -878,18 +865,18 @@ describe('FormattingToolbar', () => {
       }
     })
 
-    it('overflow popover surfaces the lowest-priority items first (Discard ahead of higher-priority buttons)', async () => {
+    it('overflow popover surfaces the lowest-priority items first (Insert query ahead of higher-priority buttons)', async () => {
       const restore = withTightLayout(120)
       try {
         render(<FormattingToolbar editor={makeEditor()} />)
         await screen.findByRole('button', { name: t('toolbar.more') })
         const overflowMenu = screen.getByTestId('toolbar-overflow-menu')
-        // Discard has priority 30 — the lowest of the 17-button set, so
-        // it must be present in the overflow.
-        const discardInOverflow = Array.from(overflowMenu.querySelectorAll('button')).find(
-          (b) => b.getAttribute('aria-label') === t('toolbar.discard'),
+        // Insert query has priority 30, the lowest of the set, so it must be
+        // present in the overflow.
+        const queryInOverflow = Array.from(overflowMenu.querySelectorAll('button')).find(
+          (b) => b.getAttribute('aria-label') === t('toolbar.insertQuery'),
         )
-        expect(discardInOverflow).toBeDefined()
+        expect(queryInOverflow).toBeDefined()
       } finally {
         restore()
       }

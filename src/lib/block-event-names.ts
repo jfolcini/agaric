@@ -19,7 +19,6 @@ export const BLOCK_EVENTS = {
   // #281 — toolbar emoji button: opens the browse-grid emoji picker dialog for
   // the focused block (same dialog the `/emoji` slash command opens).
   OPEN_EMOJI_PICKER: 'open-emoji-picker',
-  DISCARD_BLOCK_EDIT: 'discard-block-edit',
   CYCLE_PRIORITY: 'cycle-priority',
   SET_PRIORITY_1: 'set-priority-1',
   SET_PRIORITY_2: 'set-priority-2',

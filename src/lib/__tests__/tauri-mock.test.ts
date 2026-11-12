@@ -28,7 +28,14 @@ vi.mock('@/lib/logger', () => ({
 
 import type { BlockRow, McpAgent, UndoResult } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
+import {
+  clearMockErrors,
+  injectMockError,
+  resetMock,
+  SEED_IDS,
+  setMockLatency,
+  setupMock,
+} from '@/lib/tauri-mock'
 import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
 import {
   blockTags,
@@ -2433,6 +2440,52 @@ describe('error injection', () => {
       unknown
     >
     expect(block['content']).toBe('Getting Started')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Latency injection (setMockLatency, #6559)
+// ---------------------------------------------------------------------------
+
+describe('latency injection', () => {
+  afterEach(() => {
+    setMockLatency(0)
+    clearMockErrors()
+  })
+
+  const getGettingStarted = () =>
+    invoke('get_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED }) as Promise<BlockRow>
+
+  it('answers a command only once the latency has passed', async () => {
+    setMockLatency(50)
+    let answered: BlockRow | null = null
+    void getGettingStarted().then((block) => {
+      answered = block
+    })
+    await vi.advanceTimersByTimeAsync(49)
+    expect(answered).toBeNull()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(answered).toMatchObject({ content: 'Getting Started' })
+  })
+
+  it('delays an injected failure too', async () => {
+    setMockLatency(50)
+    injectMockError('get_block', 'late failure')
+    let rejected: unknown = null
+    void getGettingStarted().catch((err: unknown) => {
+      rejected = err
+    })
+    await vi.advanceTimersByTimeAsync(49)
+    expect(rejected).toBeNull()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(rejected).toEqual(new Error('late failure'))
+  })
+
+  it('is off by default and after resetMock: the answer is synchronous', () => {
+    expect(getGettingStarted()).toMatchObject({ content: 'Getting Started' })
+    setMockLatency(50)
+    resetMock()
+    expect(getGettingStarted()).toMatchObject({ content: 'Getting Started' })
   })
 })
 

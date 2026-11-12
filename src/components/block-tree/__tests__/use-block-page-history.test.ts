@@ -96,13 +96,22 @@ describe('useBlockPageHistory (#6556)', () => {
     expect(useBlockStore.getState().focusedBlockId).toBe('A')
   })
 
-  it('declines in the journal, leaving the editor alone', () => {
-    useNavigationStore.setState({ currentView: 'journal' })
-    const handle = makeHandle('A')
-    const pageHistory = renderPageHistory(handle)
+  it.each(['undo', 'redo'] as const)(
+    'in the journal, runs the page %s for the page the block is on (#6541)',
+    async (direction) => {
+      useNavigationStore.setState({ currentView: 'journal' })
+      const handle = makeHandle('A')
+      const pageHistory = renderPageHistory(handle)
 
-    expect(pageHistory.current('undo')).toBe(false)
-    expect(handle.unmount).not.toHaveBeenCalled()
-    expect(performPageUndo).not.toHaveBeenCalled()
-  })
+      let took = false
+      act(() => {
+        took = pageHistory.current(direction)
+      })
+
+      expect(took).toBe(true)
+      await waitFor(() => expect(handle.mount).toHaveBeenCalledWith('A', 'restored'))
+      const ran = direction === 'undo' ? performPageUndo : performPageRedo
+      expect(ran.mock.calls).toEqual([['PAGE_1']])
+    },
+  )
 })

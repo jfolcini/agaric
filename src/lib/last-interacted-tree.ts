@@ -42,6 +42,11 @@ export function isLastInteractedTree(token: TreeToken): boolean {
   return lastInteracted === null || lastInteracted === token
 }
 
+/** The most-recently-interacted tree, `null` before any: the journal's undo target (#6541). */
+export function lastInteractedTree(): TreeToken | null {
+  return lastInteracted
+}
+
 /**
  * Drop `token` if it is the current holder (called on unmount), so a stale
  * reference to an unmounted tree can't keep claiming Escape.

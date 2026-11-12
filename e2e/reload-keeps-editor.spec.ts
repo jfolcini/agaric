@@ -33,6 +33,8 @@ import {
 
 const SPACE = 'SPACE_PERSONAL'
 const PAGE_GS = '00000000000000000000PAGE01'
+const GS1 = '0000000000000000000BLOCK01'
+const GS2 = '0000000000000000000BLOCK02'
 const GS3 = '0000000000000000000BLOCK03'
 const GS3_TEXT = 'Create new blocks by pressing Enter at the end of any block.'
 const LONG_TITLE = 'Reload Long Page'
@@ -377,6 +379,69 @@ test.describe('a reload of the open page keeps its editor and rows (#6533) @edit
       expect(await treeMutations(page)).toEqual(UNCHANGED_TREE)
     })
   }
+})
+
+test.describe('after an MCP write, Ctrl+Z undoes the agent’s op, then the user’s newest (#731) @editor @mcp', () => {
+  const AGENT_TEXT = 'AGENT WROTE THIS'
+
+  const priorityOf = async (page: Page, blockId: string): Promise<string | null> =>
+    (await ipc<{ priority: string | null }>(page, 'get_block', { blockId })).priority
+
+  // An agent's op is a page op the positional undo numbers, so `blocks:changed` re-anchors undo.
+  async function agentWrites(page: Page): Promise<void> {
+    await ipc(page, 'edit_block', { blockId: GS1, toText: AGENT_TEXT })
+    await emitMockEvent(page, 'blocks:changed', { changed_page_ids: [PAGE_GS] })
+    await expect(page.locator(`li[data-block-id="${GS1}"]`)).toContainText(AGENT_TEXT)
+  }
+
+  test.beforeEach(async ({ page }) => {
+    // Edits less than `UNDO_GROUP_WINDOW_MS` apart join one undo entry; the
+    // fast-forwards below keep each write an entry of its own.
+    await page.clock.install()
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+  })
+
+  test('the second press takes off the priority set before the write, not an older edit', async ({
+    page,
+  }) => {
+    const gs1 = await storedContent(page, GS1)
+    await focusBlockById(page, GS3)
+    await page.keyboard.type(' typed')
+    await blurEditors(page)
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${GS3_TEXT} typed`)
+    await page.clock.fastForward(1000)
+    await focusBlockById(page, GS2)
+    await page.keyboard.press('Control+Shift+1')
+    await expect.poll(() => priorityOf(page, GS2)).toBe('1')
+    await blurEditors(page)
+    await page.clock.fastForward(1000)
+    await agentWrites(page)
+
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => storedContent(page, GS1)).toBe(gs1)
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => priorityOf(page, GS2)).toBeNull()
+    expect(await storedContent(page, GS3)).toBe(`${GS3_TEXT} typed`)
+  })
+
+  test('after an undo, the press takes off the agent’s write, not the undone edit again', async ({
+    page,
+  }) => {
+    const gs1 = await storedContent(page, GS1)
+    await focusBlockById(page, GS3)
+    await page.keyboard.type(' typed')
+    await blurEditors(page)
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${GS3_TEXT} typed`)
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => storedContent(page, GS3)).toBe(GS3_TEXT)
+    await page.clock.fastForward(1000)
+    await agentWrites(page)
+
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => storedContent(page, GS1)).toBe(gs1)
+    expect(await storedContent(page, GS3)).toBe(GS3_TEXT)
+  })
 })
 
 test.describe('a reload brings the peer’s text into a focused block with nothing typed (#6533) @editor @sync', () => {

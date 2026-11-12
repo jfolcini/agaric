@@ -14,6 +14,7 @@ import { EditorSurfaceContext } from '@/components/editor/editor-surface-context
 import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { StaticBlock } from '@/components/editor/StaticBlock'
 import { getActiveEditor } from '@/editor/active-editor'
+import type { TextPoint } from '@/editor/click-caret'
 import { blockLinkToken } from '@/editor/markdown-common'
 import { parse } from '@/editor/markdown-serializer'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -433,7 +434,7 @@ function EditableBlockInner({
   }, [isFocused, blockId, listMarker.style, listMarker.ordinal, rovingEditor.editor])
 
   const handleFocus = useCallback(
-    (id: string) => {
+    (id: string, caret?: TextPoint) => {
       // Unmount from previous block if any
       if (rovingEditorRef.current.activeBlockId && rovingEditorRef.current.activeBlockId !== id) {
         persistUnmount(
@@ -453,7 +454,8 @@ function EditableBlockInner({
       // Mount into the new block
       logger.debug('editor', 'focus', { blockId: id })
       setFocused(id)
-      rovingEditorRef.current.mount(id, content)
+      if (caret === undefined) rovingEditorRef.current.mount(id, content)
+      else rovingEditorRef.current.mount(id, content, { cursorPlacement: caret })
     },
     [content, setFocused, rootParentId],
   )

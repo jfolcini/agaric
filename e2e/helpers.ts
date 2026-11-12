@@ -1144,9 +1144,8 @@ export async function reopenPage(page: Page, title: string) {
  * Click into a static block's bottom-right padding (`px-3 py-1`) to enter edit
  * mode. The box centre is a tag or page chip on a block like GS_4 once the
  * reading width (#5332) narrows the box, and a chip click navigates instead.
- * The browser places the caret from the click point as the editor mounts, so
- * this corner leaves it at the end of the text, as a click past the end of a
- * short line always did. The corner is measured once, so the block must have
+ * The caret goes where the click lands (#6562), so this corner leaves it at
+ * the end of the text. The corner is measured once, so the block must have
  * finished rendering: one that shrinks before the click is missed.
  */
 async function clickIntoStaticBlock(block: Locator): Promise<void> {

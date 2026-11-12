@@ -592,3 +592,33 @@ async fn a_page_saved_in_the_folder_after_an_attachment_rename_links_the_new_cop
         "the file written back links the new copy: {text}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_linking_a_copy_its_page_did_not_link_keeps_that_link() {
+    let mut fx = Fx::new(Some(true)).await;
+    let (_, _, attachment) = fx.page_with_image("Alpha", "cat.png", PNG).await;
+    let beta = fx.page("Beta").await;
+    let block = fx.block(&beta, "words").await;
+    fx.tick().await;
+    let written = fx.text("TestSpace/Beta.md");
+    let link = format!("![a picture](assets/{attachment}/cat.png)");
+
+    std::fs::write(
+        fx.root.join("TestSpace/Beta.md"),
+        written.replace("words", &link),
+    )
+    .unwrap();
+    // The first tick sees the save, the second reads it in and writes it back.
+    fx.ticks(2).await;
+
+    assert_eq!(
+        fx.content(&block).await,
+        format!("![a picture](attachment:{attachment})"),
+        "the link to the copy reads in as the attachment's"
+    );
+    assert_eq!(
+        fx.text("TestSpace/Beta.md"),
+        written.replace("words", &link),
+        "the file written back keeps its link to the copy"
+    );
+}

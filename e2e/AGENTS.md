@@ -25,11 +25,11 @@ npm run typecheck:e2e                         # tsc for this directory only
 
 `reuseExistingServer` is on locally, so Playwright attaches to whatever already listens on its port: a leftover `npm run dev` or older `vite preview` means testing the wrong bundle, and a concurrent run shares or kills the first one's server. Give each worktree its own port (`PW_PORT=5557 npx playwright test …`). Before a run, kill the PID from `lsof -ti :$PW_PORT`, never `pkill -f`, which also matches unrelated shells.
 
-In CI, `scripts/classify-changes.sh` picks the lanes: a diff of only `e2e/*.spec.ts` runs just those specs on one leg (`playwright_specs`), a diff of only vitest tests or `e2e-tauri/` files runs no Playwright, and any other frontend change, like the weekly full suite, runs every shard.
+In CI, `scripts/classify-changes.sh` picks the lanes: a diff of only `e2e/*.spec.ts` runs just those specs on one leg (`playwright_specs`), a diff of only vitest tests or `e2e-tauri/` files runs no Playwright, and any other frontend change, like the nightly full suite, runs every shard.
 
 ## Mock backend
 
-`src/lib/tauri-mock/` is an in-memory backend that activates when `window.__TAURI_INTERNALS__` is absent. It seeds fixed pages and blocks and exports `SEED_IDS` and `resetMock()`. `page.reload()` re-seeds it, so a spec verifies persistence by navigating away and back (`reopenPage`), never by reloading.
+`src/lib/tauri-mock/` is an in-memory backend that activates when `window.__TAURI_INTERNALS__` is absent. It seeds fixed pages and blocks and exports `SEED_IDS` and `resetMock()`. `page.reload()` re-seeds it, so a spec verifies persistence by navigating away and back (`reopenPage`), never by reloading. It answers every command at once; `window.__setMockLatency(ms)` makes it answer `ms` later, to race a handler that awaits an IPC and then moves the editor (`enter-merge-latency.spec.ts`).
 
 ## The mock is a contract, not a convenience
 
@@ -74,7 +74,7 @@ test('edits a block', async ({ page }) => {
 - Select with `data-testid` / `data-slot`, not CSS classes.
 - `installIpcRecorder` / `getInvokeCalls` / `clearInvokeCalls` assert on IPC traffic. The recorder sees only calls made after boot; counting boot IPC wraps the assignment instead (`boot-ipc-counts.spec.ts`).
 - `fullyParallel` is on; a spec whose tests share global state sets `test.describe.configure({ mode: 'serial' })`.
-- Changing a shared control's visibility, a label, a selector or seed data, or removing a behaviour: grep `e2e/` (including `helpers.ts`), `e2e-tauri/` and `scripts/` (`android-e2e-safe-area.mjs`) in the same PR, and run the specs it hits. A spec may assert the bug itself; re-premise it rather than keep the bug.
+- Changing a shared control's visibility, a label, a selector or seed data, or removing a behaviour: grep `e2e/` (including `helpers.ts`), `e2e-tauri/` and `scripts/` (`android-e2e-safe-area.mjs`, `android-e2e-persist.mjs`) in the same PR, and run the specs it hits. A spec may assert the bug itself; re-premise it rather than keep the bug.
 - Mobile behaviour keys on the user agent (`src/lib/platform/index.ts`), not the viewport. A mobile spec sets the whole device (`viewport`, `userAgent`, `isMobile`, `hasTouch` from `devices['iPhone 13']`, as `mobile-editor.spec.ts` does).
 - Focus on a hidden element, Escape-listener order, CSS specificity and forced-colors are invisible to the vitest DOM; reproduce them here, and assert focus with `toBeFocused()`.
 

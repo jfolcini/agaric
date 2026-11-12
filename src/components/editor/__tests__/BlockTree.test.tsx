@@ -5319,6 +5319,47 @@ describe('BlockTree Enter creates new sibling block', () => {
     expect(newBlock).toBeDefined()
   })
 
+  // #6559 — Enter focuses the new block before `create_block` answers; when it
+  // refuses, the row goes, and the user is back in the block Enter left.
+  it('a refused create removes the new row and gives the block Enter left back, text intact', async () => {
+    const { toast } = await import('sonner')
+    const tree = [makeBlock({ id: 'A', content: 'First block' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
+    mockGetMarkdownReturn = 'First block'
+    const createAnswer = deferred<void>()
+    stubBlockTree({
+      create_block: async () => {
+        await createAnswer.promise
+        throw new Error('create refused')
+      },
+    })
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.['onEnterSave']).toBeDefined()
+    })
+    act(() => {
+      ;(capturedBlockKeyboardOpts as { onEnterSave: () => void }).onEnterSave()
+    })
+
+    const newId = pageStore.getState().blocks.find((b) => b.id !== 'A')?.id
+    expect(newId).toBeDefined()
+    expect(useBlockStore.getState().focusedBlockId).toBe(newId)
+
+    await act(async () => {
+      createAnswer.resolve()
+    })
+
+    await waitFor(() => {
+      expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['A'])
+    })
+    expect(useBlockStore.getState().focusedBlockId).toBe('A')
+    expect(mockMount).toHaveBeenLastCalledWith('A', 'First block')
+    expect(pageStore.getState().blocksById.get('A')?.content).toBe('First block')
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to create block')
+  })
+
   it('empty just-created block is deleted when focus changes', async () => {
     const tree = [makeBlock({ id: 'A', content: 'First block' })]
     pageStore.setState({ blocks: tree, loading: false })

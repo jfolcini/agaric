@@ -415,7 +415,7 @@ token-scoped REST API is still on master only, a month after it merged.
 | Capability | Logseq | Agaric | Status |
 | --- | --- | --- | --- |
 | Desktop | Linux, Windows, macOS | Linux (deb/rpm/AppImage), Windows (MSI), macOS (x86_64 + aarch64 dmg) | Done |
-| Android | F-Droid serves the **file version** 0.10.15 (2025-12-18, not re-fetched). The 2.0.2 release carries an APK (42.1 MB). **A native Jetpack Compose app opened to backer sign-ups on 2026-11-04, with testing from the week of 2026-11-09** and access by Google Play account (Open Collective update); no public store listing was found, and the docs still say it "has not been opened up for alpha testing yet" | Signed APK, **arm64-v8a, API 30+, sideload-only**. A release-profile APK is now installed and launched on an emulator before a release publishes, and weekly (`.github/workflows/android-launch-smoke.yml`, #6050): the check 0.15.0 lacked. Nothing else runs on a device in CI, and the real-phone checks are an open list (#6513) | Tie |
+| Android | F-Droid serves the **file version** 0.10.15 (2025-12-18, not re-fetched). The 2.0.2 release carries an APK (42.1 MB). **A native Jetpack Compose app opened to backer sign-ups on 2026-11-04, with testing from the week of 2026-11-09** and access by Google Play account (Open Collective update); no public store listing was found, and the docs still say it "has not been opened up for alpha testing yet" | Signed APK, **arm64-v8a, API 30+, sideload-only**. A release-profile APK is now installed and launched on an emulator before a release publishes, and nightly (`.github/workflows/android-launch-smoke.yml`, #6050): the check 0.15.0 lacked. The same emulator then checks the system-bar insets and that a typed block survives a force-stop (#6553); the real-phone checks are an open list (#6513) | Tie |
 | iOS | App Store still **0.10.9 (2024-04-23)** (fetched 2026-11-11). 2.0: a native app in **invite-only testing** since 2026-10-20 (docs: "invite only for now") | **Absent**: no target, no work | Gap |
 | Mobile sync | RTC (alpha); the iOS test app claims background sync and a ~200 ms start (Open Collective, 2026-10-20) | LAN sync, **foreground only** (`docs/architecture/sync-and-network.md`); in daily Android ↔ Linux use (maintainer report, 2026-10-21) | Partial |
 | Phone UI | 2.0.2 popup and safe-area fixes | Phone layout overhaul with 44 px targets (#5941, #5948, #5955, #5957, #5958, #5969); page mode and its toolbar work on touch (#5691); read aloud through Android's `TextToSpeech` is on `main`, in no release (#6484). The Markdown mirror is desktop only. Whether the folder pickers that the vault, graph and restore imports need work in the Android WebView is **unverified** | Done |
@@ -529,8 +529,8 @@ Rows the last revision marked fixed (`listStyle`, the sync quarantine) are gone.
 - **Mutation testing cannot fail a build.** `stryker.config.mjs` still sets no `thresholds.break`.
   The PR lane now reads a list of accepted mutants (`mutation-accepted.tsv`), which is a list of
   survivors someone decided to live with.
-- **Fuzzing, the benchmark SLO gate and the Android launch check run weekly or at release**, not
-  per PR.
+- **Fuzzing and the benchmark SLO gate run weekly, and the Android emulator checks nightly and at
+  release**, not per PR.
 - **The 100K-block benchmark measures latency only** (2026-10-21 finding, not re-read). Peak memory
   is unmeasured, and there is no Android performance number.
 - **`revert_ops` is still exempt from its budget**
@@ -734,7 +734,7 @@ symbol. Logseq was read from repository pages and raw files; the GitHub API was 
 | Claim | Now |
 | --- | --- |
 | Human-readable storage: Edit as Markdown only; export is a projection | A Markdown mirror on desktop (#5363), off by default: one-way in 0.23.0, two-way on `main` (#6474, #6483, #6504) |
-| Android row: "no Android device lane in CI" | A release APK is launched on an emulator at release and weekly (#6050, merged 2026-10-22) |
+| Android row: "no Android device lane in CI" | A release APK is launched on an emulator at release and nightly (#6050, merged 2026-10-22; nightly since #6553) |
 | "Import is per file"; a `((uuid))` into another file is stripped; `journals/` is not journal dates | A Logseq graph folder imports with journals, namespaces and block refs across files (#6033) |
 | Import merge: "No merge" | A single-file re-import updates the page in place (#6277); folders and Logseq graphs still do not |
 | Import formats without Notion or Org | Notion export folders and `.org` files import (#6033) |

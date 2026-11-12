@@ -227,11 +227,11 @@ describe('registerFocusedCommandTarget (#5691, page mode)', () => {
 
   it('swallows a command it has no handler for, rather than sending it to a tree', () => {
     const tree = vi.fn()
-    registerBlockCommandTarget(makeStore(['BLOCK_A']), { DISCARD_BLOCK_EDIT: tree })
+    registerBlockCommandTarget(makeStore(['BLOCK_A']), { INSERT_DIVIDER: tree })
     registerFocusedCommandTarget(() => 'PAGE_BLOCK', {})
     setFocus('BLOCK_A')
 
-    dispatchBlockCommand('DISCARD_BLOCK_EDIT')
+    dispatchBlockCommand('INSERT_DIVIDER')
 
     expect(tree).not.toHaveBeenCalled()
   })

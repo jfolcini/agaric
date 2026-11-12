@@ -135,6 +135,14 @@ describe('AdvancedQueryView', () => {
     expect(await screen.findByText('No blocks match these filters')).toBeInTheDocument()
   })
 
+  it('explains the view in one line, and an empty filter in plain words (#6548)', async () => {
+    render(<AdvancedQueryView />)
+    await screen.findByText('No blocks match these filters')
+
+    expect(screen.getByText(t('advancedQuery.description'))).toBeInTheDocument()
+    expect(screen.getByText(t('advancedQuery.builder.emptyGroupAnd'))).toBeInTheDocument()
+  })
+
   it('renders matched rows and the total count', async () => {
     routeInvoke(
       makeResponse({
@@ -291,10 +299,9 @@ describe('AdvancedQueryView', () => {
     await addTagLeaf(user, 'b')
 
     // The combinator is a single-select ToggleGroup: All is the active segment.
-    expect(screen.getByRole('radiogroup', { name: 'Combinator' })).toHaveAttribute(
-      'data-slot',
-      'toggle-group',
-    )
+    expect(
+      screen.getByRole('radiogroup', { name: t('advancedQuery.builder.opLabel') }),
+    ).toHaveAttribute('data-slot', 'toggle-group')
     expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('data-state', 'on')
 
     // Flip the root group's combinator from All (And) to Any (Or).
@@ -493,8 +500,10 @@ describe('AdvancedQueryView', () => {
 
     expect(screen.getByTestId('advanced-query-fulltext')).toBeInTheDocument()
     expect(screen.getByLabelText('Group by')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Add sort key' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Add aggregate' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: t('advancedQuery.sort.add') })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: t('advancedQuery.aggregate.add') }),
+    ).toBeInTheDocument()
   })
 
   it('typing a debounced full-text term sends fulltext in the request', async () => {
@@ -522,7 +531,7 @@ describe('AdvancedQueryView', () => {
     await screen.findByText('No blocks match these filters')
 
     // Add a sort key — with no full-text term, Relevance is absent.
-    await user.click(screen.getByRole('button', { name: 'Add sort key' }))
+    await user.click(screen.getByRole('button', { name: t('advancedQuery.sort.add') }))
     const sourceSelect = screen.getByLabelText('Sort field') as HTMLSelectElement
     const optionTexts = (): string[] => Array.from(sourceSelect.options).map((o) => o.text)
     expect(optionTexts()).not.toContain('Relevance')

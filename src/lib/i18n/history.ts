@@ -171,17 +171,9 @@ export const history: Record<string, string> = {
   'trash.clearFilter': 'Clear filter',
   'trash.itemsInBatch_one': '+{{count}} block',
   'trash.itemsInBatch_other': '+{{count}} blocks',
-  // #2941 — Ctrl+Z/Ctrl+Y in Journal view (the default landing view) used to
-  // silently no-op: journal days ARE pages (per-page undo already works via
-  // the swipe-to-delete "Undo" toast, which pins to the day's own pageId read
-  // from the block's page-store context), but the document-level keyboard
-  // shortcut has no reliable already-tracked signal for which day-page the
-  // user last touched — weekly/monthly render many day-pages at once and
-  // nothing records a "last focused page" globally. Surfacing this toast
-  // instead of doing nothing lets the user know why the shortcut had no
-  // effect and points them at a working alternative (per-block History).
-  'undo.journalUndoUnavailableMessage':
-    "Undo isn't available in Journal view yet — use a block's History to revert it",
+  // #6541 — the journal's Ctrl+Z / Ctrl+Y act on the day last worked in; this
+  // says so when no day was worked in yet.
+  'undo.journalNoDayMessage': "Click a day's block first — undo works on the day you last edited",
   'undo.undoneMessage': 'Undone',
   'undo.undoFailedMessage': 'Undo failed',
   'undo.redoneMessage': 'Redone',

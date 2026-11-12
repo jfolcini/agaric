@@ -252,8 +252,7 @@ export function DonePanel({
     scrollParentRef,
   })
 
-  const headerLabel =
-    totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })
+  const headerLabel = t('donePanel.header', { count: totalCount })
 
   // A *failed* load gets an explicit error + retry affordance, distinct from
   // the empty `null` below — otherwise a thrown load is indistinguishable from

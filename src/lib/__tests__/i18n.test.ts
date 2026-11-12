@@ -163,8 +163,7 @@ describe('key existence', () => {
     'unlinkedRefs.header',
     'unlinkedRefs.linkIt',
 
-    // Done Panel
-    'donePanel.header',
+    // Done Panel (`donePanel.header` is plural-only: the {{count}} test below)
     'donePanel.completedItems',
 
     // Agenda
@@ -310,8 +309,8 @@ describe('interpolation', () => {
   })
 
   it('interpolates {{count}} in donePanel.header', () => {
-    const result = i18n.t('donePanel.header', { count: 3 })
-    expect(result).toBe('3 Completed')
+    expect(i18n.t('donePanel.header', { count: 1 })).toBe('1 Completed')
+    expect(i18n.t('donePanel.header', { count: 3 })).toBe('3 Completed')
   })
 
   it('interpolates {{count}} in duePanel.header', () => {

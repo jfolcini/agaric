@@ -8,6 +8,7 @@ import { axe } from '@/__tests__/helpers/axe'
 import type { QueryControlsBarProps } from '@/components/AdvancedQuery/QueryControlsBar'
 import { QueryControlsBar } from '@/components/AdvancedQuery/QueryControlsBar'
 import type { AggregateSpec, GroupSpec, SortKey } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 
 const noop = (): void => {}
 
@@ -150,14 +151,18 @@ describe('QueryControlsBar — aggregate target Property (#4553 Phase 1)', () =>
   it('offers a Property option; no key input until it is selected', () => {
     render(<Harness onChange={vi.fn()} />)
     const row = screen.getByTestId('advanced-query-aggregate-row')
-    const targetSelect = within(row).getByLabelText('Aggregate target') as HTMLSelectElement
+    const targetSelect = within(row).getByLabelText(
+      t('advancedQuery.aggregate.targetLabel'),
+    ) as HTMLSelectElement
     expect(Array.from(targetSelect.options).map((o) => o.value)).toEqual([
       '__none__',
       'priority',
       'position',
       '__property__',
     ])
-    expect(within(row).queryByLabelText('Property key to aggregate')).not.toBeInTheDocument()
+    expect(
+      within(row).queryByLabelText(t('advancedQuery.aggregate.propertyKeyLabel')),
+    ).not.toBeInTheDocument()
   })
 
   it('selecting Property reveals a key input; typing emits { type: "Property", key }', async () => {
@@ -165,14 +170,16 @@ describe('QueryControlsBar — aggregate target Property (#4553 Phase 1)', () =>
     const onChange = vi.fn()
     render(<Harness onChange={onChange} />)
     const row = screen.getByTestId('advanced-query-aggregate-row')
-    const targetSelect = within(row).getByLabelText('Aggregate target') as HTMLSelectElement
+    const targetSelect = within(row).getByLabelText(
+      t('advancedQuery.aggregate.targetLabel'),
+    ) as HTMLSelectElement
 
     await user.selectOptions(targetSelect, 'Property')
     expect(onChange).toHaveBeenLastCalledWith([
       { op: 'sum', target: { type: 'Property', key: '' } },
     ])
 
-    const keyInput = within(row).getByLabelText('Property key to aggregate')
+    const keyInput = within(row).getByLabelText(t('advancedQuery.aggregate.propertyKeyLabel'))
     await user.type(keyInput, 'estimate')
     expect(onChange).toHaveBeenLastCalledWith([
       { op: 'sum', target: { type: 'Property', key: 'estimate' } },
@@ -184,13 +191,20 @@ describe('QueryControlsBar — aggregate target Property (#4553 Phase 1)', () =>
     const user = userEvent.setup()
     render(<Harness onChange={vi.fn()} />)
     const row = screen.getByTestId('advanced-query-aggregate-row')
-    const targetSelect = within(row).getByLabelText('Aggregate target') as HTMLSelectElement
+    const targetSelect = within(row).getByLabelText(
+      t('advancedQuery.aggregate.targetLabel'),
+    ) as HTMLSelectElement
 
     await user.selectOptions(targetSelect, 'Property')
-    await user.type(within(row).getByLabelText('Property key to aggregate'), 'estimate')
+    await user.type(
+      within(row).getByLabelText(t('advancedQuery.aggregate.propertyKeyLabel')),
+      'estimate',
+    )
 
     await user.selectOptions(targetSelect, 'Priority')
-    expect(within(row).queryByLabelText('Property key to aggregate')).not.toBeInTheDocument()
+    expect(
+      within(row).queryByLabelText(t('advancedQuery.aggregate.propertyKeyLabel')),
+    ).not.toBeInTheDocument()
   })
 })
 

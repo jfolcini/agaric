@@ -89,6 +89,8 @@
 //     [--run-url <url>]             (default: derived from $GITHUB_SERVER_URL
 //                                    /$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
 //     [--dry-run]                   (compute + print; never write via `gh`)
+//     [--scope job,job,...]         (#6553: judge only these jobs; every other
+//                                    tracked lane keeps its recorded state)
 //     [--known-body-file <path>]    (TEST-ONLY: use this file's content as the
 //                                    existing tracking issue's body instead of
 //                                    calling `gh issue list`; a missing/empty
@@ -133,7 +135,7 @@ export const PROFILES = Object.freeze({
     headline: 'scheduled-deep-checks lane',
     recovery: 'All scheduled-deep-checks lanes are green again',
     // #4456 review of #4440 — FALSE. This profile's `toJSON(needs)` payload
-    // never carries `periodHours` (its lanes are JOBS inside one weekly run,
+    // never carries `periodHours` (its lanes are JOBS inside one scheduled run,
     // not workflows with their own polling cadence — see `parseNeeds`), so
     // `escalationThreshold` is 1 for every lane this profile ever renders,
     // no matter how weekly the containing workflow is. The standing prose in
@@ -202,6 +204,7 @@ const RESULT_LABEL = {
   cancelled: '⚠️ cancelled',
   skipped: '⚠️ skipped',
   success: '✅ success',
+  'not-in-run': '➖ not in this run',
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +264,36 @@ export function parseNeeds(text) {
     }
     return out
   })
+}
+
+/**
+ * #6553 — what one run is evidence about. A run that covers only some lanes
+ * (the nightly cron) judges those; every other lane keeps the state the issue
+ * already records, so a weekly-only lane is neither resolved nor re-reported
+ * by a run that never ran it. Returns the lanes to judge, the failing set to
+ * diff (theirs plus the carried ones), and the rows to render, where a lane
+ * outside the scope reads as not run rather than as skipped.
+ *
+ * @param {{ job: string, result: string }[]} lanes every needed job
+ * @param {Set<string>} known the tracked set from the issue body
+ * @param {Set<string> | undefined} scope job ids this run covers; all when absent
+ */
+function scopeLanes(lanes, known, scope) {
+  if (scope === undefined) return { observed: lanes, current: failingJobs(lanes), shown: lanes }
+  const present = new Set(lanes.map((l) => l.job))
+  const missing = [...scope].filter((j) => !present.has(j))
+  if (missing.length > 0) {
+    throw new Error(
+      `--scope names ${missing.join(', ')}, which the \`needs\` payload does not carry — refusing to judge lanes this run has no result for`,
+    )
+  }
+  const observed = lanes.filter((l) => scope.has(l.job))
+  const carried = [...known].filter((j) => !scope.has(j))
+  return {
+    observed,
+    current: [...failingJobs(observed), ...carried],
+    shown: lanes.map((l) => (scope.has(l.job) ? l : { job: l.job, result: 'not-in-run' })),
+  }
 }
 
 /** True when a lane's job result means "this lane did not do its job". */
@@ -1106,6 +1139,12 @@ function parseArgs(argv) {
         args.knownState = argv[++i]
         break
       }
+      case '--scope': {
+        const jobs = (argv[++i] ?? '').split(',').filter(Boolean)
+        if (jobs.length === 0) throw new Error('--scope needs a comma-separated list of job ids')
+        args.scope = new Set(jobs)
+        break
+      }
       default: {
         throw new Error(`unrecognized argument: ${a}`)
       }
@@ -1134,14 +1173,7 @@ export function main(argv = process.argv.slice(2)) {
       `--needs-json-file ${args.needsJsonFile} does not exist — the \`needs\` context was never written, so lane health is UNKNOWN, not green`,
     )
   }
-  const lanes = parseNeeds(readFileSync(args.needsJsonFile, 'utf8'))
-  const current = failingJobs(lanes)
-
-  console.log(
-    `${profile.headline}s: ${lanes.length} total, ${current.length} failing${
-      current.length > 0 ? ` (${current.join(', ')})` : ''
-    }`,
-  )
+  const allLanes = parseNeeds(readFileSync(args.needsJsonFile, 'utf8'))
 
   // --known-body-file is a TEST-ONLY escape hatch substituting for the
   // `gh issue list` lookup, so the diff/decide/render logic can be exercised
@@ -1159,6 +1191,13 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   const known = parseKnownLanes(existingIssue?.body)
+  const { observed: lanes, current, shown } = scopeLanes(allLanes, known, args.scope)
+  const observedFailing = failingJobs(lanes)
+  console.log(
+    `${profile.headline}s: ${lanes.length} judged, ${observedFailing.length} failing${
+      observedFailing.length > 0 ? ` (${observedFailing.join(', ')})` : ''
+    }`,
+  )
   const { newOnes, resolvedOnes, all } = diffLanes(current, known)
   // #4400 — the consecutive-observed-failure counter. Fed this run's observed
   // failing set; `fallbackRunId` only matters for a caller that never supplies
@@ -1167,7 +1206,7 @@ export function main(argv = process.argv.slice(2)) {
   const laneById = new Map(lanes.map((l) => [l.job, l]))
   const knownStreaks = parseKnownStreaks(existingIssue?.body)
   const { streaks, advanced, escalated } = advanceStreaks({
-    currentFailing: current,
+    currentFailing: observedFailing,
     laneById,
     known: knownStreaks,
     fallbackRunId: runUrl ?? '(unknown run — no $GITHUB_RUN_ID or --run-url)',
@@ -1203,7 +1242,7 @@ export function main(argv = process.argv.slice(2)) {
 
   const body = buildIssueBody({
     all,
-    lanes,
+    lanes: shown,
     runUrl,
     profile,
     streaks: persistedStreaks,
@@ -1217,7 +1256,7 @@ export function main(argv = process.argv.slice(2)) {
     // is rendered from so the comment can never quote a count the issue body
     // does not show.
     streaks: persistedStreaks,
-    lanes,
+    lanes: shown,
     runUrl,
     profile,
   })

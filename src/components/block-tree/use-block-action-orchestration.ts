@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 
 import { consumePendingSplit } from '@/components/block-tree/use-block-flush'
@@ -11,6 +11,7 @@ import { pmEndOfFirstBlock } from '@/editor/types'
 import type { DeleteBlockOpts } from '@/editor/use-block-keyboard'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { announce } from '@/lib/announcer'
+import { newBlockId } from '@/lib/block-id'
 import type { ListStyle } from '@/lib/list-style'
 import { clearListStyle, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
@@ -198,33 +199,6 @@ interface EditorCapture {
   loaded: string
 }
 
-/**
- * Escape or a click left `sourceId` while Enter's create was in flight.
- * Focusing the new block then would override that gesture and strand it
- * blank, since no later focus change would leave it for BlockTree's
- * empty-block cleanup; drop it the way that cleanup would. Resolves `false`
- * when focus is still on the source or already in the new block.
- */
-async function dropBlankIfFocusLeft(
-  sourceId: string,
-  newBlockId: string,
-  remove: (id: string, options?: DeleteBlockOptions) => Promise<void>,
-): Promise<boolean> {
-  const focusNow = useBlockStore.getState().focusedBlockId
-  if (focusNow === sourceId || focusNow === newBlockId) return false
-  try {
-    await remove(newBlockId, { undoable: false })
-  } catch (err) {
-    logger.warn(
-      'useBlockActionOrchestration',
-      'Enter left a blank block behind after focus moved during its create',
-      { blockId: sourceId, newBlockId },
-      err,
-    )
-  }
-  return true
-}
-
 export interface UseBlockActionOrchestrationParams {
   focusedBlockId: string | null
   /**
@@ -291,7 +265,7 @@ export interface UseBlockActionOrchestrationParams {
   dedent: (id: string) => Promise<boolean>
   moveUp: (id: string) => Promise<boolean>
   moveDown: (id: string) => Promise<boolean>
-  createBelow: (afterBlockId: string, content?: string) => Promise<string | null>
+  createBelow: (afterBlockId: string, content: string, blockId: string) => Promise<string | null>
   /**
    * #4729 — ids BlockTree's leaked-empty-block cleanup must skip exactly once.
    *
@@ -300,12 +274,10 @@ export interface UseBlockActionOrchestrationParams {
    * deliberately EMPTY, the text moves into a new sibling below, and focus
    * follows the text. That empty source is the user's blank line, so the
    * focus-leave cleanup must not treat it as a leak — otherwise Enter-at-line-
-   * start becomes a visible no-op. Registered here BEFORE the split's first
-   * await (a click elsewhere during the `edit`/`createBelow` round trip moves
-   * focus off the already-emptied source, and the cleanup must find the
-   * exemption in place by then), consumed (and cleared) by the cleanup effect
-   * on the next focus change, and withdrawn on the split's failure paths,
-   * which restore the source's full content.
+   * start becomes a visible no-op. Registered here before focus moves to the
+   * new sibling, consumed (and cleared) by the cleanup effect on that focus
+   * change, and withdrawn on the split's failure paths, which restore the
+   * source's full content.
    *
    * Optional: callers that never drive a caret split (isolated hook tests) may
    * omit it.
@@ -336,7 +308,6 @@ export interface UseBlockActionOrchestrationReturn {
   handleMergeById: (blockId: string) => Promise<void>
   handleEnterSave: () => Promise<void>
   handleEscapeSave: () => void
-  handleDiscard: () => void
 }
 
 export function useBlockActionOrchestration({
@@ -370,36 +341,21 @@ export function useBlockActionOrchestration({
     focusedBlockIdRef.current = focusedBlockId
   })
 
-  // Tracks the post-merge setTextSelection setTimeout so we can cancel it on
-  // unmount. Without this, a late-firing callback could call
-  // `setTextSelection` on a stale editor instance and move the user's cursor
-  // On the NEXT mounted block (#).
-  const pendingMergeSelectionRef = useRef<number | null>(null)
-
-  useEffect(
-    () => () => {
-      if (pendingMergeSelectionRef.current !== null) {
-        window.clearTimeout(pendingMergeSelectionRef.current)
-        pendingMergeSelectionRef.current = null
-      }
-    },
-    [],
-  )
-
   // Re-entrancy guard: prevents rapid Backspace presses from duplicating deletes.
   const deleteInProgress = useRef(false)
 
-  // The Enter in flight. A second Enter meanwhile is dropped so it cannot
-  // create a duplicate block; a restructure chord waits for it
+  // The latest Enter in flight. A restructure chord waits for it
   // (`afterEnterSettles`).
   const enterInFlight = useRef<Promise<void> | null>(null)
 
-  // Re-entrancy guard for merges: handleMergeWithPrev/handleMergeById unmount
-  // the roving editor (resetting its doc to empty) BEFORE awaiting the edit
-  // IPC, so an autorepeat Backspace in that window matches the
-  // Backspace-on-empty rule and an Enter matches the create rule — both on
-  // the block that is being merged away. handleDeleteBlock/handleEnterSave
-  // honor this flag so no concurrent structural op races the merge.
+  // Re-entrancy guard for merges, whose edit, reparent and remove are in flight
+  // until the merge settles. handleMergeById unmounts the roving editor
+  // (resetting its doc to empty) meanwhile, so an autorepeat Backspace matches
+  // the Backspace-on-empty rule and an Enter the create rule, both on the block
+  // being merged away; after a Backspace merge an Enter would send a second
+  // edit of the joined block, which can land before the merge's.
+  // handleDeleteBlock/handleEnterSave honor this flag so no concurrent
+  // structural op races the merge.
   const mergeInProgress = useRef(false)
 
   // #4552 slice 3 — the style `continueListStyle` just wrote to a freshly
@@ -474,25 +430,24 @@ export function useBlockActionOrchestration({
 
   // The "continue the list" half: the sibling Enter created carries the
   // source block's style, so a numbered procedure keeps numbering without
-  // any inheritance from a parent.
+  // any inheritance from a parent. `handleEnterSave` records the optimistic
+  // style when it focuses the sibling, before the create and this write: the
+  // gesture it exists for is a second Enter, which lands while they are in
+  // flight. Dropped on failure so a rejected write cannot leave the keyboard
+  // grain acting on a list the block never joined.
   const continueListStyle = useCallback(
-    async (newBlockId: string, style: ListStyle): Promise<void> => {
+    async (blockId: string, style: ListStyle): Promise<void> => {
       if (style === 'none') return
-      // Recorded BEFORE the write, not after: the gesture this exists for is a
-      // second Enter, which lands while the write is still in flight. Dropped
-      // on failure so a rejected write cannot leave the keyboard grain acting
-      // on a list the block never joined.
-      optimisticListStyle.current = { blockId: newBlockId, style }
       try {
-        await setListStyle(newBlockId, style)
+        await setListStyle(blockId, style)
       } catch (err) {
-        if (optimisticListStyle.current?.blockId === newBlockId) {
+        if (optimisticListStyle.current?.blockId === blockId) {
           optimisticListStyle.current = null
         }
         logger.error(
           'useBlockActionOrchestration',
           'setListStyle (Enter continuation) failed',
-          { blockId: newBlockId, style },
+          { blockId, style },
           err,
         )
         notify.error(t('blockTree.setListStyleFailed'))
@@ -531,9 +486,8 @@ export function useBlockActionOrchestration({
     (opts?: DeleteBlockOpts) => {
       if (!focusedBlockId) return
       if (deleteInProgress.current) return
-      // An in-flight merge has already unmounted the roving editor (its doc is
-      // empty), so an autorepeat Backspace routes here for the very block the
-      // merge is removing — bail instead of racing a second remove().
+      // A merge in flight (see `mergeInProgress`): bail instead of racing a
+      // second remove() against its own.
       if (mergeInProgress.current) return
       // #4552 slice 3 — Backspace on an empty styled block leaves the list
       // first; the next Backspace deletes the block.
@@ -727,9 +681,9 @@ export function useBlockActionOrchestration({
     [captureEditor, handleFlush, moveDown, remountBaseline, t],
   )
 
-  // Until Enter's create lands, focus still names the block Enter left, so a
-  // chord pressed in that window (Enter, Tab) would restructure it. Run the
-  // chord on the block focused once Enter settles instead: the one it created.
+  // Until Enter's create lands the backend does not have the block it focused,
+  // and a move of it would be refused. Run a chord pressed in that window (Tab,
+  // a move) on the block focused once Enter settles.
   const afterEnterSettles = useCallback((chord: (id: string) => Promise<void>): boolean => {
     const enter = enterInFlight.current
     if (!enter) return false
@@ -952,11 +906,8 @@ export function useBlockActionOrchestration({
 
   const handleMergeWithPrev = useCallback(async () => {
     if (!focusedBlockId) return
-    // Re-entrancy guard: the merge unmounts the roving editor (emptying its
-    // doc) and then awaits IPC, so an autorepeat/double Backspace in that
-    // window would route through the Backspace-on-empty rule into
-    // handleDeleteBlock and race a second remove() against the in-flight
-    // merge (cascade-deleting the source subtree). Mirror deleteInProgress.
+    // Re-entrancy guard (see `mergeInProgress`): a second merge would race
+    // the first's remove() (cascade-deleting the source subtree).
     if (mergeInProgress.current) return
     // #4552 slice 3 — Backspace at the start of a styled block strips the
     // style first; the next Backspace merges. Checked before the first-block
@@ -999,8 +950,14 @@ export function useBlockActionOrchestration({
       // collapsed/visible projection.
       const reparent = planChildReparent(blocks, focusedBlockId, prevBlock.id)
 
-      const remount = () => rovingEditorRef.current.mount(focusedBlockId, currentContent)
-      const ok = await mergeBlocksAndHandle({
+      // The merge failed: the user gets the block they merged away back with
+      // its text. What they typed at the join has nowhere to go.
+      const backToSource = () => {
+        rovingEditorRef.current.unmount()
+        rovingEditorRef.current.mount(focusedBlockId, currentContent)
+        setFocused(focusedBlockId)
+      }
+      const merged = mergeBlocksAndHandle({
         prevBlockId: prevBlock.id,
         removeBlockId: focusedBlockId,
         prevContent,
@@ -1009,36 +966,24 @@ export function useBlockActionOrchestration({
         editLogBlockId: prevBlock.id,
         removeLogMessage: 'Failed to merge blocks (remove step)',
         removeLogBlockId: focusedBlockId,
-        onEditFailureCleanup: remount,
-        onRemoveFailureCleanup: remount,
+        onEditFailureCleanup: backToSource,
+        onRemoveFailureCleanup: backToSource,
         ...(reparent && {
           reparentChildren: () => moveBlocks(reparent.childIds, prevBlock.id, reparent.newIndex),
         }),
       })
-      if (!ok) return
 
-      setFocused(prevBlock.id)
+      // #6559 — the caret goes to the join now, not once the writes land, so
+      // keys typed meanwhile go there.
       rovingEditorRef.current.mount(prevBlock.id, mergedContent)
-
-      // #976 f22 — capture the merge TARGET so the deferred cursor placement can
-      // verify the editor is still mounted on that block when the timer fires. If
-      // the user arrow-navigates before the 0ms callback runs, `handleFocusNext/
-      // Prev` remounts the roving editor onto a DIFFERENT block (updating
-      // `activeBlockId`), and a blind `setTextSelection` would land the caret in
-      // the wrong block. Guard on `activeBlockId === targetBlockId` — the same
-      // deterministic check `useEditorBlur` uses — so a stale timer is a no-op.
-      const targetBlockId = prevBlock.id
-      if (pendingMergeSelectionRef.current !== null) {
-        window.clearTimeout(pendingMergeSelectionRef.current)
+      flushSync(() => setFocused(prevBlock.id))
+      const editor = rovingEditorRef.current.editor
+      if (editor) {
+        editor.commands.setTextSelection(Math.min(joinPoint, editor.state.doc.content.size - 1))
+        // As Enter's `focusCreated`: the commit dropped the editor's focus.
+        editor.view.focus()
       }
-      pendingMergeSelectionRef.current = window.setTimeout(() => {
-        pendingMergeSelectionRef.current = null
-        const editor = rovingEditorRef.current.editor
-        if (editor && rovingEditorRef.current.activeBlockId === targetBlockId) {
-          const pmPos = Math.min(joinPoint, editor.state.doc.content.size - 1)
-          editor.commands.setTextSelection(pmPos)
-        }
-      }, 0)
+      await merged
     } finally {
       mergeInProgress.current = false
     }
@@ -1116,29 +1061,26 @@ export function useBlockActionOrchestration({
 
   const handleEnterSave = useCallback(async () => {
     if (!focusedBlockId) return
-    // An in-flight merge has unmounted the editor; splitAtCaret on the emptied
-    // doc would take the legacy path and create a stray sibling under the
-    // block being merged away. Drop the Enter until the merge settles.
     if (mergeInProgress.current) {
       logger.warn('useBlockActionOrchestration', 'Enter press dropped — merge still in progress', {
         blockId: focusedBlockId,
       })
       return
     }
-    if (enterInFlight.current) {
-      logger.warn(
-        'useBlockActionOrchestration',
-        'Enter press dropped — previous save still in progress',
-        {
-          blockId: focusedBlockId,
-        },
-      )
+    // Until the Enter in flight mounts the block it creates, the editor holds
+    // nothing, and splitting it would add a stray empty sibling. Only the #2914
+    // split below leaves that window: it focuses once its creates land.
+    if (enterInFlight.current && rovingEditorRef.current.activeBlockId === null) {
+      logger.warn('useBlockActionOrchestration', 'Enter press dropped — block split in progress', {
+        blockId: focusedBlockId,
+      })
       return
     }
     let settle: () => void = () => undefined
-    enterInFlight.current = new Promise<void>((resolve) => {
+    const enter = new Promise<void>((resolve) => {
       settle = resolve
     })
+    enterInFlight.current = enter
     try {
       // Capture content before flush so we can re-mount on failure
       const savedContent = rovingEditorRef.current.getMarkdown?.() ?? ''
@@ -1152,6 +1094,28 @@ export function useBlockActionOrchestration({
         return
       }
 
+      // #6559 — the new block is in the store as soon as `createBelow` is
+      // called, so focus moves to it then, not once the IPC answers: keys typed
+      // meanwhile land in it. The store holds a write to it until it exists.
+      const createdId = newBlockId()
+      const focusCreated = () => {
+        flushSync(() => setFocused(createdId))
+        // The commit moved the editor into the new row, which drops its focus
+        // until `mount()`'s next-frame refocus: a key typed sooner hits the page.
+        rovingEditorRef.current.editor?.view.focus()
+        if (listStyle !== 'none')
+          optimisticListStyle.current = { blockId: createdId, style: listStyle }
+      }
+      // The create failed: the user gets the block Enter left back with its
+      // full text, unless they have moved on. What they typed into the new
+      // block has nowhere to go.
+      const restoreSource = () => {
+        if (useBlockStore.getState().focusedBlockId !== createdId) return
+        rovingEditorRef.current.unmount()
+        flushSync(() => setFocused(focusedBlockId))
+        rovingEditorRef.current.mount(focusedBlockId, savedContent)
+      }
+
       // #909 — split the block at the caret. When there is text AFTER the
       // caret, keep the before-text in the current block and move the
       // after-text into the new block (Logseq/Notion/ProseMirror splitBlock).
@@ -1163,12 +1127,9 @@ export function useBlockActionOrchestration({
         rovingEditorRef.current.unmount()
         // #4729 — Enter at the START of a line leaves the source block empty
         // (`before` is ''), and that blank line is the point of the keystroke.
-        // Exempt it from the focus-leave empty-block cleanup NOW, before any
-        // await: the `edit()` after `createBelow` empties the block
-        // optimistically, and a click elsewhere during its round trip moves
-        // focus off the source, which the cleanup would otherwise delete.
-        // Withdrawn on the failure paths, which restore the full unsplit
-        // content.
+        // Exempt it from the focus-leave empty-block cleanup before focus
+        // leaves it. Withdrawn on the failure paths, which restore the full
+        // unsplit content.
         const leavesSourceEmpty = split.before.trim() === ''
         if (leavesSourceEmpty) preserveEmptyBlockIds?.current.add(focusedBlockId)
         // #5272 — create the after-text sibling BEFORE shortening the source.
@@ -1176,12 +1137,13 @@ export function useBlockActionOrchestration({
         // while a live block of this page still holds it; saving `before`
         // first removed the only holder of a link sitting after the caret,
         // and the create was refused.
-        const newBlockId = await createBelow(focusedBlockId, split.after)
-        if (!newBlockId) {
-          // createBelow logged + toasted and nothing was written: re-mount the
-          // full unsplit content so the user has a place to type.
+        const created = createBelow(focusedBlockId, split.after, createdId)
+        focusCreated()
+        readSplitOffAsTyped(rovingEditorRef.current, createdId, split)
+        if (!(await created)) {
+          // createBelow logged + toasted and nothing was written.
           if (leavesSourceEmpty) preserveEmptyBlockIds?.current.delete(focusedBlockId)
-          rovingEditorRef.current.mount(focusedBlockId, savedContent)
+          restoreSource()
           return
         }
         // #730 family — edit() RESOLVES false on failure (the store rolled the
@@ -1190,7 +1152,7 @@ export function useBlockActionOrchestration({
         // instead of leaving that text duplicated below the restored source.
         if (!(await edit(focusedBlockId, split.before))) {
           try {
-            await remove(newBlockId)
+            await remove(createdId)
           } catch (err) {
             // BlockTree's `remove` throws when the block is still in the store
             // after a failed delete (the store toasted). The after-text is then
@@ -1199,12 +1161,12 @@ export function useBlockActionOrchestration({
             logger.warn(
               'useBlockActionOrchestration',
               'Split rollback left the after-text sibling behind',
-              { blockId: focusedBlockId, newBlockId },
+              { blockId: focusedBlockId, newBlockId: createdId },
               err,
             )
           }
           if (leavesSourceEmpty) preserveEmptyBlockIds?.current.delete(focusedBlockId)
-          rovingEditorRef.current.mount(focusedBlockId, savedContent)
+          restoreSource()
           return
         }
         // #2786 — the direct `unmount()` above bypasses `persistUnmount`
@@ -1223,13 +1185,8 @@ export function useBlockActionOrchestration({
         // append a SECOND `edit_block` op that clobbers the split we just
         // committed with the old, un-split content.
         discardDraft(focusedBlockId)
-        // The SOURCE's #4729 exemption was registered above, before the
-        // awaits; this `setFocused` is what consumes it. Flushed, so the
-        // editor is on the new block (EditableBlock's auto-mount) on return.
-        flushSync(() => setFocused(newBlockId))
-        readSplitOffAsTyped(rovingEditorRef.current, newBlockId, split)
         announce(t('announce.blockCreated'))
-        await continueListStyle(newBlockId, listStyle)
+        await continueListStyle(createdId, listStyle)
         return
       }
 
@@ -1257,19 +1214,16 @@ export function useBlockActionOrchestration({
         }
         return
       }
-      const newBlockId = await createBelow(focusedBlockId)
-      if (!newBlockId) {
-        // createBelow returned null (e.g. backend error) — re-mount editor
-        // so the user isn't stuck with an unmounted block.
-        rovingEditorRef.current.mount(focusedBlockId, savedContent)
+      const created = createBelow(focusedBlockId, '', createdId)
+      focusCreated()
+      if (!(await created)) {
+        restoreSource()
         return
       }
-      if (await dropBlankIfFocusLeft(focusedBlockId, newBlockId, remove)) return
-      setFocused(newBlockId)
       announce(t('announce.blockCreated'))
-      await continueListStyle(newBlockId, listStyle)
+      await continueListStyle(createdId, listStyle)
     } finally {
-      enterInFlight.current = null
+      if (enterInFlight.current === enter) enterInFlight.current = null
       settle()
     }
   }, [
@@ -1299,23 +1253,6 @@ export function useBlockActionOrchestration({
     else setSelected([focusedBlockId])
   }, [focusedBlockId, captureEditor, handleFlush, setFocused, setSelected])
 
-  const handleDiscard = useCallback(() => {
-    if (!focusedBlockId) return
-    // Discard any persisted draft BEFORE unmounting so the autosave
-    // cleanup cannot flush stale content to the database.
-    discardDraft(focusedBlockId)
-    const stored = rovingEditorRef.current.storedMarkdown
-    const changed = rovingEditorRef.current.unmount()
-    // A block read as typed reports its text untouched; that is no change to discard.
-    if (changed !== null && changed !== stored) {
-      notify(t('blockTree.changesDiscarded'), { duration: 2000 })
-    }
-    // An untouched stub left behind by Enter is not deleted here: unfocusing
-    // runs BlockTree's leaked-empty-block cleanup, whose guards (children,
-    // properties, tags, attachments, references) this path never had (#5412).
-    setFocused(null)
-  }, [focusedBlockId, setFocused, discardDraft, t])
-
   return {
     handleFocusPrev,
     handleFocusNext,
@@ -1332,6 +1269,5 @@ export function useBlockActionOrchestration({
     handleMergeById,
     handleEnterSave,
     handleEscapeSave,
-    handleDiscard,
   }
 }

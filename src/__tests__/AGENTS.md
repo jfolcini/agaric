@@ -41,11 +41,11 @@ npx vitest run -t "splitBlock" # one name pattern
 npm run test:e2e               # playwright — builds and serves the app itself
 npm run test:e2e:ui            # playwright interactive UI
 npm run test:e2e-tauri         # WebdriverIO against the real Tauri binary
-npm run test:e2e-android       # adb against a CONNECTED device — manual, never run by CI
+npm run test:e2e-android       # adb against a CONNECTED device; CI runs it on an emulator
 npm run mutation               # Stryker mutation run (stryker.config.mjs)
 ```
 
-Run `test:e2e-android` ([`scripts/android-e2e-safe-area.mjs`](../../scripts/android-e2e-safe-area.mjs)) by hand after touching `MainActivity.kt` or the mobile header; no workflow can.
+Run `test:e2e-android` ([`scripts/android-e2e-safe-area.mjs`](../../scripts/android-e2e-safe-area.mjs)) by hand after touching `MainActivity.kt` or the mobile header; `android-launch-smoke.yml` runs it on an emulator only nightly and at release.
 
 **Timeouts are set in config, not per test:** `asyncUtilTimeout` in [`src/test-setup.ts`](../test-setup.ts) (raised so `axe()` survives pre-push contention with `cargo nextest`), `testTimeout` / `hookTimeout` in [`vitest.config.ts`](../../vitest.config.ts). An explicit `waitFor(..., { timeout: n })` or `it(..., n)` lowers the ceiling as often as it raises it; add one only for axe cold-load or a Radix popover `onPointerDown → setTimeout → setState` chain.
 

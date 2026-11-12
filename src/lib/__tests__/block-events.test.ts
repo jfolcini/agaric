@@ -18,7 +18,6 @@ describe('BLOCK_EVENTS', () => {
       'OPEN_EMOJI_PICKER',
       'OPEN_QUERY_BUILDER',
       'PASTE_BLOCKS',
-      'DISCARD_BLOCK_EDIT',
       'CYCLE_PRIORITY',
       'SET_PRIORITY_1',
       'SET_PRIORITY_2',
@@ -37,7 +36,6 @@ describe('BLOCK_EVENTS', () => {
     expect(BLOCK_EVENTS.OPEN_SCHEDULED_DATE_PICKER).toBe('open-scheduled-date-picker')
     expect(BLOCK_EVENTS.TOGGLE_TODO_STATE).toBe('toggle-todo-state')
     expect(BLOCK_EVENTS.OPEN_BLOCK_PROPERTIES).toBe('open-block-properties')
-    expect(BLOCK_EVENTS.DISCARD_BLOCK_EDIT).toBe('discard-block-edit')
     expect(BLOCK_EVENTS.CYCLE_PRIORITY).toBe('cycle-priority')
     expect(BLOCK_EVENTS.SET_PRIORITY_1).toBe('set-priority-1')
     expect(BLOCK_EVENTS.SET_PRIORITY_2).toBe('set-priority-2')

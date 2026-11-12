@@ -213,7 +213,6 @@ export const block: Record<string, string> = {
     'Cannot delete the first block while it has children — there is nothing above to move them under',
   'blockTree.mergeBlocksFailed': 'Failed to merge blocks',
   'blockTree.duplicateFailed': 'Failed to duplicate block',
-  'blockTree.changesDiscarded': 'Changes discarded',
   'blockTree.noBlocks': 'No blocks yet. Click + Add block below to start writing.',
   'blockTree.emptyPageHint': 'Type / for commands',
   'blockTree.emptyPage': 'Creating first block\u2026',

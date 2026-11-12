@@ -107,7 +107,7 @@ test('a full-text term narrows the results and a sort key orders them @search', 
   await page.getByRole('searchbox', { name: 'Full-text search' }).fill('quokka')
   await expect(page.getByTestId('advanced-query-total')).toHaveText('3 matching blocks')
 
-  await page.getByRole('button', { name: 'Add sort key', exact: true }).click()
+  await page.getByRole('button', { name: 'Add sort', exact: true }).click()
   await chooseSelectOption(page, 'Sort field', 'Priority')
 
   await expect(resultRows(page)).toHaveText([/Quokka two/, /Quokka one/, /Quokka six/])

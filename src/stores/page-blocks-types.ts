@@ -83,8 +83,12 @@ export interface PageBlockState {
   /** Load the full block subtree from the backend. */
   load: () => Promise<void>
 
-  /** Create a new block below the given block. Returns the new block ID. */
-  createBelow: (afterBlockId: string, content?: string) => Promise<string | null>
+  /**
+   * Create a new block below the given block. Returns the new block ID. The row
+   * is in the store when the call returns, so a caller that passes `blockId`
+   * can focus it before the create answers.
+   */
+  createBelow: (afterBlockId: string, content?: string, blockId?: string) => Promise<string | null>
   /** Edit a block's content. Resolves `true` on success, `false` if the
    * write failed (the optimistic update is rolled back and a generic
    * save-failed toast is shown). Callers that need a context-specific error

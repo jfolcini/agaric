@@ -406,7 +406,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                                   : 'border-transparent',
                               )}
                               style={{ backgroundColor: resolveTagBackground(preset.value) }}
-                              aria-label={preset.name}
+                              aria-label={t(`tagList.color.${preset.name}`)}
                               aria-pressed={color === preset.value}
                               onClick={() => setColor(tag.tag_id, preset.value)}
                             />
