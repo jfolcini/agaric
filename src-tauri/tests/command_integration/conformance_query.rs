@@ -226,7 +226,7 @@ const DELETED_SENTINEL: &str = "DELETED";
 /// are relabeled ids, so a command that serves the right blocks with the wrong
 /// tree links (the #1775 class) still reddens; `deleted_at` says whether the
 /// command's SQL filters tombstones. MUST match `BLOCK_ATTRS` in the TS twin.
-const BLOCK_ATTRS: &[&str] = &["parent_id", "page_id", "position", "deleted_at"];
+pub(super) const BLOCK_ATTRS: &[&str] = &["parent_id", "page_id", "position", "deleted_at"];
 
 /// A `TagCacheRow` listing: `tag_id#name=…#usage_count=…`. `updated_at` is a
 /// clock and stays off the token.

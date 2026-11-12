@@ -144,6 +144,12 @@ where
     R: tauri::Runtime,
     M: tauri::Manager<R>,
 {
+    // #6529 spike — a headless app carries its own vault, because the env
+    // override below is process-global and tests run many apps at once.
+    #[cfg(any(test, feature = "test-util"))]
+    if let Some(dir) = app.try_state::<crate::headless::HeadlessDataDir>() {
+        return Ok(dir.0.clone());
+    }
     let os_default = app.path().app_data_dir();
     let data_dir_raw = std::env::var(DATA_DIR_ENV).ok();
     let sandbox_raw = std::env::var(SANDBOX_ENV).ok();

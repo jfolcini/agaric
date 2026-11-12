@@ -146,20 +146,20 @@ macro_rules! agaric_commands {
             // list_tags_for_block so the UI can render inherited chips
             // distinctly from directly-applied ones.
             $crate::commands::tags::list_inherited_tags_for_block,
-            $crate::commands::properties::set_property,
-            $crate::commands::properties::set_todo_state,
+            $crate::commands::properties::set_property::<tauri::Wry>,
+            $crate::commands::properties::set_todo_state::<tauri::Wry>,
             // Multi-select batch set-todo: collapses
             // the per-row IPC loop (50 IPCs for "mark 50 done") into
             // one IMMEDIATE tx with one op_log scope.
-            $crate::commands::properties::set_todo_state_batch,
+            $crate::commands::properties::set_todo_state_batch::<tauri::Wry>,
             // Multi-select batch set-property: generalises
             // `set_todo_state_batch` across the four reserved column-backed
             // keys (todo_state / priority / due_date / scheduled_date).
-            $crate::commands::properties::set_property_batch,
-            $crate::commands::properties::set_priority,
-            $crate::commands::properties::set_due_date,
-            $crate::commands::properties::set_scheduled_date,
-            $crate::commands::properties::delete_property,
+            $crate::commands::properties::set_property_batch::<tauri::Wry>,
+            $crate::commands::properties::set_priority::<tauri::Wry>,
+            $crate::commands::properties::set_due_date::<tauri::Wry>,
+            $crate::commands::properties::set_scheduled_date::<tauri::Wry>,
+            $crate::commands::properties::delete_property::<tauri::Wry>,
             $crate::commands::properties::get_properties,
             $crate::commands::properties::get_property,
             $crate::commands::properties::get_batch_properties,
@@ -216,7 +216,7 @@ macro_rules! agaric_commands {
             $crate::commands::sync_cmds::start_pairing,
             $crate::commands::sync_cmds::confirm_pairing,
             $crate::commands::sync_cmds::cancel_pairing,
-            $crate::commands::sync_cmds::start_sync,
+            $crate::commands::sync_cmds::start_sync::<tauri::Wry>,
             $crate::commands::sync_cmds::cancel_sync,
             // #2506 — mDNS-disabled status backfill for the peers/
             // device-management surface (its `sync:mdns_disabled` listener
@@ -258,12 +258,12 @@ macro_rules! agaric_commands {
             // Undated tasks
             $crate::commands::agenda::list_undated_tasks,
             // OS notifications for due / scheduled tasks
-            $crate::commands::notifier::notify_task,
+            $crate::commands::notifier::notify_task::<tauri::Wry>,
             // Task reminders (#4554)
             $crate::commands::notifier::get_reminder_settings,
             $crate::commands::notifier::set_reminder_settings,
             // The Markdown mirror (#5363)
-            $crate::commands::mirror::pick_mirror_folder,
+            $crate::commands::mirror::pick_mirror_folder::<tauri::Wry>,
             $crate::commands::mirror::set_mirror_folder,
             $crate::commands::mirror::set_mirror_read_back,
             $crate::commands::mirror::set_mirror_copy_files,
@@ -275,7 +275,7 @@ macro_rules! agaric_commands {
             $crate::commands::speech::speak_text,
             $crate::commands::speech::stop_speaking,
             // Logseq/Markdown import (#660)
-            $crate::commands::pages::import_markdown,
+            $crate::commands::pages::import_markdown::<tauri::Wry>,
             // The pages an import merges its files into (#6277 G5).
             $crate::commands::pages::list_import_merges,
             // The end of a folder import: links between its notes.
@@ -283,14 +283,14 @@ macro_rules! agaric_commands {
             // BibTeX / CSL-JSON bibliography import (#1454 tier a)
             $crate::commands::pages::import_bibliography,
             // Attachments (F-7)
-            $crate::commands::attachments::add_attachment_with_bytes,
-            $crate::commands::meeting_attachments::add_meeting,
+            $crate::commands::attachments::add_attachment_with_bytes::<tauri::Wry>,
+            $crate::commands::meeting_attachments::add_meeting::<tauri::Wry>,
             // NOTE: `read_attachment` is intentionally ABSENT here. It returns a
             // raw-byte `tauri::ipc::Response` (zero JSON encoding, #2654), which
             // does not implement `specta::Type`, so it cannot be a tauri-specta
             // command. It is registered directly on the invoke handler in `run()`.
             $crate::commands::attachments::read_attachment_meta,
-            $crate::commands::attachments::delete_attachment,
+            $crate::commands::attachments::delete_attachment::<tauri::Wry>,
             $crate::commands::attachments::rename_attachment,
             $crate::commands::attachments::list_attachments,
             $crate::commands::attachments::list_attachments_batch,
@@ -326,14 +326,14 @@ macro_rules! agaric_commands {
             $crate::commands::link_metadata::fetch_link_metadata,
             $crate::commands::link_metadata::get_link_metadata,
             // Bug report
-            $crate::commands::bug_report::collect_bug_report_metadata,
-            $crate::commands::bug_report::read_logs_for_report,
+            $crate::commands::bug_report::collect_bug_report_metadata::<tauri::Wry>,
+            $crate::commands::bug_report::read_logs_for_report::<tauri::Wry>,
             // Reconciliation oracle against the live vault (#4886)
             $crate::commands::reconciliation::compute_reconciliation_report,
             $crate::commands::reconciliation::rebuild_derived_state,
             // MCP — Settings "Agent access" tab
-            $crate::commands::mcp::get_mcp_status,
-            $crate::commands::mcp::mcp_set_enabled,
+            $crate::commands::mcp::get_mcp_status::<tauri::Wry>,
+            $crate::commands::mcp::mcp_set_enabled::<tauri::Wry>,
             $crate::commands::mcp::mcp_disconnect_all,
             // MCP activity ring read surface (#695)
             $crate::commands::mcp::get_mcp_recent_activity,
@@ -374,6 +374,11 @@ macro_rules! agaric_commands {
         ]
     };
 }
+
+// #6529 spike — the real command surface on `MockRuntime` (test-only).
+// Declared after `agaric_commands!` so the macro is in textual scope.
+#[cfg(any(test, feature = "test-util"))]
+pub mod headless;
 
 /// Build the tracing `EnvFilter` directive string for Agaric.
 ///
@@ -3093,19 +3098,18 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 /// a child of the frontend interaction. No `traceparent` (the default, and
 /// whenever observability is off) ⇒ the inner handler runs unwrapped and
 /// the command starts a fresh root trace, exactly as before.
-fn build_invoke_handler(
-    builder: &tauri_specta::Builder<tauri::Wry>,
-) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+pub(crate) fn build_invoke_handler<R: tauri::Runtime>(
+    builder: &tauri_specta::Builder<R>,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     let specta_invoke_handler = builder.invoke_handler();
     // #2654 — `read_attachment` returns a raw-byte `tauri::ipc::Response`
     // (see its doc comment) which cannot be a tauri-specta command, so it
     // lives on its own generated handler and is routed here by command
     // name. Every other command flows through the tauri-specta handler.
-    let raw_bytes_invoke_handler: Box<
-        dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync,
-    > = Box::new(tauri::generate_handler![
-        crate::commands::attachments::read_attachment
-    ]);
+    let raw_bytes_invoke_handler: Box<dyn Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync> =
+        Box::new(tauri::generate_handler![
+            crate::commands::attachments::read_attachment
+        ]);
     move |invoke| {
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
         // #2110 M6 — time each IPC command dispatch and record it to the

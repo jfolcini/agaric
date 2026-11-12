@@ -1027,8 +1027,8 @@ pub async fn list_page_attachments_inner(
 /// [`add_attachment_with_bytes_inner`].
 #[tauri::command]
 #[specta::specta]
-pub async fn add_attachment_with_bytes(
-    app: tauri::AppHandle,
+pub async fn add_attachment_with_bytes<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     filename: String,
@@ -1073,8 +1073,8 @@ pub async fn add_attachment_with_bytes(
 /// sanctioned raw-`invoke` seam). The byte fetch itself delegates to
 /// [`read_attachment_inner`].
 #[tauri::command]
-pub async fn read_attachment(
-    app: tauri::AppHandle,
+pub async fn read_attachment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     pool: State<'_, ReadPool>,
     attachment_id: AttachmentId,
 ) -> Result<tauri::ipc::Response, AppError> {
@@ -1107,8 +1107,8 @@ pub async fn read_attachment_meta(
 /// Tauri command: delete an attachment. Delegates to [`delete_attachment_inner`].
 #[tauri::command]
 #[specta::specta]
-pub async fn delete_attachment(
-    app: tauri::AppHandle,
+pub async fn delete_attachment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     attachment_id: AttachmentId,
 ) -> Result<(), AppError> {

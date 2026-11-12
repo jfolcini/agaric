@@ -235,7 +235,7 @@ pub(super) fn update_mode() -> bool {
 }
 
 /// List the fixture files, sorted by name for deterministic test order.
-fn fixture_paths() -> Vec<PathBuf> {
+pub(super) fn fixture_paths() -> Vec<PathBuf> {
     let dir = fixtures_dir();
     let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("read conformance dir {}: {e}", dir.display()))
@@ -1324,8 +1324,8 @@ pub struct FixtureReplay {
     pub op_records: Vec<Value>,
     /// Held so the temp DB and the per-instance engine state outlive the
     /// `queries` leg, exactly as they did when this was one function.
-    _mat: Materializer,
-    _dir: tempfile::TempDir,
+    pub _mat: Materializer,
+    pub _dir: tempfile::TempDir,
 }
 
 /// Seed a fresh backend from `fixture["seed"]`, apply `fixture["ops"]` through
@@ -1811,7 +1811,7 @@ pub async fn replay_fixture(
     }
 }
 
-async fn run_fixture(path: &PathBuf) {
+pub(super) async fn run_fixture(path: &PathBuf) {
     let raw = std::fs::read_to_string(path).unwrap();
     let mut fixture: Value = serde_json::from_str(&raw)
         .unwrap_or_else(|e| panic!("parse fixture {}: {e}", path.display()));

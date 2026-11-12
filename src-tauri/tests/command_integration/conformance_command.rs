@@ -1548,16 +1548,38 @@ pub(super) async fn run_command_op(
     });
     let at = format!("fixture '{fixture_name}' op '{name}' (command '{command}')");
     let mut emitted = Vec::new();
-    let outcome = apply_op_via_command(
-        pool,
-        mat,
-        app_data_dir,
-        op,
-        created_ids,
-        op_refs,
-        &mut emitted,
-    )
-    .await;
+    // #6529 spike — the same op through the real IPC surface when asked.
+    let mut ipc_events: Option<Vec<Value>> = None;
+    let outcome: Result<Value, (Value, Value)> = if super::conformance_ipc::active() {
+        let out = super::conformance_ipc::apply_op_via_ipc(
+            pool,
+            mat,
+            app_data_dir,
+            op,
+            created_ids,
+            op_refs,
+        )
+        .await;
+        ipc_events = Some(out.property_events);
+        out.result
+    } else {
+        apply_op_via_command(
+            pool,
+            mat,
+            app_data_dir,
+            op,
+            created_ids,
+            op_refs,
+            &mut emitted,
+        )
+        .await
+        .map_err(|e| {
+            (
+                serde_json::to_value(e.kind()).expect("serialize AppErrorKind"),
+                serde_json::to_value(e.validation_code()).expect("serialize ValidationCode"),
+            )
+        })
+    };
     let (returns, error, code) = match outcome {
         Ok(mut response) => (
             PROJECTING_STEP.sync_scope(at.clone(), || {
@@ -1570,11 +1592,7 @@ pub(super) async fn run_command_op(
             Value::Null,
             Value::Null,
         ),
-        Err(e) => (
-            Vec::new(),
-            serde_json::to_value(e.kind()).expect("serialize AppErrorKind"),
-            serde_json::to_value(e.validation_code()).expect("serialize ValidationCode"),
-        ),
+        Err((kind, code)) => (Vec::new(), kind, code),
     };
     if declarations == Declarations::Enforced {
         check_declaration(
@@ -1586,13 +1604,17 @@ pub(super) async fn run_command_op(
         );
     }
     let mut record = json!({ "name": name, "returns": returns, "error": error, "code": code });
-    if !emitted.is_empty() {
-        let events: Vec<String> = PROJECTING_STEP.sync_scope(at, || {
-            emitted
-                .iter()
-                .map(|payload| event_token(EVENT_PROPERTY_CHANGED, payload))
-                .collect()
-        });
+    let events: Vec<String> = PROJECTING_STEP.sync_scope(at, || match &ipc_events {
+        Some(wire) => wire
+            .iter()
+            .map(|payload| event_token(EVENT_PROPERTY_CHANGED, payload))
+            .collect(),
+        None => emitted
+            .iter()
+            .map(|payload| event_token(EVENT_PROPERTY_CHANGED, payload))
+            .collect(),
+    });
+    if !events.is_empty() {
         record["events"] = json!(events);
     }
     record

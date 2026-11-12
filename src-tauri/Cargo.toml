@@ -129,7 +129,7 @@ ci-smoke = []
 # the moved suites and the two remaining in-lib test modules both use) to that
 # set, which is why the feature now pulls `tempfile` — the same shape as
 # `agaric-store`'s `test-util = ["dep:tempfile"]` for its `test_support`.
-test-util = ["dep:tempfile", "agaric-store/test-util"]
+test-util = ["dep:tempfile", "agaric-store/test-util", "agaric-sync/test-util"]
 # #645 — the `diagnostics` feature (formerly built the
 # `audit_cross_space_refs` / `op_log_histogram` bins) is retired: those
 # bins moved to the `agaric-diagnostics` workspace member, so the feature

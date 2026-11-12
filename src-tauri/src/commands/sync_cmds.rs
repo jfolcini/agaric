@@ -548,8 +548,8 @@ pub async fn cancel_pairing(
 /// Checks backoff (#278), acquires the per-peer lock, and returns session info.
 #[tauri::command]
 #[specta::specta]
-pub async fn start_sync(
-    app: tauri::AppHandle,
+pub async fn start_sync<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     peer_id: String,
     pool: State<'_, ReadPool>,
     device_id: State<'_, DeviceId>,
