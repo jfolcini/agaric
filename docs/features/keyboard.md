@@ -18,6 +18,9 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 | --- | --- |
 | `Enter` | Split block at the cursor |
 | `Escape` | Leave the block, keeping what you typed, and select it |
+| `Enter` / `F2` (on the block under the selection cursor) | Edit that block, the caret at its end: after `Escape`, or once `Ctrl+↓` has put the cursor on a block |
+| `↑` / `↓` | On the block's first / last line: go to the block above / below, keeping the caret's horizontal position. `←` / `→` at the block's start / end go to the block above / below |
+| `Shift+↑` / `Shift+↓` | Extend the text selection a line; once it reaches the block's start / end, select the block and the one above / below, and go on selecting blocks |
 | `Shift+Enter` | Soft line break inside the current block |
 | `Backspace` (at block start) | Merge into the previous block |
 | `Ctrl+Shift+→` | Indent block (and any selected siblings) |
@@ -64,7 +67,7 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 | `Ctrl+Shift+G` | Show current page in the graph (local mode) |
 | `Ctrl+E` / `Ctrl+Shift+M` | Switch the page on screen between editing blocks and editing it as one document ([page mode](editor.md#page-mode)); nothing where the switch is not offered |
 | `Ctrl+Space` | In a block: leave it, selected, with the selection cursor (a focus ring) on it. With blocks selected and focus in the block list: add or remove the block under the cursor |
-| `Ctrl+↑` / `Ctrl+↓` | With blocks selected and focus in the block list: move the cursor to the block above / below without changing the selection. `Shift+↑` / `Shift+↓` select a range from the cursor |
+| `Ctrl+↑` / `Ctrl+↓` | With blocks selected and focus in the block list: move the cursor to the block above / below without changing the selection. `Shift+↑` / `Shift+↓` select a range from the cursor. With no block selected or being edited: put the cursor on the last / first block |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste the selected blocks as a markdown outline, keeping their task state, priority, dates, list style and properties |
 
 ## Edit as Markdown

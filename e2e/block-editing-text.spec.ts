@@ -94,13 +94,13 @@ test.describe('Typing right after an arrow crosses a block boundary @editor', ()
   })
 
   const cases = [
-    { key: 'ArrowRight', from: 0, at: 'end' },
-    { key: 'ArrowDown', from: 0, at: 'end' },
-    { key: 'ArrowLeft', from: 2, at: 'start' },
-    { key: 'ArrowUp', from: 2, at: 'start' },
+    { key: 'ArrowRight', from: 0, at: 'end', landsAtEnd: true },
+    { key: 'ArrowDown', from: 0, at: 'end', landsAtEnd: false },
+    { key: 'ArrowLeft', from: 2, at: 'start', landsAtEnd: true },
+    { key: 'ArrowUp', from: 2, at: 'start', landsAtEnd: false },
   ] as const
 
-  for (const { key, from, at } of cases) {
+  for (const { key, from, at, landsAtEnd } of cases) {
     test(`${key} at a block's ${at} keeps the keyboard in the block it lands on`, async ({
       page,
     }) => {
@@ -118,10 +118,20 @@ test.describe('Typing right after an arrow crosses a block boundary @editor', ()
       )
       await expect(live).toBeFocused()
       await page.keyboard.type('Q')
-      await expect(live).toHaveText(`${original}Q`)
+      // ArrowRight / ArrowLeft land at the block's end; ArrowDown / ArrowUp at the
+      // caret's x (#6537), so the Q lands somewhere in the text, exactly once.
+      await expect
+        .poll(async () => ((await live.textContent()) ?? '').length)
+        .toBe(original.length + 1)
+      const typed = (await live.textContent()) ?? ''
+      const qAt = [...typed.matchAll(/Q/g)]
+        .map((m) => m.index)
+        .find((i) => typed.slice(0, i) + typed.slice(i + 1) === original)
+      expect(qAt).toBeDefined()
+      expect(qAt === original.length).toBe(landsAtEnd)
 
       await reopenPage(page, PAGE)
-      await expect(staticTarget).toHaveText(`${original}Q`)
+      await expect(staticTarget).toHaveText(typed)
     })
   }
 })

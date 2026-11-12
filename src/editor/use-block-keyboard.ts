@@ -1,7 +1,9 @@
 /**
  * useBlockKeyboard — keyboard boundary handling for the roving editor.
  *
- * ArrowUp/Left at pos 0 → prev block. ArrowDown/Right at end → next block.
+ * ArrowUp on the first visual line → prev block, ArrowDown on the last → next
+ * block, at the same x (#6537). ArrowLeft at pos 0 → prev block, ArrowRight at
+ * end → next block. Shift+ArrowUp/Down at the block's edge → block selection.
  * Backspace on empty → delete block + focus prev. Enter → create new sibling.
  * Ctrl/Cmd+Shift+ArrowRight → indent. Ctrl/Cmd+Shift+ArrowLeft → dedent.
  */
@@ -101,10 +103,21 @@ export const INERT_BLOCK_KEYBOARD_CALLBACKS: BlockKeyboardCallbacks = {
 }
 
 export interface BlockKeyboardCallbacks {
-  /** Focus the previous block. Called with cursor-to-end hint. */
-  onFocusPrev: () => void
-  /** Focus the next block. Called with cursor-to-start hint. */
-  onFocusNext: () => void
+  /**
+   * Focus the previous block; with `caretX` (an ArrowUp), with the caret on its
+   * last line at that viewport x.
+   */
+  onFocusPrev: (caretX?: number) => void
+  /**
+   * Focus the next block; with `caretX` (an ArrowDown), with the caret on its
+   * first line at that viewport x.
+   */
+  onFocusNext: (caretX?: number) => void
+  /**
+   * Leave editing with this block and its neighbour in `direction` block-selected
+   * (Shift+Arrow past the block's edge, #6537). The caller flushes first.
+   */
+  onSelectWithNeighbour?: ((direction: 'up' | 'down') => void) | undefined
   /** Delete the current block (empty + backspace). Receives cursor placement hint. */
   onDeleteBlock: (opts: DeleteBlockOpts) => void
   /** Indent the current block (Ctrl/Cmd+Shift+ArrowRight). */
@@ -195,6 +208,29 @@ function isProseMirrorState(state: EditorState): state is EditorState & ProseMir
   return typeof state.doc.resolve === 'function'
 }
 
+/**
+ * The caret is on the block's first (`'up'`) or last (`'down'`) visual line, so
+ * that arrow leaves the block (#6537): ProseMirror's `endOfTextblock` for the
+ * line, in the doc's first / last textblock. Without a view, the doc's start / end.
+ */
+function isOnEdgeLine(editor: EditorLike, dir: 'up' | 'down'): boolean {
+  const { state, view } = editor
+  if (dir === 'up' ? isAtDocStart(state) : isAtDocEnd(state)) return true
+  const probe = getSelectionProbe()
+  if (!view || !probe || !isProseMirrorState(state) || !state.selection.empty) return false
+  const { doc, selection }: ProseMirrorState = state
+  const edge = dir === 'up' ? probe.atStartFrom(doc) : probe.atEndTo(doc)
+  return doc.resolve(edge).parent === selection.$head.parent && view.endOfTextblock(dir)
+}
+
+/** The selection's moving end is at the doc's start (`'up'`) or end (`'down'`). */
+function isHeadAtEdge(state: EditorState, dir: 'up' | 'down'): boolean {
+  const probe = getSelectionProbe()
+  if (!probe || !isProseMirrorState(state)) return false
+  const { head } = state.selection
+  return head === (dir === 'up' ? probe.atStartFrom(state.doc) : probe.atEndTo(state.doc))
+}
+
 /** #5689 — a revealed Markdown marker sits right beside the caret on `side`. */
 function hasMarkerBeside(state: EditorState, side: 'before' | 'after'): boolean {
   return isProseMirrorState(state) && markerBesideCaret(state, side) !== null
@@ -210,9 +246,17 @@ function isAtDocEnd(state: EditorState): boolean {
   return to >= state.doc.content.size - 1
 }
 
+/** The ProseMirror view calls the line-wise arrows need; absent on test doubles. */
+interface ViewLike {
+  endOfTextblock: (dir: 'up' | 'down') => boolean
+  coordsAtPos: (pos: number) => { left: number }
+}
+
 export interface EditorLike {
   state: EditorState
   isEmpty: boolean
+  /** Absent on test doubles: ArrowUp / ArrowDown then leave only at the doc's start / end. */
+  view?: ViewLike
   /**
    * Node-type probe (TipTap's `Editor.isActive(name)`). Optional so plain
    * test doubles keep working — when absent, the selection is assumed to be
@@ -232,9 +276,18 @@ export function handleBlockKeyDown(
   editor: EditorLike,
   callbacks: BlockKeyboardCallbacks,
 ): void {
+  const { view } = editor
   const ctx: KeyContext = {
     atStart: isAtDocStart(editor.state),
     atEnd: isAtDocEnd(editor.state),
+    onFirstLine: isOnEdgeLine(editor, 'up'),
+    onLastLine: isOnEdgeLine(editor, 'down'),
+    headAtStart: isHeadAtEdge(editor.state, 'up'),
+    headAtEnd: isHeadAtEdge(editor.state, 'down'),
+    caretX: () =>
+      view && isProseMirrorState(editor.state)
+        ? view.coordsAtPos(editor.state.selection.head).left
+        : null,
     isEmpty: editor.isEmpty,
     // #725 — node-type guards: inside a code block or table, Enter must
     // insert a newline/paragraph (ProseMirror's newlineInCode / splitBlock)
@@ -275,6 +328,14 @@ type KeyEvent = Pick<
 interface KeyContext {
   atStart: boolean
   atEnd: boolean
+  /** The caret is on the block's first / last visual line (#6537). */
+  onFirstLine: boolean
+  onLastLine: boolean
+  /** The selection's head is at the block's start / end, collapsed or not. */
+  headAtStart: boolean
+  headAtEnd: boolean
+  /** The caret's viewport x; a call, as only a boundary arrow asks. Null on a test double. */
+  caretX: () => number | null
   isEmpty: boolean
   /** Selection is inside a code block (#725 — Enter/Backspace guards). */
   inCodeBlock: boolean
@@ -478,45 +539,68 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onEscapeSave()
     },
   },
-  // ArrowUp / ArrowLeft at position 0 → previous block (suppressed when popup open).
-  // #910 — `!e.shiftKey`: Shift+Arrow at a boundary must EXTEND the selection
-  // (let ProseMirror/the browser handle it), not navigate to the adjacent block
-  // and silently drop the selection. Plain Arrow still moves block focus.
+  // Shift+ArrowUp / Shift+ArrowDown with the selection already at the block's
+  // edge: block selection takes over, from this block and its neighbour (#6537).
+  // Before the edge Shift+Arrow is the text selection's (#910).
+  {
+    match: (e, ctx) =>
+      (e.key === 'ArrowUp' ? ctx.headAtStart : e.key === 'ArrowDown' && ctx.headAtEnd) &&
+      e.shiftKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      !isSuggestionPopupVisible(),
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onFlush()
+      cb.onSelectWithNeighbour?.(e.key === 'ArrowUp' ? 'up' : 'down')
+    },
+  },
+  // ArrowUp on the first visual line, ArrowLeft at position 0 → previous block
+  // (suppressed when popup open); ArrowUp keeps the caret's x (#6537).
+  // #910 — `!e.shiftKey`: Shift+Arrow before the edge extends the text selection
+  // (the rule above takes it at the edge). Plain Arrow still moves block focus.
   // #921 — `!ctrlKey && !metaKey && !altKey`: word/line-wise motion
   // (Ctrl/Alt+Arrow, Cmd+Arrow) must defer to native caret movement rather than
   // jumping to the adjacent block.
   {
     match: (e, ctx) =>
-      (e.key === 'ArrowUp' || (e.key === 'ArrowLeft' && !ctx.markerBeforeCaret)) &&
+      (e.key === 'ArrowUp'
+        ? ctx.onFirstLine
+        : e.key === 'ArrowLeft' && !ctx.markerBeforeCaret && ctx.atStart) &&
       !e.shiftKey &&
       !e.ctrlKey &&
       !e.metaKey &&
       !e.altKey &&
-      ctx.atStart &&
       !isSuggestionPopupVisible(),
-    handle: (e, cb) => {
+    handle: (e, cb, ctx) => {
       e.preventDefault()
+      const x = e.key === 'ArrowUp' ? ctx.caretX() : null
       cb.onFlush()
-      cb.onFocusPrev()
+      if (x === null) cb.onFocusPrev()
+      else cb.onFocusPrev(x)
     },
   },
-  // ArrowDown / ArrowRight at end → next block (suppressed when popup open).
+  // ArrowDown on the last visual line, ArrowRight at end → next block
+  // (suppressed when popup open); ArrowDown keeps the caret's x (#6537).
   // #910 — `!e.shiftKey`; #921 — `!ctrlKey && !metaKey && !altKey`: see the
-  // ArrowUp/ArrowLeft rule above (Shift extends selection; word/line modifiers
-  // defer to native caret motion instead of jumping to the next block).
+  // ArrowUp/ArrowLeft rule above.
   {
     match: (e, ctx) =>
-      (e.key === 'ArrowDown' || (e.key === 'ArrowRight' && !ctx.markerAfterCaret)) &&
+      (e.key === 'ArrowDown'
+        ? ctx.onLastLine
+        : e.key === 'ArrowRight' && !ctx.markerAfterCaret && ctx.atEnd) &&
       !e.shiftKey &&
       !e.ctrlKey &&
       !e.metaKey &&
       !e.altKey &&
-      ctx.atEnd &&
       !isSuggestionPopupVisible(),
-    handle: (e, cb) => {
+    handle: (e, cb, ctx) => {
       e.preventDefault()
+      const x = e.key === 'ArrowDown' ? ctx.caretX() : null
       cb.onFlush()
-      cb.onFocusNext()
+      if (x === null) cb.onFocusNext()
+      else cb.onFocusNext(x)
     },
   },
   // Backspace on empty block → delete block (unless sole remaining block).
@@ -559,6 +643,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
   const {
     onFocusPrev,
     onFocusNext,
+    onSelectWithNeighbour,
     onDeleteBlock,
     onIndent,
     onDedent,
@@ -638,6 +723,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       handleBlockKeyDown(event, editor, {
         onFocusPrev,
         onFocusNext,
+        onSelectWithNeighbour,
         onDeleteBlock,
         onIndent,
         onDedent,
@@ -668,6 +754,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       editor,
       onFocusPrev,
       onFocusNext,
+      onSelectWithNeighbour,
       onDeleteBlock,
       onIndent,
       onDedent,

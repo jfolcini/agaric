@@ -365,14 +365,15 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   },
   {
     // #922 — keyboard range-select. Documentation-only: the Shift+Arrow
-    // trigger is hardcoded in `useBlockTreeKeyboardShortcuts` (positional,
-    // block-select-mode-only) and NOT routed through matchesShortcutBinding,
-    // like the positional Enter/Backspace navigation rules.
+    // trigger is hardcoded in `useBlockTreeKeyboardShortcuts` (block-select
+    // mode) and, at a block's edge, in `use-block-keyboard.ts` (#6537), NOT
+    // routed through matchesShortcutBinding, like the positional Enter/Backspace
+    // navigation rules.
     id: 'extendSelectionDown',
     keys: 'Shift + Arrow Down',
     category: 'keyboard.category.blockSelection',
     description: 'keyboard.extendSelectionDown',
-    condition: 'keyboard.condition.notEditing',
+    condition: 'keyboard.condition.notEditingOrAtBlockEdge',
     rebindable: false,
   },
   {
@@ -381,7 +382,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     keys: 'Shift + Arrow Up',
     category: 'keyboard.category.blockSelection',
     description: 'keyboard.extendSelectionUp',
-    condition: 'keyboard.condition.notEditing',
+    condition: 'keyboard.condition.notEditingOrAtBlockEdge',
     rebindable: false,
   },
   {
@@ -399,6 +400,16 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.blockSelection',
     description: 'keyboard.blockCursorUp',
     condition: 'keyboard.condition.notEditing',
+  },
+  {
+    // #6537 — the keyboard way into a block. Documentation-only: hardcoded in
+    // `useBlockTreeKeyboardShortcuts`, like the positional Enter rules.
+    id: 'editCursorBlock',
+    keys: 'Enter / F2',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.editCursorBlock',
+    condition: 'keyboard.condition.onCursorBlock',
+    rebindable: false,
   },
   {
     // #1733 / #5734 — adds or removes the cursor block, the keyboard counterpart
