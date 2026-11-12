@@ -175,9 +175,9 @@ describe('insertTemplateBlocks', () => {
     // fetches the whole template subtree in ONE `load_page_subtree`
     // IPC, groups descendants by `parent_id`, accumulates one
     // `CreateBlockSpec` per descendant in DFS order, and fires ONE
-    // `create_blocks_batch` per depth level. For a flat template with
+    // `create_blocks_batch` for the whole tree. For a flat template with
     // two siblings we expect ONE load_page_subtree and ONE
-    // create_blocks_batch (depth 0).
+    // create_blocks_batch.
     // #1258 — `load_page_subtree` returns `{ blocks, truncated, total }`.
     stubTemplates({
       load_page_subtree: () => ({

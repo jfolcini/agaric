@@ -221,6 +221,49 @@ async fn create_blocks_batch_mid_batch_rejection_leaves_engine_in_lockstep_with_
     );
 }
 
+/// #6530: a typed property a LATER nested spec cannot hold fails inside the
+/// loop, after the earlier specs reached the engine; the rollback must take
+/// them back out of it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_failing_nested_typed_property_leaves_engine_in_lockstep_6530() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "CBB_P", "page", "P", None, Some(1)).await;
+    assign_all_to_test_space(&pool).await;
+    seed_engine_block(&mat, TEST_SPACE_ID, "CBB_P", "page", "P", None, 1);
+
+    let spec =
+        |content: &str, parent_id: Option<&str>, parent_index: Option<u32>| CreateBlockSpec {
+            block_type: "content".into(),
+            content: content.into(),
+            parent_id: parent_id.map(Into::into),
+            position: None,
+            parent_index,
+            typed_properties: std::collections::HashMap::new(),
+            properties: std::collections::HashMap::default(),
+        };
+    let mut child = spec("child", None, Some(0));
+    child.typed_properties.insert(
+        "kickoff".into(),
+        agaric_lib::commands::SetPropertyArgs {
+            value_date: Some("not-a-date".into()),
+            ..Default::default()
+        },
+    );
+    let specs = vec![spec("top", Some("CBB_P"), None), child];
+    let result = create_blocks_batch_inner(&pool, DEV, &mat, specs).await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "an invalid date on the nested spec must reject the batch, got {result:?}"
+    );
+
+    assert!(
+        engine_children(&mat, TEST_SPACE_ID, Some("CBB_P")).is_empty(),
+        "no engine child may survive the rolled-back nested batch"
+    );
+}
+
 // ======================================================================
 // R10/R24 — single purge_block / purge_all_deleted_inner must drop the purged
 // subtree from the engine (like purge_blocks_by_ids does, #1257)
