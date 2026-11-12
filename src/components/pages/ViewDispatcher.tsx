@@ -217,7 +217,9 @@ function JournalFallback(): ReactElement {
  * Renders the main view body based on `currentView`. Extracted from `App`
  * so the parent component stays well under the cognitive-complexity budget
  *. Each branch is a `FeatureErrorBoundary` so a crashed view
- * Never unmounts the shell. Non-journal views are lazy-loaded;
+ * Never unmounts the shell. The boundaries share one position, so each is keyed
+ * by its view: unkeyed, React keeps one instance and a crash panel follows the
+ * user into every other view. Non-journal views are lazy-loaded;
  * the nested `Suspense` boundary shows a skeleton until the chunk arrives.
  */
 export function ViewDispatcher({
@@ -231,14 +233,14 @@ export function ViewDispatcher({
   switch (currentView) {
     case 'journal': {
       return (
-        <FeatureErrorBoundary name="Journal" nameKey="sidebar.journal">
+        <FeatureErrorBoundary key={currentView} name="Journal" nameKey="sidebar.journal">
           <JournalPage onNavigateToPage={onPageSelect} />
         </FeatureErrorBoundary>
       )
     }
     case 'search': {
       return (
-        <FeatureErrorBoundary name="Search" nameKey="sidebar.search">
+        <FeatureErrorBoundary key={currentView} name="Search" nameKey="sidebar.search">
           <Suspense fallback={<ViewFallback />}>
             <SearchPanel />
           </Suspense>
@@ -247,7 +249,7 @@ export function ViewDispatcher({
     }
     case 'pages': {
       return (
-        <FeatureErrorBoundary name="Pages" nameKey="sidebar.pages">
+        <FeatureErrorBoundary key={currentView} name="Pages" nameKey="sidebar.pages">
           <Suspense fallback={<ViewFallback />}>
             <PageBrowser onPageSelect={onPageSelect} />
           </Suspense>
@@ -256,7 +258,7 @@ export function ViewDispatcher({
     }
     case 'tags': {
       return (
-        <FeatureErrorBoundary name="Tags" nameKey="sidebar.tags">
+        <FeatureErrorBoundary key={currentView} name="Tags" nameKey="sidebar.tags">
           <Suspense fallback={<ViewFallback />}>
             <TagsView onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
           </Suspense>
@@ -265,7 +267,7 @@ export function ViewDispatcher({
     }
     case 'trash': {
       return (
-        <FeatureErrorBoundary name="Trash" nameKey="sidebar.trash">
+        <FeatureErrorBoundary key={currentView} name="Trash" nameKey="sidebar.trash">
           <Suspense fallback={<ViewFallback />}>
             <TrashView />
           </Suspense>
@@ -274,7 +276,7 @@ export function ViewDispatcher({
     }
     case 'settings': {
       return (
-        <FeatureErrorBoundary name="Settings" nameKey="sidebar.settings">
+        <FeatureErrorBoundary key={currentView} name="Settings" nameKey="sidebar.settings">
           <Suspense fallback={<ViewFallback />}>
             <SettingsView />
           </Suspense>
@@ -283,7 +285,7 @@ export function ViewDispatcher({
     }
     case 'history': {
       return (
-        <FeatureErrorBoundary name="History" nameKey="sidebar.history">
+        <FeatureErrorBoundary key={currentView} name="History" nameKey="sidebar.history">
           <Suspense fallback={<ViewFallback />}>
             <HistoryView />
           </Suspense>
@@ -292,7 +294,7 @@ export function ViewDispatcher({
     }
     case 'templates': {
       return (
-        <FeatureErrorBoundary name="Templates" nameKey="sidebar.templates">
+        <FeatureErrorBoundary key={currentView} name="Templates" nameKey="sidebar.templates">
           <Suspense fallback={<ViewFallback />}>
             <TemplatesView />
           </Suspense>
@@ -301,7 +303,7 @@ export function ViewDispatcher({
     }
     case 'graph': {
       return (
-        <FeatureErrorBoundary name="Graph" nameKey="sidebar.graph">
+        <FeatureErrorBoundary key={currentView} name="Graph" nameKey="sidebar.graph">
           <Suspense fallback={<ViewFallback />}>
             {/* #5294 — its filters hold tag ids of one space; remount on a switch. */}
             <GraphView key={currentSpaceId ?? ''} />
@@ -311,7 +313,7 @@ export function ViewDispatcher({
     }
     case 'query': {
       return (
-        <FeatureErrorBoundary name="AdvancedQuery" nameKey="sidebar.query">
+        <FeatureErrorBoundary key={currentView} name="AdvancedQuery" nameKey="sidebar.query">
           <Suspense fallback={<ViewFallback />}>
             <AdvancedQueryView onNavigate={onPageSelect} />
           </Suspense>
@@ -328,7 +330,14 @@ export function ViewDispatcher({
         return <JournalFallback />
       }
       return (
-        <FeatureErrorBoundary name="PageEditor" nameKey="errorBoundary.section.pageEditor">
+        <FeatureErrorBoundary
+          key={currentView}
+          // A page key would remount PageEditor on every page change; resetKey
+          // only clears a crashed page's panel.
+          resetKey={activePage.pageId}
+          name="PageEditor"
+          nameKey="errorBoundary.section.pageEditor"
+        >
           <Suspense fallback={<ViewFallback />}>
             <PageEditor
               pageId={activePage.pageId}
