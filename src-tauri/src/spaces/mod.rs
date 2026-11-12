@@ -33,4 +33,6 @@ pub use bootstrap::bootstrap_spaces_for_test;
 #[cfg(test)]
 mod move_sync_proptest;
 #[cfg(test)]
+mod session_save_tests;
+#[cfg(test)]
 mod tests;

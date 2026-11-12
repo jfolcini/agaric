@@ -174,8 +174,9 @@ The primitives wire into the tx lifecycle via a per-tx **revert log** on
   space) into the log alongside the exact engine `Arc`. The `BEGIN IMMEDIATE`
   write lock serialises writers, so at most one tx mutates the engines at a time,
   making a single un-keyed in-flight log race-free (design-Q *Concurrency*
-  resolved). `for_space` in production is exclusively a mutation chokepoint, so
-  an armed log never records a concurrent reader.
+  resolved). The log records only through `for_space_recording`; readers go
+  through `for_space` or, on the sync paths, `with_engine`, neither of which
+  records, so an armed log never records a concurrent reader.
 - **Commit / abort hooks.** The tx owner arms a `RevertScope` after
   `BEGIN IMMEDIATE`; once the apply has run it `detach`es the recorded
   checkpoints out of the shared log — WHILE THE WRITE LOCK IS STILL HELD, so the

@@ -36,6 +36,14 @@
 //! same-named page or tag the session brought in. A repair that wrote
 //! anything takes the full-reload form too, and the pages this device renamed
 //! go out as `pages:renamed`, its notice.
+//!
+//! #6525: before any of that the task saves the engines. A session's imports
+//! are committed to SQL at once but reach `loro_doc_state` only through a
+//! snapshot pass, and boot replay restores local ops only, so a process killed
+//! before the next pass would boot with SQL ahead of its engines. An `Error`
+//! saves too: each space's import commits on its own, so a failed session may
+//! have committed some. So does a converged `Some(0)` while an engine is
+//! dirty: an imported property definition changes no block.
 
 use std::sync::Arc;
 
@@ -56,7 +64,8 @@ pub struct SpacePlacementSink {
     pub device_id: String,
     pub materializer: Materializer,
     pub view: Arc<dyn ViewChangeEmitter>,
-    /// The task spawned by the latest `Complete`, so a test can await it.
+    /// The task spawned by the latest `Complete` or `Error`, so a test can
+    /// await it.
     #[cfg(test)]
     pub last_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -83,69 +92,35 @@ impl SpacePlacementSink {
     }
 }
 
+/// The snapshot pass a sync session ends with (#6525; see the module docs).
+async fn save_engines_after_session(pool: &SqlitePool, materializer: &Materializer) {
+    let saved =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(pool, materializer).await;
+    tracing::info!(saved, "loro: persisted snapshots after a sync session");
+}
+
 impl SyncEventSink for SpacePlacementSink {
     fn on_sync_event(&self, event: SyncEvent) {
-        if let SyncEvent::Complete {
-            changed_blocks,
-            changed_page_ids,
-            remote_device_id,
-            ..
-        } = &event
-            && *changed_blocks != Some(0)
-        {
-            let pool = self.pool.clone();
-            let read_pool = self.read_pool.clone();
-            let device_id = self.device_id.clone();
-            let materializer = self.materializer.clone();
-            let view = self.view.clone();
-            let peer = remote_device_id.clone();
-            let changed_page_ids = changed_page_ids.clone();
-            let task = tokio::spawn(async move {
-                let placed =
-                    match place_space_less_blocks(&pool, &read_pool, &device_id, &materializer)
-                        .await
-                    {
-                        Ok((0, 0)) => false,
-                        Ok((pages, tags)) => {
-                            tracing::info!(
-                                peer_id = %peer,
-                                pages,
-                                tags,
-                                "placed space-less blocks after inbound sync"
-                            );
-                            true
-                        }
-                        // Non-fatal: the boot pass remains the backstop.
-                        Err(e) => {
-                            tracing::warn!(
-                                peer_id = %peer,
-                                error = %e,
-                                "failed to place space-less blocks after inbound sync"
-                            );
-                            false
-                        }
-                    };
-                // #6278: a duplicate journal day or a same-named page or tag
-                // the session brought in, once the placement gave it a space.
-                let repaired =
-                    crate::repair::repair_after_sync(&pool, &read_pool, &device_id, &materializer)
-                        .await;
-                // #5251: signal only once the post-sync rebuild has drained —
-                // it is what fills `page_id` and `page_link_cache` for the
-                // synced-in blocks, and (#4781) what turns a placed block's raw
-                // `#[ULID]` back into a tag, so a placement, like a repair,
-                // takes the full-reload form. The wait fails only on shutdown,
-                // when the signal has no listener either.
-                let _ = materializer.flush_inbound_rebuilds().await;
-                view.emit_blocks_changed(if placed || repaired.changed {
-                    Vec::new()
-                } else {
-                    changed_page_ids
-                });
-                if !repaired.renamed.is_empty() {
-                    view.emit_pages_renamed(repaired.renamed);
-                }
-            });
+        let task = match &event {
+            SyncEvent::Complete {
+                changed_blocks,
+                changed_page_ids,
+                remote_device_id,
+                ..
+            } if *changed_blocks != Some(0) => {
+                Some(self.spawn_after_import(remote_device_id.clone(), changed_page_ids.clone()))
+            }
+            // A property-definition-only import changes no block but dirties
+            // its engine.
+            SyncEvent::Complete { .. }
+                if self.materializer.loro_state().registry.dirty_count() > 0 =>
+            {
+                Some(self.spawn_save())
+            }
+            SyncEvent::Error { .. } => Some(self.spawn_save()),
+            _ => None,
+        };
+        if let Some(task) = task {
             #[cfg(test)]
             {
                 *self.last_task.lock().expect("placement task slot poisoned") = Some(task);
@@ -154,6 +129,75 @@ impl SyncEventSink for SpacePlacementSink {
             drop(task);
         }
         self.inner.on_sync_event(event);
+    }
+}
+
+impl SpacePlacementSink {
+    fn spawn_save(&self) -> tokio::task::JoinHandle<()> {
+        let pool = self.pool.clone();
+        let materializer = self.materializer.clone();
+        tokio::spawn(async move {
+            save_engines_after_session(&pool, &materializer).await;
+        })
+    }
+
+    /// The work after a session that changed something: save the engines,
+    /// place what came in space-less, repair, then signal open views.
+    fn spawn_after_import(
+        &self,
+        peer: String,
+        changed_page_ids: Vec<String>,
+    ) -> tokio::task::JoinHandle<()> {
+        let pool = self.pool.clone();
+        let read_pool = self.read_pool.clone();
+        let device_id = self.device_id.clone();
+        let materializer = self.materializer.clone();
+        let view = self.view.clone();
+        tokio::spawn(async move {
+            save_engines_after_session(&pool, &materializer).await;
+            let placed =
+                match place_space_less_blocks(&pool, &read_pool, &device_id, &materializer).await {
+                    Ok((0, 0)) => false,
+                    Ok((pages, tags)) => {
+                        tracing::info!(
+                            peer_id = %peer,
+                            pages,
+                            tags,
+                            "placed space-less blocks after inbound sync"
+                        );
+                        true
+                    }
+                    // Non-fatal: the boot pass remains the backstop.
+                    Err(e) => {
+                        tracing::warn!(
+                            peer_id = %peer,
+                            error = %e,
+                            "failed to place space-less blocks after inbound sync"
+                        );
+                        false
+                    }
+                };
+            // #6278: a duplicate journal day or a same-named page or tag
+            // the session brought in, once the placement gave it a space.
+            let repaired =
+                crate::repair::repair_after_sync(&pool, &read_pool, &device_id, &materializer)
+                    .await;
+            // #5251: signal only once the post-sync rebuild has drained —
+            // it is what fills `page_id` and `page_link_cache` for the
+            // synced-in blocks, and (#4781) what turns a placed block's raw
+            // `#[ULID]` back into a tag, so a placement, like a repair,
+            // takes the full-reload form. The wait fails only on shutdown,
+            // when the signal has no listener either.
+            let _ = materializer.flush_inbound_rebuilds().await;
+            view.emit_blocks_changed(if placed || repaired.changed {
+                Vec::new()
+            } else {
+                changed_page_ids
+            });
+            if !repaired.renamed.is_empty() {
+                view.emit_pages_renamed(repaired.renamed);
+            }
+        })
     }
 }
 
@@ -501,10 +545,11 @@ mod tests {
         let task = sink.last_task.lock().unwrap().take().expect("spawned");
         task.await.unwrap();
 
-        // The four rebuilds the placement's `space` op dispatches (#5275,
-        // #5426, #6209: the two tag-ref rebuilds, `RebuildPagesCacheCounts`
-        // and `RebuildPageLinkCache`), and the drain barrier itself.
-        assert_eq!(view.drained.lock().unwrap().clone(), vec![before + 5]);
+        // The drain barrier of the session-end save (#6525), the four
+        // rebuilds the placement's `space` op dispatches (#5275, #5426,
+        // #6209: the two tag-ref rebuilds, `RebuildPagesCacheCounts` and
+        // `RebuildPageLinkCache`), and the drain barrier itself.
+        assert_eq!(view.drained.lock().unwrap().clone(), vec![before + 6]);
         // ...and those rebuilds are what made the tag resolvable.
         let refs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs WHERE tag_id = ?")
             .bind(&tag_id)

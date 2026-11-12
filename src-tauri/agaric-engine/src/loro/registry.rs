@@ -109,7 +109,10 @@ pub(crate) type SharedEngine = Arc<Mutex<LoroEngine>>;
 /// any code path that *might* mutate that engine is counted, including
 /// read-only `for_space` calls — over-marking is harmless because the
 /// extra per-space snapshot is idempotent; the conservative bias is toward
-/// marking, never toward missing a real mutation). A space stays dirty
+/// marking, never toward missing a real mutation).
+/// [`with_engine`](Self::with_engine) marks only when its closure moved the
+/// op log, so the sync paths, which read every space and mostly import
+/// nothing new, leave clean spaces clean (#6525). A space stays dirty
 /// until [`save_all_engines`] SUCCESSFULLY persists it, at which point its
 /// flag is cleared — but only if it was not re-marked in the meantime
 /// (see [`clear_dirty_if_unchanged`](Self::clear_dirty_if_unchanged)), so a
@@ -124,8 +127,8 @@ pub struct LoroEngineRegistry {
     inner: Mutex<HashMap<SpaceId, SharedEngine>>,
     /// #2201 — per-space dirty set. A key's PRESENCE means "this space has
     /// a mutation not yet persisted"; the value is the global-monotonic
-    /// mark STAMP (from `mark_seq`) recorded by the most recent
-    /// [`for_space`](Self::for_space) on that space.
+    /// mark STAMP (from `mark_seq`) recorded by the most recent mark of that
+    /// space ([`mark_dirty`](Self::mark_dirty)).
     ///
     /// The saver captures a space's stamp when it collects the export, then
     /// clears the flag after a successful persist ONLY if the stamp is
@@ -139,23 +142,23 @@ pub struct LoroEngineRegistry {
     /// lock discipline).
     dirty: Mutex<HashMap<SpaceId, u64>>,
     /// #2201 — monotonic source of dirty-mark stamps. `fetch_add`-bumped on
-    /// every [`for_space`](Self::for_space); never reset (not even by
+    /// every [`mark_dirty`](Self::mark_dirty); never reset (not even by
     /// [`clear`](Self::clear)), so a stamp is globally unique-and-ordered
     /// across the registry's lifetime. That is what lets a stale captured
     /// stamp never collide with a fresh post-clear re-mark.
     mark_seq: AtomicU64,
-    /// #607 review: monotone counter bumped by [`clear`](Self::clear).
+    /// #607 review: monotone counter bumped by [`clear`](Self::clear) and by
+    /// [`evict_space`](Self::evict_space).
     ///
     /// `save_all_engines` collects O(1) doc handles, drops the registry
     /// lock, then persists each export with its own awaited INSERT. A
-    /// wholesale wipe + `reload_registry_from_db` (the #4699-deleted RESET) that
+    /// drop of an engine whose `loro_doc_state` row was deleted with it that
     /// lands inside that collect→write span would otherwise let the saver
-    /// re-persist PRE-reset engine state into the freshly wiped
-    /// `loro_doc_state` (the #779 resurrection, via the periodic tick or
-    /// the `RunEvent::Exit` save). The saver captures this generation
-    /// before collecting handles and re-checks it before every write —
-    /// a mismatch means the handles predate a reset and must not be
-    /// persisted.
+    /// re-persist the dropped engine's state into the deleted row (the #779
+    /// resurrection, via the periodic tick or the `RunEvent::Exit` save). The
+    /// saver captures this generation before collecting handles and re-checks
+    /// it before every write — a mismatch means the handles predate the drop
+    /// and must not be persisted.
     generation: AtomicU64,
     /// #792 — the Loro peer-id epoch every lazily-created engine derives
     /// its `PeerID` from (see [`crate::loro::engine::peer_id_for_epoch`]).
@@ -163,11 +166,10 @@ pub struct LoroEngineRegistry {
     /// `0` (the constructor default and the lifetime value for any vault
     /// that never went through a snapshot RESET) reproduces the legacy
     /// `peer_id_from_device_id` mapping exactly. Loaded from
-    /// `app_settings` at boot (`crate::loro::peer_epoch::load_peer_epoch`)
-    /// and refreshed by `reload_registry_from_db` right after a RESET
-    /// bumps the persisted value — so post-reset engines mint ops under a
-    /// FRESH peer id instead of forking the `(peer, counter)` space
-    /// against this device's pre-reset ops still held by peers.
+    /// `app_settings` at boot (`crate::loro::peer_epoch::load_peer_epoch`),
+    /// so a vault a RESET bumped keeps minting ops under a FRESH peer id
+    /// instead of forking the `(peer, counter)` space against this device's
+    /// pre-reset ops still held by peers.
     peer_epoch: AtomicU64,
     /// #5712: the inbound sync sessions (live pulls and snapshot catch-ups)
     /// between their first import and the sweep that ends them. A session
@@ -175,6 +177,9 @@ pub struct LoroEngineRegistry {
     /// that ends one session leaves the ids alone while another is still in
     /// this set; see [`Self::begin_inbound_sync`].
     inbound_syncs: Arc<AtomicUsize>,
+    /// Engine locks handed out, read by [`Self::guard_acquisitions`].
+    #[cfg(any(test, feature = "test-util"))]
+    acquisitions: AtomicU64,
 }
 
 impl LoroEngineRegistry {
@@ -188,6 +193,8 @@ impl LoroEngineRegistry {
             generation: AtomicU64::new(0),
             peer_epoch: AtomicU64::new(0),
             inbound_syncs: Arc::new(AtomicUsize::new(0)),
+            #[cfg(any(test, feature = "test-util"))]
+            acquisitions: AtomicU64::new(0),
         }
     }
 
@@ -213,19 +220,16 @@ impl LoroEngineRegistry {
     }
 
     /// #792 — install the peer-id epoch subsequent engine constructions
-    /// derive their `PeerID` from. Called at boot (with the
-    /// `app_settings` value) and by `reload_registry_from_db` after a
-    /// snapshot RESET bumped the persisted epoch. Engines already held
-    /// by the registry are NOT re-keyed — the RESET path clears them in
-    /// the same breath, and a healthy boot sets the epoch before any
-    /// engine exists.
+    /// derive their `PeerID` from. Called at boot with the `app_settings`
+    /// value, before any engine exists. Engines already held by the
+    /// registry are NOT re-keyed.
     pub fn set_peer_epoch(&self, epoch: u64) {
         self.peer_epoch.store(epoch, Ordering::Release);
     }
 
     /// #607 review: current clear-generation. See the field docs —
-    /// `save_all_engines` uses this to detect a registry [`clear`](Self::clear)
-    /// (snapshot RESET) racing its collect→write span.
+    /// `save_all_engines` uses this to detect a [`clear`](Self::clear) or an
+    /// [`evict_space`](Self::evict_space) racing its collect→write span.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
     }
@@ -240,27 +244,25 @@ impl LoroEngineRegistry {
         self.dirty.lock().len()
     }
 
-    /// #4100 test instrument — how many engine-guard acquisitions this registry
-    /// has served since it was created.
-    ///
-    /// `mark_seq` is bumped exactly once per [`shared_for_space`](Self::shared_for_space)
-    /// call, which is the sole path to a guard ([`for_space`](Self::for_space)
-    /// and [`for_space_recording`](Self::for_space_recording) both go through
-    /// it, and nothing else calls [`mark_dirty`](Self::mark_dirty)). So the
-    /// delta across an operation is exactly that operation's acquisition count
-    /// — which is the property #540 states and #4100 is about, and which is
+    /// #4100 test instrument — how many engine locks this registry has handed
+    /// out since it was created, through [`Self::for_space`],
+    /// [`Self::for_space_recording`] and [`Self::with_engine`] (all of them
+    /// take the engine from [`Self::engine_for`], which counts). So the delta
+    /// across an operation is exactly that operation's acquisition count —
+    /// which is the property #540 states and #4100 is about, and which is
     /// otherwise unobservable from outside the registry.
     ///
     /// Test-only: production code must not branch on an acquisition count.
     #[cfg(any(test, feature = "test-util"))]
     pub fn guard_acquisitions(&self) -> u64 {
-        self.mark_seq.load(Ordering::Relaxed)
+        self.acquisitions.load(Ordering::Relaxed)
     }
 
     /// #2201 — mark `space_id` dirty. Records a fresh global-monotonic
     /// stamp (see the `mark_seq` field docs) so a re-mark that races a
     /// concurrent persist always out-ranks the stamp the saver captured.
-    /// Called from [`for_space`](Self::for_space); the map lock is already
+    /// Called from [`for_space`](Self::for_space) and
+    /// [`with_engine`](Self::with_engine); the map lock is already
     /// released, and the dirty lock is a short O(1) critical section taken
     /// on its own (never nested with the map lock or an engine lock).
     fn mark_dirty(&self, space_id: &SpaceId) {
@@ -356,16 +358,62 @@ impl LoroEngineRegistry {
         Ok(EngineGuard { guard })
     }
 
-    /// Lookup-or-lazily-create the per-space engine `Arc`, marking the space
-    /// dirty. Shared by [`for_space`](Self::for_space) and
-    /// [`for_space_recording`](Self::for_space_recording); returns the `Arc`
-    /// with the outer map lock already released, so the caller takes only the
-    /// per-space engine lock (#2205).
+    /// [`Self::engine_for`], marking the space dirty. Shared by
+    /// [`for_space`](Self::for_space) and
+    /// [`for_space_recording`](Self::for_space_recording).
     fn shared_for_space(
         &self,
         space_id: &SpaceId,
         device_id: &str,
     ) -> Result<SharedEngine, AppError> {
+        let shared = self.engine_for(space_id, device_id)?;
+        // Issue #157 sub-item I / #2201 — `for_space` is the chokepoint
+        // every mutation path for THIS space goes through (cross-space ops
+        // are impossible by construction — see the module docs), so marking
+        // `space_id` dirty here captures exactly the space this call may
+        // mutate. Over-marks (a read-only `for_space` call also marks); the
+        // extra per-space snapshot is idempotent, so the false positive costs
+        // one re-encode — the bias is toward marking, never toward missing a
+        // real mutation. The map guard was dropped in `engine_for`, so this
+        // takes only the short dirty lock (never nested).
+        self.mark_dirty(space_id);
+        Ok(shared)
+    }
+
+    /// Run `f` on `space_id`'s engine under its lock, and mark the space dirty
+    /// only if `f` moved its op log (#6525). An unknown space gets a fresh
+    /// empty engine, as [`Self::for_space`] gives it.
+    ///
+    /// A sync session reads every space and imports into most of them without
+    /// changing anything; marking each one would re-encode and rewrite the
+    /// whole vault's snapshot at every pass. A write through `f` is still
+    /// saved: every engine write commits to the op log, and the mark comes
+    /// after it, so a pass that captured an older stamp keeps the space dirty.
+    pub fn with_engine<T>(
+        &self,
+        space_id: &SpaceId,
+        device_id: &str,
+        f: impl FnOnce(&mut LoroEngine) -> T,
+    ) -> Result<T, AppError> {
+        let shared = self.engine_for(space_id, device_id)?;
+        let (out, moved) = {
+            let mut engine = shared.lock();
+            let before = engine.checkpoint_frontiers();
+            let out = f(&mut engine);
+            (out, engine.checkpoint_frontiers() != before)
+        };
+        if moved {
+            self.mark_dirty(space_id);
+        }
+        Ok(out)
+    }
+
+    /// Lookup-or-lazily-create the per-space engine `Arc`, returned with the
+    /// outer map lock already released, so the caller takes only the
+    /// per-space engine lock (#2205).
+    fn engine_for(&self, space_id: &SpaceId, device_id: &str) -> Result<SharedEngine, AppError> {
+        #[cfg(any(test, feature = "test-util"))]
+        self.acquisitions.fetch_add(1, Ordering::Relaxed);
         let shared: SharedEngine = {
             let mut map = self.inner.lock();
             if let Some(existing) = map.get(space_id) {
@@ -385,18 +433,8 @@ impl LoroEngineRegistry {
                 map.insert(space_id.clone(), Arc::clone(&shared));
                 shared
             }
-            // Outer map guard drops HERE — before the engine lock below.
+            // Outer map guard drops HERE — before the caller's engine lock.
         };
-        // Issue #157 sub-item I / #2201 — `for_space` is the chokepoint
-        // every mutation path for THIS space goes through (cross-space ops
-        // are impossible by construction — see the module docs), so marking
-        // `space_id` dirty here captures exactly the space this call may
-        // mutate. Over-marks (a read-only `for_space` call also marks); the
-        // extra per-space snapshot the daemon may then fire is idempotent so
-        // the false positive is harmless — the bias is toward marking, never
-        // toward missing a real mutation. The map guard was dropped above, so
-        // this takes only the short dirty lock (never nested).
-        self.mark_dirty(space_id);
         Ok(shared)
     }
 
@@ -552,11 +590,10 @@ impl LoroEngineRegistry {
 
     /// Drop every registered engine (#607).
     ///
-    /// Used by [`crate::loro::snapshot::reload_registry_from_db`] after a
-    /// wholesale wipe (the #4699-deleted snapshot RESET) of `loro_doc_state`: the live
-    /// engines still hold the pre-reset CRDT lineage and must be dropped so
-    /// neither the periodic `save_all_engines` tick nor the `RunEvent::Exit`
-    /// save can persist stale state over the post-reset SQL. Subsequent
+    /// Written for the snapshot RESET's wholesale wipe of `loro_doc_state`,
+    /// which #4699 deleted; no production path calls it now. The dropped
+    /// engines must not be saved over the wiped table by the periodic
+    /// `save_all_engines` tick or the `RunEvent::Exit` save. Subsequent
     /// [`for_space`](Self::for_space) calls lazy-create fresh empty engines,
     /// exactly like a first boot.
     ///
@@ -1795,6 +1832,90 @@ mod tests {
         assert_eq!(
             dirty[0].0, a,
             "the single dirty space must be A (the one mutated), never B"
+        );
+    }
+
+    /// #6525 — `with_engine` marks the space dirty only when its closure moved
+    /// the op log. A read, the second export of a stamped doc and an import of
+    /// what the doc holds leave it clean; the format stamp a first export
+    /// writes, an import of new ops and a closure that imports and then fails
+    /// each mark it; a space with no engine gets one, unmarked.
+    #[test]
+    fn with_engine_marks_only_what_moved_the_op_log_6525() {
+        let r = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+        let persist = |r: &LoroEngineRegistry| {
+            for (space, stamp, bytes) in r.snapshot_dirty_engines() {
+                bytes.expect("export ok");
+                r.clear_dirty_if_unchanged(&space, stamp);
+            }
+        };
+        let mut engine = LoroEngine::with_peer_id("device-1").expect("engine");
+        engine
+            .apply_create_block("BLOCK_1", "content", "held", None, 0)
+            .expect("create");
+        r.install_engine(space.clone(), engine);
+        assert_eq!(r.dirty_count(), 0, "installing an engine marks nothing");
+
+        let live = r
+            .with_engine(&space, "device-1", |e| e.live_block_ids())
+            .expect("lock")
+            .expect("read");
+        assert_eq!(live, ["BLOCK_1"], "the closure saw the engine");
+        assert_eq!(r.dirty_count(), 0, "a read leaves the space clean");
+
+        let held = r
+            .with_engine(&space, "device-1", |e| e.export_snapshot())
+            .expect("lock")
+            .expect("export");
+        assert_eq!(
+            r.dirty_count(),
+            1,
+            "the format stamp the first export writes is an op, so it marks"
+        );
+        persist(&r);
+        r.with_engine(&space, "device-1", |e| e.export_snapshot())
+            .expect("lock")
+            .expect("export");
+        assert_eq!(r.dirty_count(), 0, "a stamped doc exports without writing");
+
+        r.with_engine(&space, "device-1", |e| e.import(&held))
+            .expect("lock")
+            .expect("import");
+        assert_eq!(
+            r.dirty_count(),
+            0,
+            "importing what the doc holds moves nothing"
+        );
+
+        let mut peer = LoroEngine::with_peer_id("device-2").expect("peer");
+        peer.apply_create_block("BLOCK_2", "content", "new", None, 0)
+            .expect("create");
+        let theirs = peer.export_snapshot().expect("export");
+        let failed = r
+            .with_engine(&space, "device-1", |e| {
+                e.import(&theirs)?;
+                Err::<(), AppError>(AppError::validation("fails after the import".to_owned()))
+            })
+            .expect("lock");
+        assert!(failed.is_err(), "the closure's own error is returned");
+        assert_eq!(
+            r.dirty_count(),
+            1,
+            "a closure that moved the op log marks even when it then fails"
+        );
+        persist(&r);
+
+        let other = SpaceId::from_trusted(SPACE_B);
+        let live = r
+            .with_engine(&other, "device-1", |e| e.live_block_ids())
+            .expect("lock")
+            .expect("read");
+        assert!(live.is_empty(), "a space with no engine starts empty");
+        assert_eq!(
+            (r.len(), r.dirty_count()),
+            (2, 0),
+            "the new engine is installed, unmarked"
         );
     }
 
