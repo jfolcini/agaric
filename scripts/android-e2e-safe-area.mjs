@@ -360,7 +360,7 @@ function dumpNodes() {
 const area = (r) => Math.max(0, r.right - r.left) * Math.max(0, r.bottom - r.top)
 
 function findMenuButton(nodes) {
-  return nodes.find((n) => n.desc.trim() === MENU_LABEL && area(n.bounds) > 0) ?? null
+  return nodes.find((n) => (n.desc || n.text).trim() === MENU_LABEL && area(n.bounds) > 0) ?? null
 }
 
 function drawerIsOpen(nodes) {
