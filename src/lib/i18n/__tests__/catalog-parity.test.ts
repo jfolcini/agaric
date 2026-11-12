@@ -343,9 +343,6 @@ const NOT_YET_FIXED_CEILING = 0
  */
 const PRE_EXISTING_COUNT_EXEMPT: Readonly<Record<string, string>> = {
   // Manual split via a separate catalog key, chosen by a call-site ternary.
-  'donePanel.header':
-    'Singular case handled by the separate "donePanel.headerOne" key; ' +
-    'DonePanel.tsx only calls this key when totalCount !== 1.',
   'duePanel.header':
     'Singular case handled by the separate "duePanel.headerOne" key; ' +
     'DuePanel.tsx only calls this key when visibleCount !== 1.',
@@ -362,14 +359,6 @@ const PRE_EXISTING_COUNT_EXEMPT: Readonly<Record<string, string>> = {
     'Singular/empty cases handled by the separate "unlinkedRefs.headerOne"/' +
     '"unlinkedRefs.headerNone" keys; UnlinkedReferences.tsx only calls this ' +
     'key when totalCount is neither 0 nor 1.',
-  'tagFilter.blockMatchOne':
-    'Paired with a wholly separate "tagFilter.blockMatchMany" key. ' +
-    'TagFilterPanel.tsx ternary-selects between them on resultCount === 1, ' +
-    'so despite its {{count}} interpolation this key is only ever invoked ' +
-    'with count === 1, where "block matches" is already correct.',
-  'tagFilter.blockMatchMany':
-    'The count !== 1 counterpart of "tagFilter.blockMatchOne" (see that ' +
-    'entry) — only ever invoked with count !== 1.',
   'search.matchCountInGroupPlural':
     'SearchResultGroups.tsx only invokes this key when g.blocks.length !== 1; ' +
     'count === 1 uses the separate, non-interpolating ' +

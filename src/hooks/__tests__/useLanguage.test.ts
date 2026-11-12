@@ -27,12 +27,8 @@ afterEach(async () => {
 describe('useLanguage', () => {
   it('defaults to English, NOT to the device', () => {
     const { result } = renderHook(() => useLanguage())
-    // Phase 1 ships 42 of 3,056 keys. `'system'` would put a device set to
-    // `es` into `<html lang="es">` over a ~99% English UI — the exact
-    // mis-announcement `applyDocumentLang` exists to prevent, for a user who
-    // never opened Settings and never saw the help text explaining the
-    // gap. Flip this to `'system'` when a second catalog is substantially
-    // translated, and change this test in the same commit.
+    // See the `agaric-language` preference: flip this to `'system'` when a
+    // second catalog is substantially translated, in the same commit.
     expect(result.current.language).toBe('en')
   })
 

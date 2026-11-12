@@ -89,7 +89,7 @@ export const pages: Record<string, string> = {
   // the tooltip points at the one query surface that can match it (#4548).
   'pageHeader.inheritedTag': 'Inherited tag {{name}}',
   'pageHeader.inheritedTagHint':
-    "Inherited from a parent block. The Tags view matches it only with 'Include inherited tags' turned on.",
+    "Inherited from a parent block. The Tags view matches it only with 'Include nested blocks' turned on.",
   'pageHeader.searchTags': 'Search or create tag...',
   'pageHeader.searchTagsLabel': 'Search tags',
   'pageHeader.tagPicker': 'Tag picker',
@@ -103,6 +103,8 @@ export const pages: Record<string, string> = {
   'pageHeader.menuAddAlias': 'Add alias',
   'pageHeader.menuAddTag': 'Add tag',
   'pageHeader.menuAddProperty': 'Add property',
+  'templates.description':
+    'A template is a page you can copy into any other page with /template. The placeholders below fill in when it is inserted.',
   'templates.empty': 'No templates yet. Mark a page as a template to see it here.',
   'templates.search': 'Search templates…',
   'templates.journalIndicator': 'Journal template',
@@ -125,9 +127,9 @@ export const pages: Record<string, string> = {
   // #215 — dynamic-variable discoverability. These tokens are expanded by
   // `expandTemplateVariables` when a template is inserted; previously they
   // were documented only in code comments.
-  'templates.variablesHintLabel': 'Dynamic variables:',
+  'templates.variablesHintLabel': 'Placeholders:',
   'templates.variablesHintIntro':
-    'Use these tokens anywhere in a template — they expand when the template is inserted.',
+    'Type these anywhere in a template; each fills in when the template is inserted.',
   'templates.variableToday': 'Current date (YYYY-MM-DD)',
   'templates.variableTime': 'Current time (HH:MM)',
   'templates.variableDatetime': 'Current date and time',

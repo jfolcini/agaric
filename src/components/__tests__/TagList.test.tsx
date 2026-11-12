@@ -39,6 +39,7 @@ import { TagList } from '@/components/TagList'
 import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { invalidateNameCaches, subscribeToNameChanges } from '@/lib/name-change-bus'
+import { TAG_COLOR_PRESETS } from '@/lib/tag-colors'
 import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -1021,7 +1022,7 @@ describe('TagList', () => {
 
       // Click the "rose" swatch — #1099 persists the accent *token*, not a
       // raw sRGB hex, so the value re-themes across light/dark/high-contrast.
-      const roseSwatch = await screen.findByRole('button', { name: 'rose' })
+      const roseSwatch = await screen.findByRole('button', { name: t('tagList.color.rose') })
       await user.click(roseSwatch)
 
       await waitFor(() => {
@@ -1143,10 +1144,27 @@ describe('TagList', () => {
       await user.click(colorBtn)
 
       const palette = await screen.findByRole('group', { name: /color palette/i })
-      const swatch = within(palette).getByRole('button', { name: 'emerald' })
+      const swatch = within(palette).getByRole('button', { name: t('tagList.color.emerald') })
       expect(swatch.className).toContain('focus-ring-visible')
       expect(swatch.className).not.toContain('focus-visible:ring-2')
       expect(swatch.className).not.toContain('focus-visible:ring-ring')
+    })
+
+    it('names each swatch through the catalog (#6548)', async () => {
+      const user = userEvent.setup()
+      stubTags([makeTag('T1', 'named-tag')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('named-tag')
+      await user.click(findColorButton(tag.closest('li') as HTMLElement))
+
+      const palette = await screen.findByRole('group', { name: /color palette/i })
+      expect(
+        within(palette)
+          .getAllByRole('button')
+          .map((b) => b.getAttribute('aria-label')),
+      ).toEqual(TAG_COLOR_PRESETS.map((p) => t(`tagList.color.${p.name}`)))
     })
 
     it('has no a11y violations with color picker open', async () => {

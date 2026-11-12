@@ -207,6 +207,8 @@ export function PdfViewerDialog({
 
         const eventBus = new EventBus()
         const linkService = new PDFLinkService({ eventBus })
+        // English whatever the app language: with no pdf.js locale files
+        // vendored, `GenericL10n` only ever has its built-in en-US strings.
         const l10n = new GenericL10n('en-US')
 
         const viewer = new PDFViewer({

@@ -4,8 +4,8 @@ import { expect, ipc, navigateToView, test, waitForBoot } from './helpers'
 
 /**
  * The Tags view's filter panel returns the blocks its mode selects (#5366):
- * with two selected tags AND lists their intersection and OR their union, and
- * "Include inherited tags" adds the children of a tagged page. Assertions read
+ * with two selected tags All lists their intersection and Any their union, and
+ * "Include nested blocks" adds the children of a tagged page. Assertions read
  * the rendered result rows, which come back in block-id order (`query_by_tags`,
  * pinned by conformance/fixtures/query_tag_and_property_boundaries.json).
  *
@@ -67,7 +67,7 @@ async function seedTaggedBlocks(page: Page): Promise<void> {
 }
 
 async function selectTag(page: Page, name: string): Promise<void> {
-  await page.getByLabel('Search tags by prefix').fill(name)
+  await page.getByLabel('Find a tag').fill(name)
   await page
     .getByRole('grid', { name: 'Matching tags', exact: true })
     .getByRole('row')
@@ -89,14 +89,14 @@ test.describe('Tag filter modes return the matching blocks (#5366) @pages @searc
     await navigateToView(page, 'Tags')
   })
 
-  test('AND lists the intersection of two tags, OR their union', async ({ page }) => {
+  test('All lists the intersection of two tags, Any their union', async ({ page }) => {
     await selectTag(page, 'alpha')
     await selectTag(page, 'beta')
 
-    await page.getByRole('radio', { name: 'AND', exact: true }).click()
+    await page.getByRole('radio', { name: 'All', exact: true }).click()
     await expect(results(page)).toHaveText([/^Alpha and beta/])
 
-    await page.getByRole('radio', { name: 'OR', exact: true }).click()
+    await page.getByRole('radio', { name: 'Any', exact: true }).click()
     await expect(results(page)).toHaveText([
       /^Alpha only/,
       /^Beta only/,
@@ -105,11 +105,11 @@ test.describe('Tag filter modes return the matching blocks (#5366) @pages @searc
     ])
   })
 
-  test("Include inherited tags adds a tagged page's children", async ({ page }) => {
+  test("Include nested blocks adds a tagged page's children", async ({ page }) => {
     await selectTag(page, 'beta')
     await expect(results(page)).toHaveText([/^Beta only/, /^Alpha and beta/, /^Beta Page/])
 
-    const inherited = page.getByRole('switch', { name: 'Include inherited tags', exact: true })
+    const inherited = page.getByRole('switch', { name: 'Include nested blocks', exact: true })
     await inherited.click()
     await expect(inherited).toHaveAttribute('aria-checked', 'true')
     await expect(results(page)).toHaveText([

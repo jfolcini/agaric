@@ -157,7 +157,7 @@ test.describe('Tag filter panel @pages', () => {
   })
 
   test('prefix search finds matching tags', async ({ page }) => {
-    const searchInput = page.getByLabel('Search tags by prefix')
+    const searchInput = page.getByLabel('Find a tag')
     await searchInput.fill('wor')
 
     // Wait for debounce (300ms) + rendering
@@ -170,7 +170,7 @@ test.describe('Tag filter panel @pages', () => {
   })
 
   test('adding a tag from search shows it as selected', async ({ page }) => {
-    const searchInput = page.getByLabel('Search tags by prefix')
+    const searchInput = page.getByLabel('Find a tag')
     await searchInput.fill('per')
 
     await expect(page.getByText('Matching tags')).toBeVisible()
@@ -186,15 +186,15 @@ test.describe('Tag filter panel @pages', () => {
     ).toBeVisible()
   })
 
-  test('AND/OR mode toggle switches active mode', async ({ page }) => {
-    // By default AND is active
-    const andBtn = page.getByRole('radio', { name: 'AND', exact: true })
-    const orBtn = page.getByRole('radio', { name: 'OR', exact: true })
+  test('All/Any mode toggle switches active mode', async ({ page }) => {
+    // By default All is active
+    const andBtn = page.getByRole('radio', { name: 'All', exact: true })
+    const orBtn = page.getByRole('radio', { name: 'Any', exact: true })
 
     await expect(andBtn).toHaveAttribute('aria-checked', 'true')
     await expect(orBtn).toHaveAttribute('aria-checked', 'false')
 
-    // Switch to OR
+    // Switch to Any
     await orBtn.click()
     await expect(orBtn).toHaveAttribute('aria-checked', 'true')
     await expect(andBtn).toHaveAttribute('aria-checked', 'false')

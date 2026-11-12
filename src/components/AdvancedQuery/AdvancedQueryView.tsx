@@ -141,6 +141,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
       className="advanced-query-view mx-auto w-full max-w-list flex flex-col gap-3"
       data-testid="advanced-query-view"
     >
+      <p className="text-sm text-muted-foreground">{t('advancedQuery.description')}</p>
       {/* Builder pane — the #1280 D3 recursive nested-boolean tree. */}
       <div className="advanced-query-builder flex flex-col gap-3">
         <div className="flex flex-col gap-2">

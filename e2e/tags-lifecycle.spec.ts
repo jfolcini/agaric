@@ -118,7 +118,7 @@ test.describe('Filter panel follows the Tags list (#5254) @pages @spaces', () =>
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await navigateToView(page, 'Tags')
-    await page.getByLabel('Search tags by prefix').fill('ide')
+    await page.getByLabel('Find a tag').fill('ide')
     const matching = page.getByRole('grid', { name: 'Matching tags', exact: true })
     await matching.getByRole('button', { name: 'Add', exact: true }).click()
     await expect(removeChip(page, 'idea')).toBeVisible()
