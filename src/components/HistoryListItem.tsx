@@ -26,6 +26,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { listRowVariants } from '@/components/ui/list-item'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
+import { opTypeLabel } from '@/lib/history-utils'
 import { cn } from '@/lib/utils'
 
 export type { BlockHistoryItemProps } from '@/components/HistoryListItem/BlockHistoryItem'
@@ -157,7 +158,7 @@ function HistoryListItemInner({
           // would otherwise toggle the cursor row as well as this one.
           onKeyDown={(e) => e.stopPropagation()}
           aria-label={t('history.selectOperationLabel', {
-            opType: entry.op_type,
+            opType: opTypeLabel(entry.op_type, t),
             seq: entry.seq,
           })}
           data-testid={`history-checkbox-${index}`}

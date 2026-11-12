@@ -18,6 +18,7 @@ import { takenNameReason, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { HistoryEntry } from '@/lib/bindings'
 import { formatTimestamp } from '@/lib/format'
+import { ALL_PAGES_HISTORY_ID } from '@/lib/history-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -25,6 +26,8 @@ import { reportIpcError } from '@/lib/report-ipc-error'
 export interface HistoryRestoreDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** The page to restore, or every page (the default). */
+  pageId?: string | undefined
   /** The entry the user clicked "Restore to here" on. */
   restoreTarget: HistoryEntry | null
   /** Called after the IPC resolves successfully. Parent reloads the list. */
@@ -34,6 +37,7 @@ export interface HistoryRestoreDialogProps {
 export function HistoryRestoreDialog({
   open,
   onOpenChange,
+  pageId = ALL_PAGES_HISTORY_ID,
   restoreTarget,
   onSuccess,
 }: HistoryRestoreDialogProps): React.ReactElement {
@@ -45,7 +49,7 @@ export function HistoryRestoreDialog({
     setRestoring(true)
     try {
       const result = unwrap(
-        await commands.restorePageToOp('__all__', restoreTarget.device_id, restoreTarget.seq),
+        await commands.restorePageToOp(pageId, restoreTarget.device_id, restoreTarget.seq),
       )
       notify.success(t('history.restoreSuccess', { count: result.ops_reverted }))
       announce(t('announce.restoreToHereSucceeded', { count: result.ops_reverted }))
@@ -54,7 +58,7 @@ export function HistoryRestoreDialog({
       }
       await onSuccess()
     } catch (err) {
-      const context = { deviceId: restoreTarget.device_id, seq: restoreTarget.seq }
+      const context = { pageId, deviceId: restoreTarget.device_id, seq: restoreTarget.seq }
       const takenName = takenNameReason(err)
       if (takenName === null) {
         reportIpcError('HistoryView', 'history.restoreFailed', err, t, context)
@@ -66,7 +70,7 @@ export function HistoryRestoreDialog({
     }
     setRestoring(false)
     onOpenChange(false)
-  }, [restoreTarget, onSuccess, onOpenChange, t])
+  }, [pageId, restoreTarget, onSuccess, onOpenChange, t])
 
   return (
     <ConfirmDialog

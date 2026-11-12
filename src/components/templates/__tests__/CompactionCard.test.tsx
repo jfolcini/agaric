@@ -2,6 +2,7 @@
  * Tests for CompactionCard component.
  *
  * Validates:
+ *  - Starts collapsed, eligible ops or not; the stats show once expanded
  *  - Shows loading skeleton while fetching
  *  - Shows stats when loaded (total ops, eligible ops, oldest date)
  *  - "Compact Now" always enabled (backend handles no-op case)
@@ -15,7 +16,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -28,7 +29,7 @@ import {
   type TypedInvokeHandlers,
 } from '@/__tests__/helpers/invoke'
 import { CompactionCard } from '@/components/templates/CompactionCard'
-import { i18n } from '@/lib/i18n'
+import { i18n, t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 
 vi.mock('@/lib/logger', () => ({
@@ -93,6 +94,16 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
+const TITLE = t('compaction.title')
+
+/** Opens the card, which starts collapsed, and waits for its stats. */
+async function expandCard(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole('button', { name: TITLE }))
+  await waitFor(() => {
+    expect(screen.getByTestId('compaction-total-ops')).toBeInTheDocument()
+  })
+}
+
 describe('CompactionCard', () => {
   it('shows loading skeleton while fetching', () => {
     const pending = deferred<CommandReturns['get_compaction_status']>()
@@ -100,18 +111,17 @@ describe('CompactionCard', () => {
 
     render(<CompactionCard />)
 
-    // Panel is collapsed by default — expand it
-    // Actually, loading happens on mount but content is collapsed.
-    // The card header should be visible.
-    expect(screen.getByText('Op Log Compaction')).toBeInTheDocument()
+    // Loading happens on mount but content is collapsed; the header shows.
+    expect(screen.getByText(TITLE)).toBeInTheDocument()
   })
 
-  it('shows stats when loaded (auto-expanded with eligible_ops > 0)', async () => {
+  it('shows stats when loaded and expanded', async () => {
+    const user = userEvent.setup()
     stubCompaction()
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
-    // Auto-expanded by since eligible_ops > 0; wait for stats to load.
     await waitFor(() => {
       expect(screen.getByTestId('compaction-total-ops')).toHaveTextContent('1500')
     })
@@ -133,10 +143,12 @@ describe('CompactionCard', () => {
     // `fetchStatus`'s `useCallback` deps on `t`, and `i18n.changeLanguage`
     // gives `t` a new identity, so the mount effect can re-fire it here; a
     // command-keyed handler answers every call, not just the first.
+    const user = userEvent.setup()
     stubCompaction()
     try {
       await i18n.changeLanguage('es')
       render(<CompactionCard />)
+      await user.click(screen.getByRole('button', { name: i18n.t('compaction.title') }))
       await waitFor(() => {
         expect(screen.getByTestId('compaction-oldest-date')).toHaveTextContent('15/6/2024')
       })
@@ -146,11 +158,12 @@ describe('CompactionCard', () => {
   })
 
   it('shows N/A when oldest_op_date is null', async () => {
+    const user = userEvent.setup()
     stubCompaction({ get_compaction_status: () => ({ ...defaultStatus, oldest_op_date: null }) })
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
-    // Auto-expanded since eligible_ops > 0.
     await waitFor(() => {
       expect(screen.getByTestId('compaction-oldest-date')).toHaveTextContent('N/A')
     })
@@ -162,7 +175,7 @@ describe('CompactionCard', () => {
 
     render(<CompactionCard />)
 
-    await user.click(screen.getByText('Op Log Compaction'))
+    await user.click(screen.getByText(TITLE))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-total-ops')).toHaveTextContent('42')
@@ -173,11 +186,12 @@ describe('CompactionCard', () => {
   })
 
   it('"Compact Now" is enabled when eligible_ops > 0', async () => {
+    const user = userEvent.setup()
     stubCompaction()
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
-    // Auto-expanded since eligible_ops > 0.
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
     })
@@ -191,6 +205,7 @@ describe('CompactionCard', () => {
     stubCompaction()
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
@@ -206,6 +221,7 @@ describe('CompactionCard', () => {
     stubCompaction()
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
@@ -227,6 +243,7 @@ describe('CompactionCard', () => {
     stubCompaction({ get_compaction_status: () => ({ ...defaultStatus, eligible_ops: 1 }) })
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('1')
@@ -250,6 +267,7 @@ describe('CompactionCard', () => {
     )
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('1')
@@ -268,6 +286,7 @@ describe('CompactionCard', () => {
     stubCompactionRun(defaultStatus, () => ({ ops_deleted: 300 }), emptyStatus)
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
@@ -295,6 +314,7 @@ describe('CompactionCard', () => {
     })
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
@@ -318,7 +338,7 @@ describe('CompactionCard', () => {
     render(<CompactionCard />)
 
     // Expand to trigger visible loading
-    await user.click(screen.getByText('Op Log Compaction'))
+    await user.click(screen.getByText(TITLE))
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to load compaction status')
@@ -333,7 +353,7 @@ describe('CompactionCard', () => {
     render(<CompactionCard />)
 
     // Expand to trigger visible loading
-    await user.click(screen.getByText('Op Log Compaction'))
+    await user.click(screen.getByText(TITLE))
 
     await waitFor(() => {
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
@@ -354,6 +374,7 @@ describe('CompactionCard', () => {
     stubCompaction({ compact_op_log_cmd: () => Promise.reject(err) })
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
@@ -384,6 +405,7 @@ describe('CompactionCard', () => {
     stubCompaction()
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
@@ -408,6 +430,7 @@ describe('CompactionCard', () => {
     stubCompaction()
 
     render(<CompactionCard />)
+    await user.click(screen.getByRole('button', { name: TITLE }))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
@@ -433,39 +456,34 @@ describe('CompactionCard', () => {
 
     render(<CompactionCard />)
 
-    // With eligible_ops=0, no auto-expand — stats should not be visible.
     expect(screen.queryByTestId('compaction-total-ops')).not.toBeInTheDocument()
 
     // Expand
-    await user.click(screen.getByText('Op Log Compaction'))
+    await user.click(screen.getByText(TITLE))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-total-ops')).toBeInTheDocument()
     })
 
     // Collapse
-    await user.click(screen.getByText('Op Log Compaction'))
+    await user.click(screen.getByText(TITLE))
 
     expect(screen.queryByTestId('compaction-total-ops')).not.toBeInTheDocument()
   })
 
   it('has no a11y violations when expanded with stats', async () => {
+    const user = userEvent.setup()
     stubCompaction()
 
     const { container } = render(<CompactionCard />)
-
-    // Auto-expanded since eligible_ops > 0.
-    await waitFor(() => {
-      expect(screen.getByTestId('compaction-total-ops')).toBeInTheDocument()
-    })
+    await expandCard(user)
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 
   it('has no a11y violations when collapsed', async () => {
-    // Use emptyStatus so the card stays collapsed (eligible_ops=0).
-    stubCompaction({ get_compaction_status: () => emptyStatus })
+    stubCompaction()
 
     const { container } = render(<CompactionCard />)
 
@@ -477,65 +495,26 @@ describe('CompactionCard', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // Auto-expand the card on mount when there are eligible ops to act on,
-  // so users see the action surface instead of a silent collapsed header.
-  describe(' auto-expand on eligible ops', () => {
-    it('starts collapsed when eligible_ops is 0', async () => {
-      stubCompaction({ get_compaction_status: () => emptyStatus })
-
-      render(<CompactionCard />)
-
-      // Wait for status fetch to settle, then assert still collapsed.
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('get_compaction_status')
-      })
-
-      expect(screen.queryByTestId('compaction-total-ops')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('compaction-eligible-ops')).not.toBeInTheDocument()
-    })
-
-    it('auto-expands on mount when eligible_ops > 0', async () => {
-      stubCompaction()
-
-      render(<CompactionCard />)
-
-      // Stats become visible without any user click — auto-expanded.
-      await waitFor(() => {
-        expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
-      })
-      expect(screen.getByTestId('compaction-total-ops')).toBeInTheDocument()
-    })
-
-    it('auto-expand fires only once per mount; user-collapse is sticky even when eligible_ops grows', async () => {
+  // #6535 — History opens on the operations, not on a red destructive button:
+  // the card stays collapsed even when there are ops it could remove.
+  describe('collapsed by default', () => {
+    it('keeps Compact Now hidden after a status with eligible ops loads', async () => {
       const user = userEvent.setup()
-      // Initial fetch (eligible=300) auto-expands; the post-compaction refresh
-      // reports 999, which must NOT re-trigger it.
-      stubCompactionRun(defaultStatus, () => ({ ops_deleted: 0 }), {
-        ...defaultStatus,
-        eligible_ops: 999,
-      })
+      const pending = deferred<CommandReturns['get_compaction_status']>()
+      stubCompaction({ get_compaction_status: () => pending.promise })
 
       render(<CompactionCard />)
-
-      // Initial auto-expand on mount with eligible_ops=300.
-      await waitFor(() => {
-        expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
+      await act(async () => {
+        pending.resolve(defaultStatus)
       })
 
-      // Drive a status refresh through the post-compaction path. eligible_ops
-      // jumps 300 → 999. A naive impl that re-derived collapsed from
-      // `eligible > 0` on every render would treat this as another auto-expand
-      // signal; the useRef-once guard ensures it does not.
-      await user.click(screen.getByRole('button', { name: /Compact Now/i }))
-      await user.click(screen.getByRole('button', { name: /^Compact$/i }))
-      await waitFor(() => {
-        expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('999')
-      })
+      expect(screen.getByRole('button', { name: TITLE })).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByRole('button', { name: /Compact Now/i })).not.toBeInTheDocument()
 
-      // User manually collapses. If the auto-expand mechanism were re-firing
-      // on every status change, this click would be undone immediately.
-      await user.click(screen.getByText('Op Log Compaction'))
-      expect(screen.queryByTestId('compaction-eligible-ops')).not.toBeInTheDocument()
+      // The status had loaded: expanding shows it without another fetch.
+      await user.click(screen.getByRole('button', { name: TITLE }))
+      expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
     })
   })
 })

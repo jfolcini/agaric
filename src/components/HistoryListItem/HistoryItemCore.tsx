@@ -1,7 +1,7 @@
 /**
  * HistoryItemCore --- shared visual elements for a history row.
  *
- * Renders the op-type badge, timestamp, device id, content preview, and
+ * Renders the op-type badge, timestamp, device name, content preview, and
  * optional diff-toggle button. Reused by both the top-level
  * `HistoryListItem` (the global history grid row) and `BlockHistoryItem`
  * (the per-block history sheet row).
@@ -36,12 +36,13 @@ import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import type { HistoryEntry } from '@/lib/bindings'
-import { formatTimestamp } from '@/lib/format'
+import { formatTimestamp, truncateId } from '@/lib/format'
 import { formatRelativeTime } from '@/lib/format-relative-time'
-import { getPayloadRawContent, getPropertyPayload } from '@/lib/history-utils'
+import { getPayloadRawContent, getPropertyPayload, opTypeLabel } from '@/lib/history-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
+import { useSyncStore } from '@/stores/sync'
 
 // ---------------------------------------------------------------------------
 // Plain-text ops
@@ -174,6 +175,14 @@ export function HistoryItemCore({
   const isPlainTextOp = isPlainTextOpType(entry.op_type)
   const richCallbacks = useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
+  // A local op was written here; a replicated one by a paired device, named
+  // as the device list names it, its truncated id until it has a name.
+  const peerName = useSyncStore((s) =>
+    entry.is_replicated ? s.peers.find((p) => p.peerId === entry.device_id)?.name : null,
+  )
+  const deviceName = entry.is_replicated
+    ? (peerName ?? truncateId(entry.device_id))
+    : t('device.thisDevice')
 
   // #1623 — memoize the recursive-descent parse of the content preview so a
   // parent re-render (selection/focus churn in the history list) doesn't
@@ -229,12 +238,13 @@ export function HistoryItemCore({
               opBadgeClasses(entry.op_type),
             )}
             data-testid="history-type-badge"
+            data-op-type={entry.op_type}
           >
             {(() => {
               const IconComponent = opIcon(entry.op_type)
               return <IconComponent className="h-3 w-3 mr-1" />
             })()}
-            {entry.op_type}
+            {opTypeLabel(entry.op_type, t)}
           </Badge>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -271,12 +281,12 @@ export function HistoryItemCore({
         </div>
         {/* Its own grid cell, not part of the meta line: beside it on a wide
             row, and under a phone row's actions (`history-row-cell`), so a
-            real device id never takes a line of its own. The separator stays
-            with the id. It truncates rather than overflow: in the block
+            device name never takes a line of its own. The separator stays
+            with the name. It truncates rather than overflow: in the block
             history sheet it shares the row with the op type and the time. */}
         <span className="history-item-device-group min-w-0 truncate text-xs text-muted-foreground">
           <span aria-hidden="true">· </span>
-          <span className="history-item-device">dev:{entry.device_id.slice(0, 8)}</span>
+          <span className="history-item-device">{deviceName}</span>
         </span>
         {/* Content preview */}
         {propPayload && (

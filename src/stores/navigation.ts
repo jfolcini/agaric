@@ -63,6 +63,12 @@ export type NavLocation =
   | { kind: 'page'; tabId: string; pageId: string; title: string }
   | { kind: 'view'; view: Exclude<View, 'journal' | 'page-editor'> }
 
+/** The page a History view is scoped to. */
+export interface HistoryPageScope {
+  id: string
+  title: string
+}
+
 export interface NavHistory {
   entries: NavLocation[]
   index: number
@@ -108,6 +114,13 @@ interface NavigationStore {
    */
   pendingPropertyReview: string | null
   /**
+   * #6535 — transient handoff slot: the page whose history the page menu's
+   * *Page history* row opens, written before it switches to `'history'`.
+   * `HistoryView` consumes and clears it. NOT persisted (excluded from
+   * `partialize`).
+   */
+  pendingHistoryPage: HistoryPageScope | null
+  /**
    * Back / Forward history per space (a page id means nothing in another
    * space). In memory only: excluded from `partialize`, so it starts empty
    * on each launch.
@@ -126,6 +139,8 @@ interface NavigationStore {
   setPendingSettingsTab: (tab: string | null) => void
   /** Write or clear the pending property-review handoff slot (#6206). */
   setPendingPropertyReview: (key: string | null) => void
+  /** Write or clear the pending page-history handoff slot (#6535). */
+  setPendingHistoryPage: (page: HistoryPageScope | null) => void
   /** Replace a space's Back / Forward history. Written only by `@/stores/navigation-history`. */
   setNavHistory: (spaceKey: string, history: NavHistory) => void
 }
@@ -267,6 +282,7 @@ export const useNavigationStore = create<NavigationStore>()(
       pendingPageBrowserFilter: null,
       pendingSettingsTab: null,
       pendingPropertyReview: null,
+      pendingHistoryPage: null,
       navHistoryBySpace: {},
 
       setView: (view: View) => {
@@ -291,6 +307,10 @@ export const useNavigationStore = create<NavigationStore>()(
 
       setPendingPropertyReview: (key: string | null) => {
         set({ pendingPropertyReview: key })
+      },
+
+      setPendingHistoryPage: (page: HistoryPageScope | null) => {
+        set({ pendingHistoryPage: page })
       },
 
       setNavHistory: (spaceKey: string, history: NavHistory) => {

@@ -1,7 +1,16 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import type { HistoryEntry } from '@/lib/bindings'
-import { getPayloadRawContent, getPropertyPayload, parsePayloadObject } from '@/lib/history-utils'
+import {
+  getPayloadRawContent,
+  getPropertyPayload,
+  OP_TYPE_LABEL_KEYS,
+  parsePayloadObject,
+} from '@/lib/history-utils'
+import { t } from '@/lib/i18n'
 
 function makeEntry(payload: string, opType = 'edit_block'): HistoryEntry {
   return {
@@ -462,5 +471,24 @@ describe('parsePayloadObject', () => {
     ['a number', '3'],
   ])('returns null for %s', (_label, payload) => {
     expect(parsePayloadObject(payload)).toBeNull()
+  })
+})
+
+describe('OP_TYPE_LABEL_KEYS', () => {
+  // The Rust `OpType::as_str` arms are the op types the backend can write; a
+  // variant added there without a label here would show its raw name.
+  it('labels every op type the backend writes, and nothing else', () => {
+    const opRs = readFileSync(
+      path.resolve(import.meta.dirname, '../../../src-tauri/agaric-store/src/op.rs'),
+      'utf8',
+    )
+    const asStr = opRs.match(/pub fn as_str\(&self\) -> &'static str \{([\s\S]*?)\n {4}\}/)
+    if (!asStr?.[1]) throw new Error('Could not locate `OpType::as_str` in op.rs')
+    const backendOpTypes = [...asStr[1].matchAll(/OpType::\w+ => "([a-z_]+)"/g)].map((m) => m[1])
+    expect(new Set(Object.keys(OP_TYPE_LABEL_KEYS))).toEqual(new Set(backendOpTypes))
+  })
+
+  it('points every op type at a key the catalog has', () => {
+    for (const key of Object.values(OP_TYPE_LABEL_KEYS)) expect(t(key)).not.toBe(key)
   })
 })
