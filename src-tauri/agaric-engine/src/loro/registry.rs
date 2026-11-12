@@ -53,7 +53,7 @@
 //!
 //! Callers hold an owned, `Arc`-backed engine guard ([`EngineGuard`]),
 //! so an engine can outlive its map entry: a
-//! `clear` (snapshot RESET) or an
+//! `clear` (test-only) or an
 //! [`install_engine`](LoroEngineRegistry::install_engine) replacement
 //! racing an in-flight engine operation detaches that engine from the
 //! map. The in-flight operation completes against the detached engine,
