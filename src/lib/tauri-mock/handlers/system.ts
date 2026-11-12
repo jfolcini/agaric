@@ -19,6 +19,13 @@ const MIRROR_FOLDER_KEY = 'mirror.folder'
 const MIRROR_READ_BACK_KEY = 'mirror.read_back'
 /** The `app_settings` key holding `'true'` while attachments are copied into the folder. */
 const MIRROR_COPY_FILES_KEY = 'mirror.copy_files'
+/** The `app_settings` key holding the unmirrored spaces' ids, as a JSON array. */
+const MIRROR_UNMIRRORED_KEY = 'mirror.unmirrored_spaces'
+
+function unmirroredSpaces(): string[] {
+  const stored = appSettings.get(MIRROR_UNMIRRORED_KEY)
+  return stored === undefined ? [] : (JSON.parse(stored) as string[])
+}
 /** What the mock's folder dialog answers: there is no OS dialog to drive. */
 const MOCK_MIRROR_FOLDER = '/home/mock/Agaric mirror'
 
@@ -33,6 +40,7 @@ function mirrorStatus(): MirrorStatus {
     read_back: appSettings.get(MIRROR_READ_BACK_KEY) !== 'false',
     pending: [],
     copy_files: appSettings.get(MIRROR_COPY_FILES_KEY) === 'true',
+    unmirrored_spaces: unmirroredSpaces(),
   }
 }
 
@@ -166,6 +174,13 @@ export const systemHandlers = {
     } else appSettings.delete(MIRROR_FOLDER_KEY)
     return mirrorStatus()
   },
+  set_mirror_space: (args) => {
+    const { spaceId, mirrored } = args as { spaceId: string; mirrored: boolean }
+    const id = spaceId.toUpperCase()
+    const others = unmirroredSpaces().filter((space) => space !== id)
+    appSettings.set(MIRROR_UNMIRRORED_KEY, JSON.stringify(mirrored ? others : [...others, id]))
+    return mirrorStatus()
+  },
   set_mirror_read_back: (args) => {
     appSettings.set(MIRROR_READ_BACK_KEY, String((args as { on?: unknown }).on === true))
     return mirrorStatus()
@@ -199,5 +214,6 @@ export const systemHandlers = {
   | 'set_mirror_folder'
   | 'set_mirror_read_back'
   | 'set_mirror_copy_files'
+  | 'set_mirror_space'
   | 'get_mirror_status'
 >

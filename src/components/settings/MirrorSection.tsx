@@ -34,16 +34,19 @@ import { commands, type MirrorStatus } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { useSpaceStore } from '@/stores/space'
 
 const MODULE = 'MirrorSection'
 
-type Action = 'choose' | 'off' | 'readBack'
+type Action = 'choose' | 'off' | 'readBack' | 'space'
 
 export function MirrorSection(): React.ReactElement | null {
   const { t } = useTranslation()
   const divergedHeadingId = useId()
   const failedHeadingId = useId()
   const readBackId = useId()
+  const spacesHeadingId = useId()
+  const spaces = useSpaceStore((s) => s.availableSpaces)
   const [status, setStatus] = useState<MirrorStatus | null>(null)
   const [pending, setPending] = useState<Action | null>(null)
   // Reading back for the next folder chosen, while the mirror is off.
@@ -100,6 +103,21 @@ export function MirrorSection(): React.ReactElement | null {
       }
     },
     [t, load],
+  )
+
+  const setSpaceMirrored = useCallback(
+    async (spaceId: string, mirrored: boolean) => {
+      setPending('space')
+      try {
+        setStatus(unwrap(await commands.setMirrorSpace(spaceId, mirrored)))
+      } catch (err) {
+        logger.error(MODULE, 'failed to change which spaces are mirrored', undefined, err)
+        notify.error(t('data.mirrorSpaceFailed', { reason: formatErrorForDisplay(err) }))
+      } finally {
+        setPending(null)
+      }
+    },
+    [t],
   )
 
   const onReadBackChange = (on: boolean): void => {
@@ -176,6 +194,30 @@ export function MirrorSection(): React.ReactElement | null {
             onCheckedChange={onReadBackChange}
           />
         </SettingRow>
+
+        {spaces.length > 1 && (
+          <div className="space-y-2">
+            <p id={spacesHeadingId} className="text-sm font-medium">
+              {t('data.mirrorSpacesHeading')}
+            </p>
+            <ul aria-labelledby={spacesHeadingId} className="space-y-2">
+              {spaces.map((space) => (
+                <li key={space.id}>
+                  <SettingRow label={space.name} controlId={`mirror-space-${space.id}`}>
+                    <Switch
+                      id={`mirror-space-${space.id}`}
+                      checked={!status.unmirrored_spaces.includes(space.id)}
+                      disabled={pending !== null}
+                      onCheckedChange={(mirrored) => {
+                        void setSpaceMirrored(space.id, mirrored)
+                      }}
+                    />
+                  </SettingRow>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <ConfirmDialog
           open={askToReadPending}

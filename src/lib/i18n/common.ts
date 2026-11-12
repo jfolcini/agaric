@@ -554,6 +554,8 @@ export const common: Record<string, string> = {
   'data.mirrorReadBackDesc':
     'Edits, new files, renames and moves made to the files outside Agaric are read back into Agaric. Off, Agaric still writes the files and never overwrites one changed elsewhere.',
   'data.mirrorReadBackFailed': 'Reading changes back was not changed: {{reason}}',
+  'data.mirrorSpacesHeading': 'Spaces mirrored',
+  'data.mirrorSpaceFailed': 'Which spaces are mirrored was not changed: {{reason}}',
   'data.mirrorReadPendingTitle': 'Read in what changed?',
   'data.mirrorReadPendingDesc_one':
     'This file changed outside Agaric while reading back was off. Turning it on reads it in.',

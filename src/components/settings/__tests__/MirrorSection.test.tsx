@@ -19,12 +19,18 @@ import type { AppError, MirrorStatus } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { useSpaceStore } from '@/stores/space'
 
 vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
 const PICKED = '/home/me/Notes mirror'
+
+const SPACES = [
+  { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null },
+  { id: 'SPACE_WORK', name: 'Work', accent_color: null },
+] as unknown as ReturnType<typeof useSpaceStore.getState>['availableSpaces']
 
 const refusedTurnOn: AppError = {
   kind: 'validation',
@@ -36,6 +42,7 @@ let folder: string | null
 let picked: string | null
 let readBack: boolean
 let pendingFiles: string[]
+let unmirrored: string[]
 let extra: Partial<MirrorStatus>
 
 function status(): MirrorStatus {
@@ -49,6 +56,7 @@ function status(): MirrorStatus {
     read_back: readBack,
     pending: readBack ? [] : pendingFiles,
     copy_files: false,
+    unmirrored_spaces: unmirrored,
     ...extra,
   }
 }
@@ -65,7 +73,9 @@ beforeEach(() => {
   picked = PICKED
   readBack = true
   pendingFiles = []
+  unmirrored = []
   extra = {}
+  useSpaceStore.setState({ availableSpaces: [] })
   stubInvoke(vi.mocked(invoke), {
     get_mirror_status: () => status(),
     pick_mirror_folder: () => picked,
@@ -74,6 +84,12 @@ beforeEach(() => {
       folder = args['path'] as string | null
       // Taken only when the mirror turns on, as the backend takes it.
       if (folder !== null && !wasOn) readBack = args['readBack'] as boolean
+      return status()
+    },
+    set_mirror_space: (args) => {
+      const id = args['spaceId'] as string
+      unmirrored = unmirrored.filter((space) => space !== id)
+      if (args['mirrored'] !== true) unmirrored.push(id)
       return status()
     },
     set_mirror_read_back: (args) => {
@@ -355,6 +371,67 @@ describe('MirrorSection', () => {
 
     await waitFor(async () => {
       expect(await axe(baseElement)).toHaveNoViolations()
+    })
+  })
+
+  it('lists each space with a switch, and turning one off keeps the others mirrored', async () => {
+    useSpaceStore.setState({ availableSpaces: SPACES })
+    folder = PICKED
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    const personal = screen.getByRole('switch', { name: 'Personal' })
+    const work = screen.getByRole('switch', { name: 'Work' })
+    expect(personal).toBeChecked()
+    expect(work).toBeChecked()
+    await user.click(work)
+
+    await waitFor(async () => {
+      expect((await storedStatus()).unmirrored_spaces).toEqual(['SPACE_WORK'])
+    })
+    expect(screen.getByRole('switch', { name: 'Work' })).not.toBeChecked()
+    expect(screen.getByRole('switch', { name: 'Personal' })).toBeChecked()
+
+    await user.click(screen.getByRole('switch', { name: 'Work' }))
+    await waitFor(async () => {
+      expect((await storedStatus()).unmirrored_spaces).toEqual([])
+    })
+  })
+
+  it('a refused space change says why and keeps the switch as it was', async () => {
+    useSpaceStore.setState({ availableSpaces: SPACES })
+    folder = PICKED
+    const refusal: AppError = { kind: 'validation', message: 'no space SPACE_WORK' }
+    stubInvoke(vi.mocked(invoke), {
+      get_mirror_status: () => status(),
+      set_mirror_space: () => Promise.reject(refusal),
+    })
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('switch', { name: 'Work' }))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        t('data.mirrorSpaceFailed', { reason: refusal.message }),
+      )
+    })
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'MirrorSection',
+      'failed to change which spaces are mirrored',
+      undefined,
+      refusal,
+    )
+    expect(screen.getByRole('switch', { name: 'Work' })).toBeChecked()
+  })
+
+  it('has no a11y violations with the spaces listed', async () => {
+    useSpaceStore.setState({ availableSpaces: SPACES })
+    folder = PICKED
+    unmirrored = ['SPACE_WORK']
+    const { container } = await renderLoaded()
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 
