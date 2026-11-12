@@ -114,7 +114,7 @@ Supported query types:
 
 The result is paginated, sortable, and respects the active space.
 
-A query shown as a table derives its columns from the properties the loaded rows carry, until you pick them: the columns button beside the edit button shows, hides and orders them, and the choice is written into the query block, so it syncs with it and the table keeps its shape as rows change. *Columns from the results* goes back to deriving them. Content comes first and the page last either way. Markdown export keeps the choice for a text query (`columns:a,b`) but not yet for a structured (`v2:`) one. A task's state shows in a list row as the block's checkbox, drawn but not clickable.
+A query shown as a table derives its columns from the properties the loaded rows carry, until you pick them: the columns button beside the edit button shows, hides and orders them, and the choice is written into the query block, so it syncs with it and the table keeps its shape as rows change. *Columns from the results* goes back to deriving them. Content comes first and the page last either way. Markdown export keeps the choice for a text query (`columns:a,b`) and for a structured (`v2:`) one. A task's state shows in a list row as the block's checkbox, drawn but not clickable.
 
 ## Tag references in property values
 
