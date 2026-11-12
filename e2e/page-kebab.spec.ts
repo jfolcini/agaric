@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+
 import type { Locator, Page } from '@playwright/test'
 
 import {
@@ -19,7 +21,7 @@ import {
  * the keyboard; Insert emoji opens the picker that writes into the page title
  * (`handleTitleEmojiSelect` in `PageHeader`). Both run against the mock and are
  * read back after reopening the page. Copy app link (#6555) is read back from the
- * mock's clipboard.
+ * mock's clipboard, and Save as Markdown file (#6546) from the downloaded file.
  */
 
 // SEED_IDS.BLOCK_GS_1 / BLOCK_GS_3 and their seed text (src/lib/tauri-mock/seed.ts).
@@ -99,5 +101,25 @@ test.describe('Page actions menu @pages', () => {
 
     await expect(page.getByText('App link copied to clipboard', { exact: true })).toBeVisible()
     expect(await readClipboard(page)).toBe(`agaric://page/${QUICK_NOTES}`)
+  })
+
+  test('Save as Markdown file downloads what Export as Markdown copies, named after the page', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Quick Notes')
+    await pageAction(page, /^Export as Markdown/)
+    const copied = await readClipboard(page)
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      pageAction(page, 'Save as Markdown file'),
+    ])
+
+    expect(download.suggestedFilename()).toBe('Quick Notes.md')
+    const saved = await readFile(await download.path(), 'utf8')
+    expect(saved).toContain('# Quick Notes')
+    expect(saved).toBe(copied)
+    await expect(page.getByText('Saved Quick Notes.md to Downloads', { exact: true })).toBeVisible()
   })
 })
