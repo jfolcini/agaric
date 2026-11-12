@@ -19,6 +19,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  clickUncovered,
   clipboardText,
   confirmDialog,
   importMarkdownPage,
@@ -89,9 +90,9 @@ async function pageAction(item: string): Promise<void> {
   const kebab = $('button[aria-label="Page actions"]')
   await kebab.waitForClickable({ timeout: ACTION_TIMEOUT })
   await kebab.click()
-  const entry = $('[role="menu"]').$(`[role="menuitem"]*=${item}`)
-  await entry.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await entry.click()
+  // The menu's last rows reach the toast corner of the lane's window, where a
+  // toast from the step before takes a plain click.
+  await clickUncovered($('[role="menu"]').$(`[role="menuitem"]*=${item}`), item)
 }
 
 /**
