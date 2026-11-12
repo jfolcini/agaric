@@ -103,7 +103,7 @@ export function MermaidCodeBlockView(props: NodeViewProps): React.ReactElement {
           // contentEditable=false so the toggle button itself is never part of
           // the editable surface / selection.
           contentEditable={false}
-          className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+          className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline focus-ring-visible"
           data-testid="mermaid-toggle-source"
           aria-pressed={showSource}
           // preventDefault on mousedown so clicking the toggle does NOT blur the

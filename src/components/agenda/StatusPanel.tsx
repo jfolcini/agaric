@@ -67,7 +67,7 @@ function MetricLabel({ label, tooltip }: { label: string; tooltip: string }): Re
           <button
             type="button"
             tabIndex={0}
-            className="cursor-help border-b border-dotted border-current bg-transparent p-0 font-inherit text-inherit"
+            className="cursor-help border-b border-dotted border-current bg-transparent p-0 font-inherit text-inherit focus-ring-visible"
           >
             {label}
           </button>

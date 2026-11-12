@@ -7430,7 +7430,7 @@ describe('#1258: page truncation notice', () => {
     const notice = await screen.findByTestId('page-truncated-notice')
     expect(notice).toBeInTheDocument()
     // Live-region role so the partial-display state is announced.
-    expect(notice).toHaveAttribute('role', 'status')
+    expect(notice).toHaveRole('status')
     expect(notice).toHaveTextContent(
       t('blockTree.truncatedNotice', { shown: tree.length, total: 12_345 }),
     )

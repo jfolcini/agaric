@@ -137,7 +137,7 @@ describe('RichContentRenderer', () => {
     const { container } = render(renderRichContent('```mermaid\ngraph TD; A-->B;\n```', {}))
     // Should render Suspense fallback (loading state) or the MermaidDiagram
     const loadingOrDiagram =
-      container.querySelector('[role="status"]') ??
+      container.querySelector('output') ??
       container.querySelector('[data-testid="mermaid-diagram"]')
     expect(loadingOrDiagram).toBeInTheDocument()
   })

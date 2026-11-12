@@ -54,7 +54,7 @@ export function SearchModeGroups({
               // an accidental subtitle. Matches Linear's match-source
               // pill convention.
               <span
-                className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground"
                 data-testid="palette-title-match-tag"
               >
                 {t('palette.titleMatchTag')}

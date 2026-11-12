@@ -7,11 +7,10 @@
  * Markdown, never with the syntax drawn.
  */
 
-import { createRequire } from 'node:module'
-
 import type { Locator, Page } from '@playwright/test'
 
 import {
+  axeViolations,
   expect,
   focusBlockById,
   ipc,
@@ -23,7 +22,6 @@ import {
   waitForBoot,
 } from './helpers'
 
-const axePath = createRequire(import.meta.url).resolve('axe-core')
 const SPACE = 'SPACE_PERSONAL'
 const PAGE_EDITOR = '[data-testid="page-mode-editor"]'
 const BLOCK_EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
@@ -246,7 +244,6 @@ test.describe('block syntax revealed around the cursor in page mode (#5691) @edi
     await caretAt(page, PAGE_EDITOR, 'plain end', 2)
     expect(await shownSyntax(page)).toEqual([])
 
-    await page.addScriptTag({ path: axePath })
     for (const [text, drawn] of [
       ['tip', ['> [!NOTE] ']],
       ['let', ['```ts', '```']],
@@ -255,12 +252,7 @@ test.describe('block syntax revealed around the cursor in page mode (#5691) @edi
       expect(await shownSyntax(page)).toEqual(drawn)
       // The code block's bubble fades in under the caret: measure it at rest.
       await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished)))
-      const violations = await page.evaluate(async () => {
-        // @ts-expect-error injected global
-        const results = await window.axe.run({ include: [['.page-editor']] })
-        return results.violations.map((v: { id: string }) => v.id)
-      })
-      expect(violations).toEqual([])
+      expect(await axeViolations(page, '.page-editor')).toEqual([])
     }
   })
 

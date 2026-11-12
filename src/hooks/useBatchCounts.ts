@@ -72,10 +72,7 @@ export function useBatchCounts(entries: DayEntry[]) {
     return () => {
       cancelled = true
     }
-    // `dates`/`pageIds` are intentionally consumed via their serialized keys so
-    // the effect re-runs only when the date range or page-id set actually
-    // changes, not when `entries` merely gets a new array identity (#1632).
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `dates`/`pageIds` arrive as their serialized keys, so a new `entries` array with the same dates does not re-run the effect (#1632)
   }, [datesKey, pageIdsKey, t, currentSpaceId, structureKey])
 
   return { agendaCounts, agendaCountsBySource, backlinkCounts }

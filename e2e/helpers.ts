@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module'
+
 import { test as baseTest, expect, type Locator, type Page } from '@playwright/test'
 
 // ---------------------------------------------------------------------------
@@ -722,6 +724,59 @@ export type TopLevelView = keyof typeof VIEW_HEADING
 export async function expectViewLoaded(page: Page, view: TopLevelView): Promise<void> {
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(VIEW_HEADING[view])
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
+}
+
+const AXE_PATH = createRequire(import.meta.url).resolve('axe-core')
+
+interface AxeNode {
+  html: string
+  target: string[]
+}
+interface AxeRuleResult {
+  id: string
+  nodes: AxeNode[]
+}
+interface AxeResults {
+  violations: AxeRuleResult[]
+  passes: AxeRuleResult[]
+  incomplete: AxeRuleResult[]
+}
+interface AxeRunOptions {
+  runOnly?: string[]
+  rules?: Record<string, { enabled: boolean }>
+}
+
+/**
+ * Run the bundled axe-core in the page over the element `scope` selects, or the
+ * whole document when it is omitted. A `scope` that matches nothing throws: a run
+ * over no element would report no violations.
+ */
+export async function runAxe(
+  page: Page,
+  scope?: string,
+  options: AxeRunOptions = {},
+): Promise<AxeResults> {
+  if (!(await page.evaluate(() => 'axe' in window))) await page.addScriptTag({ path: AXE_PATH })
+  return page.evaluate(
+    async ({ selector, opts }) => {
+      const context = selector === null ? document : document.querySelector(selector)
+      if (context === null) throw new Error(`runAxe: no element matches ${selector}`)
+      const { axe } = window as unknown as {
+        axe: { run: (c: Document | Element, o: AxeRunOptions) => Promise<AxeResults> }
+      }
+      return axe.run(context, opts)
+    },
+    { selector: scope ?? null, opts: options },
+  )
+}
+
+/** The ids of the axe rules violated inside `scope` (see `runAxe`). */
+export async function axeViolations(
+  page: Page,
+  scope?: string,
+  options?: AxeRunOptions,
+): Promise<string[]> {
+  return (await runAxe(page, scope, options)).violations.map((v) => v.id)
 }
 
 /**

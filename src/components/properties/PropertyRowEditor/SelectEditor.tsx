@@ -263,7 +263,7 @@ function SelectOptionRow({ opt, idx, state }: SelectOptionRowProps) {
       </Button>
       <button
         type="button"
-        className="shrink-0 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+        className="shrink-0 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95 focus-ring-visible"
         onClick={() => handleRemove(opt)}
         aria-label={t('pageProperty.removeOptionLabel', { option: opt })}
       >

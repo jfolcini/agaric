@@ -137,7 +137,7 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
   }
 
   if (pills.length === 0) {
-    return <span className="flex-1 text-[11px]">{expression}</span>
+    return <span className="flex-1 text-xs">{expression}</span>
   }
 
   return (
@@ -178,14 +178,12 @@ function SortPartialNotice({
   const { t } = useTranslation()
   if (loading || error || !tableMode || !hasMore || sortKey == null) return null
   return (
-    <p
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- announced as a status update when the user applies a sort; <output> would tie it to a form control that does not exist here
-      role="status"
+    <output
       data-testid="query-sort-partial-notice"
-      className="px-3 pb-1 text-xs text-muted-foreground"
+      className="block px-3 pb-1 text-xs text-muted-foreground"
     >
       {t('query.sortPartialNotice', { count: loadedCount })}
-    </p>
+    </output>
   )
 }
 
@@ -331,7 +329,7 @@ export function QueryResult({
       <div className="flex w-full items-center gap-0 text-xs font-medium text-muted-foreground">
         <button
           type="button"
-          className="flex flex-1 items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
+          className="flex flex-1 items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors focus-ring-visible"
           onClick={(e) => {
             e.stopPropagation()
             setCollapsed(!collapsed)

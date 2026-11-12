@@ -3,17 +3,7 @@
  * axe in a real browser is where every shipped theme is measured, light ones included.
  */
 
-import { createRequire } from 'node:module'
-
-import { expect, navigateToView, seedSearchBlocks, test, waitForBoot } from './helpers'
-
-const axePath = createRequire(import.meta.url).resolve('axe-core')
-
-interface AxeResult {
-  violations: Array<{ id: string; nodes: Array<{ html: string }> }>
-  passes: Array<{ id: string; nodes: Array<{ html: string }> }>
-  incomplete: Array<{ id: string; nodes: Array<{ html: string }> }>
-}
+import { expect, navigateToView, runAxe, seedSearchBlocks, test, waitForBoot } from './helpers'
 
 const THEMES = [
   'light',
@@ -68,16 +58,7 @@ for (const theme of THEMES) {
     await expect(page.locator('.hljs-comment')).toHaveCount(3)
     for (const token of HIGHLIGHTED) await expect(page.locator(token).first()).toBeVisible()
 
-    await page.addScriptTag({ path: axePath })
-    const result = await page.evaluate(() =>
-      (
-        window as unknown as {
-          axe: {
-            run: (el: Element, opts: { runOnly: string[] }) => Promise<AxeResult>
-          }
-        }
-      ).axe.run(document.body, { runOnly: ['color-contrast'] }),
-    )
+    const result = await runAxe(page, 'body', { runOnly: ['color-contrast'] })
 
     // Only the code blocks are under test here.
     const inCode = (n: { html: string }) => n.html.includes('hljs')

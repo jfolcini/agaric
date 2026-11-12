@@ -93,7 +93,7 @@ function DueDateChipInner({
     <button
       type="button"
       className={cn(
-        'agenda-results-due touch-hit-area inline-flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none [@media(pointer:coarse)]:text-sm [@media(pointer:coarse)]:py-1 cursor-pointer hover:ring-1 hover:ring-ring',
+        'agenda-results-due touch-hit-area inline-flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none [@media(pointer:coarse)]:text-sm [@media(pointer:coarse)]:py-1 cursor-pointer hover:ring-1 hover:ring-ring focus-ring-visible',
         dueDateColor(dueDate),
       )}
       onClick={(e) => e.stopPropagation()}
@@ -549,7 +549,7 @@ function BlockListItemInner({
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="reschedule-btn hidden [@media(pointer:coarse)]:inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors touch-target"
+              className="reschedule-btn hidden [@media(pointer:coarse)]:inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors touch-target focus-ring-visible"
               aria-label={t('block.reschedule')}
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => e.stopPropagation()}

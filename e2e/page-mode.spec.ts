@@ -12,12 +12,11 @@
  * `{{` pickers.
  */
 
-import { createRequire } from 'node:module'
-
 import type { Locator, Page } from '@playwright/test'
 
 import {
   activeSuggestionPopup,
+  axeViolations,
   blurEditors,
   emitMockEvent,
   expect,
@@ -28,12 +27,12 @@ import {
   readClipboard,
   reopenPage,
   replaceEditorText,
+  runAxe,
   selectEditorRange,
   test,
   waitForBoot,
 } from './helpers'
 
-const axePath = createRequire(import.meta.url).resolve('axe-core')
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const EDITOR = '[data-testid="page-mode-editor"]'
 /** A 1×1 PNG, enough for the browser to decode as an image. */
@@ -224,25 +223,11 @@ test.describe('page mode (#5691) @editor @pages', () => {
     expect(blocks[4]).toEqual({ id: seeded.ids[4], depth: 1, text: 'block 4' })
     await expect(modeSwitch(page, 'Page')).toHaveAttribute('aria-checked', 'true')
 
-    await page.addScriptTag({ path: axePath })
-    const violations = await page.evaluate(async () => {
-      const run = (
-        window as unknown as {
-          axe: {
-            run: (el: Element) => Promise<{ violations: Array<{ id: string; nodes: unknown[] }> }>
-          }
-        }
-      ).axe.run
-      const found: Array<{ id: string; count: number }> = []
-      // The switch may sit in the app header, outside the page's own column.
-      for (const selector of ['.page-editor', '[role="radiogroup"]']) {
-        // axe allows one run at a time.
-        const { violations: list } = await run(document.querySelector(selector) as Element)
-        found.push(...list.map((v) => ({ id: v.id, count: v.nodes.length })))
-      }
-      return found
-    })
-    expect(violations).toEqual([])
+    // The switch may sit in the app header, outside the page's own column.
+    for (const selector of ['.page-editor', '[role="radiogroup"]']) {
+      const { violations } = await runAxe(page, selector)
+      expect(violations.map((v) => ({ id: v.id, count: v.nodes.length }))).toEqual([])
+    }
   })
 
   test('typing saves after a pause, and only the block typed in', async ({ page }) => {
@@ -796,15 +781,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await openViaPalette(page, 'Getting Started')
     await openViaPalette(page, 'Typed tags')
     await expect(page.locator('.page-editor [data-testid="tag-ref-chip"]')).toHaveText('newtag')
-    await page.addScriptTag({ path: axePath })
-    const violations = await page.evaluate(async () => {
-      const { axe } = window as unknown as {
-        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-      }
-      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
-      return found.map((v) => v.id)
-    })
-    expect(violations).toEqual([])
+    expect(await axeViolations(page, '.page-editor')).toEqual([])
   })
 
   // A press on the switch keeps the focus in the block being edited: its text is
@@ -923,15 +900,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
       'shipped',
       'plain',
     ])
-    await page.addScriptTag({ path: axePath })
-    const violations = await page.evaluate(async () => {
-      const { axe } = window as unknown as {
-        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-      }
-      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
-      return found.map((v) => v.id)
-    })
-    expect(violations).toEqual([])
+    expect(await axeViolations(page, '.page-editor')).toEqual([])
   })
 
   test('a page of priorities and dates opens in page mode; the keys, the badge and the picker set them, and they stay', async ({
@@ -1014,15 +983,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect(inBlock(ids[1], '.scheduled-chip')).toHaveText('Nov 1')
     expect(await row(ids[1])).toMatchObject({ priority: null, scheduled_date: '2026-11-01' })
     expect(await backend(page, pageId)).toEqual(await shown(page))
-    await page.addScriptTag({ path: axePath })
-    const violations = await page.evaluate(async () => {
-      const { axe } = window as unknown as {
-        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-      }
-      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
-      return found.map((v) => v.id)
-    })
-    expect(violations).toEqual([])
+    expect(await axeViolations(page, '.page-editor')).toEqual([])
   })
 
   test('a page of properties and a repeating task opens in page mode; a chip and a typed line set them, and they stay', async ({
@@ -1110,15 +1071,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
       'Repeats every 1 week',
     )
     expect(await backend(page, pageId)).toEqual(await shown(page))
-    await page.addScriptTag({ path: axePath })
-    const violations = await page.evaluate(async () => {
-      const { axe } = window as unknown as {
-        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-      }
-      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
-      return found.map((v) => v.id)
-    })
-    expect(violations).toEqual([])
+    expect(await axeViolations(page, '.page-editor')).toEqual([])
   })
 
   // At a smaller font a date chip is shorter than a property chip; the narrow width covers the phone layout.
@@ -1226,17 +1179,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
       await expect(block(last - 7).locator('[data-testid="priority-badge"]')).toHaveText('P1')
       await expect(marker(count / 2)).toHaveCount(0)
 
-      await page.addScriptTag({ path: axePath })
-      const violations = await page.evaluate(async () => {
-        const { axe } = window as unknown as {
-          axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-        }
-        const { violations: found } = await axe.run(
-          document.querySelector('.page-editor') as Element,
-        )
-        return found.map((v) => v.id)
-      })
-      expect(violations).toEqual([])
+      expect(await axeViolations(page, '.page-editor')).toEqual([])
     })
   }
 
@@ -1356,15 +1299,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(8)
     await expect.poll(markers).toEqual(['•', '1.', '1.', '2.', '', '1.', '2.', ''])
     expect(await backend(page, pageId)).toEqual(await shown(page))
-    await page.addScriptTag({ path: axePath })
-    const violations = await page.evaluate(async () => {
-      const { axe } = window as unknown as {
-        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-      }
-      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
-      return found.map((v) => v.id)
-    })
-    expect(violations).toEqual([])
+    expect(await axeViolations(page, '.page-editor')).toEqual([])
   })
 
   test('a heading carrying a list style shows no marker, and a block is no formatting context of its own', async ({
@@ -1477,15 +1412,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect(inBlock(ids[0], 'img[alt="photo.png"]')).toBeVisible()
     await expect(inBlock(ids[2], '[data-testid="markdown-attachment-body"]')).toHaveText('dropped')
     expect(await backend(page, pageId)).toEqual(await shown(page))
-    await page.addScriptTag({ path: axePath })
-    const violations = await page.evaluate(async () => {
-      const { axe } = window as unknown as {
-        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-      }
-      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
-      return found.map((v) => v.id)
-    })
-    expect(violations).toEqual([])
+    expect(await axeViolations(page, '.page-editor')).toEqual([])
   })
 
   test('an image dragged to a new size keeps it once Tab draws its block anew', async ({
@@ -1568,16 +1495,6 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
       page.locator(`${EDITOR} [data-page-block-id="${id}"] ${selector}`)
     const query = inBlock(ids[1], '[data-testid="query-result"]')
     const results = inBlock(ids[1], '[data-testid="query-result-item"]')
-    const axeViolations = async (): Promise<string[]> => {
-      await page.addScriptTag({ path: axePath })
-      return page.evaluate(async () => {
-        const { axe } = window as unknown as {
-          axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-        }
-        const { violations } = await axe.run(document.querySelector('.page-editor') as Element)
-        return violations.map((v) => v.id)
-      })
-    }
 
     // Block mode's static view: the results and the embedded block, in place of the text.
     await expect(query).toContainText('4 results')
@@ -1592,7 +1509,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     expect((await boxes()).map(([x, , , height]) => [x, height])).toEqual(
       inBlockMode.map(([, , , height]) => [textLeft, height]),
     )
-    expect(await axeViolations()).toEqual([])
+    expect(await axeViolations(page, '.page-editor')).toEqual([])
 
     // The arrows step into the text, which shows in place of the results while the caret is in it.
     await caret(page, 0, 'end')
@@ -1631,7 +1548,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect(results.filter({ hasText: 'Buy groceries' })).toHaveCount(1)
     await expect(inBlock(ids[2], '[data-testid="embed-container"]')).toContainText(welcome)
     await expect(inBlock(ids[1], '.page-block-content')).toHaveText('{{query tag:personal}}')
-    expect(await axeViolations()).toEqual([])
+    expect(await axeViolations(page, '.page-editor')).toEqual([])
   })
 
   test('an open picker keeps its arrows beside a query or an embed: the highlight moves, and the caret and the typed name stay', async ({
@@ -1711,15 +1628,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await caret(page, 0, 'end')
     await page.keyboard.type(' /todo')
     await expect(menu.locator('#suggestion-todo')).toHaveAttribute('aria-selected', 'true')
-    await page.addScriptTag({ path: axePath })
-    const menuViolations = await page.evaluate(async () => {
-      const { axe } = window as unknown as {
-        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-      }
-      const popup = document.querySelector('[data-testid="suggestion-popup"]') as Element
-      return (await axe.run(popup)).violations.map((v) => v.id)
-    })
-    expect(menuViolations).toEqual([])
+    expect(await axeViolations(page, '[data-testid="suggestion-popup"]')).toEqual([])
     await page.keyboard.press('Enter')
     await expect(menu).toHaveCount(0)
     await expect(marker(ids[0])).toHaveAttribute('aria-label', 'Task: TODO. Click to cycle.')

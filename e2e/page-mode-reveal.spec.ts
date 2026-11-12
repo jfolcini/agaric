@@ -7,11 +7,10 @@
  * saved never holds a marker, which leaving the page and coming back shows.
  */
 
-import { createRequire } from 'node:module'
-
 import type { Page } from '@playwright/test'
 
 import {
+  axeViolations,
   expect,
   ipc,
   navigateToView,
@@ -21,7 +20,6 @@ import {
   waitForBoot,
 } from './helpers'
 
-const axePath = createRequire(import.meta.url).resolve('axe-core')
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const EDITOR = '[data-testid="page-mode-editor"]'
 const TITLE = 'Reveal in page mode'
@@ -208,13 +206,7 @@ test.describe('Markdown syntax revealed around the cursor in page mode (#5974) @
     expect(await shownMarkers(page)).toEqual(['## '])
     await caret(page, 3, 6)
     expect(await shownMarkers(page)).toEqual(['[', `](${LINK})`])
-    await page.addScriptTag({ path: axePath })
-    const violations = await page.evaluate(async () => {
-      // @ts-expect-error injected global
-      const results = await window.axe.run(document.querySelector('.page-editor'))
-      return results.violations.map((v: { id: string }) => v.id)
-    })
-    expect(violations).toEqual([])
+    expect(await axeViolations(page, '.page-editor')).toEqual([])
   })
 
   test('Backspace after a marker at a block’s start removes the mark without a join, and it is saved', async ({

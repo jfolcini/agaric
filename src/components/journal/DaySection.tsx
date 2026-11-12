@@ -335,7 +335,7 @@ function DaySectionInner({
             {isClickable ? (
               <button
                 type="button"
-                className="touch-hit-area hover:text-primary hover:underline underline-offset-2 cursor-pointer transition-colors"
+                className="touch-hit-area hover:text-primary hover:underline underline-offset-2 cursor-pointer transition-colors focus-ring-visible"
                 onClick={() => navigateToDate(entry.date, 'daily')}
                 aria-label={t('journal.goToDailyView', { date: entry.displayDate })}
               >
@@ -362,7 +362,7 @@ function DaySectionInner({
                     key={source}
                     type="button"
                     className={cn(
-                      'touch-hit-area inline-flex items-center rounded-sm px-1.5 py-0.5 text-xs font-medium',
+                      'touch-hit-area inline-flex items-center rounded-sm px-1.5 py-0.5 text-xs font-medium focus-ring-visible',
                       color.light,
                       color.dark,
                       'hover:opacity-80',
@@ -377,7 +377,7 @@ function DaySectionInner({
               {entry.pageId && (backlinkCounts[entry.pageId] ?? 0) > 0 && (
                 <button
                   type="button"
-                  className="touch-hit-area inline-flex items-center rounded-sm bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 active:bg-primary/30"
+                  className="touch-hit-area inline-flex items-center rounded-sm bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 active:bg-primary/30 focus-ring-visible"
                   onClick={() => goToDateAndPanel(entry.date, 'references')}
                   aria-label={t('journal.backlinkCountBadge', {
                     count: backlinkCounts[entry.pageId],

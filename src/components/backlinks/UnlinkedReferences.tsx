@@ -527,14 +527,12 @@ export function UnlinkedReferences({
             loading={loading}
             items={groups}
             skeleton={
-              <div
+              <output
                 className="unlinked-references-loading flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
                 aria-busy="true"
-                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- kept as role="status" so the loading indicator is discoverable via [role="status"]; <output> drops the explicit attribute relied on by callers/tests
-                role="status"
               >
                 <Spinner /> {t('unlinkedRefs.loading')}
-              </div>
+              </output>
             }
             // #3738 note 1 — a FAILED fetch reaches the same "no items, not
             // loading" branch as a genuinely empty result, and since #3735 the

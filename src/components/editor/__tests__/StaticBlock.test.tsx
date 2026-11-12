@@ -1977,7 +1977,7 @@ describe('StaticBlock', () => {
       const loadingOrDiagram =
         container.querySelector('[data-testid="mermaid-loading"]') ??
         container.querySelector('[data-testid="mermaid-diagram"]') ??
-        container.querySelector('[role="status"]')
+        container.querySelector('output')
       expect(loadingOrDiagram).toBeInTheDocument()
     })
 

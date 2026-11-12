@@ -51,7 +51,9 @@ describe('Kbd', () => {
 
   it('defaults to the compact sm size', () => {
     const { container } = render(<Kbd>A</Kbd>)
-    expect(container.querySelector('kbd')?.className).toContain('text-[11px]')
+    const kbd = container.querySelector('kbd')
+    expect(kbd?.className).toContain('text-xs')
+    expect(kbd?.className).not.toContain('font-semibold')
   })
 
   it('size="md" renders the prominent settings variant', () => {
@@ -59,7 +61,7 @@ describe('Kbd', () => {
     const kbd = container.querySelector('kbd')
     expect(kbd?.className).toContain('text-xs')
     expect(kbd?.className).toContain('font-semibold')
-    expect(kbd?.className).toContain('shadow-sm')
+    expect(kbd?.className).toContain('shadow-(--shadow-resting)')
   })
 
   it('does not apply aria-hidden by default (standalone help chips stay readable)', () => {

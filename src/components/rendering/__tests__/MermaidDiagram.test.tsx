@@ -197,7 +197,7 @@ describe('MermaidDiagram', () => {
 
     const loading = screen.getByTestId('mermaid-loading')
     expect(loading).toBeInTheDocument()
-    expect(loading).toHaveAttribute('role', 'status')
+    expect(loading).toHaveRole('status')
     expect(loading.textContent).toContain('Rendering diagram')
   })
 

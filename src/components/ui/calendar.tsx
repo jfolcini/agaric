@@ -98,8 +98,8 @@ const BASE_CLASS_NAMES = {
   range_middle: 'aria-selected:bg-accent aria-selected:text-accent-foreground',
   hidden: 'invisible',
   week_number:
-    'flex h-8 w-8 items-center justify-center text-[0.7rem] text-muted-foreground [@media(pointer:coarse)]:h-11',
-  week_number_header: 'text-[0.7rem] text-muted-foreground w-8',
+    'flex h-8 w-8 items-center justify-center text-xs text-muted-foreground [@media(pointer:coarse)]:h-11',
+  week_number_header: 'text-xs text-muted-foreground w-8',
 } as const
 
 // Hoisted to module scope (no closure deps) so its identity is stable across
@@ -140,7 +140,7 @@ const makeWeekNumber = (
       <th {...thProps}>
         <button
           type="button"
-          className="text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors focus-ring-visible"
+          className="text-xs text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors focus-ring-visible"
           onClick={() => onWeekNumberClick(weekNum, dates)}
           aria-label={i18n.t('journal.goToWeek', { weekNum })}
         >

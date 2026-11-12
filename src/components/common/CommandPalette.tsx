@@ -939,39 +939,28 @@ export function PaletteBody({
       {/* SR-only loading status — announced politely during refetch.
           Outside the input wrapper so screen readers don't read the
           input twice. */}
-      <div
-        className="sr-only"
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level sr-only live region; <output> is inline-level and the div is intentionally a block container for the announced status text
-        role="status"
-        aria-live="polite"
-        data-testid="palette-loading-status"
-      >
+      <output className="sr-only" aria-live="polite" data-testid="palette-loading-status">
         {loading ? t('palette.searching') : ''}
-      </div>
+      </output>
       {linkMode && (
-        <div
-          className="mx-3 mt-2 rounded-md border border-alert-info-border bg-alert-info px-3 py-1.5 text-xs text-alert-info-foreground"
-          // role="status" + aria-live polite so screen readers announce
-          // Entering / leaving link mode (a11y review).
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level badge card (border/padding/rounded); <output> is inline-level and would break the boxed layout
-          role="status"
+        // A live region, so screen readers announce entering link mode.
+        <output
+          className="mx-3 mt-2 block rounded-md border border-alert-info-border bg-alert-info px-3 py-1.5 text-xs text-alert-info-foreground"
           aria-live="polite"
           data-testid="palette-link-mode-badge"
         >
           {t('palette.linkModeBadge')}
-        </div>
+        </output>
       )}
       {showNoResults && (
         // Above the list, not in it: a listbox may hold only options, and
         // not a <CommandEmpty>, which hides once the rows below it show.
-        <div
-          className="px-3 py-3 text-sm text-muted-foreground"
+        <output
+          className="block px-3 py-3 text-sm text-muted-foreground"
           data-testid="palette-no-results"
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level no-results row (full-width padded); <output> is inline-level and would break the row layout
-          role="status"
         >
           {t('palette.noResults', { query: trimmedQuery })}
-        </div>
+        </output>
       )}
       {showWelcomeEmpty && !isMobile && (
         // Above the list for the same reason, with the Navigate commands below it.

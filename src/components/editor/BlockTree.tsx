@@ -1538,7 +1538,7 @@ export function BlockTree({
         {editorHost}
         <div
           className="block-tree-loading space-y-3 p-2"
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level skeleton container; native <output> is display:inline and would collapse the space-y-3 vertical stacking of the skeleton rows
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> takes phrasing content only, and this wraps <Skeleton>'s block rows
           role="status"
           aria-busy="true"
           aria-label={t('blockTree.loadingLabel')}
@@ -1577,14 +1577,12 @@ export function BlockTree({
           SearchPanel capped-notice pattern) tells the user the page is only
           partially displayed. */}
             {truncatedTotal != null && (
-              <div
-                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
-                role="status"
+              <output
                 data-testid="page-truncated-notice"
-                className="mb-2 rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
+                className="mb-2 block rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
               >
                 {t('blockTree.truncatedNotice', { shown: blocks.length, total: truncatedTotal })}
-              </div>
+              </output>
             )}
             <BlockBatchActionMenu
               selectedBlockIds={selectedBlockIds}

@@ -275,15 +275,13 @@ export function DeviceManagement(): React.ReactElement {
                   mount-time backfill); the always-on hint below covers the
                   general "mDNS might be unavailable" case. */}
               {mdnsStatus.disabled && (
-                <p
-                  className="mdns-disabled-hint text-xs text-destructive mb-4"
-                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level banner with mb-4 stacking; native <output> is inline-level and would collapse it
-                  role="status"
+                <output
+                  className="mdns-disabled-hint block text-xs text-destructive mb-4"
                   data-testid="mdns-disabled-hint"
                 >
                   <Globe className="inline h-3 w-3 mr-1 align-text-bottom" />
                   {t('device.mdnsDisabledHint', { reason: mdnsStatus.reason ?? '' })}
-                </p>
+                </output>
               )}
 
               {/* #3864 — internet-facing sync bind. Rendered only once the
@@ -294,7 +292,7 @@ export function DeviceManagement(): React.ReactElement {
               {unacknowledgedBind !== null && (
                 <div
                   className="internet-facing-bind-hint rounded-md border border-destructive/40 p-3 mb-4"
-                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level banner with mb-4 stacking; native <output> is inline-level and would collapse it
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> takes phrasing content only, and this wraps a <p> and a <Button>
                   role="status"
                   data-testid="internet-facing-bind-hint"
                 >

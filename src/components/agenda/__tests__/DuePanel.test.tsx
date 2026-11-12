@@ -1027,9 +1027,9 @@ describe('DuePanel', () => {
 
       render(<DuePanel date="2026-04-13" />)
 
-      // An h4, beside the Overdue / Upcoming section titles.
+      // An h2, beside the Overdue / Upcoming section titles: both hosts head the panel with an h1.
       expect(
-        await screen.findByRole('heading', { level: 4, name: t('due.projected') }),
+        await screen.findByRole('heading', { level: 2, name: t('due.projected') }),
       ).toBeInTheDocument()
       expect(screen.getByText(/Projected task/)).toBeInTheDocument()
     })

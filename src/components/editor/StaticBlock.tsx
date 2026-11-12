@@ -167,17 +167,8 @@ function StaticBlockInner({
           The wrapper accepts mouse clicks (which mount the roving TipTap
           editor via onFocus) but is not in the tab order. Inner rich-content
           chips (block-link, tag-ref, external-link) and any attachment
-          buttons retain their own role/tabIndex/keyboard handling. The two
-          a11y suppressions below are the cost of a passive surface that
-          converts pointer clicks into editor-mount via onFocus: keyboard
-          users reach the same outcome by tabbing to an inner chip/button. */}
-      {/* Both suppressions must sit on the single line directly above the
-          <div>: oxlint-disable-next-line only affects the immediately
-          following line, so stacking them on separate lines left the first
-          one disabling the second comment instead of the element. Passive
-          container — keyboard activation routes through inner focusable
-          controls;  comment above. */}
-      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
+          buttons retain their own role/tabIndex/keyboard handling. */}
+      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events -- a passive surface whose click mounts the editor; keyboard users reach the same content through the inner chips and buttons */}
       <div
         className={cn(
           'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left leading-normal transition-colors hover:bg-accent/50 [@media(pointer:coarse)]:min-h-[2.75rem]',

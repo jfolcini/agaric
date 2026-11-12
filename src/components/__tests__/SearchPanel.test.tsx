@@ -1590,7 +1590,7 @@ describe('SearchPanel', () => {
     // "N matches in M pages" summary, so showing both would state it twice.
     const countSpan = screen.getByText(t('search.resultsCount', { count: 2 }))
     expect(countSpan).toHaveClass('sr-only')
-    expect(countSpan.closest('[role="status"]')).toBe(screen.getByTestId('search-results-status'))
+    expect(countSpan.closest('output')).toBe(screen.getByTestId('search-results-status'))
     expect(screen.getByTestId('search-result-count-summary')).not.toHaveClass('sr-only')
   })
 
@@ -2193,7 +2193,7 @@ describe('SearchPanel', () => {
       // A separate status div with aria-live="polite" exists.
       const status = screen.getByTestId('search-results-status')
       expect(status).toHaveAttribute('aria-live', 'polite')
-      expect(status).toHaveAttribute('role', 'status')
+      expect(status).toHaveRole('status')
       // Status must be a sibling of (not contain) the listbox.
       expect(status.contains(listbox)).toBe(false)
     })
@@ -2296,7 +2296,7 @@ describe('SearchPanel', () => {
 
       const status = await screen.findByTestId('search-results-status')
       expect(status).toHaveAttribute('aria-live', 'polite')
-      expect(status).toHaveAttribute('role', 'status')
+      expect(status).toHaveRole('status')
 
       await waitFor(() => {
         expect(status).toHaveTextContent(t('search.resultsCount', { count: 2 }))
@@ -2639,7 +2639,7 @@ describe('SearchPanel', () => {
 
       await user.click(screen.getByRole('button', { name: t('search.addFilter') }))
       await user.click(
-        await screen.findByRole('menuitem', {
+        await screen.findByRole('button', {
           name: (name) => name.startsWith(t('search.filterCategory.pathInclude')),
         }),
       )

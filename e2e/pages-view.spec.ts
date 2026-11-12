@@ -1,5 +1,3 @@
-import { createRequire } from 'node:module'
-
 import type { Locator, Page } from '@playwright/test'
 
 import {
@@ -9,14 +7,10 @@ import {
   expect,
   navigateToView,
   openAddFilter,
+  runAxe,
   test,
   waitForBoot,
 } from './helpers'
-
-// Resolve the bundled axe-core source for in-page injection. `addScriptTag`
-// runs in Node, and this spec is ESM, so build a `require` to locate the
-// package's main file deterministically regardless of the test cwd.
-const axePath = createRequire(import.meta.url).resolve('axe-core')
 
 /**
  * Comprehensive behavioural e2e for every Pages-view capability.
@@ -1106,36 +1100,30 @@ test.describe('a11y + keyboard @pages', () => {
     page,
   }) => {
     await bootPages(page)
-    await page.addScriptTag({ path: axePath })
 
-    const runAxe = async () =>
-      page.evaluate(async () => {
-        // @ts-expect-error injected global
-        const results = await window.axe.run(document.querySelector('.page-browser'), {
-          // Colour-contrast depends on the design tokens, not this view's
-          // structure; exclude it so the run targets ARIA/role correctness.
-          rules: { 'color-contrast': { enabled: false } },
-        })
-        return results.violations.map((v: { id: string; nodes: unknown[] }) => ({
-          id: v.id,
-          count: v.nodes.length,
-        }))
+    const structuralViolations = async () => {
+      // Colour-contrast depends on the design tokens, not this view's
+      // structure; exclude it so the run targets ARIA/role correctness.
+      const { violations } = await runAxe(page, '.page-browser', {
+        rules: { 'color-contrast': { enabled: false } },
       })
+      return violations.map((v) => ({ id: v.id, count: v.nodes.length }))
+    }
 
     // Filtered (non-empty) state.
     await addBooleanFacet(page, 'Orphan')
     await expect(countChip(page)).toHaveText('4 matching pages')
-    expect(await runAxe()).toEqual([])
+    expect(await structuralViolations()).toEqual([])
 
     // Zero-result state — the grid role is dropped for the status region.
     await addBooleanFacet(page, 'Stub')
     await expect(page.getByText('No matching pages')).toBeVisible()
-    expect(await runAxe()).toEqual([])
+    expect(await structuralViolations()).toEqual([])
 
     // Popover open.
     await openAddFilter(page)
     await expect(activePopover(page)).toBeVisible()
-    expect(await runAxe()).toEqual([])
+    expect(await structuralViolations()).toEqual([])
   })
 })
 

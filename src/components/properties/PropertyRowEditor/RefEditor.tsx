@@ -147,7 +147,7 @@ function RefPageRow({ content, saving, disabled, onClick }: RefPageRowProps) {
   return (
     <button
       type="button"
-      className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent truncate flex items-center gap-1.5 disabled:opacity-60"
+      className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent truncate flex items-center gap-1.5 disabled:opacity-60 focus-ring-visible"
       onClick={onClick}
       disabled={disabled}
       aria-busy={saving}

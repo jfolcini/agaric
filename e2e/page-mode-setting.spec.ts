@@ -6,11 +6,10 @@
  * both, the switch as a *Page actions* row. Axe on the settings row and the switch.
  */
 
-import { createRequire } from 'node:module'
-
 import { devices, type Page } from '@playwright/test'
 
 import {
+  axeViolations,
   expect,
   navigateMobile,
   navigateToView,
@@ -20,7 +19,6 @@ import {
   waitForBoot,
 } from './helpers'
 
-const axePath = createRequire(import.meta.url).resolve('axe-core')
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const EDITOR = '[data-testid="page-mode-editor"]'
 
@@ -64,19 +62,6 @@ async function openViaPalette(page: Page, title: string): Promise<void> {
 
 function modeSwitch(page: Page, name: 'Blocks' | 'Page') {
   return page.getByRole('radiogroup', { name: 'Editing mode' }).getByRole('radio', { name })
-}
-
-/** Axe violations inside `selector`. */
-async function axeViolations(page: Page, selector: string): Promise<string[]> {
-  await page.addScriptTag({ path: axePath })
-  return page.evaluate(async (s) => {
-    const { violations } = await (
-      window as unknown as {
-        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-      }
-    ).axe.run(document.querySelector(s) as Element)
-    return violations.map((v) => v.id)
-  }, selector)
 }
 
 async function chooseInSettings(page: Page, mode: 'Blocks' | 'Page'): Promise<void> {

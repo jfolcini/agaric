@@ -202,7 +202,9 @@ const Sidebar = ({
             <SheetTitle>{t('sidebar.label')}</SheetTitle>
             <SheetDescription>{t('sidebar.mobileDescription')}</SheetDescription>
           </SheetHeader>
-          <div className="flex h-full w-full flex-col">{children}</div>
+          <nav aria-label={t('sidebar.label')} className="flex h-full w-full flex-col">
+            {children}
+          </nav>
         </SheetContent>
       </Sheet>
     )
@@ -247,13 +249,14 @@ const Sidebar = ({
         )}
         {...props}
       >
-        <div
+        <nav
+          aria-label={t('sidebar.label')}
           data-sidebar="sidebar"
           data-slot="sidebar-inner"
-          className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm"
+          className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-(--shadow-resting)"
         >
           {children}
-        </div>
+        </nav>
       </div>
     </div>
   )
@@ -345,7 +348,7 @@ const SidebarInset = ({ ref, className, ...props }: React.ComponentProps<'main'>
       // from bleeding to the document and pushing the app shell off the
       // viewport. Vertical overflow is unaffected.
       'relative flex min-w-0 w-full flex-1 flex-col overflow-x-hidden bg-background',
-      'md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2',
+      'md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-(--shadow-resting) md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2',
       className,
     )}
     {...props}

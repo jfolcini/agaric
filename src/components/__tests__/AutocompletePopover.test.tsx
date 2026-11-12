@@ -97,7 +97,7 @@ describe('AutocompletePopover', () => {
     })
     const hint = screen.getByTestId('autocomplete-loading')
     expect(hint).toHaveTextContent('Searching tags…')
-    expect(hint).toHaveAttribute('role', 'status')
+    expect(hint).toHaveRole('status')
     // No selectable items rendered while loading with empty list.
     expect(screen.queryByRole('option')).not.toBeInTheDocument()
   })

@@ -202,14 +202,12 @@ function RegexScopeNotice({
   const { t } = useTranslation()
   if (!regexMode || queryLength === 0 || regexError) return null
   return (
-    <div
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
-      role="status"
+    <output
       data-testid="search-regex-scope-notice"
-      className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground"
+      className="block rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground"
     >
       {t('search.regexScopeNotice')}
-    </div>
+    </output>
   )
 }
 
@@ -786,14 +784,12 @@ export function SearchPanel(): React.ReactElement {
 
       {/* the 5000-item ceiling was hit silently; tell the user. */}
       {capped && (
-        <div
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
-          role="status"
+        <output
           data-testid="search-capped-notice"
-          className="rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
+          className="block rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
         >
           {t('search.cappedNotice')}
-        </div>
+        </output>
       )}
 
       <RegexScopeNotice

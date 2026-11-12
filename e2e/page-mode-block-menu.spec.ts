@@ -6,13 +6,10 @@
  * selection across blocks, an undo of a delete, and a link's own rows.
  */
 
-import { createRequire } from 'node:module'
-
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, ipc, readClipboard, test, waitForBoot } from './helpers'
+import { axeViolations, expect, ipc, readClipboard, test, waitForBoot } from './helpers'
 
-const axePath = createRequire(import.meta.url).resolve('axe-core')
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const EDITOR = '[data-testid="page-mode-editor"]'
 
@@ -195,17 +192,7 @@ test.describe('page mode block menu (#5972) @editor @pages', () => {
     await openInPageMode(page, 'Menu indent', 4)
 
     await rightClick(page, ids[1])
-    await page.addScriptTag({ path: axePath })
-    const violations = await page.evaluate(async () => {
-      const { axe } = window as unknown as {
-        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-      }
-      const { violations: found } = await axe.run(
-        document.querySelector('[role="menu"]') as Element,
-      )
-      return found.map((v) => v.id)
-    })
-    expect(violations).toEqual([])
+    expect(await axeViolations(page, '[role="menu"]')).toEqual([])
     await arrange(page, 'Indent')
     await expect
       .poll(async () => (await backend(page, pageId)).map((r) => r[1]))

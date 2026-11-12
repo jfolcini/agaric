@@ -29,7 +29,7 @@ const TERM = 'quokka'
 async function addPagePathChip(page: Page, glob: string): Promise<void> {
   await page.getByRole('button', { name: 'Add filter' }).click()
   const popover = activePopover(page)
-  await popover.getByRole('menuitem', { name: /^Page path \(include\)/ }).click()
+  await popover.getByRole('button', { name: /^Page path \(include\)/ }).click()
   await popover.getByRole('textbox', { name: 'Page path (include)' }).fill(glob)
   await popover.getByRole('button', { name: 'Add', exact: true }).click()
 }

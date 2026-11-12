@@ -1,10 +1,13 @@
-import { createRequire } from 'node:module'
-
 import type { Page } from '@playwright/test'
 
-import { activeAlertDialog, activeDialog, expect, readClipboard, test } from './helpers'
-
-const axePath = createRequire(import.meta.url).resolve('axe-core')
+import {
+  activeAlertDialog,
+  activeDialog,
+  axeViolations,
+  expect,
+  readClipboard,
+  test,
+} from './helpers'
 
 /**
  * E2E — Settings → Agent access → Agents (#5667): add an agent, copy its
@@ -14,15 +17,9 @@ const axePath = createRequire(import.meta.url).resolve('axe-core')
  */
 
 /** The axe violations inside `selector`, by rule id. */
-async function axeViolations(page: Page, selector: string): Promise<string[]> {
-  return page.evaluate(async (scope) => {
-    // @ts-expect-error injected global
-    const results = await window.axe.run(document.querySelector(scope), {
-      // Colour contrast follows the design tokens, not this card's structure.
-      rules: { 'color-contrast': { enabled: false } },
-    })
-    return results.violations.map((v: { id: string }) => v.id)
-  }, selector)
+function structuralViolations(page: Page, selector: string): Promise<string[]> {
+  // Colour contrast follows the design tokens, not this card's structure.
+  return axeViolations(page, selector, { rules: { 'color-contrast': { enabled: false } } })
 }
 
 test.describe('Agents card @mcp', () => {
@@ -32,20 +29,19 @@ test.describe('Agents card @mcp', () => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByRole('tab', { name: 'Agent access' }).click()
     await expect(page.locator('[data-testid="settings-panel-agent"]')).toBeVisible()
-    await page.addScriptTag({ path: axePath })
   })
 
   test('adds an agent, lists it, and revokes it', async ({ page }) => {
     const rows = page.getByTestId('mcp-agent-row')
     await expect(page.getByText('No agents yet')).toBeVisible()
     await expect(rows).toHaveCount(0)
-    expect(await axeViolations(page, '[data-testid="settings-panel-agent"]')).toEqual([])
+    expect(await structuralViolations(page, '[data-testid="settings-panel-agent"]')).toEqual([])
 
     await page.getByRole('button', { name: 'Add agent' }).click()
     const dialog = activeDialog(page)
     await dialog.getByLabel('Name').fill('Planner')
     await dialog.getByRole('radio', { name: 'Read and write' }).click()
-    expect(await axeViolations(page, '[data-slot="dialog-content"]')).toEqual([])
+    expect(await structuralViolations(page, '[data-slot="dialog-content"]')).toEqual([])
     await dialog.getByLabel('Name').press('Enter')
 
     await expect(rows).toHaveCount(1)
@@ -53,7 +49,7 @@ test.describe('Agents card @mcp', () => {
     await expect(rows).toContainText('Read and write')
     await expect(rows).toContainText('All spaces · Never used')
     await expect(page.getByRole('button', { name: 'Add agent' })).toBeFocused()
-    expect(await axeViolations(page, '[data-testid="settings-panel-agent"]')).toEqual([])
+    expect(await structuralViolations(page, '[data-testid="settings-panel-agent"]')).toEqual([])
 
     await page.getByRole('button', { name: 'Revoke Planner' }).click()
     await activeAlertDialog(page).getByRole('button', { name: 'Revoke' }).click()

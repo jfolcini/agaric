@@ -1887,7 +1887,7 @@
 
 .source-ulid-token[data-ulid-hint]:hover::after,
 .ProseMirror-focused .source-ulid-token[data-ulid-hint][data-ulid-active]::after {
-  @apply rounded-sm bg-muted px-1.5 text-xs text-muted-foreground shadow-sm;
+  @apply rounded-sm bg-muted px-1.5 text-xs text-muted-foreground shadow-(--shadow-resting);
   content: attr(data-ulid-hint) / '';
   position: absolute;
   top: 100%;

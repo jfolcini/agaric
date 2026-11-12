@@ -24,7 +24,7 @@
  * meets WCAG AA (4.5:1) in both themes on selected and unselected rows.
  *
  * `size`:
- *  - `sm` — compact slash-menu / palette chip (`text-[11px]`).
+ *  - `sm` — compact slash-menu / palette chip (`text-xs`).
  *  - `md` — prominent settings / help chip (`text-xs font-semibold`,
  *    a subtle shadow), matching the old `renderKeys` look.
  */
@@ -42,8 +42,8 @@ const kbdVariants = cva(
   {
     variants: {
       size: {
-        sm: 'px-1.5 py-0.5 text-[11px]',
-        md: 'px-1.5 py-0.5 text-xs font-semibold shadow-sm',
+        sm: 'px-1.5 py-0.5 text-xs',
+        md: 'px-1.5 py-0.5 text-xs font-semibold shadow-(--shadow-resting)',
       },
     },
     defaultVariants: { size: 'sm' },

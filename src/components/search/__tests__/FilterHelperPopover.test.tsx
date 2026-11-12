@@ -101,6 +101,17 @@ describe('FilterHelperPopover — i18n', () => {
     expect(screen.getByText(t('search.filterCategoryTip'))).toBeInTheDocument()
   })
 
+  it('lists the categories as plain buttons, not a menu without arrow-key support', async () => {
+    const user = userEvent.setup()
+    renderPopover()
+    await user.click(screen.getByRole('button', { name: t('search.addFilter') }))
+    const dialog = await screen.findByRole('dialog', { name: t('search.addFilter') })
+    expect(within(dialog).queryByRole('menu')).toBeNull()
+    expect(
+      within(dialog).getByRole('button', { name: /^Page path \(include\)/ }),
+    ).toBeInTheDocument()
+  })
+
   it('renders the trigger as the compact "Add filter" button the other filter bars use', () => {
     renderPopover()
     const trigger = screen.getByTestId('add-filter-button')
@@ -634,7 +645,7 @@ describe('FilterHelperPopover — a11y', () => {
     const user = userEvent.setup()
     renderPopover()
     await user.click(screen.getByRole('button', { name: t('search.addFilter') }))
-    await screen.findByRole('menu')
+    await screen.findByRole('button', { name: /^Page path \(include\)/ })
     await waitFor(
       async () => {
         expect(await axe(document.body as any)).toHaveNoViolations()

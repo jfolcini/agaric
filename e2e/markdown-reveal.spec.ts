@@ -8,8 +8,6 @@
  * an IME composition leaves the markers in place until it ends.
  */
 
-import { createRequire } from 'node:module'
-
 import { devices, type Page } from '@playwright/test'
 
 import {
@@ -22,13 +20,11 @@ import {
   openSettingsTab,
   reopenPage,
   replaceEditorText,
+  runAxe,
   selectEditorRange,
   test,
   waitForBoot,
 } from './helpers'
-
-// The bundled axe-core, injected into the page (`pages-view.spec.ts`).
-const axePath = createRequire(import.meta.url).resolve('axe-core')
 
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 
@@ -602,16 +598,8 @@ test('axe finds no violation with a heading’s # run and a link’s syntax draw
   await typeBlock(page, '## see [label](https://example.com) **bold**')
   await setCaret(page, 7)
   expect(await shownMarkers(page)).toEqual(['## ', '[', '](https://example.com)'])
-  await page.addScriptTag({ path: axePath })
-  const violations = await page.evaluate(async () => {
-    // @ts-expect-error injected global
-    const results = await window.axe.run(document.querySelector('[data-testid="block-editor"]'))
-    return results.violations.map((v: { id: string; nodes: unknown[] }) => ({
-      id: v.id,
-      count: v.nodes.length,
-    }))
-  })
-  expect(violations).toEqual([])
+  const { violations } = await runAxe(page, '[data-testid="block-editor"]')
+  expect(violations.map((v) => ({ id: v.id, count: v.nodes.length }))).toEqual([])
 })
 
 test('an IME composition past a link in a heading leaves its markers in place until it ends @editor @markdown @mobile', async ({

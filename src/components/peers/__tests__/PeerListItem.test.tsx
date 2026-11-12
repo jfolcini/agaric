@@ -476,9 +476,7 @@ describe('PeerListItem', () => {
       expect(hint).toBeInTheDocument()
       expect(hint.textContent).toContain('192.168.1.100:5000')
 
-      // Hint must use text-xs, not the old text-xs.
       expect(hint.className).toContain('text-xs')
-      expect(hint.className).not.toContain('text-[10px]')
 
       // axe audit with popover open.
       const results = await axe(container)

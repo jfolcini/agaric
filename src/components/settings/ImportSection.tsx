@@ -25,6 +25,7 @@ import { ImportMergeDialog } from '@/components/settings/ImportMergeDialog'
 import { type FailedFile, useImportRunner } from '@/components/settings/useImportRunner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { SettingRow } from '@/components/ui/setting-row'
 import { countEvernoteNoteLinks, parseEnex } from '@/lib/enex-import'
 import { formatBytes } from '@/lib/format'
@@ -642,16 +643,14 @@ export function ImportSection(): React.ReactElement {
           // reason once the SpaceStore hydration kicks the user
           // into this branch; `aria-describedby` on the disabled
           // Button above also points here.
-          <p
+          <output
             id={importHintId}
-            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role lives on a <p> referenced by aria-describedby on the disabled Button; swapping to <output> would lose paragraph semantics and is not a valid p replacement
-            role="status"
             aria-live="polite"
-            className="text-xs text-muted-foreground mt-2"
+            className="mt-2 block text-xs text-muted-foreground"
             data-testid="import-space-not-ready-hint"
           >
             {t('data.importSpaceNotReady')}
-          </p>
+          </output>
         )}
         {currentFileIndex !== null && (
           <>
@@ -762,7 +761,7 @@ export function ImportSection(): React.ReactElement {
                 data-testid="import-result"
                 // Announce the outcome once the progress region clears
                 // (#1929), mirroring the not-ready hint pattern above.
-                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level status wrapper holding the summary <p> and the <details> list; <output> is inline-level and would change the block flow of the result region
+                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> takes phrasing content only, and this wraps a <p> and a <details> list
                 role="status"
                 aria-live="polite"
                 aria-atomic="true"
@@ -795,7 +794,7 @@ export function ImportSection(): React.ReactElement {
                 {navTitle != null && currentSpaceId != null && (
                   <button
                     type="button"
-                    className="underline text-status-done-foreground"
+                    className="underline text-status-done-foreground focus-ring-visible"
                     data-testid="import-view-button"
                     onClick={() => {
                       void goToImportedPage(navTitle, currentSpaceId)
@@ -819,44 +818,43 @@ export function ImportSection(): React.ReactElement {
                         </span>
                       )}
                     </summary>
-                    <ul
-                      className="mt-1 space-y-0.5 max-h-40 overflow-y-auto"
-                      data-testid="import-result-detail-list"
-                    >
-                      {shownFailures.map(({ name, reason }, i) => (
-                        <li
-                          // A vault import can surface the same basename
-                          // from different folders, so index-qualify.
-                          // oxlint-disable-next-line react/no-array-index-key -- failure basenames can duplicate across folders; the list is render-only (no reorder/insert), so the positional index is a stable, unique key
-                          key={`fail-${i}-${name}`}
-                          className="text-destructive"
-                          data-testid="import-failure-item"
-                        >
-                          {/* #1935 — show WHY the file failed when a reason
+                    <ScrollArea className="mt-1 max-h-40" viewportClassName="[&>div]:!block">
+                      <ul className="space-y-0.5" data-testid="import-result-detail-list">
+                        {shownFailures.map(({ name, reason }, i) => (
+                          <li
+                            // A vault import can surface the same basename
+                            // from different folders, so index-qualify.
+                            // oxlint-disable-next-line react/no-array-index-key -- failure basenames can duplicate across folders; the list is render-only (no reorder/insert), so the positional index is a stable, unique key
+                            key={`fail-${i}-${name}`}
+                            className="text-destructive"
+                            data-testid="import-failure-item"
+                          >
+                            {/* #1935 — show WHY the file failed when a reason
                               was extracted; fall back to the reason-less
                               label otherwise. */}
-                          {reason
-                            ? t('data.importFailedFileDetail', { name, reason })
-                            : t('data.importFailedFile', { name })}
-                        </li>
-                      ))}
-                      {shownWarnings.map((warning, i) => (
-                        <li
-                          // Warnings are free-form strings and may repeat, so
-                          // index-qualify the key to keep it stable+unique.
-                          // oxlint-disable-next-line react/no-array-index-key -- warning strings are free-form and may duplicate; the list is render-only (no reorder/insert), so the positional index is a stable, unique key
-                          key={`warn-${i}-${warning}`}
-                          className="text-status-pending-foreground"
-                          data-testid="import-warning-item"
-                        >
-                          {warning}
-                        </li>
-                      ))}
-                    </ul>
+                            {reason
+                              ? t('data.importFailedFileDetail', { name, reason })
+                              : t('data.importFailedFile', { name })}
+                          </li>
+                        ))}
+                        {shownWarnings.map((warning, i) => (
+                          <li
+                            // Warnings are free-form strings and may repeat, so
+                            // index-qualify the key to keep it stable+unique.
+                            // oxlint-disable-next-line react/no-array-index-key -- warning strings are free-form and may duplicate; the list is render-only (no reorder/insert), so the positional index is a stable, unique key
+                            key={`warn-${i}-${warning}`}
+                            className="text-status-pending-foreground"
+                            data-testid="import-warning-item"
+                          >
+                            {warning}
+                          </li>
+                        ))}
+                      </ul>
+                    </ScrollArea>
                     {truncated && (
                       <button
                         type="button"
-                        className="mt-1 underline text-muted-foreground"
+                        className="mt-1 underline text-muted-foreground focus-ring-visible"
                         data-testid="import-details-toggle"
                         onClick={() => setDetailsExpanded((v) => !v)}
                       >

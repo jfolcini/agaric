@@ -398,7 +398,7 @@ describe('InPageFind — close + a11y', () => {
     render(<InPageFind />)
     openToolbar()
     const counter = screen.getByTestId('in-page-find-counter')
-    expect(counter).toHaveAttribute('role', 'status')
+    expect(counter).toHaveRole('status')
     expect(counter).toHaveAttribute('aria-live', 'polite')
   })
 

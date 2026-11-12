@@ -214,15 +214,13 @@ export function AutocompletePopover({
           <SelectedItemBridge onSync={syncAriaIds} />
           <CommandList label={label}>
             {items.length === 0 && loading ? (
-              <div
-                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level loading row inside the listbox popup; <output> is inline-level and would break the padded full-width row layout
-                role="status"
+              <output
                 aria-live="polite"
-                className="px-3 py-2 text-sm text-muted-foreground"
+                className="block px-3 py-2 text-sm text-muted-foreground"
                 data-testid="autocomplete-loading"
               >
                 {loadingLabel}
-              </div>
+              </output>
             ) : (
               items.map((item) => (
                 <CommandItem
