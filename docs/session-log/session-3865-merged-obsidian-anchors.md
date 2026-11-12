@@ -1,4 +1,4 @@
-# Session 3857 — a merged file's Obsidian `^name` anchors (#6277 G5)
+# Session 3865 — a merged file's Obsidian `^name` anchors (#6277 G5)
 
 G5 item 2, agreed with the coordinator: a file merged into the page of its
 title keeps an Obsidian `^name` marker out of its block's text and makes the
