@@ -1532,3 +1532,41 @@ async fn a_rename_made_while_reading_back_was_off_is_read_in_as_a_rename() {
     assert!(pages_titled(&fx, "Beta").await.is_empty());
     assert!(!fx.root.join("TestSpace/Beta.md").exists());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_trashed_for_its_deleted_file_and_restored_from_the_trash_is_written_again() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.page("Beta", &["two"]).await;
+    fx.tick().await;
+    std::fs::remove_file(fx.root.join(ALPHA)).unwrap();
+    // Restored at once, before another tick, as from the Trash list.
+    for _ in 0..6 {
+        fx.tick().await;
+        if is_trashed(&fx, &alpha).await {
+            break;
+        }
+    }
+    assert!(is_trashed(&fx, &alpha).await);
+
+    let deleted_at = sqlx::query_scalar::<_, i64>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(&alpha)
+        .fetch_one(&fx.pool)
+        .await
+        .unwrap();
+    crate::commands::restore_block_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        BlockId::from_trusted(&alpha),
+        deleted_at,
+    )
+    .await
+    .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await, "restored");
+    assert!(fx.root.join(ALPHA).exists(), "and written again");
+}

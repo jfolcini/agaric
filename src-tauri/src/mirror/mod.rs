@@ -1226,6 +1226,10 @@ impl Mirror {
             match ingest::trash(ingest, &self.device_id, page_id, path).await {
                 Ok(event) => {
                     (ingest.notify)(event);
+                    // Its file is gone: a page restored from the Trash is
+                    // written as a new one, not taken for a file vanished
+                    // again and trashed once more.
+                    self.forget(page_id);
                     Ok(Wrote::Done)
                 }
                 Err(why) => Ok(Wrote::Refused(why)),
