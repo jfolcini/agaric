@@ -251,15 +251,20 @@ function readSafeRect() {
     .filter((line) => line.startsWith('InsetsSource'))
 
   const re =
-    /InsetsSource id=\S+ type=(\w+) frame=\[(\d+),(\d+)\]\[(\d+),(\d+)\] visible=(true|false)[^\n]*?sideHint=(\w+)/g
+    /InsetsSource id=\S+ type=(\w+) frame=\[(\d+),(\d+)\]\[(\d+),(\d+)\] visible=(true|false)(?:[^\n]*?sideHint=(\w+))?/g
   let m
   let parsed = 0
   let sources = 0
   while ((m = re.exec(section)) !== null) {
     parsed += 1
-    const [, type, l, t, r, b, visible, side] = m
+    const [, type, l, t, r, b, visible, sideHint] = m
     if (!wanted.has(type) || visible !== 'true') continue
     const rect = { left: +l, top: +t, right: +r, bottom: +b }
+    // Android before 14 prints no `sideHint`: a bar hugs the edge it starts at.
+    const horizontal = rect.right - rect.left > rect.bottom - rect.top
+    const side =
+      sideHint ??
+      (horizontal ? (rect.top === 0 ? 'TOP' : 'BOTTOM') : rect.left === 0 ? 'LEFT' : 'RIGHT')
     // A zero-area source claims nothing.
     if (rect.right <= rect.left || rect.bottom <= rect.top) continue
     sources += 1
