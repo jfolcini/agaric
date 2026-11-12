@@ -247,7 +247,7 @@ The `prek.toml` file is the single source of truth for hooks. CI invokes the sam
 
 ### Pre-commit vs pre-push split
 
-Pre-commit (every `git commit`): fast hooks only, staged-file-scoped — oxlint, oxfmt, tsc, cargo fmt (auto-fix), markdownlint, md-link-targets, doc-vs-code-paths, zizmor, sqruff, taplo, typos, snapshot redaction, IPC error-path, axe-presence, and so on. Per-commit overhead stays sub-30 s on a warm cache.
+Pre-commit (every `git commit`): fast hooks only, staged-file-scoped — oxlint, oxfmt, tsc, cargo fmt (auto-fix), markdownlint, md-link-targets, zizmor, sqruff, taplo, typos, snapshot redaction, IPC error-path, axe-presence, and so on. Per-commit overhead stays sub-30 s on a warm cache. A guard whose whole-tree scan takes over 500 ms of CPU is staged `manual` instead: CI's `lint` job runs it, and `prek run --hook-stage manual --all-files` runs it locally.
 
 **`cargo-clippy`, `cargo-fmt --check`, `cargo-doc-links`, `knip`, `npm-audit`, and `lychee` are staged `pre-push` in `prek.toml`, and the related vitest and nextest runs are verifier phases, not pre-commit** — they're either too slow (clippy compiles the whole workspace + all targets; a change to `agaric-core` selects every crate's tests), too whole-repo (knip is a whole-repo dead-code scan), or too network-dependent (lychee, npm-audit hit external endpoints) for the commit path. `cargo-fmt --check` is the odd one out: it's a read-only backstop re-verification for the case where the pre-commit `cargo-fmt` auto-fixer was bypassed (`--no-verify`, or hooks not yet installed). Each runs once per push: as its own pre-push hook on a raw `git push`, or in Phase A2 of the verifier below under `scripts/push.sh`, before any test phase.
 

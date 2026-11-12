@@ -1594,16 +1594,13 @@ function findDocsLintRunLine(jobBody) {
  * is a property of a WORKFLOW FILE this guard has no runtime relationship
  * to and cannot exercise by running itself against a scratch repo — so
  * this reads the REAL repo's `_validate.yml` (not a fixture) and asserts
- * the wiring textually, the same "read the real file, not a simulation of
- * it" shape `scripts/check-zizmor-version-pin.mjs` uses for its own
- * cross-file consistency check.
+ * the wiring textually: read the real file, not a simulation of it.
  *
  * Failing to find a `docs-lint:` job at all — or a `run: prek run
  * --all-files …` line inside it — is ALSO a failure, not a silent pass:
- * same "an empty scan throws" reasoning `check-zizmor-version-pin.mjs`
- * documents — a workflow restructure that renames the job or the step
- * would otherwise make this scenario green by construction forever, which
- * is the opposite of what it exists to catch.
+ * an empty scan throws, because a workflow restructure that renames the
+ * job or the step would otherwise make this scenario green by construction
+ * forever, which is the opposite of what it exists to catch.
  *
  * Scope, honestly stated: this only catches drift when `--self-test` runs
  * — today that means whenever THIS SCRIPT changes (the

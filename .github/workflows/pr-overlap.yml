@@ -38,8 +38,7 @@ name: Open-PR file overlap (informational)
 # fork, regardless of what `permissions:` asks for — but that mitigation lives
 # entirely in GitHub's defaults, not in this file, and survives only until the
 # trigger changes to `pull_request_target` (which gets no such downgrade) or
-# a PAT gets added. A comment cannot enforce that it doesn't; see
-# `check-pr-overlap-trust-boundary.mjs` below for the guard that does.
+# a PAT gets added. zizmor's `dangerous-triggers` audit flags that trigger.
 #
 # So the job is split by trust level instead of relying on the default:
 #
@@ -142,10 +141,7 @@ jobs:
           #
           # No `ref:` override — the `pull_request` event's own default
           # (`refs/pull/N/merge`) is exactly the fork-authored content this
-          # job needs to diff against, and is why this job carries NO token:
-          # see `check-pr-overlap-trust-boundary.mjs`, which fails if this
-          # trigger ever becomes `pull_request_target` while a checkout here
-          # still resolves to PR head content.
+          # job needs to diff against, and is why this job carries NO token.
           fetch-depth: 0
           persist-credentials: false
 
@@ -271,8 +267,7 @@ jobs:
           # `pull_request` event's default checkout here would still resolve
           # to `refs/pull/N/merge` (fork content) even though this job holds
           # a write-scoped token, reintroducing the exact combination #3967
-          # removed. `check-pr-overlap-trust-boundary.mjs` polices the
-          # trigger side of that; this `ref:` is the checkout side.
+          # removed.
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
@@ -589,9 +584,8 @@ jobs:
         # guard scripts (bash/node), and now, since #4078, its
         # `package.json`'s `typecheck` script, which is an arbitrary command.
         # It holds only `contents: read`, sets `persist-credentials: false`,
-        # and references no secrets (see the trust-boundary guard,
-        # scripts/check-pr-overlap-trust-boundary.mjs). #3967 is recent enough
-        # that a false reassurance in this file is worth correcting (#4169).
+        # and references no secrets. #3967 is recent enough that a false
+        # reassurance in this file is worth correcting (#4169).
         #
         # #4169 follow-up 1: every OTHER failure mode in this lane routes
         # through pr-merge-result-check.sh and renders a "Merge-result check:
@@ -854,9 +848,8 @@ jobs:
   #
   # ─── #4431 — and the guard being ABSENT is its own outcome ────────────────
   #
-  # The checkout above is pinned to `base.sha` deliberately, and
-  # `check-pr-overlap-trust-boundary.mjs` enforces that it stays so; it must
-  # NOT be moved to the PR head to make the guard present. The consequence is
+  # The checkout above is pinned to `base.sha` deliberately; it must NOT be
+  # moved to the PR head to make the guard present. The consequence is
   # that `[ ! -f "$GUARD_SCRIPT" ]` compares TWO REFS, not one: `GUARD_SCRIPT`
   # is read from the workflow file, which on a `pull_request` event GitHub
   # takes from the PR's MERGE ref, while the file it looks for comes from the
@@ -1216,9 +1209,8 @@ jobs:
           # ── #4431 defect 2: the guard may not exist in THIS checkout ──────
           #
           # This job checks out `base.sha` on purpose — a commit already in
-          # this repo's history, never a fork's — and that trust boundary is
-          # pinned mechanically by `check-pr-overlap-trust-boundary.mjs`. The
-          # price is that the guard we run is the BASE branch's copy while
+          # this repo's history, never a fork's. The price is that the guard
+          # we run is the BASE branch's copy while
           # `GUARD_SCRIPT` comes from the workflow file, which a
           # `pull_request` run takes from the PR's MERGE ref. So the guard
           # reads as absent on the PR that INTRODUCES it, and on a PR that

@@ -170,3 +170,14 @@ describe('attachment links (#6032)', () => {
     expect(screen.getByText('bad')).toBeInTheDocument()
   })
 })
+
+describe('highlight text colour (#6528)', () => {
+  // Without a text colour the browser paints `<mark>` text black, 4.2:1 on the
+  // Dark theme's highlight; the token is the one the contrast test measures.
+  it('paints highlighted text with the highlight foreground token', () => {
+    const { container } = render(
+      <>{renderTextInline(textNode('x', [{ type: 'highlight' }]), 'k', ctx)}</>,
+    )
+    expect(container.querySelector('mark')).toHaveClass('text-highlight-foreground')
+  })
+})

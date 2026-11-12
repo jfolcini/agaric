@@ -20,6 +20,8 @@ import {
   CornerDownLeft,
   FileSymlink,
   Highlighter,
+  IndentDecrease,
+  IndentIncrease,
   Italic,
   ListFilter,
   Parentheses,
@@ -297,6 +299,33 @@ export function createStructureButtons(editor: Editor): ToolbarButtonConfig[] {
   ]
 }
 
+/**
+ * Indent and Outdent, on touch only (#6532): a phone's keyboard has no Tab, and
+ * indenting is an outliner's most frequent structural action. Ranked just below
+ * the TODO toggle (80), so a bar with room for only some of them keeps TODO.
+ */
+export function createIndentButtons(
+  onIndent: () => void,
+  onOutdent: () => void,
+): ToolbarButtonConfig[] {
+  return [
+    {
+      icon: IndentIncrease,
+      label: 'toolbar.indent',
+      tip: 'toolbar.indentTip',
+      priority: 78,
+      action: onIndent,
+    },
+    {
+      icon: IndentDecrease,
+      label: 'toolbar.outdent',
+      tip: 'toolbar.outdentTip',
+      priority: 78,
+      action: onOutdent,
+    },
+  ]
+}
+
 export function createMetadataButtons(): ToolbarButtonConfig[] {
   return [
     {
@@ -342,14 +371,20 @@ export function createMetadataButtons(): ToolbarButtonConfig[] {
   ]
 }
 
-export function createHistoryButtons(editor: Editor): ToolbarButtonConfig[] {
+/**
+ * Undo and Redo never leave the bar with a fine pointer. On touch (#6532) they
+ * give way to the TODO toggle, the page link and the tag (60), and to Indent and
+ * Outdent: the bar holds a handful of 44 px buttons, and More still has them.
+ */
+export function createHistoryButtons(editor: Editor, touch = false): ToolbarButtonConfig[] {
+  const priority = touch ? 55 : 100
   return [
     {
       icon: Undo2,
       label: 'toolbar.undo',
       tip: 'toolbar.undoTip',
       disabledWhenFalse: 'canUndo',
-      priority: 100,
+      priority,
       action: () => editor.chain().focus().undo().run(),
     },
     {
@@ -357,7 +392,7 @@ export function createHistoryButtons(editor: Editor): ToolbarButtonConfig[] {
       label: 'toolbar.redo',
       tip: 'toolbar.redoTip',
       disabledWhenFalse: 'canRedo',
-      priority: 100,
+      priority,
       action: () => editor.chain().focus().redo().run(),
     },
     {

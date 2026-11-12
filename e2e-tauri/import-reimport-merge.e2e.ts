@@ -167,3 +167,52 @@ describe('Agaric real-backend re-import of an export folder into its own space (
     expect(properties.find((row) => row.key === 'template')?.value_text).toBe('true')
   })
 })
+
+/** Pick `markdown` as the file `${title}.md` in the Data tab's file input. */
+async function pickMarkdownFile(title: string, markdown: string): Promise<void> {
+  await openDataTab()
+  const file = path.join(mkdtempSync(path.join(os.tmpdir(), 'wdio-reimport-')), `${title}.md`)
+  writeFileSync(file, markdown)
+  const input = $('[data-testid="import-file-input"]')
+  await input.waitForExist({ timeout: ACTION_TIMEOUT })
+  await browser.execute(() => {
+    document.querySelector('[data-testid="import-file-input"]')?.classList.remove('hidden')
+  })
+  await input.addValue(file)
+}
+
+describe('Agaric real-backend re-import of a file with an Obsidian ^name anchor (#6277 G5) @markdown @pages', () => {
+  it('takes the marker out of its new block and makes the link to it a ref to that block', async () => {
+    await waitForAppReady()
+    await switchToSpace('Personal')
+    const marker = runScopedMarker('wdio-anchor')
+    const title = `${marker}-notes`
+    await importMarkdownPage(title, `${marker}-old\n`)
+
+    await pickMarkdownFile(
+      title,
+      `- ${marker}-old\n- ${marker}-fresh ^two\n- ${marker}-see [[${title}#^two]]\n`,
+    )
+    await confirmDialog('Update and import')
+    await waitForImportResult('1 existing page updated')
+
+    // Round-trip, then read what the backend stored.
+    await navigateTo('Journal')
+    await reopenPageByTitle(title)
+    await blockStaticByMarker(`${marker}-fresh`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const spaces = await invoke<{ id: string; name: string }[]>('list_spaces')
+    const scope = { kind: 'active', space_id: spaces.find((s) => s.name === 'Personal')?.id ?? '' }
+    const pages = await invoke<{ id: string; content: string | null }[]>(
+      'list_all_pages_in_space',
+      { scope, tagIds: null },
+    )
+    const pageId = pages.find((page) => page.content === title)?.id ?? ''
+    const { blocks } = await invoke<{ blocks: { id: string; content: string | null }[] }>(
+      'load_page_subtree',
+      { rootBlockId: pageId, scope },
+    )
+    const fresh = blocks.find((block) => block.content === `${marker}-fresh`)
+    expect(fresh?.content).toBe(`${marker}-fresh`)
+    expect(blocks.map((block) => block.content)).toContain(`${marker}-see ((${fresh?.id}))`)
+  })
+})

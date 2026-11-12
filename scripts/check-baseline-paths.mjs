@@ -70,6 +70,8 @@ export const DATA_SOURCES = {
   'src-tauri/dynamic-sql-baseline.txt': ['text:count-path', '.'],
   // One path per line, relative to `src-tauri/` (the file's header says so).
   'src-tauri/unsafe-allowlist.txt': ['text:lines', 'src-tauri'],
+  // One repo-relative path per line.
+  'scripts/axe-presence-baseline.txt': ['text:lines', '.'],
 }
 
 // Discovered files that name no paths, with the reason, so "checked and found
@@ -93,11 +95,7 @@ export const NO_PATHS = {
 export const EMBEDDED_SOURCES = [
   // Sanctioned raw-transaction sites. Mixed exact paths and `**` globs.
   ['scripts/check-raw-tx.mjs', 'ALLOWLIST_GLOBS', '.'],
-  // Sanctioned raw `invoke(` / `localStorage` seams.
-  ['scripts/check-raw-invoke.mjs', 'EXEMPT_FILES', '.'],
-  // Directory prefixes: existence covers both, and a prefix that stopped
-  // naming a directory exempts nothing just as silently.
-  ['scripts/check-raw-invoke.mjs', 'EXEMPT_DIR_PREFIXES', '.'],
+  // Sanctioned raw `localStorage` seams.
   ['scripts/check-raw-local-storage.mjs', 'EXEMPT_FILES', '.'],
   // Components allowed to have no IPC error-path test.
   ['scripts/check-ipc-error-path.mjs', 'NO_TEST_ALLOWLIST', '.'],

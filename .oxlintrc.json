@@ -235,6 +235,31 @@
         "eslint/no-restricted-imports": [
           "error",
           {
+            "paths": [
+              {
+                "name": "@tauri-apps/api/core",
+                "importNames": ["invoke"],
+                "message": "Call commands through the typed `commands.*` bindings in @/lib/bindings; a raw invoke() fails only at runtime (#3993)."
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "^\\.\\.?/",
+                "message": "Use the @/ alias for intra-src imports (#2699)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // The one sanctioned raw invoke: `readAttachment` returns raw bytes, so
+      // it has no generated binding (#2654).
+      "files": ["src/lib/ipc-helpers.ts"],
+      "rules": {
+        "eslint/no-restricted-imports": [
+          "error",
+          {
             "patterns": [
               {
                 "regex": "^\\.\\.?/",

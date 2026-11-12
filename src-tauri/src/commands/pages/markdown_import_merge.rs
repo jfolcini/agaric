@@ -205,14 +205,23 @@ pub(super) async fn merge_into_page(
         .map(String::as_str)
         .collect();
     let stripped = import::strip_title_heading(file.content, file.title);
-    let source = merge_source(&stripped, &vault, &held, &own);
+    let mut source = merge_source(&stripped, &vault, &held, &own);
     let (text, mut anchors) = anchor_free(&source.text);
     for anchor in &mut anchors {
         if anchor.as_deref().is_some_and(|id| !own.contains(id)) {
             *anchor = None;
         }
     }
-    let line_ids = pair_unanchored_lines(&buffer.text, &buffer.line_ids, &text, &anchors);
+    let (text, named) = strip_named_anchors(&text);
+    let mut line_ids = pair_unanchored_lines(&buffer.text, &buffer.line_ids, &text, &anchors);
+    let mut text = text;
+    if !named.is_empty() {
+        // The links to a name are refs to its block once its line has paired,
+        // and the lines holding them pair again as refs.
+        let (linked, fresh) = link_named_anchors(&text, file.title, &named, &line_ids);
+        line_ids = pair_unanchored_lines(&buffer.text, &buffer.line_ids, &linked, &anchors);
+        (text, source.named) = (linked, fresh);
+    }
     let flags = SourceSaveFlags {
         merge: false,
         line_ids,

@@ -27,13 +27,13 @@
 - **`Swatinem/rust-cache` hashes every `CARGO*` / `RUST*` variable and `.cargo/config.toml` into its key,** so a lane restoring another job's key copies that job's environment and toolchain setup order (mold before the cache step), or it never matches.
 - **The real-backend lane's build restores `rust-mcp` with `save-if: false`:** `main` runs that lane only weekly, so a key of its own never hit (#5853). Its shards restore `apt-e2e-tauri-runtime-*`, which `ci.yml`'s `e2e-tauri-apt-cache` job saves on every main push for the same reason.
 - A lane with its own package set takes its own `apt-*` key, and bumps its `-vN` suffix whenever the list changes. The `apt-tauri-*-v1` key is shared.
-- A cache-poisoning suppression is an inline `# zizmor: ignore[cache-poisoning]` on its step, never an entry in `zizmor.yml`; adding one means bumping `EXPECTED_INLINE_SUPPRESSIONS` (`scripts/check-cache-poisoning-suppressions.mjs`). Only a job that never signs or publishes may restore a cache; `release.yml`'s own jobs restore none (#3542); the workflows it calls restore caches but ship nothing.
+- A cache-poisoning suppression is an inline `# zizmor: ignore[cache-poisoning]` on its step, never an entry in `zizmor.yml`. Only a job that never signs or publishes may restore a cache; `release.yml`'s own jobs restore none (#3542); the workflows it calls restore caches but ship nothing.
 
 ## Pins
 
 - **Every third-party `uses:` is pinned to a full commit SHA with its `# vX.Y.Z` comment.** zizmor checks that the comment matches the SHA, and Dependabot (`dependabot.yml`) bumps both. `actions/rust-toolchain` exists because a tag that moves under a pinned SHA failed that check after every move.
 - The Rust toolchain is an exact version in every workflow except the nightly `fuzz` lane, in lockstep with `rust-toolchain.toml` and `src-tauri/Cargo.toml` `rust-version` (#640); the header of `rust-toolchain.toml` lists the places.
-- zizmor and prek are each pinned in two places that Dependabot cannot track: zizmor in `scripts/zizmor-hook.sh` and the `tool:` lists of `taiki-e/install-action`, prek in `scripts/setup-hooks.sh` and those lists. The `zizmor-version-pin` and `prek-version-pin` hooks keep each pair equal. actionlint is pinned by SHA in `prek.toml`.
+- zizmor and prek are each pinned in two places that Dependabot cannot track: zizmor in `scripts/zizmor-hook.sh` and the `tool:` lists of `taiki-e/install-action`, prek in `scripts/setup-hooks.sh` and those lists. The `tool-pins` hook keeps each pair equal. actionlint is pinned by SHA in `prek.toml`.
 - Every checkout sets `persist-credentials: false`. Each workflow's top-level `permissions` are read-only, and a job widens only what it needs.
 - A job that runs `npm ci` uses the `./.github/actions/setup-node` composite, which installs the npm `package.json` pins (`engine-strict` refuses an older one); a job that only runs `node scripts/…` keeps the upstream `actions/setup-node` with `package-manager-cache: false`.
 - apt installs go through `actions/prepare-apt` and `actions/apt-install`. Exit 75 with `AGARIC_APT_INFRA` means the mirror failed: rerun the job.

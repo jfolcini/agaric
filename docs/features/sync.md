@@ -30,7 +30,8 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 - **Sidebar Sync icon** (footer), the one place the status dot is drawn:
   - Green: idle.
   - Spinning + amber: syncing now.
-  - Red: last attempt failed (toast offers *Retry*).
+  - Red, with an alert glyph and the error in the tooltip: last attempt failed (toast offers *Retry*).
+  - Yellow, with *No devices paired* in the tooltip: nothing to sync with yet.
   - Strikethrough WiFi: offline.
 - **"Last synced N ago"** in the Sync icon's tooltip, with the state.
 - **Settings › Sync & devices**, at the top (below any sync changes that could not be applied) once a device is paired: the overall sync state, the last successful sync, and the peer count. To retry, use the device list's *Sync all* or a device's *Sync now*.

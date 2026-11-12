@@ -18,7 +18,7 @@
  * remaining props.
  */
 
-import { ChevronsLeft, Plus, RefreshCw, WifiOff } from 'lucide-react'
+import { AlertCircle, ChevronsLeft, Plus, RefreshCw, WifiOff } from 'lucide-react'
 import { memo, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -57,7 +57,7 @@ import { type SyncState, useSyncStore } from '@/stores/sync'
  */
 function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
   if (syncState === 'offline') return 'bg-muted-foreground'
-  if (!hasPeers) return 'bg-status-pending'
+  if (!hasPeers) return 'bg-status-pending-foreground'
   switch (syncState) {
     case 'idle': {
       return 'bg-sync-idle'
@@ -75,6 +75,7 @@ function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
 }
 
 const LAST_SYNCED_ID = 'sidebar-last-synced'
+const SYNC_STATUS_ID = 'sidebar-sync-status'
 
 function CollapseButton() {
   const { t } = useTranslation()
@@ -121,6 +122,7 @@ function AppSidebarInner({
   const syncState = useSyncStore((s) => s.state)
   const syncPeers = useSyncStore((s) => s.peers)
   const lastSyncedAt = useSyncStore((s) => s.lastSyncedAt)
+  const syncError = useSyncStore((s) => s.error)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const { isMobile, setOpenMobile } = useSidebar()
@@ -129,6 +131,16 @@ function AppSidebarInner({
     ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t, now) })
     : t('sidebar.lastSyncedNever')
   const syncUnavailable = syncing || !isOnline
+  // Offline wins, then no peers, as they do for the dot; a running sync
+  // replaces the old error.
+  const hasPeers = syncPeers.length > 0
+  const syncSettled = isOnline && !syncing
+  const syncFailed = syncSettled && hasPeers && syncState === 'error'
+  const syncStatusLabel = syncFailed
+    ? t('sync.failed', { message: syncError ?? '' })
+    : syncSettled && !hasPeers
+      ? t('sync.noPeersTitle')
+      : null
 
   /**
    * On mobile the sidebar is a Sheet that overlays the content, so acting on
@@ -246,17 +258,19 @@ function AppSidebarInner({
       </SidebarContent>
       <SidebarFooter>
         {/* One row of icons; it stacks in the 48px rail. The sync state is
-            the icon (spinner, offline) plus the dot, and the "last synced"
-            line lives in the tooltip and the button's description. Hover
-            paints the nav rows' lighter fill, so it never matches the active
-            Settings pill. */}
+            the icon (spinner, offline, error) plus the dot; the error or "no
+            devices paired" line and the "last synced" line live in the
+            tooltip and the button's description. Hover paints the nav rows'
+            lighter fill, so it never matches the active Settings pill. */}
         <div className="flex items-center gap-1 group-data-[collapsible=icon]:flex-col">
           <IconButton
             variant="ghost"
             size="icon-sm"
             className="hover:bg-sidebar-accent/50 aria-disabled:opacity-50"
             ariaLabel={isOnline ? t('sidebar.sync') : t('sidebar.offline')}
-            aria-describedby={LAST_SYNCED_ID}
+            aria-describedby={
+              syncStatusLabel === null ? LAST_SYNCED_ID : `${SYNC_STATUS_ID} ${LAST_SYNCED_ID}`
+            }
             tooltip={
               <div className="flex flex-col gap-0.5">
                 <span>
@@ -264,7 +278,7 @@ function AppSidebarInner({
                     ? t('sidebar.offline')
                     : syncing
                       ? t('sidebar.syncing')
-                      : t('sidebar.syncTooltip')}
+                      : (syncStatusLabel ?? t('sidebar.syncTooltip'))}
                 </span>
                 <span className="opacity-90">{lastSyncedLabel}</span>
               </div>
@@ -277,13 +291,15 @@ function AppSidebarInner({
             <span className="relative inline-flex">
               {!isOnline ? (
                 <WifiOff className="text-muted-foreground" />
+              ) : syncFailed ? (
+                <AlertCircle className="text-destructive" />
               ) : (
                 <RefreshCw className={syncing ? 'animate-spin' : ''} />
               )}
               <span
                 className={cn(
                   'sync-button-status-dot absolute -top-1 -right-1 h-2 w-2 rounded-full',
-                  syncDotClass(syncState, syncPeers.length > 0),
+                  syncDotClass(syncState, hasPeers),
                 )}
                 data-testid="sync-button-status-dot"
                 data-sync-state={syncState}
@@ -291,6 +307,11 @@ function AppSidebarInner({
               />
             </span>
           </IconButton>
+          {syncStatusLabel !== null && (
+            <span id={SYNC_STATUS_ID} className="sr-only">
+              {syncStatusLabel}
+            </span>
+          )}
           <span id={LAST_SYNCED_ID} className="sr-only" data-testid="last-synced">
             {lastSyncedLabel}
           </span>

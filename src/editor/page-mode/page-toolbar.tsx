@@ -14,6 +14,9 @@
  * - Priority, the date pickers, properties, the query builder and the emoji
  *   picker: on the caret's block, as page mode's keys and slash menu run them.
  *
+ * Indent and Outdent, on the bar on touch, run Tab's and Shift+Tab's commands on
+ * page mode's editor: the blocks the selection touches.
+ *
  * Discard is left off: page mode saves as it goes, with no edit to throw away.
  * The task button's tooltip says what it does here: Ctrl+Enter cycles the task.
  *
@@ -34,6 +37,7 @@ import { FormattingToolbar } from '@/components/FormattingToolbar'
 import { getActiveEditor } from '@/editor/active-editor'
 import { blockIdsBetween } from '@/editor/page-mode/page-block-actions'
 import { GRIP_MENU, type GripMenuDetail } from '@/editor/page-mode/page-gutter'
+import { indentBlocks, outdentBlocks } from '@/editor/page-mode/page-keys'
 import type { PageLists } from '@/editor/page-mode/page-lists'
 import { caretBlockId } from '@/editor/page-mode/page-tasks'
 import type { PickerItem } from '@/editor/SuggestionList'
@@ -174,6 +178,10 @@ export function PageToolbar({
           ? { open: blockMenuOpen, onOpen: (anchor) => openBlockMenu(editor, anchor) }
           : undefined
       }
+      indent={{
+        onIndent: () => indentBlocks(editor.state, editor.view.dispatch, editor.view),
+        onOutdent: () => outdentBlocks(editor.state, editor.view.dispatch, editor.view),
+      }}
     />
   )
 }

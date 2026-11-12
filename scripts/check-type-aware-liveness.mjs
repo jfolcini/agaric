@@ -111,7 +111,7 @@
 // Exit codes: 0 = the lane ran; 2 = the lane did NOT run; 3 = UNVERIFIABLE,
 // the guard could not reach a verdict.
 // 1 is deliberately unused so node's own exit-1-on-crash cannot be mistaken
-// for a verdict — the same discipline as scripts/check-tsgolint-version-pin.mjs.
+// for a verdict.
 // `--summary` always exits 0.
 
 import { execFileSync } from 'node:child_process'

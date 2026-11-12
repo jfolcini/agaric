@@ -44,8 +44,7 @@
 #
 # The bug documented above (a checkout that lands on the merge ref, base-tip
 # first parent) is not the only path to it. If `pr-overlap.yml`'s `compute`
-# job's trigger were ever changed to `pull_request_target` — the exact edit
-# `scripts/check-pr-overlap-trust-boundary.mjs` exists to police — its
+# job's trigger were ever changed to `pull_request_target`, its
 # ref-less checkout would land on the BASE branch instead (that trigger's
 # default, with no explicit head ref). For a FORK PR, `HEAD_SHA` (the
 # workflow's `github.event.pull_request.head.sha`) is then a commit this
@@ -58,14 +57,8 @@
 # FORK-ONLY, so a same-repo PR (where `head.sha` resolves fine) keeps
 # working and hides that the fork case is broken.
 #
-# `check-pr-overlap-trust-boundary.mjs`'s condition 3 — no write-scoped job
-# may hold a checkout without a base-pinned `ref:` — does NOT catch this
-# configuration: `compute` (the job this script runs in) holds `permissions:
-# contents: read`, no write scope of any kind, so condition 3 has nothing to
-# flag there. That guard polices TOKEN EXFILTRATION (a write-scoped job
-# running fork-authored code); this is a DATA-CORRECTNESS hazard in a job
-# that was never a write-scope risk in the first place, and nothing in this
-# repo mechanically pins it today.
+# zizmor's `dangerous-triggers` audit flags that trigger change; nothing in
+# this repo pins the data-correctness consequence described here.
 #
 # Usage:
 #   scripts/pr-overlap-diverged.sh <base-ref> [<head-sha>]

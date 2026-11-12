@@ -169,6 +169,7 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 #
 #   check-unsafe-allowlist.sh   -> hook `unsafe-allowlist`  (dropped when HAS_RS=0)
 #   check-axe-presence.sh       -> hook `axe-presence`      (dropped when HAS_TS=0)
+#   axe-presence-baseline.txt   -> hook `axe-presence`      (dropped when HAS_TS=0)
 #   check-test-file-naming.sh   -> hook `test-file-naming`  (dropped when HAS_TS=0)
 #
 # The TS list also carries every script a `src/**/*.test.ts` imports or
@@ -182,7 +183,7 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 # cargo-audit-guard.sh used to be covered by self-test hooks outside every
 # skip list; #4556 Phase 2 deleted those, so they get shellcheck alone here.
 HOOK_OWNER_RS_RE='^scripts/check-unsafe-allowlist\.sh$'
-HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|mutation-reports|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$|^scripts/classify-changes\.sh$'
+HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/axe-presence-baseline\.txt$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|mutation-reports|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$|^scripts/classify-changes\.sh$'
 
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
@@ -447,9 +448,8 @@ prek_skip_list() {
     if [ "$has_ts" = "0" ]; then
         skip_items+=(tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
             no-ui-store-imports no-legacy-react-apis \
-            import-cycles store-layering axe-presence test-file-naming \
-            ipc-error-path-coverage no-raw-invoke no-raw-local-storage \
-            trace-interactions-named)
+            store-layering axe-presence test-file-naming \
+            ipc-error-path-coverage no-raw-local-storage)
     fi
     # Backend absent → skip the Rust/cargo/SQL/migration hooks. No
     # check-sqlx-cache-drift: CI is the gate and never skipped it (#3901's
@@ -478,10 +478,10 @@ prek_skip_list() {
     # binding boundary — they MUST run if frontend OR backend changed.
     [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
         skip_items+=(tauri-mock-parity snapshot-redaction no-retired-pending-doc-refs)
-    # doc-vs-code-paths reads BOTH docs and code, so it is a 3-way compound and
-    # not a docs-only hook: CI's placement, and CI is the gate.
+    # architecture-citations reads BOTH docs and code, so it is a 3-way compound
+    # and not a docs-only hook: CI's placement, and CI is the gate.
     [ "$has_docs" = "0" ] && [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
-        skip_items+=(architecture-citations doc-vs-code-paths)
+        skip_items+=(architecture-citations)
     # oxlint/oxfmt also cover `scripts/*.mjs`, which is tooling (`ci`): they
     # run when frontend OR ci changed, so a tooling-only push is still linted.
     [ "$has_ts" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-json oxlint oxfmt)
