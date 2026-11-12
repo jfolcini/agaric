@@ -5991,6 +5991,164 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
 }
 
 // ======================================================================
+// #6525 — a sync session marks only the spaces its imports changed
+// ======================================================================
+
+const DEV_A_6525: &str = "DEV6525A";
+const DEV_B_6525: &str = "DEV6525B";
+const SPACES_6525: [&str; 2] = ["01HZ6525SPACE1XXXXXXXXXXXX", "01HZ6525SPACE2XXXXXXXXXXXX"];
+
+/// Two paired devices that both hold B's blocks in both [`SPACES_6525`],
+/// every engine saved: nothing is dirty.
+struct ConvergedPair6525 {
+    pool_a: SqlitePool,
+    mat_a: Materializer,
+    pool_b: SqlitePool,
+    mat_b: Materializer,
+    _dirs: (TempDir, TempDir),
+}
+
+impl ConvergedPair6525 {
+    async fn new() -> Self {
+        let (pool_a, dir_a) = test_pool().await;
+        let (pool_b, dir_b) = test_pool().await;
+        let mat_a = Materializer::new(pool_a.clone());
+        let mat_b = Materializer::new(pool_b.clone());
+        peer_refs::upsert_peer_ref(&pool_a, DEV_B_6525)
+            .await
+            .unwrap();
+        peer_refs::upsert_peer_ref(&pool_b, DEV_A_6525)
+            .await
+            .unwrap();
+        let pair = Self {
+            pool_a,
+            mat_a,
+            pool_b,
+            mat_b,
+            _dirs: (dir_a, dir_b),
+        };
+        for (n, space) in SPACES_6525.iter().enumerate() {
+            pair.edit_on_b(space, &format!("01HZ6525B{n}XXXXXXXXXXXXXXXX"), "seed")
+                .await;
+        }
+        pair.pull().await;
+        for (pool, mat) in [(&pair.pool_a, &pair.mat_a), (&pair.pool_b, &pair.mat_b)] {
+            mat.flush_background().await.unwrap();
+            agaric_engine::loro::snapshot::save_all_engines(pool, &mat.loro_state().registry).await;
+            assert_eq!(mat.loro_state().registry.dirty_count(), 0, "saved");
+        }
+        pair
+    }
+
+    /// Device B creates `block` in `space` through the local-edit pipeline.
+    async fn edit_on_b(&self, space: &str, block: &str, content: &str) {
+        make_local_edit_602(
+            &self.pool_b,
+            &self.mat_b,
+            self.mat_b.loro_state(),
+            DEV_B_6525,
+            &agaric_store::space::SpaceId::from_trusted(space),
+            block,
+            content,
+            1_736_942_400_000,
+        )
+        .await;
+    }
+
+    /// One whole session: A pulls from B.
+    async fn pull(&self) {
+        let mut init = SyncOrchestrator::new(
+            self.pool_a.clone(),
+            DEV_A_6525.into(),
+            Arc::new(self.mat_a.clone()),
+        )
+        .with_expected_remote_id(DEV_B_6525.into());
+        let mut resp = SyncOrchestrator::new(
+            self.pool_b.clone(),
+            DEV_B_6525.into(),
+            Arc::new(self.mat_b.clone()),
+        )
+        .with_expected_remote_id(DEV_A_6525.into());
+        pump_full_session_602(&mut init, &mut resp).await;
+        assert_eq!(
+            init.session().state,
+            crate::sync_protocol::SyncState::Complete,
+            "the session completes"
+        );
+        self.mat_a.flush_background().await.unwrap();
+        self.mat_b.flush_background().await.unwrap();
+    }
+
+    fn shutdown(&self) {
+        self.mat_a.shutdown();
+        self.mat_b.shutdown();
+    }
+}
+
+/// #6525 — a session between converged devices marks no space dirty on
+/// either side, so the next snapshot pass writes nothing. Reddens if the
+/// responder's export or the puller's import goes back to marking every
+/// space it reads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_session_that_changes_nothing_leaves_every_space_clean_6525() {
+    let pair = ConvergedPair6525::new().await;
+
+    pair.pull().await;
+
+    for (side, pool, mat) in [
+        ("puller", &pair.pool_a, &pair.mat_a),
+        ("responder", &pair.pool_b, &pair.mat_b),
+    ] {
+        let registry = &mat.loro_state().registry;
+        assert_eq!(registry.dirty_count(), 0, "the {side} has no dirty space");
+        assert_eq!(
+            agaric_engine::loro::snapshot::save_all_engines(pool, registry)
+                .await
+                .saved,
+            0,
+            "the {side}'s next snapshot pass writes nothing"
+        );
+    }
+    pair.shutdown();
+}
+
+/// #6525 — a session that brings one space's edit leaves exactly that space
+/// dirty on the puller, and none on the responder.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_importing_session_leaves_exactly_the_imported_space_dirty_6525() {
+    let pair = ConvergedPair6525::new().await;
+    pair.edit_on_b(SPACES_6525[1], "01HZ6525NEWXXXXXXXXXXXXXXX", "new")
+        .await;
+    agaric_engine::loro::snapshot::save_all_engines(
+        &pair.pool_b,
+        &pair.mat_b.loro_state().registry,
+    )
+    .await;
+
+    pair.pull().await;
+
+    let dirty: Vec<agaric_store::space::SpaceId> = pair
+        .mat_a
+        .loro_state()
+        .registry
+        .snapshot_dirty_engines()
+        .into_iter()
+        .map(|(space, _, _)| space)
+        .collect();
+    assert_eq!(
+        dirty,
+        vec![agaric_store::space::SpaceId::from_trusted(SPACES_6525[1])],
+        "the puller's only dirty space is the one the session imported into"
+    );
+    assert_eq!(
+        pair.mat_b.loro_state().registry.dirty_count(),
+        0,
+        "the responder only read"
+    );
+    pair.shutdown();
+}
+
+// ======================================================================
 // #2536 — multi-space delta sync must not fail on the second LoroSync
 // ======================================================================
 

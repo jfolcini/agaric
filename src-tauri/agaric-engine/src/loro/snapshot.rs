@@ -24,9 +24,10 @@
 //! - [`save_all_engines`] — walk the registry, persist every dirty space.
 //!   Catches and logs per-space errors so one bad space never blocks the
 //!   others.
-//! - [`save_engines_and_advance_cursor`] — the periodic, background and exit
-//!   pass: [`save_all_engines`], then the apply cursor moves to what it
-//!   persisted, so boot replays only the ops after it (#5418).
+//! - [`save_engines_and_advance_cursor`] — the pass the periodic, background,
+//!   exit, session-end and mobile-suspend triggers run: [`save_all_engines`],
+//!   then the apply cursor moves to what it persisted, so boot replays only the
+//!   ops after it (#5418).
 //!
 //! ## Boot rehydration design
 //!
@@ -208,8 +209,7 @@ pub async fn rehydrate_registry(
     let mut imported = Vec::with_capacity(rows.len());
     for (space_id_str, bytes) in rows {
         // #792: derive the engine's PeerID from the registry's current
-        // peer-id epoch (installed at boot from `app_settings`, refreshed
-        // by `reload_registry_from_db` after a RESET) so rehydrated
+        // peer-id epoch (installed at boot from `app_settings`) so rehydrated
         // engines and lazily-created ones agree on the device's peer id.
         let mut engine = LoroEngine::with_peer_id_epoch(device_id, registry.peer_epoch())?;
         match engine.import_deferring_index(&bytes) {
@@ -248,70 +248,6 @@ fn unreadable_snapshot(space_id: &str, engine: &LoroEngine, cause: &AppError) ->
              rather than overwrite it."
         )),
     }
-}
-
-/// In-process engine reload after a wholesale replace of the Loro sidecar
-/// state (#607 / #779).
-///
-/// Written for the snapshot RESET, which replaced every core SQL table and
-/// wiped `loro_doc_state`, `loro_sync_inbox` and the apply cursor in one
-/// transaction without access to the live engine registry. #4699 deleted
-/// that caller; this is now reached only from its tests, which pin the
-/// reload contract for whatever brings a wholesale replace back. The
-/// in-memory engines still hold the pre-replace CRDT lineage when such a
-/// wipe returns. Left alone, the next `prepare_outgoing` would
-/// export that stale state to peers and the next periodic / exit-time
-/// `save_all_engines` would persist it straight back into the freshly
-/// wiped `loro_doc_state` (#779's restart scenario).
-///
-/// This is the matching reload primitive: drop every engine, then re-run
-/// the standard boot rehydration against whatever `loro_doc_state` now
-/// holds. After a RESET that table is empty, so the registry ends up
-/// empty — which is the CORRECT post-reset state, not a shortcut: the
-/// snapshot format carries SQL rows only (no CRDT history), and seeding
-/// fresh Loro docs from snapshot SQL would mint an independent history
-/// whose tree nodes would duplicate the peer's on the next loro-sync
-/// merge. An empty engine instead has an empty version vector, so the
-/// next sync session imports the peer's full CRDT state cleanly and
-/// re-converges engine and SQL.
-///
-/// Must run immediately after the wipe commits, before any further engine
-/// access. Returns the number of engines rehydrated (0 after a wipe).
-pub async fn reload_registry_from_db(
-    pool: &SqlitePool,
-    registry: &LoroEngineRegistry,
-    device_id: &str,
-) -> Result<usize, AppError> {
-    // #792: re-read the persisted peer-id epoch BEFORE dropping the
-    // engines. The RESET bumped it inside its transaction, so
-    // after a successful RESET this installs the NEW epoch and every
-    // post-reset engine (lazy or rehydrated) mints ops under a fresh
-    // PeerID — counters can restart at 0 without forking the
-    // (peer, counter) space against pre-reset ops still held by peers.
-    // On the failed-apply restore path the tx rolled back, the load
-    // returns the unchanged epoch, and the engines reload onto their
-    // original peer id — exactly matching the restored loro_doc_state.
-    //
-    // #2023: if that read FAILS (after `load_peer_epoch`'s bounded
-    // retry) we must NOT proceed. This runs right after a RESET, where
-    // the persisted epoch was bumped to >= 1; defaulting to 0 (or
-    // leaving the stale in-memory epoch in place) and then rehydrating
-    // would mint engines under the retired pre-reset PeerID — the exact
-    // fork #792 prevents. Propagate the error and leave the registry
-    // untouched (engines NOT cleared / rehydrated) so the caller can
-    // fail the session closed instead of silently forking.
-    let epoch = crate::loro::peer_epoch::load_peer_epoch(pool).await?;
-    if epoch != registry.peer_epoch() {
-        tracing::info!(
-            old_epoch = registry.peer_epoch(),
-            new_epoch = epoch,
-            "loro: peer-id epoch changed across registry reload (#792); \
-             post-reload engines will mint ops under a fresh PeerID"
-        );
-        registry.set_peer_epoch(epoch);
-    }
-    registry.clear();
-    rehydrate_registry(pool, registry, device_id).await
 }
 
 /// What one [`save_all_engines`] pass did.
@@ -365,11 +301,6 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // prevent. Re-checked before every write below.
     let generation = registry.generation();
     let pairs = registry.snapshot_dirty_engines();
-    // #3309 — the space set this process holds an ENGINE for, cut alongside
-    // the dirty set (not re-read at the end): a space that is lazily created
-    // mid-pass has an engine whose relationship to its persisted row this
-    // pass never observed, so it must not be advanced either.
-    let installed = registry.space_ids();
 
     let mut saved = 0usize;
     // #3309 — every space this pass TOUCHED (persisted or failed). Spaces
@@ -440,15 +371,8 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // captured generation are threaded IN and re-checked there instead, which
     // makes the exclusion a property of the function rather than of the
     // caller's control flow.
-    advance_clean_space_watermarks(
-        pool,
-        applied_through_seq,
-        &attempted,
-        &installed,
-        registry,
-        generation,
-    )
-    .await;
+    advance_clean_space_watermarks(pool, applied_through_seq, &attempted, registry, generation)
+        .await;
 
     SavePass {
         saved,
@@ -478,13 +402,11 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 /// ## Why it is sound
 ///
 /// `applied_through_seq` claims only "this blob reflects every op with
-/// `seq <= watermark`". A row is advanced only when BOTH hold:
-///
-/// * its space has an engine INSTALLED in `registry` — so there really is
-///   an in-memory engine whose state the blob is being compared against
-///   (see the "engine absent" exclusion below), and
-/// * that space is absent from `attempted` — so it was clean at the
-///   dirty-set cut, i.e. its persisted blob equals its in-memory engine.
+/// `seq <= watermark`". A row is advanced only when its space is absent from
+/// `attempted`, so it was clean at the dirty-set cut: its persisted blob
+/// equals its in-memory engine. Every row has an engine behind it, because
+/// boot installs one for each row or stops (#6525) and a pass writes rows only
+/// for engines.
 ///
 /// The engine in turn reflects the ops up to the pass's op-log head, of
 /// which `applied_through_seq` is one less, bar the engine writes that land
@@ -506,14 +428,6 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 /// persisted successfully already had the current watermark written by the
 /// `INSERT OR REPLACE` above, so excluding it costs nothing.)
 ///
-/// Spaces with NO engine in the registry are excluded because "not
-/// attempted" is NOT the same as "clean" for them: a row with no engine
-/// behind it was never verified against one, and advancing it would assert
-/// that a blob nobody read reflects the whole log and would suppress the
-/// rebuild the boot heal exists to drive. `snapshot_dirty_engines` phase 2 also
-/// skips a dirty space that is absent from the map, which this exclusion
-/// covers as well.
-///
 /// `updated_at` is deliberately left alone: it records when the BLOB was
 /// written, and no blob is rewritten here.
 ///
@@ -529,9 +443,9 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 /// the enclosing pass observed, so either a [`LoroEngineRegistry::clear`]
 /// (snapshot RESET) or a [`LoroEngineRegistry::evict_space`] (a purged
 /// space's engine dropped mid-pass, #2910) landing in between invalidates
-/// all of them at once: `attempted` and `installed` describe engines that
-/// may no longer exist, and the rows they would vouch for may belong to a
-/// wiped or shrunk table. This used to be inherited from
+/// all of them at once: `attempted` describes engines that may no longer
+/// exist, and the rows it would vouch for may belong to a wiped or shrunk
+/// table. This used to be inherited from
 /// [`save_all_engines`]' per-pair check, which does not run when the dirty set
 /// is EMPTY — the exact quiescent case this function was written for. Checking
 /// it here at entry makes the exclusion a property of this function rather
@@ -553,7 +467,6 @@ async fn advance_clean_space_watermarks(
     pool: &SqlitePool,
     applied_through_seq: i64,
     attempted: &[SpaceId],
-    installed: &[SpaceId],
     registry: &LoroEngineRegistry,
     generation: u64,
 ) -> usize {
@@ -590,12 +503,6 @@ async fn advance_clean_space_watermarks(
     let mut advanced = 0usize;
     for (space_id,) in stale {
         if attempted.iter().any(|s| s.as_str() == space_id) {
-            continue;
-        }
-        // A row whose space is absent from `installed` never had its blob
-        // verified against an engine in this pass, so it is left pinning
-        // `MIN` — which is precisely the full-rebuild signal it needs.
-        if !installed.iter().any(|s| s.as_str() == space_id) {
             continue;
         }
         // Re-assert `applied_through_seq <` in the UPDATE so a concurrent
@@ -946,131 +853,6 @@ mod tests {
         assert!(milestones[0].contains("imported_spaces=2"), "{logs}");
     }
 
-    /// #607 / #779 — `reload_registry_from_db` drops stale engines and
-    /// rehydrates strictly from `loro_doc_state`. Two cases in one walk:
-    /// (a) after a snapshot RESET the table is empty, so the registry
-    /// ends up EMPTY (no pre-reset engine survives in memory, and a
-    /// follow-up `save_all_engines` persists nothing stale); (b) a space
-    /// whose snapshot IS persisted comes back, proving the reload is a
-    /// real rehydrate and not just a clear.
-    #[tokio::test]
-    async fn reload_registry_from_db_drops_stale_engines_and_rehydrates_607() {
-        let (pool, _dir) = fresh_pool().await;
-        let registry = LoroEngineRegistry::new();
-        let space_a = SpaceId::from_trusted(SPACE_A);
-        let space_b = SpaceId::from_trusted(SPACE_B);
-
-        // Live engine for A holds pre-reset content; loro_doc_state has
-        // NO row for A (the RESET wiped it). B has a persisted snapshot
-        // (simulating a future format that carries engine state).
-        {
-            let mut g = registry.for_space(&space_a, "device-1").expect("a");
-            g.engine_mut()
-                .apply_create_block("BLOCK_PRE", "content", "pre-reset", None, 0)
-                .expect("create");
-        }
-        let mut engine_b = LoroEngine::with_peer_id("device-1").expect("engine_b");
-        engine_b
-            .apply_create_block("BLOCK_B", "content", "persisted", None, 0)
-            .expect("create");
-        save_snapshot(&pool, &space_b, &engine_b)
-            .await
-            .expect("save b");
-
-        let n = reload_registry_from_db(&pool, &registry, "device-1")
-            .await
-            .expect("reload");
-        assert_eq!(n, 1, "only the persisted space must rehydrate");
-        assert_eq!(registry.len(), 1, "stale engine for A must be dropped");
-
-        // A: fresh lazy engine, pre-reset block gone.
-        {
-            let mut g = registry.for_space(&space_a, "device-1").expect("a");
-            assert!(
-                g.engine_mut().read_block("BLOCK_PRE").unwrap().is_none(),
-                "pre-reset content must not survive the reload"
-            );
-        }
-        // B: rehydrated from its persisted snapshot.
-        {
-            let mut g = registry.for_space(&space_b, "device-1").expect("b");
-            let snap = g.engine_mut().read_block("BLOCK_B").unwrap().unwrap();
-            assert_eq!(snap.content, "persisted");
-        }
-
-        // (a) continued: with loro_doc_state now empty for A, a simulated
-        // exit-save persists nothing stale — the #779 boot source stays
-        // clean. (B's row is refreshed, which is fine.)
-        sqlx::query("DELETE FROM loro_doc_state")
-            .execute(&pool)
-            .await
-            .expect("wipe");
-        registry.clear();
-        let n = reload_registry_from_db(&pool, &registry, "device-1")
-            .await
-            .expect("reload");
-        assert_eq!(n, 0, "empty loro_doc_state must rehydrate nothing");
-        assert_eq!(registry.len(), 0);
-        let saved = save_all_engines(&pool, &registry).await.saved;
-        assert_eq!(saved, 0, "exit-save over an empty registry writes nothing");
-        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_state")
-            .fetch_one(&pool)
-            .await
-            .expect("count");
-        assert_eq!(
-            rows, 0,
-            "loro_doc_state must stay empty after the simulated exit-save"
-        );
-    }
-
-    /// #792 — `reload_registry_from_db` re-reads the persisted peer-id
-    /// epoch before rehydrating, so the post-RESET registry (a) reports
-    /// the bumped epoch and (b) lazily creates engines under the fresh
-    /// salted PeerID instead of the retired pre-reset one.
-    #[tokio::test]
-    async fn reload_registry_from_db_picks_up_bumped_peer_epoch_792() {
-        use crate::loro::engine::{peer_id_for_epoch, peer_id_from_device_id};
-
-        let (pool, _dir) = fresh_pool().await;
-        let registry = LoroEngineRegistry::new();
-        let space = SpaceId::from_trusted(SPACE_A);
-
-        // Pre-reset: epoch 0, legacy peer id.
-        {
-            let mut g = registry.for_space(&space, "device-792").expect("pre");
-            assert_eq!(
-                g.engine_mut().peer_id(),
-                peer_id_from_device_id("device-792")
-            );
-        }
-
-        // A vault that went through the (#4699-deleted) RESET carries a
-        // bumped epoch row; seed the row the way that transaction left it.
-        sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES (?, '1', 0)")
-            .bind(crate::loro::peer_epoch::PEER_EPOCH_KEY)
-            .execute(&pool)
-            .await
-            .expect("seed epoch");
-
-        let n = reload_registry_from_db(&pool, &registry, "device-792")
-            .await
-            .expect("reload");
-        assert_eq!(n, 0, "loro_doc_state is empty after a RESET");
-        assert_eq!(
-            registry.peer_epoch(),
-            1,
-            "reload must install the new epoch"
-        );
-
-        // Post-reset engines mint under the fresh peer id.
-        {
-            let mut g = registry.for_space(&space, "device-792").expect("post");
-            let got = g.engine_mut().peer_id();
-            assert_eq!(got, peer_id_for_epoch("device-792", 1));
-            assert_ne!(got, peer_id_from_device_id("device-792"));
-        }
-    }
-
     #[tokio::test]
     async fn save_all_engines_persists_every_registered_engine() {
         let (pool, _dir) = fresh_pool().await;
@@ -1319,44 +1101,6 @@ mod tests {
         );
     }
 
-    /// #3309 — "not attempted this pass" is NOT the same as "clean". A row
-    /// whose space has NO engine in the registry was never verified against
-    /// anything. Advancing such a row would claim a blob nobody read reflects
-    /// the whole op-log and would suppress the boot rebuild that is the only
-    /// thing that can repair it. (Boot no longer leaves this shape behind: a
-    /// blob that fails to import stops it, #6525.)
-    #[tokio::test]
-    async fn save_all_engines_does_not_advance_watermark_of_unrehydrated_space_3309() {
-        let (pool, _dir) = fresh_pool().await;
-        let registry = LoroEngineRegistry::new();
-        let space_a = SpaceId::from_trusted(SPACE_A);
-
-        // B has a row but NO engine — the row-without-an-engine shape.
-        seed_row(&pool, SPACE_B, 1).await;
-        seed_op_log_head(&pool, 500).await;
-        {
-            let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
-            g.engine_mut()
-                .apply_create_block("BLOCK_A", "content", "in A", None, 0)
-                .expect("create");
-        }
-
-        let n = save_all_engines(&pool, &registry).await.saved;
-        assert_eq!(n, 1, "only the dirty space A is re-encoded");
-
-        assert_eq!(
-            watermark_of(&pool, SPACE_A).await,
-            499,
-            "the re-encoded space records the pass watermark"
-        );
-        assert_eq!(
-            watermark_of(&pool, SPACE_B).await,
-            1,
-            "a row with no engine behind it must keep pinning MIN so the next \
-             boot rebuilds it — 'not attempted' is not 'clean' (#3309)"
-        );
-    }
-
     /// #4020 — a snapshot RESET racing the pass must stop the clean-space
     /// watermark refresh, and that exclusion must hold when the dirty set is
     /// EMPTY.
@@ -1385,7 +1129,6 @@ mod tests {
 
         // What `save_all_engines` captures before the (empty) loop.
         let generation = registry.generation();
-        let installed = registry.space_ids();
 
         // …and the RESET that lands before the tail runs.
         registry.clear();
@@ -1395,14 +1138,12 @@ mod tests {
             "clear() must bump the generation, or this test proves nothing"
         );
 
-        let advanced =
-            advance_clean_space_watermarks(&pool, 499, &[], &installed, &registry, generation)
-                .await;
+        let advanced = advance_clean_space_watermarks(&pool, 499, &[], &registry, generation).await;
 
         assert_eq!(
             advanced, 0,
-            "a refresh whose whole premise (`installed`, `attempted`) describes engines \
-             the RESET destroyed must advance nothing (#607/#4020)"
+            "a refresh whose whole premise (`attempted`) describes engines the RESET \
+             destroyed must advance nothing (#607/#4020)"
         );
         assert_eq!(
             watermark_of(&pool, SPACE_B).await,

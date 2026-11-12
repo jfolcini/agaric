@@ -6146,9 +6146,9 @@ async fn apply_remote_backfills_ancestor_missing_from_sql_parent_id_4083() {
 /// in `apply_remote` is identical — so any difference in the acquisition count
 /// is the healing branch's, and nothing else's.
 ///
-/// `guard_acquisitions` is the registry's own `mark_seq`, bumped exactly once
-/// per guard handed out; the delta across the apply is that apply's acquisition
-/// count.
+/// `guard_acquisitions` is the registry's own counter, bumped exactly once per
+/// engine lock handed out (`for_space`, `for_space_recording` or `with_engine`);
+/// the delta across the apply is that apply's acquisition count.
 #[tokio::test]
 async fn apply_remote_healing_reads_one_engine_view_like_the_healthy_path_4100() {
     /// Returns (guard acquisitions during the apply, whether the root row was

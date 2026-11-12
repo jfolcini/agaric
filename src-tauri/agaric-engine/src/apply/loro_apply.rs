@@ -1046,10 +1046,9 @@ fn seed_attachments(
 /// ## No sync duplicate-node hazard
 /// A seeded block either never entered an engine export (#2326, #4775) or left
 /// its doc's live tree through a purge (#5670), which a peer merges as a deleted
-/// node. Either way the seed is the id's one live node, unlike the
-/// `reload_registry_from_db` re-seed warning (which concerns blocks peers hold
-/// live), unless a peer moves the purged node before it merges the purge: that
-/// revives it beside the seed.
+/// node. Either way the seed is the id's one live node, unlike a block seeded
+/// from SQL that peers hold live, unless a peer moves the purged node before it
+/// merges the purge: that revives it beside the seed.
 ///
 /// ## Engine rollback
 /// The seed goes through `for_space_recording`, so a caller that armed

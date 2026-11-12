@@ -2127,6 +2127,8 @@ fn register_managed_state<R: tauri::Runtime>(
     // consumers (`get_device_id`, `sync_cmds`, `link_metadata`, …).
     let device_id = DeviceId::new(device_id);
     let write_ctx = WriteCtx::new(pools.write.clone(), device_id.clone(), materializer.clone());
+    #[cfg(mobile)]
+    let (pool_for_suspend, materializer_for_suspend) = (pools.write.clone(), materializer.clone());
 
     // Store all in Tauri managed state
     app.manage(WritePool(pools.write));
@@ -2209,6 +2211,10 @@ fn register_managed_state<R: tauri::Runtime>(
                 tauri::WindowEvent::Suspended => {
                     tracing::info!("app suspended by OS — backgrounding");
                     lifecycle_for_listener.mark_backgrounded();
+                    drop(spawn_save_on_suspend(
+                        pool_for_suspend.clone(),
+                        materializer_for_suspend.clone(),
+                    ));
                 }
                 #[cfg(mobile)]
                 tauri::WindowEvent::Resumed => {
@@ -2226,6 +2232,21 @@ fn register_managed_state<R: tauri::Runtime>(
     }
 
     cancel_flag
+}
+
+/// #6525: a mobile OS kills a suspended app without warning, and the engines
+/// reach `loro_doc_state` only through a snapshot pass, so suspend runs one.
+#[cfg(any(mobile, test))]
+fn spawn_save_on_suspend(
+    pool: sqlx::SqlitePool,
+    materializer: materializer::Materializer,
+) -> tauri::async_runtime::JoinHandle<()> {
+    tauri::async_runtime::spawn(async move {
+        let saved =
+            agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &materializer)
+                .await;
+        tracing::info!(saved, "loro: persisted snapshots on suspend");
+    })
 }
 
 /// Inputs the [`SyncDaemon`](agaric_sync::sync_daemon::SyncDaemon) needs, gathered into a
@@ -3781,6 +3802,42 @@ mod boot_path_tests {
             after, before,
             "the unreadable snapshot row is left byte-identical"
         );
+    }
+
+    /// #6525 — an OS suspend runs a snapshot pass: the space written before
+    /// it is clean afterwards, and its row holds the write.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn suspend_saves_the_engines_6525() {
+        let dir = tempfile::tempdir().expect("throwaway app-data dir");
+        let pool = crate::db::init_pool(&dir.path().join("notes.db"))
+            .await
+            .expect("a migrated pool");
+        let materializer = crate::materializer::Materializer::new(pool.clone());
+        let space = agaric_store::space::SpaceId::from_trusted(SPACE_6525);
+        let registry = &materializer.loro_state().registry;
+        registry
+            .for_space(&space, "dev-6525")
+            .expect("engine")
+            .engine_mut()
+            .apply_create_block("BLOCK_6525", "content", "before suspend", None, 0)
+            .expect("create");
+
+        super::spawn_save_on_suspend(pool.clone(), materializer.clone())
+            .await
+            .expect("the save task");
+
+        assert_eq!(registry.dirty_count(), 0, "the pass saved the space");
+        let saved = agaric_engine::loro::snapshot::load_snapshot(&pool, &space)
+            .await
+            .expect("read the row")
+            .expect("the row");
+        let mut engine = agaric_engine::loro::engine::LoroEngine::new();
+        engine.import(&saved).expect("import");
+        assert!(
+            engine.contains_block("BLOCK_6525"),
+            "the row holds the write"
+        );
+        materializer.shutdown();
     }
 }
 

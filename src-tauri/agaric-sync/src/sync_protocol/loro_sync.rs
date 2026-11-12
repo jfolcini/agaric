@@ -272,11 +272,10 @@ pub async fn prepare_outgoing(
     // the guard, then drop the guard BEFORE the SQL round-trip (the guard
     // is not `Send` across an `.await`, and the read is a pure snapshot — a
     // local write landing during the SQL round-trip is not seen until the
-    // next export).
-    let live_block_ids: Vec<String> = {
-        let mut guard = registry.for_space(space_id, device_id)?;
-        guard.engine_mut().live_block_ids()?
-    };
+    // next export). Every engine access here goes through `with_engine`, so
+    // an export that changes nothing leaves the space clean (#6525).
+    let live_block_ids: Vec<String> =
+        registry.with_engine(space_id, device_id, |engine| engine.live_block_ids())??;
     if let Some(stale_id) = first_engine_live_block_sql_deleted(&live_block_ids, sql_deleted) {
         // Refuse + signal rebuild. Emit NO payload this round; a future
         // caller can trigger a rebuild-from-op-log to reconcile the engine
@@ -306,11 +305,12 @@ pub async fn prepare_outgoing(
             // atomicity vs concurrent mutation exactly as before. The guard is
             // `!Send`, but the closure runs inline on this same worker thread,
             // so a `!Send` guard inside it is fine. See `cpu_block_in_place`
-            // for the current-thread-runtime fallback.
+            // for the current-thread-runtime fallback. `export_snapshot` may
+            // stamp the format version, an op the peer then holds; `with_engine`
+            // sees the op log move and marks the space, so the stamp is saved.
             let bytes = cpu_block_in_place(|| {
-                let mut guard = registry.for_space(space_id, device_id)?;
-                guard.engine_mut().export_snapshot()
-            })?;
+                registry.with_engine(space_id, device_id, |engine| engine.export_snapshot())
+            })??;
             Ok(Some(LoroSyncMessage::Snapshot {
                 protocol_version: LORO_SYNC_PROTOCOL_VERSION,
                 space_id: space_id.clone(),
@@ -325,9 +325,8 @@ pub async fn prepare_outgoing(
             // `cpu_block_in_place` to unblock the reactor without releasing the
             // lock.
             let bytes = cpu_block_in_place(|| {
-                let mut guard = registry.for_space(space_id, device_id)?;
-                guard.engine_mut().export_update_since(vv)
-            })?;
+                registry.with_engine(space_id, device_id, |engine| engine.export_update_since(vv))
+            })??;
             Ok(Some(LoroSyncMessage::Update {
                 protocol_version: LORO_SYNC_PROTOCOL_VERSION,
                 space_id: space_id.clone(),
@@ -452,10 +451,8 @@ fn gate_inbound_message(
             // our current `oplog_vv()`.  Read the local vv off the
             // engine BEFORE the import — and BEFORE any SQL tx — so
             // a miss returns without side-effects.
-            let local_vv_bytes: Vec<u8> = {
-                let mut guard = registry.for_space(&space_id, device_id)?;
-                guard.engine_mut().version_vector()
-            };
+            let local_vv_bytes: Vec<u8> =
+                registry.with_engine(&space_id, device_id, |engine| engine.version_vector())?;
             match classify_from_vv_reachability(&local_vv_bytes, &from_vv)? {
                 None => {
                     // Reachable — fall through to the import.
@@ -540,10 +537,9 @@ pub async fn apply_remote(
     // which becomes the condition for deleting its write-ahead slot below —
     // one `decode_import_blob_meta` for both facts (see
     // `LoroEngine::screen_inbound_blob`).
-    let screen = {
-        let mut guard = registry.for_space(&space_id, device_id)?;
-        guard.engine_mut().screen_inbound_blob(&bytes)
-    };
+    let screen = registry.with_engine(&space_id, device_id, |engine| {
+        engine.screen_inbound_blob(&bytes)
+    })?;
     if let Some(reason) = screen.fork {
         tracing::warn!(
             space_id = %space_id,
@@ -1004,9 +1000,7 @@ async fn project_pass_defs(
         return Ok(Vec::new());
     }
     let declared = agaric_engine::block_ops::load_value_types(&mut *tx, space_id.as_str()).await?;
-    let changes = {
-        let mut guard = registry.for_space(space_id, device_id)?;
-        let engine = guard.engine_mut();
+    let changes = registry.with_engine(space_id, device_id, |engine| {
         let mut changes = Vec::with_capacity(def_keys.len());
         for key in def_keys {
             let def = engine.read_property_def(key)?;
@@ -1020,8 +1014,8 @@ async fn project_pass_defs(
             };
             changes.push((key, def, holders));
         }
-        changes
-    };
+        Ok::<_, AppError>(changes)
+    })??;
     let mut retyped = Vec::new();
     for (key, def, holders) in &changes {
         project_property_def_to_sql(&mut *tx, space_id.as_str(), key, def.as_ref()).await?;
@@ -1485,16 +1479,16 @@ fn fan_out_swept_tombstones(
     swept_tombstones: &[(String, i64)],
 ) {
     if !swept_tombstones.is_empty() {
-        let fanout_result: Result<(), AppError> = (|| {
-            let mut guard = registry.for_space(space_id, device_id)?;
-            let engine = guard.engine_mut();
-            for (id, ts) in swept_tombstones {
-                if engine.read_deleted_at(id)?.is_none() {
-                    engine.apply_delete_block(id, &ts.to_string())?;
+        let fanout_result: Result<(), AppError> = registry
+            .with_engine(space_id, device_id, |engine| {
+                for (id, ts) in swept_tombstones {
+                    if engine.read_deleted_at(id)?.is_none() {
+                        engine.apply_delete_block(id, &ts.to_string())?;
+                    }
                 }
-            }
-            Ok(())
-        })();
+                Ok(())
+            })
+            .and_then(|fanned_out| fanned_out);
         if let Err(err) = fanout_result {
             tracing::warn!(
                 error = %err,
@@ -1727,8 +1721,17 @@ fn read_projection_states(
         .iter()
         .map(agaric_core::ulid::BlockId::as_str)
         .collect();
-    let mut guard = registry.for_space(space_id, device_id)?;
-    let engine = guard.engine_mut();
+    registry.with_engine(space_id, device_id, |engine| {
+        read_projection_states_from(engine, changed_blocks, &rank_only)
+    })?
+}
+
+/// [`read_projection_states`]' reads, under its one engine lock.
+fn read_projection_states_from(
+    engine: &mut agaric_engine::loro::engine::LoroEngine,
+    changed_blocks: &[agaric_core::ulid::BlockId],
+    rank_only: &std::collections::HashSet<&str>,
+) -> Result<ProjectionStates, AppError> {
     // #1621: derive every block's `position` from a per-parent ordered-
     // children index built ONCE (read_blocks_bulk), not a per-block O(K)
     // `child_rank_position` sibling scan. For N changed blocks in a flat
@@ -1874,11 +1877,9 @@ fn healing_fallback_delta(
     device_id: &str,
     space_id: &SpaceId,
 ) -> Result<HealingDelta, AppError> {
-    let (full, defs) = {
-        let mut guard = registry.for_space(space_id, device_id)?;
-        let engine = guard.engine_mut();
-        (engine.live_blocks_preorder(), engine.read_property_defs()?)
-    };
+    let (full, defs) = registry.with_engine(space_id, device_id, |engine| {
+        Ok::<_, AppError>((engine.live_blocks_preorder(), engine.read_property_defs()?))
+    })??;
     Ok((
         full,
         Vec::new(),
@@ -2048,20 +2049,19 @@ fn clearable_slot_ids(
     let clearable_ids: Vec<i64> = if require_covered.is_empty() {
         inbox_ids.to_vec()
     } else {
-        let shortfalls: Vec<(i64, Option<String>)> = {
-            let mut guard = registry.for_space(space_id, device_id)?;
-            let engine = guard.engine_mut();
-            inbox_ids
-                .iter()
-                .map(|id| {
-                    let shortfall = require_covered
-                        .iter()
-                        .find(|(slot, _)| slot == id)
-                        .and_then(|(_, end_vv)| engine.oplog_shortfall(end_vv));
-                    (*id, shortfall)
-                })
-                .collect()
-        };
+        let shortfalls: Vec<(i64, Option<String>)> =
+            registry.with_engine(space_id, device_id, |engine| {
+                inbox_ids
+                    .iter()
+                    .map(|id| {
+                        let shortfall = require_covered
+                            .iter()
+                            .find(|(slot, _)| slot == id)
+                            .and_then(|(_, end_vv)| engine.oplog_shortfall(end_vv));
+                        (*id, shortfall)
+                    })
+                    .collect()
+            })?;
         let mut clearable = Vec::with_capacity(shortfalls.len());
         for (id, shortfall) in shortfalls {
             match shortfall {
@@ -2088,6 +2088,9 @@ fn clearable_slot_ids(
 /// atomicity vs concurrent mutation is unchanged). The `!Send` guard is fine
 /// inside the closure — it runs inline on this same worker thread. See
 /// [`cpu_block_in_place`] for the current-thread-runtime fallback.
+///
+/// #6525: the space is marked dirty only when the import added something to
+/// its op log, so a redelivered or empty update leaves it clean.
 fn import_payload_into_engine(
     registry: &LoroEngineRegistry,
     device_id: &str,
@@ -2095,9 +2098,7 @@ fn import_payload_into_engine(
     payload: agaric_engine::loro::engine::ImportPayload<'_>,
 ) -> Result<agaric_engine::loro::engine::ImportDelta, AppError> {
     cpu_block_in_place(|| {
-        let mut guard = registry.for_space(space_id, device_id)?;
-        let engine = guard.engine_mut();
-        match payload {
+        registry.with_engine(space_id, device_id, |engine| match payload {
             agaric_engine::loro::engine::ImportPayload::Single(bytes) => {
                 engine.import_with_changed_purged_tagscope(bytes)
             }
@@ -2111,8 +2112,8 @@ fn import_payload_into_engine(
             agaric_engine::loro::engine::ImportPayload::Batch(blobs) => {
                 engine.import_batch_with_changed_purged_tagscope(blobs)
             }
-        }
-    })
+        })
+    })?
 }
 
 /// Import `bytes` into the per-space engine and project every changed
@@ -2505,10 +2506,9 @@ pub async fn replay_inbox_row(
     // the per-row path's substitute for the batch gate's
     // `ReplayBlobGate::Accept { end_vv }`, used as the slot-delete condition
     // below (one `decode_import_blob_meta` for both facts).
-    let screen = {
-        let mut guard = registry.for_space(&space, device_id)?;
-        guard.engine_mut().screen_inbound_blob(bytes)
-    };
+    let screen = registry.with_engine(&space, device_id, |engine| {
+        engine.screen_inbound_blob(bytes)
+    })?;
     if let Some(reason) = screen.fork {
         tracing::warn!(
             space_id,
@@ -2532,7 +2532,8 @@ pub async fn replay_inbox_row(
     // boot-replay path here imported unconditionally, so a slot whose causal
     // base out-runs the rehydrated-then-op-log-replayed engine (the engine can
     // be BEHIND the surviving Update's base: `loro_doc_state` is persisted only
-    // periodically and op-log replay never reconstructs remote Loro-only ops)
+    // by snapshot passes, which a kill can precede, and op-log replay never
+    // reconstructs remote Loro-only ops)
     // re-errored on EVERY boot — a permanent poison row.
     //
     // The inbox row stores only `(space_id, bytes)` — no `from_vv` — so we
@@ -2544,10 +2545,9 @@ pub async fn replay_inbox_row(
     // sync session re-detects the gap in `apply_remote` and routes into the
     // snapshot catch-up that reconciles it. This trades a never-reconciled
     // poison slot for a clean, self-healing gap.
-    let unreachable = {
-        let mut guard = registry.for_space(&space, device_id)?;
-        guard.engine_mut().unreachable_update_in_blob(bytes)
-    };
+    let unreachable = registry.with_engine(&space, device_id, |engine| {
+        engine.unreachable_update_in_blob(bytes)
+    })?;
     if let Some(reason) = unreachable {
         tracing::warn!(
             space_id,
@@ -2681,15 +2681,13 @@ async fn replay_accepted_slots_individually(
                         // path that is already the cold poison-isolation
                         // fallback and only for slots that did not
                         // clear.
-                        let screen = {
-                            let mut guard = registry.for_space(space, device_id)?;
-                            guard.engine_mut().screen_inbound_blob(bytes)
-                        };
-                        let reason = {
-                            let mut guard = registry.for_space(space, device_id)?;
-                            guard.engine_mut().oplog_shortfall(&screen.declared_end_vv)
-                        }
-                        .unwrap_or_else(|| {
+                        let (screen, shortfall) =
+                            registry.with_engine(space, device_id, |engine| {
+                                let screen = engine.screen_inbound_blob(bytes);
+                                let shortfall = engine.oplog_shortfall(&screen.declared_end_vv);
+                                (screen, shortfall)
+                            })?;
+                        let reason = shortfall.unwrap_or_else(|| {
                             "kept after a committed projection although the op-log \
                              reports no shortfall (#3213/#535)"
                                 .to_string()
@@ -2721,10 +2719,8 @@ async fn replay_accepted_slots_individually(
                 // the same quarantine. The blob's declared frontier is
                 // whatever its metadata says (empty when the metadata
                 // itself will not decode, which is the usual case here).
-                let screen = {
-                    let mut guard = registry.for_space(space, device_id)?;
-                    guard.engine_mut().screen_inbound_blob(bytes)
-                };
+                let screen = registry
+                    .with_engine(space, device_id, |engine| engine.screen_inbound_blob(bytes))?;
                 let reason = format!("replay failed: {e}");
                 account_unresolved_slot(
                     pool,
@@ -2778,15 +2774,13 @@ async fn account_batch_survivors(
                     .find(|(slot, _)| slot == id)
                     .map(|(_, vv)| vv.clone())
                     .unwrap_or_default();
-                let reason = {
-                    let mut guard = registry.for_space(space, device_id)?;
-                    guard.engine_mut().oplog_shortfall(&declared)
-                }
-                .unwrap_or_else(|| {
-                    "kept after a committed projection although the op-log \
-                     reports no shortfall (#3194/#535)"
-                        .to_string()
-                });
+                let reason = registry
+                    .with_engine(space, device_id, |engine| engine.oplog_shortfall(&declared))?
+                    .unwrap_or_else(|| {
+                        "kept after a committed projection although the op-log \
+                         reports no shortfall (#3194/#535)"
+                            .to_string()
+                    });
                 account_unresolved_slot(pool, space.as_str(), *id, &declared, &reason, out).await?;
             }
         }
@@ -2817,8 +2811,9 @@ async fn gate_replay_slots(
     // so two log lines for one space cannot differ in case.
     let gates = {
         let blob_refs: Vec<&[u8]> = slots.iter().map(|s| s.bytes.as_slice()).collect();
-        let mut guard = registry.for_space(space, device_id)?;
-        guard.engine_mut().gate_replay_blobs(&blob_refs)
+        registry.with_engine(space, device_id, |engine| {
+            engine.gate_replay_blobs(&blob_refs)
+        })?
     };
 
     let mut accepted: Vec<InboxSlot> = Vec::with_capacity(slots.len());
