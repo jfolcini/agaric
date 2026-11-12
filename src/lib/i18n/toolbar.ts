@@ -105,4 +105,9 @@ export const toolbar: Record<string, string> = {
   // #5160 D2 — a line break inside the block (Shift+Enter, for virtual keyboards).
   'toolbar.newLine': 'New line',
   'toolbar.newLineTip': 'New line (Shift+Enter)',
+  // #6532 — Indent and Outdent on a phone's bar, where the keyboard has no Tab.
+  'toolbar.indent': 'Indent',
+  'toolbar.indentTip': 'Indent block',
+  'toolbar.outdent': 'Outdent',
+  'toolbar.outdentTip': 'Outdent block',
 }

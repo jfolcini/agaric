@@ -17,6 +17,7 @@ import type { Editor } from '@tiptap/react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useBlockActions } from '@/components/block-tree/use-block-actions'
 import { ImageBubbleMenu } from '@/components/editor-toolbar/ImageBubbleMenu'
 import { SelectionBubbleMenu } from '@/components/editor-toolbar/SelectionBubbleMenu'
 import type { EditorSurfaceProps } from '@/components/editor/editor-surface-context'
@@ -29,12 +30,22 @@ export function EditorSurface({
   isDragOver,
 }: EditorSurfaceProps): React.ReactElement {
   const { t } = useTranslation()
+  const { onIndent, onDedent } = useBlockActions()
   // The context types `editor` loosely (`unknown`) to stay TipTap-free; here it
   // is always the live TipTap `Editor` for the focused block.
   const ed = editor as Editor
   return (
     <>
-      <FormattingToolbar editor={ed} blockId={blockId} currentPriority={currentPriority} />
+      <FormattingToolbar
+        editor={ed}
+        blockId={blockId}
+        currentPriority={currentPriority}
+        indent={
+          onIndent && onDedent
+            ? { onIndent: () => onIndent(blockId), onOutdent: () => onDedent(blockId) }
+            : undefined
+        }
+      />
       <SelectionBubbleMenu editor={ed} blockId={blockId} />
       <ImageBubbleMenu editor={ed} />
       <EditorContent editor={ed} />
