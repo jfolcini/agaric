@@ -329,6 +329,12 @@ impl StateDir {
         Ok(true)
     }
 
+    /// Drop `folder`'s states: the mirror then writes every page there as
+    /// new, which the guard keeps from overwriting a file that differs.
+    pub fn forget(&self, folder: &str) -> std::io::Result<()> {
+        remove_dir_if_any(&self.dir_for(folder))
+    }
+
     /// States written before each folder kept its own directory, in
     /// `mirror/state`: they are the folder `mirror/folder` names, or, naming
     /// none, `folder`'s. Each step can be repeated, so a crash between them

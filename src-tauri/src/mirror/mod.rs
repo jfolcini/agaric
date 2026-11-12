@@ -93,6 +93,15 @@ pub struct MirrorStatus {
     pub unmirrored_spaces: Vec<String>,
 }
 
+/// Whether `root` holds nothing but hidden entries, as the mirror's marker.
+pub fn is_emptied(root: &Path) -> bool {
+    !std::fs::read_dir(root).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+    })
+}
+
 /// What the mirror's task shares with the commands and the sync sink.
 #[derive(Clone)]
 pub struct MirrorState(Arc<Shared>);
@@ -120,6 +129,9 @@ struct Inner {
     /// Copies that could not be written, and why, by path.
     failed_copies: BTreeMap<String, String>,
     last_pass_ms: Option<i64>,
+    /// The folder chosen again while it is emptied: the next tick drops its
+    /// states and writes every page there as new.
+    start_fresh: bool,
 }
 
 impl MirrorState {
@@ -151,6 +163,18 @@ impl MirrorState {
         } else if changed_blocks != Some(0) {
             inner.full_pass = true;
         }
+    }
+
+    /// Drop the folder's states on the next tick, the way out of the pause
+    /// [`Mirror::emptied`] holds: the user chose the folder again, so it is
+    /// the one to fill.
+    pub fn start_fresh(&self) {
+        self.lock().start_fresh = true;
+        self.restart();
+    }
+
+    fn take_start_fresh(&self) -> bool {
+        std::mem::take(&mut self.lock().start_fresh)
     }
 
     /// Start over in a new folder: forget the old one's diverged and failed
@@ -593,12 +617,12 @@ impl Mirror {
         if self.pages.is_empty() {
             return None;
         }
-        let holds_something = std::fs::read_dir(root).is_ok_and(|entries| {
-            entries
-                .flatten()
-                .any(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
-        });
-        (!holds_something).then(|| format!("the folder {} is empty", root.display()))
+        is_emptied(root).then(|| {
+            format!(
+                "the folder {} is empty; choose it again to write every page there",
+                root.display()
+            )
+        })
     }
 
     /// Start over in another folder, with its own states: nothing it lacks
@@ -661,7 +685,11 @@ impl Mirror {
             self.full_due = true;
             return Ok(());
         };
-        if self.store.bind(&folder)? {
+        let fresh = self.state.take_start_fresh();
+        if fresh {
+            self.store.forget(&folder)?;
+        }
+        if self.store.bind(&folder)? || fresh {
             self.forget_folder();
             self.pages = self.store.load()?;
         }

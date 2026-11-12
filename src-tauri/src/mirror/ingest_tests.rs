@@ -1379,6 +1379,50 @@ async fn an_emptied_folder_trashes_nothing_and_pauses_the_mirror() {
     );
 }
 
+/// The way out of the pause: the emptied folder chosen again is filled,
+/// every page written as new, and nothing trashed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_emptied_folder_chosen_again_is_filled_and_trashes_nothing() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    std::fs::remove_dir_all(fx.root.join("TestSpace")).unwrap();
+    fx.tick().await;
+    assert!(fx.status().await.paused.is_some(), "paused on it");
+
+    let folder = fx.root.to_str().unwrap().to_owned();
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(folder), true)
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.status().await.paused, None);
+    assert!(fx.root.join(ALPHA).exists(), "written there again");
+    assert!(!is_trashed(&fx, &alpha).await);
+}
+
+/// Chosen again while it holds its files, the folder keeps its states: a
+/// file changed outside is still read back, not overwritten as new.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_holding_its_files_chosen_again_keeps_its_states() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    fx.write(fx.read().replace("one", "uno"));
+
+    let folder = fx.root.to_str().unwrap().to_owned();
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(folder), true)
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.contents(&page).await, ["uno"], "read in as an edit");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_space_folder_removed_trashes_none_of_its_pages() {
     use crate::commands::tests::common::TEST_SPACE_B_ID;
