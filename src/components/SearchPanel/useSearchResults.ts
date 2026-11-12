@@ -274,12 +274,6 @@ export function useSearchResults({
       // A content edit fires no event the key folds in, so a query asked again
       // re-reads the backend instead of a cached answer.
       staleTime: 0,
-      // `invalidationKey` mints a new key on every block-property change; under the
-      // client's `gcTime: Infinity` those superseded, observer-less entries would
-      // accumulate unbounded over a session. Bound the churn (mirrors DonePanel):
-      // the active key keeps an observer while mounted and is never collected; each
-      // prior key is evicted 5 min after going inactive.
-      gcTime: 5 * 60 * 1000,
     },
     queryClient,
   )

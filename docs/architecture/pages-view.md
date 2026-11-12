@@ -48,7 +48,7 @@ Every Pages-view list render walks the same four stages. The IPC is the only asy
 └──────────────────────────┘
 ```
 
-Returning to the view refetches only a stale list (#5446). Any local command that can write notes marks it stale (`watchLocalWrites` in `src/lib/local-write-watch.ts`, installed in `main.tsx`), and so does an out-of-band change (`invalidatePageBrowserData` from `useSyncEvents`). A stale list refetches every loaded page in order from page 1; a sort, filter or space change refetches as before.
+Returning to the view refetches only a stale list (#5446), while the list is still cached: the client collects a list no view shows after its `gcTime` (`src/lib/query-client.ts`), and the next visit loads page 1 only. Any local command that can write notes marks it stale (`watchLocalWrites` in `src/lib/local-write-watch.ts`, installed in `main.tsx`), and so does an out-of-band change (`invalidatePageBrowserData` from `useSyncEvents`). A stale list refetches every loaded page in order from page 1; a sort, filter or space change refetches as before.
 
 One side hook orbits this pipeline without altering its shape:
 

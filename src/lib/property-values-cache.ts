@@ -38,6 +38,10 @@ export const PROPERTY_VALUES_EMPTY: string[] = []
 /** Query-key root shared by every key-scoped property-values entry. */
 const PROPERTY_VALUES_QUERY_ROOT = 'propValues' as const
 
+// One entry per property key, kept for the session like the key list
+// (`property-keys-cache.ts`).
+queryClient.setQueryDefaults([PROPERTY_VALUES_QUERY_ROOT], { gcTime: Number.POSITIVE_INFINITY })
+
 /** Build the TanStack query key for a given property `key`. */
 export function propertyValuesQueryKey(
   key: string,
