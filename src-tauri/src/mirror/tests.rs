@@ -801,3 +801,31 @@ async fn a_moved_block_rewrites_the_pages_referring_to_it() {
         fx.read(BETA)
     );
 }
+
+/// A crash after the old folder's states were set aside, before the record
+/// of the bound folder was rewritten, loses none of them on the next start.
+#[test]
+fn a_folder_change_cut_short_by_a_crash_keeps_the_states_it_set_aside() {
+    let data = TempDir::new().unwrap();
+    let states = StateDir::new(data.path());
+    states.bind("/folder/a").unwrap();
+    let state = PageState {
+        path: "TestSpace/Alpha.md".into(),
+        shadows: vec![Shadow {
+            text: "one\n".into(),
+            line_ids: vec![None],
+            buffer: None,
+        }],
+    };
+    states.save("PAGE", &state).unwrap();
+    // Where a folder change puts them, by the key `StateDir` derives.
+    let key = blake3::hash(b"/folder/a").to_hex();
+    let aside = data.path().join("mirror/folders").join(&key[..32]);
+    std::fs::create_dir_all(aside.parent().unwrap()).unwrap();
+    std::fs::rename(data.path().join("mirror/state"), &aside).unwrap();
+
+    states.bind("/folder/b").unwrap();
+    states.bind("/folder/a").unwrap();
+
+    assert_eq!(states.load().unwrap().get("PAGE"), Some(&state));
+}

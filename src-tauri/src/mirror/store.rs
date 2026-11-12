@@ -321,10 +321,14 @@ impl StateDir {
             return Ok(false);
         }
         if let Some(bound) = &bound {
-            let aside = self.kept_for(bound);
-            remove_dir_if_any(&aside)?;
-            std::fs::create_dir_all(aside.parent().unwrap_or(&aside))?;
-            rename_if_any(&self.0, &aside)?;
+            // No states here means a crash already set them aside: replacing
+            // what is there would lose them.
+            if self.0.exists() {
+                let aside = self.kept_for(bound);
+                remove_dir_if_any(&aside)?;
+                std::fs::create_dir_all(aside.parent().unwrap_or(&aside))?;
+                std::fs::rename(&self.0, &aside)?;
+            }
             rename_if_any(&self.kept_for(folder), &self.0)?;
         }
         std::fs::create_dir_all(&self.0)?;
