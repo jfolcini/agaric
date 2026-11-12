@@ -21,6 +21,15 @@ What shipped (`markdown_import_merge_anchors.rs`):
   name no one block holds becomes a link to the page, with a warning. Its
   edits undo with the merge.
 
+Also, from the #6502 and #6508 reviews, each its own commit:
+
+- A bare ref value naming a note in a subfolder (`owner:: [[Beta]]` for
+  `Ns/Beta.md`) named no note, so the value was dropped, where the link
+  `[[Beta]]` reaches the note's page. `create_note_targets` falls back on the
+  links' bare-name map (`vault_note_titles`) and keys the page by the note's
+  title.
+- `merged_line` no longer clones the line it reads attachment refs from.
+
 Shown red:
 
 - `a_file_with_an_obsidian_anchor_reimports_unchanged` and
@@ -30,3 +39,4 @@ Shown red:
   with the fallback leaving the placeholder.
 - The e2e-tauri case in `import-reimport-merge.e2e.ts`, with the link rewrite
   mutated off.
+- `a_bare_ref_value_names_a_later_note_in_a_subfolder`, before its fix.
