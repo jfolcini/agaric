@@ -137,15 +137,21 @@ async function createViewPage(
   payload: SavedViewPayload,
 ): Promise<SavedView> {
   const id = unwrap(await commands.createPageInSpace(null, name, spaceId))
-  unwrap(
-    await commands.setProperty(id, SAVED_VIEW_PROPERTY_KEY, {
-      value_text: encodeSavedView(payload),
-      value_num: null,
-      value_date: null,
-      value_ref: null,
-      value_bool: null,
-    }),
-  )
+  try {
+    unwrap(
+      await commands.setProperty(id, SAVED_VIEW_PROPERTY_KEY, {
+        value_text: encodeSavedView(payload),
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      }),
+    )
+  } catch (err) {
+    // Without its property the page would be a plain empty page in every list.
+    unwrap(await commands.deleteBlock(id))
+    throw err
+  }
   return { id, name, payload }
 }
 

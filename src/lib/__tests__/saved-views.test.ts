@@ -125,6 +125,24 @@ describe('saveView', () => {
     expect(storedViews(PERSONAL)).toEqual([])
   })
 
+  it('trashes the page it made when the property write fails, leaving no plain page', async () => {
+    vi.mocked(invoke).mockImplementation((cmd: string, args?: InvokeArgs) =>
+      cmd === 'set_property'
+        ? Promise.reject({ kind: 'database', message: 'disk I/O error' })
+        : Promise.resolve(dispatch(cmd, args)),
+    )
+
+    await expect(saveView(PERSONAL, 'Half saved', ORPHANS)).rejects.toMatchObject({
+      kind: 'database',
+    })
+
+    const pages = (await dispatch('list_all_pages_in_space', {
+      scope: { kind: 'active', space_id: PERSONAL },
+      tagId: null,
+    })) as Array<{ content: string }>
+    expect(pages.map((p) => p.content)).not.toContain('Half saved')
+  })
+
   it('refuses the name of another view of the space, and takes it in another space', async () => {
     await saveView(PERSONAL, 'Mine', ORPHANS)
 
