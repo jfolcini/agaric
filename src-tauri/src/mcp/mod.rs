@@ -987,8 +987,15 @@ pub(crate) mod test_support {
     use sqlx::SqlitePool;
     use tempfile::TempDir;
 
+    use super::activity::ActivityContext;
     use super::agents::{AgentStore, ConnectedAgent, McpAgent, McpAgentMode, insert_agent};
     use super::server::{McpServer, ToolRegistry};
+    use super::tools_ro::ReadOnlyTools;
+    use super::tools_rw::ReadWriteTools;
+    use crate::materializer::Materializer;
+
+    /// The device the production registries of [`real_server`] write as.
+    pub(crate) const DEV: &str = "dev-5667";
 
     /// A fresh vault holding one agent named `name`.
     pub(crate) async fn vault_with_agent(
@@ -1028,6 +1035,32 @@ pub(crate) mod test_support {
             read_write: Arc::new(read_write),
             agents: AgentStore::new(pool.clone(), pool),
             activity_ctx: None,
+        })
+    }
+
+    /// The production registries over `pool`, and its agents.
+    pub(crate) fn real_server(
+        pool: SqlitePool,
+        activity_ctx: Option<ActivityContext>,
+    ) -> Arc<McpServer<ReadOnlyTools, ReadWriteTools>> {
+        let mat = Materializer::new(pool.clone());
+        Arc::new(McpServer {
+            read_only: Arc::new(ReadOnlyTools::new(
+                pool.clone(),
+                pool.clone(),
+                mat.clone(),
+                DEV.into(),
+                std::env::temp_dir(),
+            )),
+            read_write: Arc::new(ReadWriteTools::new(
+                pool.clone(),
+                pool.clone(),
+                mat,
+                DEV.into(),
+                std::env::temp_dir(),
+            )),
+            agents: AgentStore::new(pool.clone(), pool),
+            activity_ctx,
         })
     }
 
@@ -1321,5 +1354,146 @@ mod tests {
             stderr.contains("Settings → Agent access"),
             "the error names where to get a token: {stderr}",
         );
+    }
+
+    /// Serves one connection on `socket_path` as the production server does,
+    /// and runs `agaric-mcp --token <token> call <tool> <arguments>` against it.
+    #[cfg(all(unix, feature = "ci-smoke"))]
+    async fn bridge_call<RO: server::ToolRegistry, RW: server::ToolRegistry>(
+        socket_path: &std::path::Path,
+        server: Arc<server::McpServer<RO, RW>>,
+        token: &str,
+        tool: &str,
+        arguments: &str,
+    ) -> std::process::Output {
+        let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let _ = server::handle_connection(stream, server).await;
+        });
+        let mut command = std::process::Command::new(bridge_binary());
+        command
+            .arg("--socket")
+            .arg(socket_path)
+            .args(["--token", token, "call", tool, arguments]);
+        tokio::task::spawn_blocking(move || command.output().expect("run agaric-mcp"))
+            .await
+            .unwrap()
+    }
+
+    /// A script appends to today's journal: the tool's JSON reaches stdout,
+    /// and the block is stored.
+    #[cfg(all(unix, feature = "ci-smoke"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stub_binary_call_prints_the_tool_result_6555() {
+        let (pool, agent, dir) =
+            test_support::vault_with_agent("Script", agents::McpAgentMode::ReadWrite, None).await;
+        let mat = crate::materializer::Materializer::new(pool.clone());
+        let space =
+            crate::commands::create_space_inner(&pool, test_support::DEV, &mat, "S".into(), None)
+                .await
+                .unwrap()
+                .into_string();
+        let arguments = serde_json::json!({ "content": "from a script", "space_id": space });
+
+        let output = bridge_call(
+            &dir.path().join("call.sock"),
+            test_support::real_server(pool.clone(), None),
+            &agent.token,
+            "capture",
+            &arguments.to_string(),
+        )
+        .await;
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+        let result: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("stdout is the tool's JSON");
+        assert_eq!(result["blocks"][0]["content"], "from a script", "{result}");
+        let stored: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE content = 'from a script' AND deleted_at IS NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, 1, "the captured block is stored");
+    }
+
+    /// An unknown tool, and a write tool on a read-only token, exit 1 with the
+    /// server's message on stderr and nothing on stdout.
+    #[cfg(all(unix, feature = "ci-smoke"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stub_binary_call_with_a_tool_error_exits_1_with_the_servers_message_6555() {
+        let (pool, agent, dir) =
+            test_support::vault_with_agent("Script", agents::McpAgentMode::ReadOnly, None).await;
+        let server = test_support::real_server(pool, None);
+
+        for tool in ["no_such_tool", "capture"] {
+            let output = bridge_call(
+                &dir.path().join(format!("{tool}.sock")),
+                server.clone(),
+                &agent.token,
+                tool,
+                "{}",
+            )
+            .await;
+
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(1), "{tool}: stderr: {stderr}");
+            assert!(
+                stderr.contains(&format!("unknown tool `{tool}`")),
+                "{tool}: stderr carries the server's message: {stderr}",
+            );
+            assert!(output.stdout.is_empty(), "{tool}: no result on stdout");
+        }
+    }
+
+    /// A revoked token is refused at `initialize`, before any tool runs.
+    #[cfg(all(unix, feature = "ci-smoke"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stub_binary_call_with_a_revoked_token_exits_1_naming_settings_6555() {
+        let (pool, agent, dir) =
+            test_support::vault_with_agent("Script", agents::McpAgentMode::ReadOnly, None).await;
+        agents::delete_agent(&pool, &agent.id).await.unwrap();
+
+        let output = bridge_call(
+            &dir.path().join("call.sock"),
+            test_support::real_server(pool, None),
+            &agent.token,
+            "list_spaces",
+            "{}",
+        )
+        .await;
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+        assert!(
+            stderr.contains("Settings → Agent access"),
+            "the refusal names where to get a token: {stderr}",
+        );
+    }
+
+    /// Arguments that are not a JSON object are a usage error, found before
+    /// connecting: the socket here does not exist.
+    #[cfg(all(unix, feature = "ci-smoke"))]
+    #[test]
+    fn stub_binary_call_with_malformed_arguments_exits_2_before_connecting_6555() {
+        for arguments in ["{\"query\":", "[1]"] {
+            let output = std::process::Command::new(bridge_binary())
+                .args(["--socket", "/nonexistent/mcp.sock", "--token", "agt_x"])
+                .args(["call", "search", arguments])
+                .output()
+                .expect("run agaric-mcp");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{arguments}: stderr: {stderr}"
+            );
+            assert!(
+                stderr.contains("not a JSON object"),
+                "{arguments}: the error names the arguments: {stderr}",
+            );
+        }
     }
 }
