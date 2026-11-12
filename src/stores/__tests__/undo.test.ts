@@ -2153,6 +2153,28 @@ describe('useUndoStore', () => {
         expect(mockLoad).toHaveBeenCalledTimes(1)
       })
 
+      // Ctrl+A on a nested page: a row per selected child can sit above a root's.
+      it("finds a root's row below its children's rows", async () => {
+        const rows = [
+          historyEntry('delete_block', 'ROOT_B', ROOT_B),
+          ...Array.from({ length: 60 }, (_, i) =>
+            historyEntry('delete_block', `CHILD_${i}`, { device_id: 'dev-1', seq: 100 - i }),
+          ),
+          historyEntry('delete_block', 'ROOT_A', ROOT_A),
+        ]
+        mockedListPageHistory.mockImplementationOnce(async (_p, _o, _s, _c, limit) =>
+          ok(historyPage(rows.slice(0, limit ?? undefined))),
+        )
+        mockedUndoOps.mockResolvedValue(
+          ok([makeUndoResult({ seq: 7 }), makeUndoResult({ seq: 6 })]),
+        )
+
+        await useUndoStore.getState().undoDeleteOf('page1', ['ROOT_A', 'ROOT_B'], mockLoad)
+
+        expect(mockedUndoOps).toHaveBeenCalledExactlyOnceWith([ROOT_B, ROOT_A])
+        expect(mockedToastError).not.toHaveBeenCalled()
+      })
+
       it('undoes nothing when one root has no delete row in the scan', async () => {
         mockedListPageHistory.mockResolvedValue(
           ok(historyPage([historyEntry('delete_block', 'ROOT_A', ROOT_A)])),

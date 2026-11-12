@@ -264,7 +264,7 @@ interface UndoStore {
    * 42). `blockId` may also be the selection roots of one batch delete
    * (#6547): their rows are undone in one atomic `undoOps`, and only the
    * roots, as undoing a root restores the selected blocks under it. A batch
-   * with more roots than one history page holds is reported as failed;
+   * of more blocks than one history page holds can be reported as failed;
    * Trash still has it. Moved from `SortableBlock`'s `undoSwipeDelete` so
    * the undo store owns the depth/redo-anchor invariants in one place
    * instead of a row component reaching around it with raw write IPC calls.
@@ -763,8 +763,9 @@ export const useUndoStore = create<UndoStore>((set, get) => {
           null,
           requireActiveScope(spaceId),
           null,
-          // The window over one delete's row, widened by each further root's.
-          paginationLimit(Math.min(SWIPE_UNDO_HISTORY_SCAN + blockIds.length - 1, PAGINATION_MAX)),
+          // A batch appends one row per selected block, the roots' among them
+          // in no set order, so it scans the widest page.
+          paginationLimit(typeof blockId === 'string' ? SWIPE_UNDO_HISTORY_SCAN : PAGINATION_MAX),
         ),
       )
       // #4328 — newest-first scan for the block's own `delete_block` row,
