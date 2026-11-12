@@ -1,10 +1,5 @@
 [
   {
-    "file": "docs/architecture/list-ergonomics.md",
-    "ref": "markdown-parse/parser.ts:407",
-    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
-  },
-  {
     "file": "e2e/search-results.spec.ts",
     "ref": "agaric-store/src/fts/search/cursor.rs:103-105",
     "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."

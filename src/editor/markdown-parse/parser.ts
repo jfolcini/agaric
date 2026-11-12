@@ -898,7 +898,13 @@ export function parseOrderedList(
   }
   const consumed = j - i
   if (items.length === 0) return { blocks: [], consumed }
-  const block: OrderedListNode = { type: 'orderedList', content: items }
+  // The first number is kept, so a list starting at 5 is written back from 5
+  // (#6530); later numbers are counted on from it.
+  const start = Number((lines[i] as string).match(ORDERED_ITEM_RE)?.[1])
+  const block: OrderedListNode =
+    Number.isSafeInteger(start) && start !== 1
+      ? { type: 'orderedList', attrs: { start }, content: items }
+      : { type: 'orderedList', content: items }
   return { blocks: [block], consumed }
 }
 

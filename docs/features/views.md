@@ -89,7 +89,7 @@ Global operation log — every edit Agaric has applied, in reverse chronological
 Pages tagged as templates.
 
 - **Browse**: each template is a page; the row shows a preview of its first child block. The placeholders a template can use (`<% today %>` and the rest) are listed below the templates, each with what it fills in.
-- **Insert a template**: in any block, type `/template` → **TemplatePicker** → pick. The template's children land under the current block.
+- **Insert a template**: in any block, type `/template` → **TemplatePicker** → pick. The template's blocks land after the current block's last sibling, each with its task state, priority, dates and properties, and one `Ctrl+Z` takes the whole insert back (#6530).
 - **Toggle template status**: open the page → **PageHeaderMenu** kebab → *Toggle template*.
 - **Journal template**: the template page new daily pages in the space copy, nesting included; it carries a *Journal template* badge. Set it from the page kebab (*Set as journal template*) or the journal's *Configure journal template* button — see [spaces.md](spaces.md).
 

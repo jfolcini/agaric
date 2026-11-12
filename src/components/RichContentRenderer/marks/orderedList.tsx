@@ -42,7 +42,7 @@ export function renderOrderedListBlock(
     items.push(<li key={itemKey}>{liChildren}</li>)
   }
   return (
-    <ol key={key} className="list-decimal list-inside">
+    <ol key={key} start={block.attrs?.start} className="list-decimal list-inside">
       {items}
     </ol>
   )

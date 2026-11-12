@@ -1169,3 +1169,74 @@ describe('insertTemplateBlocks — text on one side of the placeholder (#5364)',
     },
   )
 })
+
+describe('insertTemplateBlocks — task state, priority, dates and properties (#6530)', () => {
+  const SPACE = 'SPACE_PERSONAL'
+
+  beforeEach(() => {
+    seedBlocks()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  })
+
+  async function block(content: string, parentId: string): Promise<string> {
+    const scope = { kind: 'active' as const, space_id: SPACE }
+    return unwrap(await commands.createBlock('content', content, parentId, null, scope, null)).id
+  }
+
+  /** A template holding a TODO with a priority, a due date, a text and a number property, and a child scheduled. */
+  async function meetingTemplate(): Promise<string> {
+    const tpl = unwrap(await commands.createPageInSpace(null, 'Meeting', SPACE))
+    const todo = await block('Prepare slides', tpl)
+    unwrap(await commands.setTodoState(todo, 'TODO'))
+    unwrap(await commands.setPriority(todo, '1'))
+    unwrap(await commands.setDueDate(todo, '2026-12-01'))
+    unwrap(await commands.setProperty(todo, 'owner', { value_text: 'alice' }))
+    unwrap(await commands.setProperty(todo, 'effort', { value_num: 3 }))
+    unwrap(await commands.setProperty(todo, 'created_at', { value_text: '2020-01-01T00:00:00Z' }))
+    const child = await block('Book the room', todo)
+    unwrap(await commands.setScheduledDate(child, '2026-11-30'))
+    return tpl
+  }
+
+  async function propertiesOf(id: string): Promise<Record<string, unknown>> {
+    const rows = unwrap(await commands.getProperties(id))
+    return Object.fromEntries(
+      rows.map((r) => [r.key, r.value_text ?? r.value_num ?? r.value_date ?? r.value_ref]),
+    )
+  }
+
+  it('copies each block with its task state, priority, dates and properties', async () => {
+    const tpl = await meetingTemplate()
+    const dest = unwrap(await commands.createPageInSpace(null, 'Monday', SPACE))
+
+    const [todo, child] = await insertTemplateBlocks(tpl, dest, SPACE)
+
+    const todoRow = unwrap(await commands.getBlock(todo as string))
+    expect([todoRow.content, todoRow.todo_state, todoRow.priority, todoRow.due_date]).toEqual([
+      'Prepare slides',
+      'TODO',
+      '1',
+      '2026-12-01',
+    ])
+    // The app's own stamps are the copy's, not the template's.
+    expect(await propertiesOf(todo as string)).toEqual({ owner: 'alice', effort: 3 })
+    const childRow = unwrap(await commands.getBlock(child as string))
+    expect([childRow.parent_id, childRow.scheduled_date]).toEqual([todo, '2026-11-30'])
+  })
+
+  it('reports the refs of every write, so one undo takes the whole insert back', async () => {
+    const tpl = await meetingTemplate()
+    const dest = unwrap(await commands.createPageInSpace(null, 'Monday', SPACE))
+    const onOpRefs = vi.fn()
+
+    const ids = await insertTemplateBlocks(tpl, dest, SPACE, { onOpRefs })
+
+    expect(onOpRefs).toHaveBeenCalledTimes(1)
+    unwrap(await commands.undoOps(onOpRefs.mock.calls[0]?.[0]))
+    const children = unwrap(
+      await commands.loadPageSubtree(dest, { kind: 'active', space_id: SPACE }),
+    )
+    expect(ids).toHaveLength(2)
+    expect(children.blocks).toEqual([])
+  })
+})

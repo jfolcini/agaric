@@ -1104,3 +1104,43 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
     expect(serialize(parse(md))).toBe(md)
   })
 })
+
+describe('#6530: an ordered list keeps the number it starts at', () => {
+  const once = (s: string) => serialize(parse(s))
+
+  it.each([
+    ['5. five\n6. six', '5. five\n6. six'],
+    ['3. item', '3. item'],
+    ['> > 3. item', '> > 3. item'],
+    ['- a\n  7. nested', '- a\n  7. nested'],
+    ['0. zero', '0. zero'],
+    // only the first number is kept; the rest count on from it
+    ['5. five\n9. six', '5. five\n6. six'],
+    ['1. one\n2. two', '1. one\n2. two'],
+  ])('%j is written back as %j', (md, written) => {
+    expect(once(md)).toBe(written)
+    expect(once(written)).toBe(written)
+  })
+
+  it('reads the start onto the list node, and none for a list starting at 1', () => {
+    expect(parse('5. five')).toEqual(
+      doc({
+        type: 'orderedList',
+        attrs: { start: 5 },
+        content: [listItem(paragraph(text('five')))],
+      }),
+    )
+    expect(parse('1. one')).toEqual(doc(orderedList(listItem(paragraph(text('one'))))))
+  })
+
+  it('writes the start an editor list carries (TipTap emits `start: 1` and `type: null`)', () => {
+    const editorList = (start: number) =>
+      doc({
+        type: 'orderedList',
+        attrs: { start, type: null },
+        content: [listItem(paragraph(text('a'))), listItem(paragraph(text('b')))],
+      } as unknown as Parameters<typeof doc>[0])
+    expect(serialize(editorList(5))).toBe('5. a\n6. b')
+    expect(serialize(editorList(1))).toBe('1. a\n2. b')
+  })
+})

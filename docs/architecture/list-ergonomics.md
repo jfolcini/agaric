@@ -94,9 +94,9 @@ first-class inline decoration, not as native `<ul>` chrome.
    state (`clearTaskStates`), each once the kind picked is written.
 3. **Ordered numbers are computed**, not stored: the number is the block's
    position among consecutive same-`listStyle`, same-depth siblings, recomputed
-   on reorder/insert. This mirrors the serializer, which already emits positional
-   `${idx + 1}.` and discards any parsed literal (`src/editor/markdown-serialize.ts:1150`,
-   `markdown-parse/parser.ts:407` — the ordinal is regenerated, never preserved).
+   on reorder/insert. An ordered list inside one block's text is different: it
+   keeps the number it starts at and counts on from it (`serializeOrderedList`,
+   `parseOrderedList`; #6530), so an imported `5.` is not rewritten as `1.`.
 4. **Nesting stays the block tree** (Tab / Shift-Tab → indent/dedent). No second
    indent mechanism inside a block. This retires the in-block PM list node
    entirely.

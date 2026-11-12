@@ -2,9 +2,10 @@ import { format as formatDateFns, addDays, getISOWeek } from 'date-fns'
 
 import { substituteTemplateVariables, toDateFnsPattern } from '@/editor/template-variables'
 import { unwrap } from '@/lib/app-error'
-import type { BlockRow, CreateBlockSpec } from '@/lib/bindings'
+import type { BlockRow, CreateBlockSpec, OpRef, PropertyRow, SetPropertyArgs } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { getDateLocale } from '@/lib/date-locale'
+import { INLINE_PROPERTY_RESERVED_KEYS } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { paginationLimit } from '@/lib/safe-limit'
@@ -294,10 +295,47 @@ function isRecordingPlaceholder(content: string): boolean {
   return m?.[1]?.trim().toLowerCase() === 'recording'
 }
 
+/** A template property `create_blocks_batch` cannot write: it types every value as text. */
+interface TypedProperty {
+  index: number
+  key: string
+  value: SetPropertyArgs
+}
+
+/**
+ * The task state, priority and dates of a template block, and its properties
+ * the copy keeps (the app's stamps and the template marker are not), as
+ * `create_blocks_batch`'s text map; a property held as a number, date, ref or
+ * boolean goes to `typed` for `set_property`, under the spec's `index`.
+ */
+function copiedProperties(
+  block: BlockRow,
+  rows: readonly PropertyRow[],
+  index: number,
+  typed: TypedProperty[],
+): Record<string, string> {
+  const text: Record<string, string> = {}
+  for (const key of ['todo_state', 'priority', 'due_date', 'scheduled_date'] as const) {
+    const value = block[key]
+    if (value != null) text[key] = value
+  }
+  for (const row of rows) {
+    if (INLINE_PROPERTY_RESERVED_KEYS.has(row.key)) continue
+    if (row.value_text != null) text[row.key] = row.value_text
+    else {
+      const { value_num, value_date, value_ref, value_bool } = row
+      const bool = value_bool == null ? null : value_bool !== 0
+      const value = { value_num, value_date, value_ref, value_bool: bool }
+      typed.push({ index, key: row.key, value })
+    }
+  }
+  return text
+}
+
 /**
  * Insert a template's children as new blocks under the given parent.
- * Recursively copies content, ordering, and nested structure from the
- * template page's entire subtree.
+ * Recursively copies content, task state, priority, dates, properties,
+ * ordering, and nested structure from the template page's entire subtree.
  *
  * Template variables are expanded during insertion: the legacy
  * `<% today %>` family AND the #1442 `{{date}}`/`{{date:FORMAT}}`/`{{time}}`/
@@ -305,7 +343,9 @@ function isRecordingPlaceholder(content: string): boolean {
  * `{{cursor}}` marker in a block records the caret target: it is stripped
  * from the content and, when `context.onCursorBlock` is supplied, the
  * created block's id is reported back so the caller can focus it after the
- * template lands. Returns the IDs of all created blocks.
+ * template lands. `context.onOpRefs` receives the refs of every write, once,
+ * so the caller can record the insert as one undo step. Returns the IDs of
+ * all created blocks.
  *
  * Replaces the per-descendant `createBlock` IPC loop
  * with a single `createBlocksBatch` call. limit-clamp-followup — the
@@ -315,19 +355,21 @@ function isRecordingPlaceholder(content: string): boolean {
  * in one SELECT against the materializer-maintained `page_id` index.
  * The specs are accumulated in DFS order with the source-id → batch-
  * index mapping tracked so each child's `parentId` resolves to the
- * freshly-created destination block from the same batch. Atomicity
- * changes: a single malformed spec now rolls the whole template back
- * instead of partially landing the prefix. The previous per-block
- * try/catch fall-through is gone — partial templates were never the
- * desired UX; the user expects "the template inserted" or a clean
- * failure.
+ * freshly-created destination block from the earlier level's batch. Each
+ * depth level is its own transaction, so a level that fails leaves the
+ * levels before it in place (#6530 asks for one command that copies the
+ * whole template in one transaction).
  */
 // oxlint-disable-next-line eslint/complexity -- pre-existing
 export async function insertTemplateBlocks(
   templatePageId: string,
   parentId: string,
   spaceId: string | null,
-  context?: { pageTitle?: string; onCursorBlock?: (blockId: string) => void },
+  context?: {
+    pageTitle?: string
+    onCursorBlock?: (blockId: string) => void
+    onOpRefs?: (refs: OpRef[]) => void
+  },
 ): Promise<string[]> {
   // Templates belong to a single space, so the descendant fetch
   // (`loadPageSubtree`) is required-active (b1). With no active space
@@ -369,6 +411,11 @@ export async function insertTemplateBlocks(
   const descendants = unwrap(
     await commands.loadPageSubtree(templatePageId, requireActiveScope(effectiveSpaceId)),
   ).blocks
+  const propertiesById =
+    descendants.length === 0
+      ? {}
+      : unwrap(await commands.getBatchProperties(descendants.map((b) => b.id)))
+  const typedProperties: TypedProperty[] = []
   const childrenByParent = new Map<string, BlockRow[]>()
   for (const block of descendants) {
     const pid = block.parent_id
@@ -411,7 +458,12 @@ export async function insertTemplateBlocks(
           // `resolveParentFromIndex`.
           parentId: destParentIndex == null ? parentId : null,
           position: null,
-          properties: {},
+          properties: copiedProperties(
+            child,
+            propertiesById[child.id] ?? [],
+            myIndex,
+            typedProperties,
+          ),
         },
         resolveParentFromIndex: destParentIndex,
       })
@@ -456,6 +508,7 @@ export async function insertTemplateBlocks(
   for (const d of depthByIndex) if (d > maxDepth) maxDepth = d
 
   const ids: string[] = Array.from<string>({ length: deferred.length })
+  const opRefs: OpRef[] = []
   // batch-index → created id (filled level-by-level)
   for (let level = 0; level <= maxDepth; level += 1) {
     const indicesAtLevel: number[] = []
@@ -472,7 +525,8 @@ export async function insertTemplateBlocks(
       specsAtLevel.push({ ...entry.spec, parentId: resolvedParentId })
     }
     try {
-      const { blocks: created } = unwrap(await commands.createBlocksBatch(specsAtLevel))
+      const { blocks: created, op_refs } = unwrap(await commands.createBlocksBatch(specsAtLevel))
+      opRefs.push(...op_refs)
       for (let k = 0; k < indicesAtLevel.length; k += 1) {
         const idx = indicesAtLevel[k]
         if (idx == null) continue
@@ -491,6 +545,16 @@ export async function insertTemplateBlocks(
       // try/catch → ids accumulate as far as we got).
       break
     }
+  }
+
+  try {
+    for (const { index, key, value } of typedProperties) {
+      const id = ids[index]
+      if (id === undefined) continue
+      opRefs.push(...unwrap(await commands.setProperty(id, key, value)).op_refs)
+    }
+  } finally {
+    if (opRefs.length > 0) context?.onOpRefs?.(opRefs)
   }
 
   // Report the caret-target block (from a `{{cursor}}` marker) once its real
