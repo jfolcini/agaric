@@ -30,7 +30,7 @@ async function tagNames(page: Page): Promise<string[]> {
 
 const rows = (page: Page) => page.locator('[data-testid="sortable-block"]')
 
-test.describe('An @ in prose stays text (#6530) @editor @tags', () => {
+test.describe('An @ in prose stays text (#6530) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await ipc(page, 'edit_block', { blockId: GS1, toText: 'meet' })
