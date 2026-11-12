@@ -324,6 +324,13 @@ export const common: Record<string, string> = {
   'welcome.workflowLinkTagDesc': 'Connect pages with [[links]] and organize blocks with @tags.',
   'welcome.workflowFormat': 'Select text to format',
   'welcome.workflowFormatDesc': 'Highlight any text to make it bold, italic, or underlined.',
+  'welcome.workflowSlashTouch': 'Type / for tasks & dates',
+  'welcome.workflowFormatTouch': 'Format with the toolbar',
+  'welcome.workflowFormatDescTouch':
+    'Tap a block, then use the toolbar above the keyboard to make text bold, italic, or underlined.',
+  'welcome.importNotes': 'Import notes',
+  'welcome.pairDevice': 'Pair a device',
+  'welcome.pairComputer': 'Pair with your computer',
   'welcome.getStarted': 'Get Started',
   'welcome.createSamplePages': 'Create sample pages',
   'welcome.samplePagesCreated': 'Sample pages created!',
@@ -338,7 +345,7 @@ export const common: Record<string, string> = {
   'welcome.sampleQuickTipsBody1': 'Press **?** to open the keyboard shortcuts reference.',
   'welcome.sampleQuickTipsBody2': 'Use **Ctrl+N** to quickly create a new page.',
   'welcome.sampleQuickTipsBody3':
-    'Type **//** to open the slash command menu for inserting dates, templates, and more.',
+    'Type **/** to open the slash command menu for inserting dates, templates, and more.',
   'sidebar.settings': 'Settings',
   'recent.ariaLabel': 'Recently visited pages',
   'recent.untitled': 'Untitled',
@@ -420,7 +427,7 @@ export const common: Record<string, string> = {
   // (`.json`) bibliography. One reference page per entry.
   'data.importBibliographyButton': 'Import bibliography (.bib/.json)',
   'data.importFilesLabel': 'Markdown, text or Org files',
-  'data.importFolderLabel': 'Folder',
+  'data.importFolderLabel': 'Folder (Logseq graph, Notion export, or any Markdown folder)',
   'data.importObsidianLabel': 'Obsidian vault',
   'data.importEnexLabel': 'Evernote',
   'data.importJexLabel': 'Joplin',
@@ -539,6 +546,8 @@ export const common: Record<string, string> = {
   'data.mirrorDesc':
     'Agaric writes every page as a .md file into a folder you choose and keeps it up to date. A file you edit elsewhere is read back into its page, and one Undo reverts that.',
   'data.mirrorFolderLabel': 'Mirror folder',
+  'data.mirrorUnsupported':
+    'Not on this device yet: the mirror runs in the desktop app only. Turn it on on your computer; notes written here reach its folder by sync.',
   'data.mirrorOff': 'Off. No folder chosen.',
   'data.mirrorChooseButton': 'Choose folder…',
   'data.mirrorTurnOffButton': 'Turn off',

@@ -16,7 +16,7 @@
  * default; a copy changed in the folder is kept, and listed under `diverged`.
  *
  * Where the backend cannot mirror (`supported: false`, the mobile builds) the
- * card renders nothing.
+ * card says so and offers no folder picker, which would only fail there.
  */
 
 import { FileCheck, FolderOpen, FolderX } from 'lucide-react'
@@ -131,16 +131,31 @@ export function MirrorSection(): React.ReactElement | null {
     }
   }
 
-  if (status === null || !status.supported) return null
+  if (status === null) return null
+
+  const header = (
+    <CardHeader>
+      <CardTitle data-testid="mirror-panel-title">{t('data.mirrorTitle')}</CardTitle>
+      <CardDescription>{t('data.mirrorDesc')}</CardDescription>
+    </CardHeader>
+  )
+
+  if (!status.supported) {
+    return (
+      <Card>
+        {header}
+        <CardContent>
+          <p className="text-sm text-muted-foreground">{t('data.mirrorUnsupported')}</p>
+        </CardContent>
+      </Card>
+    )
+  }
 
   const on = status.folder !== null
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle data-testid="mirror-panel-title">{t('data.mirrorTitle')}</CardTitle>
-        <CardDescription>{t('data.mirrorDesc')}</CardDescription>
-      </CardHeader>
+      {header}
       <CardContent className="space-y-4">
         <SettingRow
           label={t('data.mirrorFolderLabel')}

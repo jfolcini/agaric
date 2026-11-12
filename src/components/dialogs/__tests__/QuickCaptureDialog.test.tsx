@@ -26,6 +26,7 @@ import { type CommandReturns, deferred, stubInvoke } from '@/__tests__/helpers/i
 import { QuickCaptureDialog } from '@/components/dialogs/QuickCaptureDialog'
 import { useCalendarPageDatesEpoch } from '@/hooks/useCalendarPageDates'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import {
   _resetGraphStructureEventsForTest,
   DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
@@ -44,7 +45,12 @@ vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
 
+vi.mock('@/hooks/useShouldShowMobileChrome', () => ({
+  useShouldShowMobileChrome: vi.fn(() => false),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedUseShouldShowMobileChrome = vi.mocked(useShouldShowMobileChrome)
 const mockedToastSuccess = vi.mocked(toast.success)
 const mockedToastError = vi.mocked(toast.error)
 const mockedUseIsMobile = vi.mocked(useIsMobile)
@@ -54,6 +60,7 @@ beforeEach(() => {
   _resetGraphStructureEventsForTest()
   // Default to the desktop path so existing test bodies keep their semantics.
   mockedUseIsMobile.mockReturnValue(false)
+  mockedUseShouldShowMobileChrome.mockReturnValue(false)
   // QuickCaptureDialog reads `currentSpaceId` from
   // `useSpaceStore` and passes it through `quickCaptureBlock`. Seed
   // a fixed space so the IPC arg shape is deterministic.
@@ -319,6 +326,17 @@ describe('QuickCaptureDialog', () => {
 
       expect(screen.getByTestId('quick-capture-textarea')).toBeInTheDocument()
       expect(screen.getByPlaceholderText(t('quickCapture.placeholder'))).toBeInTheDocument()
+    })
+
+    // #6520 — opened from the floating button, a phone has no key combination to press.
+    it('names no key on a touch phone', () => {
+      mockedUseIsMobile.mockReturnValue(true)
+      mockedUseShouldShowMobileChrome.mockReturnValue(true)
+      render(<QuickCaptureDialog open onOpenChange={() => {}} />)
+
+      const sheet = screen.getByTestId('quick-capture-dialog')
+      expect(sheet).toHaveTextContent("today's journal")
+      expect(sheet.textContent).not.toMatch(/Press|Ctrl|key combination/)
     })
   })
 })

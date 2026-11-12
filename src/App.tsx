@@ -5,6 +5,7 @@ import { reloadMeetingLink } from '@/components/attachments/meeting-link'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { HeaderSearchButton } from '@/components/common/HeaderSearchButton'
 import { HistoryNavButtons } from '@/components/common/HistoryNavButtons'
+import { NoPeersPairing } from '@/components/dialogs/NoPeersPairing'
 import { ViewToolbarSlot } from '@/components/FormattingToolbar/view-toolbar'
 import { GlobalDateControls, JournalControls } from '@/components/JournalPage'
 import { AppSidebar } from '@/components/layout/AppSidebar'
@@ -78,14 +79,14 @@ const WelcomeModal = lazy(() =>
 const GestureCoachMark = lazy(() =>
   import('@/components/mobile/GestureCoachMark').then((m) => ({ default: m.GestureCoachMark })),
 )
-// PERF (design-system review tier-2 #12): the three shell-level dialogs
+// PERF (design-system review tier-2 #12): the shell-level dialogs
 // below are mounted unconditionally near the bottom of `App` but only
 // render content when their `open` boolean flips true. Code-splitting
 // them keeps `BugReportDialog → bug-report-zip.ts → jszip` (≈96 KB
-// `export-graph` chunk), the `QuickCaptureDialog` editor surface, and
-// the `NoPeersDialog` alert-dialog tree off the critical path until the
-// user actually triggers each one. Each component is a named export so
-// the dynamic-import re-export shape is required for `React.lazy`.
+// `export-graph` chunk) and the `QuickCaptureDialog` editor surface off
+// the critical path until the user actually triggers each one. Each
+// component is a named export, so the dynamic-import re-export shape is
+// required for `React.lazy`.
 const BugReportDialog = lazy(() =>
   import('@/components/dialogs/BugReportDialog').then((m) => ({ default: m.BugReportDialog })),
 )
@@ -99,9 +100,6 @@ const NewPageDialog = lazy(() =>
 )
 const MeetingDialog = lazy(() =>
   import('@/components/attachments/MeetingDialog').then((m) => ({ default: m.MeetingDialog })),
-)
-const NoPeersDialog = lazy(() =>
-  import('@/components/dialogs/NoPeersDialog').then((m) => ({ default: m.NoPeersDialog })),
 )
 // The three search overlays (`SearchOverlays` below mounts them): the
 // in-page find toolbar (Ctrl+F), the Cmd/Ctrl+K command palette, and the
@@ -268,8 +266,7 @@ function App() {
   // ONLY to the routing / view-shell zustand slices it actually uses:
   //   • `currentView`      — drives view routing, header switch, viewKey,
   //                           and the focus-on-view-change effect.
-  //   • `setView`          — used by `handleOpenSyncSettings`; also
-  //                           forwarded to AppSidebar as `onSelectView`.
+  //   • `setView`          — forwarded to AppSidebar as `onSelectView`.
   //   • `navigateToPage`   — used by `handlePageSelect`
   //                           and forwarded to ViewDispatcher.
   //   • `pageStack`        — derives `activePage` for both `viewKey` and
@@ -282,7 +279,6 @@ function App() {
   // stable zustand actions, so subscribing here is a zero-rerender cost.
   const currentView = useNavigationStore((s) => s.currentView)
   const setView = useNavigationStore((s) => s.setView)
-  const setPendingSettingsTab = useNavigationStore((s) => s.setPendingSettingsTab)
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const pageStack = useTabsStore(selectPageStack)
   const headerLabel = useHeaderLabel()
@@ -468,8 +464,8 @@ function App() {
 
   // Sidebar Sync click guard. The hook itself short-circuits on
   // `peers.length === 0` silently (see useSyncTrigger.ts:113-117) — this
-  // wrapper opens a discoverable dialog instead, with a CTA that
-  // navigates the user to the Settings → Sync tab where pairing lives.
+  // wrapper opens a discoverable dialog instead, whose CTA opens the
+  // pairing dialog (`NoPeersPairing`).
   //
   // Offline state is intentionally not handled here — the existing
   // `disabled={syncing || !isOnline}` on the button + the offline
@@ -503,20 +499,6 @@ function App() {
     // success; only this path may raise the "Sync complete" toast.
     void syncAll({ userInitiated: true })
   }, [syncAll, setShowNoPeersDialog])
-
-  // CTA handler for the NoPeersDialog. Pre-selects the Sync tab so
-  // the user lands directly on the pairing UI without an extra click.
-  // #734 — routes through the navigation store's pending-tab handoff slot
-  // (which SettingsView subscribes to while mounted) instead of the
-  // `?settings=sync` URL param: the param is only read in the useState
-  // initializer, so the CTA was a no-op whenever Settings was already the
-  // current view. SettingsView mirrors the consumed tab back into the URL
-  // + localStorage itself.
-  const handleOpenSyncSettings = useCallback(() => {
-    setShowNoPeersDialog(false)
-    setPendingSettingsTab('sync')
-    setView('settings')
-  }, [setView, setShowNoPeersDialog, setPendingSettingsTab])
 
   const activePage = pageStack.length > 0 ? pageStack.at(-1) : null
 
@@ -604,6 +586,7 @@ function App() {
           onNewPage={openNewPageDialog}
           onSyncClick={handleSyncClick}
         />
+        <NoPeersPairing open={showNoPeersDialog} onOpenChange={setShowNoPeersDialog} />
         <SidebarInset>
           <ViewHeaderOutletProvider>
             <header
@@ -868,22 +851,6 @@ function App() {
             <MeetingDialog
               onClose={() => setNewMeetingOpen(false)}
               onCreated={(created) => void reloadMeetingLink(created)}
-            />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )}
-      {/* shell-level dialog opened by the sidebar Sync button when
-          there are zero paired peers. Replaces the silent
-          `peers.length === 0` no-op with a discoverable affordance that
-          links the user to the pairing flow. Lazy + Suspense so the
-          alert-dialog tree only ships once the no-peers branch fires. */}
-      {showNoPeersDialog && (
-        <FeatureErrorBoundary name="Sync setup" nameKey="errorBoundary.section.syncSetup">
-          <Suspense fallback={null}>
-            <NoPeersDialog
-              open={showNoPeersDialog}
-              onOpenChange={setShowNoPeersDialog}
-              onOpenSettings={handleOpenSyncSettings}
             />
           </Suspense>
         </FeatureErrorBoundary>

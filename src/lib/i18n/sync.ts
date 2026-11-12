@@ -241,8 +241,8 @@ export const sync: Record<string, string> = {
   'sync.retryAction': 'Retry sync',
   'sync.backOnline': 'Back online. Syncing\u2026',
   'sync.noPeersTitle': 'No devices paired',
-  'sync.noPeersBody': 'Sync requires at least one paired device. Open sync settings to pair one.',
-  'sync.noPeersCta': 'Open sync settings',
+  'sync.noPeersBody': 'Sync needs at least one paired device. Pair one now to start syncing.',
+  'sync.noPeersCta': 'Pair a device',
   'sync.noPeersCancel': 'Cancel',
   // #6057 — deltas the boot replay gave up on (`loro_sync_quarantine`). The
   // bytes are kept, so the copy says "not applied", never "lost".

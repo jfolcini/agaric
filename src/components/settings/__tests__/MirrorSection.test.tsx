@@ -181,14 +181,16 @@ describe('MirrorSection', () => {
     expect(screen.queryByRole('list', { name: t('data.mirrorFailedHeading') })).toBeNull()
   })
 
-  it('renders nothing where the mirror is not supported', async () => {
+  // #6520 — a phone is a full peer: the card stays and says why it cannot run there.
+  it('says why it cannot run where the mirror is not supported, and offers no folder picker', async () => {
     extra = { supported: false }
     const { container } = render(<MirrorSection />)
 
-    await waitFor(() => {
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith('get_mirror_status')
-    })
-    expect(container).toBeEmptyDOMElement()
+    expect(await screen.findByText(t('data.mirrorUnsupported'))).toBeInTheDocument()
+    expect(screen.getByTestId('mirror-panel-title')).toHaveTextContent(t('data.mirrorTitle'))
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('a refused folder shows the reason, logs it, and keeps the mirror off', async () => {

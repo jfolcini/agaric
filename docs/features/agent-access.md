@@ -6,7 +6,8 @@ Agaric exposes itself to AI agents (Claude Desktop, Cursor, Continue, and any ot
 ## What you can do
 
 - **Enable / disable MCP** (Settings → Agent access): one switch for the one
-  socket.
+  socket. On a phone the tab says that no other app there can reach the
+  socket yet, so agents are set up on a computer.
 - **Give each client its own agent** (Settings → Agent access → Agents): a
   name, read-only or read-write, the spaces it may use, and a token. Copy its
   Claude Desktop config or Claude Code command from its row; revoke it there

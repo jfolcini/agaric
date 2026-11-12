@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
+import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { createBlock } from '@/lib/ipc-helpers'
@@ -21,27 +22,35 @@ import { isOnboardingDone, markOnboardingDone } from '@/lib/onboarding'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { requireActiveScope } from '@/lib/space-scope'
 import { useBootStore } from '@/stores/boot'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
 // #214 Phase 1B — three concrete workflow rows replace the earlier six
 // abstract feature blurbs. Each teaches one core gesture a new user can
 // try immediately: the slash menu, links/tags, and inline formatting.
+// A touch phone gets its own wording where the desktop one names a key (#6520).
 const FEATURES = [
   {
     icon: SquareSlash,
     titleKey: 'welcome.workflowSlash',
+    touchTitleKey: 'welcome.workflowSlashTouch',
     descKey: 'welcome.workflowSlashDesc',
+    touchDescKey: 'welcome.workflowSlashDesc',
   },
   {
     icon: AtSign,
     titleKey: 'welcome.workflowLinkTag',
+    touchTitleKey: 'welcome.workflowLinkTag',
     descKey: 'welcome.workflowLinkTagDesc',
+    touchDescKey: 'welcome.workflowLinkTagDesc',
   },
   {
     icon: Bold,
     titleKey: 'welcome.workflowFormat',
+    touchTitleKey: 'welcome.workflowFormatTouch',
     descKey: 'welcome.workflowFormatDesc',
+    touchDescKey: 'welcome.workflowFormatDescTouch',
   },
 ] as const
 
@@ -187,6 +196,7 @@ async function createSamplePages(t: TFunction): Promise<string> {
 export function WelcomeModal() {
   const { t } = useTranslation()
   const bootState = useBootStore((s) => s.state)
+  const touch = useShouldShowMobileChrome()
   const [open, setOpen] = useState(() => !isOnboardingDone())
   const [creating, setCreating] = useState(false)
 
@@ -194,6 +204,16 @@ export function WelcomeModal() {
     setOpen(false)
     markOnboardingDone()
   }, [])
+
+  const openSettingsTab = useCallback(
+    (tab: 'data' | 'sync') => {
+      const navigation = useNavigationStore.getState()
+      navigation.setPendingSettingsTab(tab)
+      navigation.setView('settings')
+      handleDismiss()
+    },
+    [handleDismiss],
+  )
 
   // Close the modal when the global "close all overlays" shortcut
   // fires. Treat this as a dismissal (same as clicking outside the Radix
@@ -248,9 +268,9 @@ export function WelcomeModal() {
 
   if (bootState !== 'ready') return null
 
-  // Feature list renders inside DialogBody on desktop so it
-  // scrolls when the viewport is short; the mobile Sheet path keeps the
-  // list inline because the shared SheetContent viewport cap is sufficient,
+  // The body renders inside DialogBody on desktop so it
+  // scrolls when the viewport is short; the mobile Sheet path keeps it
+  // inline because the shared SheetContent viewport cap is sufficient,
   // avoiding nested scroll regions.
   const featureList = (
     /*
@@ -266,12 +286,36 @@ export function WelcomeModal() {
             aria-hidden="true"
           />
           <div>
-            <p className="text-sm font-medium">{t(feature.titleKey)}</p>
-            <p className="text-sm text-muted-foreground">{t(feature.descKey)}</p>
+            <p className="text-sm font-medium">
+              {t(touch ? feature.touchTitleKey : feature.titleKey)}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {t(touch ? feature.touchDescKey : feature.descKey)}
+            </p>
           </div>
         </li>
       ))}
     </ul>
+  )
+
+  const importButton = (
+    <Button key="import" variant="outline" size="sm" onClick={() => openSettingsTab('data')}>
+      {t('welcome.importNotes')}
+    </Button>
+  )
+  const pairButton = (
+    <Button key="pair" variant="outline" size="sm" onClick={() => openSettingsTab('sync')}>
+      {t(touch ? 'welcome.pairComputer' : 'welcome.pairDevice')}
+    </Button>
+  )
+  // On a phone, pairing with the computer the notes already live on comes first.
+  const body = (
+    <>
+      <div className="flex flex-wrap gap-2">
+        {touch ? [pairButton, importButton] : [importButton, pairButton]}
+      </div>
+      {featureList}
+    </>
   )
 
   return (
@@ -286,7 +330,7 @@ export function WelcomeModal() {
           <Title>{t('welcome.title')}</Title>
           <Description>{t('welcome.description')}</Description>
         </Header>
-        {parts.isMobile ? featureList : <DialogBody>{featureList}</DialogBody>}
+        {parts.isMobile ? body : <DialogBody>{body}</DialogBody>}
         <Footer>
           <Button variant="outline" onClick={handleCreateSamplePages} disabled={creating}>
             {creating && <Spinner />}

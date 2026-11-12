@@ -1122,7 +1122,7 @@ describe('SettingsView', () => {
   })
 
   // ── #734: pending-tab handoff slot ───────────────────────────────────
-  // `agaric://settings/<tab>` (and the NoPeersDialog CTA) write
+  // `agaric://settings/<tab>` (and the welcome modal's actions) write
   // `useNavigationStore.pendingSettingsTab` BEFORE flipping the view. The
   // panel subscribes while mounted, so the request lands even when
   // Settings is already open — the localStorage / `?settings=` mechanisms

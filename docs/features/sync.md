@@ -23,7 +23,7 @@ Agaric syncs across your own devices over local WiFi. **No cloud, no accounts, a
 
 If the camera fails (no permission, no camera), the scanner says why and offers *Retry camera*; *Type passphrase* stays available.
 
-If you click the Sync button before any device is paired, the **NoPeersDialog** appears with a direct path into the pairing flow.
+If you click the Sync button before any device is paired, the **NoPeersDialog** appears; its *Pair a device* opens the pairing dialog itself, closing the phone's navigation drawer first.
 
 ## What the user sees
 

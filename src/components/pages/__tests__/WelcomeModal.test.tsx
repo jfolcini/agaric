@@ -41,10 +41,12 @@ vi.mock('lucide-react', () => ({
 
 import { WelcomeModal } from '@/components/pages/WelcomeModal'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { useBootStore } from '@/stores/boot'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -52,8 +54,13 @@ vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
 
+vi.mock('@/hooks/useShouldShowMobileChrome', () => ({
+  useShouldShowMobileChrome: vi.fn(() => false),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
 const mockedUseIsMobile = vi.mocked(useIsMobile)
+const mockedUseShouldShowMobileChrome = vi.mocked(useShouldShowMobileChrome)
 
 /** No-op boot function to prevent side-effects. */
 const noopBoot = vi.fn(async () => {})
@@ -157,6 +164,8 @@ beforeEach(() => {
   localStorage.clear()
   // Default to the desktop path so existing test bodies keep their semantics.
   mockedUseIsMobile.mockReturnValue(false)
+  mockedUseShouldShowMobileChrome.mockReturnValue(false)
+  useNavigationStore.setState({ currentView: 'journal', pendingSettingsTab: null })
   useBootStore.setState({ state: 'ready', error: null, boot: noopBoot })
   // H-3b — WelcomeModal routes onboarding sample-page creation
   // through `createPageInSpace`, which reads
@@ -748,6 +757,54 @@ describe('WelcomeModal', () => {
   // specifics — just that the title / body content / buttons are
   // accessible under both code paths.
   // ----------------------------------------------------------------------
+
+  // #6520 — the two things a newcomer came for: bringing notes in and pairing.
+  describe('import and pairing actions', () => {
+    it.each([
+      ['Import notes', 'data'],
+      ['Pair a device', 'sync'],
+    ])('"%s" closes the modal and opens Settings on the %s tab', async (label, tab) => {
+      const user = userEvent.setup()
+      render(<WelcomeModal />)
+
+      await user.click(screen.getByRole('button', { name: label }))
+
+      expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
+      expect(localStorage.getItem('agaric-onboarding-done')).toBe('true')
+      expect(useNavigationStore.getState().currentView).toBe('settings')
+      expect(useNavigationStore.getState().pendingSettingsTab).toBe(tab)
+    })
+
+    it('has no a11y violations on the dialog with both actions', async () => {
+      render(<WelcomeModal />)
+
+      expect(screen.getByRole('button', { name: 'Import notes' })).toBeInTheDocument()
+      const results = await axe(screen.getByTestId('welcome-modal'))
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  describe('on a touch phone', () => {
+    beforeEach(() => {
+      mockedUseIsMobile.mockReturnValue(true)
+      mockedUseShouldShowMobileChrome.mockReturnValue(true)
+    })
+
+    it('names no key the phone does not have', () => {
+      render(<WelcomeModal />)
+
+      const text = screen.getByTestId('welcome-modal').textContent
+      expect(text).not.toMatch(/Press|Ctrl|key combination|Highlight/)
+    })
+
+    it('leads with pairing with a computer, and still offers import', () => {
+      render(<WelcomeModal />)
+
+      const buttons = screen.getAllByRole('button')
+      expect(buttons[0]).toHaveAccessibleName('Pair with your computer')
+      expect(screen.getByRole('button', { name: 'Import notes' })).toBeInTheDocument()
+    })
+  })
 
   describe('responsive path', () => {
     it('mounts on the mobile path (Sheet) with title, workflow list, and buttons accessible', () => {

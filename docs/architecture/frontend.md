@@ -73,6 +73,7 @@ BootGate
   SpaceTopStripe          (3 px accent bar)
   SidebarProvider
     AppSidebar            (collapsible left rail)
+    NoPeersPairing        (no-peers dialog → pairing dialog, both lazy)
     SidebarInset
       Header bar
       TabBar              (hoisted; hidden on mobile / 1 tab)
@@ -82,7 +83,7 @@ BootGate
         ViewDispatcher → one of the views
   Suspense
     KeyboardShortcuts, WelcomeModal, BugReportDialog,
-    QuickCaptureDialog, NoPeersDialog       (all lazy)
+    QuickCaptureDialog                      (all lazy)
   Toaster
 ```
 

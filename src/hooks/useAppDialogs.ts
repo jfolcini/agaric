@@ -34,9 +34,8 @@
  *   when focus has drifted elsewhere.
  *
  * The hook only owns the STATE. The dialog JSX (`BugReportDialog`,
- * `QuickCaptureDialog`, `NoPeersDialog`, `KeyboardShortcuts`) stays at
- * the App.tsx render boundary so each can wire its own
- * `onOpenChange` / `onOpenSettings` handler.
+ * `QuickCaptureDialog`, `NoPeersPairing`, `KeyboardShortcuts`) stays at
+ * the App.tsx render boundary so each can wire its own `onOpenChange`.
  */
 
 import { useEffect, useState } from 'react'

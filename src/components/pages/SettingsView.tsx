@@ -145,7 +145,7 @@ export function SettingsView(): React.ReactElement {
   const integrity = useReconciliationReport('SettingsView')
 
   // #734 — consume the pending-tab handoff slot. The deep-link router and
-  // the NoPeersDialog CTA write it before flipping the view to
+  // the welcome modal's actions write it before flipping the view to
   // `'settings'`; subscribing (rather than reading once in the useState
   // initializer like localStorage / the URL param) means an
   // `agaric://settings/<tab>` link still lands while Settings is ALREADY
