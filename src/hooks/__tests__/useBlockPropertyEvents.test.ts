@@ -41,7 +41,6 @@ import {
   _resetBlockPropertyEventsForTest,
   EVENT_PROPERTY_CHANGED,
 } from '@/lib/block-property-events'
-import { dispatchBlanketPropertyChange } from '@/lib/property-change-dispatch'
 
 beforeEach(() => {
   eventListeners.clear()
@@ -204,24 +203,6 @@ describe('useScopedBlockPropertyEvents', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(150)
     })
-    expect(result.current.invalidationKey).toBe(1)
-  })
-
-  // A sync, an MCP write or an undo changes properties with no event naming a block, and a reload
-  // keeps the tree's rows: the tree re-reads, whatever blocks it owns (#6533).
-  it('bumps for a change no event names, whatever blocks it owns', async () => {
-    const { result } = renderHook(() => useScopedBlockPropertyEvents({ ownsBlock: () => false }))
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0)
-    })
-
-    act(() => {
-      dispatchBlanketPropertyChange()
-    })
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(150)
-    })
-
     expect(result.current.invalidationKey).toBe(1)
   })
 })

@@ -221,6 +221,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     blocksById: new Map(),
     rootParentId: pageId,
     loading: true,
+    completedLoads: 0,
     truncatedTotal: null,
     staleFocusedBlock: null,
 
@@ -405,6 +406,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           blocks: newBlocks,
           blocksById: buildBlocksById(newBlocks),
           loading: false,
+          completedLoads: get().completedLoads + 1,
           truncatedTotal,
           staleFocusedBlock,
         })

@@ -6,7 +6,8 @@
  * of them are dropped; a cache added later goes here, and every caller gets it.
  *
  * Not here: the page stores and the resolve store, which each caller reloads
- * for the pages it can name, and the space list, which only a peer changes.
+ * for the pages it can name (a tree reads its rows' properties again on each
+ * load of its store), and the space list, which only a peer changes.
  */
 
 import { invalidatePageBrowserData } from '@/hooks/usePageBrowserData'
@@ -16,16 +17,12 @@ import { invalidateCalendarPageDates } from '@/lib/calendar-page-dates-cache'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
-import { dispatchBlanketPropertyChange } from '@/lib/property-change-dispatch'
 
 export function invalidateDerivedCaches(): void {
   // Links: the Graph, the references panels and query blocks.
   recordGraphStructureChange()
   // Task state and dates: the agenda, Due, Done and Unfinished panels, search.
   recordBlockPropertyChange()
-  // Chips, list markers and image sizes of the open block trees, whose rows a reload keeps
-  // mounted: no property event names such a write, so they re-read on this.
-  dispatchBlanketPropertyChange()
   // Property key and value lists, and the open page's own properties.
   invalidatePropertyCaches()
   // Page and tag names: the `[[` and `#` pickers, tag views.

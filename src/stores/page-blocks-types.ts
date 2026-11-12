@@ -51,6 +51,12 @@ export interface PageBlockState {
   rootParentId: string | null
   /** Loading state. */
   loading: boolean
+  /**
+   * How many loads brought a snapshot in (a failed or superseded one does not
+   * count). A reload keeps the tree's rows mounted (#6533), so what the tree
+   * reads beside the blocks, their properties, is read again when this moves.
+   */
+  completedLoads: number
 
   /**
    * #1258 — total active descendant count when the backend truncated the

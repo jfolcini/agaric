@@ -241,15 +241,17 @@ export function BlockTree({
 }: BlockTreeProps = {}): React.ReactElement {
   const { t } = useTranslation()
   // Per-page data from context
-  const { blocks, blocksById, rootParentId, loading, truncatedTotal } = usePageBlockStore(
-    useShallow((s) => ({
-      blocks: s.blocks,
-      blocksById: s.blocksById,
-      rootParentId: s.rootParentId,
-      loading: s.loading,
-      truncatedTotal: s.truncatedTotal,
-    })),
-  )
+  const { blocks, blocksById, rootParentId, loading, completedLoads, truncatedTotal } =
+    usePageBlockStore(
+      useShallow((s) => ({
+        blocks: s.blocks,
+        blocksById: s.blocksById,
+        rootParentId: s.rootParentId,
+        loading: s.loading,
+        completedLoads: s.completedLoads,
+        truncatedTotal: s.truncatedTotal,
+      })),
+    )
   // #5447 — this tree's share of the GLOBAL focus and selection: the focused id
   // only while this store owns it, the selected ids it owns. The journal week
   // view mounts one tree per day, and subscribing to the raw values re-rendered
@@ -1497,7 +1499,9 @@ export function BlockTree({
   const { invalidationKey: propertyInvalidationKey } = useScopedBlockPropertyEvents({
     ownsBlock: ownsBlockForPropertyEvents,
   })
-  const batchPropertiesInvalidationKey = `${propertyInvalidationKey}|${currentSpaceId ?? ''}`
+  // Every completed load reads the batch again: a paste, an undo, a sync or an MCP write changes
+  // properties with no event naming the block, then reloads, and a reload keeps the rows (#6533).
+  const batchPropertiesInvalidationKey = `${propertyInvalidationKey}|${currentSpaceId ?? ''}|${completedLoads}`
 
   // The skeleton covers only the store's first load. A reload (a sync, an MCP
   // write, an undo) keeps every row and the focused editor mounted (#6533).

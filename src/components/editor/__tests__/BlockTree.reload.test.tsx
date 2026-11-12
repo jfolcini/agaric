@@ -16,21 +16,28 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlockRow } from '@/__tests__/fixtures'
+import { makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
 import { axe } from '@/__tests__/helpers/axe'
 import { INITIAL_MOUNT_LIMIT } from '@/components/block-tree/use-block-mount-limit'
-import type { PageSubtree } from '@/lib/bindings'
+import type { PageSubtree, PropertyRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { LIST_STYLE_KEY } from '@/lib/list-style'
 import { useBlockStore } from '@/stores/blocks'
 import { getPageStore, PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 
-vi.mock('@/components/editor/SortableBlock', () => ({
-  SortableBlock: (props: { blockId: string }) => (
-    <div data-testid={`sortable-block-${props.blockId}`}>SortableBlock</div>
-  ),
-  INDENT_WIDTH: 24,
-}))
+vi.mock('@/components/editor/SortableBlock', async () => {
+  const { useListMarker } = await import('@/components/editor/ListMarkerContext')
+  function SortableBlock({ blockId }: { blockId: string }): React.ReactElement {
+    const { style } = useListMarker(blockId)
+    return (
+      <div data-testid={`sortable-block-${blockId}`} data-list-style={style}>
+        SortableBlock
+      </div>
+    )
+  }
+  return { SortableBlock, INDENT_WIDTH: 24 }
+})
 
 const rovingEditor = {
   editor: null,
@@ -93,6 +100,10 @@ interface PendingLoad {
 
 /** Every `load_page_subtree` call, left in flight until the test answers it. */
 let pendingLoads: PendingLoad[] = []
+/** The `block_properties` rows `get_batch_properties` answers with, by block id. */
+let storedProperties: Record<string, PropertyRow[]> = {}
+/** The ids of every `get_batch_properties` call, in call order. */
+let batchReads: string[][] = []
 
 function subtreeOf(pageId: string, count: number): PageSubtree {
   const blocks = Array.from({ length: count }, (_, i) =>
@@ -142,16 +153,25 @@ function Pane({ pane, pageId }: { pane: string; pageId: string }): React.ReactEl
 const skeletonIn = (pane: string) => screen.getByTestId(pane).querySelector('.block-tree-loading')
 const rowsIn = (pane: string) =>
   within(screen.getByTestId(pane)).queryAllByTestId(/^sortable-block-/)
+const listStyleIn = (pane: string, blockId: string) =>
+  within(screen.getByTestId(pane)).getByTestId(`sortable-block-${blockId}`).dataset['listStyle']
 
 beforeEach(() => {
   vi.clearAllMocks()
   pendingLoads = []
+  storedProperties = {}
+  batchReads = []
   mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
     if (cmd === 'load_page_subtree') {
       const { rootBlockId } = args as { rootBlockId: string }
       return new Promise((resolve, reject) => {
         pendingLoads.push({ rootBlockId, resolve, reject })
       })
+    }
+    if (cmd === 'get_batch_properties') {
+      const { blockIds } = args as { blockIds: string[] }
+      batchReads.push(blockIds)
+      return Object.fromEntries(blockIds.map((id) => [id, storedProperties[id] ?? []]))
     }
     return []
   })
@@ -206,6 +226,25 @@ describe('BlockTree reload (#6533)', () => {
     await answerLoad('PAGE_A', subtreeOf('PAGE_A', INITIAL_MOUNT_LIMIT + 1))
     await reloaded
     expect(screen.getByTestId('block-tree-mount-boundary')).toBe(boundary)
+  })
+
+  // A paste, an undo or a sync writes properties with no `block:properties-changed`, then reloads.
+  it('a reload re-reads the rows’ properties once, for a row the write restyled as for a row it added', async () => {
+    render(<Pane pane="a" pageId="PAGE_A" />)
+    await waitFor(() => expect(pendingLoads).toHaveLength(1))
+    await answerLoad('PAGE_A', subtreeOf('PAGE_A', 1))
+    await waitFor(() => expect(batchReads).toEqual([['PAGE_A_B0']]))
+    expect(listStyleIn('a', 'PAGE_A_B0')).toBe('none')
+
+    const bullet = [makePropertyRow({ key: LIST_STYLE_KEY, value_text: 'bullet' })]
+    storedProperties = { PAGE_A_B0: bullet, PAGE_A_B1: bullet }
+    const reloaded = reload('PAGE_A')
+    await answerLoad('PAGE_A', subtreeOf('PAGE_A', 2))
+    await reloaded
+
+    await waitFor(() => expect(listStyleIn('a', 'PAGE_A_B0')).toBe('bullet'))
+    expect(listStyleIn('a', 'PAGE_A_B1')).toBe('bullet')
+    expect(batchReads).toEqual([['PAGE_A_B0'], ['PAGE_A_B0', 'PAGE_A_B1']])
   })
 
   it('a reload that fails keeps the rows and tells the user', async () => {

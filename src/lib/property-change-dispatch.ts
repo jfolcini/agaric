@@ -69,15 +69,6 @@ function dispatch(payload: PropertyChangedPayload | undefined): void {
 }
 
 /**
- * Fan a change no `block:properties-changed` event names (a sync, an MCP write,
- * an undo or an import wrote `block_properties`) out to every target as a
- * payload-less event, which each treats as a blanket change.
- */
-export function dispatchBlanketPropertyChange(): void {
-  dispatch(undefined)
-}
-
-/**
  * Lazily register the ONE process-lifetime Tauri listener that fans
  * `block:properties-changed` out to every registered target. Idempotent — safe
  * to call from every consumer on every render; only the first successful call

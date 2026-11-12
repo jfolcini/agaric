@@ -365,7 +365,7 @@ test.describe('a reload of the open page keeps its editor and rows (#6533) @edit
       await watchTree(page)
 
       // An undo and a redo write properties with no property event, and the rows stay mounted:
-      // the reset that follows the reload is what re-reads them.
+      // each completed reload re-reads them.
       await blurEditors(page)
       await page.keyboard.press('Control+z')
       await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
