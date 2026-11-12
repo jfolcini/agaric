@@ -203,7 +203,8 @@ function makeEditor() {
         resolve: mockResolve,
         textBetween: mockTextBetween,
       },
-      selection: { from: 0, to: 0 },
+      // `$head` at depth 0: a caret in no table cell, as every real selection carries one.
+      selection: { from: 0, to: 0, $head: { depth: 0 } },
     },
     schema: {
       marks: {
