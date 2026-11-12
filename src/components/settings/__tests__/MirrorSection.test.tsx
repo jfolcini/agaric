@@ -41,6 +41,7 @@ const refusedTurnOn: AppError = {
 let folder: string | null
 let picked: string | null
 let readBack: boolean
+let copyFiles: boolean
 let pendingFiles: string[]
 let unmirrored: string[]
 let extra: Partial<MirrorStatus>
@@ -55,7 +56,7 @@ function status(): MirrorStatus {
     last_pass_ms: null,
     read_back: readBack,
     pending: readBack ? [] : pendingFiles,
-    copy_files: false,
+    copy_files: copyFiles,
     unmirrored_spaces: unmirrored,
     ...extra,
   }
@@ -72,6 +73,7 @@ beforeEach(() => {
   folder = null
   picked = PICKED
   readBack = true
+  copyFiles = false
   pendingFiles = []
   unmirrored = []
   extra = {}
@@ -99,6 +101,10 @@ beforeEach(() => {
       }
       readBack = args['on'] as boolean
       if (readBack) pendingFiles = []
+      return status()
+    },
+    set_mirror_copy_files: (args) => {
+      copyFiles = args['on'] as boolean
       return status()
     },
   })
@@ -330,6 +336,74 @@ describe('MirrorSection', () => {
     // The card read the status again, so the next try asks about the file.
     await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
     expect(await screen.findByRole('alertdialog')).toHaveTextContent('Personal/Projects.md')
+  })
+
+  it('the copy switch turns copying attachments on and off', async () => {
+    folder = PICKED
+    const user = userEvent.setup()
+    await renderLoaded()
+    const copy = screen.getByRole('switch', { name: t('data.mirrorCopyFilesLabel') })
+    expect(copy).not.toBeChecked()
+
+    await user.click(copy)
+    await waitFor(() => {
+      expect(copy).toBeChecked()
+    })
+    expect((await storedStatus()).copy_files).toBe(true)
+
+    await user.click(copy)
+    await waitFor(() => {
+      expect(copy).not.toBeChecked()
+    })
+    expect((await storedStatus()).copy_files).toBe(false)
+  })
+
+  it('a copy switch the backend refuses says why and stays as it was', async () => {
+    const refused: AppError = { kind: 'io', message: 'disk full' }
+    vi.mocked(invoke).mockImplementation((cmd: string) =>
+      cmd === 'set_mirror_copy_files' ? Promise.reject(refused) : Promise.resolve(status()),
+    )
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorCopyFilesLabel') }))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        t('data.mirrorCopyFilesFailed', { reason: refused.message }),
+      )
+    })
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'MirrorSection',
+      'failed to change copying attachments',
+      undefined,
+      refused,
+    )
+    expect(screen.getByRole('switch', { name: t('data.mirrorCopyFilesLabel') })).not.toBeChecked()
+    expect((await storedStatus()).copy_files).toBe(false)
+  })
+
+  it('lists files no page owns, such as kept copies, one row each', async () => {
+    folder = PICKED
+    const keys = vi.spyOn(console, 'error').mockImplementation(() => {})
+    extra = {
+      diverged: [
+        { page_id: '', path: 'Personal/assets/A1/cat.png' },
+        { page_id: '', path: 'Personal/assets/A2/dog.png' },
+      ],
+      failed: [
+        { page_id: '', path: 'Personal/assets/A3/a.png', message: 'denied' },
+        { page_id: '', path: 'Personal/assets/A4/b.png', message: 'denied' },
+      ],
+    }
+    await renderLoaded()
+
+    const diverged = screen.getByRole('list', { name: t('data.mirrorDivergedHeading') })
+    expect(diverged.querySelectorAll('li')).toHaveLength(2)
+    const failed = screen.getByRole('list', { name: t('data.mirrorFailedHeading') })
+    expect(failed.querySelectorAll('li')).toHaveLength(2)
+    expect(keys).not.toHaveBeenCalledWith(expect.stringContaining('same key'), expect.anything())
+    keys.mockRestore()
   })
 
   it('confirming a list a later change made stale reads nothing in and asks again', async () => {

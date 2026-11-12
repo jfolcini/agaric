@@ -358,7 +358,7 @@ async fn copying_on_copies_each_linked_attachment_and_links_the_page_to_it() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_missing_or_changed_copy_is_written_again() {
+async fn a_missing_copy_is_written_again() {
     let mut fx = Fx::new(Some(true)).await;
     let (_, block, attachment) = fx.page_with_image("Alpha", "cat.png", PNG).await;
     fx.tick().await;
@@ -368,12 +368,41 @@ async fn a_missing_or_changed_copy_is_written_again() {
     fx.edit(&block, &format!("![renamed](attachment:{attachment})"))
         .await;
     fx.tick().await;
-    assert_eq!(fx.read(&copy).as_deref(), Some(PNG), "a missing copy");
+    assert_eq!(fx.read(&copy).as_deref(), Some(PNG));
+}
 
-    std::fs::write(fx.root.join(&copy), b"scribbled over").unwrap();
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_edited_copy_is_kept_and_listed_not_rendered_over_while_copying_is_on() {
+    let mut fx = Fx::new(Some(true)).await;
+    let (_, block, attachment) = fx.page_with_image("Alpha", "cat.png", PNG).await;
+    fx.tick().await;
+    let copy = copy_of(&attachment, "cat.png");
+
+    std::fs::write(fx.root.join(&copy), b"annotated").unwrap();
+    fx.edit(&block, &format!("![renamed](attachment:{attachment})"))
+        .await;
     fx.state.restart();
     fx.tick().await;
-    assert_eq!(fx.read(&copy).as_deref(), Some(PNG), "a changed copy");
+
+    assert_eq!(
+        fx.read(&copy).as_deref(),
+        Some(&b"annotated"[..]),
+        "the user's edit stays"
+    );
+    assert!(
+        fx.text("TestSpace/Alpha.md")
+            .contains(&format!("![renamed](assets/{attachment}/cat.png)")),
+        "the page links the user's copy: {}",
+        fx.text("TestSpace/Alpha.md")
+    );
+    let paths: Vec<String> = fx
+        .status()
+        .await
+        .diverged
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(paths, [copy], "listed as no longer its attachment");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -529,5 +558,37 @@ async fn a_renamed_attachment_is_linked_at_its_new_copy_and_its_old_one_goes() {
             .contains(&format!("(assets/{attachment}/apple.png)")),
         "the page links the copy that is there: {}",
         fx.text("TestSpace/Alpha.md")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_saved_in_the_folder_after_an_attachment_rename_links_the_new_copy() {
+    let mut fx = Fx::new(Some(true)).await;
+    let (page, _, attachment) = fx.page_with_image("Alpha", "zebra.png", PNG).await;
+    fx.block(&page, "words").await;
+    fx.tick().await;
+    let written = fx.text("TestSpace/Alpha.md");
+
+    rename_attachment_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        AttachmentId::from_trusted(&attachment),
+        "apple.png".into(),
+    )
+    .await
+    .unwrap();
+    std::fs::write(
+        fx.root.join("TestSpace/Alpha.md"),
+        written.replace("words", "other words"),
+    )
+    .unwrap();
+    fx.ticks(2).await;
+
+    let text = fx.text("TestSpace/Alpha.md");
+    assert!(text.contains("other words"), "the edit was read: {text}");
+    assert!(
+        text.contains(&format!("(assets/{attachment}/apple.png)")),
+        "the file written back links the new copy: {text}"
     );
 }

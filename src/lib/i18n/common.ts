@@ -556,6 +556,10 @@ export const common: Record<string, string> = {
   'data.mirrorReadBackFailed': 'Reading changes back was not changed: {{reason}}',
   'data.mirrorSpacesHeading': 'Spaces mirrored',
   'data.mirrorSpaceFailed': 'Which spaces are mirrored was not changed: {{reason}}',
+  'data.mirrorCopyFilesLabel': 'Copy attachments into the folder',
+  'data.mirrorCopyFilesDesc':
+    'Images and files your pages link are copied into an assets folder beside them, and the pages link the copies. A copy you change there is kept and listed below.',
+  'data.mirrorCopyFilesFailed': 'Copying attachments was not changed: {{reason}}',
   'data.mirrorReadPendingTitle': 'Read in what changed?',
   'data.mirrorReadPendingDesc_one':
     'This file changed outside Agaric while reading back was off. Turning it on reads it in.',
@@ -697,7 +701,8 @@ export const common: Record<string, string> = {
   'help.updateNoneFoundToast': "You're on the latest version",
   'help.updateInstallFailedToast': 'Update install failed',
   'help.updateMobileHint':
-    "To update on Android, install the newest APK from Agaric's GitHub releases page.",
+    "Agaric does not update itself on Android. Install the newest APK from Agaric's GitHub releases page.",
+  'help.updateOpenReleasesButton': 'Open releases page',
   'spaceSwitcher.shortcutHint': 'Tip: Alt+1–9 to switch spaces',
   'spaceSwitcher.createAnotherHint': 'Create another space\u2026',
 

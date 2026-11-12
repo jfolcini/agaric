@@ -123,6 +123,10 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 vi.mock('sonner', () => ({ toast: toastMock }))
 
+const { mockOpenUrl } = vi.hoisted(() => ({ mockOpenUrl: vi.fn(async () => true) }))
+
+vi.mock('@/lib/open-url', () => ({ openUrl: mockOpenUrl }))
+
 vi.mock('@/stores/sync', () => ({
   useSyncStore: {
     getState: vi.fn(() => ({
@@ -1182,6 +1186,72 @@ describe('useSyncEvents', () => {
           'error',
           'This device and the other device run different versions of Agaric. Update both to the latest version, then sync again.',
         )
+        unmount()
+      })
+    })
+
+    // #6538 — Android does not update itself, so the mismatch toast says where.
+    describe('#6538 the version-mismatch toast on Android links the releases page', () => {
+      const mismatch = {
+        payload: {
+          type: 'error',
+          message: 'peer engine format v3 incompatible with local v4',
+          remote_device_id: 'device-42',
+          code: 'engine_format_mismatch',
+        },
+      }
+      const originalUA = navigator.userAgent
+
+      afterEach(() => {
+        Object.defineProperty(navigator, 'userAgent', { configurable: true, get: () => originalUA })
+      })
+
+      it('adds an action that opens the releases page on Android', async () => {
+        Object.defineProperty(navigator, 'userAgent', {
+          configurable: true,
+          get: () => 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile Safari/537.36',
+        })
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(mismatch)
+
+        const opts = mockedToastError.mock.calls[0]?.[1] as {
+          action?: { label: string; onClick: () => void }
+        }
+        expect(opts.action?.label).toBe('Open releases page')
+        opts.action?.onClick()
+        expect(mockOpenUrl).toHaveBeenCalledExactlyOnceWith(
+          'https://github.com/jfolcini/agaric/releases/latest',
+        )
+        unmount()
+      })
+
+      it('adds no action to other sync errors on Android', async () => {
+        Object.defineProperty(navigator, 'userAgent', {
+          configurable: true,
+          get: () => 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile Safari/537.36',
+        })
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')({
+          payload: { type: 'error', message: 'connection lost' },
+        })
+
+        const opts = mockedToastError.mock.calls[0]?.[1] as { action?: unknown }
+        expect(opts.action).toBeUndefined()
+        unmount()
+      })
+
+      it('leaves the toast unchanged on desktop', async () => {
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(mismatch)
+
+        const opts = mockedToastError.mock.calls[0]?.[1] as { action?: unknown }
+        expect(opts.action).toBeUndefined()
         unmount()
       })
     })

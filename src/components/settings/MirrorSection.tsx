@@ -12,6 +12,9 @@
  * files the dialog listed, so the backend refuses it when another file
  * changed since: nothing is read in that the user was not shown.
  *
+ * Copying attachments into the folder is a stored switch of its own, off by
+ * default; a copy changed in the folder is kept, and listed under `diverged`.
+ *
  * Where the backend cannot mirror (`supported: false`, the mobile builds) the
  * card renders nothing.
  */
@@ -38,7 +41,7 @@ import { useSpaceStore } from '@/stores/space'
 
 const MODULE = 'MirrorSection'
 
-type Action = 'choose' | 'off' | 'readBack' | 'space'
+type Action = 'choose' | 'off' | 'readBack' | 'copyFiles' | 'space'
 
 export function MirrorSection(): React.ReactElement | null {
   const { t } = useTranslation()
@@ -47,6 +50,7 @@ export function MirrorSection(): React.ReactElement | null {
   const readBackId = useId()
   const spacesHeadingId = useId()
   const spaces = useSpaceStore((s) => s.availableSpaces)
+  const copyFilesId = useId()
   const [status, setStatus] = useState<MirrorStatus | null>(null)
   const [pending, setPending] = useState<Action | null>(null)
   // Reading back for the next folder chosen, while the mirror is off.
@@ -113,6 +117,21 @@ export function MirrorSection(): React.ReactElement | null {
       } catch (err) {
         logger.error(MODULE, 'failed to change which spaces are mirrored', undefined, err)
         notify.error(t('data.mirrorSpaceFailed', { reason: formatErrorForDisplay(err) }))
+      } finally {
+        setPending(null)
+      }
+    },
+    [t],
+  )
+
+  const setCopyFiles = useCallback(
+    async (on: boolean) => {
+      setPending('copyFiles')
+      try {
+        setStatus(unwrap(await commands.setMirrorCopyFiles(on)))
+      } catch (err) {
+        logger.error(MODULE, 'failed to change copying attachments', undefined, err)
+        notify.error(t('data.mirrorCopyFilesFailed', { reason: formatErrorForDisplay(err) }))
       } finally {
         setPending(null)
       }
@@ -195,6 +214,22 @@ export function MirrorSection(): React.ReactElement | null {
           />
         </SettingRow>
 
+        <SettingRow
+          label={t('data.mirrorCopyFilesLabel')}
+          description={t('data.mirrorCopyFilesDesc')}
+          controlId={copyFilesId}
+        >
+          <Switch
+            id={copyFilesId}
+            aria-describedby={settingDescriptionId(copyFilesId)}
+            checked={status.copy_files}
+            disabled={pending !== null}
+            onCheckedChange={(checked) => {
+              void setCopyFiles(checked)
+            }}
+          />
+        </SettingRow>
+
         {spaces.length > 1 && (
           <div className="space-y-2">
             <p id={spacesHeadingId} className="text-sm font-medium">
@@ -262,7 +297,7 @@ export function MirrorSection(): React.ReactElement | null {
               <ScrollArea className="max-h-56 rounded-md border" viewportClassName="p-3">
                 <ul aria-labelledby={divergedHeadingId} className="space-y-1 text-sm">
                   {status.diverged.map((file) => (
-                    <li key={file.page_id} className="font-mono break-all">
+                    <li key={file.path} className="font-mono break-all">
                       {file.path}
                     </li>
                   ))}
@@ -280,7 +315,7 @@ export function MirrorSection(): React.ReactElement | null {
             <ScrollArea className="max-h-56 rounded-md border" viewportClassName="p-3">
               <ul aria-labelledby={failedHeadingId} className="space-y-1 text-sm">
                 {status.failed.map((failure) => (
-                  <li key={failure.page_id} className="break-all">
+                  <li key={failure.path} className="break-all">
                     {t('data.mirrorFailedItem', { path: failure.path, message: failure.message })}
                   </li>
                 ))}
