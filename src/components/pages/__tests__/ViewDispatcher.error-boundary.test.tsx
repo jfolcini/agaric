@@ -18,7 +18,12 @@ vi.mock('@/components/PageBrowser', () => ({
     throw new Error('pages blew up')
   },
 }))
-vi.mock('@/components/pages/PageEditor', () => ({ PageEditor: () => null }))
+vi.mock('@/components/pages/PageEditor', () => ({
+  PageEditor: ({ pageId }: { pageId: string }) => {
+    if (pageId === 'PAGE_A') throw new Error('page A blew up')
+    return <div data-testid={`page-editor-${pageId}`} />
+  },
+}))
 vi.mock('@/components/AdvancedQuery/AdvancedQueryView', () => ({ AdvancedQueryView: () => null }))
 vi.mock('@/components/graph/GraphView', () => ({ GraphView: () => null }))
 vi.mock('@/components/history/HistoryView', () => ({ HistoryView: () => null }))
@@ -56,5 +61,22 @@ describe('ViewDispatcher — a crashed view keeps its error panel to itself (#65
 
     expect(screen.getByTestId('journal-mock')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('leaving a crashed page renders the next page, and the crashed one again on return', async () => {
+    const pageA = { pageId: 'PAGE_A', title: 'A' }
+    const pageB = { pageId: 'PAGE_B', title: 'B' }
+    const { rerender } = render(
+      <ViewDispatcher {...props({ currentView: 'page-editor', activePage: pageA })} />,
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent('page A blew up')
+
+    rerender(<ViewDispatcher {...props({ currentView: 'page-editor', activePage: pageB })} />)
+    expect(await screen.findByTestId('page-editor-PAGE_B')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    // Returning re-renders page A, which throws again: its own panel, as a view does.
+    rerender(<ViewDispatcher {...props({ currentView: 'page-editor', activePage: pageA })} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('page A blew up')
   })
 })

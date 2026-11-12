@@ -332,6 +332,9 @@ export function ViewDispatcher({
       return (
         <FeatureErrorBoundary
           key={currentView}
+          // A page key would remount PageEditor on every page change; resetKey
+          // only clears a crashed page's panel.
+          resetKey={activePage.pageId}
           name="PageEditor"
           nameKey="errorBoundary.section.pageEditor"
         >
