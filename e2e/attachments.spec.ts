@@ -27,7 +27,7 @@ import {
  *   5. `/attach` through the file chooser — an allowed file attaches; a
  *      disallowed type or an oversized file is refused with a toast and no row
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   BLOCK_GS_1 ('0000000000000000000BLOCK01') — first child of "Getting Started"
  *
  * The mock's attachment store (Map) persists state across IPC calls within a

@@ -18,7 +18,7 @@ import {
  * this pattern and renders a <QueryResult> widget that executes the query
  * against the backend (mock IPC in E2E) and displays matching blocks.
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   TAG_WORK  ("work")     — applied to BLOCK_PROJ_1, BLOCK_PROJ_2, BLOCK_MTG_1
  *   TAG_PERSONAL ("personal") — applied to BLOCK_DAILY_3
  *   Properties:

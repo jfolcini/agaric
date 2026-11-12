@@ -19,7 +19,7 @@ import {
  * return search results (searchBlockRefs guards with q.length < 2).
  * An empty query or single character returns no results.
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   PAGE_GETTING_STARTED ("Getting Started") — 5 child blocks
  *     GS_1: "Welcome to Agaric! This is your personal knowledge base."
  *     GS_2: "Use the sidebar to navigate between pages, tags, and search."

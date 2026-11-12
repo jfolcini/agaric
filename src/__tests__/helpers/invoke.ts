@@ -253,6 +253,31 @@ export function stubInvoke(
   mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
 }
 
+/**
+ * Answer `invoke` from the tauri mock's `dispatch` over a freshly re-seeded
+ * store, so a test asserts what the backend's second implementation persisted
+ * instead of a hand-written third description of it. A command the mock does
+ * not model still fails through {@link strictInvokeFallback}: `dispatch`
+ * answers an unknown command with `null`.
+ *
+ * Async because the mock is imported on demand: `src/test-setup.ts` imports
+ * this module, and a static import would load the whole mock into every file.
+ */
+export async function answerInvokeFromMock(
+  mockedInvoke: MockedFunction<typeof invoke>,
+): Promise<void> {
+  const [{ dispatch, HANDLERS, PLUGIN_HANDLERS }, { seedBlocks }] = await Promise.all([
+    import('@/lib/tauri-mock/handlers'),
+    import('@/lib/tauri-mock/seed'),
+  ])
+  seedBlocks()
+  mockedInvoke.mockImplementation((command: string, args?: unknown) =>
+    Object.hasOwn(HANDLERS, command) || Object.hasOwn(PLUGIN_HANDLERS, command)
+      ? Promise.resolve().then(() => dispatch(command, args))
+      : strictInvokeFallback(command),
+  )
+}
+
 /** A `move_block` response: `WithOps<MoveResponse>`, `op_refs` included. */
 export function moveResp(
   blockId: string,

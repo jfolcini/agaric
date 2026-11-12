@@ -10,7 +10,7 @@ interface MockErrorWindow extends Window {
  *
  * These tests inject errors via the mock layer's __injectMockError window
  * global and verify the app handles failures gracefully (e.g. error toasts,
- * no crashes). The mock layer (tauri-mock.ts) auto-activates in the browser.
+ * no crashes). The mock layer (`src/lib/tauri-mock/`) auto-activates in the browser.
  *
  * Block operations use the "Getting Started" seed page (TipTap roving editor).
  */

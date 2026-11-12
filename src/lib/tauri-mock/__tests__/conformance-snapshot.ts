@@ -217,7 +217,7 @@ export function buildSnapshot(
   // occurrence of a pair already carries the same kind and the first one wins.
   const linkRows = new Map<string, Record<string, unknown>>()
   for (const edge of deriveLinkEdges(state.blocks, state.unresolvedLinks, state.keptLinkKinds)) {
-    const pair = `${edge.sourceId} ${edge.targetId}`
+    const pair = `${edge.sourceId}\0${edge.targetId}`
     if (linkRows.has(pair)) continue
     linkRows.set(pair, {
       source_id: relabel(edge.sourceId),

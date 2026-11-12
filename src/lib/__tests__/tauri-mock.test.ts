@@ -1,5 +1,5 @@
 /**
- * Tests for src/lib/tauri-mock.ts — the in-memory Tauri IPC mock.
+ * Tests for `src/lib/tauri-mock/` — the in-memory Tauri IPC mock.
  *
  * These tests verify the mock's IPC command handler directly by capturing
  * the handler registered via mockIPC, then invoking it with command names
@@ -1966,6 +1966,7 @@ describe('list_trash', () => {
     const ids = result.items.map((b) => b['id'])
     expect(ids).toContain(SEED_IDS.BLOCK_GS_1)
     // All returned items should have deleted_at set
+    expect(result.items).toHaveLength(1)
     for (const item of result.items) {
       expect(item['deleted_at']).not.toBeNull()
     }
@@ -2581,7 +2582,7 @@ describe('list_blocks with agendaDate', () => {
       items: Record<string, unknown>[]
     }
     // Should include blocks with due_date=today OR scheduled_date=today
-    expect(result.items.length).toBeGreaterThanOrEqual(1)
+    expect(result.items).toHaveLength(5)
     for (const item of result.items) {
       expect(item['due_date'] === todayStr || item['scheduled_date'] === todayStr).toBe(true)
     }
@@ -2593,6 +2594,7 @@ describe('list_blocks with agendaDate', () => {
     const result = invoke('list_blocks', {
       request: { date: todayStr, source: 'column:due_date' },
     }) as { items: Record<string, unknown>[] }
+    expect(result.items).toHaveLength(4)
     for (const item of result.items) {
       expect(item['due_date']).toBe(todayStr)
     }
@@ -2604,6 +2606,7 @@ describe('list_blocks with agendaDate', () => {
     const result = invoke('list_blocks', {
       request: { date: todayStr, source: 'column:scheduled_date' },
     }) as { items: Record<string, unknown>[] }
+    expect(result.items).toHaveLength(1)
     for (const item of result.items) {
       expect(item['scheduled_date']).toBe(todayStr)
     }
@@ -4945,6 +4948,7 @@ describe('list_pages_with_metadata — compound filters', () => {
     }) as MetaPageResp
     // Pages cleanly: fresh rows, none duplicated from the first slice.
     const firstIds = new Set(first.items.map((r) => r['id'] as string))
+    expect(second.items).toHaveLength(2)
     for (const r of second.items) expect(firstIds.has(r['id'] as string)).toBe(false)
   })
 })

@@ -188,14 +188,16 @@ test.describe('Draft autosave @editor', () => {
     const editor = await focusBlock(page, 0)
     const blockId = await liveEditorBlockId(page)
 
+    // A `key:: value` line, which the mid-typing content commit leaves to blur:
+    // text it commits needs no draft row, so the hook skips its save.
     await editor.press('Control+a')
-    await editor.pressSequentially('unsaved draft text')
+    await editor.pressSequentially('status:: unsaved draft')
 
     // No `waitForTimeout` — `expect.poll` absorbs the 2000ms trailing
     // debounce (DRAFT_DEBOUNCE_MS, src/hooks/useDraftAutosave.ts).
     await expect
       .poll(async () => (await lastCall(page, 'save_draft'))?.['content'], { timeout: 8000 })
-      .toBe('unsaved draft text')
+      .toBe('status:: unsaved draft')
 
     const call = await lastCall(page, 'save_draft')
     expect(call?.['blockId']).toBe(blockId)
@@ -333,9 +335,11 @@ test.describe('Draft autosave @editor', () => {
     await editor.pressSequentially('helloworld')
     await expect(editor).toHaveText('helloworld')
 
-    // Let the debounced save_draft actually land BEFORE the split, so a
-    // real (already-persisted) draft row exists for the split to discard —
-    // this is the exact repro this file's header comment cites for #2786.
+    // Persist a draft row BEFORE the split, so a real row exists for the split
+    // to discard — the repro this file's header cites for #2786. The debounced
+    // save no longer writes one for text the content commit already stored, so
+    // the page-hide flush, which saves the live text unconditionally, writes it.
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')))
     await expect
       .poll(async () => (await lastCall(page, 'save_draft'))?.['content'], { timeout: 8000 })
       .toBe('helloworld')

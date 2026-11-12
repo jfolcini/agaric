@@ -302,6 +302,56 @@ describe('useDraftAutosave', () => {
     expect(mockedSaveDraft).not.toHaveBeenCalled()
   })
 
+  describe('a committed burst needs no draft row', () => {
+    /** Type `text`, then let the content commit store `committed` before the draft timer fires. */
+    function typeAndCommit(text: string, committed: string) {
+      const { ref, state, handle } = makeEditor({ markdown: '' })
+      const { result } = renderAutosave(ref)
+      state.markdown = text
+      act(() => {
+        result.current.onContentChange()
+      })
+      ;(handle as { storedMarkdown: string }).storedMarkdown = committed
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+    }
+
+    it('issues no saveDraft after a commit stored the live text', () => {
+      typeAndCommit('hello', 'hello')
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(0)
+    })
+
+    it('still drafts a `key:: value` line the content commit leaves to blur', () => {
+      typeAndCommit('status:: done', '')
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'status:: done')
+    })
+
+    it('overwrites an earlier row even when the live text is committed', () => {
+      const { ref, state, handle } = makeEditor({ markdown: 'a' })
+      const { result } = renderAutosave(ref)
+      act(() => {
+        result.current.onContentChange()
+      })
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(mockedSaveDraft).toHaveBeenLastCalledWith('BLOCK_1', 'a')
+      state.markdown = 'ab'
+      act(() => {
+        result.current.onContentChange()
+      })
+      ;(handle as { storedMarkdown: string }).storedMarkdown = 'ab'
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      // Left holding 'a', the row would be replayed over 'ab' by boot recovery.
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(2)
+      expect(mockedSaveDraft).toHaveBeenLastCalledWith('BLOCK_1', 'ab')
+    })
+  })
+
   // Issue #715 — the flush effect is keyed on `blockId` alone. Content changes
   // while the same block stays focused must never trigger a flush.
   describe('issue #715 — flush only on block change / unmount', () => {

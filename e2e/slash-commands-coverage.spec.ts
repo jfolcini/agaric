@@ -35,7 +35,7 @@ import {
  * The mark commands (/bold /italic /code /strike /highlight) are in
  * `slash-marks.spec.ts`.
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   PAGE_GETTING_STARTED ("Getting Started") — 5 child blocks; GS_1 is the
  *   first, editable, plain-paragraph block these tests mutate.
  */

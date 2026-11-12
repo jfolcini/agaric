@@ -33,7 +33,7 @@ import {
  *     attachments are not imported"); assert the result panel's warnings
  *     heading + list render it.
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   PAGE_GETTING_STARTED ("Getting Started") — 5 child blocks, some with [[link]] and #[tag] tokens
  *   PAGE_QUICK_NOTES ("Quick Notes") — 2 child blocks with [[link]] to Getting Started
  *   PAGE_DAILY (today's date) — 5 child blocks with tasks

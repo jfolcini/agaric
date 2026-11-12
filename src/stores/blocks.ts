@@ -321,9 +321,9 @@ function activePageContextKey(): string {
   const view = useNavigationStore.getState().currentView
   const topPageId = selectPageStack(useTabsStore.getState()).at(-1)?.pageId ?? ''
   const { mode, currentDate } = useJournalStore.getState()
-  const journalDay = view === 'journal' ? `${mode} ${currentDate.toDateString()}` : ''
+  const journalDay = view === 'journal' ? `${mode}\0${currentDate.toDateString()}` : ''
   const spaceId = useSpaceStore.getState().currentSpaceId
-  return `${view} ${topPageId} ${journalDay} ${spaceId}`
+  return `${view}\0${topPageId}\0${journalDay}\0${spaceId}`
 }
 
 let lastPageContextKey = activePageContextKey()

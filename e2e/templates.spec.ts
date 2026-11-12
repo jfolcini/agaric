@@ -29,7 +29,7 @@ test.describe.configure({ mode: 'serial' })
  *  7. The journal offers the template pages and a new one; a new day copies the picked one,
  *     nesting included
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   PAGE_TMPL_MEETING ("Meeting Notes Template") — 3 child blocks:
  *     BLOCK_TMPL_M1: "## Attendees"
  *     BLOCK_TMPL_M2: "## Notes — <% today %>"

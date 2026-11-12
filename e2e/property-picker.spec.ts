@@ -5,7 +5,7 @@ import { expect, focusBlock, openPage, reopenPage, test, waitForBoot } from './h
 /**
  * E2E tests for the :: property picker.
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   list_property_keys returns keys gathered from the `properties` map
  *   plus the hard-coded 'todo' and 'priority' keys.  With default seed
  *   data the full sorted list is:

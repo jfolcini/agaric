@@ -7,7 +7,7 @@ import { expect, test, waitForBoot } from './helpers'
  * in the journal daily view, overdue task display, date navigation, and
  * view mode interactions (daily/weekly/monthly/agenda).
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   PAGE_DAILY — content = today's date, 5 child blocks:
  *     BLOCK_DAILY_1: "Morning standup notes"                     (no state)
  *     BLOCK_DAILY_2: "Review project milestones"                 (no state)

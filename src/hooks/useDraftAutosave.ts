@@ -106,6 +106,18 @@ export function useDraftAutosave(
   // typing run first armed a (since-reset) debounce timer; null when no save
   // is pending.
   const pendingSinceRef = useRef<number | null>(null)
+  // Blocks this hook has written a draft row for that no delete or flush has
+  // removed since. A committed burst skips its save only when no row is left:
+  // an older row would be replayed over the committed text at boot.
+  const draftRowIdsRef = useRef<Set<string>>(new Set())
+  const saveDraftRow = (id: string, md: string) => {
+    draftRowIdsRef.current.add(id)
+    return retryOnPoolBusy(() => commands.saveDraft(id, md).then(unwrap))
+  }
+  const deleteDraftRow = (id: string) => {
+    draftRowIdsRef.current.delete(id)
+    return retryOnPoolBusy(() => commands.deleteDraft(id).then(unwrap))
+  }
 
   /**
    * Discard the current block's draft: cancel any pending save, mark the
@@ -138,7 +150,7 @@ export function useDraftAutosave(
     // flush even if an unmount coincides with blur (blockIdRef still set).
     discardedRef.current.add(id)
     if (!saveOutcome) {
-      retryOnPoolBusy(() => commands.deleteDraft(id).then(unwrap)).catch((err: unknown) => {
+      deleteDraftRow(id).catch((err: unknown) => {
         logger.warn('useDraftAutosave', 'deleteDraft failed during discard', { blockId: id }, err)
       })
       return
@@ -165,20 +177,18 @@ export function useDraftAutosave(
             blockId: id,
           })
           if (failedContent) {
-            retryOnPoolBusy(() => commands.saveDraft(id, failedContent).then(unwrap)).catch(
-              (err: unknown) => {
-                logger.warn(
-                  'useDraftAutosave',
-                  'draft re-save after failed save failed',
-                  { blockId: id },
-                  err,
-                )
-              },
-            )
+            saveDraftRow(id, failedContent).catch((err: unknown) => {
+              logger.warn(
+                'useDraftAutosave',
+                'draft re-save after failed save failed',
+                { blockId: id },
+                err,
+              )
+            })
           }
           return
         }
-        retryOnPoolBusy(() => commands.deleteDraft(id).then(unwrap)).catch((err: unknown) => {
+        deleteDraftRow(id).catch((err: unknown) => {
           logger.warn('useDraftAutosave', 'deleteDraft failed during discard', { blockId: id }, err)
         })
       })
@@ -249,9 +259,11 @@ export function useDraftAutosave(
         if (!re || re.activeBlockId !== id) return
         const md = readLive()
         if (!md) return
+        if (md === readBaseline() && !draftRowIdsRef.current.has(id)) return
         // #1065 — a genuine fresh save for this block clears any prior
         // "discarded" marker so a real edit made after a discard can flush.
         discardedRef.current.delete(id)
+        draftRowIdsRef.current.add(id)
         retryOnPoolBusy(() => commands.saveDraft(id, md).then(unwrap), {
           onRetry: (attempt) => {
             logger.debug('useDraftAutosave', 'retrying saveDraft (pool_busy)', {
@@ -272,7 +284,7 @@ export function useDraftAutosave(
       },
       overdue ? 0 : DRAFT_DEBOUNCE_MS,
     )
-  }, [isEditorEmpty, readLive, rovingEditorRef])
+  }, [isEditorEmpty, readBaseline, readLive, rovingEditorRef])
 
   // #2938 — per-block reset. A block change (or unmount) starts a fresh typing
   // run for the max-latency cap and clear-detection, and cancels any pending
@@ -312,6 +324,7 @@ export function useDraftAutosave(
     // (add/delete) and never reassigned, so the cleanup observes the latest
     // membership without reading `discardedRef.current` directly at teardown.
     const discarded = discardedRef.current
+    const draftRowIds = draftRowIdsRef.current
     return () => {
       if (blockIdRef.current === null) return
       if (discarded.has(blockId)) return
@@ -364,23 +377,17 @@ export function useDraftAutosave(
       // `edit_block` with unchanged content. Drop the row instead, since a
       // debounced row may hold text the user has since undone.
       if (latest && latest === readBaseline()) {
-        retryOnPoolBusy(() => commands.deleteDraft(blockId).then(unwrap)).catch((err: unknown) => {
+        deleteDraftRow(blockId).catch((err: unknown) => {
           logger.warn('useDraftAutosave', 'deleteDraft of unchanged block failed', { blockId }, err)
         })
         return
       }
       const ensureSaved = latest
-        ? retryOnPoolBusy(() => commands.saveDraft(blockId, latest).then(unwrap)).catch(
-            (err: unknown) => {
-              logger.warn(
-                'useDraftAutosave',
-                'final saveDraft before flush failed',
-                { blockId },
-                err,
-              )
-            },
-          )
+        ? saveDraftRow(blockId, latest).catch((err: unknown) => {
+            logger.warn('useDraftAutosave', 'final saveDraft before flush failed', { blockId }, err)
+          })
         : Promise.resolve()
+      draftRowIds.delete(blockId)
       void ensureSaved.then(() =>
         retryOnPoolBusy(() => commands.flushDraft(blockId).then(unwrap)).catch((err: unknown) => {
           logger.warn('useDraftAutosave', 'flushDraft failed', { blockId }, err)
@@ -410,11 +417,9 @@ export function useDraftAutosave(
       if (!re || re.activeBlockId !== blockId) return
       const latest = readLive()
       if (!latest) return
-      retryOnPoolBusy(() => commands.saveDraft(blockId, latest).then(unwrap)).catch(
-        (err: unknown) => {
-          logger.warn('useDraftAutosave', 'background flush saveDraft failed', { blockId }, err)
-        },
-      )
+      saveDraftRow(blockId, latest).catch((err: unknown) => {
+        logger.warn('useDraftAutosave', 'background flush saveDraft failed', { blockId }, err)
+      })
     }
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') persistLatest()

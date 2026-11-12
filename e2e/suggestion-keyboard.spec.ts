@@ -15,7 +15,7 @@ import {
  * suggestion popup is open.  These interactions were fixed in session 228
  * (Enter/Tab/Escape/Backspace passthrough to Suggestion plugin).
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   PAGE_GETTING_STARTED ("Getting Started") — 5 child blocks
  *   PAGE_QUICK_NOTES ("Quick Notes") — 2 child blocks
  *   Tags: work, personal, idea
