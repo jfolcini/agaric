@@ -1,4 +1,4 @@
-# Session 3891 — Auto-purge keeps a trash cohort that holds a block created after the delete
+# Session 3905 — Auto-purge keeps a trash cohort that holds a block created after the delete
 
 #6543: device A deletes page P; device B, not yet synced, writes C under P. After the exchange C sits in P's trash cohort on both devices, dated at A's delete, and `tombstone_purge` hard-deleted it with the cohort 90 days after that date, possibly days after C arrived. The two-device test reproduced this before the fix: C took P's `deleted_at` on both sides and the purge took P, its old child and C.
 
