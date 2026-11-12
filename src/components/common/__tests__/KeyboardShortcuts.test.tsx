@@ -532,7 +532,7 @@ describe('KeyboardShortcuts', () => {
       expect(screen.getByText(t('keyboard.deepLinks.description'))).toBeInTheDocument()
     })
 
-    it('lists exactly the three documented deep-link routes', () => {
+    it('lists exactly the documented deep-link routes', () => {
       render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const table = screen.getByTestId('deep-links-table')
@@ -541,11 +541,13 @@ describe('KeyboardShortcuts', () => {
         'agaric://block/<ULID>',
         'agaric://page/<ULID>',
         'agaric://settings/<tab>',
+        'agaric://settings/safe-mode',
       ])
 
       expect(screen.getByText(t('keyboard.deepLinks.block'))).toBeInTheDocument()
       expect(screen.getByText(t('keyboard.deepLinks.page'))).toBeInTheDocument()
       expect(screen.getByText(t('keyboard.deepLinks.settings'))).toBeInTheDocument()
+      expect(screen.getByText(t('keyboard.deepLinks.safeMode'))).toBeInTheDocument()
     })
 
     it('has no a11y violations with the new sections rendered', async () => {

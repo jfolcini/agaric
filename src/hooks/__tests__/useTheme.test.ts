@@ -109,6 +109,21 @@ describe('useTheme', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(true)
   })
 
+  it('prints on the light palette and restores the theme after printing (#6558)', () => {
+    localStorage.setItem('theme-preference', 'dracula')
+    renderHook(() => useTheme())
+    const classes = () => [...document.documentElement.classList].toSorted()
+
+    act(() => {
+      window.dispatchEvent(new Event('beforeprint'))
+    })
+    expect(classes()).toEqual([])
+    act(() => {
+      window.dispatchEvent(new Event('afterprint'))
+    })
+    expect(classes()).toEqual(['dark', 'theme-dracula'])
+  })
+
   it('removes .dark class when isDark is false', () => {
     localStorage.setItem('theme-preference', 'light')
     renderHook(() => useTheme())

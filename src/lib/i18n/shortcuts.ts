@@ -242,4 +242,5 @@ export const shortcuts: Record<string, string> = {
   'keyboard.deepLinks.block': 'Jump to a specific block by ULID',
   'keyboard.deepLinks.page': 'Jump to a specific page by ULID',
   'keyboard.deepLinks.settings': 'Open a Settings tab (e.g. keyboard, sync)',
+  'keyboard.deepLinks.safeMode': 'Turn custom CSS off and open Appearance',
 }

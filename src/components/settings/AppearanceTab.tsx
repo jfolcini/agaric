@@ -1,6 +1,6 @@
 /**
  * AppearanceTab — theme, note text size, interface zoom, animation speed and
- * tooltip delay selectors.
+ * tooltip delay selectors, and the custom CSS stylesheet with its switch.
  *
  * Delegates each preference to its shared hook. The hooks are
  * localStorage-backed and re-read across windows via synthetic `storage`
@@ -11,6 +11,7 @@ import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Select,
@@ -20,10 +21,15 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
+import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
+import { useCustomCss } from '@/hooks/useCustomCss'
 import { type FontSize, useFontSize } from '@/hooks/useFontSize'
 import { type MotionPreference, useMotionPreference } from '@/hooks/useMotionPreference'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { type TooltipDelay, useTooltipDelay } from '@/hooks/useTooltipDelay'
+import { CUSTOM_CSS_DOCS_URL } from '@/lib/config'
+import { openUrl } from '@/lib/open-url'
 import { isMobilePlatform } from '@/lib/platform'
 import {
   INTERFACE_ZOOM_LEVELS,
@@ -66,6 +72,7 @@ export function AppearanceTab(): React.ReactElement {
   const { motion, setMotion } = useMotionPreference()
   const { tooltipDelay, setTooltipDelay } = useTooltipDelay()
   const { fontSize, setFontSize } = useFontSize()
+  const customCss = useCustomCss()
   const [zoom, setZoom] = usePreference(PREFERENCES.interfaceZoom)
   const percent = new Intl.NumberFormat(i18n.language, { style: 'percent' })
 
@@ -223,6 +230,38 @@ export function AppearanceTab(): React.ReactElement {
             </SelectContent>
           </Select>
         </SettingRow>
+
+        {/* Custom CSS (#6558): the switch comes first and stays reachable while
+            a broken sheet is applied; `agaric://settings/safe-mode` is the way
+            back when the sheet hides Settings too. */}
+        <div className="space-y-2">
+          <SettingRow
+            label={t('settings.customCssLabel')}
+            controlId="custom-css-enabled"
+            description={t('settings.customCssHelp')}
+          >
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => void openUrl(CUSTOM_CSS_DOCS_URL)}>
+                {t('settings.customCssDocs')}
+              </Button>
+              <Switch
+                id="custom-css-enabled"
+                aria-describedby={settingDescriptionId('custom-css-enabled')}
+                checked={customCss.enabled}
+                onCheckedChange={customCss.setEnabled}
+              />
+            </div>
+          </SettingRow>
+          <Textarea
+            aria-label={t('settings.customCssTextLabel')}
+            className="font-mono"
+            spellCheck={false}
+            rows={6}
+            value={customCss.css}
+            onChange={(e) => customCss.setCss(e.target.value)}
+            placeholder=":root { --background: oklch(0.97 0.02 85); }"
+          />
+        </div>
       </CardContent>
     </Card>
   )

@@ -262,6 +262,16 @@ export function useTheme(): UseThemeReturn {
     // Android activity creation; see module doc above and
     // `android-theme-bridge.ts`. No-op off Android.
     pushThemeBackgroundToNative(isResolvedDark(resolved))
+    // Paper is white: print on the light palette (#6558). `beforeprint` runs
+    // before the browser lays the page out for printing.
+    const printLight = () => applyThemeClasses('light')
+    const restore = () => applyThemeClasses(resolved)
+    window.addEventListener('beforeprint', printLight)
+    window.addEventListener('afterprint', restore)
+    return () => {
+      window.removeEventListener('beforeprint', printLight)
+      window.removeEventListener('afterprint', restore)
+    }
   }, [resolved])
 
   const setTheme = useCallback((next: ThemePreference) => {

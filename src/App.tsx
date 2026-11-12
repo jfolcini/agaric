@@ -28,6 +28,7 @@ import { useAppBootRecovery } from '@/hooks/useAppBootRecovery'
 import { useAppDialogs } from '@/hooks/useAppDialogs'
 import { useAppKeyboardShortcuts } from '@/hooks/useAppKeyboardShortcuts'
 import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
+import { useCustomCss } from '@/hooks/useCustomCss'
 import { useDeepLinkRouter } from '@/hooks/useDeepLinkRouter'
 import { useFontSize } from '@/hooks/useFontSize'
 import { useInterfaceZoom } from '@/hooks/useInterfaceZoom'
@@ -291,6 +292,8 @@ function App() {
   useFontSize()
   // Apply the interface zoom from boot (#5646).
   useInterfaceZoom()
+  // Apply the user stylesheet from boot, unless its switch is off (#6558).
+  useCustomCss()
   // Apply the global animation-speed preference app-wide from boot (the Settings
   // Select mounts the same hook for the control). #animation-speed-tuning
   useMotionPreference()

@@ -1064,6 +1064,29 @@ const FONT_SIZE_PREFERENCE: PreferenceDefinition<FontSize> = {
 }
 
 /**
+ * `agaric-custom-css` — the user stylesheet (#6558), written into one
+ * `<style>` after the app's own by `useCustomCss`. Per device, never synced.
+ */
+const CUSTOM_CSS_PREFERENCE: PreferenceDefinition<string> = {
+  key: 'agaric-custom-css',
+  scope: 'device',
+  version: 1,
+  defaultValue: '',
+  parse: (raw) => raw,
+  serialize: (value) => value,
+}
+
+/** `agaric-custom-css-enabled` — the user stylesheet's off switch, read before it is applied. */
+const CUSTOM_CSS_ENABLED_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'agaric-custom-css-enabled',
+  scope: 'device',
+  version: 1,
+  defaultValue: true,
+  parse: (raw) => raw !== 'false',
+  serialize: jsonSerialize<boolean>,
+}
+
+/**
  * Interface zoom factors (`src/hooks/useInterfaceZoom.ts`, #5646): Chrome's
  * page-zoom steps, capped at the largest that keeps the default window
  * (`tauri.conf.json`) at least as wide as the narrowest layout
@@ -1630,6 +1653,8 @@ export const PREFERENCES = {
   tooltipDelay: TOOLTIP_DELAY_PREFERENCE,
   language: LANGUAGE_PREFERENCE,
   fontSize: FONT_SIZE_PREFERENCE,
+  customCss: CUSTOM_CSS_PREFERENCE,
+  customCssEnabled: CUSTOM_CSS_ENABLED_PREFERENCE,
   interfaceZoom: INTERFACE_ZOOM_PREFERENCE,
   deadlineWarningDays: DEADLINE_WARNING_DAYS_PREFERENCE,
   lastUpdateCheck: LAST_UPDATE_CHECK_PREFERENCE,

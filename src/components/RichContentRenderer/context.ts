@@ -35,12 +35,12 @@ export interface RenderContext {
 }
 
 export const HEADING_CLASSES: Record<number, string> = {
-  1: 'text-xl sm:text-2xl font-bold',
-  2: 'text-lg sm:text-xl font-bold',
-  3: 'text-base sm:text-lg font-semibold',
-  4: 'text-sm sm:text-base font-semibold',
-  5: 'text-sm font-semibold',
-  6: 'text-xs font-semibold uppercase tracking-wide',
+  1: 'text-heading-1 font-bold',
+  2: 'text-heading-2 font-bold',
+  3: 'text-heading-3 font-semibold',
+  4: 'text-heading-4 font-semibold',
+  5: 'text-heading-5 font-semibold',
+  6: 'text-heading-6 font-semibold uppercase tracking-wide',
 }
 
 /** Callout type configuration: border color, icon, and label. */
