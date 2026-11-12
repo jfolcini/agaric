@@ -32,9 +32,9 @@
   - an edited copy rewritten, and a kept copy not listed, each failed the edited-copy test;
   - the switch not calling the command, and the refusal not shown, failed the component tests;
   - keys back on `page_id` failed the rows test, once the warning matcher took React's two arguments. It first survived with a three-argument matcher.
-  - The switch not calling the command also failed the real-backend spec (E2E_RED).
+  - A switch that always sends `false` failed the real-backend spec on its first wait: no copy of the image once copying was turned on. The run checked that the defect was in the bundle the app embedded. A first try planted a no-op that `tsc` refused, a build break and not a red. A second, with the defect, passed, and its bundle held the unmutated code, so that run proved nothing.
 - **Results:**
   - `cargo nextest run -p agaric -E 'test(/mirror/)'`: 111 passed;
   - `MirrorSection.test.tsx`: 18 passed;
   - `e2e-tauri/mirror-copy-files.e2e.ts`: passed;
-  - CLIPPY_RESULT.
+  - `cargo clippy --workspace --all-targets -- -D warnings` is clean.
