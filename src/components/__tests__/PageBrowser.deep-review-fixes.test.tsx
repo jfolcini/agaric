@@ -323,6 +323,44 @@ describe('PageBrowser', () => {
       )
     })
 
+    it('a saved view named like a date is refused with a toast saying why', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands(
+          {
+            ...savedViewInvokeHandlers(new Map()),
+            resolve_page_by_alias: () => null,
+            list_all_pages_in_space: () => [],
+            list_pages_with_metadata: () => ({
+              items: [metaPage('P1', 'Apple')],
+              next_cursor: null,
+              has_more: false,
+              total_count: 1,
+            }),
+            create_page_in_space: () => {
+              throw new Error('a date name must not reach the create')
+            },
+          },
+          { fallback: pageRowInvokeFallback },
+        ),
+      )
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+      await user.click(await screen.findByTestId('saved-views-trigger'))
+      await user.click(
+        await screen.findByRole('button', { name: t('pageBrowser.savedViews.saveCurrentView') }),
+      )
+      await user.type(await screen.findByRole('textbox', { name: 'Name' }), '2031-04-05')
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.savedViews.save') }))
+
+      await waitFor(() =>
+        expect(mockedToastError).toHaveBeenCalledWith(
+          t('pageBrowser.savedViews.nameIsDate', { name: '2031-04-05' }),
+        ),
+      )
+    })
+
     it('a saved view the backend fails to save is reported', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(

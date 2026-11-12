@@ -154,6 +154,7 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.saveError': 'Could not save the view',
   'advancedQuery.savedViews.nameTaken':
     'A page or view named "{{name}}" already exists in this space',
+  'advancedQuery.savedViews.nameIsDate': 'A view cannot be named like a date: "{{name}}"',
   'advancedQuery.savedViews.renameError': 'Could not rename the view',
   'advancedQuery.savedViews.deleteError': 'Could not delete the view',
   'advancedQuery.savedViews.empty': 'No saved views yet',

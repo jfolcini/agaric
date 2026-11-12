@@ -895,6 +895,18 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
     expect(await loadSavedViews('SPACE_PERSONAL')).toEqual([])
   })
 
+  it('refuses a name shaped like a date, telling the user why, and stamps nothing', async () => {
+    render(<AdvancedQueryView />)
+    await saveViewNamed('2031-04-05')
+
+    await waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        t('advancedQuery.savedViews.nameIsDate', { name: '2031-04-05' }),
+      ),
+    )
+    expect(await loadSavedViews('SPACE_PERSONAL')).toEqual([])
+  })
+
   it('reports a save the backend refuses', async () => {
     mockedInvoke.mockImplementation((cmd: string, args?: InvokeArgs) => {
       if (cmd === 'run_advanced_query') return Promise.resolve(makeResponse())

@@ -34,7 +34,18 @@ const ORPHANS: SavedViewPayload = {
   sort: 'most-content',
   filters: [{ type: 'Orphan' }],
 }
+// Shaped like a journal page title, which the backend's journal lookups would read as that day's page.
+const DATE_NAME = '2031-04-05'
 const SPEC = { filter: { type: 'And', children: [] }, sort: [], fulltext: 'x' }
+
+/** The titles of the live pages of `spaceId`, views included. */
+async function pageTitles(spaceId: string): Promise<unknown[]> {
+  const pages = (await dispatch('list_all_pages_in_space', {
+    scope: { kind: 'active', space_id: spaceId },
+    tagId: null,
+  })) as Array<{ content: string }>
+  return pages.map((p) => p.content)
+}
 
 /** The live view pages of `spaceId` as the mock stores them: title and decoded payload. */
 function storedViews(spaceId: string): Array<{ title: unknown; payload: SavedViewPayload | null }> {
@@ -143,6 +154,14 @@ describe('saveView', () => {
     expect(pages.map((p) => p.content)).not.toContain('Half saved')
   })
 
+  it('refuses a name shaped like a journal date, and makes no page of it', async () => {
+    expect(await saveView(PERSONAL, DATE_NAME, ORPHANS)).toBeNull()
+
+    expect(await pageTitles(PERSONAL)).not.toContain(DATE_NAME)
+    expect(await loadSavedViews(PERSONAL)).toEqual([])
+    expect(storedViews(PERSONAL)).toEqual([])
+  })
+
   it('refuses the name of another view of the space, and takes it in another space', async () => {
     await saveView(PERSONAL, 'Mine', ORPHANS)
 
@@ -164,6 +183,19 @@ describe('renameSavedView', () => {
     // Its own title respelled is not taken.
     expect(await renameSavedView(PERSONAL, id, 'FINAL')).toBe(true)
     expect(blocks.get(id)?.['content']).toBe('FINAL')
+  })
+})
+
+describe('renameSavedView onto a journal date', () => {
+  it('refuses the name and keeps the view titled as it was', async () => {
+    const view = await saveView(PERSONAL, 'Draft', ORPHANS)
+    const id = view?.id ?? ''
+
+    expect(await renameSavedView(PERSONAL, id, DATE_NAME)).toBe(false)
+
+    expect(blocks.get(id)?.['content']).toBe('Draft')
+    expect(await pageTitles(PERSONAL)).not.toContain(DATE_NAME)
+    expect((await loadSavedViews(PERSONAL)).map((v) => v.name)).toEqual(['Draft'])
   })
 })
 
@@ -264,6 +296,24 @@ describe('migrateDeviceSavedViews', () => {
       { title: 'Projects (2)', payload: { kind: 'pages', sort: 'alphabetical', filters: [] } },
     ])
     expect(blocks.get(SEED_IDS.PAGE_PROJECTS)?.['content']).toBe('Projects')
+  })
+
+  it('lands a view named like a journal date as `<date> (2)`, never as the date', async () => {
+    writePreference(PREFERENCES.savedPagesViews, {
+      schemaVersion: 1,
+      views: [{ ...TAGGED, id: 'dated', name: DATE_NAME, filters: [] }],
+    })
+
+    await migrateDeviceSavedViews([PERSONAL])
+
+    expect(storedViews(PERSONAL)).toEqual([
+      {
+        title: `${DATE_NAME} (2)`,
+        payload: { kind: 'pages', sort: 'alphabetical', filters: [] },
+      },
+    ])
+    expect(await pageTitles(PERSONAL)).not.toContain(DATE_NAME)
+    expect(localStorage.getItem('agaric:pages:savedViews:v1')).toBeNull()
   })
 
   it('keeps the key when a write fails, and the next boot finishes without duplicates', async () => {

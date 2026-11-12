@@ -16,6 +16,7 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { RenameDialog } from '@/components/dialogs/RenameDialog'
 import { Button } from '@/components/ui/button'
 import { useSavedViews } from '@/hooks/useSavedViews'
+import { isDateFormattedPage } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { deleteSavedView, renameSavedView } from '@/lib/saved-views'
@@ -63,7 +64,15 @@ export function SavedViews({ spaceKey }: SavedViewsProps): React.ReactElement {
     renameSavedView(spaceId, id, name)
       .then((renamed) => {
         if (renamed) notify.success(t('advancedQuery.savedViews.renamed', { name }))
-        else notify.error(t('advancedQuery.savedViews.nameTaken', { name }))
+        else
+          notify.error(
+            t(
+              isDateFormattedPage(name)
+                ? 'advancedQuery.savedViews.nameIsDate'
+                : 'advancedQuery.savedViews.nameTaken',
+              { name },
+            ),
+          )
       })
       .catch((err: unknown) => {
         reportIpcError('SavedViews', 'advancedQuery.savedViews.renameError', err, t, { id })

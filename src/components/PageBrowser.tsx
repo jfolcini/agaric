@@ -49,6 +49,7 @@ import { useSavedPagesViews } from '@/hooks/useSavedPagesViews'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 import type { BlockRow } from '@/lib/bindings'
+import { isDateFormattedPage } from '@/lib/date-utils'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
 import { openNewPageDialog } from '@/lib/overlay-events'
@@ -245,7 +246,15 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     (name: string) => {
       saveView(name, currentViewTuple)
         .then((saved) => {
-          if (!saved) notify.error(t('pageBrowser.savedViews.nameTaken', { name }))
+          if (!saved)
+            notify.error(
+              t(
+                isDateFormattedPage(name)
+                  ? 'pageBrowser.savedViews.nameIsDate'
+                  : 'pageBrowser.savedViews.nameTaken',
+                { name },
+              ),
+            )
         })
         .catch((err: unknown) => {
           reportIpcError('PageBrowser', 'pageBrowser.savedViews.saveFailed', err, t, { name })

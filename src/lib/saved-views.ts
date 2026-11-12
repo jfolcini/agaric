@@ -12,7 +12,9 @@
  *
  * A view's name is refused when a live page or another view of the space holds
  * it: `create_page_in_space` answers an existing title with that page, which
- * the save would then stamp.
+ * the save would then stamp. It is also refused when it is shaped like a
+ * journal date, because the backend's journal lookups would take the view page
+ * for that day's page.
  *
  * Both lists (the Pages view's, Advanced Query's) read one TanStack query per
  * space. Every write here re-reads it; a change that arrives some other way (a
@@ -26,6 +28,7 @@
 import { unwrap, validationCode } from '@/lib/app-error'
 import { base64UrlToUtf8, utf8ToBase64Url } from '@/lib/base64url'
 import { commands, type FilterPrimitive } from '@/lib/bindings'
+import { isDateFormattedPage } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { nameKey } from '@/lib/name-tokens'
@@ -131,6 +134,13 @@ async function takenNames(spaceId: string, exceptId: string | null): Promise<Set
   )
 }
 
+/** Whether `name` cannot title a view of `spaceId`: a journal date, or held by a page or view but `exceptId`'s. */
+async function nameRefused(spaceId: string, exceptId: string | null, name: string) {
+  return (
+    isDateFormattedPage(name.trim()) || (await takenNames(spaceId, exceptId)).has(nameKey(name))
+  )
+}
+
 async function createViewPage(
   spaceId: string,
   name: string,
@@ -155,21 +165,21 @@ async function createViewPage(
   return { id, name, payload }
 }
 
-/** Save `payload` as a view named `name` in `spaceId`; `null` when the name is taken there. */
+/** Save `payload` as a view named `name` in `spaceId`; `null` when the name is taken there or is a date. */
 export async function saveView(
   spaceId: string,
   name: string,
   payload: SavedViewPayload,
 ): Promise<SavedView | null> {
-  if ((await takenNames(spaceId, null)).has(nameKey(name))) return null
+  if (await nameRefused(spaceId, null, name)) return null
   const view = await createViewPage(spaceId, name, payload)
   invalidateSavedViews()
   return view
 }
 
-/** Rename view `id` of `spaceId`; `false` when the name is taken there. */
+/** Rename view `id` of `spaceId`; `false` when the name is taken there or is a date. */
 export async function renameSavedView(spaceId: string, id: string, name: string): Promise<boolean> {
-  if ((await takenNames(spaceId, id)).has(nameKey(name))) return false
+  if (await nameRefused(spaceId, id, name)) return false
   try {
     unwrap(await commands.editBlock(id, name))
   } catch (err) {
@@ -193,9 +203,9 @@ export async function restoreSavedView(id: string, deletedAt: number): Promise<v
   invalidateSavedViews()
 }
 
-/** `name`, or `name (2)`, `name (3)`, … whichever `taken` does not hold. */
+/** `name`, or `name (2)`, `name (3)`, … whichever `taken` does not hold; a date counts as held. */
 function freeName(name: string, taken: ReadonlySet<string>): string {
-  if (!taken.has(nameKey(name))) return name
+  if (!isDateFormattedPage(name.trim()) && !taken.has(nameKey(name))) return name
   for (let n = 2; ; n++) {
     const candidate = `${name} (${n})`
     if (!taken.has(nameKey(candidate))) return candidate

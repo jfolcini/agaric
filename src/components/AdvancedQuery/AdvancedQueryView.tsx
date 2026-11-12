@@ -37,6 +37,7 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
 import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey } from '@/lib/bindings'
+import { isDateFormattedPage } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { saveView } from '@/lib/saved-views'
@@ -133,7 +134,15 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
     saveView(currentSpaceId, name, { kind: 'query', spec: serializeQuerySpec(builder, controls) })
       .then((saved) => {
         if (saved) notify.success(t('advancedQuery.savedViews.saved', { name }))
-        else notify.error(t('advancedQuery.savedViews.nameTaken', { name }))
+        else
+          notify.error(
+            t(
+              isDateFormattedPage(name)
+                ? 'advancedQuery.savedViews.nameIsDate'
+                : 'advancedQuery.savedViews.nameTaken',
+              { name },
+            ),
+          )
       })
       .catch((err: unknown) => {
         reportIpcError('AdvancedQueryView', 'advancedQuery.savedViews.saveError', err, t, { name })

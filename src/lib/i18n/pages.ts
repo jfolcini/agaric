@@ -357,6 +357,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.savedViews.applied': 'Applied view "{{name}}"',
   'pageBrowser.savedViews.nameTaken':
     'A page or view named "{{name}}" already exists in this space',
+  'pageBrowser.savedViews.nameIsDate': 'A view cannot be named like a date: "{{name}}"',
   'pageBrowser.savedViews.saveFailed': 'Could not save the view',
   'pageBrowser.savedViews.deleteFailed': 'Could not delete the view',
   'pageBrowser.savedViews.restoreFailed': 'Could not restore the view',

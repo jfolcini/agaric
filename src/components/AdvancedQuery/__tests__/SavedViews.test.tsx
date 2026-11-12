@@ -178,6 +178,28 @@ describe('SavedViews', () => {
     expect(await storedNames()).toEqual(['My view'])
   })
 
+  it('refuses a rename onto a date, telling the user why, and keeps the name', async () => {
+    renderPicker()
+    const user = userEvent.setup()
+    await user.click(
+      await screen.findByRole('button', {
+        name: t('advancedQuery.savedViews.renameTitle', { name: 'My view' }),
+      }),
+    )
+    const dialog = await screen.findByRole('dialog')
+    const input = within(dialog).getByRole('textbox')
+    await user.clear(input)
+    await user.type(input, '2031-04-05')
+    await user.click(within(dialog).getByRole('button', { name: t('rename.save') }))
+
+    await waitFor(() =>
+      expect(mockedToastError).toHaveBeenCalledWith(
+        t('advancedQuery.savedViews.nameIsDate', { name: '2031-04-05' }),
+      ),
+    )
+    expect(await storedNames()).toEqual(['My view'])
+  })
+
   it('deletes a view only after confirming, to the Trash', async () => {
     renderPicker()
     const user = userEvent.setup()
