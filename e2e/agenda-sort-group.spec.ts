@@ -45,7 +45,7 @@ test('Sort by and Group by choices are kept across a trip to Pages @journal', as
 
   await navigateToView(page, 'Pages')
   await expect(page.getByTestId('agenda-view')).toHaveCount(0)
-  await navigateToView(page, 'Journal')
+  await navigateToView(page, 'Tasks')
 
   await expect(sortBy).toHaveText('Sort by:Priority')
   await expect(groupBy).toHaveText('Group by:State')
