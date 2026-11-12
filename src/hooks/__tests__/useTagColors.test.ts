@@ -12,6 +12,7 @@ import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helper
 import { useTagColors } from '@/hooks/useTagColors'
 import { logger } from '@/lib/logger'
 import { getTagColors } from '@/lib/tag-colors'
+import { useResolveStore } from '@/stores/resolve'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -22,6 +23,7 @@ function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.removeItem('tag-colors')
+  useResolveStore.setState({ tagColors: {} })
 })
 
 describe('useTagColors', () => {
@@ -106,5 +108,55 @@ describe('useTagColors', () => {
       expect.any(Error),
     )
     warn.mockRestore()
+  })
+
+  describe('synced `color` property (#6544)', () => {
+    it('shows the synced colour over the local one, and the local one where none synced', () => {
+      localStorage.setItem('tag-colors', JSON.stringify({ T1: 'accent-rose', T2: 'accent-blue' }))
+      useResolveStore.setState({ tagColors: { T1: 'accent-violet', T3: 'accent-amber' } })
+
+      const { result } = renderHook(() => useTagColors())
+
+      expect(result.current.tagColors).toEqual({
+        T1: 'accent-violet',
+        T2: 'accent-blue',
+        T3: 'accent-amber',
+      })
+    })
+
+    it('setColor records the committed colour as the synced one', async () => {
+      useResolveStore.setState({ tagColors: { T1: 'accent-violet' } })
+      stubInvoke({ set_property: () => withOps(makeBlockRow({ id: 'T1', block_type: 'tag' })) })
+      const { result } = renderHook(() => useTagColors())
+
+      await act(() => result.current.setColor('T1', 'accent-blue'))
+
+      expect(useResolveStore.getState().tagColors).toEqual({ T1: 'accent-blue' })
+      expect(result.current.tagColors).toEqual({ T1: 'accent-blue' })
+    })
+
+    it('setColor leaves the synced colour when the property write fails', async () => {
+      vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      useResolveStore.setState({ tagColors: { T1: 'accent-violet' } })
+      stubInvoke({ set_property: () => Promise.reject(new Error('offline')) })
+      const { result } = renderHook(() => useTagColors())
+
+      await act(() => result.current.setColor('T1', 'accent-blue'))
+
+      expect(useResolveStore.getState().tagColors).toEqual({ T1: 'accent-violet' })
+      expect(result.current.tagColors).toEqual({ T1: 'accent-violet' })
+      vi.mocked(logger.warn).mockRestore()
+    })
+
+    it('clearColor drops the synced colour once the delete commits', async () => {
+      useResolveStore.setState({ tagColors: { T1: 'accent-violet' } })
+      stubInvoke({ delete_property: () => withOps({ block_id: 'T1', key: 'color' }) })
+      const { result } = renderHook(() => useTagColors())
+
+      await act(() => result.current.clearColor('T1'))
+
+      expect(useResolveStore.getState().tagColors).toEqual({})
+      expect(result.current.tagColors).toEqual({})
+    })
   })
 })

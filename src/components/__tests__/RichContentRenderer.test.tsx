@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 vi.mock('@/lib/open-url', () => ({ openUrl: vi.fn() }))
@@ -24,6 +24,7 @@ import {
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { t } from '@/lib/i18n'
 import { setTagColor } from '@/lib/tag-colors'
+import { useResolveStore } from '@/stores/resolve'
 
 const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 const TAG_ID = '01CRZ3NDEKTSV4RRFFQ69G5FAV'
@@ -341,6 +342,36 @@ describe('RichContentRenderer', () => {
       expect(screen.getByTestId('tag-ref-chip').style.getPropertyValue('--tag-color')).toBe(
         'var(--accent-rose, var(--accent-current))',
       )
+    })
+
+    describe('from the synced `color` property (#6544)', () => {
+      afterEach(() => {
+        useResolveStore.setState({ tagColors: {} })
+      })
+
+      it('paints the synced colour over the local one and repaints when it syncs again', () => {
+        setTagColor(TAG_ID, 'accent-rose')
+        useResolveStore.setState({ tagColors: { [TAG_ID]: 'accent-blue' } })
+        render(renderRichContent(`#[${TAG_ID}]`, { resolveTagName: () => '#MyTag' }))
+        const chip = screen.getByTestId('tag-ref-chip')
+        expect(chip.style.getPropertyValue('--tag-color')).toBe(
+          'var(--accent-blue, var(--accent-current))',
+        )
+
+        act(() => useResolveStore.setState({ tagColors: { [TAG_ID]: 'accent-violet' } }))
+        expect(chip.style.getPropertyValue('--tag-color')).toBe(
+          'var(--accent-violet, var(--accent-current))',
+        )
+      })
+
+      it('paints the local colour of a tag with no synced one', () => {
+        setTagColor(TAG_ID, 'accent-rose')
+        useResolveStore.setState({ tagColors: { '01XRZ3NDEKTSV4RRFFQ69G5FAV': 'accent-blue' } })
+        render(renderRichContent(`#[${TAG_ID}]`, { resolveTagName: () => '#MyTag' }))
+        expect(screen.getByTestId('tag-ref-chip').style.getPropertyValue('--tag-color')).toBe(
+          'var(--accent-rose, var(--accent-current))',
+        )
+      })
     })
 
     it('leaves the chip of an uncoloured tag unstyled', () => {

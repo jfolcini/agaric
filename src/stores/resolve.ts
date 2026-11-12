@@ -40,6 +40,7 @@ import { commands } from '@/lib/bindings'
 import { resolveStoreTitle, unresolvedBlockLabel } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { requireActiveScope } from '@/lib/space-scope'
+import { migrateTagColors } from '@/lib/tag-colors'
 import { useSpaceStore } from '@/stores/space'
 
 const MAX_CACHE_SIZE = 10_000
@@ -215,6 +216,13 @@ interface ResolveStore {
   version: number
   /** Whether preload has been called at least once */
   _preloaded: boolean
+  /**
+   * Tag id → the tag's synced `color` property (#6544), re-read on every
+   * preload. A tag chip paints this, else its localStorage colour.
+   */
+  tagColors: Readonly<Record<string, string>>
+  /** Record a `color` property write that committed; `null` after a delete. */
+  setSyncedTagColor: (tagId: string, color: string | null) => void
 
   /**
    * Fetch all pages (in `spaceId`) + tags into the cache. Call once on
@@ -533,6 +541,30 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
     namedIds.set(spaceId, new Set(pages.map((p) => p.id)))
   }
 
+  /** Replace `tagColors` with the `color` properties of `tagIds`; a failed read keeps the last. */
+  async function refreshTagColors(spaceId: string, tagIds: string[]): Promise<void> {
+    const colors: Record<string, string> = {}
+    try {
+      for (let i = 0; i < tagIds.length; i += TARGETED_PRELOAD_MAX_IDS) {
+        const chunk = tagIds.slice(i, i + TARGETED_PRELOAD_MAX_IDS)
+        const props = unwrap(await commands.getBatchProperties(chunk))
+        for (const [tagId, rows] of Object.entries(props)) {
+          const color = rows.find((r) => r.key === 'color')?.value_text
+          if (color) colors[tagId] = color
+        }
+      }
+    } catch (err) {
+      logger.warn('ResolveStore', 'failed to read tag colours', { spaceId }, err)
+      return
+    }
+    const next = migrateTagColors(colors).colors
+    const prev = get().tagColors
+    const same =
+      Object.keys(prev).length === Object.keys(next).length &&
+      Object.entries(next).every(([id, color]) => prev[id] === color)
+    if (!same) set({ tagColors: next })
+  }
+
   /**
    * One pages+tags scan for `spaceId`. Never rejects (logs instead); resolves
    * `false` when the scan threw and applied nothing, `true` otherwise.
@@ -568,6 +600,10 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       pageHalfSucceeded = true
       if (tagHalf.status === 'rejected') throw tagHalf.reason
       const tags = tagHalf.value
+      await refreshTagColors(
+        spaceId,
+        tags.map((t) => t.tag_id),
+      )
 
       const fetchedTags = new Map<string, ResolveEntry>()
       const named = namedIds.get(spaceId) ?? new Set<string>()
@@ -678,6 +714,15 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
     cache: new Map(),
     version: 0,
     _preloaded: false,
+    tagColors: {},
+
+    setSyncedTagColor: (tagId, color) =>
+      set((state) => {
+        const tagColors = { ...state.tagColors }
+        if (color === null) delete tagColors[tagId]
+        else tagColors[tagId] = color
+        return { tagColors }
+      }),
 
     preload: (spaceId, forceRefresh = false, changedPageIds) => {
       // FE-H-22 — fail closed during pre-bootstrap. Earlier we forwarded

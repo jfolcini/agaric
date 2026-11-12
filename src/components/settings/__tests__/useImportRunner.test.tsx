@@ -95,6 +95,7 @@ beforeEach(() => {
       { tag_id: 'TAG_IMPORTED', name: 'imported-tag', usage_count: 1, updated_at: '2025-01-01' },
     ],
     batch_resolve: () => [],
+    get_batch_properties: () => ({}),
   })
 })
 

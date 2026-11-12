@@ -52,7 +52,7 @@ use regex::Regex;
 use agaric_store::filters::{FilterExpr, FilterPrimitive, PropertyPredicate, PropertyValue};
 
 /// The structured payload of a `v2:` inline query block. Mirrors the TS
-/// `InlineQuerySpec` in `src/lib/inline-query-spec.ts` (`{ filter, table? }`)
+/// `InlineQuerySpec` in `src/lib/inline-query-spec.ts` (`{ filter, table?, columns? }`)
 /// so a Rust-encoded payload is byte-compatible with the frontend decoder and
 /// vice-versa. `filter` deserializes into the query engine's OWN
 /// [`FilterExpr`] type, so no schema is re-implemented here.
@@ -63,6 +63,10 @@ pub struct InlineQuerySpec {
     /// matching the TS encoder which only emits `table` when `true`.
     #[serde(default)]
     pub table: bool,
+    /// The table's columns in the order the user picked; absent ⇒ derived
+    /// from the rows. Carried so an export/import round-trip keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub columns: Option<Vec<String>>,
 }
 
 /// Which resolution map a ref field routes through. The field POSITION in the
@@ -551,6 +555,7 @@ mod tests {
         let spec = InlineQuerySpec {
             filter,
             table: false,
+            columns: None,
         };
         format!("{{{{query {}}}}}", encode_v2(&spec).unwrap())
     }
@@ -640,6 +645,48 @@ mod tests {
         }
         // The OLD vault's ULID must not survive the roundtrip.
         assert!(!imported.contains(TAG_ULID), "old ULID leaked: {imported}");
+    }
+
+    /// The stored `{{query v2:…}}` token for a raw JSON spec, so a test can
+    /// carry a field a Rust round-trip might drop.
+    fn stored_v2_json(spec: &serde_json::Value) -> String {
+        let b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(spec).unwrap());
+        format!("{{{{query v2:{b64}}}}}")
+    }
+
+    fn payload_json(stored: &str) -> serde_json::Value {
+        let b64 = stored
+            .strip_prefix("{{query v2:")
+            .and_then(|s| s.strip_suffix("}}"))
+            .unwrap();
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(b64).unwrap()).unwrap()
+    }
+
+    fn export_then_import(stored: &str) -> String {
+        let tag_names = HashMap::from([(TAG_ULID.to_string(), "rust".to_string())]);
+        let exported = rewrite_inline_queries_for_export(stored, &tag_names, &HashMap::new());
+        let resolved_tag_tokens = HashMap::from([("rust".to_string(), TAG_ULID.to_string())]);
+        rewrite_inline_queries_for_import(&exported, &HashMap::new(), &resolved_tag_tokens)
+    }
+
+    #[test]
+    fn export_import_roundtrip_keeps_the_chosen_table_columns() {
+        let mut spec = payload_json(&stored_v2(tag_leaf(TAG_ULID)));
+        spec["columns"] = serde_json::json!(["due_date", "owner"]);
+        let imported = export_then_import(&stored_v2_json(&spec));
+        assert_eq!(
+            payload_json(&imported)["columns"],
+            serde_json::json!(["due_date", "owner"]),
+            "columns dropped: {imported}"
+        );
+    }
+
+    #[test]
+    fn export_import_roundtrip_leaves_a_spec_without_columns_byte_identical() {
+        let filter = serde_json::to_string(&tag_leaf(TAG_ULID)).unwrap();
+        let json = format!(r#"{{"filter":{filter},"table":false}}"#);
+        let stored = format!("{{{{query v2:{}}}}}", URL_SAFE_NO_PAD.encode(json));
+        assert_eq!(export_then_import(&stored), stored);
     }
 
     #[test]

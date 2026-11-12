@@ -5,6 +5,7 @@ import type { TagRefNode } from '@/editor/types'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
 import { migrateTagColors, tagColorStyle } from '@/lib/tag-colors'
 import { cn } from '@/lib/utils'
+import { useResolveStore } from '@/stores/resolve'
 
 /**
  * Build the event-handler + role props bundle for a clickable tag chip.
@@ -35,17 +36,20 @@ function tagRefProps(tagId: string, onTagClick: (id: string) => void): Record<st
 }
 
 /**
- * The chip, in the colour the Tags view set for its tag. A component so it
- * repaints when that colour changes, however its caller memoizes the tree.
+ * The chip, in its tag's synced colour, else the colour this device set. A
+ * component so it repaints when that colour changes, however its caller
+ * memoizes the tree.
  */
 function TagRefChip({
   tagId,
   ...props
 }: { tagId: string } & React.ComponentProps<'span'>): React.ReactElement {
+  const syncedColor = useResolveStore((s) => s.tagColors[tagId])
   const [tagColors] = usePreference(PREFERENCES.tagColors)
   // The raw read skips the #1099 legacy-hex migration `getTagColors` applies;
   // that one also writes back, which a render must not.
-  return <span {...props} style={tagColorStyle(migrateTagColors(tagColors).colors[tagId])} />
+  const color = syncedColor ?? migrateTagColors(tagColors).colors[tagId]
+  return <span {...props} style={tagColorStyle(color)} />
 }
 
 export function renderTagRef(

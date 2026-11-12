@@ -14,6 +14,7 @@
 import { mergeAttributes, Node } from '@tiptap/core'
 
 import { getTagColor, tagColorStyle } from '@/lib/tag-colors'
+import { useResolveStore } from '@/stores/resolve'
 
 export interface TagRefOptions {
   /** Resolve a tag ULID to its display name. Falls back to truncated ULID. */
@@ -86,7 +87,9 @@ export const TagRef = Node.create<TagRefOptions>({
       function render(tagId: string) {
         currentId = tagId
         const name = options.resolveName(tagId)
-        const style = tagColorStyle(getTagColor(tagId))
+        const style = tagColorStyle(
+          useResolveStore.getState().tagColors[tagId] ?? getTagColor(tagId),
+        )
 
         dom.textContent = name
         dom.className = 'tag-ref-chip'

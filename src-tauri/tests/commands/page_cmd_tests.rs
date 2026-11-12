@@ -1337,6 +1337,7 @@ async fn export_page_markdown_inline_query_tag_roundtrips_2968() {
             },
         },
         table: false,
+        columns: None,
     };
     let stored_payload = encode_v2(&spec).unwrap();
     let query_content = format!("{{{{query {stored_payload}}}}}");
@@ -7403,6 +7404,7 @@ async fn apply_page_source_keeps_an_inline_query_page_ref() {
     let spec = InlineQuerySpec {
         filter: child_of_target.clone(),
         table: false,
+        columns: None,
     };
     let payload = encode_v2(&spec).unwrap();
     dup_child(
@@ -14624,6 +14626,7 @@ async fn an_inline_query_naming_an_anchored_page_remaps_to_the_page() {
     let spec = InlineQuerySpec {
         filter: links_to("Issue #42"),
         table: false,
+        columns: None,
     };
     let named = encode_v2(&spec).unwrap().replacen("v2:", "v2n:", 1);
 
