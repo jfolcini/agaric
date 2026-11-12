@@ -350,8 +350,8 @@ fn is_write_contention(err: &AppError) -> bool {
 /// `TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN` ceiling is hit. This lets a
 /// large accumulated backlog drain within a few 24 h ticks rather than
 /// at ~1000 rows/day, while keeping every individual delete batched and
-/// bounded. The eligibility predicate (`deleted_at < cutoff`) is
-/// unchanged; only the per-run throughput grows.
+/// bounded. Eligibility is `deleted_at < cutoff`, minus any cohort that
+/// holds a block created after its delete (#6543, see the query).
 ///
 /// **Poison tolerance (#3311):** a batch that fails to purge no longer
 /// aborts the run. This is the same contract every other unattended loop
@@ -387,8 +387,18 @@ pub async fn tombstone_purge(
     let cutoff = chrono::Utc::now() - chrono::Duration::days(TOMBSTONE_RETENTION_DAYS);
     // #109 Phase 2: blocks.deleted_at is INTEGER epoch-ms; compare against the
     // cutoff as ms, not an rfc3339 string.
-    let cutoff_ms = cutoff.timestamp_millis();
+    tombstone_purge_before(pool, device_id, materializer, cutoff.timestamp_millis()).await
+}
 
+/// [`tombstone_purge`] with the retention cutoff passed in, so a test can put
+/// the clock past the retention window without back-dating rows whose ULIDs
+/// carry their creation time.
+async fn tombstone_purge_before(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &crate::materializer::Materializer,
+    cutoff_ms: i64,
+) -> Result<(), AppError> {
     let batch_limit = TOMBSTONE_PURGE_BATCH_LIMIT;
     let mut total_purged: usize = 0;
     let mut batches: usize = 0;
@@ -412,16 +422,7 @@ pub async fn tombstone_purge(
         // short-batch-means-backlog-exhausted break below relies on).
         let fetch_limit = batch_limit
             .saturating_add(i64::try_from(poisoned.len()).unwrap_or(i64::MAX - batch_limit));
-        let ids: Vec<String> = sqlx::query_scalar!(
-            "SELECT id FROM blocks \
-             WHERE deleted_at IS NOT NULL AND deleted_at < ? \
-             ORDER BY deleted_at ASC \
-             LIMIT ?",
-            cutoff_ms,
-            fetch_limit
-        )
-        .fetch_all(pool)
-        .await?;
+        let ids = fetch_purge_candidates(pool, cutoff_ms, fetch_limit).await?;
 
         let ids: Vec<String> = ids
             .into_iter()
@@ -468,6 +469,57 @@ pub async fn tombstone_purge(
 
     log_run_outcome(total_purged, batches, poisoned.len(), cutoff_ms);
     Ok(())
+}
+
+/// One drain-loop read: up to `fetch_limit` soft-deleted ids past `cutoff_ms`,
+/// oldest first.
+async fn fetch_purge_candidates(
+    pool: &SqlitePool,
+    cutoff_ms: i64,
+    fetch_limit: i64,
+) -> Result<Vec<String>, AppError> {
+    // #6543 — a block whose ULID is newer than its own `deleted_at` was
+    // created after the delete (written on a device that had not yet
+    // synced it) and was never visible. Keep its whole cohort (same
+    // `deleted_at`) and every ancestor whose purge would cascade onto it.
+    // The ULID prefix is the deleted_at ms in Crockford base32; ids that
+    // are not 26-char ULIDs carry no creation time and are never "late".
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+    Ok(sqlx::query_scalar!(
+        "WITH RECURSIVE late(parent_id, deleted_at) AS ( \
+             SELECT b.parent_id, b.deleted_at \
+             FROM blocks b, (SELECT '0123456789ABCDEFGHJKMNPQRSTVWXYZ' AS a) c \
+             WHERE b.deleted_at IS NOT NULL AND length(b.id) = 26 \
+               AND substr(b.id, 1, 10) > \
+                   substr(c.a, ((b.deleted_at >> 45) & 31) + 1, 1) \
+                || substr(c.a, ((b.deleted_at >> 40) & 31) + 1, 1) \
+                || substr(c.a, ((b.deleted_at >> 35) & 31) + 1, 1) \
+                || substr(c.a, ((b.deleted_at >> 30) & 31) + 1, 1) \
+                || substr(c.a, ((b.deleted_at >> 25) & 31) + 1, 1) \
+                || substr(c.a, ((b.deleted_at >> 20) & 31) + 1, 1) \
+                || substr(c.a, ((b.deleted_at >> 15) & 31) + 1, 1) \
+                || substr(c.a, ((b.deleted_at >> 10) & 31) + 1, 1) \
+                || substr(c.a, ((b.deleted_at >> 5) & 31) + 1, 1) \
+                || substr(c.a, (b.deleted_at & 31) + 1, 1) \
+         ), \
+         above_late(id, depth) AS ( \
+             SELECT parent_id, 0 FROM late WHERE parent_id IS NOT NULL \
+             UNION ALL \
+             SELECT b.parent_id, a.depth + 1 FROM above_late a \
+             JOIN blocks b ON b.id = a.id \
+             WHERE b.parent_id IS NOT NULL AND a.depth < 100 \
+         ) \
+         SELECT id FROM blocks \
+         WHERE deleted_at IS NOT NULL AND deleted_at < ? \
+           AND deleted_at NOT IN (SELECT deleted_at FROM late) \
+           AND id NOT IN (SELECT id FROM above_late) \
+         ORDER BY deleted_at ASC \
+         LIMIT ?",
+        cutoff_ms,
+        fetch_limit
+    )
+    .fetch_all(pool)
+    .await?)
 }
 
 /// One drain-loop batch: purge `ids` as a single batch and, when that fails,
@@ -2007,5 +2059,247 @@ mod tests {
             "EXACTLY ONE RebuildProjectedAgendaCache must land despite {N} concurrent ticks (CAS)"
         );
         mat.shutdown();
+    }
+
+    /// Ship `space`'s doc from one device to another as the snapshot catch-up
+    /// does, then settle the receiver's inbound rebuilds.
+    async fn sync_space(
+        from: (&SqlitePool, &crate::materializer::Materializer, &str),
+        space: &str,
+        to: (&SqlitePool, &crate::materializer::Materializer, &str),
+    ) {
+        use agaric_sync::sync_protocol::loro_sync::{
+            ApplyOutcome, apply_remote, prepare_outgoing_for_pool,
+        };
+        let space_id = agaric_store::space::SpaceId::from_trusted(space);
+        let msg = prepare_outgoing_for_pool(
+            from.0,
+            &from.1.loro_state().registry,
+            &space_id,
+            from.2,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("the freshness gate must not refuse a consistent engine");
+        let outcome = apply_remote(to.0, &to.1.loro_state().registry, to.2, msg)
+            .await
+            .unwrap();
+        let ApplyOutcome::Imported { changed_blocks, .. } = outcome else {
+            panic!("a snapshot imports, got {outcome:?}");
+        };
+        to.1.enqueue_inbound_sync_rebuilds(&changed_blocks, &[])
+            .await
+            .unwrap();
+        to.1.flush_inbound_rebuilds().await.unwrap();
+    }
+
+    async fn deleted_at_of(pool: &SqlitePool, id: &str) -> Option<Option<i64>> {
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+    }
+
+    /// #6543 — device A deletes page P; device B, not yet synced, writes C
+    /// under P. After the exchange C sits in P's trash cohort on both devices,
+    /// dated at A's delete. Auto-purge past the retention window must keep that
+    /// whole cohort (C was never visible to anyone), while a cohort with no
+    /// late block purges as before, and a live block written after the delete
+    /// outside P is untouched. Restoring P on A brings C back.
+    ///
+    /// Counter-delta shape: none. Each `Materializer` has its own `LoroState`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tombstone_purge_keeps_a_cohort_holding_a_block_created_after_the_delete_6543() {
+        use crate::commands::{
+            create_block_inner, create_page_in_space_inner, create_space_inner, delete_block_inner,
+            restore_block_inner,
+        };
+        use crate::materializer::Materializer;
+
+        let dir_a = tempfile::TempDir::new().unwrap();
+        let pool_a = crate::db::init_pool(&dir_a.path().join("a.db"))
+            .await
+            .unwrap();
+        let mat_a = Materializer::new(pool_a.clone());
+        let dir_b = tempfile::TempDir::new().unwrap();
+        let pool_b = crate::db::init_pool(&dir_b.path().join("b.db"))
+            .await
+            .unwrap();
+        let mat_b = Materializer::new(pool_b.clone());
+        let a = (&pool_a, &mat_a, "device-A");
+        let b = (&pool_b, &mat_b, "device-B");
+        for (pool, mat, dev) in [a, b] {
+            crate::spaces::bootstrap::bootstrap_spaces(pool, dev, mat)
+                .await
+                .unwrap();
+        }
+
+        let space = create_space_inner(&pool_a, a.2, &mat_a, "Notes".into(), None)
+            .await
+            .unwrap();
+        let mut pages = Vec::new();
+        for title in ["Doomed", "Plain deleted", "Live"] {
+            let page = create_page_in_space_inner(
+                &pool_a,
+                a.2,
+                &mat_a,
+                None,
+                title.into(),
+                space.as_str().to_owned(),
+            )
+            .await
+            .unwrap();
+            pages.push(page);
+        }
+        let [p, q, live_page] = [&pages[0], &pages[1], &pages[2]];
+        let early = create_block_inner(
+            &pool_a,
+            a.2,
+            &mat_a,
+            "content".into(),
+            "written before the delete".into(),
+            Some(p.clone()),
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+        mat_a.flush_background().await.unwrap();
+        sync_space(a, space.as_str(), b).await;
+
+        delete_block_inner(&pool_a, a.2, &mat_a, p.clone())
+            .await
+            .unwrap();
+        delete_block_inner(&pool_a, a.2, &mat_a, q.clone())
+            .await
+            .unwrap();
+        mat_a.flush_background().await.unwrap();
+        let p_deleted_at = deleted_at_of(&pool_a, p.as_str())
+            .await
+            .flatten()
+            .expect("P is soft-deleted on A");
+        // C's ULID must carry a later millisecond than the delete.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        let mut late = Vec::new();
+        for parent in [p, live_page] {
+            let block = create_block_inner(
+                &pool_b,
+                b.2,
+                &mat_b,
+                "content".into(),
+                "written on B after the delete".into(),
+                Some(parent.clone()),
+                None,
+            )
+            .await
+            .unwrap();
+            late.push(block.id);
+        }
+        let [c, live_late] = [&late[0], &late[1]];
+        mat_b.flush_background().await.unwrap();
+
+        sync_space(b, space.as_str(), a).await;
+        sync_space(a, space.as_str(), b).await;
+
+        for (pool, _, dev) in [a, b] {
+            assert_eq!(
+                deleted_at_of(pool, c.as_str()).await,
+                Some(Some(p_deleted_at)),
+                "{dev}: C must land in P's trash cohort, dated at A's delete"
+            );
+        }
+
+        for (pool, mat, dev) in [a, b] {
+            tombstone_purge_before(pool, dev, mat, i64::MAX)
+                .await
+                .unwrap();
+        }
+
+        for (pool, _, dev) in [a, b] {
+            for (id, what) in [
+                (p.as_str(), "P"),
+                (early.as_str(), "P's child written before the delete"),
+                (c.as_str(), "C, written after the delete"),
+            ] {
+                assert_eq!(
+                    deleted_at_of(pool, id).await,
+                    Some(Some(p_deleted_at)),
+                    "{dev}: {what} must stay in Trash: its cohort holds a block \
+                     created after the delete"
+                );
+            }
+            assert_eq!(
+                deleted_at_of(pool, q.as_str()).await,
+                None,
+                "{dev}: a cohort with no late block is purged as before"
+            );
+            for id in [live_page.as_str(), live_late.as_str()] {
+                assert_eq!(
+                    deleted_at_of(pool, id).await,
+                    Some(None),
+                    "{dev}: a live block is never purged"
+                );
+            }
+        }
+
+        restore_block_inner(&pool_a, a.2, &mat_a, p.clone(), p_deleted_at)
+            .await
+            .unwrap();
+        assert_eq!(
+            deleted_at_of(&pool_a, c.as_str()).await,
+            Some(None),
+            "restoring P brings C back"
+        );
+        mat_a.shutdown();
+        mat_b.shutdown();
+    }
+
+    /// #6543 — the late block sits in an OLDER nested cohort: child D was
+    /// trashed at t0, L was written under D after t0 (so it carries D's date),
+    /// and page R was trashed later at t1. R's own cohort holds no late block,
+    /// but purging R cascades onto D and L, so R must be kept too.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tombstone_purge_keeps_an_ancestor_whose_cascade_reaches_a_late_block_6543() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let day = 86_400_000;
+        let t0 = now - 200 * day;
+        let t1 = now - 100 * day;
+        let ulid_at =
+            |ms: i64, n: u128| ulid::Ulid::from_parts(u64::try_from(ms).unwrap(), n).to_string();
+        let r = ulid_at(t0 - 1000, 1);
+        let d = ulid_at(t0 - 1000, 2);
+        let l = ulid_at(t0 + 1000, 3);
+        for (id, parent, deleted_at) in [(&r, None, t1), (&d, Some(&r), t0), (&l, Some(&d), t0)] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+                 VALUES (?, 'content', '', ?, 0, ?)",
+            )
+            .bind(id)
+            .bind(parent)
+            .bind(deleted_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        tombstone_purge(&pool, "test-device", &mat).await.unwrap();
+
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            remaining, 3,
+            "R's purge would cascade onto L, written after its own cohort's delete"
+        );
     }
 }
