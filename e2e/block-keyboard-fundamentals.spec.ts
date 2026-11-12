@@ -170,9 +170,13 @@ test.describe('Keyboard fundamentals @editor', () => {
     const ids = await blockIds(page)
     await editor.press('Shift+ArrowUp')
 
-    // Focus must remain on GS_2 — the editor (which carries data-block-id) must
-    // still be mounted on the same block, NOT navigated up to GS_1.
-    const liveEditor = page.locator('[data-testid="block-editor"]')
-    await expect(liveEditor).toHaveAttribute('data-block-id', ids[1] as string)
+    // The editor must NOT move up into GS_1 and drop the selection: at the edge the
+    // selection becomes a block selection of GS_2 and GS_1 (#6537), no editor open.
+    await expect(page.locator('[data-testid="block-editor"]')).toHaveCount(0)
+    for (const id of [ids[0], ids[1]] as string[]) {
+      await expect(
+        page.locator(`li[data-block-id="${id}"]`).getByRole('checkbox', { name: 'Select block' }),
+      ).toBeChecked()
+    }
   })
 })

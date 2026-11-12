@@ -1200,12 +1200,23 @@ export function BlockTree({
   // which `runUnmountFlush`'s `shouldSplitOnBlur` turns into a real split of
   // the SOURCE block. The bindings `preventDefault()` before they call back,
   // so attached-and-inert is what actually swallows the chord.
+  // Shift+Arrow past the block's edge (#6537): this block and its neighbour,
+  // then on as block selection. The keymap flushes first.
+  const handleSelectWithNeighbour = useCallback(
+    (direction: 'up' | 'down') => {
+      if (!focusedBlockId) return
+      setSelected([focusedBlockId])
+      extendSelection(direction, visibleIds)
+    },
+    [focusedBlockId, setSelected, extendSelection, visibleIds],
+  )
   useBlockKeyboard(
     rovingEditor.editor,
     ownsRovingBlock
       ? {
           onFocusPrev: handleFocusPrev,
           onFocusNext: handleFocusNext,
+          onSelectWithNeighbour: handleSelectWithNeighbour,
           onDeleteBlock: handleDeleteBlock,
           onIndent: handleIndentKey,
           onDedent: handleDedentKey,

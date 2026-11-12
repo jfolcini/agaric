@@ -4,6 +4,7 @@ import { useCallback, useLayoutEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 
 import { consumePendingSplit } from '@/components/block-tree/use-block-flush'
+import { textPointAtLine } from '@/editor/click-caret'
 import { shouldSplitOnBlur } from '@/editor/content-delta'
 import { parse } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
@@ -293,8 +294,8 @@ export interface UseBlockActionOrchestrationParams {
 }
 
 export interface UseBlockActionOrchestrationReturn {
-  handleFocusPrev: () => void
-  handleFocusNext: () => void
+  handleFocusPrev: (caretX?: number) => void
+  handleFocusNext: (caretX?: number) => void
   handleDeleteBlock: (opts?: DeleteBlockOpts) => void
   handleIndent: () => void
   handleDedent: () => void
@@ -456,31 +457,54 @@ export function useBlockActionOrchestration({
     [t],
   )
 
-  const handleFocusPrev = useCallback(() => {
-    const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
-    if (idx > 0) {
-      const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
-      setFocused(prevBlock.id)
-      rovingEditorRef.current.mount(prevBlock.id, prevBlock.content ?? '')
-      const preview = prevBlock.content?.slice(0, 50) ?? ''
-      announce(t('announce.editingBlock', { preview: preview || t('announce.emptyBlock') }))
-    }
-  }, [collapsedVisible, focusedBlockId, setFocused, t])
+  // Step onto `block`; with `caretX`, an Arrow Up / Down, the caret lands on
+  // its `line` at that x, read from its static render before the mount (#6537).
+  const focusNeighbour = useCallback(
+    (block: FlatBlock, caretX: number | undefined, line: 'first' | 'last') => {
+      const content = block.content ?? ''
+      const render =
+        caretX === undefined
+          ? null
+          : document.querySelector(`[data-testid="block-static"][data-block-id="${block.id}"]`)
+      const caret =
+        caretX === undefined || render === null
+          ? null
+          : textPointAtLine(render, content, caretX, line)
+      setFocused(block.id)
+      if (caret === null) rovingEditorRef.current.mount(block.id, content)
+      else rovingEditorRef.current.mount(block.id, content, { cursorPlacement: caret })
+      announce(
+        t('announce.editingBlock', { preview: content.slice(0, 50) || t('announce.emptyBlock') }),
+      )
+    },
+    [setFocused, t],
+  )
 
-  const handleFocusNext = useCallback(() => {
-    const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
-    if (idx < 0) return
-    // #4959 — at the last MOUNTED row, reveal the row past the mount cap and
-    // step onto it; the reveal and the focus batch into one render, so the row
-    // mounts already focused.
-    const nextBlock: FlatBlock | null | undefined =
-      idx < collapsedVisible.length - 1 ? collapsedVisible[idx + 1] : revealNextMounted?.()
-    if (!nextBlock) return
-    setFocused(nextBlock.id)
-    rovingEditorRef.current.mount(nextBlock.id, nextBlock.content ?? '')
-    const preview = nextBlock.content?.slice(0, 50) ?? ''
-    announce(t('announce.editingBlock', { preview: preview || t('announce.emptyBlock') }))
-  }, [collapsedVisible, focusedBlockId, revealNextMounted, setFocused, t])
+  const handleFocusPrev = useCallback(
+    (caretX?: number) => {
+      const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
+      if (idx > 0) {
+        const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
+        focusNeighbour(prevBlock, caretX, 'last')
+      }
+    },
+    [collapsedVisible, focusedBlockId, focusNeighbour],
+  )
+
+  const handleFocusNext = useCallback(
+    (caretX?: number) => {
+      const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
+      if (idx < 0) return
+      // #4959 — at the last MOUNTED row, reveal the row past the mount cap and
+      // step onto it; the reveal and the focus batch into one render, so the row
+      // mounts already focused.
+      const nextBlock: FlatBlock | null | undefined =
+        idx < collapsedVisible.length - 1 ? collapsedVisible[idx + 1] : revealNextMounted?.()
+      if (!nextBlock) return
+      focusNeighbour(nextBlock, caretX, 'first')
+    },
+    [collapsedVisible, focusedBlockId, revealNextMounted, focusNeighbour],
+  )
 
   const handleDeleteBlock = useCallback(
     (opts?: DeleteBlockOpts) => {
