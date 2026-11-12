@@ -89,6 +89,17 @@ pub struct MirrorStatus {
     /// Whether the attachments pages link are copied into the folder
     /// ([`assets`]).
     pub copy_files: bool,
+    /// The spaces not mirrored; every other one is, a new one included.
+    pub unmirrored_spaces: Vec<String>,
+}
+
+/// Whether `root` holds nothing but hidden entries, as the mirror's marker.
+pub fn is_emptied(root: &Path) -> bool {
+    !std::fs::read_dir(root).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+    })
 }
 
 /// What the mirror's task shares with the commands and the sync sink.
@@ -118,6 +129,9 @@ struct Inner {
     /// Copies that could not be written, and why, by path.
     failed_copies: BTreeMap<String, String>,
     last_pass_ms: Option<i64>,
+    /// The folder chosen again while it is emptied: the next tick drops its
+    /// states and writes every page there as new.
+    start_fresh: bool,
 }
 
 impl MirrorState {
@@ -151,6 +165,18 @@ impl MirrorState {
         }
     }
 
+    /// Drop the folder's states on the next tick, the way out of the pause
+    /// [`is_emptied`] holds: the user chose the folder again, so it is
+    /// the one to fill.
+    pub fn start_fresh(&self) {
+        self.lock().start_fresh = true;
+        self.restart();
+    }
+
+    fn take_start_fresh(&self) -> bool {
+        std::mem::take(&mut self.lock().start_fresh)
+    }
+
     /// Start over in a new folder: forget the old one's diverged and failed
     /// files and run a full pass on the next tick.
     pub fn restart(&self) {
@@ -171,6 +197,7 @@ impl MirrorState {
             folder,
             read_back,
             copy_files,
+            unmirrored,
         } = settings;
         let on = folder.is_some();
         MirrorStatus {
@@ -226,6 +253,7 @@ impl MirrorState {
             read_back,
             pending,
             copy_files,
+            unmirrored_spaces: unmirrored,
         }
     }
 
@@ -429,8 +457,6 @@ pub struct Mirror {
     store: StateDir,
     /// Each page's file as last written, from its state file.
     pages: HashMap<String, PageState>,
-    /// The layout of the last pass, to tell which pages it renamed.
-    layout: Layout,
     watermark: i64,
     full_due: bool,
     last_full: Option<Instant>,
@@ -450,6 +476,18 @@ pub struct Mirror {
     unrendered: bool,
     /// Copies that could not be written, and why, by path.
     copy_failed: BTreeMap<String, String>,
+    /// The spaces neither written nor read, as of this tick.
+    unmirrored: HashSet<String>,
+    /// What the mirror learned of the folder it writes, forgotten for another.
+    seen: Seen,
+}
+
+/// What [`Mirror`] learned of the folder it writes: all of it is that
+/// folder's, so another folder starts from [`Seen::default`].
+#[derive(Default)]
+struct Seen {
+    /// The layout of the last pass, to tell which pages it renamed.
+    layout: Layout,
     /// Each page's file as last seen: a change outside Agaric makes the page
     /// dirty.
     stats: HashMap<String, FileStat>,
@@ -471,6 +509,25 @@ pub struct Mirror {
     /// The pages whose file was renamed to a path a refusal keeps, by that
     /// path: held as missing while the refused file stays as it was.
     refused_renames: HashMap<String, String>,
+}
+
+impl Seen {
+    /// Whether the new file at `path` holds `bytes` as the last tick read
+    /// them too, and they are not bytes an ingest refused.
+    fn new_file_settled(&mut self, path: &str, bytes: &[u8]) -> bool {
+        if self
+            .refused_new
+            .get(path)
+            .is_some_and(|(refused, _)| *refused == bytes)
+        {
+            return false;
+        }
+        if self.settling_new.get(path).map(Vec::as_slice) != Some(bytes) {
+            self.settling_new.insert(path.to_owned(), bytes.to_vec());
+            return false;
+        }
+        true
+    }
 }
 
 /// A folder's listing: its modification time, its `.md` files as paths below
@@ -548,25 +605,18 @@ impl Mirror {
             state,
             store,
             pages,
-            layout: Layout::new(),
             watermark,
             full_due: true,
             last_full: None,
             ingest: None,
+            seen: Seen::default(),
             read_back: true,
             copy_files: false,
             copies,
             linked_copies: HashSet::new(),
             unrendered: false,
             copy_failed: BTreeMap::new(),
-            stats: HashMap::new(),
-            settling: HashMap::new(),
-            refused: HashMap::new(),
-            folders: HashMap::new(),
-            settling_new: HashMap::new(),
-            refused_new: HashMap::new(),
-            missing: HashMap::new(),
-            refused_renames: HashMap::new(),
+            unmirrored: HashSet::new(),
         })
     }
 
@@ -586,27 +636,19 @@ impl Mirror {
         if self.pages.is_empty() {
             return None;
         }
-        let holds_something = std::fs::read_dir(root).is_ok_and(|entries| {
-            entries
-                .flatten()
-                .any(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
-        });
-        (!holds_something).then(|| format!("the folder {} is empty", root.display()))
+        is_emptied(root).then(|| {
+            format!(
+                "the folder {} is empty; choose it again to write every page there",
+                root.display()
+            )
+        })
     }
 
     /// Start over in another folder, with its own states: nothing it lacks
     /// is a file that vanished from it.
     fn forget_folder(&mut self) {
         self.pages.clear();
-        self.layout.clear();
-        self.stats.clear();
-        self.settling.clear();
-        self.refused.clear();
-        self.folders.clear();
-        self.settling_new.clear();
-        self.refused_new.clear();
-        self.missing.clear();
-        self.refused_renames.clear();
+        self.seen = Seen::default();
         self.full_due = true;
     }
 
@@ -622,7 +664,8 @@ impl Mirror {
         self.pages
             .iter()
             .filter(|(id, state)| {
-                self.stats
+                self.seen
+                    .stats
                     .get(*id)
                     .is_some_and(|seen| *seen != file_stat(&root.join(&state.path)))
             })
@@ -648,12 +691,23 @@ impl Mirror {
             self.copy_files = settings.copy_files;
             self.full_due = true;
         }
+        let unmirrored: HashSet<String> = settings.unmirrored.into_iter().collect();
+        if unmirrored != self.unmirrored {
+            // A file refused because its space was off is read again.
+            self.seen.refused_new.clear();
+            self.seen.refused_renames.clear();
+            self.unmirrored = unmirrored;
+        }
         let Some(folder) = settings.folder else {
             self.state.set_paused(None);
             self.full_due = true;
             return Ok(());
         };
-        if self.store.bind(&folder)? {
+        let fresh = self.state.take_start_fresh();
+        if fresh {
+            self.store.forget(&folder)?;
+        }
+        if self.store.bind(&folder)? || fresh {
             self.forget_folder();
             self.pages = self.store.load()?;
         }
@@ -675,13 +729,13 @@ impl Mirror {
         let (mut dirty, full_requested) = self.state.take_synced();
         self.full_due |= full_requested;
         dirty.extend(self.state.retried());
-        dirty.extend(self.missing.keys().cloned());
+        dirty.extend(self.seen.missing.keys().cloned());
         dirty.extend(self.changed_files(&root));
         let full = self.full_due || self.last_full.is_none_or(|at| at.elapsed() >= BACKSTOP);
         if full {
             // A file made within a folder's timestamp resolution of its last
             // listing is found here at the latest.
-            self.folders.clear();
+            self.seen.folders.clear();
         }
         if full || touched.is_some() || !dirty.is_empty() {
             dirty.extend(touched.unwrap_or_default());
@@ -707,20 +761,21 @@ impl Mirror {
                 .and_then(|meta| meta.modified())
                 .ok();
             let fresh = self
+                .seen
                 .folders
                 .get(&folder)
                 .is_some_and(|listing| modified.is_some() && listing.modified == modified);
             if !fresh {
                 let listing = Listing::of(root, &folder, modified);
-                self.folders.insert(folder.clone(), listing);
+                self.seen.folders.insert(folder.clone(), listing);
             }
-            if let Some(listing) = self.folders.get(&folder) {
+            if let Some(listing) = self.seen.folders.get(&folder) {
                 found.extend(listing.files.iter().cloned());
                 stack.extend(listing.folders.iter().cloned());
             }
             seen.insert(folder);
         }
-        self.folders.retain(|folder, _| seen.contains(folder));
+        self.seen.folders.retain(|folder, _| seen.contains(folder));
         found
     }
 
@@ -738,14 +793,14 @@ impl Mirror {
             .pages
             .values()
             .map(|state| state.path.as_str())
-            .chain(self.layout.values().map(|(path, _)| path.as_str()))
+            .chain(self.seen.layout.values().map(|(path, _)| path.as_str()))
             .collect();
         let new: Vec<String> = found
             .into_iter()
             .filter(|path| !owned.contains(path.as_str()))
             .collect();
-        self.settling_new.retain(|path, _| new.contains(path));
-        self.refused_new.retain(|path, _| new.contains(path));
+        self.seen.settling_new.retain(|path, _| new.contains(path));
+        self.seen.refused_new.retain(|path, _| new.contains(path));
         self.state.new_files_are(&new);
         if new.is_empty() {
             return Ok(());
@@ -791,24 +846,32 @@ impl Mirror {
         let Some(bytes) = store::read_optional(&target)? else {
             return Ok(true);
         };
-        if self
-            .refused_new
-            .get(path)
-            .is_some_and(|(refused, _)| *refused == bytes)
-        {
-            return Ok(true);
-        }
-        if self.settling_new.get(path) != Some(&bytes) {
-            self.settling_new.insert(path.to_owned(), bytes);
+        if !self.seen.new_file_settled(path, &bytes) {
             return Ok(true);
         }
         if let Some(why) = pause_reason(root, &self.device_id) {
             self.state.set_paused(Some(why));
             return Ok(false);
         }
+        let unmirrored = self.unmirrored.contains(space_id);
         if let Some(page_id) = self.renamed_from(&bytes) {
-            self.read_renamed_file(ingest, &page_id, space_id, title, path, bytes)
-                .await;
+            if unmirrored {
+                // Left where it is, its page held where it was: a page whose
+                // file moved into a space not mirrored is neither moved there
+                // nor trashed.
+                self.refuse_rename(
+                    &page_id,
+                    path,
+                    bytes,
+                    "the space it was moved to is not mirrored",
+                );
+            } else {
+                self.read_renamed_file(ingest, &page_id, space_id, title, path, bytes)
+                    .await;
+            }
+            return Ok(true);
+        }
+        if unmirrored {
             return Ok(true);
         }
         let ids = assets::copy_linked(&String::from_utf8_lossy(&bytes));
@@ -824,12 +887,12 @@ impl Mirror {
             &links,
         )
         .await;
-        self.settling_new.remove(path);
+        self.seen.settling_new.remove(path);
         let (page_id, ingested) = match created {
             Ok(created) => created,
             Err(NotIngested::Refused(why)) => {
                 self.state.file_failed(path, &why);
-                self.refused_new.insert(path.to_owned(), (bytes, why));
+                self.seen.refused_new.insert(path.to_owned(), (bytes, why));
                 return Ok(true);
             }
             Err(NotIngested::NoBase) => return Ok(true),
@@ -853,7 +916,7 @@ impl Mirror {
     /// the file's anchors (#5363 Decide 4). None when several pages match.
     fn renamed_from(&self, bytes: &[u8]) -> Option<String> {
         let anchors = ingest::anchors(bytes);
-        let mut matched = self.missing.keys().filter(|page_id| {
+        let mut matched = self.seen.missing.keys().filter(|page_id| {
             let Some(state) = self.pages.get(*page_id) else {
                 return false;
             };
@@ -889,7 +952,7 @@ impl Mirror {
         path: &str,
         bytes: Vec<u8>,
     ) {
-        self.settling_new.remove(path);
+        self.seen.settling_new.remove(path);
         let renamed = ingest::rename(
             &self.pool,
             ingest,
@@ -903,16 +966,13 @@ impl Mirror {
         let event = match renamed {
             Ok(event) => event,
             Err(why) => {
-                self.state.file_failed(path, &why);
-                self.refused_new.insert(path.to_owned(), (bytes, why));
-                self.refused_renames
-                    .insert(page_id.to_owned(), path.to_owned());
+                self.refuse_rename(page_id, path, bytes, &why);
                 return;
             }
         };
         (ingest.notify)(event);
-        self.missing.remove(page_id);
-        self.refused_renames.remove(page_id);
+        self.seen.missing.remove(page_id);
+        self.seen.refused_renames.remove(page_id);
         let Some(mut state) = self.pages.get(page_id).cloned() else {
             return;
         };
@@ -921,6 +981,19 @@ impl Mirror {
             tracing::warn!(page_id, error = %e, "cannot save a mirror state file");
         }
         self.pages.insert(page_id.to_owned(), state);
+    }
+
+    /// List the renamed file at `path` as refused, and why, and hold the page
+    /// whose file it is: it is neither written again nor trashed while the
+    /// file stays as it was.
+    fn refuse_rename(&mut self, page_id: &str, path: &str, bytes: Vec<u8>, why: &str) {
+        self.state.file_failed(path, why);
+        self.seen
+            .refused_new
+            .insert(path.to_owned(), (bytes, why.to_owned()));
+        self.seen
+            .refused_renames
+            .insert(page_id.to_owned(), path.to_owned());
     }
 
     /// The pages this device's ops since the watermark touched, the source
@@ -966,7 +1039,12 @@ impl Mirror {
         let layout = self.load_layout().await?;
         let renamed: Vec<String> = layout
             .iter()
-            .filter(|(id, now)| self.layout.get(*id).is_some_and(|before| before != *now))
+            .filter(|(id, now)| {
+                self.seen
+                    .layout
+                    .get(*id)
+                    .is_some_and(|before| before != *now)
+            })
             .map(|(id, _)| id.clone())
             .collect();
         dirty.extend(self.linking_pages(&renamed).await?);
@@ -1008,7 +1086,7 @@ impl Mirror {
                 return Ok(());
             }
         }
-        self.layout = layout;
+        self.seen.layout = layout;
         let complete = full && frozen.is_empty() && !self.unrendered;
         self.sweep_copies(root, complete).await?;
         if full {
@@ -1018,7 +1096,7 @@ impl Mirror {
         let known: HashSet<String> = self
             .pages
             .keys()
-            .chain(self.layout.keys())
+            .chain(self.seen.layout.keys())
             .cloned()
             .collect();
         self.state.passed(full, &known);
@@ -1059,7 +1137,10 @@ impl Mirror {
             .map(|space| (space.id, space.name))
             .collect();
         let mut pages = Vec::new();
-        for (space_id, _) in &spaces {
+        for (space_id, _) in spaces
+            .iter()
+            .filter(|(id, _)| !self.unmirrored.contains(id))
+        {
             let listed =
                 crate::commands::pages::list_all_pages_in_space_inner(&self.pool, space_id, None)
                     .await?;
@@ -1165,8 +1246,8 @@ impl Mirror {
 
     fn forget(&mut self, page_id: &str) {
         self.pages.remove(page_id);
-        self.missing.remove(page_id);
-        self.refused_renames.remove(page_id);
+        self.seen.missing.remove(page_id);
+        self.seen.refused_renames.remove(page_id);
         self.state.page_ok(page_id);
         if let Err(e) = self.store.delete(page_id) {
             tracing::warn!(page_id, error = %e, "cannot delete a mirror state file");
@@ -1178,7 +1259,7 @@ impl Mirror {
     async fn write_page(&mut self, root: &Path, page_id: &str, path: &str) -> bool {
         let wrote = self.try_write_page(root, page_id, path).await;
         if !matches!(wrote, Ok(Wrote::Missing)) {
-            self.missing.remove(page_id);
+            self.seen.missing.remove(page_id);
         }
         match wrote {
             Ok(Wrote::Done) => self.state.page_ok(page_id),
@@ -1194,7 +1275,8 @@ impl Mirror {
                 self.state.page_failed(page_id, path, &e);
             }
         }
-        self.stats
+        self.seen
+            .stats
             .insert(page_id.to_owned(), file_stat(&root.join(path)));
         true
     }
@@ -1255,7 +1337,7 @@ impl Mirror {
                 // again: it is listed as pending, and read in, as the rename or
                 // the delete it was, once the user chooses to.
                 if vanished && !self.read_back {
-                    self.missing.entry(page_id.to_owned()).or_insert(0);
+                    self.seen.missing.entry(page_id.to_owned()).or_insert(0);
                     return Ok(Wrote::Missing);
                 }
                 if vanished && self.still_missing(page_id) {
@@ -1335,18 +1417,18 @@ impl Mirror {
     fn still_missing(&mut self, page_id: &str) -> bool {
         // The page's file is the refused one, not gone: a second file would
         // make two for one page.
-        if let Some(path) = self.refused_renames.get(page_id) {
-            if self.refused_new.contains_key(path) {
+        if let Some(path) = self.seen.refused_renames.get(page_id) {
+            if self.seen.refused_new.contains_key(path) {
                 return true;
             }
-            self.refused_renames.remove(page_id);
+            self.seen.refused_renames.remove(page_id);
         }
-        let ticks = self.missing.entry(page_id.to_owned()).or_default();
+        let ticks = self.seen.missing.entry(page_id.to_owned()).or_default();
         *ticks += 1;
         if *ticks <= MISSING_TICKS {
             return true;
         }
-        self.missing.remove(page_id);
+        self.seen.missing.remove(page_id);
         false
     }
 
@@ -1387,8 +1469,8 @@ impl Mirror {
 
     /// Keep `shadow` as the text last written for the page at `path`.
     fn record(&mut self, page_id: &str, path: &str, shadow: Shadow) -> Result<Wrote, AppError> {
-        self.settling.remove(page_id);
-        self.refused.remove(page_id);
+        self.seen.settling.remove(page_id);
+        self.seen.refused.remove(page_id);
         let mut state = self
             .pages
             .get(page_id)
@@ -1443,13 +1525,13 @@ impl Mirror {
         let Some(ingest) = self.ingest() else {
             return Ok(Wrote::Diverged);
         };
-        if let Some((refused, why)) = self.refused.get(page_id)
+        if let Some((refused, why)) = self.seen.refused.get(page_id)
             && *refused == bytes
         {
             return Ok(Wrote::Refused(why.clone()));
         }
-        if self.settling.get(page_id) != Some(&bytes) {
-            self.settling.insert(page_id.to_owned(), bytes);
+        if self.seen.settling.get(page_id) != Some(&bytes) {
+            self.seen.settling.insert(page_id.to_owned(), bytes);
             return Ok(Wrote::Diverged);
         }
         let Some(state) = self.pages.get(page_id).filter(|state| state.path == path) else {
@@ -1471,8 +1553,9 @@ impl Mirror {
             Ok(ingested) => ingested,
             Err(NotIngested::NoBase) => return Ok(Wrote::Diverged),
             Err(NotIngested::Refused(why)) => {
-                self.settling.remove(page_id);
-                self.refused
+                self.seen.settling.remove(page_id);
+                self.seen
+                    .refused
                     .insert(page_id.to_owned(), (bytes, why.clone()));
                 return Ok(Wrote::Refused(why));
             }

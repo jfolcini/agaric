@@ -11,10 +11,10 @@ use agaric_core::error::AppError;
 
 use super::store::{self, StateDir};
 
-/// The files, as paths below `root`, that reading back would act on now: each
-/// page's file that is not the text last written there or is gone, and each
-/// `.md` file in one of `space_folders` that no page owns. A file that cannot
-/// be read is listed too.
+/// The files, as paths below `root`, that reading back would act on now, in
+/// `space_folders`, the mirrored spaces' folders: each page's file that is
+/// not the text last written there or is gone, and each `.md` file no page
+/// owns. A file that cannot be read is listed too.
 ///
 /// # Errors
 ///
@@ -34,8 +34,14 @@ pub fn pending(
     let unreadable =
         |e: std::io::Error| AppError::validation(format!("cannot tell which files changed: {e}"));
     let pages = states.load().map_err(unreadable)?;
+    // Only the mirrored spaces' files: the others are never read.
+    let mirrored = |path: &str| {
+        path.split_once('/')
+            .is_some_and(|(folder, _)| space_folders.contains(folder))
+    };
     let written: HashMap<&str, &[u8]> = pages
         .values()
+        .filter(|state| mirrored(&state.path))
         .filter_map(|state| Some((state.path.as_str(), state.newest()?.text.as_bytes())))
         .collect();
     let mut pending: Vec<String> = written

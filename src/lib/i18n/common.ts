@@ -563,6 +563,8 @@ export const common: Record<string, string> = {
   'data.mirrorReadBackDesc':
     'Edits, new files, renames and moves made to the files outside Agaric are read back into Agaric. Off, Agaric still writes the files and never overwrites one changed elsewhere.',
   'data.mirrorReadBackFailed': 'Reading changes back was not changed: {{reason}}',
+  'data.mirrorSpacesHeading': 'Spaces mirrored',
+  'data.mirrorSpaceFailed': 'Which spaces are mirrored was not changed: {{reason}}',
   'data.mirrorCopyFilesLabel': 'Copy attachments into the folder',
   'data.mirrorCopyFilesDesc':
     'Images and files your pages link are copied into an assets folder beside them, and the pages link the copies. A copy you change there is kept and listed below.',

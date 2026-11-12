@@ -62,7 +62,8 @@ pub async fn pick_mirror_folder_inner<R: tauri::Runtime>(
 /// ([`mirror::check_folder`]), marked as this device's and stored, after
 /// `read_back`, so the first tick already follows it, and the next tick
 /// writes every page. Off, the setting goes and the files and the marker
-/// stay.
+/// stay. The folder chosen again while it holds nothing but its marker
+/// starts fresh ([`MirrorState::start_fresh`]).
 ///
 /// # Errors
 ///
@@ -92,8 +93,14 @@ pub async fn set_mirror_folder_inner(
             mirror::store::set_read_back(pool, read_back).await?;
         }
     }
+    let chosen_again = path.is_some() && mirror::store::folder(pool).await? == path;
     mirror::store::set_folder(pool, path.as_deref()).await?;
-    mirror.restart();
+    match path.as_deref().map(Path::new) {
+        // The way out of the pause on an emptied folder: the user says this
+        // is the folder, so every page is written there.
+        Some(folder) if chosen_again && mirror::is_emptied(folder) => mirror.start_fresh(),
+        _ => mirror.restart(),
+    }
     get_mirror_status_inner(pool, device_id, mirror).await
 }
 
@@ -152,6 +159,40 @@ pub async fn set_mirror_copy_files_inner(
     get_mirror_status_inner(pool, device_id, mirror).await
 }
 
+/// Mirror `space_id`, or with `mirrored: false` stop: the space's pages are
+/// no longer written, its unchanged files are removed and its changed files
+/// stay, listed, and nothing in its folder is read. Every space is mirrored
+/// until it is turned off here, a new one included.
+///
+/// # Errors
+///
+/// [`AppError::Validation`] when `space_id` names no space; the settings
+/// cannot be read or written.
+pub async fn set_mirror_space_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    mirror: &MirrorState,
+    space_id: &str,
+    mirrored: bool,
+) -> Result<MirrorStatus, AppError> {
+    let space_id = space_id.to_ascii_uppercase();
+    let known = super::spaces::list_spaces_inner(pool)
+        .await?
+        .into_iter()
+        .any(|space| space.id == space_id);
+    if !known {
+        return Err(AppError::validation(format!("no space {space_id}")));
+    }
+    let mut unmirrored = mirror::store::settings(pool).await?.unmirrored;
+    unmirrored.retain(|id| *id != space_id);
+    if !mirrored {
+        unmirrored.push(space_id);
+    }
+    mirror::store::set_unmirrored(pool, &unmirrored).await?;
+    mirror.restart();
+    get_mirror_status_inner(pool, device_id, mirror).await
+}
+
 /// [`mirror::read_back::pending`] for the folder at `root`, with this vault's
 /// space folders.
 async fn pending(
@@ -165,10 +206,16 @@ async fn pending(
         .into_iter()
         .map(|space| (space.id, space.name))
         .collect();
+    let unmirrored = mirror::store::settings(pool).await?.unmirrored;
     let folders: HashSet<String> = mirror::paths::space_folders(&spaces)
-        .into_values()
+        .into_iter()
+        .filter(|(space, _)| !unmirrored.contains(space))
+        .map(|(_, folder)| folder)
         .collect();
-    let states = mirror::store::StateDir::new(mirror.app_data_dir());
+    let mut states = mirror::store::StateDir::new(mirror.app_data_dir());
+    states
+        .bind(&root.to_string_lossy())
+        .map_err(|e| AppError::validation(format!("cannot tell which files changed: {e}")))?;
     mirror::read_back::pending(root, device_id, &states, &folders)
 }
 
@@ -246,6 +293,21 @@ pub async fn set_mirror_copy_files(
     on: bool,
 ) -> Result<MirrorStatus, AppError> {
     set_mirror_copy_files_inner(&pool.0, device_id.as_str(), &mirror, on)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[tracing::instrument(skip_all, err)]
+pub async fn set_mirror_space(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    mirror: State<'_, MirrorState>,
+    space_id: String,
+    mirrored: bool,
+) -> Result<MirrorStatus, AppError> {
+    set_mirror_space_inner(&pool.0, device_id.as_str(), &mirror, &space_id, mirrored)
         .await
         .map_err(sanitize_internal_error)
 }

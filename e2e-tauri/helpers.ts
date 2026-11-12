@@ -1776,3 +1776,59 @@ export async function restoreFromTrash(title: string): Promise<void> {
   await restore.click()
   await row.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
 }
+
+/** Settings › Spaces' panel. */
+export const SPACES_PANEL = '[data-testid="settings-panel-spaces"]'
+
+/** Settings › Spaces, opened from the switcher's Manage spaces item. */
+export async function openSpacesSettings(): Promise<void> {
+  await chooseSelectOption(SPACE_SWITCHER, 'Manage spaces')
+  await $(SPACES_PANEL).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+}
+
+export interface SpaceRow {
+  name: string
+  deleteDisabled: boolean
+  blockedHint: boolean
+}
+
+/** The Settings › Spaces rows: the name in the rename field, Delete's state, the blocked hint. */
+export function spaceRows(): Promise<SpaceRow[]> {
+  return browser.execute(() =>
+    [...document.querySelectorAll('[data-slot="space-manage-row"]')].map((row) => ({
+      name: row.querySelector<HTMLInputElement>('[aria-label="Rename space"]')?.value ?? '',
+      deleteDisabled:
+        row.querySelector<HTMLButtonElement>('button[aria-label="Delete space"]')?.disabled ?? true,
+      blockedHint: row.querySelector('[data-testid="space-delete-blocked-hint"]') !== null,
+    })),
+  )
+}
+
+/** Wait until the Settings › Spaces rows satisfy `holds`. */
+export async function waitForSpaceRows(holds: (rows: SpaceRow[]) => boolean, what: string) {
+  let seen: SpaceRow[] = []
+  await browser
+    .waitUntil(
+      async () => {
+        seen = await spaceRows()
+        return holds(seen)
+      },
+      { timeout: ACTION_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(`${what}: Settings › Spaces reads ${JSON.stringify(seen)}`)
+    })
+}
+
+/** Create the space `name` from Settings › Spaces, open, and wait for its row. */
+export async function createSpace(name: string): Promise<void> {
+  const create = $(SPACES_PANEL).$('button[aria-label="Create new space"]')
+  await create.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await create.click()
+  await typeInputVerified('[aria-label="New space name"]', name)
+  await browser.keys(['Enter'])
+  await waitForSpaceRows(
+    (rows) => rows.some((row) => row.name === name),
+    `the space ${name} never appeared`,
+  )
+}

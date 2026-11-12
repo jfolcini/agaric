@@ -23,7 +23,6 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
-  chooseSelectOption,
   confirmDialog,
   enterBlankSibling,
   expectAbsent,
@@ -37,68 +36,19 @@ import {
   typeMarkerVerified,
   waitForAppReady,
   waitForToast,
+  createSpace,
+  openSpacesSettings,
+  spaceRows,
+  waitForSpaceRows,
 } from './helpers'
 
 const SWITCHER = '[aria-label="Switch space"]'
-const PANEL = '[data-testid="settings-panel-spaces"]'
 const SEARCH_INPUT = '[aria-label="Search blocks"]'
 const SEARCH_STATUS = '[data-testid="search-results-count"]'
 
 /** A Pages list row's title span (PageBrowser/PageRow.tsx), by exact title. */
 function pageRow(title: string): string {
   return `//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`
-}
-
-/** Settings › Spaces, opened from the switcher's Manage spaces item. */
-async function openSpacesSettings(): Promise<void> {
-  await chooseSelectOption(SWITCHER, 'Manage spaces')
-  await $(PANEL).waitForDisplayed({ timeout: ACTION_TIMEOUT })
-}
-
-interface SpaceRow {
-  name: string
-  deleteDisabled: boolean
-  blockedHint: boolean
-}
-
-/** The Settings › Spaces rows: the name in the rename field, Delete's state, the blocked hint. */
-function spaceRows(): Promise<SpaceRow[]> {
-  return browser.execute(() =>
-    [...document.querySelectorAll('[data-slot="space-manage-row"]')].map((row) => ({
-      name: row.querySelector<HTMLInputElement>('[aria-label="Rename space"]')?.value ?? '',
-      deleteDisabled:
-        row.querySelector<HTMLButtonElement>('button[aria-label="Delete space"]')?.disabled ?? true,
-      blockedHint: row.querySelector('[data-testid="space-delete-blocked-hint"]') !== null,
-    })),
-  )
-}
-
-/** Wait until the Settings › Spaces rows satisfy `holds`. */
-async function waitForSpaceRows(holds: (rows: SpaceRow[]) => boolean, what: string) {
-  let seen: SpaceRow[] = []
-  await browser
-    .waitUntil(
-      async () => {
-        seen = await spaceRows()
-        return holds(seen)
-      },
-      { timeout: ACTION_TIMEOUT },
-    )
-    .catch(() => {
-      throw new Error(`${what}: Settings › Spaces reads ${JSON.stringify(seen)}`)
-    })
-}
-
-async function createSpace(name: string): Promise<void> {
-  const create = $(PANEL).$('button[aria-label="Create new space"]')
-  await create.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await create.click()
-  await typeInputVerified('[aria-label="New space name"]', name)
-  await browser.keys(['Enter'])
-  await waitForSpaceRows(
-    (rows) => rows.some((row) => row.name === name),
-    `the space ${name} never appeared`,
-  )
 }
 
 /** The names the open switcher offers, read and then closed with Escape. */

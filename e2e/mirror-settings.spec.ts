@@ -69,3 +69,33 @@ test.describe('Settings › Data: Markdown mirror @settings @markdown', () => {
     await expect(readBack).toBeChecked()
   })
 })
+
+test.describe('Settings › Data: which spaces are mirrored @settings @markdown', () => {
+  test.beforeEach(async ({ page }) => {
+    // The mock's opt-in second space, "Work" (`seedWorkSpace`).
+    await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
+    await waitForBoot(page)
+  })
+
+  test('a space turned off stays off, and the others stay mirrored', async ({ page }) => {
+    await openMirrorCard(page)
+    await page.getByRole('button', { name: 'Choose folder…' }).click()
+    await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
+    const work = page.getByRole('switch', { name: 'Work', exact: true })
+    const personal = page.getByRole('switch', { name: 'Personal', exact: true })
+    await expect(work).toBeChecked()
+    await expect(personal).toBeChecked()
+
+    await work.click()
+    await expect(work).not.toBeChecked()
+    await navigateToView(page, 'Journal')
+    await openMirrorCard(page)
+    await expect(work).not.toBeChecked()
+    await expect(personal).toBeChecked()
+
+    await work.click()
+    await navigateToView(page, 'Journal')
+    await openMirrorCard(page)
+    await expect(work).toBeChecked()
+  })
+})

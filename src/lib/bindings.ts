@@ -733,6 +733,7 @@ export const commands = {
 	setMirrorFolder: (path: string | null, readBack: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path, readBack })),
 	setMirrorReadBack: (on: boolean, confirmed: string[]) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_read_back", { on, confirmed })),
 	setMirrorCopyFiles: (on: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_copy_files", { on })),
+	setMirrorSpace: (spaceId: string, mirrored: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_space", { spaceId, mirrored })),
 	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
 	getSpeechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("get_speech_status")),
 	/**  Whether the backend engine can speak now (see [`SpeechEngine::available`]). */
@@ -2970,6 +2971,8 @@ export type MirrorStatus = {
 	 *  ([`assets`]).
 	 */
 	copy_files: boolean,
+	/**  The spaces not mirrored; every other one is, a new one included. */
+	unmirrored_spaces: string[],
 };
 
 export type MoveResponse = {
