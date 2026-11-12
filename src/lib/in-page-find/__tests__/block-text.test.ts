@@ -68,7 +68,8 @@ describe('domMatchesIn', () => {
   it('matches across a mark boundary and skips text that is not content', () => {
     const root = document.createElement('div')
     root.innerHTML =
-      '<span aria-hidden="true">boldtail</span><strong>bo</strong>ld<em>tail</em><span class="sr-only">boldtail</span>'
+      '<span aria-hidden="true">boldtail</span><strong>bo</strong>ld<em>tail</em><span class="sr-only">boldtail</span>' +
+      '<span class="katex-mathml"><annotation>boldtail</annotation></span>'
     const [match, ...rest] = domMatchesIn(root, compile('boldtail'))
     expect(rest).toHaveLength(0)
     expect(match?.node.nodeValue).toBe('bo')

@@ -9,7 +9,7 @@
  * A match is `{ blockId, start, end }` over {@link blockFindText}. Painting
  * re-runs the same matcher over the hydrated row's own DOM text and takes the
  * k-th DOM match for the block's k-th match, so a small difference between the
- * derived text and what the row draws (a footnote number, KaTeX) moves a
+ * derived text and what the row draws (a footnote number) moves a
  * highlight within its block rather than breaking it.
  */
 
@@ -113,8 +113,12 @@ export function findInBlocks(
   return { matches, skippedLongNodes, timedOut: false }
 }
 
-/** Text a row draws that is not the block's content: list markers, the empty-block hint, screen-reader labels. */
-const NOT_CONTENT = '[aria-hidden="true"], .block-placeholder, .sr-only, [data-find-skip]'
+/**
+ * Text a row draws that is not the block's content: list markers, the empty-block hint,
+ * screen-reader labels, and KaTeX's hidden MathML copy (it holds the LaTeX source).
+ */
+const NOT_CONTENT =
+  '[aria-hidden="true"], .block-placeholder, .sr-only, .katex-mathml, [data-find-skip]'
 
 function contentTextNodes(root: Element): Text[] {
   const out: Text[] = []
