@@ -162,7 +162,7 @@ site page named in the row or in the Appendix.
 | Comments | `%%hidden%%` | **None.** No handling of `%%` was found under `src/editor/`; an imported comment presumably stays visible text (**unverified**) | Gap |
 | Highlight colours | Six colours (help, *Basic formatting syntax*; roadmap: October 2026) | One highlight (`==`) | Gap |
 | Folding | Headings and lists fold | Blocks collapse; the state is per device, not synced | Partial |
-| Find in note | Find and replace | `Ctrl+F` with case, whole-word and regex (`docs/SEARCH.md`). **No replace** was found | Partial |
+| Find in note | Find and replace | `Ctrl+F` with case, whole-word and regex; `Ctrl+H` replaces one or all matches in the open page, `$1` groups in regex mode (`docs/SEARCH.md`). No replace across pages | Done |
 | Multiple cursors | Yes (help, *Multiple cursors*) | Not found | Gap |
 | Slides | Core plugin | None | Gap |
 | Spellcheck | Built in (roadmap: June 2020) | The webview's (`spellcheck: 'true'` in `src/editor/use-roving-editor.ts`) | Done |
@@ -475,7 +475,7 @@ core only; a plugin closes each.
 | **Publishing** | Publish, PDF export | None |
 | **Importers** | 15 sources, including Apple Notes, OneNote, Google Keep, Bear, Roam | 8 sources |
 | **Languages** | 51 complete app translations, RTL | English and a little Spanish |
-| **Vim mode, multiple cursors, comments, slides, find-and-replace** | In core | Absent |
+| **Vim mode, multiple cursors, comments, slides** | In core | Absent |
 | **Team and track record** | Seven people, six years, audits, paying users | One maintainer, pre-1.0 |
 | **Signed installers** | Yes (memory) | Unsigned on desktop |
 
@@ -583,7 +583,7 @@ low / medium / high; cost low is hours to days, medium is weeks, high is a month
 | 11 | **A readable query language** | Dataview users expect to paste a query. The engine exists; the text form was dropped | medium | medium | low |
 | 12 | **One user stylesheet** | A single custom CSS file covers most of what snippets are used for, on the token layer that already exists | medium | low | low to medium: support burden when the DOM changes |
 | 13 | **Translations** | Finish Spanish; open a contribution path. Every string already passes through `t()` | medium | medium | low |
-| 14 | **Editor parity items** | `%%comments%%`, find-and-replace, table sort, outgoing-links list, `/template` keeping properties, searches shorter than three characters | medium | low each | low |
+| 14 | **Editor parity items** | `%%comments%%`, table sort, outgoing-links list, `/template` keeping properties, searches shorter than three characters | medium | low each | low |
 | 15 | **PDF and static HTML export** | Sharing a page with someone who does not use the app | low to medium | medium | low |
 | 16 | **Fix the README** | It still describes a WebSocket transport, four journal modes, five property types and inline block-ref content | low | low | low |
 

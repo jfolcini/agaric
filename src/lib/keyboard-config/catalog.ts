@@ -514,6 +514,13 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.global',
     description: 'keyboard.findInPage',
   },
+  // On macOS Cmd+H hides the app before the page sees it; the matcher takes Ctrl+H there too.
+  {
+    id: 'replaceInPage',
+    keys: 'Ctrl + H',
+    category: 'keyboard.category.global',
+    description: 'keyboard.replaceInPage',
+  },
   {
     id: 'focusSearch',
     keys: 'Ctrl + Shift + F',

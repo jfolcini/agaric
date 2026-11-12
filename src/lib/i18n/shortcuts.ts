@@ -109,6 +109,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.navigateItemsVim': 'Navigate items (vim-style)',
   'keyboard.focusSearch': 'Search across all pages',
   'keyboard.findInPage': 'Find in current page',
+  'keyboard.replaceInPage': 'Find and replace in current page',
   'keyboard.paletteOpen': 'Open quick search palette',
   'keyboard.quickSwitcher': 'Open the quick switcher (search pages)',
   'keyboard.commandPalette': 'Open the command palette',
