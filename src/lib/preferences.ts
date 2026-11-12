@@ -720,7 +720,7 @@ interface DeviceSavedPagesView {
   filters: FilterPrimitive[]
 }
 
-/** On-disk envelope version for `PREFERENCES.savedPagesViews`. Bump on breaking shape changes. */
+/** The only envelope version `PREFERENCES.savedPagesViews` was written with; the migration reads no other. */
 export const SAVED_PAGES_VIEWS_SCHEMA_VERSION = 1
 
 /** Parsed shape of the `agaric:pages:savedViews:v1` payload. */
