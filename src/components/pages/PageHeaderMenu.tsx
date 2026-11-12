@@ -1,10 +1,10 @@
 import {
   BookTemplate,
   Clock,
+  Copy,
   Download,
   ExternalLink,
   FileCode,
-  FileText,
   FolderOutput,
   LayoutTemplate,
   Link,
@@ -412,7 +412,7 @@ export function PageHeaderMenu({
         onClick={onExport}
         {...menuItemProps('export')}
       >
-        <Download className="h-3.5 w-3.5" />
+        <Copy className="h-3.5 w-3.5" />
         {t('pageHeader.exportMarkdown')}
         <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('exportPageMarkdown')}</span>
       </button>
@@ -423,7 +423,7 @@ export function PageHeaderMenu({
           onClick={onSaveMarkdownFile}
           {...menuItemProps('saveMarkdownFile')}
         >
-          <FileText className="h-3.5 w-3.5" />
+          <Download className="h-3.5 w-3.5" />
           {t('pageHeader.saveMarkdownFile')}
         </button>
       )}

@@ -853,6 +853,11 @@ test.describe('Edit as Markdown on a 390 px phone @editor @pages @markdown @mobi
     await pageActions(page).click()
     const editSource = page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true })
     await expect(editSource).toBeVisible()
+    // Its rows overflow this screen: a click while the sheet still slides in
+    // scrolls them to reach the row, so the slide ends first.
+    await activeSheet(page).evaluate((sheet) =>
+      Promise.all(sheet.getAnimations().map((slide) => slide.finished)),
+    )
     // Every frame from the click until the sheet has left: its rows, each with
     // its offset from the sheet's top, so the slide itself does not count.
     await page.evaluate(() => {

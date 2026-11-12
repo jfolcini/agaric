@@ -234,10 +234,13 @@ export function PageHeader({
     setKebabOpen(false)
   }, [copyPageMarkdownToClipboard])
 
-  // The Markdown the copy above takes, as a file.
+  // The Markdown the copy above takes, as a file named after the title cut to 200 bytes, as
+  // the mirror cuts a name (`MAX_SEGMENT_BYTES`): WebKitGTK writes no file past 255.
   const handleSaveMarkdownFile = useCallback(async () => {
     setKebabOpen(false)
-    const fileName = `${sanitizeSegment(title.replaceAll('/', '_'))}.md`
+    const flatTitle = title.replaceAll('/', '_')
+    const { read } = new TextEncoder().encodeInto(flatTitle, new Uint8Array(200))
+    const fileName = `${sanitizeSegment(flatTitle.slice(0, read))}.md`
     try {
       const markdown = await pageMarkdownForCopy(pageId)
       downloadBlob(new Blob([markdown], { type: 'text/markdown' }), fileName)
@@ -639,9 +642,8 @@ export function PageHeader({
               onToggleTemplate={handleToggleTemplate}
               onToggleJournalTemplate={handleToggleJournalTemplate}
               onExport={handleExport}
-              // Not on Android, whose WebView saves no `blob:` download (#6546), nor on a
-              // phone: its sheet is at its height cap, and a phone here is an Android one.
-              onSaveMarkdownFile={isAndroid() || onPhone ? undefined : handleSaveMarkdownFile}
+              // Not on Android, whose WebView saves no `blob:` download (#6546).
+              onSaveMarkdownFile={isAndroid() ? undefined : handleSaveMarkdownFile}
               onCopyAppLink={handleCopyAppLink}
               onEditSource={handleEditSource}
               editMode={editMode}

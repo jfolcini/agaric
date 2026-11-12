@@ -1,7 +1,7 @@
 /**
  * The page kebab's *Save as Markdown file* (#6546): it saves the Markdown
  * *Export as Markdown* copies as `<title>.md` through `downloadBlob`, and is
- * absent on Android, whose WebView saves no `blob:` download, and on a phone.
+ * absent on Android, whose WebView saves no `blob:` download.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -16,7 +16,6 @@ import { axe } from '@/__tests__/helpers/axe'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { PageHeader } from '@/components/pages/PageHeader'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { useIsTouch } from '@/hooks/useIsTouch'
 import type { ResolvedBlock } from '@/lib/bindings'
 import { pageMarkdownForCopy } from '@/lib/export-graph'
 import { t } from '@/lib/i18n'
@@ -25,8 +24,6 @@ import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
-
-vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: vi.fn(() => false) }))
 
 const PAGE_ID = '01HZY3V9Q8K2M4N6P7R8S9T0VW'
 const ATTACHMENT_ID = '01HZX9P3QABCDEF0123456789'
@@ -106,11 +103,11 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function renderHeader() {
+function renderHeader(title = TITLE) {
   return render(
     <TooltipProvider>
       <PageBlockContext.Provider value={pageStore}>
-        <PageHeader pageId={PAGE_ID} title={TITLE} />
+        <PageHeader pageId={PAGE_ID} title={title} />
       </PageBlockContext.Provider>
     </TooltipProvider>,
   )
@@ -143,6 +140,20 @@ describe('PageHeader Save as Markdown file', () => {
     await waitFor(() => {
       expect(screen.queryByRole('menu', { name: t('pageHeader.pageActions') })).toBeNull()
     })
+  })
+
+  it('cuts a long title to 200 bytes on a character boundary', async () => {
+    const user = userEvent.setup()
+    // Three bytes a character: 66 of them fit in 200 bytes, the 67th would not.
+    renderHeader('日'.repeat(100))
+    await openMenu(user)
+
+    await user.click(screen.getByRole('menuitem', { name: t('pageHeader.saveMarkdownFile') }))
+
+    await waitFor(() => {
+      expect(saved).toHaveLength(1)
+    })
+    expect(saved[0]?.download).toBe(`${'日'.repeat(66)}.md`)
   })
 
   it('shows an error toast and saves nothing when the export rejects', async () => {
@@ -188,28 +199,6 @@ describe('PageHeader Save as Markdown file', () => {
     // The menu is portalled out of the render container, so audit it directly.
     await waitFor(async () => {
       expect(await axe(menu)).toHaveNoViolations()
-    })
-  })
-
-  describe('in a phone-width window', () => {
-    const desktopWidth = window.innerWidth
-    beforeEach(() => {
-      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
-    })
-    afterEach(() => {
-      Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
-      vi.mocked(useIsTouch).mockReturnValue(false)
-    })
-
-    it.each([true, false])('offers the row only without touch (touch: %s)', async (touch) => {
-      vi.mocked(useIsTouch).mockReturnValue(touch)
-      const user = userEvent.setup()
-      renderHeader()
-      await openMenu(user)
-
-      expect(screen.getByRole('menuitem', { name: /Export as Markdown/ })).toBeInTheDocument()
-      const row = screen.queryByRole('menuitem', { name: t('pageHeader.saveMarkdownFile') })
-      expect(row === null).toBe(touch)
     })
   })
 
