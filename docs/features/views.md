@@ -76,7 +76,7 @@ Global operation log — every edit Agaric has applied, in reverse chronological
 - **Restore to here**: every entry has a *"Restore to here"* button that reverts every op after that point. Use with care — it's a snapshot rollback.
 - **Vim keys**: `j` / `k` for next / previous; `Home` / `End` for first / last; `PageDown` / `PageUp` to page.
 - **Per-block history sheet**: from a block's toolbar → History — opens a sheet with only that block's edits.
-- **Compaction**: a card at the top shows op-log stats and how many ops are eligible for compaction; *Compact* runs the cleanup.
+- **Compaction**: ops older than 90 days are pruned automatically, in a daily background pass when the app is idle (`op_log_compact` in `src-tauri/src/maintenance.rs`, which calls `compact_op_log_cmd_inner(pool, 90)`). A card at the top shows op-log stats and how many ops are eligible for compaction; *Compact* runs the same cleanup on demand.
 
 ## Templates
 

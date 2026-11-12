@@ -416,14 +416,20 @@ fn free_of(text: &str, line_ids: &[Option<String>]) -> (String, Vec<Option<Strin
     (free, ids)
 }
 
-/// The text written that differs from `text` in the fewest lines, the newest
-/// of equals: the base of an editor that kept an older text open, whose save
-/// reads as undoing what Agaric wrote since against any newer one.
+/// The text written that leaves the fewest of `text`'s lines unexplained,
+/// then of those the one differing from it in the fewest lines, the newest of
+/// equals: the base of an editor that kept an older text open, whose save
+/// reads as undoing what Agaric wrote since against any newer one. Deleting
+/// lines from the newest text cannot make an older text the base by being
+/// shorter, which would undo the deletes and add the kept lines again; and a
+/// stale save that only deletes keeps the older base, so a block Agaric added
+/// since is kept, not read as deleted.
 fn closest<'a>(shadows: &'a [Shadow], text: &str) -> Option<&'a Shadow> {
     let lines: Vec<&str> = text.split('\n').collect();
     shadows.iter().rev().min_by_key(|shadow| {
         let written: Vec<&str> = shadow.text.split('\n').collect();
-        written.len() + lines.len() - 2 * equal_pairs(&written, &lines).len()
+        let equal = equal_pairs(&written, &lines).len();
+        (lines.len() - equal, written.len() + lines.len() - 2 * equal)
     })
 }
 

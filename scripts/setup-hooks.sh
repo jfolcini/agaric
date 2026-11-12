@@ -281,8 +281,7 @@ ensure_uv() {
 # compatible. Keep in lockstep with the `tool:` pins above — bumping one
 # without the other reintroduces the exact drift this table exists to
 # prevent (there is no automated cross-check of *installability*, only of
-# the version strings agreeing — see scripts/check-prek-version-pin.mjs and
-# its caveat).
+# the version strings agreeing — see scripts/check-tool-pins.mjs).
 pinned_version_for() {
   case "$1" in
     sqruff) echo "0.38.0" ;;
@@ -477,8 +476,7 @@ SQRUFF_VERSION_AWK='NR == 1 { print $2 }'
 # `<name> <version>` on one line, same shape as sqruff (#3742). prek has no
 # wrapper of its own to source this from — it IS the hook runner, there is
 # nothing standing between it and the developer's shell the way
-# zizmor-hook.sh stands in front of zizmor — so scripts/check-prek-version-pin.mjs
-# reads this constant directly out of this file instead.
+# zizmor-hook.sh stands in front of zizmor.
 PREK_VERSION_AWK='NR == 1 { print $2 }'
 TAPLO_VERSION_AWK='NR == 1 { print $2 }'
 TYPOS_VERSION_AWK='NR == 1 { print $2 }'
@@ -552,6 +550,29 @@ install_lychee() {
   warn "could not install lychee (prebuilt tarball and cargo fallbacks all failed) — install manually (https://github.com/lycheeverse/lychee/releases)"
 }
 
+# cargo-nextest is never compiled here: from source it was the longest step of
+# a cloud session's boot, and it competed with the agent's own first cargo run.
+# binstall without its compile fallback, then upstream's prebuilt tarball.
+install_nextest() {
+  if have cargo-nextest; then ok "cargo-nextest (already installed)"; return; fi
+  if have cargo-binstall && cargo binstall -y --disable-strategies compile cargo-nextest >/dev/null 2>&1; then
+    ok "cargo-nextest (binstall)"; return
+  fi
+  local platform=""
+  case "$OS-$(uname -m)" in
+    Linux-x86_64)               platform=linux ;;
+    Linux-aarch64|Linux-arm64)  platform=linux-arm ;;
+    Darwin-*)                   platform=mac ;;
+  esac
+  local dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+  if [ -n "$platform" ] && mkdir -p "$dest" \
+    && curl -LsSf "https://get.nexte.st/latest/$platform" | tar zxf - -C "$dest" >/dev/null 2>&1 \
+    && have cargo-nextest; then
+    ok "cargo-nextest (prebuilt $platform)"; return
+  fi
+  warn "could not install cargo-nextest — run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C \"$dest\""
+}
+
 # sqlx-cli needs custom features (rustls + sqlite only) — same as CI.
 install_sqlx_cli() {
   # sqlx-cli ships both `cargo-sqlx` and `sqlx`; check either so the skip fires.
@@ -568,7 +589,10 @@ install_sqlx_cli() {
 
 echo "Setting up the prek hook toolchain (OS: $OS)…"
 
-# --- Rust hook tools -------------------------------------------------------
+# --- Rust hook tools the pre-commit stage needs ------------------------------
+# Only these come before the wiring below: in a cloud session the setup runs
+# in the background, and every minute the hooks are unwired is a minute of
+# commits with no hook feedback. The pre-push-only tools follow the wiring.
 # uv first, and OUTSIDE the cargo gate: it needs no cargo, and .mcp.json's
 # code-review-graph wants it on a box that has no Rust at all.
 ensure_uv
@@ -584,15 +608,10 @@ else
   cargo_get_pinned prek "$(pinned_version_for prek)" prek "$PREK_VERSION_AWK"
   cargo_get cargo-deny
   cargo_get cargo-machete
-  cargo_get cargo-audit
   cargo_get_pinned sqruff "$(pinned_version_for sqruff)" sqruff "$SQRUFF_VERSION_AWK"
   cargo_get_pinned typos-cli "$(pinned_version_for typos-cli)" typos "$TYPOS_VERSION_AWK"
   cargo_get_pinned zizmor "$ZIZMOR_PINNED_VERSION" zizmor "$ZIZMOR_VERSION_AWK"
   cargo_get_pinned taplo-cli "$(pinned_version_for taplo-cli)" taplo "$TAPLO_VERSION_AWK"
-  cargo_get cargo-nextest cargo-nextest
-  cargo_get just
-  install_lychee
-  install_sqlx_cli
 fi
 
 # --- System hook tools -----------------------------------------------------
@@ -636,6 +655,15 @@ if have prek; then
   fi
 else
   warn "prek not on PATH — install it, then run: prek install"
+fi
+
+# --- Tools only the pre-push stage and the verifier need -------------------
+if have cargo; then
+  cargo_get cargo-audit
+  install_nextest
+  cargo_get just
+  install_lychee
+  install_sqlx_cli
 fi
 
 # --- Summary: make gaps loud, without failing the bootstrap ----------------

@@ -1711,6 +1711,7 @@ describe('DataTab', () => {
         stubInvoke(vi.mocked(invoke), {
           batch_resolve: () => [],
           list_all_tags_in_space: () => [],
+          list_import_merges: () => [],
           list_property_defs: () => ({
             items: [
               {

@@ -13,10 +13,12 @@
 #             whole-tree ratchets (`pass_filenames = false`) still run whole
 #             tree when triggered. CI runs the same hooks over the whole tree
 #             in `lint`, which is the gate; this is the fast local pass.
-#             Tests are skipped here because the prek vitest / cargo-test
-#             hooks read `--cached` and there's nothing staged at push time
-#             — the SKIP= env var below silences their "no staged files" log
-#             noise.
+#
+#   Phase A2 — the same over the pre-push stage (clippy, cargo fmt --check,
+#             rustdoc links, knip, lychee, npm-audit, no-commit-to-branch),
+#             before any test runs, so `scripts/push.sh` can push with
+#             `--no-verify`. Skipped inside `git push`'s own hook, where prek
+#             has already run those hooks ahead of this one.
 #
 #   Phase B/C/D — vitest + cargo nextest scoped to the **commit range**
 #                 being pushed (`@{upstream}..HEAD`, override with
@@ -167,6 +169,7 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 #
 #   check-unsafe-allowlist.sh   -> hook `unsafe-allowlist`  (dropped when HAS_RS=0)
 #   check-axe-presence.sh       -> hook `axe-presence`      (dropped when HAS_TS=0)
+#   axe-presence-baseline.txt   -> hook `axe-presence`      (dropped when HAS_TS=0)
 #   check-test-file-naming.sh   -> hook `test-file-naming`  (dropped when HAS_TS=0)
 #
 # The TS list also carries every script a `src/**/*.test.ts` imports or
@@ -180,7 +183,7 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 # cargo-audit-guard.sh used to be covered by self-test hooks outside every
 # skip list; #4556 Phase 2 deleted those, so they get shellcheck alone here.
 HOOK_OWNER_RS_RE='^scripts/check-unsafe-allowlist\.sh$'
-HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|mutation-reports|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$|^scripts/classify-changes\.sh$'
+HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/axe-presence-baseline\.txt$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|mutation-reports|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$|^scripts/classify-changes\.sh$'
 
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
@@ -405,7 +408,7 @@ phase_a_skip_compose() {
 # The caller's entries that are NOT already in the required set — i.e.
 # exactly the hooks the caller's SKIP actually removes from this run.
 # This, not the raw `SKIP`, is what the non-equivalence warning reports:
-# a caller who redundantly re-skips `vitest` has changed nothing, and
+# a caller who re-skips a hook the category plan already skips has changed nothing, and
 # warning about it would train the reader to ignore the warning.
 phase_a_skip_extra() {
     local required="${1:-}" caller="${2:-}"
@@ -439,16 +442,14 @@ phase_a_skip_extra() {
 # Args: <docs> <frontend> <backend> <ci>, each 1 (present) or 0 (absent).
 prek_skip_list() {
     local has_docs="$1" has_ts="$2" has_rs="$3" has_ci="$4"
-    # Base: the two test hooks (always scoped in Phases C/D, never here).
-    local -a skip_items=(vitest cargo-test)
+    local -a skip_items=()
 
     # Frontend absent → skip the FE lint/type/architecture hooks.
     if [ "$has_ts" = "0" ]; then
         skip_items+=(tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
             no-ui-store-imports no-legacy-react-apis \
-            import-cycles store-layering axe-presence test-file-naming \
-            ipc-error-path-coverage no-raw-invoke no-raw-local-storage \
-            trace-interactions-named)
+            store-layering axe-presence test-file-naming \
+            ipc-error-path-coverage no-raw-local-storage)
     fi
     # Backend absent → skip the Rust/cargo/SQL/migration hooks. No
     # check-sqlx-cache-drift: CI is the gate and never skipped it (#3901's
@@ -477,17 +478,17 @@ prek_skip_list() {
     # binding boundary — they MUST run if frontend OR backend changed.
     [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
         skip_items+=(tauri-mock-parity snapshot-redaction no-retired-pending-doc-refs)
-    # doc-vs-code-paths reads BOTH docs and code, so it is a 3-way compound and
-    # not a docs-only hook: CI's placement, and CI is the gate.
+    # architecture-citations reads BOTH docs and code, so it is a 3-way compound
+    # and not a docs-only hook: CI's placement, and CI is the gate.
     [ "$has_docs" = "0" ] && [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
-        skip_items+=(architecture-citations doc-vs-code-paths)
+        skip_items+=(architecture-citations)
     # oxlint/oxfmt also cover `scripts/*.mjs`, which is tooling (`ci`): they
     # run when frontend OR ci changed, so a tooling-only push is still linted.
     [ "$has_ts" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-json oxlint oxfmt)
     [ "$has_rs" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-toml)
     [ "$has_ci" = "0" ] && skip_items+=(check-yaml)
 
-    (IFS=,; printf '%s' "${skip_items[*]}")
+    (IFS=,; printf '%s' "${skip_items[*]-}")
 }
 
 # ── --print-skip ───────────────────────────────────────────────────
@@ -2023,6 +2024,18 @@ db.close()
         st_bad "the dev.db migration-gap preflight runs before Phase A" "$st_out"
     fi
 
+    # 61. Ratchet: the pre-push hooks (clippy first among them) run before the
+    #     first test phase, or a lint failure costs a whole test run (#6560).
+    ST_PHASE_A2_ANCHOR='^    if ! SKIP="\$PHASE_A2_SKIP" prek run .*--hook-stage pre-push'
+    ST_PHASE_C_ANCHOR='^if ! bash scripts/test-related-ts.sh --range'
+    st_rc=0
+    st_out="$(st_order_check "${BASH_SOURCE[0]}" "$ST_PHASE_A2_ANCHOR" "$ST_PHASE_C_ANCHOR")" || st_rc=$?
+    if [ "$st_rc" -eq 0 ]; then
+        st_ok "the pre-push hooks run before the first test phase — $st_out"
+    else
+        st_bad "the pre-push hooks run before the first test phase" "$st_out"
+    fi
+
     if [ "$st_fail" != 0 ]; then
         echo "verify-ci-equivalent self-test FAILED" >&2
         exit 2
@@ -2283,9 +2296,7 @@ fi
 # or the whole-tree lints. Hooks with `pass_filenames = false` still run
 # whole-tree when one of their trigger files is in the range. CI's `lint`
 # job runs the same hooks with `--all-files` and is the gate.
-# SKIP silences the vitest/cargo-test hooks (they'd read `--cached` and log
-# "no staged files — skipping" — wasted noise since Phase C/D run them with
-# --range below) AND, category-aware, the hooks whose category did NOT change.
+# SKIP drops, category-aware, the hooks whose category did NOT change.
 #
 # The per-category plan is `prek_skip_list` above, which CI's `lint` job reads
 # through `--print-skip` — one list, not two. A hook is skipped only when
@@ -2339,6 +2350,25 @@ if ! SKIP="$PHASE_A_SKIP" prek run --from-ref "$RANGE_BASE" --to-ref HEAD --hook
     exit 1
 fi
 echo "  ✓ prek over the push range"
+
+# ── Phase A2: prek run over the push range (pre-push hooks) ─────────
+# Clippy is the most common Rust rejection; running it here fails a push in
+# seconds instead of after the test phases, and before `scripts/push.sh`
+# opens a connection. Inside `git push`'s own pre-push hook (prek sets
+# PRE_COMMIT_REMOTE_NAME there) prek has already run these hooks: this one is
+# last in prek.toml.
+if [ -z "${PRE_COMMIT_REMOTE_NAME:-}" ]; then
+    PHASE_A2_SKIP="$(phase_a_skip_compose "verify-ci-equivalent" "$CALLER_SKIP")"
+    echo ""
+    echo "→ Phase A2: prek run over '$RANGE_BASE..HEAD' (pre-push stage)"
+    if ! SKIP="$PHASE_A2_SKIP" prek run --from-ref "$RANGE_BASE" --to-ref HEAD --hook-stage pre-push; then
+        echo ""
+        echo "✗ Pre-push verification FAILED at Phase A2 (pre-push hooks over the push range)."
+        echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+        exit 1
+    fi
+    echo "  ✓ pre-push hooks over the push range"
+fi
 
 # Migrations append-only backstop (#806): the migrations-immutable hook
 # scans the STAGED index, which is empty at push time, so a commit made

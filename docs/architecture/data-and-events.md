@@ -90,6 +90,12 @@ Append-only. Composite primary key `(device_id, seq)` where `seq` is the device-
 
 **Three truths (#2481).** The op log is **globally-replicated audit truth**, the Loro engine is **state truth**, and SQL is **query truth**. Own-device ops are dual-written to the log *and* applied to state (below); since #2481 phase 1, *foreign*-device ops also land in the log — streamed as `SyncMessage::OpLogBatch` after the Loro deltas, hash-verified, stored with `is_replicated = 1` — but purely as **audit metadata for cross-device History/attribution, never applied to state** (every state path filters `is_replicated = 0`). State converges only through Loro CRDT sync; the replicated log cannot be a cross-device state-rebuild source (op replay is order-dependent and non-convergent — the pre-Loro problem the cutover deleted).
 
+| Layer | Authoritative for | Rebuilt from |
+| --- | --- | --- |
+| Op log (`op_log`) | History and attribution: every device's records, and this device's own ops in order (the tail after the last engine snapshot is what boot replay re-applies) | Nothing: append-only, shrunk only by compaction |
+| Loro engine (`loro_doc_state`) | Merged state: text, block tree, typed scalar properties, each space's property definitions | Peers, by Loro sync; the op log replays only this device's own ops |
+| SQLite tables | Queries: every projection and cache | The engine (`reproject_blocks_from_engine`), then the materializer for the caches |
+
 **Hash chain.** Each op carries a `blake3` hash of its own preimage. The chain is **positional, not Merkle**: the preimage includes `parent_seqs` (the `(device_id, seq)` *positions* of the parent op(s)), not the parent op's hash — so a child's hash does not transitively depend on its ancestors' hashes. The preimage is a null-byte-separated concat of fields (`\0`-delimited so a payload containing the delimiter would be unrepresentable — fields are guarded against `\0`). `origin` is intentionally excluded from the preimage so local-only attribution metadata (e.g. `agent:claude`) doesn't perturb cross-device op identity. See [`op-log-format.md`](op-log-format.md) for the exact preimage byte layout and verification rules.
 
 ULIDs are normalised to uppercase Crockford-Base32 in the preimage (and in every `block_id` slot) — the hash is byte-stable only when the normalisation is.
@@ -146,7 +152,7 @@ Synchronous primary-state materialization, not pure CQRS. Every op is dual-writt
 ```text
 apply_op_projected(op, advance_cursor):
   BEGIN IMMEDIATE
-    INSERT INTO op_log (...) VALUES (...)        -- the truth
+    INSERT INTO op_log (...) VALUES (...)        -- the audit record
     apply op to core tables (blocks, ...)        -- primary state
     apply op to LoroEngine (per-space)           -- engine, same tx
     reproject engine-owned ordering (dense-rank)  -- when the op moved things

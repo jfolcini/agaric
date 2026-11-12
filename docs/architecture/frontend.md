@@ -175,7 +175,7 @@ A second round (#3391) closed nine further shapes an adversarial reviewer constr
 
 ## Tauri command surface
 
-`src/lib/bindings.ts` is the specta-generated, checked-in, CI-enforced binding surface, and every call site uses it: `unwrap(await commands.someCommand(…))`, with `unwrap` from `src/lib/app-error.ts`. The hand-written per-domain wrapper layer that used to sit on top of it is gone (#2927), and so is the `tauri-import-baseline` ratchet that shrank it. A `no-raw-invoke` prek hook keeps bare `invoke()` out of app code.
+`src/lib/bindings.ts` is the specta-generated, checked-in, CI-enforced binding surface, and every call site uses it: `unwrap(await commands.someCommand(…))`, with `unwrap` from `src/lib/app-error.ts`. The hand-written per-domain wrapper layer that used to sit on top of it is gone (#2927), and so is the `tauri-import-baseline` ratchet that shrank it. An oxlint `no-restricted-imports` entry (`.oxlintrc.json`) keeps a bare `invoke` import out of app code; `src/lib/ipc-helpers.ts` is the one exemption.
 
 What remains is a small permanent floor in `src/lib/ipc-helpers.ts`: `Channel<T>` progress plumbing (`importMarkdown`, `startSync`), a client-side abort bridge (`cancelledError`/`withAbort`), a chunked cursor-drain (`restoreAllDeletedInSpace`/`purgeAllDeletedInSpace`), the two search wrappers that derive the required `scope` from the active space (`searchBlocks`, `searchBlocksPartitioned`), `createBlock`'s explicit-null coercion (Tauri rejects `undefined` over the wire), `logFrontend` (the backend log sink `main.tsx` registers at boot), and the one sanctioned raw-`invoke` seam (`readAttachment`, whose raw-response command can't carry a `specta::Type`). Each is there because the generated binding cannot express what it does — nothing else belongs in that file.
 
@@ -187,7 +187,7 @@ The full inventory lives in [`docs/UI-MAP.md`](../UI-MAP.md). The architecture-r
 - `src/components/` — domain components.
 - `src/components/<Feature>/` — per-feature sub-component directories (FormattingToolbar, settings/SpacesTab, properties/PropertyRowEditor, …).
 
-Four of these layering rules are mechanically enforced, all as commit-blocking prek hooks: `store-layering` (`scripts/check-store-layering.mjs`, page-block stores → global focus only), `import-cycles` (`scripts/check-import-cycles.mjs`), `no-ui-store-imports` (`src/components/ui/` primitives may not import stores), and `lib-layering` (`scripts/check-lib-layering.mjs`, below). The rest are conventions upheld in review.
+Four of these layering rules are mechanically enforced as prek hooks, `store-layering` and `no-ui-store-imports` at commit, `import-cycles` and `lib-layering` in CI's `manual` stage: `store-layering` (`scripts/check-store-layering.mjs`, page-block stores → global focus only), `import-cycles` (`scripts/check-import-cycles.mjs`), `no-ui-store-imports` (`src/components/ui/` primitives may not import stores), and `lib-layering` (`scripts/check-lib-layering.mjs`, below). The rest are conventions upheld in review.
 
 ### `lib-layering` — the frontend tier guard (#3121)
 

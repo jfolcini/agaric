@@ -413,7 +413,7 @@ describe('mdFilesToUnits', () => {
   })
 
   // #6277 decision 7 — only a note sent with no vault may merge into the page of its title.
-  it("names the page a plain pick's note may merge into, and none for a folder's, an Org or a Logseq note", () => {
+  it("names the page a Markdown note may merge into, a folder's too, and none for an Org or a Logseq note", () => {
     const plain = [
       new File(['- a'], 'note.md', { type: 'text/markdown' }),
       new File(['- b'], 'plain.txt', { type: 'text/plain' }),
@@ -431,7 +431,7 @@ describe('mdFilesToUnits', () => {
       undefined,
     ])
     expect(mdFilesToUnits(folder, indexVaultFiles(folder), false).map((u) => u.merges)).toEqual([
-      undefined,
+      'note.md',
     ])
     expect(mdFilesToUnits(graph, null, false).map((u) => u.merges)).toEqual([undefined, undefined])
   })
@@ -1370,11 +1370,11 @@ describe('enexNotesToUnits', () => {
     expect(enexNotesToUnits([], 'export.enex')).toEqual([])
   })
 
-  it('names the page a note without attachments may merge into, and reads each as Markdown', async () => {
+  it('names the page each note may merge into, and reads each as Markdown', async () => {
     const pic = { path: 'pic.png', bytes: new Uint8Array([1]), mime: 'image/png' }
     const units = enexNotesToUnits([note('Plain'), note('Pic', [pic])], 'export.enex')
 
-    expect(units.map((u) => u.merges)).toEqual(['export/Plain.md', undefined])
+    expect(units.map((u) => u.merges)).toEqual(['export/Plain.md', 'export/Pic.md'])
     expect(await Promise.all(units.map(async (u) => (await u.load()).dialect))).toEqual([
       'Markdown',
       'Markdown',
@@ -1465,11 +1465,11 @@ describe('jexNotesToUnits', () => {
     ])
   })
 
-  it('names the page a note without resources may merge into, and reads each as Markdown', async () => {
+  it('names the page each note may merge into, and reads each as Markdown', async () => {
     const pic = { path: 'pic.png', bytes: new Uint8Array([1]), mime: 'image/png' }
     const units = jexNotesToUnits([note('Plain'), note('Pic', [pic])])
 
-    expect(units.map((u) => u.merges)).toEqual(['Plain.md', undefined])
+    expect(units.map((u) => u.merges)).toEqual(['Plain.md', 'Pic.md'])
     expect(await Promise.all(units.map(async (u) => (await u.load()).dialect))).toEqual([
       'Markdown',
       'Markdown',

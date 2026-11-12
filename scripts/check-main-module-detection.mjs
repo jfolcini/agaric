@@ -66,8 +66,7 @@
 // `` `file://${…}` `` form contains a `//` inside a template literal, and
 // a naive stripper would blank the violation it is supposed to catch.
 //
-// Known scope limit (mirrors check-raw-invoke.mjs's documented narrowness):
-// detection is syntactic and local, so an entry check laundered through an
+// Known scope limit: detection is syntactic and local, so an entry check laundered through an
 // intermediate binding (`const entry = process.argv[1]; … === entry`) is
 // not matched. No such form exists in the tree; the rule covers the shapes
 // that actually drifted.

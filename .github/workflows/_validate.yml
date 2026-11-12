@@ -497,7 +497,7 @@ jobs:
           echo "Both Cargo.lock files are graph-consistent with their manifests."
 
   # ---------------------------------------------------------------------------
-  # lint — prek hook suite (excluding vitest/cargo-test/no-commit-to-branch),
+  # lint — prek hook suite (excluding no-commit-to-branch),
   # npm audit signatures (blocking), cargo audit (blocking — see PEND-41 R5), and the sqlx
   # offline-cache drift check. Needs the full Node + Rust + mold + cargo
   # plugins stack because prek's hooks invoke clippy, cargo-deny, sqruff,
@@ -583,6 +583,7 @@ jobs:
           scripts/e2e-related.test.mjs
           scripts/android-launch-smoke.test.mjs
           scripts/render-mutation-summary.test.mjs
+          scripts/nextest-flaky-report.test.mjs
           || { cat "$RUNNER_TEMP/node-test.log"; exit 1; }
 
       - name: Verify npm package provenance signatures
@@ -640,7 +641,7 @@ jobs:
           # scripts/setup-hooks.sh (which installs these versions locally,
           # replacing any different one already on PATH) and the same pins
           # in the two scheduled-deep-checks.yml install steps. Verified by
-          # scripts/check-prek-version-pin.mjs.
+          # scripts/check-tool-pins.mjs.
           tool: prek@0.3.8,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.46.0,sqruff@0.38.0
 
       # ci/path-conditional-jobs: the cargo-* plugins are invoked only by the
@@ -798,10 +799,9 @@ jobs:
       - name: Run prek (same as `prek run --all-files` locally)
         env:
           # SKIP is computed by the preceding "Compute prek SKIP" step and
-          # exported via $GITHUB_ENV. It always carries the pre-push-only /
-          # sibling-job hooks (no-commit-to-branch, vitest, cargo-test) and
-          # appends a category's hooks only when that category is absent from
-          # the diff (`prek_skip_list` in scripts/verify-ci-equivalent.sh has
+          # exported via $GITHUB_ENV. It always carries the CI-only
+          # no-commit-to-branch and appends a category's hooks only when that
+          # category is absent from the diff (`prek_skip_list` in scripts/verify-ci-equivalent.sh has
           # the per-category + compound AND rules).
           # Security / hygiene hooks are never in it, so they always run here.
           SKIP: ${{ env.SKIP }}
@@ -1129,7 +1129,12 @@ jobs:
         # `docs/architecture/*.md` here.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: prek run --all-files markdownlint md-link-targets doc-vs-code-paths typos remove-after-markers architecture-citations dead-symbol-citations
+        run: prek run --all-files markdownlint md-link-targets typos remove-after-markers architecture-citations dead-symbol-citations
+
+      - name: Run doc-vs-code-paths (manual-stage hook)
+        # A `manual`-stage hook, which the default-stage run above drops
+        # without a word when named, so it needs the explicit selector.
+        run: prek run --all-files --hook-stage manual doc-vs-code-paths
 
       - name: Run lychee link check (pre-push-staged hook)
         # lychee is staged `pre-push` in prek.toml, so it needs the explicit
@@ -1673,6 +1678,20 @@ jobs:
           cargo llvm-cov report --lcov --workspace \
             --output-path coverage-${{ matrix.shard }}.lcov
 
+      - name: Name every test that passed only on a retry
+        # The `ci` profile's `retries` turn a flake green; this keeps its name (#6553).
+        if: ${{ !cancelled() }}
+        run: node scripts/nextest-flaky-report.mjs src-tauri/target/nextest/ci/junit.xml >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the nextest JUnit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextest-junit-cargo-tests-${{ matrix.shard }}
+          path: src-tauri/target/nextest/ci/junit.xml
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload shard coverage artifact
         # Partial lcov for this shard. Retained 7 days — the merged artifact
         # the `cargo-coverage` job publishes is the long-lived one.
@@ -1893,6 +1912,20 @@ jobs:
         # `--lib`: the `stub_binary_` tests live in the lib target, so the
         # package's integration-test binaries need no `ci-smoke` rebuild.
         run: cargo nextest run --lib --features ci-smoke --profile ci -E 'test(stub_binary_)'
+
+      - name: Name every test that passed only on a retry
+        # As in `cargo-tests` (#6553).
+        if: ${{ !cancelled() }}
+        run: node scripts/nextest-flaky-report.mjs src-tauri/target/nextest/ci/junit.xml >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the nextest JUnit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextest-junit-mcp-tests
+          path: src-tauri/target/nextest/ci/junit.xml
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Verify agaric-mcp smoke (--version)
         run: src-tauri/target/debug/agaric-mcp --version

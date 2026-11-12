@@ -19,9 +19,8 @@
 // `getItem` / `setItem` / `removeItem` / `clear`. Comments are stripped
 // before scanning, so a commented-out or documented call is not a
 // violation. Access through an intermediate variable (e.g.
-// `const storage = localStorage; storage.getItem(...)`) is NOT matched —
-// mirrors `check-raw-invoke.mjs`'s documented scope, and covers the
-// handful of one-time legacy-key migration readers that pre-date this
+// `const storage = localStorage; storage.getItem(...)`) is NOT matched,
+// which covers the handful of one-time legacy-key migration readers that pre-date this
 // guard.
 //
 // ─── Scope / exemptions ─────────────────────────────────────────────

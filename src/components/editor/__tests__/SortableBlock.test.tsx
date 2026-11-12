@@ -4674,6 +4674,34 @@ describe('SortableBlock swipe-to-delete progressive cue', () => {
     expect(screen.queryByTestId('swipe-release-hint')).not.toBeInTheDocument()
   })
 
+  it("the revealed trash button deletes with the swipe's Undo toast", () => {
+    mockUseBlockSwipeActions.mockImplementation(() => ({
+      translateX: -80,
+      isRevealed: true,
+      thresholdCrossed: false,
+      gestureIntent: 'delete' as const,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+    const onDelete = vi.fn()
+
+    render(
+      <TestBlockActionsOverride actions={{ onDelete }}>
+        <SortableBlock
+          blockId="BLOCK_SWIPE"
+          content="swipe test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete block' }))
+
+    expect(onDelete).toHaveBeenCalledExactlyOnceWith('BLOCK_SWIPE')
+    expect(mockNotify).toHaveBeenCalledOnce()
+    expect(mockNotify.mock.calls[0]?.[0]).toBe('Block deleted')
+  })
+
   it('switches to the solid destructive variant once the threshold is crossed', () => {
     mockUseBlockSwipeActions.mockImplementation(() => ({
       translateX: -200,

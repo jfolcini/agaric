@@ -11,10 +11,10 @@
 //!
 //! [`insert_remote_op`](crate::dag::insert_remote_op) and
 //! [`append_merge_op`](crate::dag::append_merge_op) have **no production
-//! callers today**. Post-#490-M1 the local `op_log` is strictly
-//! device-local (see `sync_protocol::operations::check_reset_required`):
-//! inbound sync lands remote state via the Loro CRDT engine import + SQL
-//! projection and never inserts a peer's ops into this table. The only
+//! callers today**. Inbound sync lands remote state via the Loro CRDT engine
+//! import + SQL projection; a peer's op records reach this table only as
+//! `is_replicated = 1` audit rows, through `insert_replicated_op` in
+//! `sync_protocol::operations`, not through this module. The only
 //! current callers of this module's remote-ingest functions are tests
 //! (`dag/tests.rs`, `op_log/tests/origin.rs`).
 //!
@@ -357,13 +357,9 @@ enum IngestProfile {
 /// ## Production status (#2473 / #2481)
 ///
 /// No production code path calls this function today; only tests do
-/// (`dag/tests.rs`, `op_log/tests/origin.rs`). The local `op_log` is
-/// strictly device-local post-#490-M1 (see
-/// `sync_protocol::operations::check_reset_required`) — production sync
-/// never reaches this function. It is kept as the deliberate, planned
-/// ingest point for #2481 phase 1 (audit-only op-log replication):
-/// replicated op records will be hash-verified and stored here for
-/// cross-device History/attribution, but never applied to state — state
+/// (`dag/tests.rs`, `op_log/tests/origin.rs`). Production sync stores a
+/// foreign device's records through `insert_replicated_op` (#2481, audit
+/// profile, `is_replicated = 1`), never through this strict profile; state
 /// remains exclusively Loro-CRDT-sourced.
 pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bool, AppError> {
     // Strict merge-ingest profile: unresolved parents hard-error, the row is

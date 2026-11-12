@@ -29,10 +29,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// Cap set 2026-09-02 (#4556 Phase 2) from the post-cleanup count of 130 hooks
-// (160 before: 31 self-tests deleted, one re-wired) — 10 of headroom.
-// Raising this requires deleting or justifying what it buys.
-const HOOK_CAP = 140
+// The cap is the hook count, with no headroom (#6566): every new hook either
+// replaces one or raises this number in a reviewed diff.
+const HOOK_CAP = 105
 // Anchored on this file's own location, not the cwd: prek invokes hooks from
 // the repo root today, but nothing in the hook contract guarantees it, and the
 // sibling change in this same commit adds the identical anchor to

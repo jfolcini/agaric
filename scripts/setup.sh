@@ -263,12 +263,13 @@ bash scripts/setup-dev-db.sh || echo "warning: dev DB setup skipped — run scri
 # (or `just install-hooks`) to fill any gaps reported above.
 #
 # This is by far the SLOWEST part of setup: it fetches ~10 cargo tools and a
-# system shellcheck, and only THEN wires the git hooks (the wiring is the very
-# last step). Under the remote SessionStart hook, all of setup.sh shares one hard
+# system shellcheck. It wires the git hooks once the pre-commit-stage tools are
+# in, and installs the pre-push-only ones after that. Under the remote
+# SessionStart hook, all of setup.sh shares one hard
 # ~600s provisioning budget — and the hook-toolchain install reproducibly
 # overran it: the provisioner SIGKILLed setup mid-install (right after
-# cargo-machete), so the slower tools never landed and — because wiring runs
-# last — the git hooks were left UNWIRED. The fast critical path above (Node,
+# cargo-machete), so the slower tools never landed and — because wiring ran
+# last then — the git hooks were left UNWIRED. The fast critical path above (Node,
 # npm ci, .env, dev DB) had already finished by then, so the clone was
 # build/test-ready; only the commit/push gate was missing.
 #
@@ -276,8 +277,9 @@ bash scripts/setup-dev-db.sh || echo "warning: dev DB setup skipped — run scri
 # the time-boxed critical path. setsid puts it in its own session so the
 # provisioner reaping the (now fast-returning) SessionStart hook can't take it
 # down with a process-group signal; output is redirected to a log. The session lands
-# build/test-ready immediately and the hooks finish wiring a couple of minutes
-# later. It's best-effort + idempotent, so a detached run that is itself cut
+# build/test-ready immediately; the hooks wire once the pre-commit-stage tools
+# are installed, minutes when binstall finds prebuilt binaries, longer when it
+# has to compile them. It's best-effort + idempotent, so a detached run that is itself cut
 # short (e.g. the container is reclaimed) just gets completed on the next
 # session start. Local/manual runs stay synchronous — there's no hook timeout
 # there and a developer wants to watch it finish.

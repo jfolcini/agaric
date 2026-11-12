@@ -396,7 +396,7 @@ function App() {
   // Fires at most once per 24 h to ask the Tauri updater plugin whether
   // a new release is available. Surfaces an "update available" sonner
   // toast with Install & restart + Later actions. Mobile is a no-op —
-  // the Play Store / App Store own that distribution path. Empty-deps;
+  // Android updates by installing a newer APK from the releases page. Empty-deps;
   // safe to slot adjacent to the other boot hooks.
   useUpdateCheck()
 

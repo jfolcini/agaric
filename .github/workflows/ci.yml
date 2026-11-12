@@ -242,8 +242,7 @@ jobs:
       - name: Rust cache
         # zizmor: ignore[cache-poisoning] — this `android-build` job only
         # compiles and tests; it never signs or publishes the cached target/
-        # tree. Anchored on the step itself, not by line number (#3737);
-        # guarded by scripts/check-cache-poisoning-suppressions.mjs.
+        # tree. Anchored on the step itself, not by line number (#3737).
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri

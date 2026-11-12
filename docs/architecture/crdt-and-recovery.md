@@ -115,18 +115,18 @@ Per-draft errors are captured in a `RecoveryReport`; a single corrupt draft does
 
 ### Missing-`blocks`-table rebuild is engine-first (#2504)
 
-Separate from the four-step `recover_at_boot` above, `init_pools` runs disaster recovery around the migration step (`src-tauri/src/db/pool.rs`, helpers in `src-tauri/src/db/recovery.rs`):
+Separate from `recover_at_boot` above, `init_pools` runs disaster recovery around the migration step (`src-tauri/src/db/pool.rs`, helpers in `src-tauri/src/db/recovery.rs`):
 
 1. `ensure_blocks_table_exists` **before migrations** — if the `blocks` table is missing (a partial blocks-rebuild migration DROP that was not rolled back, or external corruption), recreate it and replay the op_log into it via `recover_blocks_from_op_log`.
 2. `recover_derived_state_from_op_log` after migrations — restores properties/tags/page aliases a CASCADE would have taken.
 3. `reproject_blocks_from_engine` — the authoritative pass. It upserts every block, property, tag, page alias and attachment row out of the per-space Loro snapshots in `loro_doc_state` (a page the engine holds no alias map for keeps its rows, and an attachment row the engine holds no entry for is left to step 4: those are the ones the #5387 and #5608 boot backfills have not reached), overwriting the op-log passes' rows, then rebuilds the visibility-critical caches (`blocks.page_id`, `fts_blocks`, tag inheritance) that the live sync path would normally rebuild via the materializer (which does not exist yet at `init_pools` time).
 4. `recover_attachments_from_op_log` **after** the engine pass (#3268) — replays `add_attachment` / `delete_attachment` / `rename_attachment` for the ids no engine snapshot holds (#5608); step 3 has projected the rest from the merge truth. The rows are FK-guarded on the owning block and a peer-authored block exists only once step 3 has reprojected it; running these arms inside step 2 silently drops every attachment on a peer-authored block, permanently. This last pass is also what retires the `DERIVED_RECOVERY_PENDING_KEY` marker, so a crash anywhere in steps 1–4 retries the whole sequence on the next boot.
 
-The engine pass is what makes this whole-vault rather than device-local. The op_log is strictly device-local (remote ops never land in it post-#490-M1), so steps 1–2 alone reconstruct only locally-authored content — `recover_blocks_from_op_log` logs loudly (`tracing::error!`) when engine snapshots exist and it is about to drop remote content, and step 3 then puts it back. Local ops authored after the last engine snapshot are replayed on top from the op_log tail by the ordinary boot replay.
+The engine pass is what makes this whole-vault rather than device-local. The op_log holds a foreign device's ops only as audit records (`is_replicated = 1`) and recovery replays just the local ones (`is_replicated = 0`), so steps 1–2 alone reconstruct only locally-authored content — `recover_blocks_from_op_log` logs loudly (`tracing::error!`) when engine snapshots exist and it is about to drop remote content, and step 3 then puts it back. Local ops authored after the last engine snapshot are replayed on top from the op_log tail by the ordinary boot replay.
 
 Steps 2–4 are gated on this boot's block-recovery signal, plus a persisted retry marker (`engine_reproject_pending`, #2920) so a partial engine reprojection is retried on the next boot instead of being lost permanently.
 
-The three-truths boundary is what this ordering encodes: **op log = audit truth (device-local), Loro engine = state truth, SQL = query truth**; only the engine can rebuild whole synced state. Pinned by `recover_blocks_from_op_log_is_device_local_only_2504` and `reproject_blocks_from_engine_no_snapshots_is_noop_2504`.
+The three-truths boundary is what this ordering encodes: **op log = audit truth (every device's records; only the local ones replay), Loro engine = state truth, SQL = query truth**; only the engine can rebuild whole synced state. Pinned by `recover_blocks_from_op_log_is_device_local_only_2504` and `reproject_blocks_from_engine_no_snapshots_is_noop_2504`.
 
 ## What's intentionally NOT crash-safe
 

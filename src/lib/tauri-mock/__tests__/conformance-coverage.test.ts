@@ -370,8 +370,7 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // `set_due_date` / `set_scheduled_date` OPS, which is what a query step over
   // a materialized table needs.
   list_projected_agenda:
-    'wall-clock dependent: `list_projected_agenda_inner` anchors the `.+` / `++` ' +
-    'recurrence projection (and the cache-freshness horizon) to `chrono::Local::now()`',
+    'mock handler is a stub; covered by `e2e-tauri/agenda-projected-repeat.e2e.ts`',
   // #4886 — same clock, one level up: the report CARRIES `today`, the local
   // date the projected-agenda rebuild is pinned to, so a backend-authored
   // `expected` binds the day it was generated on. And the subject is the
@@ -2067,6 +2066,8 @@ function resolveCitation(cite: Citation): string | null {
         path.resolve(MOCK_TESTS_DIR, cite.file),
         path.resolve(MOCK_DIR, cite.file),
         path.resolve(SRC_DIR, cite.file),
+        // A repo-root path, e.g. an `e2e-tauri/` spec.
+        path.resolve(SRC_DIR, '..', cite.file),
       ]
   return candidates.find((p) => existsSync(p)) ?? null
 }

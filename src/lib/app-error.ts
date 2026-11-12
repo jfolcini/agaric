@@ -183,8 +183,8 @@ export function takenNameReason(err: unknown): string | null {
 /**
  * Unwrap a `commands.*` result, throwing on error to preserve the
  * reject-based semantics of the `invoke()` wrappers #2927 retired.
- * Component call sites — which cannot use the raw `invoke()` bypass, per the
- * `no-raw-invoke` guard — adopt the `commands.foo(...).then(unwrap)` /
+ * Component call sites — which cannot import the raw `invoke()` bypass, per
+ * the oxlint `no-restricted-imports` rule — adopt the `commands.foo(...).then(unwrap)` /
  * `unwrap(await commands.foo())` convention instead of a bespoke wrapper.
  *
  * Lives here, in the tauri-free IPC-error module, so a call site needs

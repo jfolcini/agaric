@@ -25,23 +25,22 @@
 // filter's `_0[0-9]{3}_` half would actually select. It does NOT run
 // nextest, compile anything, or need `DATABASE_URL`: this is a textual scan
 // over migration filenames and Rust test-function names, the same "narrow
-// and mechanical" scoping the rest of this repo's prek guards use — see
-// `check-pr-overlap-trust-boundary.mjs`'s header for the same argument made
-// at length.
+// and mechanical" scoping the rest of this repo's prek guards use.
 //
 // ─── Baseline (shrink-only) ────────────────────────────────────────────
 //
-// 102 of this repo's 111 migrations predate the `_<NNNN>_` naming
+// Most of this repo's migrations predate the `_<NNNN>_` naming
 // convention entirely — AGENTS.md's own "Older batch, pinned by issue
 // number" paragraph documents exactly this: `_376`/`_606`/`_708` tests
 // cover an unspecified set of early migrations by ISSUE number, not by
 // migration number, because they predate the migration-number convention.
-// Retrofitting 102 tests to carry a `_<NNNN>_` tag is a content sweep, not
-// a guard's job, so — following the same shrink-only-baseline convention as
+// Retrofitting a test per migration to carry a `_<NNNN>_` tag is a content
+// sweep, not a guard's job, so — following the same shrink-only-baseline convention as
 // `scripts/doc-code-paths-baseline.json` and
 // `src-tauri/table-ownership-baseline.txt` — those migration numbers are
-// grandfathered in `src-tauri/migrations-test-coverage-baseline.txt`. #4182
-// tracks burning that list down.
+// grandfathered in `src-tauri/migrations-test-coverage-baseline.txt`. The
+// burn-down issue (#4182) was closed without the sweep, so the list shrinks
+// only as a migration gains a test.
 //
 // A migration number is exempt ONLY if it is already listed in that file.
 // Nothing is grandfathered automatically: migration 0112 (or any migration
@@ -80,7 +79,7 @@
 //     them, and both numbers sit in the baseline as a result. That direction
 //     is the safe one — the guard is stricter than the filter, never looser
 //     — but it is a real divergence and it is why those two baseline entries
-//     are not quite "no test exists". #4182 tracks the sweep.
+//     are not quite "no test exists".
 //
 // Falsification: rename an existing, non-grandfathered migration's covering
 // test to drop its `_<NNNN>_` tag, and this guard goes red on that
@@ -105,9 +104,8 @@ const BASELINE_FILE = join(REPO_ROOT, 'src-tauri', 'migrations-test-coverage-bas
 // The exact files AGENTS.md names as carrying migration tests: "These live
 // in db::tests (src-tauri/src/db/tests.rs) — and a few siblings under
 // snapshot/spaces." Scoped to these three, not every `*.rs` file in the
-// tree, for the same reason `check-android-trigger.mjs` and
-// `check-pr-overlap-trust-boundary.mjs` scope to the ONE file each is
-// about: this is insurance for the specific convention AGENTS.md documents,
+// tree, for the same reason `check-android-trigger.mjs` scopes to the ONE
+// file it is about: this is insurance for the specific convention AGENTS.md documents,
 // not a general "does some test somewhere mention this migration" search. A
 // test with the right name sitting in a file OTHER than these three does
 // not satisfy the documented convention (nor would it be selected by
