@@ -13,8 +13,8 @@ import {
 /**
  * A colour picked for a tag in the Tags view paints that tag's chips: the
  * static chip, the editor chip and the chip on the tag's own page, and it is
- * still there after navigating away and back. In `e2e/` because the colour is
- * device-local and its paint is CSS that only a browser computes.
+ * still there after navigating away and back. In `e2e/` because the paint is
+ * CSS that only a browser computes.
  *
  * Seed (`SEED_IDS` in `src/lib/tauri-mock/seed.ts`): BLOCK_GS_4 on "Getting
  * Started" carries a `work` chip.
@@ -74,4 +74,23 @@ test('a tag colour picked in the Tags view paints its chips @editor @pages', asy
   await tagged.getByRole('link', { name: 'Getting Started', exact: true }).click()
   await expect(page.locator('[aria-label="Page title"]')).toHaveText('Getting Started')
   await expectPainted(workChip(staticBlock), paint)
+})
+
+test('a tag colour outlives its localStorage entry through the tag property @editor @pages', async ({
+  page,
+}) => {
+  await waitForBoot(page)
+  await navigateToView(page, 'Tags')
+  const row = page.getByRole('listitem').filter({ has: page.getByTestId('tag-item-work') })
+  await row.getByRole('button', { name: 'Set tag color', exact: true }).click()
+  await activePopover(page).getByRole('button', { name: 'Rose', exact: true }).click()
+
+  await page.evaluate(() => localStorage.removeItem('tag-colors'))
+  await openPage(page, 'Getting Started')
+  const paint = await rosePaint(page)
+  const staticBlock = page.locator(`[data-testid="block-static"][data-block-id="${GS_4}"]`)
+  await expectPainted(workChip(staticBlock), paint)
+
+  await navigateToView(page, 'Tags')
+  await expectPainted(page.getByTestId('tag-item-work').locator('[title]'), paint)
 })

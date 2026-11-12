@@ -2,16 +2,18 @@
  * useTagColors — the tag colours the Tags view paints, and the one tag whose
  * colour picker is open.
  *
- * A colour is written to localStorage first, which is what renders; the
- * block's `color` property follows best-effort, so a failed write only logs.
+ * A tag paints its synced `color` property, else its localStorage colour. A
+ * colour is written to localStorage first, then to the property; a failed
+ * property write only logs and leaves the synced colour as it was.
  */
 
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { clearTagColor, getTagColors, setTagColor } from '@/lib/tag-colors'
+import { useResolveStore } from '@/stores/resolve'
 
 export interface TagColors {
   /** Tag id → an accent token or a custom `#rrggbb`. */
@@ -26,12 +28,17 @@ export interface TagColors {
 }
 
 export function useTagColors(): TagColors {
-  const [tagColors, setTagColors] = useState<Record<string, string>>(getTagColors)
+  const [localColors, setLocalColors] = useState<Record<string, string>>(getTagColors)
+  const syncedColors = useResolveStore((s) => s.tagColors)
+  const tagColors = useMemo(
+    () => ({ ...localColors, ...syncedColors }),
+    [localColors, syncedColors],
+  )
   const [colorPickerOpen, setColorPickerOpen] = useState<string | null>(null)
 
   const setColor = useCallback(async (tagId: string, color: string) => {
     setTagColor(tagId, color)
-    setTagColors((prev) => ({ ...prev, [tagId]: color }))
+    setLocalColors((prev) => ({ ...prev, [tagId]: color }))
     setColorPickerOpen(null)
     try {
       unwrap(
@@ -43,6 +50,7 @@ export function useTagColors(): TagColors {
           value_bool: null,
         }),
       )
+      useResolveStore.getState().setSyncedTagColor(tagId, color)
     } catch (err) {
       logger.warn(
         'useTagColors',
@@ -55,7 +63,7 @@ export function useTagColors(): TagColors {
 
   const clearColor = useCallback(async (tagId: string) => {
     clearTagColor(tagId)
-    setTagColors((prev) => {
+    setLocalColors((prev) => {
       const next = { ...prev }
       delete next[tagId]
       return next
@@ -63,6 +71,7 @@ export function useTagColors(): TagColors {
     setColorPickerOpen(null)
     try {
       unwrap(await commands.deleteProperty(tagId, 'color'))
+      useResolveStore.getState().setSyncedTagColor(tagId, null)
     } catch (err) {
       logger.warn('useTagColors', 'failed to clear tag color via deleteProperty', { tagId }, err)
     }

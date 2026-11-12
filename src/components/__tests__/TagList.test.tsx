@@ -41,6 +41,7 @@ import type { NameChange } from '@/lib/name-change-bus'
 import { invalidateNameCaches, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { TAG_COLOR_PRESETS } from '@/lib/tag-colors'
 import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -106,6 +107,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   virtualWindow.size = null
   localStorage.removeItem('tag-colors')
+  useResolveStore.setState({ tagColors: {} })
   // b1 — `list_all_tags_in_space` is required-active; seed an active space
   // so the tag-list load runs.
   useSpaceStore.setState({

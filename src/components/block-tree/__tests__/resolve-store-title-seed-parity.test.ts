@@ -66,6 +66,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockedListPageAliasesByPrefix(...args).then((data: unknown) => ({ status: 'ok', data })),
       listAllPagesInSpace: (...args: unknown[]) =>
         mockedListAllPagesInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+      getBatchProperties: () => Promise.resolve({ status: 'ok', data: {} }),
     },
   }
 })

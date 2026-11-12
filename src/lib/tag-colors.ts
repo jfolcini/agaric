@@ -1,12 +1,9 @@
 /**
  * Tag colors — localStorage-backed map of tag ID → accent token or custom hex.
  *
- * Stores a JSON object under the `tag-colors` localStorage key, which every tag
- * chip and badge renders from. `useTagColors` also writes the tag's `color`
- * property best-effort, but nothing reads it back, so a colour stays on the
- * device that set it.
- *
- * Pattern follows starred-pages.ts (also device-local).
+ * Stores a JSON object under the `tag-colors` localStorage key. A tag chip or
+ * badge paints the tag's synced `color` property (`useResolveStore.tagColors`)
+ * and falls back to this map only when the property is absent (#6544).
  */
 
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'

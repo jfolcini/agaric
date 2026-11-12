@@ -3,7 +3,7 @@ import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import type { NodeType, Node as PmNode } from '@tiptap/pm/model'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AtTagPicker } from '@/editor/extensions/at-tag-picker'
 import { BlockLink } from '@/editor/extensions/block-link'
@@ -12,6 +12,8 @@ import { BlockRef } from '@/editor/extensions/block-ref'
 import { ExternalLink } from '@/editor/extensions/external-link'
 import { SlashCommand } from '@/editor/extensions/slash-command'
 import { TagRef } from '@/editor/extensions/tag-ref'
+import { setTagColor } from '@/lib/tag-colors'
+import { useResolveStore } from '@/stores/resolve'
 
 // Build a ProseMirror schema from our extensions to inspect their specs.
 const schema = getSchema([
@@ -470,5 +472,39 @@ describe('BlockRef NodeView title attribute (B-67 / #4228)', () => {
     expect(result.dom.getAttribute('title')).toBe('Active content')
     expect(result.dom.textContent).toBe('Active content')
     expect(result.dom.classList.contains('block-ref-deleted')).toBe(false)
+  })
+})
+
+describe('TagRef NodeView colour (#6544)', () => {
+  function tagChip(tagId: string): HTMLSpanElement {
+    const ext = TagRef.configure({ resolveName: () => '#tag' })
+    const addNodeView = ext.config.addNodeView as unknown as (this: unknown) => NodeViewFactory
+    const factory = addNodeView.call({ options: ext.options })
+    return factory({
+      node: { attrs: { id: tagId }, type: { name: 'tag_ref' } },
+      editor: {},
+      getPos: () => 0,
+    }).dom
+  }
+
+  afterEach(() => {
+    localStorage.removeItem('tag-colors')
+    useResolveStore.setState({ tagColors: {} })
+  })
+
+  it("paints the tag's synced colour over its local one", () => {
+    setTagColor('TAG_A', 'accent-rose')
+    useResolveStore.setState({ tagColors: { TAG_A: 'accent-blue' } })
+    expect(tagChip('TAG_A').style.getPropertyValue('--tag-color')).toBe(
+      'var(--accent-blue, var(--accent-current))',
+    )
+  })
+
+  it('paints the local colour of a tag with no synced one', () => {
+    setTagColor('TAG_A', 'accent-rose')
+    useResolveStore.setState({ tagColors: { TAG_B: 'accent-blue' } })
+    expect(tagChip('TAG_A').style.getPropertyValue('--tag-color')).toBe(
+      'var(--accent-rose, var(--accent-current))',
+    )
   })
 })

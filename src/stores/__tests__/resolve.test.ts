@@ -16,7 +16,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makePageHeading } from '@/__tests__/fixtures'
+import { makePageHeading, makePropertyRow } from '@/__tests__/fixtures'
 import { type CommandReturns, strictInvokeFallback, stubInvoke } from '@/__tests__/helpers/invoke'
 import type { PageHeading, TagCacheRow } from '@/lib/bindings'
 import { unresolvedBlockLabel } from '@/lib/block-title'
@@ -78,6 +78,7 @@ describe('preload', () => {
     stubInvoke(mockedInvoke, {
       list_all_pages_in_space: () => [pageRow('PAGE_1', 'Page One'), pageRow('PAGE_2', 'Page Two')],
       list_all_tags_in_space: () => mockTags,
+      get_batch_properties: () => ({}),
     })
 
     await useResolveStore.getState().preload(TEST_SPACE_ID)
@@ -124,6 +125,7 @@ describe('preload', () => {
         new Promise<CommandReturns['list_all_tags_in_space']>((resolve) => {
           answerTags = resolve
         }),
+      get_batch_properties: () => ({}),
     })
 
     const pending = useResolveStore.getState().preload(TEST_SPACE_ID)
@@ -157,6 +159,7 @@ describe('preload', () => {
     stubInvoke(mockedInvoke, {
       list_all_pages_in_space: () => [],
       list_all_tags_in_space: () => mockTags,
+      get_batch_properties: () => ({}),
     })
 
     await useResolveStore.getState().preload(TEST_SPACE_ID)
@@ -286,6 +289,7 @@ describe('preload', () => {
     stubInvoke(mockedInvoke, {
       list_all_pages_in_space: () => [pageRow('PAGE_1', 'Page One'), pageRow('PAGE_2', 'Page Two')],
       list_all_tags_in_space: () => [tagRow('TAG_1', 'tag-one', 5)],
+      get_batch_properties: () => ({}),
     })
 
     await useResolveStore.getState().preload(TEST_SPACE_ID)
@@ -536,6 +540,74 @@ describe('preload', () => {
 })
 
 // ---------------------------------------------------------------------------
+// preload — synced tag colours (#6544)
+// ---------------------------------------------------------------------------
+describe('preload tag colours', () => {
+  beforeEach(() => {
+    useResolveStore.setState({ tagColors: {} })
+  })
+
+  it("reads each tag's synced `color` property, migrating a legacy hex", async () => {
+    stubInvoke(mockedInvoke, {
+      list_all_pages_in_space: () => [],
+      list_all_tags_in_space: () => [
+        tagRow('TAG_1', 'one'),
+        tagRow('TAG_2', 'two'),
+        tagRow('TAG_3', 'three'),
+      ],
+      get_batch_properties: () => ({
+        TAG_1: [makePropertyRow({ key: 'color', value_text: 'accent-blue' })],
+        TAG_2: [makePropertyRow({ key: 'color', value_text: '#ef4444' })],
+        TAG_3: [makePropertyRow({ key: 'note', value_text: 'accent-blue' })],
+      }),
+    })
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+
+    expect(useResolveStore.getState().tagColors).toEqual({
+      TAG_1: 'accent-blue',
+      TAG_2: 'accent-rose',
+    })
+  })
+
+  it('drops a colour a peer cleared on the next preload', async () => {
+    useResolveStore.setState({ tagColors: { TAG_1: 'accent-blue' } })
+    stubInvoke(mockedInvoke, {
+      list_all_pages_in_space: () => [],
+      list_all_tags_in_space: () => [tagRow('TAG_1', 'one')],
+      get_batch_properties: () => ({}),
+    })
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true)
+
+    expect(useResolveStore.getState().tagColors).toEqual({})
+  })
+
+  it('keeps the names and the last colours when the colour read fails', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    useResolveStore.setState({ tagColors: { TAG_1: 'accent-blue' } })
+    stubInvoke(mockedInvoke, {
+      list_all_pages_in_space: () => [],
+      list_all_tags_in_space: () => [tagRow('TAG_1', 'renamed')],
+      get_batch_properties: () => Promise.reject(new Error('offline')),
+    })
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true)
+
+    const state = useResolveStore.getState()
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'TAG_1'))?.title).toBe('renamed')
+    expect(state.tagColors).toEqual({ TAG_1: 'accent-blue' })
+    expect(warnSpy).toHaveBeenCalledWith(
+      'ResolveStore',
+      'failed to read tag colours',
+      { spaceId: TEST_SPACE_ID },
+      expect.any(Error),
+    )
+    warnSpy.mockRestore()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // preload — in-flight coalescing (#753)
 // ---------------------------------------------------------------------------
 describe('preload in-flight coalescing (#753)', () => {
@@ -693,6 +765,7 @@ describe('preload targeted rescan (#3321)', () => {
           }))
       },
       list_all_tags_in_space: () => tagRows,
+      get_batch_properties: () => ({}),
     })
 
     return { titles, deleted, missing, tagRows }
@@ -1941,6 +2014,7 @@ describe('targeted rescan re-resolves cached blocks no full scan named (#5245)',
     stubInvoke(mockedInvoke, {
       list_all_pages_in_space: () => [pageRow('PAGE_1', 'Page One'), pageRow('PAGE_2', 'Page Two')],
       list_all_tags_in_space: () => [tagRow('TAG_1', 'tag-one')],
+      get_batch_properties: () => ({}),
       batch_resolve: (args) => {
         const ids = (args['ids'] as string[] | undefined) ?? []
         batches.push(ids)
@@ -1998,6 +2072,7 @@ describe('a scan re-resolves the cached entries it no longer names (#5289)', () 
     stubInvoke(mockedInvoke, {
       list_all_pages_in_space: () => live('page').map((r) => pageRow(r.id, r.title)),
       list_all_tags_in_space: () => live('tag').map((r) => tagRow(r.id, r.title)),
+      get_batch_properties: () => ({}),
       batch_resolve: (args) => {
         const ids = (args['ids'] as string[] | undefined) ?? []
         batches.push(ids)
