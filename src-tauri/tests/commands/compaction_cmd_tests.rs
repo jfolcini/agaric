@@ -207,19 +207,11 @@ async fn compact_op_log_cmd_noop_when_no_old_ops() {
     mat.shutdown();
 }
 
-/// Regression: `compact_op_log_cmd_inner` previously returned
-/// `ops_deleted = eligible_in_tx`, the count of ops eligible at the
-/// start of the wrapper transaction. That figure is stale by the time
-/// the inner `snapshot::compact_op_log` runs (more ops can be appended
-/// between commit and the inner write phase, and the frontier guard inside
-/// `compact_op_log` may also skip some). The fix routes the real
-/// `deleted_count` from `snapshot::compact_op_log` up to the wrapper.
-///
-/// This test pre-seeds the op_log with N eligible ops, runs
-/// `compact_op_log_cmd_inner`, and asserts that the reported
-/// `ops_deleted` matches the **actual** row delta in `op_log`. It
-/// guards against doc-code drift if a future refactor reintroduces
-/// `eligible_in_tx` as the source of `ops_deleted`.
+/// `compact_op_log_cmd_inner` reports the number of rows the purge
+/// actually removed, which the frontier guard inside
+/// `snapshot::compact_op_log` can make smaller than a pre-flight count of
+/// eligible ops. Seeds N eligible ops and asserts `ops_deleted` matches the
+/// real row delta in `op_log`.
 #[tokio::test]
 async fn compact_op_log_returns_real_deleted_count_l42() {
     let (pool, _dir) = test_pool().await;
@@ -304,10 +296,7 @@ async fn compact_op_log_returns_real_deleted_count_l42() {
     let actual_deleted = count_before - count_after;
 
     // Core invariant: the reported `ops_deleted` is the **real**
-    // number of rows the inner DELETE removed, not the pre-flight
-    // recount. Any regression that wires the wrapper back to
-    // `eligible_in_tx` would break this invariant the moment the two
-    // figures drift.
+    // number of rows the inner DELETE removed, not a pre-flight count.
     assert_eq!(
         result.ops_deleted, actual_deleted,
         "ops_deleted ({}) must equal the actual op_log row delta ({}); \

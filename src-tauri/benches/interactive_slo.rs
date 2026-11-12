@@ -718,7 +718,7 @@ async fn seed_tags_with_usage(
 /// Seeds `n_pages` page blocks, each with `children_per_page` child blocks
 /// whose `page_id` points back at the owning page (the column the
 /// `child_block_count` subselect in
-/// `materializer/handlers/pages_cache.rs:104-120` filters on — plain
+/// `agaric_engine::apply::pages_cache::recompute_pages_cache_counts_for_pages` filters on — plain
 /// `seed_pages_with_links`-style children don't set `page_id`, which would
 /// make that subselect scan zero rows). Every page's first child also links
 /// to 3 OTHER pages' own block ids (round-robin), so `inbound_link_count`
@@ -4851,8 +4851,7 @@ const SLO_TAGS_CACHE_DIRECT_SQL: &str = "SELECT b.id, b.content, COALESCE(t.cnt,
              ORDER BY b.id ASC";
 
 /// #2508 scope item 1 — the two `pages_cache` count subselects from
-/// `materializer/handlers/pages_cache.rs:104-120`
-/// (`recompute_pages_cache_counts_for_pages`), adapted from an `UPDATE
+/// `agaric_engine::apply::pages_cache::recompute_pages_cache_counts_for_pages`, adapted from an `UPDATE
 /// pages_cache SET … WHERE page_id IN (…)` into a plain `SELECT … FROM
 /// blocks p WHERE p.id IN (…)` — same two correlated subqueries, same
 /// predicates, just read instead of written, and rooted on `blocks` (the

@@ -144,12 +144,10 @@ pub fn should_attempt_sync_with_discovered_peer(
 /// future caller must reconnect over a link-local address, preserve the
 /// scope ID in a follow-up change.
 ///
-/// This is the one constructor that yields `endpoint_id: None`, and the reason that
-/// field is an `Option` at all: `last_address` is a row written by the pre-iroh
-/// transport, so there is no key to carry (see migration
+/// This is the one constructor that can yield `endpoint_id: None`, and the reason that
+/// field is an `Option` at all: `last_address` carries no key (see migration
 /// `0107_peer_refs_endpoint_id.sql` on why a synthesised one would be worse than an
-/// absent one). #3464 retires `last_address`, which retires this path and the `Option`
-/// together.
+/// absent one). Why `last_address` is still kept: [`resolve_peer_address`].
 ///
 /// Extracted from `daemon_loop` Branches B/C for independent testing.
 pub fn build_fallback_peer(

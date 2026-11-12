@@ -1510,170 +1510,36 @@ fn dial_timeout_text(peer_id: &str, diagnosis: Option<EgressReport>) -> String {
 
 /// Book an initiator-side failure: **always** the backoff, **always** the
 /// log, but the user-facing `Sync failed: …` / `Connection failed: …` /
-/// identity-mismatch event only once per *distinct failure text* per streak —
-/// twice at most, if the pair goes dark mid-streak and the text is the same
-/// on both sides of that transition (#4305).
+/// identity-mismatch event only once per `(failure text, still serving)` pair
+/// per streak.
 ///
-/// # The shape this exists for (#4084 → #4103 → #4120)
+/// A device whose outbound dial keeps failing while its peer still pulls from
+/// it would otherwise toast the same unchanged failure every retry, forever;
+/// a toast the user cannot act on again teaches them to dismiss toasts unread.
+/// The retry itself is owed and is not touched: the backoff ladder already caps
+/// at the resync cadence, and [`SyncScheduler::peers_due_for_resync`] reads
+/// `synced_at` only.
 ///
-/// A sync session is one-directional (#610): the initiator pulls, the
-/// responder streams. A device whose outbound dial persistently fails while
-/// its inbound sessions succeed is therefore *responder-only* — it serves the
-/// peer every window and never pulls it.
+/// `still_serving` ([`peer_pulled_from_us_recently`]: has this peer streamed to
+/// us inside two resync intervals) is part of the key, not a switch: "our pull
+/// fails while the peer still serves us" and "the peer stopped talking to us"
+/// are different facts, so the same text reports once in each state and then
+/// stops. What stays true after that belongs on the peer row, not in a toast.
 ///
-/// `peer_refs` already records that faithfully: #4103 added `streamed_at`, so
-/// the streamer stamps the session it actually performed and the device list
-/// renders `MAX(synced_at, streamed_at)` instead of "never synced".
-/// [`SyncScheduler::peers_due_for_resync`] still reads `synced_at` **only**,
-/// which is correct and is pinned: a `streamed_at`-aware due-check hands the
-/// peer a starvation lever, because it is the *peer's* activity that refreshes
-/// our `streamed_at`, inside every one of our windows (#610; pinned on both
-/// the `None` and stale-`Some` arms by
-/// `peers_due_for_resync_ignores_streamed_at_4084`).
+/// The memory is a bounded set of the streak's reported texts (see
+/// [`SyncScheduler::record_failure_and_take_report`]), so alternating causes
+/// stay suppressed. It rides on the scheduler's backoff entry, which
+/// [`SyncScheduler::record_success`] drops on the next successful pull and
+/// [`SyncScheduler::clear_backoff`] drops on a pairing act, so the next failure
+/// after either is reported again.
 ///
-/// So the pull is genuinely owed and genuinely retried, and the retry *cadence*
-/// is already the resync cadence — `record_failure`'s ladder caps at
-/// `MAX_BACKOFF`, which is `DEFAULT_RESYNC`. What was left of #4084's reported
-/// impact is the reporting: a red toast once a minute, forever, about a
-/// condition the user was told about the first time and that has not changed
-/// since — while the pair is, by the peer's own inbound sessions, visibly
-/// exchanging data.
-///
-/// That is #3505's lesson in a second place. There the generic wrapper said
-/// "Sync failed" about a handshake that was working; here it says it about a
-/// stable, already-reported one-way condition. Either way a toast the user
-/// cannot act on again is a toast they learn to dismiss unread — including on
-/// the sessions that really did just fail.
-///
-/// # Where freshness went (#4305)
-///
-/// #4120 built this as a two-term gate: `already_reported && still_serving`,
-/// where `still_serving` is
-/// [`peer_pulled_from_us_recently`] — has this peer streamed to us inside two
-/// resync intervals. The second term was there to protect a real signal: a peer
-/// with no recent `streamed_at` is not exchanging with us in **either**
-/// direction, and staying quiet about that would hide a total outage behind one
-/// toast the user may have missed.
-///
-/// But a peer that has genuinely gone away stops streaming *immediately*, so
-/// `still_serving` goes false within about two minutes and then stays false —
-/// at which point the gate can never close again and the same unchanged
-/// `Sync failed: sync ended in terminal state: …` fires every sixty seconds for
-/// as long as the app runs. That is #4084's own complaint, arrived at from the
-/// opposite end: #4084 was the toast that would not stop about a pair that was
-/// working, and this was the toast that would not stop about a pair that was
-/// not.
-///
-/// The signal `still_serving` carries is preserved by moving it out of the gate
-/// and into the **key** (see [`SyncScheduler::record_failure_and_take_report`]).
-/// The suppression key is `(text, still_serving)`, so:
-///
-/// * the first failure of a given text always reports — a peer going from
-///   healthy to unreachable is never silent, which is the transition a user
-///   does need to see;
-/// * when the pair later goes dark, that same text reports once more, because
-///   "our pull fails while the peer still serves us" and "the peer has stopped
-///   talking to us entirely" are different facts;
-/// * and then it stops. What remains true after that is durable, so it belongs
-///   on durable surfaces — the peer row and the sync status dot — not on a
-///   transient one. This is the same call #4300 made for `unpaired_by_peer_at_ms`.
-///
-/// The bound is therefore two reports per distinct text per streak, and a
-/// `streamed_at` flapping across the window boundary cannot exceed it: both
-/// values of the flag are remembered the first time each is seen.
-///
-/// # What counts as a repeat, and where the memory resets
-///
-/// A repeat is the *same failure text* against the *same peer*. Keying on the
-/// peer's failure count alone would swallow a failure whose cause changed
-/// mid-streak — see the inline comment in the body.
-///
-/// The memory resets exactly where the situation changes, because it rides on
-/// the scheduler's per-peer backoff entry: [`SyncScheduler::record_success`]
-/// drops the entry on the next successful pull, and
-/// [`SyncScheduler::clear_backoff`] drops every entry on a pairing act (#3547).
-/// The next failure after either is reported again, in full.
-///
-/// # Alternating causes (#4201)
-///
-/// The memory is a bounded *set* of the streak's reported texts, not the single
-/// slot #4120 shipped. A peer failing `A, B, A, B, …` matched the slot on
-/// neither cycle, so suppression never engaged and #4084's forever-toast came
-/// back at half the rate. See [`SyncScheduler::record_failure_and_take_report`]
-/// and `MAX_REMEMBERED_REPORTS` for the bound and for what evicting the oldest
-/// text degrades to.
-///
-/// # Why the identity refusal routes through here too (#4203)
-///
-/// It used to be the one initiator-side failure that emitted its own event
-/// unconditionally, on the argument that "a different device is answering to a
-/// paired peer's name" is security-relevant, not transient, and asks for an
-/// action the user genuinely has to take. All of that is true of the *first*
-/// report and none of it is true of the hundredth: a red toast once a minute
-/// forever is the #4084 shape with a different string, and it teaches the user
-/// to dismiss toasts unread — including the ones that are new.
-///
-/// Routing it here is a narrower change than it looks:
-///
-/// * Its text is [`IDENTITY_MISMATCH_MESSAGE`], a **constant** — so the
-///   suppression key for this one site is exactly stable, with no `Display`
-///   dependency at all.
-/// * It is reported once while the *real* peer is still pulling from us, and
-///   again if our `streamed_at` for that peer later goes stale — the case where
-///   a user who has lost their peer to something announcing its name most needs
-///   to hear it. #4305 bounded that second report at one instead of one per
-///   cycle; the condition itself is not transient, so past the second telling
-///   it is the peer row's to render, not a toast's to repeat.
-/// * That gate is not fooled by the impostor, and this is what makes routing a
-///   *security-relevant* refusal through it safe at all. `streamed_at` is
-///   stamped by `session_state_machine`'s responder path, and the responder
-///   resolves an inbound session through `get_peer_ref_by_endpoint_id` on the
-///   key the QUIC handshake **authenticated** — not on any name the peer
-///   claims. So a fresh `streamed_at` on this peer's row is evidence that the
-///   device holding the *pinned* key streamed to us inside the window. The
-///   device announcing the mismatched key resolves to a different row, or to
-///   none, and cannot refresh it — with one exception, stated below rather than
-///   left for a reader to discover, because this bullet is what licenses
-///   suppressing a security-relevant refusal at all.
-/// * **The exception that used to sit here, and why it is closed (#4230).**
-///   `server::handle_incoming_sync` admits a key it has no binding for when the
-///   caller proves knowledge of the pairing passphrase (#855/#1519), and on
-///   that branch alone it deliberately does *not* set `expected_remote_id` — so
-///   the FSM falls back to the device id the peer advertised, which is a claim.
-///   A proof-bearing device could therefore claim a paired peer's id and have
-///   `record_stream_in_tx` stamp that peer's `streamed_at` (and, worse for
-///   reasons that have nothing to do with toasts, its `loro_vv_bytes`). It
-///   could never take the *binding* — post-session `peer_is_bound_to_another_key`
-///   refuses to re-point a bound peer — and #4230 arms that same predicate on
-///   the bookkeeping writes, via
-///   [`SyncOrchestrator::with_unverified_claim_guard`](crate::sync_protocol::SyncOrchestrator::with_unverified_claim_guard),
-///   so the claimed-id stamp is now skipped for exactly the rows the bind would
-///   have protected. That covers every peer this refusal can fire about: it
-///   fires only when an *announced* key disagrees with a **pinned** one, so the
-///   victim row is by construction already bound, which is the case the guard
-///   refuses. What remains unguarded is a row with no `endpoint_id` at all.
-///   *This* refusal cannot fire about such a row — it needs a pinned key to
-///   mismatch — but the other failures routed through this function can, and
-///   the residual is worth stating rather than leaving a bullet's scope to be
-///   read as the whole function's: a proof-bearing device that claims an
-///   **unbound** id still freshens that id's `streamed_at`, and so can withhold
-///   its *repeat* connect/session-failure reports. Bounded twice over — the
-///   first report of any `(text, still_serving)` pair always lands, and the
-///   freshness window goes false two intervals after the last stamp — which,
-///   since #4305, itself produces one further report rather than none. #4230 leaves that half open deliberately: deferring the
-///   writes until after the bind — the alternative the issue suggested — closes
-///   none of it, since `peer_is_bound_to_another_key` permits an unbound row
-///   and the bind would then hand the row itself to the claimant.
-/// * The memory resets on a successful pull and on a pairing act (#3547),
-///   which is precisely "the user re-paired, so tell them again if it is still
-///   wrong".
-/// * Nothing else about the refusal changes: it still refuses the session, it
-///   still books the backoff, and its `tracing::warn!` still fires every cycle.
-///
-/// # What this deliberately does not do
-///
-/// It does not touch the backoff (the retry pacing is right) and it does not
-/// touch `peers_due_for_resync` (see above).
+/// The identity refusal routes here too: its text is the constant
+/// [`IDENTITY_MISMATCH_MESSAGE`], and `streamed_at` is stamped only for the row
+/// the QUIC handshake authenticated (a claimed id is refused for a bound row by
+/// [`SyncOrchestrator::with_unverified_claim_guard`](crate::sync_protocol::SyncOrchestrator::with_unverified_claim_guard)),
+/// so an impostor cannot keep the real peer's report quiet. A proof-bearing
+/// device claiming an *unbound* id can still freshen its `streamed_at`, which
+/// at most withholds repeats of a text already reported once.
 fn record_initiator_failure(
     scheduler: &SyncScheduler,
     event_sink: &Arc<dyn SyncEventSink>,
@@ -1682,37 +1548,20 @@ fn record_initiator_failure(
     message: String,
     rejection: Option<&Rejection>,
 ) {
-    // Computed before the scheduler call because it reads `peer_refs` and the
-    // clock, not the scheduler's map — keeping it outside means the one
-    // acquisition below covers exactly the check-and-record and nothing else.
-    //
-    // #4305: this is now part of the suppression *key* rather than a switch
-    // that turns suppression off. See `record_failure_and_take_report`.
+    // Computed before the scheduler call so the one acquisition below covers
+    // exactly the check-and-record.
     let still_serving_this_peer = peer_pulled_from_us_recently(scheduler, peer_refs, peer_id);
 
-    // #4385: the eviction discriminator, computed HERE for the same reason as
-    // the flag above — this function is handed a fresh `&[PeerRef]` slice it
-    // already reads, and `evict_for_new_peer` runs under a `std::sync::Mutex`
-    // where a DB read would be a blocking call inside a sync mutex on an async
-    // runtime. Row PRESENCE, not `endpoint_id.is_some()`: a migrated pair is
-    // unbound until its first successful iroh session and a refused bind
-    // leaves the row unbound, so the bind predicate is exactly wrong on the
-    // peers the policy protects. See `PeerMembership`.
+    // Computed here because `evict_for_new_peer` runs under a sync mutex where
+    // a DB read would block the runtime. Row presence, not
+    // `endpoint_id.is_some()`: a migrated or refused pair stays unbound, and
+    // those are the peers the eviction policy protects. See `PeerMembership`.
     let membership = PeerMembership::of(peer_refs, peer_id);
 
-    // ONE acquisition books the failure and decides the report together
-    // (#4202). "Already reported" is per `(peer, message, still-serving)`, NOT
-    // per peer: a failure whose *cause changes* mid-streak is news the user has
-    // not been told, and a streak count cannot express that. The count is also
-    // the wrong key for any route that books a failure without reporting
-    // through here — `SyncScheduler::record_failure` is still public, and #4203
-    // removed the last in-tree caller of it (the pinned-identity refusal, which
-    // now routes here) rather than making the count safe to key on.
-    //
-    // The failure mode of the message key is bounded in the safe direction: a
-    // failure text that churns (an error string carrying a varying detail)
-    // degrades to reporting every cycle — i.e. back to the pre-#4120 behaviour,
-    // never quieter than it.
+    // One acquisition books the failure and decides the report together.
+    // Keyed on the message, not the streak count: a failure whose cause changes
+    // mid-streak is news. A churning text degrades to reporting every cycle,
+    // never to silence.
     let booking = scheduler.record_failure_and_take_report(
         peer_id,
         &message,
@@ -1865,9 +1714,7 @@ fn refuse_on_identity_mismatch(
 /// Every advertised address goes in at once and iroh races them. The sequential
 /// loop this replaces paid a full connect timeout on a dead path before trying a
 /// live one, which is exactly the multi-homed LAN case — a device on both WiFi and
-/// Ethernet — that the address list exists for. `peer_refs.last_address` goes with
-/// the loop: iroh keeps its own per-endpoint path state, so a column the daemon
-/// writes and nothing reads is worse than no column.
+/// Ethernet — that the address list exists for.
 fn dial_addr(
     ctx: &SyncSessionContext<'_>,
     peer: &DiscoveredPeer,

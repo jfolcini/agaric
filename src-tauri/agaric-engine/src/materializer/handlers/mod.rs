@@ -13,8 +13,6 @@
 //! - `task_handlers`: foreground/background queue task dispatch.
 //! - `apply`: the per-op apply transaction, apply cursor, and
 //!   Restore/Delete cascade fan-out + cohort collectors.
-//!   `pages_cache`: `pages_cache.{inbound_link_count,
-//!   child_block_count}` maintenance (the canonical recompute SELECT).
 //! - `loro_apply`: engine-routed `apply_*_via_loro` + the SQL purge cascade.
 //! - `sql_only`: the `apply_*_sql_only` projection fallbacks.
 //! - `attachments`: attachment apply handlers + orphan-cleanup (C-3c).
@@ -40,10 +38,10 @@ mod apply;
 mod attachments;
 pub(crate) mod descendant_fanout_dropped;
 mod loro_apply;
-mod pages_cache;
 mod sql_only;
-pub(crate) mod sql_only_fallback;
 mod task_handlers;
+use crate::apply::pages_cache;
+pub(crate) use crate::apply::sql_only_fallback;
 
 // Private glob re-exports so the STAYING sibling submodules (`apply`'s
 // `apply_op` + fan-out, `task_handlers`) resolve the re-exported kernel items

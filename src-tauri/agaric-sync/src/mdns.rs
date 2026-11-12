@@ -151,8 +151,7 @@ pub struct DiscoveredPeer {
     /// `sync_daemon::discovery::build_fallback_peer`, which synthesises a peer from
     /// `peer_refs.last_address` — a row that predates iroh and has no key to offer.
     /// Migration `0107_peer_refs_endpoint_id.sql` records why inventing one there would
-    /// be worse than leaving it absent, and #3464 retires `last_address` at the
-    /// cutover, which retires this `Option` with it.
+    /// be worse than leaving it absent.
     pub endpoint_id: Option<EndpointId>,
     pub addresses: Vec<IpAddr>,
     pub port: u16,

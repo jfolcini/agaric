@@ -115,7 +115,7 @@ A cursor whose `position` slot does not match the requested sort is rejected by 
 
 `inbound_link_count` and `child_block_count` are **materialised into `pages_cache`** (migration `0069`). The IPC's SELECT drives from `pages_cache` and reads the cached columns directly; the previous per-page `COUNT(DISTINCT bl.source_id)` / `COUNT(*)` correlated subqueries are gone.
 
-The materializer maintains both columns byte-identically to the canonical SELECT on every `CreateBlock` / `EditBlock` / `DeleteBlock` / `RestoreBlock` / `PurgeBlock` op (helpers live in `src-tauri/agaric-engine/src/materializer/handlers/pages_cache.rs`). The implementation uses **recompute-on-touch** (re-run the canonical aggregate for affected pages on each op) rather than delta-math — per-op cost is bounded by the affected-page count (typically 1-5) and the parity test catches any drift.
+The materializer maintains both columns byte-identically to the canonical SELECT on every `CreateBlock` / `EditBlock` / `DeleteBlock` / `RestoreBlock` / `PurgeBlock` op (helpers live in `src-tauri/agaric-engine/src/apply/pages_cache.rs`). The implementation uses **recompute-on-touch** (re-run the canonical aggregate for affected pages on each op) rather than delta-math — per-op cost is bounded by the affected-page count (typically 1-5) and the parity test catches any drift.
 
 The parity contract is non-negotiable: `src-tauri/agaric-engine/src/materializer/tests/pages_cache_parity.rs` (`mixed_fixture_full_lifecycle` via `assert_parity`) exercises a mixed 10-page fixture through every materializer op and asserts `pages_cache.{inbound,child}_block_count == SELECT COUNT(...) FROM block_links / blocks` after each step.
 

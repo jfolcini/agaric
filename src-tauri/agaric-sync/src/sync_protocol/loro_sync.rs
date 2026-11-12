@@ -40,12 +40,6 @@
 //! live sync session re-detects the gap in [`apply_remote`] and routes into
 //! the snapshot catch-up. Snapshot-shaped slots stay safe to import
 //! unconditionally.
-//!
-//! ## TODOs
-//!
-//! * `peer_refs.loro_vv_bytes` schema / read. Callers pass the peer's
-//!   vv as `Option<&[u8]>`; the read-from-SQL piece lands with the
-//!   push wiring.
 
 use sqlx::SqlitePool;
 

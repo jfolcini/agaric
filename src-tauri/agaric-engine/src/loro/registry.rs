@@ -53,7 +53,7 @@
 //!
 //! Callers hold an owned, `Arc`-backed engine guard ([`EngineGuard`]),
 //! so an engine can outlive its map entry: a
-//! [`clear`](LoroEngineRegistry::clear) (snapshot RESET) or an
+//! `clear` (snapshot RESET) or an
 //! [`install_engine`](LoroEngineRegistry::install_engine) replacement
 //! racing an in-flight engine operation detaches that engine from the
 //! map. The in-flight operation completes against the detached engine,
@@ -133,7 +133,7 @@ pub struct LoroEngineRegistry {
     /// The saver captures a space's stamp when it collects the export, then
     /// clears the flag after a successful persist ONLY if the stamp is
     /// unchanged. Because stamps are drawn from a single ever-increasing
-    /// counter, a re-mark (even one that races a [`clear`](Self::clear) and
+    /// counter, a re-mark (even one that races a `clear` and
     /// a re-insert of the same space) always produces a STRICTLY GREATER
     /// stamp than any the saver captured — so the conditional clear never
     /// wipes the dirty signal of a mutation whose new state wasn't the one
@@ -143,11 +143,11 @@ pub struct LoroEngineRegistry {
     dirty: Mutex<HashMap<SpaceId, u64>>,
     /// #2201 — monotonic source of dirty-mark stamps. `fetch_add`-bumped on
     /// every [`mark_dirty`](Self::mark_dirty); never reset (not even by
-    /// [`clear`](Self::clear)), so a stamp is globally unique-and-ordered
+    /// `clear`), so a stamp is globally unique-and-ordered
     /// across the registry's lifetime. That is what lets a stale captured
     /// stamp never collide with a fresh post-clear re-mark.
     mark_seq: AtomicU64,
-    /// #607 review: monotone counter bumped by [`clear`](Self::clear) and by
+    /// #607 review: monotone counter bumped by `clear` and by
     /// [`evict_space`](Self::evict_space).
     ///
     /// `save_all_engines` collects O(1) doc handles, drops the registry
@@ -228,7 +228,7 @@ impl LoroEngineRegistry {
     }
 
     /// #607 review: current clear-generation. See the field docs —
-    /// `save_all_engines` uses this to detect a [`clear`](Self::clear) or an
+    /// `save_all_engines` uses this to detect a `clear` or an
     /// [`evict_space`](Self::evict_space) racing its collect→write span.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
@@ -588,12 +588,9 @@ impl LoroEngineRegistry {
             .insert(space_id, Arc::new(Mutex::new(engine)));
     }
 
-    /// Drop every registered engine (#607).
-    ///
-    /// Written for the snapshot RESET's wholesale wipe of `loro_doc_state`,
-    /// which #4699 deleted; no production path calls it now. The dropped
-    /// engines must not be saved over the wiped table by the periodic
-    /// `save_all_engines` tick or the `RunEvent::Exit` save. Subsequent
+    /// Drop every registered engine (#607). Test-only: the snapshot RESET it
+    /// served was deleted in #4699, and tests use it to start from empty
+    /// engines or to bump the generation. Subsequent
     /// [`for_space`](Self::for_space) calls lazy-create fresh empty engines,
     /// exactly like a first boot.
     ///
@@ -614,6 +611,7 @@ impl LoroEngineRegistry {
     /// map lock is held, so `save_all_engines`' pre-collect generation
     /// capture vs. re-check-per-write protocol still detects any clear
     /// that lands after its handle collection.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn clear(&self) {
         let mut map = self.inner.lock();
         map.clear();
@@ -649,7 +647,7 @@ impl LoroEngineRegistry {
     /// [`rehydrate_registry`](crate::loro::snapshot::rehydrate_registry) would
     /// rebuild it from that resurrected row forever.
     ///
-    /// Mirrors [`clear`](Self::clear) but for one key:
+    /// Mirrors `clear` but for one key:
     /// * removes the map entry — an in-flight engine op holding the `Arc` guard
     ///   completes against the now-detached engine, whose state then drops (see
     ///   "Detached engines" in the module docs); a later
@@ -719,7 +717,7 @@ impl LoroEngineRegistry {
     /// construction — its `applied_through_seq` watermark is a
     /// conservative per-space lower bound read BEFORE the collect, and
     /// its generation re-check before every write handles a racing
-    /// [`clear`](Self::clear).
+    /// `clear`.
     pub fn snapshot_all_engines(&self) -> Vec<(SpaceId, Result<Vec<u8>, AppError>)> {
         // Phase 1: clone the Arc handles under the map lock, then release it
         // (no engine lock is taken while the map lock is held — see the
@@ -760,7 +758,7 @@ impl LoroEngineRegistry {
     ///    release it — this is the atomic cut of what to persist this pass;
     /// 2. resolve each dirty space's engine `Arc` under the MAP lock, release
     ///    it (a dirty space no longer in the map — e.g. cleared — is dropped
-    ///    from this pass and its stale flag left for [`clear`](Self::clear) /
+    ///    from this pass and its stale flag left for `clear` /
     ///    a future re-mark to reconcile; it is never persisted);
     /// 3. per space, take THAT engine's lock only for the O(1)
     ///    [`LoroEngine::doc_handle`] clone, then export with no lock held.
