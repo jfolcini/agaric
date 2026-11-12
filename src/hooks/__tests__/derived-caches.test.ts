@@ -16,6 +16,7 @@ import { getCalendarPageDatesEpoch } from '@/lib/calendar-page-dates-cache'
 import { getRecordedGraphStructureChanges } from '@/lib/graph-structure-events'
 import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { pagePropertiesQueryKey } from '@/lib/property-caches'
+import { registerPropertyChangeTarget } from '@/lib/property-change-dispatch'
 import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
 import { propertyValuesQueryKey } from '@/lib/property-values-cache'
 import { queryClient } from '@/lib/query-client'
@@ -54,9 +55,17 @@ const nameCaches: Probe = () => {
   return () => changes.length === 1 && changes[0]?.kind === 'invalidated'
 }
 
+/** What a block tree's property batch hears: a payload-less change, which it re-reads on. */
+const treePropertyBatches: Probe = () => {
+  const changes: unknown[] = []
+  cleanups.push(registerPropertyChangeTarget((payload) => changes.push(payload)))
+  return () => changes.length === 1 && changes[0] === undefined
+}
+
 const CACHES: Array<[string, Probe]> = [
   ['the graph-structure counter', counter(getRecordedGraphStructureChanges)],
   ['the block-property counter', counter(getBlockPropertyInvalidationKey)],
+  ["the open block trees' property batches", treePropertyBatches],
   ['the property key list', query(propertyKeysQueryKey('SPACE'))],
   ['the property value list', query(propertyValuesQueryKey('status'))],
   ["the open page's properties", query(pagePropertiesQueryKey('PAGE'))],

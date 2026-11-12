@@ -38,6 +38,22 @@ const GS3_TEXT = 'Create new blocks by pressing Enter at the end of any block.'
 const LONG_TITLE = 'Reload Long Page'
 const LONG_ROWS = 150
 
+/** What a row shows from the page's property batch, which only a property event or a reset re-reads. */
+const BATCHED_ROW_STATE = [
+  {
+    name: 'a property chip',
+    key: 'assignee',
+    value: 'Ana',
+    shown: (row: Locator) => row.getByText('Ana'),
+  },
+  {
+    name: 'a list marker',
+    key: 'listStyle',
+    value: 'bullet',
+    shown: (row: Locator) => row.getByTestId('list-marker'),
+  },
+]
+
 function syncComplete(changedPageIds: string[]) {
   return {
     type: 'complete',
@@ -327,4 +343,38 @@ test.describe('a reload of the open page keeps its editor and rows (#6533) @edit
       .toEqual([{ blockId: GS3, content: `${GS3_TEXT}!` }])
     expect(await getInvokeCalls(page, 'flush_draft')).toEqual([])
   })
+
+  for (const state of BATCHED_ROW_STATE) {
+    test(`a page undo and redo take ${state.name} off a row and back, the rows staying mounted`, async ({
+      page,
+    }) => {
+      await openPage(page, 'Getting Started')
+      const row = page.locator(`li[data-block-id="${GS3}"]`)
+      await ipc(page, 'set_property', {
+        blockId: GS3,
+        key: state.key,
+        value: {
+          value_text: state.value,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
+      })
+      await expect(state.shown(row)).toHaveCount(1)
+      await watchTree(page)
+
+      // An undo and a redo write properties with no property event, and the rows stay mounted:
+      // the reset that follows the reload is what re-reads them.
+      await blurEditors(page)
+      await page.keyboard.press('Control+z')
+      await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
+      await expect(state.shown(row)).toHaveCount(0)
+      await page.keyboard.press('Control+y')
+      await expect(page.getByLabel('Notifications alt+T').getByText(/Red(one|id)/)).toBeVisible()
+      await expect(state.shown(row)).toHaveCount(1)
+
+      expect(await treeMutations(page)).toEqual(UNCHANGED_TREE)
+    })
+  }
 })
