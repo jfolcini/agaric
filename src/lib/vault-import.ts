@@ -343,11 +343,11 @@ export interface ImportUnit {
   bytes: number
   /**
    * The `path` a unit the backend may merge into the page of its title
-   * imports as, known before the run: a Markdown file, a folder's note or a
-   * note with attachments too (#6277 decision 7), whose existing page the run
-   * asks about first. Absent for a Logseq or Org file, which never merges.
+   * imports as, which the run asks about first (#6277 decision 7): known
+   * before the run, or for a Logseq page or an Org file read from its text,
+   * whose title can be its own (`title::`, `#+TITLE`).
    */
-  merges?: string | undefined
+  merges?: string | (() => Promise<string>) | undefined
   load: () => Promise<{
     content: string
     path: string
@@ -552,7 +552,17 @@ export function mdFilesToUnits(
     // Count bytes from the file size (known without reading) so a load
     // failure still advances the byte counter, matching the pre-refactor loop.
     bytes: file.size,
-    merges: !logseq && extension !== '.org' ? importedAs : undefined,
+    merges:
+      logseq || extension === '.org'
+        ? async () => {
+            const { paths, graph } = await naming()
+            const path = paths[index] as string
+            const text = await file.text()
+            if (extension === '.org') return retitle(path, orgToMarkdown(text).title)
+            const title = graph === null ? null : logseqTitleProperty(text)
+            return title === null ? path : `${title}.md`
+          }
+        : importedAs,
     load: async () => {
       const { paths, notesByName, graph } = await naming()
       const text = await file.text()

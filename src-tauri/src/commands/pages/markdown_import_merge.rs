@@ -50,10 +50,9 @@ pub(super) struct MergedPage {
 
 /// Whether a file merges into the page of its title that holds blocks.
 pub(super) struct MergeRule<'a> {
-    /// Whether a buffer save reads the file as its import does, its per-file
-    /// rewrites applied first ([`merge_source`]): a Markdown file. An import
-    /// reads a Logseq or Org file as an outline.
-    readable: bool,
+    /// Whether the import reads the file as an outline, a Logseq or Org
+    /// file, which merges as its render ([`render_outline`]).
+    pub(super) outline: bool,
     /// The pages earlier files of the import's run created or merged into:
     /// two notes of one title in a run are two pages.
     run_pages: &'a [String],
@@ -64,27 +63,23 @@ impl<'a> MergeRule<'a> {
     /// wrote `run_pages`.
     pub(super) fn new(dialect: ImportDialect, run_pages: &'a [String]) -> Self {
         Self {
-            readable: dialect == ImportDialect::Markdown,
+            outline: dialect == ImportDialect::LogseqOrg,
             run_pages,
         }
     }
 
     fn merges(&self, page_id: &str) -> bool {
-        self.readable && !self.run_pages.iter().any(|id| id == page_id)
+        !self.run_pages.iter().any(|id| id == page_id)
     }
 
-    /// Why a file titled `name` did not merge into `page_id`, and the
-    /// title, `imported_as`, it was imported under instead.
-    fn warning(&self, name: &str, page_id: &str, imported_as: &str) -> String {
-        let why = if self.run_pages.iter().any(|id| id == page_id) {
-            format!("an earlier file of this import wrote the page '{name}'")
-        } else {
-            format!(
-                "a page titled '{name}' is in this space, and a Logseq or Org file does not \
-                 merge into it"
-            )
-        };
-        format!("{why}; the file was imported as '{imported_as}'")
+    /// Why a file titled `name` did not merge into the page of its title:
+    /// an earlier file of the run wrote it, and the title, `imported_as`, it
+    /// was imported under instead.
+    fn warning(name: &str, imported_as: &str) -> String {
+        format!(
+            "an earlier file of this import wrote the page '{name}'; the file was imported as \
+             '{imported_as}'"
+        )
     }
 }
 
@@ -163,10 +158,10 @@ pub(super) async fn import_target(
             page_id: page.id,
             title: page.title,
         },
-        Some(page) => {
+        Some(_) => {
             let names = SpacePageNames::read(conn, space_id).await?;
             let free = crate::repair::name_collisions::first_free_title(&names, title);
-            warnings.push(rule.warning(title, &page.id, &free));
+            warnings.push(MergeRule::warning(title, &free));
             ImportTarget::Create(free)
         }
     })
@@ -179,14 +174,16 @@ pub(super) async fn import_target(
 /// [`pair_unanchored_lines`], and [`apply_page_source_inner`] saves the file
 /// over the buffer, as one transaction and so one undo, which the op cap
 /// refuses as it refuses any save. The file's `# Title` line is its title, as
-/// on import, and the file is read as [`merge_source`] reads it. Returns the
-/// save's report and the ops it appended, and what the save did not read.
+/// on import, and the file is read as [`merge_source`] reads it; a file read
+/// as an outline is its `outline` render. Returns the save's report and the
+/// ops it appended, and what the save did not read.
 pub(super) async fn merge_into_page(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
     page_id: &str,
     file: &ImportFile<'_>,
+    outline: Option<&OutlineRender>,
 ) -> Result<(WithOps<PageSourceReport>, MergeSource), AppError> {
     let buffer = get_page_buffer_inner(pool, page_id).await?;
     let held = held_files(&mut *pool.acquire().await?, page_id).await?;
@@ -204,9 +201,11 @@ pub(super) async fn merge_into_page(
         .flatten()
         .map(String::as_str)
         .collect();
-    let stripped = import::strip_title_heading(file.content, file.title);
+    let content = outline.map_or(file.content, |outline| outline.text.as_str());
+    let stripped = import::strip_title_heading(content, file.title);
     let mut source = merge_source(&stripped, &vault, &held, &own);
     let (text, mut anchors) = anchor_free(&source.text);
+    let placeholders = outline.map(|_| anchors.clone());
     for anchor in &mut anchors {
         if anchor.as_deref().is_some_and(|id| !own.contains(id)) {
             *anchor = None;
@@ -221,6 +220,16 @@ pub(super) async fn merge_into_page(
         let (linked, fresh) = link_named_anchors(&text, file.title, &named, &line_ids);
         line_ids = pair_unanchored_lines(&buffer.text, &buffer.line_ids, &linked, &anchors);
         (text, source.named) = (linked, fresh);
+    }
+    if let (Some(outline), Some(placeholders)) = (outline, &placeholders) {
+        // A block's placeholder is the id of the block its line paired with,
+        // and the lines holding refs to it pair again as refs.
+        let (linked, fresh, folds) =
+            link_outline_ids(&text, placeholders, &line_ids, &outline.collapsed);
+        line_ids = pair_unanchored_lines(&buffer.text, &buffer.line_ids, &linked, &anchors);
+        text = linked;
+        source.named.extend(fresh);
+        source.collapsed = folds;
     }
     let flags = SourceSaveFlags {
         merge: false,

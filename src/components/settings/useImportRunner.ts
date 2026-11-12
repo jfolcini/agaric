@@ -186,7 +186,12 @@ export function useImportRunner(): UseImportRunner {
   // Whether the user lets the run merge `units` into the existing pages of
   // their titles; true when there are none to ask about.
   const confirmMerges = useCallback(async (spaceId: string, units: ImportUnit[]) => {
-    const filenames = units.flatMap((unit) => (unit.merges === undefined ? [] : [unit.merges]))
+    const filenames: string[] = []
+    // One file's text at a time: a Logseq or Org title is read from it.
+    for (const unit of units) {
+      if (unit.merges === undefined) continue
+      filenames.push(typeof unit.merges === 'string' ? unit.merges : await unit.merges())
+    }
     if (filenames.length === 0) return true
     const pages = unwrap(await commands.listImportMerges(spaceId, filenames))
     if (pages.length === 0) return true

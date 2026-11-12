@@ -372,7 +372,18 @@ pub(super) async fn create_import_page(
         ImportTarget::Adopt(page_id) => (page_id, file.title.to_string()),
         ImportTarget::Merge { page_id, title } => {
             tx.rollback().await?;
-            let merge = merge_into_page(pool, device_id, materializer, &page_id, file);
+            let outline = file
+                .rule
+                .outline
+                .then(|| render_outline(&page_id, &title, parse_output));
+            let merge = merge_into_page(
+                pool,
+                device_id,
+                materializer,
+                &page_id,
+                file,
+                outline.as_ref(),
+            );
             let (saved, source) = Box::pin(merge).await?;
             return Ok(ImportPage::Merged(Box::new(MergedPage {
                 page_id,
