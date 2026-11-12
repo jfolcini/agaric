@@ -8,7 +8,8 @@ Two bugs found while reviewing other work; neither had an issue.
   index changes, as Trash and History already do.
 - The virtualizer had no `getItemKey`, so rows were keyed by position. After a bookmark re-sort a
   page's slot, its focused star and a namespace's collapsed state went to whichever page moved in.
-  Rows are now keyed by page id, section, or namespace path.
+  Rows are now keyed by page id, section, or namespace path (`pageBrowserRowKey`); a property test
+  pins that no two rows share a key, since a bookmarked namespaced page shows twice.
 
 Decisions and traps:
 
@@ -16,8 +17,13 @@ Decisions and traps:
   vitest asserted a mocked `scrollToOffset` and mounted without a cache, so neither could see the
   first bug. `e2e/pages-scroll-restore.spec.ts` is the coverage.
 - The guess that a second Space on a focused star toggles another page was false. Space and Enter
-  on any button inside the Pages view open the list cursor's page, because the document-level list
-  handler takes them. That is a separate keyboard bug, not fixed here.
+  on any button of the Pages view open the list cursor's page instead, because the document-level
+  list handler takes them: a row's title, star, delete and namespace toggle, the header's New Page,
+  and the delete dialog's buttons (Enter on a row checkbox does nothing). Tabbing to a page and
+  pressing Enter opens a different page. That is a separate keyboard bug, not fixed here.
+- After arrow-key moves, a load-more still yanks the list to the top: with no `resetKey`,
+  `useListKeyboardNavigation` resets the cursor to row 0 on any item-count change, and the
+  focused-row effect follows it. Not fixed here.
 - When a bookmarked page moves out of the rendered window its row unmounts and focus drops to the
   body. Following it was not built: it would yank the list after a mouse click.
 - `usePageBrowserScrollRestoration` drops a pending save on unmount, so a scroll that ends just

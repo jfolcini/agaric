@@ -5,12 +5,14 @@
  */
 
 import { renderHook } from '@testing-library/react'
+import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
 import { makePage } from '@/__tests__/fixtures'
 import {
   buildMultiPageBranch,
   buildSinglePageBranch,
+  pageBrowserRowKey,
   usePageBrowserGrouping,
 } from '@/hooks/usePageBrowserGrouping'
 import type { PageTreeNode } from '@/lib/page-tree'
@@ -272,6 +274,27 @@ describe('duplicate titles (#4709)', () => {
     expect(flagFor('P2')?.duplicateTitle).toBe(true)
     // The unique title is NOT flagged — the cue stays off the common row.
     expect(flagFor('P3')?.duplicateTitle).toBeUndefined()
+  })
+})
+
+describe('pageBrowserRowKey', () => {
+  // The virtualizer keys rows with it: two rows sharing a key share one DOM
+  // node and one measured size.
+  it('keys every row apart, bookmarked, namespaced and duplicate titles included', () => {
+    const titles = ['a', 'b', 'a/x', 'a/x/y', 'b/', '/c']
+    fc.assert(
+      fc.property(
+        fc.array(fc.record({ title: fc.constantFrom(...titles), starred: fc.boolean() }), {
+          maxLength: 10,
+        }),
+        (specs) => {
+          const pages = specs.map((s, i) => makePage({ id: `P${i}`, content: s.title }))
+          const starred = new Set(pages.filter((_, i) => specs[i]?.starred).map((p) => p.id))
+          const keys = buildMultiPageBranch(pages, starred).groupedRows.map(pageBrowserRowKey)
+          expect(new Set(keys).size).toBe(keys.length)
+        },
+      ),
+    )
   })
 })
 

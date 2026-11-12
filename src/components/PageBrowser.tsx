@@ -41,7 +41,7 @@ import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '@/hooks/useListMultiSelect'
 import { usePageBrowserAutoLoad } from '@/hooks/usePageBrowserAutoLoad'
 import { usePageBrowserData } from '@/hooks/usePageBrowserData'
-import { usePageBrowserGrouping } from '@/hooks/usePageBrowserGrouping'
+import { pageBrowserRowKey, usePageBrowserGrouping } from '@/hooks/usePageBrowserGrouping'
 import { usePageBrowserKeyboard } from '@/hooks/usePageBrowserKeyboard'
 import { usePageBrowserScrollRestoration } from '@/hooks/usePageBrowserScrollRestoration'
 import { usePageBrowserSort } from '@/hooks/usePageBrowserSort'
@@ -410,15 +410,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     [groupedRows],
   )
 
-  // Keyed by what the row shows, so a re-sort (a bookmark toggle moves a page
-  // between sections) moves each row's DOM, focus and state with its page.
   const getItemKey = useCallback(
     (index: number) => {
       const row = groupedRows[index]
-      if (row == null) return index
-      if (row.kind === 'header') return `header:${row.section}`
-      if (row.kind === 'tree-page') return `tree:${row.node.nodeKey ?? row.node.fullPath}`
-      return row.page.id
+      return row == null ? index : pageBrowserRowKey(row)
     },
     [groupedRows],
   )
