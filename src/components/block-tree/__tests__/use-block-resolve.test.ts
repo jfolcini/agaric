@@ -829,6 +829,10 @@ describe('onCreateTag — tagsListRef cache staleness (#3277 finding 1)', () => 
 // ── searchPages ─────────────────────────────────────────────────────────
 
 describe('searchPages — short query (<=2 chars)', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
   it('uses pagesListRef cache for substring match', async () => {
     const { result } = renderHook(() => useBlockResolve())
 
@@ -872,7 +876,6 @@ describe('searchPages — short query (<=2 chars)', () => {
     await act(async () => {
       items = await result.current.searchPages('20')
     })
-    localStorage.clear()
 
     expect(items.filter((i) => !i.isCreate)).toEqual([
       expect.objectContaining({ id: 'DAY', label: '11/11/2026', title: '2026-11-11' }),

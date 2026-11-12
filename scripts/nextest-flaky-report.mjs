@@ -20,8 +20,7 @@
 
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 
-const TAG =
-  /<(\/?)(testsuites|testsuite|testcase|flakyFailure|flakyError)((?:\s+[^\s=/>]+="[^"]*")*)\s*(\/?)>/g
+const TAG = /<(\/?)(testcase|flakyFailure|flakyError)((?:\s+[^\s=/>]+="[^"]*")*)\s*(\/?)>/g
 const ATTR = /([^\s=]+)="([^"]*)"/g
 const ENTITY = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" }
 

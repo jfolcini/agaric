@@ -33,9 +33,9 @@
 //
 // ─── The three design calls (#4043, #4044, #4064) ────────────────────────
 //
-// Each of these is a decision this file used to make silently, by the shape
-// of a regex, so the next reader had to infer it. They are stated here
-// because the answer is not derivable from the code — only visible in it.
+// Each of these is a decision this file makes by the shape of a regex, which
+// the next reader could not otherwise infer. They are stated here because the
+// answer is not derivable from the code — only visible in it.
 //
 // 1. A COMMAND-SCOPED SCRUB COUNTS, WHEN THE COMMAND IT SCOPES IS `git`
 //    (#4043). `env -u GIT_INDEX_FILE git …`, `env -i PATH=$PATH git -C "$d"
@@ -76,24 +76,11 @@
 //
 // ─── Why `.mjs` is scanned, not just `.sh` (#4015) ───────────────────────
 //
-// This guard used to enumerate with `entry.name.endsWith('.sh')`, so it
-// inspected ~30 shell scripts and nothing else. That is the meta-guard
-// committing the exact error it was written to end: a per-LANGUAGE fix does
-// not end a class of defect any more than a per-SCRIPT one does, it just
-// moves the next occurrence somewhere new.
-//
-// It did. `scripts/lib/git-scratch-guard.mjs` was added during #3962 as the
-// Node sibling of the shell helper; its own header names this gap
-// explicitly — that a `.mjs` self-test spawning git is the unwatched case —
-// and the very file that says so shipped a scenario which leaked. One
-// scenario read the index IN PROCESS rather than through a spawned guard,
-// with no `env` threaded to `git ls-files`, so under a real `git commit` the
-// ambient `GIT_INDEX_FILE` (which OUTRANKS `cwd`) made it enumerate the real
-// repository's 4,610 paths instead of the fixture's 8. The standalone
-// self-test passed, `prek run --all-files` passed, and three adversarial
-// review passes over the diff passed; only an actual `git commit`
-// reproduced it, because that is the only context which sets
-// `GIT_INDEX_FILE`.
+// A per-language check does not end the class: a `.mjs` self-test that reads
+// the index in process, with no `env` threaded to `git ls-files`, sees the
+// real repository under a real `git commit`, because the ambient
+// `GIT_INDEX_FILE` outranks `cwd`. Standalone runs and `prek run --all-files`
+// never set it, so only a scan of every `.sh` and `.mjs` catches the shape.
 //
 // Deliberately grep-based, not a real shell parser (matching the issue's own
 // suggested fix: "a meta-guard that greps hook scripts and self-tests for
