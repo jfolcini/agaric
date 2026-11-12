@@ -33,10 +33,6 @@ export type LanguagePreference = 'system' | SupportedLocale
 /** Every legal stored value, in the order the Settings select renders them. */
 export const LANGUAGE_PREFERENCES = ['system', ...SUPPORTED_LOCALES] as const
 
-export function isSupportedLocale(value: string): value is SupportedLocale {
-  return (SUPPORTED_LOCALES as readonly string[]).includes(value)
-}
-
 export function isLanguagePreference(value: string): value is LanguagePreference {
   return (LANGUAGE_PREFERENCES as readonly string[]).includes(value)
 }

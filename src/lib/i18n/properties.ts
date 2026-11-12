@@ -477,7 +477,7 @@ export const properties: Record<string, string> = {
   'tagFilter.composer.removeLeaf': 'Remove {{label}}',
   'tagFilter.composer.emptyGroup': 'Add tags, name-prefixes, or a nested group to filter by.',
   'tagFilter.composer.prefixLeafLabel': '{{prefix}}*',
-  'tagFilter.composer.searchPlaceholder': 'Search tags by prefix…',
+  'tagFilter.composer.searchPlaceholder': 'Find a tag…',
   'tagFilter.composer.searchLabel': 'Search tags to add',
   'tagFilter.composer.addPrefixOption': 'Add prefix "{{prefix}}*"',
   'sourceFilter.filterLabel': 'Filter by source page',

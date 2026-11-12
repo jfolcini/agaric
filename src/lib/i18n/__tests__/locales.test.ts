@@ -10,10 +10,8 @@ import { i18n } from '@/lib/i18n'
 import {
   DEFAULT_LOCALE,
   isLanguagePreference,
-  isSupportedLocale,
   LANGUAGE_PREFERENCES,
   resolveLocale,
-  SUPPORTED_LOCALES,
 } from '@/lib/i18n/locales'
 import { loadLocale, setLocale } from '@/lib/i18n/set-locale'
 
@@ -35,13 +33,6 @@ describe('resolveLocale', () => {
 })
 
 describe('the supported-locale allowlist', () => {
-  it('accepts every shipped locale and rejects anything else', () => {
-    for (const locale of SUPPORTED_LOCALES) expect(isSupportedLocale(locale)).toBe(true)
-    expect(isSupportedLocale('fr')).toBe(false)
-    expect(isSupportedLocale('es-ES')).toBe(false)
-    expect(isSupportedLocale('')).toBe(false)
-  })
-
   it('accepts every stored preference value and rejects anything else', () => {
     for (const pref of LANGUAGE_PREFERENCES) expect(isLanguagePreference(pref)).toBe(true)
     expect(isLanguagePreference('auto')).toBe(false)
@@ -49,7 +40,6 @@ describe('the supported-locale allowlist', () => {
   })
 
   it('includes the default locale, which must be statically bundled', () => {
-    expect(isSupportedLocale(DEFAULT_LOCALE)).toBe(true)
     expect(i18n.hasResourceBundle(DEFAULT_LOCALE, 'translation')).toBe(true)
   })
 })
