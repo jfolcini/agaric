@@ -25,7 +25,7 @@
 import { createContext, createElement, useContext, useEffect, useRef } from 'react'
 import { createStore, type StoreApi, useStore } from 'zustand'
 
-import { takeReloadedText } from '@/editor/active-editor'
+import { reloadBaseline, takeReloadedText } from '@/editor/active-editor'
 import { isNotFound, unwrap, validationCode } from '@/lib/app-error'
 import { commands, type TodoStateBatch, type WithOps } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
@@ -258,6 +258,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       if (rootParentId == null) return
       // #753 — claim a generation (see `loadGeneration` doc above).
       const generation = ++loadGeneration
+      // #6533 — what the focused editor was based on as this load started.
+      const startFocusedId = useBlockStore.getState().focusedBlockId
+      const startBaseline = startFocusedId ? reloadBaseline(startFocusedId) : null
       set({ loading: true })
       try {
         const start = performance.now()
@@ -337,7 +340,11 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
             if (fresh) {
               if (
                 fresh.content !== currentBlock.content &&
-                !takeReloadedText(focusedBlockId, fresh.content ?? '')
+                !takeReloadedText(
+                  focusedBlockId,
+                  fresh.content ?? '',
+                  focusedBlockId === startFocusedId ? startBaseline : null,
+                )
               ) {
                 staleFocusedBlock = { id: focusedBlockId, content: currentBlock.content }
                 newBlocks = newBlocks.map((b) =>

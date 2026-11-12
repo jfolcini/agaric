@@ -66,31 +66,55 @@ export function getActiveEditor(): Editor | null {
 }
 
 /**
- * #6533 — give a reload's text for `blockId` to the roving editor mounted on
- * it, when nothing typed there is uncommitted: the document is replaced out of
- * undo history, the selection is kept where it still fits, and the commit
- * baseline becomes `markdown`. Returns false, changing nothing, when the editor
- * holds uncommitted text or no live roving editor is on the block (a lazy
- * editor's buffered mount still holds the text it was given): the caller keeps
- * the text the editor started from.
+ * #6533 — the text a clean roving editor on `blockId` is based on, or null when
+ * it holds uncommitted text, is mid-composition, or is not on the block. A
+ * reload reads this when it STARTS: a snapshot that began before a local
+ * commit landed is older than the editor, and only an editor still on the same
+ * baseline when the snapshot arrives can take it without losing that commit.
  */
-export function takeReloadedText(blockId: string, markdown: string): boolean {
+export function reloadBaseline(blockId: string): string | null {
   const editor = getActiveEditor()
   const roving = editor === null ? null : activeRoving
-  if (editor === null || roving?.activeBlockId !== blockId) return false
-  if (roving.getMarkdown() !== roving.storedMarkdown) return false
+  if (editor === null || roving?.activeBlockId !== blockId || editor.view.composing) return null
+  return roving.getMarkdown() === roving.storedMarkdown ? roving.storedMarkdown : null
+}
+
+/**
+ * #6533 — give a reload's text for `blockId` to the roving editor mounted on
+ * it, when nothing typed there is uncommitted and the editor is still on the
+ * `baseline` the reload started from (`reloadBaseline`): the document is
+ * replaced out of undo history, the selection is kept where it still fits, and
+ * the commit baseline becomes `markdown`. Returns false, changing nothing, when
+ * the editor holds uncommitted text, has committed since the reload started, or
+ * no live roving editor is on the block (a lazy editor's buffered mount still
+ * holds the text it was given): the caller keeps the text the editor started from.
+ */
+export function takeReloadedText(
+  blockId: string,
+  markdown: string,
+  baseline: string | null,
+): boolean {
+  if (baseline === null || reloadBaseline(blockId) !== baseline) return false
+  const editor = getActiveEditor()
+  const roving = activeRoving
+  if (editor === null || roving === null) return false
+  const { from, to } = editor.state.selection
   try {
-    const { from, to } = editor.state.selection
     const doc = editor.schema.nodeFromJSON(parse(markdown))
     const tr = editor.state.tr.replaceWith(0, editor.state.doc.content.size, doc.content)
     // Not typing: no undo entry, and no update signal to arm the commit or the draft.
     tr.setMeta('addToHistory', false).setMeta('preventUpdate', true)
     editor.view.dispatch(tr)
-    editor.commands.setTextSelection({ from, to })
   } catch (err) {
     logger.warn('editor', 'reloaded text not taken by the editor', { blockId }, err)
     return false
   }
+  // The text is in: the baseline moves with it, whatever becomes of the caret.
   roving.markCommitted(markdown)
+  try {
+    editor.commands.setTextSelection({ from, to })
+  } catch (err) {
+    logger.warn('editor', 'caret not restored after a reload', { blockId }, err)
+  }
   return true
 }

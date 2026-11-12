@@ -100,9 +100,14 @@ vi.mock('@/stores/blocks', () => ({
 }))
 
 // #6533 — whether the focused block's roving editor took a reload's text; no editor by default.
-const mockTakeReloadedText = vi.fn((_blockId: string, _markdown: string) => false)
+const mockTakeReloadedText = vi.fn(
+  (_blockId: string, _markdown: string, _baseline: string | null) => false,
+)
+const mockReloadBaseline = vi.fn((_blockId: string): string | null => null)
 vi.mock('@/editor/active-editor', () => ({
-  takeReloadedText: (blockId: string, markdown: string) => mockTakeReloadedText(blockId, markdown),
+  takeReloadedText: (blockId: string, markdown: string, baseline: string | null) =>
+    mockTakeReloadedText(blockId, markdown, baseline),
+  reloadBaseline: (blockId: string) => mockReloadBaseline(blockId),
 }))
 
 let store: StoreApi<PageBlockState>
@@ -361,9 +366,25 @@ describe('PageBlockStore', () => {
 
       await store.getState().load()
 
-      expect(mockTakeReloadedText).toHaveBeenCalledWith('A', 'peer text')
+      expect(mockTakeReloadedText).toHaveBeenCalledWith('A', 'peer text', null)
       expect(store.getState().blocksById.get('A')?.content).toBe('typed here')
       expect(store.getState().staleFocusedBlock).toEqual({ id: 'A', content: 'typed here' })
+    })
+
+    it('hands the editor the baseline read when the load started, not when it ended (#6533)', async () => {
+      store.setState({
+        blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'old text' })],
+      })
+      mockGlobalBlockState = { focusedBlockId: 'A', selectedBlockIds: [] }
+      mockReloadBaseline.mockReturnValueOnce('old text').mockReturnValue('typed since')
+      stubInvoke(mockedInvoke, {
+        load_page_subtree: () =>
+          subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'peer text' })]),
+      })
+
+      await store.getState().load()
+
+      expect(mockTakeReloadedText).toHaveBeenCalledWith('A', 'peer text', 'old text')
     })
 
     it('a focused block whose editor took the reloaded text holds it, with no stale copy (#6533)', async () => {

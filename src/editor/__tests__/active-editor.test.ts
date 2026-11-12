@@ -16,7 +16,12 @@ import Text from '@tiptap/extension-text'
 import type { Editor } from '@tiptap/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { getActiveEditor, setActiveEditor, takeReloadedText } from '@/editor/active-editor'
+import {
+  getActiveEditor,
+  reloadBaseline,
+  setActiveEditor,
+  takeReloadedText,
+} from '@/editor/active-editor'
 import { serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
 
@@ -82,7 +87,7 @@ describe('takeReloadedText (#6533)', () => {
     const { editor, roving, onUpdate } = mountOnA('hello world')
     editor.commands.setTextSelection(3)
 
-    expect(takeReloadedText('A', 'hello brave world')).toBe(true)
+    expect(takeReloadedText('A', 'hello brave world', 'hello world')).toBe(true)
 
     expect(roving.getMarkdown()).toBe('hello brave world')
     expect(editor.state.selection.from).toBe(3)
@@ -97,22 +102,70 @@ describe('takeReloadedText (#6533)', () => {
     const { editor, roving } = mountOnA('hello world')
     editor.commands.insertContentAt(12, '!')
 
-    expect(takeReloadedText('A', 'hello brave world')).toBe(false)
+    expect(takeReloadedText('A', 'hello brave world', 'hello world')).toBe(false)
 
     expect(roving.getMarkdown()).toBe('hello world!')
     expect(roving.markCommitted).not.toHaveBeenCalled()
     editor.destroy()
   })
 
+  it('an editor that committed since the reload started is not overwritten by the older snapshot', () => {
+    const { editor, roving } = mountOnA('hello')
+    const baseline = reloadBaseline('A')
+    expect(baseline).toBe('hello')
+    // A commit lands while the reload's snapshot is in flight.
+    editor.commands.insertContentAt(6, '!')
+    roving.markCommitted('hello!')
+
+    expect(takeReloadedText('A', 'hello', baseline)).toBe(false)
+    expect(roving.getMarkdown()).toBe('hello!')
+    editor.destroy()
+  })
+
+  it('a dirty editor, or one mid-composition, has no baseline', () => {
+    const { editor, roving } = mountOnA('hello')
+    expect(reloadBaseline('A')).toBe('hello')
+    const composing = vi.spyOn(editor.view, 'composing', 'get').mockReturnValue(true)
+    expect(reloadBaseline('A')).toBeNull()
+    composing.mockRestore()
+    editor.commands.insertContentAt(6, '!')
+    expect(reloadBaseline('A')).toBeNull()
+    expect(roving.getMarkdown()).toBe('hello!')
+    editor.destroy()
+  })
+
+  it('undo after a take does not bring back the pre-reload text', () => {
+    const { editor, roving } = mountOnA('hello')
+    editor.commands.insertContentAt(6, '!')
+    roving.markCommitted('hello!')
+
+    expect(takeReloadedText('A', 'peer hello!', 'hello!')).toBe(true)
+    editor.commands.undo()
+
+    expect(roving.getMarkdown()).toBe('peer hello!')
+    editor.destroy()
+  })
+
+  it('a selection past the new, shorter text is clamped', () => {
+    const { editor, roving } = mountOnA('hello world')
+    editor.commands.setTextSelection({ from: 5, to: 12 })
+
+    expect(takeReloadedText('A', 'hi', 'hello world')).toBe(true)
+
+    expect(roving.getMarkdown()).toBe('hi')
+    expect(editor.state.selection.to).toBeLessThanOrEqual(3)
+    editor.destroy()
+  })
+
   it('leaves an editor on another block, or none, alone', () => {
     const { editor, roving } = mountOnA('hello world')
     roving.activeBlockId = 'B'
-    expect(takeReloadedText('A', 'peer text')).toBe(false)
+    expect(takeReloadedText('A', 'peer text', 'hello world')).toBe(false)
     expect(roving.getMarkdown()).toBe('hello world')
 
     setActiveEditor(editor as unknown as Editor)
     roving.activeBlockId = 'A'
-    expect(takeReloadedText('A', 'peer text')).toBe(false)
+    expect(takeReloadedText('A', 'peer text', 'hello world')).toBe(false)
     expect(roving.getMarkdown()).toBe('hello world')
     editor.destroy()
   })
