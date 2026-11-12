@@ -219,7 +219,7 @@ pub async fn delocalize(pool: &SqlitePool, text: &str) -> Result<String, AppErro
 
 /// The live attachments among `ids`: each one's file name and stored path
 /// below the app's data.
-async fn attachments(
+pub(super) async fn attachments(
     pool: &SqlitePool,
     ids: Vec<String>,
 ) -> Result<HashMap<String, (String, String)>, AppError> {
@@ -301,8 +301,9 @@ impl Copies {
     }
 
     /// Copy each live attachment among `ids` into `space`'s folder below
-    /// `root`, unless its copy is there as written. Returns the paths of the
-    /// copies in place and the attachments that could not be copied, and why.
+    /// `root`, unless its copy is there as written. Returns each copy in
+    /// place, as its attachment and path, and the copies that could not be
+    /// written, and why.
     ///
     /// # Errors
     ///
@@ -313,7 +314,7 @@ impl Copies {
         root: &Path,
         space: &str,
         ids: Vec<String>,
-    ) -> Result<(Vec<String>, Vec<(String, String)>), AppError> {
+    ) -> Result<(Vec<(String, String)>, Vec<(String, String)>), AppError> {
         let found = attachments(pool, ids).await?;
         let mut placed = Vec::new();
         let mut failed = Vec::new();
@@ -335,14 +336,14 @@ impl Copies {
                 self.written.insert(
                     path.clone(),
                     Copy {
-                        id,
+                        id: id.clone(),
                         len,
                         modified_ms,
                     },
                 );
                 changed = true;
             }
-            placed.push(path);
+            placed.push((id, path));
         }
         if changed {
             self.save()?;
@@ -395,15 +396,6 @@ impl Copies {
     pub fn ids(&self) -> Vec<String> {
         let ids: HashSet<&String> = self.written.values().map(|copy| &copy.id).collect();
         ids.into_iter().cloned().collect()
-    }
-
-    /// The live attachments among `ids`.
-    ///
-    /// # Errors
-    ///
-    /// They cannot be read.
-    pub async fn live(pool: &SqlitePool, ids: Vec<String>) -> Result<HashSet<String>, AppError> {
-        Ok(attachments(pool, ids).await?.into_keys().collect())
     }
 }
 

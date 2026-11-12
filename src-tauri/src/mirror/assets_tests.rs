@@ -10,7 +10,9 @@ use sqlx::SqlitePool;
 use tempfile::TempDir;
 
 use super::*;
-use crate::commands::attachments::{add_attachment_with_bytes_inner, delete_attachment_inner};
+use crate::commands::attachments::{
+    add_attachment_with_bytes_inner, delete_attachment_inner, rename_attachment_inner,
+};
 use crate::commands::mirror::{
     get_mirror_status_inner, set_mirror_copy_files_inner, set_mirror_folder_inner,
 };
@@ -492,5 +494,40 @@ async fn a_file_in_a_copy_folder_is_never_read_and_a_page_below_assets_is() {
         fx.pages_titled("assets/x").await,
         1,
         "a page below assets/ is read"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_renamed_attachment_is_linked_at_its_new_copy_and_its_old_one_goes() {
+    let mut fx = Fx::new(Some(true)).await;
+    let (_, _, attachment) = fx.page_with_image("Alpha", "zebra.png", PNG).await;
+    fx.tick().await;
+    assert!(fx.read(&copy_of(&attachment, "zebra.png")).is_some());
+
+    rename_attachment_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        AttachmentId::from_trusted(&attachment),
+        "apple.png".into(),
+    )
+    .await
+    .unwrap();
+    fx.state.restart();
+    fx.tick().await;
+
+    assert_eq!(
+        fx.read(&copy_of(&attachment, "apple.png")).as_deref(),
+        Some(PNG)
+    );
+    assert!(
+        fx.read(&copy_of(&attachment, "zebra.png")).is_none(),
+        "the old name's copy goes"
+    );
+    assert!(
+        fx.text("TestSpace/Alpha.md")
+            .contains(&format!("(assets/{attachment}/apple.png)")),
+        "the page links the copy that is there: {}",
+        fx.text("TestSpace/Alpha.md")
     );
 }

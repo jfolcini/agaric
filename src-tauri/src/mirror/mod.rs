@@ -996,7 +996,10 @@ impl Mirror {
         let live = if ids.is_empty() || !self.copy_files {
             HashSet::new()
         } else {
-            assets::Copies::live(&self.pool, ids).await?
+            assets::attachments(&self.pool, ids)
+                .await?
+                .into_keys()
+                .collect()
         };
         if !self.copy_files {
             self.copy_failed.clear();
@@ -1239,10 +1242,15 @@ impl Mirror {
             return Ok(file);
         }
         let (placed, failed) = self.copies.ensure(&self.pool, root, space, ids).await?;
-        for copy in &placed {
-            self.copy_failed.remove(copy);
+        let prefix = format!("{space}/");
+        let mut copies = HashMap::new();
+        for (id, copy) in placed {
+            self.copy_failed.remove(&copy);
+            if let Some(below) = copy.strip_prefix(&prefix) {
+                copies.insert(id, below.to_owned());
+            }
+            self.linked_copies.insert(copy);
         }
-        self.linked_copies.extend(placed);
         for (copy, why) in failed {
             if self.copy_failed.insert(copy.clone(), why.clone()).is_none() {
                 tracing::warn!(
@@ -1252,7 +1260,9 @@ impl Mirror {
                 );
             }
         }
-        Ok(self.links(path).localize(file))
+        // The copies just placed: a renamed attachment's old copy may still
+        // be recorded, and must not be linked.
+        Ok(assets::Links::for_page(path, copies).localize(file))
     }
 
     /// How the file at `path` links its attachments' copies: not at all

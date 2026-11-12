@@ -33,7 +33,7 @@
   - the copy-folder rule;
   - the link rewrite at two depths and with `<…>` destinations;
   - `linked`;
-  - tick tests for: off by default; on, copy and link; a missing and a changed copy rewritten; off, removing unchanged copies and listing a changed one; a deleted attachment's copy removed; an edit beside a link read back as `attachment:`; and the `assets/` scan cases.
+  - tick tests for: off by default; on, copy and link; a missing and a changed copy rewritten; off, removing unchanged copies and listing a changed one; a deleted attachment's copy removed; a renamed attachment linked at its new copy, with the old one gone; an edit beside a link read back as `attachment:`; and the `assets/` scan cases.
 - Each falsified by a planted defect, in one script that restored the files on exit; each failed the test it targets:
   - no link rewrite;
   - an existing copy never rewritten;
@@ -42,10 +42,11 @@
   - no read-back mapping;
   - copy folders not skipped;
   - copying on by default.
+- Review of the first push: renaming an attachment left the page linking the old name's copy, which the end-of-pass sweep then removed. A page now links only the copies placed for it in that render, not every recorded copy of its space. Linking from the record again failed the new rename test.
 - Copying on by default first survived: the default test stored `false` explicitly. Its fixture now leaves the setting unset.
 - **Existing tests edited for the new required `MirrorStatus.copy_files` field:** the `get_mirror_status` stubs in `DataTab.test.tsx` (two) and the `status()` fixture in `MirrorSection.test.tsx`.
 - **Results:**
-  - `cargo nextest run -p agaric -E 'test(/mirror/)'`: 108 passed;
+  - `cargo nextest run -p agaric -E 'test(/mirror/)'`: 109 passed;
   - vitest over the settings, the mock and the vectors: 69 files passed;
   - `npm run typecheck` and `cargo clippy -p agaric --all-targets -- -D warnings` are clean.
 
