@@ -233,6 +233,18 @@ export function PageHeader({
     setKebabOpen(false)
   }, [copyPageMarkdownToClipboard])
 
+  // The link `useDeepLinkRouter` opens, for a calendar entry or a task manager.
+  const handleCopyAppLink = useCallback(async () => {
+    setKebabOpen(false)
+    try {
+      await writeText(`agaric://page/${pageId}`)
+      notify.success(t('pageHeader.appLinkCopied'))
+    } catch (err) {
+      logger.error('PageHeader', 'Failed to copy the app link', { pageId }, err)
+      notify.error(t('pageHeader.appLinkCopyFailed'))
+    }
+  }, [pageId, t])
+
   // --- Page shortcuts: export as Markdown, show in graph ---
   useEffect(() => {
     function handlePageShortcut(e: KeyboardEvent) {
@@ -612,6 +624,7 @@ export function PageHeader({
               onToggleTemplate={handleToggleTemplate}
               onToggleJournalTemplate={handleToggleJournalTemplate}
               onExport={handleExport}
+              onCopyAppLink={handleCopyAppLink}
               onEditSource={handleEditSource}
               editMode={editMode}
               onEditModeChange={onPhone ? handleMenuEditModeChange : undefined}

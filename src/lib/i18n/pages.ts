@@ -156,6 +156,9 @@ export const pages: Record<string, string> = {
   'pageHeader.journalTemplateFailed': 'Failed to update journal template',
   'pageHeader.exportCopied': 'Markdown copied to clipboard',
   'pageHeader.exportFailed': 'Export failed',
+  'pageHeader.copyAppLink': 'Copy app link',
+  'pageHeader.appLinkCopied': 'App link copied to clipboard',
+  'pageHeader.appLinkCopyFailed': 'Could not copy the app link',
   // #5140 — source mode: the page edited as one markdown buffer.
   'pageSource.edit': 'Edit as Markdown',
   'pageSource.editorLabel': 'Markdown source',
