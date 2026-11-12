@@ -142,8 +142,8 @@ struct Fx {
 
 impl Fx {
     /// A vault with the test space, and the mirror on, reading back, with
-    /// copying `copy_files`.
-    async fn new(copy_files: bool) -> Self {
+    /// copying set to `copy_files`, or left unset with `None`.
+    async fn new(copy_files: Option<bool>) -> Self {
         let db = TempDir::new().unwrap();
         let pool = init_pool(&db.path().join("test.db")).await.unwrap();
         let mat = Materializer::new(pool.clone());
@@ -162,9 +162,11 @@ impl Fx {
         )
         .await
         .unwrap();
-        set_mirror_copy_files_inner(&pool, DEV, &state, copy_files)
-            .await
-            .unwrap();
+        if let Some(on) = copy_files {
+            set_mirror_copy_files_inner(&pool, DEV, &state, on)
+                .await
+                .unwrap();
+        }
         let ingest = Ingest {
             pool: pool.clone(),
             materializer: mat.clone(),
@@ -317,7 +319,7 @@ fn copy_of(attachment: &str, name: &str) -> String {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn copying_is_off_by_default_and_a_page_keeps_its_attachment_link() {
-    let mut fx = Fx::new(false).await;
+    let mut fx = Fx::new(None).await;
     let (_, _, attachment) = fx.page_with_image("Alpha", "cat.png", PNG).await;
     fx.tick().await;
 
@@ -333,7 +335,7 @@ async fn copying_is_off_by_default_and_a_page_keeps_its_attachment_link() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn copying_on_copies_each_linked_attachment_and_links_the_page_to_it() {
-    let mut fx = Fx::new(true).await;
+    let mut fx = Fx::new(Some(true)).await;
     let (_, _, attachment) = fx.page_with_image("Alpha", "cat.png", PNG).await;
     fx.tick().await;
 
@@ -355,7 +357,7 @@ async fn copying_on_copies_each_linked_attachment_and_links_the_page_to_it() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_missing_or_changed_copy_is_written_again() {
-    let mut fx = Fx::new(true).await;
+    let mut fx = Fx::new(Some(true)).await;
     let (_, block, attachment) = fx.page_with_image("Alpha", "cat.png", PNG).await;
     fx.tick().await;
     let copy = copy_of(&attachment, "cat.png");
@@ -374,7 +376,7 @@ async fn a_missing_or_changed_copy_is_written_again() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn turning_copying_off_removes_unchanged_copies_and_lists_a_changed_one() {
-    let mut fx = Fx::new(true).await;
+    let mut fx = Fx::new(Some(true)).await;
     let (_, _, kept) = fx.page_with_image("Alpha", "cat.png", PNG).await;
     let (_, _, gone) = fx.page_with_image("Beta", "dog.png", b"woof").await;
     fx.tick().await;
@@ -410,7 +412,7 @@ async fn turning_copying_off_removes_unchanged_copies_and_lists_a_changed_one() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_removed_attachments_copy_is_removed() {
-    let mut fx = Fx::new(true).await;
+    let mut fx = Fx::new(Some(true)).await;
     let (_, _, attachment) = fx.page_with_image("Alpha", "cat.png", PNG).await;
     fx.tick().await;
     assert!(fx.read(&copy_of(&attachment, "cat.png")).is_some());
@@ -436,7 +438,7 @@ async fn a_removed_attachments_copy_is_removed() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_edit_beside_a_link_to_a_copy_keeps_the_attachment_link() {
-    let mut fx = Fx::new(true).await;
+    let mut fx = Fx::new(Some(true)).await;
     let (page, block, attachment) = fx.page_with_image("Alpha", "cat.png", PNG).await;
     fx.block(&page, "words").await;
     fx.tick().await;
@@ -463,7 +465,7 @@ async fn an_edit_beside_a_link_to_a_copy_keeps_the_attachment_link() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_file_in_a_copy_folder_is_never_read_and_a_page_below_assets_is() {
-    let mut fx = Fx::new(true).await;
+    let mut fx = Fx::new(Some(true)).await;
     let (_, _, attachment) = fx
         .page_with_image("Alpha", "notes.md", b"- not a page\n")
         .await;

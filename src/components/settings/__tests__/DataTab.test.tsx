@@ -133,6 +133,7 @@ beforeEach(() => {
       last_pass_ms: null,
       read_back: true,
       pending: [],
+      copy_files: false,
     }),
   })
 })
@@ -1734,6 +1735,7 @@ describe('DataTab', () => {
             last_pass_ms: null,
             read_back: true,
             pending: [],
+            copy_files: false,
           }),
         })
       }

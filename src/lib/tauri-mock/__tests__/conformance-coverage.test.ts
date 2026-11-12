@@ -267,6 +267,9 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   set_mirror_read_back:
     'device-local file I/O: turning it on reads the mirror folder to find the files changed ' +
     'outside Agaric, which a fixture seed cannot express',
+  set_mirror_copy_files:
+    'device-local file I/O: its effect is the copies the mirror writes into a folder on disk, ' +
+    'and the one command reading the setting back, get_mirror_status, is environment dependent',
 }
 
 // ---------------------------------------------------------------------------
@@ -633,6 +636,10 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
   // Turning it on reads that folder to find what changed outside Agaric
   // (#5363), and a refusal depends on those files: same input problem.
   'set_mirror_read_back',
+  // Its effect is files the mirror copies into that folder (#5363), and the
+  // only read of the setting, `get_mirror_status`, is waived as environment
+  // dependent: nothing a fixture can observe.
+  'set_mirror_copy_files',
 ])
 
 /**
