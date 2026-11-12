@@ -152,6 +152,10 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.namePrompt': 'Name this view:',
   'advancedQuery.savedViews.saved': 'Saved view "{{name}}"',
   'advancedQuery.savedViews.saveError': 'Could not save the view',
+  'advancedQuery.savedViews.nameTaken':
+    'A page or view named "{{name}}" already exists in this space',
+  'advancedQuery.savedViews.renameError': 'Could not rename the view',
+  'advancedQuery.savedViews.deleteError': 'Could not delete the view',
   'advancedQuery.savedViews.empty': 'No saved views yet',
   'advancedQuery.savedViews.load': 'Load',
   'advancedQuery.savedViews.loadTitle': 'Load "{{name}}"',
@@ -163,7 +167,8 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.renamed': 'Renamed view to "{{name}}"',
   'advancedQuery.savedViews.delete': 'Delete',
   'advancedQuery.savedViews.deleteTitle': 'Delete "{{name}}"',
-  'advancedQuery.savedViews.deleteConfirm': 'Delete saved view "{{name}}"? This cannot be undone.',
+  'advancedQuery.savedViews.deleteConfirm':
+    'Delete saved view "{{name}}"? You can restore it from the Trash.',
   'advancedQuery.savedViews.deleted': 'Deleted view "{{name}}"',
   'query.operator.eqDesc': 'equals',
   'query.operator.neqDesc': 'not equal',

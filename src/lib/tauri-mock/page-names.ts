@@ -8,7 +8,17 @@ import type { AppError } from '@/lib/bindings'
 import { nameKey } from '@/lib/name-tokens'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import { ownerSpaceOf } from '@/lib/tauri-mock/link-index'
-import { blocks, pageAliases } from '@/lib/tauri-mock/seed'
+import { blocks, pageAliases, properties } from '@/lib/tauri-mock/seed'
+
+/**
+ * #6544 — a saved view is a page carrying `saved_view`. The backend's
+ * `NOT EXISTS (SELECT 1 FROM block_properties sv WHERE sv.block_id = b.id AND
+ * sv.key = 'saved_view')` leaves it out of the page listings, search, the
+ * query surfaces and the names a space's pages hold; this is that predicate.
+ */
+export function isSavedViewPage(b: Record<string, unknown>): boolean {
+  return properties.get(b['id'] as string)?.has('saved_view') ?? false
+}
 
 export interface PageNameHolder {
   id: string
@@ -30,7 +40,8 @@ export function pageNameHolder(
       b['block_type'] === 'page' &&
       !b['deleted_at'] &&
       b['id'] !== excludeId &&
-      ownerSpaceOf(b) === spaceId,
+      ownerSpaceOf(b) === spaceId &&
+      !isSavedViewPage(b),
   )
   const smallest = (held: (b: Record<string, unknown>) => boolean) =>
     pages
@@ -63,6 +74,8 @@ export function pageNameRefusal(holder: PageNameHolder, title: string): Error & 
  * its title and each alias it holds, against every other page there.
  */
 export function rejectTakenPageNames(page: Record<string, unknown>, spaceId: string): void {
+  // A saved view holds no name, so it clashes with none.
+  if (isSavedViewPage(page)) return
   const id = page['id'] as string
   const names = [page['content'], ...(pageAliases.get(id) ?? [])]
   for (const name of names) {

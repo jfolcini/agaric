@@ -355,8 +355,11 @@ export const pages: Record<string, string> = {
   'pageBrowser.savedViews.deleted': 'Deleted view "{{name}}"',
   'pageBrowser.savedViews.restored': 'Restored view "{{name}}"',
   'pageBrowser.savedViews.applied': 'Applied view "{{name}}"',
-  'pageBrowser.savedViews.schemaMismatch':
-    'Saved views from a newer version of Agaric could not be loaded and were reset.',
+  'pageBrowser.savedViews.nameTaken':
+    'A page or view named "{{name}}" already exists in this space',
+  'pageBrowser.savedViews.saveFailed': 'Could not save the view',
+  'pageBrowser.savedViews.deleteFailed': 'Could not delete the view',
+  'pageBrowser.savedViews.restoreFailed': 'Could not restore the view',
   'pageBrowser.savedViews.dialogTitle': 'Save current view',
   'pageBrowser.savedViews.dialogDescription':
     'Saves the current sort and filters so you can reapply them later.',

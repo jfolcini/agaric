@@ -1,0 +1,219 @@
+{
+  "description": "#6544 \u2014 a saved view is a page carrying the internal `saved_view` property, and every listing a user reads leaves it out: `list_all_pages_in_space` (the `[[` picker, the graph, the resolve preload), `list_pages_with_metadata` (the Pages view and MCP `list_pages`, rows and `total_count`), `search_blocks` and `search_blocks_partitioned` (FTS), `run_advanced_query` and `filtered_blocks_query` (the query surfaces), and `list_blocks` by type (rows and `total_count`). S1 `Weekly plan` is an ordinary page and S2 `Weekly review` a Pages view, both titled through `edit_block` so FTS indexes them, and both match `weekly`, so a listing that drops the exclusion returns S2 next to S1. What still serves a view page: `query_by_property` on `saved_view` (how the saved-view lists read them), `batch_resolve` (the title path by id) and `list_trash` (S3, a deleted Advanced Query view, is a trash root so it can be restored). The `create_page_in_space` op pins that a view holds no name: asking for `Weekly review` makes a NEW page, where the ordinary title resolution would return S2 and let a caller stamp it.",
+  "name": "query_saved_view_pages_hidden",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S1",
+        "toText": "Weekly plan"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "Weekly review"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "saved_view",
+        "value": {
+          "value_text": "v1:eyJraW5kIjoicGFnZXMiLCJzb3J0IjoiYWxwaGFiZXRpY2FsIiwiZmlsdGVycyI6W119"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "saved_view",
+        "value": {
+          "value_text": "v1:eyJraW5kIjoicXVlcnkiLCJzcGVjIjp7ImZpbHRlciI6eyJ0eXBlIjoiQW5kIiwiY2hpbGRyZW4iOltdfSwic29ydCI6W10sImZ1bGx0ZXh0IjoiIiwiZ3JvdXBfYnkiOm51bGwsImFnZ3JlZ2F0ZXMiOltdfX0"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "content": "Weekly review",
+        "parentId": null,
+        "spaceId": "$SPACE"
+      },
+      "command": "create_page_in_space",
+      "comment": "S2 holds the title, but a view holds no name: a new page is made, not S2 returned.",
+      "name": "a_view_holds_no_name",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_all_pages_in_space",
+      "comment": "S1 and the page the last op made; S2 is a view and S3 is in the Trash.",
+      "name": "all_pages_leave_the_view_out"
+    },
+    {
+      "args": {
+        "filter": {
+          "sort": "alphabetical",
+          "spaceId": "$SPACE"
+        },
+        "limit": 50
+      },
+      "command": "list_pages_with_metadata",
+      "comment": "The Pages view: the view is out of the rows and of `total_count`.",
+      "name": "pages_metadata_leave_the_view_out"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "weekly"
+      },
+      "command": "search_blocks",
+      "comment": "Both titles match `weekly`; only the ordinary page is a hit.",
+      "name": "search_leaves_the_view_out"
+    },
+    {
+      "args": {
+        "blockLimit": 10,
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "pageLimit": 10,
+        "query": "weekly"
+      },
+      "command": "search_blocks_partitioned",
+      "comment": "Neither partition holds the view.",
+      "name": "partitioned_search_leaves_the_view_out"
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "A filterless query is the whole space, less the view.",
+      "name": "advanced_query_leaves_the_view_out"
+    },
+    {
+      "args": {
+        "blockType": "page",
+        "limit": 100,
+        "propertyFilters": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "The `{{query}}` block's pages, less the view.",
+      "name": "filtered_blocks_leave_the_view_out"
+    },
+    {
+      "args": {
+        "request": {
+          "blockType": "page",
+          "limit": 50
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "`list_by_type`: the view is out of the rows and of `total_count` (it replaces the retired `view_type = 'query-view'` marker).",
+      "name": "list_by_type_leaves_the_view_out"
+    },
+    {
+      "args": {
+        "request": {
+          "key": "saved_view",
+          "limit": 100
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "How the saved-view lists read their pages: the live view S2, not the trashed S3.",
+      "name": "views_listed_by_their_property"
+    },
+    {
+      "args": {
+        "ids": ["S2"],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "batch_resolve",
+      "comment": "The title path by id still names the view.",
+      "name": "view_title_resolves_by_id"
+    },
+    {
+      "args": {
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_trash",
+      "comment": "A deleted view is a trash root, so it can be restored.",
+      "name": "trash_lists_the_deleted_view"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "placeholder",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "placeholder",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Old view",
+        "id": "S3",
+        "parent_id": null,
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

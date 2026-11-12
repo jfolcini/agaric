@@ -50,7 +50,12 @@ import {
   taskLineOf,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveInboundNames } from '@/lib/tauri-mock/names'
-import { pageNameHolder, pageNameRefusal, rejectTakenPageNames } from '@/lib/tauri-mock/page-names'
+import {
+  isSavedViewPage,
+  pageNameHolder,
+  pageNameRefusal,
+  rejectTakenPageNames,
+} from '@/lib/tauri-mock/page-names'
 import {
   allOrNothing,
   attachmentBytes,
@@ -1074,15 +1079,10 @@ export const blocksHandlers = {
       // `None` with `count_blocks_by_type`, which counts every match under the
       // SAME predicates as the row fetch, independent of the page.
       //
-      // KNOWN GAP (pre-existing): `list_by_type` and `count_blocks_by_type` also
-      // carry a `NOT EXISTS (… bp.key = 'view_type' AND bp.value_text =
-      // 'query-view')` clause (#1460) excluding saved-view marker blocks from
-      // both the rows and the count. The mock does not model it, so a mock
-      // saved-view page would show up here where the backend hides it. Not
-      // covered by a fixture step either — filed as #3878 rather than fixed
-      // silently.
+      // `list_by_type` and `count_blocks_by_type` leave a saved view out of
+      // both the rows and the count (#6544).
       const items = active.filter(
-        (b) => b['block_type'] === blockType && ownerSpaceOf(b) === spaceId,
+        (b) => b['block_type'] === blockType && ownerSpaceOf(b) === spaceId && !isSavedViewPage(b),
       )
       // `list_by_type` mints `Cursor::for_id`.
       return paginateKeyset(items, idKey, limit, cursor, items.length, [])

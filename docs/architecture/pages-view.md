@@ -12,7 +12,7 @@ Four strands of work compose here, and all of them hang off one seam — the `li
 - **Page rows + sort modes + the metadata IPC** — the base surface (below).
 - **Materialised counts** — `inbound_link_count` / `child_block_count` moved into `pages_cache`, which removed the 20k-page scaling cliff on `most-linked` / `most-content`.
 - **Compound filters** — `FilterPrimitive` shared with Search and the other filter surfaces. See [`filters.md`](filters.md).
-- **Multi-select + bulk ops + saved views** (#81) — a saved view is a `{filterSet, sort}` pair persisted under `agaric:pages:savedViews:v1` (`src/hooks/useSavedPagesViews.ts`); the compound-filter work owns `filterSet`, the sort work owns `sort`. Views saved before #5372 also carry a `density` field that nothing reads.
+- **Multi-select + bulk ops + saved views** (#81) — a saved view is a `{filters, sort}` pair stored as a page of its space carrying the internal `saved_view` property (`src/lib/saved-views.ts`, `src/hooks/useSavedPagesViews.ts`, #6544), so views sync and a deleted one goes to the Trash; the compound-filter work owns `filters`, the sort work owns `sort`. The device-wide `agaric:pages:savedViews:v1` list views lived in before is copied into every space once (`migrateDeviceSavedViews`).
 
 ## Data flow
 
@@ -125,5 +125,4 @@ Migration `0123` adds the two sort keys beside them, `title_sort_key` and `last_
 
 ## Open extension points
 
-- **Backend graduation of saved views** — deferred. Saved views ship today as a per-device `localStorage` shape (`agaric:pages:savedViews:v1`); that shape is the long-term contract, and syncing them is a separate decision.
 - **MCP exposure of `list_pages_with_metadata`** — deferred. Today's MCP `list_pages` serves the simpler shape; the richer surface lands only if a tool-side need emerges in the saved-views or compound-filter work.

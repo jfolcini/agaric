@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
 // Real-backend Advanced Query saved views (#5738).
 //
-// "Save view" stores the query spec in the active space's saved views on this
-// device (`src/lib/saved-query-views.ts`); Saved views lists them
-// (SavedViews.tsx), and Load parses the stored spec back into the builder and
-// re-runs it against the real engine. Saved views once never listed on the
-// real backend while the mock lane stayed green (#5738), so the round trip is
-// pinned here too.
+// "Save view" stores the query spec as a page of the active space carrying the
+// `saved_view` property (`src/lib/saved-views.ts`, #6544); Saved views lists
+// those pages (SavedViews.tsx), and Load parses the stored spec back into the
+// builder and re-runs it against the real engine. Saved views once never
+// listed on the real backend while the mock lane stayed green (#5738), so the
+// round trip is pinned here too.
 //
 // Advanced Query opens from the Pages header's "Advanced Query" button
 // (PageBrowserHeader.tsx); a result row is `[data-testid="query-result-item"]`

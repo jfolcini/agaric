@@ -238,42 +238,6 @@ export function writePreference<T>(def: PreferenceDefinition<T>, value: T, keyAr
 }
 
 /**
- * True when the key holds a well-formed JSON object whose `schemaVersion`
- * field disagrees with `expected`. This is the one distinction the normal
- * read path erases: `parse` discards a schema-mismatched payload back to the
- * default, so a caller can't otherwise tell "the user had data from an
- * incompatible app version" apart from "nothing was ever stored". Reads the
- * raw string directly — this module is the sanctioned raw-localStorage site.
- *
- * MUST be called from a render-phase `useState` lazy initializer, not an
- * effect: `useLocalStoragePreference`'s mount write-back re-persists the
- * parsed (empty) value and would erase the mismatched raw value before an
- * effect could observe it. A missing key, non-JSON value, non-object payload,
- * or a payload with no numeric `schemaVersion` is NOT a mismatch. SSR-safe;
- * a storage throw degrades to `false`.
- */
-export function peekPreferenceSchemaMismatch<T>(
-  def: PreferenceDefinition<T>,
-  expected: number,
-  keyArg?: string,
-): boolean {
-  if (typeof window === 'undefined') return false
-  const key = effectiveKey(def, keyArg)
-  try {
-    const raw = localStorage.getItem(key)
-    if (raw === null) return false
-    const parsed: unknown = JSON.parse(raw)
-    if (parsed === null || typeof parsed !== 'object') return false
-    const schemaVersion = (parsed as Record<string, unknown>)['schemaVersion']
-    if (typeof schemaVersion !== 'number') return false
-    return schemaVersion !== expected
-  } catch {
-    // Storage unavailable (private mode / locked-down webview) — no signal.
-    return false
-  }
-}
-
-/**
  * True when the key has ANY stored value (including one that fails to
  * `parse`). Distinct from `readPreference(def) !== def.defaultValue` — a
  * caller that needs to tell "never stored" apart from "stored, and happens
@@ -379,7 +343,7 @@ const ALL_SORTS: ReadonlyArray<SortOption> = [
  * `created`, so neither the preference nor a saved view holding it is reset
  * or dropped (#5371). `undefined` for anything else unknown.
  */
-function readSort(raw: unknown): SortOption | undefined {
+export function readSort(raw: unknown): SortOption | undefined {
   if (raw === 'default') return 'created'
   return (ALL_SORTS as readonly unknown[]).includes(raw) ? (raw as SortOption) : undefined
 }
@@ -744,18 +708,13 @@ const STARRED_PAGES_PREFERENCE: PreferenceDefinition<string[]> = {
 }
 
 /**
- * A saved Pages-view snapshot: sort + compound filter chips,
- * captured under a user-chosen name (#2003 piece 1). `filters` stores
- * `FilterPrimitive[]` verbatim — no `_addId` (that's a React-key-only field
- * `usePageBrowserFilters` adds locally, stripped before persisting here,
- * same as it's stripped before the IPC round-trip).
+ * A Pages-view saved view as this device stored it before saved views became
+ * pages (#2003 piece 1, #6544). Only `migrateDeviceSavedViews`
+ * (`src/lib/saved-views.ts`) reads it.
  */
-export interface SavedPagesView {
-  /** Stable id (`crypto.randomUUID()`), never reused even after delete. */
+interface DeviceSavedPagesView {
   id: string
-  /** User-chosen display name (not unique-enforced). */
   name: string
-  /** ISO timestamp of creation. */
   createdAt: string
   sort: SortOption
   filters: FilterPrimitive[]
@@ -767,7 +726,7 @@ export const SAVED_PAGES_VIEWS_SCHEMA_VERSION = 1
 /** Parsed shape of the `agaric:pages:savedViews:v1` payload. */
 export interface SavedPagesViewsPayload {
   schemaVersion: number
-  views: SavedPagesView[]
+  views: DeviceSavedPagesView[]
 }
 
 const EMPTY_SAVED_PAGES_VIEWS_PAYLOAD: SavedPagesViewsPayload = {
@@ -776,7 +735,7 @@ const EMPTY_SAVED_PAGES_VIEWS_PAYLOAD: SavedPagesViewsPayload = {
 }
 
 /** Light structural check — a full `FilterPrimitive` discriminant match isn't worth duplicating here. */
-function isFilterPrimitiveLike(value: unknown): value is FilterPrimitive {
+export function isFilterPrimitiveLike(value: unknown): value is FilterPrimitive {
   return (
     value !== null &&
     typeof value === 'object' &&
@@ -785,7 +744,7 @@ function isFilterPrimitiveLike(value: unknown): value is FilterPrimitive {
 }
 
 /** A stored view with its sort read by {@link readSort}; `undefined` when malformed. */
-function readSavedPagesView(value: unknown): SavedPagesView | undefined {
+function readSavedPagesView(value: unknown): DeviceSavedPagesView | undefined {
   if (value === null || typeof value !== 'object') return undefined
   const v = value as Record<string, unknown>
   const sort = readSort(v['sort'])
@@ -800,22 +759,13 @@ function readSavedPagesView(value: unknown): SavedPagesView | undefined {
   ) {
     return undefined
   }
-  return { ...(value as SavedPagesView), sort }
+  return { ...(value as DeviceSavedPagesView), sort }
 }
 
 /**
  * Parse the `agaric:pages:savedViews:v1` payload. An unknown/future
- * `schemaVersion` — or a payload that isn't a JSON object at all — discards
- * the stored contents and returns the empty envelope stamped with the
- * CURRENT schema version, matching this module's "invalid stored data →
- * defaultValue" failure discipline (see module docstring). That silent
- * discard alone can't be told apart from "nothing was ever stored" from
- * inside `parse` — `peekSavedPagesViewsSchemaMismatch` in
- * `saved-pages-views.ts` reads the raw string independently (bypassing this
- * registry entry) to surface that distinction as a one-shot recovery signal
- * to `useSavedPagesViews`, timed to run before `useLocalStoragePreference`'s
- * mount-effect write-back would overwrite the mismatched raw value with the
- * empty envelope.
+ * `schemaVersion` — or a payload that isn't a JSON object at all — reads as
+ * the empty envelope, so the migration moves nothing and leaves the key alone.
  */
 function parseSavedPagesViewsPayload(raw: string): SavedPagesViewsPayload {
   const parsed: unknown = JSON.parse(raw)
@@ -831,10 +781,9 @@ function parseSavedPagesViewsPayload(raw: string): SavedPagesViewsPayload {
 }
 
 /**
- * `agaric:pages:savedViews:v1` — user-named Pages-view snapshots (sort +
- * filters), #2003 piece 1. Device-scoped; JSON envelope (unlike
- * the bare-string preferences above) because the payload is structured and
- * this is a brand-new key with no pre-registry on-disk shape to preserve.
+ * `agaric:pages:savedViews:v1` — this device's Pages-view saved views from
+ * before they became pages (#6544); `migrateDeviceSavedViews` moves them once
+ * and removes the key.
  */
 const SAVED_PAGES_VIEWS_PREFERENCE: PreferenceDefinition<SavedPagesViewsPayload> = {
   key: 'agaric:pages:savedViews:v1',
@@ -846,18 +795,16 @@ const SAVED_PAGES_VIEWS_PREFERENCE: PreferenceDefinition<SavedPagesViewsPayload>
 }
 
 /**
- * A saved Advanced Query view (#5738). `spec` is the JSON of a `SavedQuerySpec`
- * (`src/stores/advancedQuery.ts`), validated by `parseQuerySpec` when the view
- * loads, because `lib/` may not import a store (`scripts/check-lib-layering.mjs`).
+ * An Advanced Query saved view as this device stored it before saved views
+ * became pages (#5738, #6544). `spec` is the JSON of a `SavedQuerySpec`.
  */
-export interface SavedQueryView {
-  /** Stable id (`crypto.randomUUID()`). */
+interface DeviceSavedQueryView {
   id: string
   name: string
   spec: string
 }
 
-function isSavedQueryView(value: unknown): value is SavedQueryView {
+function isSavedQueryView(value: unknown): value is DeviceSavedQueryView {
   if (value === null || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
   return (
@@ -869,20 +816,21 @@ function isSavedQueryView(value: unknown): value is SavedQueryView {
 }
 
 /**
- * `agaric:advancedQuery:savedViews:<spaceId>` — Advanced Query saved views in
- * creation order, per space because a view's leaves hold that space's ids.
+ * `agaric:advancedQuery:savedViews:<spaceId>` — this device's Advanced Query
+ * saved views of one space from before they became pages (#6544);
+ * `migrateDeviceSavedViews` moves them once and removes the key.
  */
-const SAVED_QUERY_VIEWS_PREFERENCE: PreferenceDefinition<SavedQueryView[]> = {
+const SAVED_QUERY_VIEWS_PREFERENCE: PreferenceDefinition<DeviceSavedQueryView[]> = {
   key: 'agaric:advancedQuery:savedViews',
   scope: 'space',
   version: 1,
-  defaultValue: [] as SavedQueryView[],
+  defaultValue: [] as DeviceSavedQueryView[],
   parse: (raw) => {
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
     return parsed.filter(isSavedQueryView)
   },
-  serialize: jsonSerialize<SavedQueryView[]>,
+  serialize: jsonSerialize<DeviceSavedQueryView[]>,
 }
 
 /**

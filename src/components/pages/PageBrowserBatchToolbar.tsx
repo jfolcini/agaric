@@ -30,8 +30,8 @@
  *
  * Saved views (#2003 item 1) are a separate piece — persisted
  * `{sort, filters}` view snapshots — implemented in
- * `src/lib/saved-pages-views.ts` / `SavedViewsDropdown` / `SaveViewDialog`,
- * not in this toolbar.
+ * `src/lib/saved-views.ts` / `SavedViewsDropdown` / `SaveViewDialog`, not in
+ * this toolbar.
  */
 
 import { Bookmark, BookmarkX, SlidersHorizontal, Tag, Trash2 } from 'lucide-react'
