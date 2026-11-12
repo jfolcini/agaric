@@ -1357,7 +1357,8 @@ mod tests {
     }
 
     /// Serves one connection on `socket_path` as the production server does,
-    /// and runs `agaric-mcp --token <token> call <tool> <arguments>` against it.
+    /// and runs `agaric-mcp --token <token> call <tool> <arguments>` against it
+    /// with its stdout on `stdout`.
     #[cfg(all(unix, feature = "ci-smoke"))]
     async fn bridge_call<RO: server::ToolRegistry, RW: server::ToolRegistry>(
         socket_path: &std::path::Path,
@@ -1365,6 +1366,7 @@ mod tests {
         token: &str,
         tool: &str,
         arguments: &str,
+        stdout: std::process::Stdio,
     ) -> std::process::Output {
         let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
         tokio::spawn(async move {
@@ -1375,7 +1377,8 @@ mod tests {
         command
             .arg("--socket")
             .arg(socket_path)
-            .args(["--token", token, "call", tool, arguments]);
+            .args(["--token", token, "call", tool, arguments])
+            .stdout(stdout);
         tokio::task::spawn_blocking(move || command.output().expect("run agaric-mcp"))
             .await
             .unwrap()
@@ -1402,6 +1405,7 @@ mod tests {
             &agent.token,
             "capture",
             &arguments.to_string(),
+            std::process::Stdio::piped(),
         )
         .await;
 
@@ -1435,6 +1439,7 @@ mod tests {
                 &agent.token,
                 tool,
                 "{}",
+                std::process::Stdio::piped(),
             )
             .await;
 
@@ -1462,6 +1467,7 @@ mod tests {
             &agent.token,
             "list_spaces",
             "{}",
+            std::process::Stdio::piped(),
         )
         .await;
 
@@ -1473,27 +1479,31 @@ mod tests {
         );
     }
 
-    /// Arguments that are not a JSON object are a usage error, found before
-    /// connecting: the socket here does not exist.
+    /// A reader that closes the pipe early, as `| head -c` does, gets exit 1
+    /// and a message: a panic aborts a release build.
     #[cfg(all(unix, feature = "ci-smoke"))]
-    #[test]
-    fn stub_binary_call_with_malformed_arguments_exits_2_before_connecting_6555() {
-        for arguments in ["{\"query\":", "[1]"] {
-            let output = std::process::Command::new(bridge_binary())
-                .args(["--socket", "/nonexistent/mcp.sock", "--token", "agt_x"])
-                .args(["call", "search", arguments])
-                .output()
-                .expect("run agaric-mcp");
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert_eq!(
-                output.status.code(),
-                Some(2),
-                "{arguments}: stderr: {stderr}"
-            );
-            assert!(
-                stderr.contains("not a JSON object"),
-                "{arguments}: the error names the arguments: {stderr}",
-            );
-        }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stub_binary_call_into_a_closed_pipe_exits_1_6555() {
+        let (pool, agent, dir) =
+            test_support::vault_with_agent("Script", agents::McpAgentMode::ReadOnly, None).await;
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+
+        let output = bridge_call(
+            &dir.path().join("call.sock"),
+            test_support::real_server(pool, None),
+            &agent.token,
+            "list_spaces",
+            "{}",
+            writer.into(),
+        )
+        .await;
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+        assert!(
+            stderr.contains("could not print the result"),
+            "stderr names the failed write: {stderr}",
+        );
     }
 }

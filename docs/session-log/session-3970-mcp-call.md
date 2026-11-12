@@ -12,6 +12,8 @@ Decisions and traps:
 - A refused token is an error to `initialize`; a tool error, including a write tool on a read-only
   token, is an error to the call. Both print the server's message on stderr and exit 1. Arguments
   that are not a JSON object exit 2 in `parse_args`, before anything connects.
+- The result goes out through `writeln!`, not `println!`: `println!` panics when the reader closes
+  the pipe early (`| head -c`), and release builds abort on panic. A failed write exits 1 naming it.
 - The happy-path test runs `capture`, not the issue's `search`: `search` needs settled full-text
   indexing, and `capture` shows both the arguments going in and the stored block.
 - `real_server` and `DEV` moved from `tests_rmcp.rs` into `mcp::test_support` so the binary smoke

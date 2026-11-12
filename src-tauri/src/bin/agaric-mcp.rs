@@ -400,8 +400,14 @@ where
     let request = CallToolRequestParams::new(call.tool).with_arguments(call.arguments);
     match client.call_tool(request).await {
         Ok(result) => {
+            // `println!` panics on a closed stdout (`| head -c`), and release
+            // builds abort on panic.
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
             for text in result.content.iter().filter_map(|block| block.as_text()) {
-                println!("{}", text.text);
+                if let Err(e) = writeln!(stdout, "{}", text.text) {
+                    return call_failed(&format!("could not print the result: {e}"));
+                }
             }
             ExitCode::SUCCESS
         }
