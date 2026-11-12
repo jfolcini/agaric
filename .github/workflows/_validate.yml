@@ -584,7 +584,6 @@ jobs:
           scripts/e2e-related.test.mjs
           scripts/android-launch-smoke.test.mjs
           scripts/render-mutation-summary.test.mjs
-          scripts/nextest-flaky-report.test.mjs
           scripts/file-scheduled-failures.test.mjs
           || { cat "$RUNNER_TEMP/node-test.log"; exit 1; }
 
@@ -1680,20 +1679,6 @@ jobs:
           cargo llvm-cov report --lcov --workspace \
             --output-path coverage-${{ matrix.shard }}.lcov
 
-      - name: Name every test that passed only on a retry
-        # A `ci` profile retry override turns a flake green; this keeps its name (#6553).
-        if: ${{ !cancelled() }}
-        run: node scripts/nextest-flaky-report.mjs src-tauri/target/nextest/ci/junit.xml >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload the nextest JUnit report
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: nextest-junit-cargo-tests-${{ matrix.shard }}
-          path: src-tauri/target/nextest/ci/junit.xml
-          if-no-files-found: error
-          retention-days: 30
-
       - name: Upload shard coverage artifact
         # Partial lcov for this shard. Retained 7 days — the merged artifact
         # the `cargo-coverage` job publishes is the long-lived one.
@@ -1914,20 +1899,6 @@ jobs:
         # `--lib`: the `stub_binary_` tests live in the lib target, so the
         # package's integration-test binaries need no `ci-smoke` rebuild.
         run: cargo nextest run --lib --features ci-smoke --profile ci -E 'test(stub_binary_)'
-
-      - name: Name every test that passed only on a retry
-        # As in `cargo-tests` (#6553).
-        if: ${{ !cancelled() }}
-        run: node scripts/nextest-flaky-report.mjs src-tauri/target/nextest/ci/junit.xml >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload the nextest JUnit report
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: nextest-junit-mcp-tests
-          path: src-tauri/target/nextest/ci/junit.xml
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Verify agaric-mcp smoke (--version)
         run: src-tauri/target/debug/agaric-mcp --version

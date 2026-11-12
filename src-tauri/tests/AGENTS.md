@@ -39,7 +39,7 @@ Selectors that silently run nothing or the wrong set:
 - A test file not declared with `mod` in its `main.rs` (or parent module) is never compiled, so its filter matches zero tests.
 - Read the reported test count, not the exit code. When the only failures are the tests you just wrote, suspect a stale binary from an OOM-killed build: compare the count against the source, then `cargo clean -p <crate>` and rerun before touching code.
 
-nextest kills a test at 2x30 s unless `src-tauri/.config/nextest.toml` overrides it. A test slow by construction (scale seeding, replaying every fixture) gets an override there with its reason; a terminated first try that passes on retry is already at the edge under load. Both profiles retry (`retries` in that file), so a green job can hold a test marked `FLAKY`: grep the job log for it, and treat a pass on retry as a bug to fix. A seed helper that runs once per seeded row uses a keyed statement: `WHERE ?1 IS NULL OR page_id = ?1` cannot use the primary key, so seeding goes quadratic.
+nextest kills a test at 2x30 s unless `src-tauri/.config/nextest.toml` overrides it. A test slow by construction (scale seeding, replaying every fixture) gets an override there with its reason; a terminated first try that passes on retry is already at the edge under load. The local `default` profile retries once and the `ci` profile never (`retries` in that file), so a green local run can hold a test marked `FLAKY`: treat a pass on retry as a bug to fix. A seed helper that runs once per seeded row uses a keyed statement: `WHERE ?1 IS NULL OR page_id = ?1` cannot use the primary key, so seeding goes quadratic.
 
 ## Process-global state
 
