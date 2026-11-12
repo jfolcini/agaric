@@ -107,8 +107,9 @@ export function useDraftAutosave(
   // is pending.
   const pendingSinceRef = useRef<number | null>(null)
   // Blocks this hook has written a draft row for that no delete or flush has
-  // removed since. A committed burst skips its save only when no row is left:
-  // an older row would be replayed over the committed text at boot.
+  // removed since. A tick whose text a commit stored skips its save only when
+  // none is left: a row holding text since reverted to the committed text would
+  // be replayed over it at boot.
   const draftRowIdsRef = useRef<Set<string>>(new Set())
   const saveDraftRow = (id: string, md: string) => {
     draftRowIdsRef.current.add(id)
@@ -259,10 +260,11 @@ export function useDraftAutosave(
         if (!re || re.activeBlockId !== id) return
         const md = readLive()
         if (!md) return
-        if (md === readBaseline() && !draftRowIdsRef.current.has(id)) return
-        // #1065 — a genuine fresh save for this block clears any prior
-        // "discarded" marker so a real edit made after a discard can flush.
+        // #1065 — a real edit for this block clears any prior "discarded"
+        // marker so an unmount can flush what is typed after it, whether or not
+        // this tick writes a row.
         discardedRef.current.delete(id)
+        if (md === readBaseline() && !draftRowIdsRef.current.has(id)) return
         draftRowIdsRef.current.add(id)
         retryOnPoolBusy(() => commands.saveDraft(id, md).then(unwrap), {
           onRetry: (attempt) => {

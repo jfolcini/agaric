@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlockRow, withOps } from '@/__tests__/fixtures'
 import {
+  answerInvokeFromMock,
   mockInvokeCommands,
   pageRowInvokeFallback,
   strictInvokeFallback,
@@ -25,6 +26,7 @@ import {
 } from '@/__tests__/helpers/invoke'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 
 afterEach(() => {
   vi.mocked(invoke).mockReset()
@@ -144,5 +146,27 @@ describe('mockInvokeCommands', () => {
     // …everything else is still loud.
     await expect(invoke('create_block')).rejects.toThrow(/no mock registered/)
     expect(takeUnstubbedInvokes()).toEqual(['create_block'])
+  })
+})
+
+describe('answerInvokeFromMock', () => {
+  it('answers a modelled command from the mock, whose writes persist across calls', async () => {
+    await answerInvokeFromMock(vi.mocked(invoke))
+
+    await invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_1, toText: 'edited' })
+
+    await expect(invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 })).resolves.toMatchObject({
+      content: 'edited',
+    })
+    expect(takeUnstubbedInvokes()).toEqual([])
+  })
+
+  it('sends a command the mock does not model to the strict fallback, not to a silent null', async () => {
+    await answerInvokeFromMock(vi.mocked(invoke))
+
+    await expect(invoke('no_such_command')).rejects.toThrow(
+      /no mock registered for command "no_such_command"/,
+    )
+    expect(takeUnstubbedInvokes()).toEqual(['no_such_command'])
   })
 })

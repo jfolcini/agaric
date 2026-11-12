@@ -16,7 +16,8 @@
  * written, not assumed from the hook's own doc comments — see the two
  * findings below where the comments and the actual wiring disagree:
  *
- *   - Typing debounces then fires `save_draft(blockId, content)`.
+ *   - Typing debounces then fires `save_draft(blockId, content)`, except for
+ *     text the idle content commit already stored (it needs no row).
  *   - Blurring a block (click away, or Enter-commit-and-move-to-a-new-
  *     sibling) discards the draft via `delete_draft` — NOT a flush
  *     (useEditorBlur.ts: "Blur is deliberately NOT a flush path").

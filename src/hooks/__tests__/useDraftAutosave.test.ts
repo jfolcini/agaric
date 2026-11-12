@@ -328,8 +328,9 @@ describe('useDraftAutosave', () => {
       expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'status:: done')
     })
 
-    it('overwrites an earlier row even when the live text is committed', () => {
-      const { ref, state, handle } = makeEditor({ markdown: 'a' })
+    it('overwrites its own row once the text is back to the committed text', () => {
+      // `a` is committed; a `key:: value` line typed after it is drafted, then deleted again.
+      const { ref, state } = makeEditor({ markdown: 'a\nk:: v', storedMarkdown: 'a' })
       const { result } = renderAutosave(ref)
       act(() => {
         result.current.onContentChange()
@@ -337,7 +338,26 @@ describe('useDraftAutosave', () => {
       act(() => {
         vi.advanceTimersByTime(2000)
       })
+      expect(mockedSaveDraft).toHaveBeenLastCalledWith('BLOCK_1', 'a\nk:: v')
+      state.markdown = 'a'
+      act(() => {
+        result.current.onContentChange()
+      })
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      // Left holding the line, the row would be replayed at boot over the text the user sees.
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(2)
       expect(mockedSaveDraft).toHaveBeenLastCalledWith('BLOCK_1', 'a')
+    })
+
+    it('a committed edit after a discard still lets an unmount flush the tail typed after it', async () => {
+      const { ref, state, handle } = makeEditor({ markdown: 'a', storedMarkdown: 'a' })
+      const { result, unmount } = renderAutosave(ref)
+      // The blur before the refocus discards the block's draft.
+      act(() => {
+        result.current.discardDraft()
+      })
       state.markdown = 'ab'
       act(() => {
         result.current.onContentChange()
@@ -346,9 +366,17 @@ describe('useDraftAutosave', () => {
       act(() => {
         vi.advanceTimersByTime(2000)
       })
-      // Left holding 'a', the row would be replayed over 'ab' by boot recovery.
-      expect(mockedSaveDraft).toHaveBeenCalledTimes(2)
-      expect(mockedSaveDraft).toHaveBeenLastCalledWith('BLOCK_1', 'ab')
+      expect(mockedSaveDraft).not.toHaveBeenCalled()
+
+      state.markdown = 'abc'
+      act(() => {
+        result.current.onContentChange()
+      })
+      unmount()
+      await flushMicrotasks()
+
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'abc')
+      expect(mockedFlushDraft).toHaveBeenCalledWith('BLOCK_1')
     })
   })
 
