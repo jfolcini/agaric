@@ -17,7 +17,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  * Selection mechanics:
  *   - Ctrl+Click on a static block toggles it in/out of selection
  *   - Selected blocks get the `block-selected` utility on [data-testid="block-static"]
- *   - Batch toolbar (`.batch-toolbar`) appears when selectedBlockIds.length > 0
+ *   - Batch toolbar (`.batch-toolbar`) appears from two selected blocks (#6547)
  *   - Ctrl+A selects all blocks (only when no block is focused/editing)
  */
 
@@ -77,12 +77,13 @@ test.describe('Batch block operations @editor', () => {
       .locator('[data-testid="block-static"]')
       .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
 
-    // Toolbar appears with count 1
-    await expect(batchToolbar).toBeVisible()
-    await expect(batchToolbar).toContainText('1')
-    await expect(batchToolbar).toContainText('selected')
+    // One selected block brings no toolbar (#6547)
+    await expect(blocks.nth(0).locator('[data-testid="block-static"]')).toHaveClass(
+      /block-selected/,
+    )
+    await expect(batchToolbar).toHaveCount(0)
 
-    // Ctrl+Click second block — count becomes 2
+    // Ctrl+Click second block — the toolbar appears with count 2
     await blocks
       .nth(1)
       .locator('[data-testid="block-static"]')

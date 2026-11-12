@@ -6697,13 +6697,24 @@ describe('BlockTree batch toolbar (#657)', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
       focusedBlockId: null,
-      selectedBlockIds: ['A'],
+      selectedBlockIds: ['A', 'B'],
     })
 
     renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+  })
+
+  // #6547 — the block Escape selects acts through its menu and keys.
+  it('shows no batch toolbar for one selected block', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'A', content: 'Alpha' })], loading: false })
+    useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: ['A'] })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    expect(screen.queryByTestId('batch-toolbar')).not.toBeInTheDocument()
   })
 
   it('batch toolbar hidden when no selection', async () => {
@@ -6866,11 +6877,11 @@ describe('BlockTree batch toolbar (#657)', () => {
 
   it('clear selection button clears selectedBlockIds', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', content: 'Beta' })]
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
       focusedBlockId: null,
-      selectedBlockIds: ['A'],
+      selectedBlockIds: ['A', 'B'],
     })
 
     renderBlockTree()

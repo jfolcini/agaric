@@ -3,7 +3,7 @@
  * when multiple blocks are selected.
  *
  * Validates:
- *  - Renders nothing when no blocks are selected
+ *  - Renders nothing when no blocks, or one, are selected
  *  - Renders the selected-count and the four TODO-state buttons + Delete +
  *    Clear-selection when a selection exists
  *  - Each TODO-state button calls onBatchSetTodo with the right state
@@ -23,9 +23,12 @@ import { axe } from 'vitest-axe'
 
 import { BlockBatchActionMenu } from '@/components/block-tree/BlockBatchActionMenu'
 import { t } from '@/lib/i18n'
+import { useBlockStore } from '@/stores/blocks'
 
 interface Overrides {
   selectedBlockIds?: string[]
+  /** The global selection the tree's share comes from; its share by default. */
+  wholeSelection?: string[]
   batchInProgress?: boolean
   batchDeleteConfirm?: boolean
   onBatchSetTodo?: (state: string | null) => void
@@ -35,7 +38,7 @@ interface Overrides {
   onClearSelection?: () => void
 }
 
-function renderToolbar(overrides: Overrides = {}) {
+function renderToolbar({ wholeSelection, ...overrides }: Overrides = {}) {
   const props = {
     selectedBlockIds: ['BLOCK_01', 'BLOCK_02'],
     batchInProgress: false,
@@ -47,6 +50,7 @@ function renderToolbar(overrides: Overrides = {}) {
     onClearSelection: vi.fn(),
     ...overrides,
   }
+  useBlockStore.setState({ selectedBlockIds: wholeSelection ?? props.selectedBlockIds })
   const result = render(<BlockBatchActionMenu {...props} />)
   return { ...result, props }
 }
@@ -57,6 +61,18 @@ describe('BlockBatchActionMenu', () => {
     const { container } = renderToolbar({ selectedBlockIds: [] })
     expect(container.innerHTML).toBe('')
     expect(screen.queryByTestId('batch-toolbar')).not.toBeInTheDocument()
+  })
+
+  // #6547 — the one block Escape selects gets no bar.
+  it('renders nothing for a selection of one block', () => {
+    const { container } = renderToolbar({ selectedBlockIds: ['A'] })
+    expect(container.innerHTML).toBe('')
+  })
+
+  // One block selected in each of two journal days is a selection of two.
+  it("renders for a tree's one block when the whole selection holds two", () => {
+    renderToolbar({ selectedBlockIds: ['A'], wholeSelection: ['A', 'ON_ANOTHER_DAY'] })
+    expect(screen.getByTestId('batch-toolbar')).toHaveTextContent(`1 ${t('blockContext.selected')}`)
   })
 
   it('wraps its actions so a phone-width viewport never scrolls sideways', () => {
@@ -190,7 +206,11 @@ describe('BlockBatchActionMenu', () => {
   // block(s)?". Hardcoded literal (not re-derived via t()) so a regression
   // in the catalog's plural forms reddens this.
   it('uses singular wording in the confirm dialog title for a 1-block selection', () => {
-    renderToolbar({ selectedBlockIds: ['A'], batchDeleteConfirm: true })
+    renderToolbar({
+      selectedBlockIds: ['A'],
+      wholeSelection: ['A', 'ON_ANOTHER_DAY'],
+      batchDeleteConfirm: true,
+    })
 
     const dialog = screen.getByRole('alertdialog')
     expect(within(dialog).getByText('Delete 1 block?')).toBeInTheDocument()

@@ -61,7 +61,7 @@ Settings › Editor › *Show Markdown syntax around the cursor* (on by default,
 | Action | Trigger |
 | --- | --- |
 | Split block | `Enter`. The text after the caret becomes a new block, read as typed, as page mode reads a new block: a task marker, `key:: value` line or `#name` it holds becomes its task state, property or tag when you leave it. Enter at the start of a block moves its text down unchanged |
-| Leave the block | `Escape` keeps what you typed and selects the block, so the block-selection keys act on it; a second `Escape` clears the selection, and `Ctrl+Z` undoes the edit like any other. An empty block is not selected: leaving tidies it away, as a click elsewhere does. The toolbar's *Discard changes* throws the edit away instead |
+| Leave the block | `Escape` keeps what you typed and selects the block, so the block-selection keys act on it, moving nothing on the page; a second `Escape` clears the selection, and `Ctrl+Z` undoes the edit like any other. An empty block is not selected: leaving tidies it away, as a click elsewhere does. The toolbar's *Discard changes* throws the edit away instead |
 | Continue a list | `Enter` on a bullet / numbered block creates the next block with the same list style; `Enter` on an *empty* styled block leaves the list instead |
 | Line break inside a block | `Shift+Enter`, or the toolbar's *New line* button (virtual keyboards have no Shift+Enter). A single line break is a line of the same block, stored as one newline and shown as a break; a blank line separates blocks |
 | Merge into previous | `Backspace` at start of block. On a bullet / numbered block the first `Backspace` clears the list style; the second merges (or, on an empty block, deletes it) |
@@ -73,8 +73,8 @@ Settings › Editor › *Show Markdown syntax around the cursor* (on by default,
 | Insert a date at the cursor | `Ctrl+Shift+D` |
 | Set a due / scheduled date | Toolbar (no default keyboard binding) |
 | Cycle task state | `Ctrl+Enter` or `Ctrl+L` |
-| Multi-select adjacent blocks | `Shift+Click`, `Ctrl+Click`, `Ctrl+A` (within page) |
-| Delete block | Toolbar → *Delete*, the block menu's *Delete* (its toast offers *Undo*, as a swipe's does), or `Ctrl+Backspace` on an empty block |
+| Multi-select adjacent blocks | `Shift+Click`, `Ctrl+Click`, `Ctrl+A` (within page). From two selected blocks the batch toolbar sets their task state or priority or deletes them; one selected block acts through its block menu |
+| Delete block | Toolbar → *Delete*, the block menu's *Delete* or the batch toolbar's (each toast offers *Undo*, as a swipe's does, the batch's bringing back every block it deleted), or `Ctrl+Backspace` on an empty block |
 | Drag to reorder | Drag the gutter handle; on touch, hold a block, then drag it |
 | Block menu (touch) | Hold a block and let go |
 | Swipe-to-delete (touch) | Swipe left on a block |

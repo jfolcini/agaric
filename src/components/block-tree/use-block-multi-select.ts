@@ -9,7 +9,7 @@ import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { clearListStyles } from '@/lib/list-style'
 import { notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
-import { buildIndexById, getDragDescendants } from '@/lib/tree-utils'
+import { buildIndexById, computeSelectionRoots, getDragDescendants } from '@/lib/tree-utils'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useUndoStore } from '@/stores/undo'
@@ -192,7 +192,10 @@ export function useBlockMultiSelect({
       // the backend SKIPPED (missing, or soft-deleted by a concurrent
       // write) to that set, so the asymmetry this closes could only have
       // under-evicted a page that was not live anyway.
-      const blocksById = pageStore.getState().blocksById
+      const { blocks, blocksById } = pageStore.getState()
+      // #6547 — the toast's Undo takes back only the roots' deletes: undoing a
+      // root restores every block under it, the selected ones included.
+      const roots = computeSelectionRoots(blocks, ids)
       // The ancestor pre-walk is no
       // longer needed. The single-row `deleteBlock` IPC required the
       // FE to filter selected descendants client-side because each
@@ -340,8 +343,21 @@ export function useBlockMultiSelect({
             totalCount: ids.length,
           }),
         )
+      } else if (rootParentId) {
+        // One Undo for the whole batch, as a single block's delete offers.
+        const pageId = rootParentId
+        notify.success(t('blockTree.deletedMessageUndo', { count: successCount }), {
+          duration: 5000,
+          action: {
+            label: t('action.undo'),
+            onClick: () => {
+              void useUndoStore
+                .getState()
+                .undoDeleteOf(pageId, roots, () => pageStore.getState().load())
+            },
+          },
+        })
       } else {
-        // Reassure the user the destructive batch is recoverable.
         notify.success(t('blockTree.deletedMessageUndo', { count: successCount }))
       }
     } finally {
