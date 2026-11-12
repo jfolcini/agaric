@@ -9,10 +9,9 @@ import { useMemo, useState } from 'react'
 import type { useTranslation } from 'react-i18next'
 
 import { CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command'
-import { Kbd } from '@/components/ui/kbd'
+import { KbdChord } from '@/components/ui/kbd'
 import { PALETTE_COMMANDS, type PaletteCommandSpec } from '@/hooks/palette-commands'
 import { useIsReadingAloud, useReadAloudSupported } from '@/hooks/useReadAloud'
-import { formatChordTokens } from '@/lib/keyboard-config/format-chord'
 import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { addRecentCommand, getRecentCommands } from '@/stores/recent-commands'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
@@ -20,28 +19,21 @@ import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 /**
  * Right-aligned chord chip group rendered inside a `<CommandItem>`.
  * Reads live from `getShortcutKeys` so a rebind takes effect on the
- * next render. Returns null when the binding is empty (e.g. a command
- * without a `shortcutId` or a deleted-then-not-rebound binding) so the
- * row layout stays consistent — no empty `<span>` placeholder.
+ * next render, and renders through `KbdChord`, which shows the catalog's
+ * `Ctrl` as this platform's mod key. Returns null when the binding is
+ * empty (e.g. a deleted-then-not-rebound binding) so the row layout stays
+ * consistent — no empty `<span>` placeholder.
  */
 function ShortcutChips({ shortcutId }: { shortcutId: string }): React.ReactElement | null {
   const keys = getShortcutKeys(shortcutId)
-  const tokens = formatChordTokens(keys)
-  if (tokens.length === 0) return null
+  if (keys.length === 0) return null
   return (
     <span
-      className="ml-auto inline-flex items-center gap-1"
+      className="ml-auto inline-flex items-center"
       aria-hidden="true"
       data-testid={`palette-cmd-shortcut-${shortcutId}`}
     >
-      {tokens.map((tok) => (
-        // Tokens within a chord are unique in practice (Ctrl+Shift+F,
-        // not Ctrl+Ctrl+F). Using `tok` as key avoids the index-as-key
-        // lint while staying stable across rebind re-renders. #1004 — the
-        // canonical <Kbd> carries its own bg/fg so the chip stays legible
-        // on a selected (`bg-accent`) command row.
-        <Kbd key={tok}>{tok}</Kbd>
-      ))}
+      <KbdChord keys={keys} size="sm" />
     </span>
   )
 }
@@ -56,15 +48,20 @@ function ShortcutChips({ shortcutId }: { shortcutId: string }): React.ReactEleme
  * `shouldFilter={false}` on the root — so we pass the user's
  * post-`>` query down explicitly and filter the registry here, then
  * render only the surviving commands.
+ *
+ * `navigateOnly` renders just the Navigate group: search mode's first open,
+ * before any page is recent, lists it under the welcome copy.
  */
 export function CommandsModeBody({
   onEscalate,
   onClose,
   t,
+  navigateOnly = false,
 }: {
   onEscalate: (q: string) => void
   onClose: () => void
   t: ReturnType<typeof useTranslation>['t']
+  navigateOnly?: boolean
 }): React.ReactElement {
   // The mode router at the parent (`PaletteBody`) has
   // already stripped the leading `>` from the store query when the
@@ -122,12 +119,12 @@ export function CommandsModeBody({
   // Recents whose command id no longer exists in the registry (stale
   // localStorage from an older build) are silently skipped.
   const recentRows = useMemo(() => {
-    if (filter.length > 0) return []
+    if (navigateOnly || filter.length > 0) return []
     const byId = new Map(commands.map((c) => [c.id, c]))
     return recents
       .map((r) => byId.get(r.id))
       .filter((c): c is (typeof commands)[number] => c != null)
-  }, [recents, commands, filter])
+  }, [recents, commands, filter, navigateOnly])
 
   // Wrap each `run` so the command id is recorded before the handler
   // closes the palette. `addRecentCommand` writes localStorage, not
@@ -144,7 +141,7 @@ export function CommandsModeBody({
   }
 
   const navigateItems = filtered.filter((c) => c.category === 'navigate')
-  const actionItems = filtered.filter((c) => c.category === 'action')
+  const actionItems = navigateOnly ? [] : filtered.filter((c) => c.category === 'action')
 
   return (
     <>

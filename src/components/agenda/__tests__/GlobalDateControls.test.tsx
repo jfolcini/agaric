@@ -2,72 +2,31 @@
  * Tests for GlobalDateControls component.
  *
  * Validates:
- *  - Renders Today on every view; Agenda + calendar only on date-control views
+ *  - Renders Today alone on every view but the journal (#6548)
  *  - Clicking Today navigates to journal daily view
- *  - Clicking calendar icon opens the calendar dropdown
+ *  - Hidden on a touch phone only
  *  - a11y compliance
  */
 
-import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { GlobalDateControls } from '@/components/agenda/GlobalDateControls'
-import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useJournalStore } from '@/stores/journal'
-import { useNavigationStore } from '@/stores/navigation'
-import { useSpaceStore } from '@/stores/space'
+import { useNavigationStore, type View } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
-
-// Mock the Calendar component used by JournalCalendarDropdown.
-//
-// The Calendar receives react-day-picker props (mode, defaultMonth, weekStartsOn,
-// showWeekNumber, showOutsideDays, selected, modifiers, components, ...) plus our
-// wrapper-level callbacks (onWeekNumberClick, onMonthClick, onSelect). None of
-// those should be forwarded onto a plain <div> — React 19 warns loudly about
-// unrecognized camelCase props ("does not recognize the `weekStartsOn` prop on
-// a DOM element ...") and about unknown event-handler props. We therefore drop
-// the props entirely from the mock: the tests in this file only care that a
-// calendar is rendered, not about its configuration.
-vi.mock('@/components/ui/calendar', () => ({
-  Calendar: () => <div data-testid="mock-calendar">Calendar</div>,
-}))
-
-const mockedInvoke = vi.mocked(invoke)
 
 vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: vi.fn(() => false) }))
 vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: vi.fn(() => false) }))
-
-/**
- * Both commands the calendar dropdown fires when it opens, overridable per
- * test.
- *
- * #4668 — the catch-all this replaced resolved `[]` for BOTH, so
- * `count_agenda_batch_by_source` — which returns a
- * `Record<date, Record<source, count>>` — was being fed an array the backend
- * cannot send.
- */
-function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}): void {
-  mockedInvoke.mockImplementation(
-    mockInvokeCommands({
-      list_journal_pages_in_range: () => [],
-      count_agenda_batch_by_source: () => ({}),
-      ...handlers,
-    }),
-  )
-}
 
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(useIsMobile).mockReturnValue(false)
   vi.mocked(useIsTouch).mockReturnValue(false)
-  __resetCalendarPageDatesForTests()
   useJournalStore.setState({
     mode: 'daily',
     currentDate: new Date(2025, 5, 15),
@@ -82,16 +41,6 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
-  // b1 — `list_journal_pages_in_range` is required-active; seed an active
-  // space so the calendar-highlight mount fetch runs.
-  useSpaceStore.setState({
-    currentSpaceId: 'SPACE_TEST',
-    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
-    isReady: true,
-  })
-  // UseCalendarPageDates now hits `list_journal_pages_in_range`,
-  // which returns a flat `BlockRow[]` (no pagination envelope).
-  stubInvoke()
 })
 
 describe('GlobalDateControls', () => {
@@ -100,22 +49,12 @@ describe('GlobalDateControls', () => {
     vi.mocked(useIsMobile).mockReturnValue(true)
     vi.mocked(useIsTouch).mockReturnValue(touch)
     render(<GlobalDateControls />)
-    expect(screen.queryByRole('button', { name: /go to agenda/i }) === null).toBe(touch)
+    expect(screen.queryByRole('button', { name: /go to today/i }) === null).toBe(touch)
   })
 
   it('renders Today button', () => {
     render(<GlobalDateControls />)
     expect(screen.getByRole('button', { name: /today/i })).toBeInTheDocument()
-  })
-
-  it('renders Agenda button', () => {
-    render(<GlobalDateControls />)
-    expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
-  })
-
-  it('renders calendar button', () => {
-    render(<GlobalDateControls />)
-    expect(screen.getByRole('button', { name: /calendar/i })).toBeInTheDocument()
   })
 
   it('clicking Today navigates to journal daily view', async () => {
@@ -128,64 +67,22 @@ describe('GlobalDateControls', () => {
     expect(useJournalStore.getState().mode).toBe('daily')
   })
 
-  it('clicking Agenda navigates to journal agenda view', async () => {
-    const user = userEvent.setup()
-    render(<GlobalDateControls />)
+  // #6548 — Agenda and the calendar used to join Today on an allowlist of
+  // views; every view outside the journal now carries the same one button.
+  it.each<View>(['pages', 'search', 'tags', 'query', 'settings', 'history', 'graph', 'trash'])(
+    'renders Today alone on the %s view',
+    async (view) => {
+      const user = userEvent.setup()
+      useNavigationStore.setState({ currentView: view, selectedBlockId: null })
 
-    await user.click(screen.getByRole('button', { name: /go to agenda/i }))
+      render(<GlobalDateControls />)
 
-    expect(useNavigationStore.getState().currentView).toBe('journal')
-    expect(useJournalStore.getState().mode).toBe('agenda')
-  })
-
-  it('clicking Agenda sets currentDate to today', async () => {
-    const user = userEvent.setup()
-    render(<GlobalDateControls />)
-
-    const beforeClick = new Date()
-    await user.click(screen.getByRole('button', { name: /go to agenda/i }))
-
-    const currentDate = useJournalStore.getState().currentDate
-    const diff = Math.abs(currentDate.getTime() - beforeClick.getTime())
-    expect(diff).toBeLessThan(5000)
-  })
-
-  // Today is on every header; Agenda + calendar only on the views where a
-  // journal date is a plausible next step (#1740).
-  it('renders Today alone on a view outside the date-control set', async () => {
-    const user = userEvent.setup()
-    useNavigationStore.setState({ currentView: 'settings', selectedBlockId: null })
-
-    render(<GlobalDateControls />)
-
-    expect(screen.queryByRole('button', { name: /go to agenda/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /calendar/i })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /go to today/i }))
-    expect(useNavigationStore.getState().currentView).toBe('journal')
-    expect(useJournalStore.getState().mode).toBe('daily')
-  })
-
-  it('Agenda button does NOT have aria-current when on agenda mode but different view', () => {
-    useNavigationStore.setState({
-      currentView: 'pages',
-      selectedBlockId: null,
-    })
-    useTabsStore.setState({
-      tabs: [{ id: '0', pageStack: [], label: '' }],
-      activeTabIndex: 0,
-    })
-    useJournalStore.setState({
-      mode: 'agenda',
-      currentDate: new Date(2025, 5, 15),
-      scrollToDate: null,
-      scrollToPanel: null,
-    })
-
-    render(<GlobalDateControls />)
-
-    const agendaBtn = screen.getByRole('button', { name: /go to agenda/i })
-    expect(agendaBtn).not.toHaveAttribute('aria-current')
-  })
+      expect(screen.getAllByRole('button')).toHaveLength(1)
+      await user.click(screen.getByRole('button', { name: /go to today/i }))
+      expect(useNavigationStore.getState().currentView).toBe('journal')
+      expect(useJournalStore.getState().mode).toBe('daily')
+    },
+  )
 
   it('clicking Today sets currentDate to today', async () => {
     const user = userEvent.setup()
@@ -197,105 +94,6 @@ describe('GlobalDateControls', () => {
     const currentDate = useJournalStore.getState().currentDate
     const diff = Math.abs(currentDate.getTime() - beforeClick.getTime())
     expect(diff).toBeLessThan(5000)
-  })
-
-  it('clicking calendar icon opens calendar dropdown', async () => {
-    const user = userEvent.setup()
-    render(<GlobalDateControls />)
-
-    await user.click(screen.getByRole('button', { name: /calendar/i }))
-
-    // The dropdown is lazy (#5441): it mounts once its chunk resolves.
-    expect(await screen.findByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
-  })
-
-  // SR users need a signal that the calendar trigger opens a popover
-  // and whether it is currently open.
-  it('calendar trigger has aria-haspopup="dialog" and aria-expanded reflects open state', async () => {
-    const user = userEvent.setup()
-    render(<GlobalDateControls />)
-
-    const trigger = screen.getByRole('button', { name: /calendar/i })
-    expect(trigger).toHaveAttribute('aria-haspopup', 'dialog')
-    expect(trigger).toHaveAttribute('aria-expanded', 'false')
-
-    await user.click(trigger)
-
-    expect(trigger).toHaveAttribute('aria-expanded', 'true')
-  })
-
-  // #3340 — the calendar-highlight fetch moved OUT of this component and into
-  // `JournalCalendarDropdown`, whose own `displayedMonth` state is the only
-  // thing that can follow the month the user pages to. It therefore runs when
-  // the dropdown OPENS, not on mount of these controls.
-  it('fetches page list for calendar highlighting when the dropdown opens', async () => {
-    const user = userEvent.setup()
-    render(<GlobalDateControls />)
-
-    await user.click(screen.getByRole('button', { name: /calendar/i }))
-
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_journal_pages_in_range',
-        expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_TEST' } }),
-      )
-    })
-  })
-
-  it('does not fetch the page list when no space is active (b1)', async () => {
-    // b1 — `list_journal_pages_in_range` is required-active. With no active
-    // space the calendar-highlight fetch must be skipped entirely rather
-    // than dispatching a Global scope (which the backend rejects).
-    useSpaceStore.setState({ currentSpaceId: null })
-    const user = userEvent.setup()
-
-    render(<GlobalDateControls />)
-    // Open the dropdown — otherwise this assertion would be vacuous, since
-    // nothing fetches the page list before it mounts (#3340).
-    await user.click(screen.getByRole('button', { name: /calendar/i }))
-    await screen.findByTestId('mock-calendar')
-
-    expect(mockedInvoke).not.toHaveBeenCalledWith('list_journal_pages_in_range', expect.anything())
-  })
-
-  it('shows error toast when the page list fetch fails', async () => {
-    // #4668 — the positional `mockRejectedValueOnce` this replaced relied on
-    // `useCalendarPageDates` registering before the dropdown's agenda-count
-    // effect, so the first IPC out took the rejection. Keying on the command
-    // says which fetch fails instead of assuming the order.
-    stubInvoke({
-      list_journal_pages_in_range: () => Promise.reject(new Error('network error')),
-    })
-    const user = userEvent.setup()
-
-    render(<GlobalDateControls />)
-    await user.click(screen.getByRole('button', { name: /calendar/i }))
-
-    await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to load calendar'),
-        // Effect-driven panel load: dedup so date-range scrubs that
-        // repeatedly hit a failing backend don't stack toasts.
-        expect.objectContaining({ id: 'journal-load-calendar-failed' }),
-      )
-    })
-  })
-
-  it('still renders controls when the page list fetch fails', async () => {
-    stubInvoke({
-      list_journal_pages_in_range: () => Promise.reject(new Error('backend unavailable')),
-    })
-    const user = userEvent.setup()
-
-    render(<GlobalDateControls />)
-    await user.click(screen.getByRole('button', { name: /calendar/i }))
-
-    await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalled()
-    })
-
-    expect(screen.getByRole('button', { name: /today/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /calendar/i })).toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {

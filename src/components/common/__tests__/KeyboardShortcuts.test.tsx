@@ -630,4 +630,37 @@ describe('KeyboardShortcuts', () => {
       expect(kbdTexts).toEqual(['⌘', 'Z'])
     })
   })
+
+  // #6548 — the sheet's own labels must say what the key does.
+  describe('labels (#6548)', () => {
+    it('describes Enter as adding a block below, which is what it does', () => {
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
+
+      const row = screen.getByText(t('keyboard.saveBlockAndClose')).closest('tr') as HTMLElement
+      expect(Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)).toEqual(['Enter'])
+      expect(t('keyboard.saveBlockAndClose')).toBe('Save block and add a new block below')
+    })
+
+    it('labels the Essential findInPage row as finding in the page, not searching notes', () => {
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
+
+      const row = screen.getByText(t('keyboard.essential.search')).closest('tr') as HTMLElement
+      expect(Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)).toEqual([
+        'Ctrl',
+        'F',
+      ])
+      expect(t('keyboard.essential.search')).toBe('Find in this page')
+    })
+
+    it('prints the Shortcut / Action header row once', () => {
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
+
+      expect(
+        screen.getAllByRole('columnheader', { name: t('keyboard.shortcutHeader') }),
+      ).toHaveLength(1)
+      expect(
+        screen.getAllByRole('columnheader', { name: t('keyboard.actionHeader') }),
+      ).toHaveLength(1)
+    })
+  })
 })

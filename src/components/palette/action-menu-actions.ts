@@ -29,7 +29,7 @@ export function buildActionMenuActions(
   const newTab: PaletteAction = {
     id: 'open-new-tab',
     label: t('palette.actionOpenNewTab'),
-    hint: '⌘↵',
+    hint: 'Ctrl + Enter',
   }
   const reveal: PaletteAction = { id: 'reveal-in-pages', label: t('palette.actionReveal') }
   // #1521 — pages copy a pasteable `[[ULID]]` page link (the block row's

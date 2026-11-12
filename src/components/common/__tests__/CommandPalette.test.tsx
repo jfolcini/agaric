@@ -41,6 +41,7 @@ import { writeText as clipboardWriteText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
 import { OPEN_NEW_PAGE_DIALOG_EVENT, TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
@@ -248,6 +249,21 @@ function openPalette(): void {
   })
 }
 
+const ORIGINAL_PLATFORM = navigator.platform
+
+/** Force what `isMac()` reads; the describes that call it restore `ORIGINAL_PLATFORM`. */
+function setPlatform(value: string): void {
+  Object.defineProperty(navigator, 'platform', { value, configurable: true })
+  __resetPlatformCacheForTests()
+}
+
+/** The mod key each platform's chips show for the catalog's `Ctrl` (#6548). */
+const MOD_BY_PLATFORM = [
+  ['Linux x86_64', 'Ctrl'],
+  ['Win32', 'Ctrl'],
+  ['MacIntel', '⌘'],
+] as const
+
 describe('CommandPalette — visibility', () => {
   it('renders nothing when the store is closed', () => {
     render(<CommandPalette />)
@@ -307,6 +323,42 @@ describe('CommandPalette — empty state', () => {
     openPalette()
     expect(screen.getByText('Recent Project')).toBeInTheDocument()
     expect(screen.getByTestId('palette-recents-group')).toBeInTheDocument()
+  })
+
+  // #6548 — a first open has no recents; the Navigate commands fill the panel.
+  it('lists the Navigate commands under the welcome copy when there are no recents', () => {
+    render(<CommandPalette />)
+    openPalette()
+    expect(useCommandPaletteStore.getState().mode).toBe('search')
+    expect(screen.getByTestId('palette-welcome-empty')).toBeInTheDocument()
+    expect(screen.getByTestId('palette-commands-navigate')).toBeInTheDocument()
+    expect(screen.getByTestId('palette-cmd-go-pages')).toBeInTheDocument()
+    expect(screen.queryByTestId('palette-commands-action')).toBeNull()
+  })
+
+  it('leaves the Navigate commands out once a recent page exists', () => {
+    seedRecentPagesStore([
+      { pageId: 'PAGE_RECENT', title: 'Recent Project', visitedAt: '2026-05-01T00:00:00Z' },
+    ])
+    render(<CommandPalette />)
+    openPalette()
+    expect(screen.getByTestId('palette-recents-group')).toBeInTheDocument()
+    expect(screen.queryByTestId('palette-commands-navigate')).toBeNull()
+  })
+
+  it('runs a Navigate command from the welcome state', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    await userEvent.click(screen.getByTestId('palette-cmd-go-settings'))
+    expect(useNavigationStore.getState().currentView).toBe('settings')
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+  })
+
+  it('passes a vitest-axe scan in the welcome state', async () => {
+    const { container } = render(<CommandPalette />)
+    openPalette()
+    expect(screen.getByTestId('palette-commands-navigate')).toBeInTheDocument()
+    expect(await axe(container)).toHaveNoViolations()
   })
 })
 
@@ -1405,6 +1457,10 @@ describe('CommandPalette — view-switch announcement (#2944)', () => {
 })
 
 describe('CommandPalette — commands mode recent commands (Phase 2)', () => {
+  afterEach(() => {
+    setPlatform(ORIGINAL_PLATFORM)
+  })
+
   it('does NOT render the Recent group on a cold open with no run history', async () => {
     render(<CommandPalette />)
     openPalette()
@@ -1662,22 +1718,26 @@ describe('CommandPalette — commands mode recent commands (Phase 2)', () => {
     expect(useCommandPaletteStore.getState().query).toBe('')
   })
 
-  it('renders an inline shortcut chip for commands with a shortcutId (Phase 1)', async () => {
-    render(<CommandPalette />)
-    openPalette()
-    fireEvent.click(screen.getByTestId('palette-mode-chip'))
-    await waitFor(() => {
-      expect(screen.getByTestId('palette-cmd-search-everywhere')).toBeInTheDocument()
-    })
-    // search-everywhere is wired to `focusSearch` (Ctrl+Shift+F) → 3 tokens.
-    const chips = screen.getByTestId('palette-cmd-shortcut-focusSearch')
-    expect(chips).toBeInTheDocument()
-    const kbds = chips.querySelectorAll('kbd')
-    expect(kbds.length).toBe(3)
-    // Modifiers map to glyphs; the letter stays uppercase.
-    const labels = Array.from(kbds).map((k) => k.textContent)
-    expect(labels).toEqual(['⌃', '⇧', 'F'])
-  })
+  it.each(MOD_BY_PLATFORM)(
+    'renders an inline shortcut chip for commands with a shortcutId (Phase 1) on %s',
+    async (platform, mod) => {
+      setPlatform(platform)
+      render(<CommandPalette />)
+      openPalette()
+      fireEvent.click(screen.getByTestId('palette-mode-chip'))
+      await waitFor(() => {
+        expect(screen.getByTestId('palette-cmd-search-everywhere')).toBeInTheDocument()
+      })
+      // search-everywhere is wired to `focusSearch` (Ctrl+Shift+F) → 3 tokens.
+      const chips = screen.getByTestId('palette-cmd-shortcut-focusSearch')
+      expect(chips).toBeInTheDocument()
+      const kbds = chips.querySelectorAll('kbd')
+      expect(kbds.length).toBe(3)
+      // `Ctrl` is the platform mod key; the other tokens are spelled out.
+      const labels = Array.from(kbds).map((k) => k.textContent)
+      expect(labels).toEqual([mod, 'Shift', 'F'])
+    },
+  )
 
   it('omits the chord chip for commands without a shortcutId', async () => {
     render(<CommandPalette />)
@@ -1690,25 +1750,29 @@ describe('CommandPalette — commands mode recent commands (Phase 2)', () => {
     expect(screen.queryByTestId('palette-cmd-shortcut-go-pages')).toBeNull()
   })
 
-  it('picks up a rebound shortcut on the next render (Phase 1)', async () => {
-    // Seed an override BEFORE the palette opens — `getShortcutKeys`
-    // reads localStorage on every call, so a rebind takes effect on
-    // the next render without forcing a remount.
-    localStorage.setItem(
-      'agaric-keyboard-shortcuts',
-      JSON.stringify({ focusSearch: 'Ctrl + Alt + K' }),
-    )
-    render(<CommandPalette />)
-    openPalette()
-    fireEvent.click(screen.getByTestId('palette-mode-chip'))
-    await waitFor(() => {
-      expect(screen.getByTestId('palette-cmd-shortcut-focusSearch')).toBeInTheDocument()
-    })
-    const labels = Array.from(
-      screen.getByTestId('palette-cmd-shortcut-focusSearch').querySelectorAll('kbd'),
-    ).map((k) => k.textContent)
-    expect(labels).toEqual(['⌃', '⌥', 'K'])
-  })
+  it.each(MOD_BY_PLATFORM)(
+    'picks up a rebound shortcut on the next render (Phase 1) on %s',
+    async (platform, mod) => {
+      setPlatform(platform)
+      // Seed an override BEFORE the palette opens — `getShortcutKeys`
+      // reads localStorage on every call, so a rebind takes effect on
+      // the next render without forcing a remount.
+      localStorage.setItem(
+        'agaric-keyboard-shortcuts',
+        JSON.stringify({ focusSearch: 'Ctrl + Alt + K' }),
+      )
+      render(<CommandPalette />)
+      openPalette()
+      fireEvent.click(screen.getByTestId('palette-mode-chip'))
+      await waitFor(() => {
+        expect(screen.getByTestId('palette-cmd-shortcut-focusSearch')).toBeInTheDocument()
+      })
+      const labels = Array.from(
+        screen.getByTestId('palette-cmd-shortcut-focusSearch').querySelectorAll('kbd'),
+      ).map((k) => k.textContent)
+      expect(labels).toEqual([mod, 'Alt', 'K'])
+    },
+  )
 
   it('silently skips stale command ids that no longer exist in the registry', async () => {
     localStorage.setItem(
@@ -1943,7 +2007,7 @@ describe('CommandPalette —  regressions', () => {
 
   it('renders the footer hint with new-tab affordance copy in search mode', () => {
     // (UX-should-3): the new footer hint surfaces the
-    // ⌘↵ new-tab affordance + ↵ + esc shortcuts.
+    // open, new-tab and close shortcuts.
     render(<CommandPalette />)
     openPalette()
     expect(screen.getByTestId('palette-footer-hint')).toBeInTheDocument()

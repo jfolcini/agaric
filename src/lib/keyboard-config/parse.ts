@@ -64,8 +64,8 @@ const MODIFIER_ALIASES: Readonly<Record<string, 'ctrl' | 'alt' | 'shift'>> = {
 const MODIFIER_PREFIX = /^([A-Za-z]+)(\s*[+-]\s*|\s+)/
 
 /**
- * A leading mac modifier GLYPH (`⌘⌥⌃⇧` — the exact set `formatChordTokens`
- * renders, so users copy them back into the Settings input). Unlike word
+ * A leading mac modifier GLYPH (`⌘⌥⌃⇧`, the spellings macOS menus show, so
+ * users copy them into the Settings input). Unlike word
  * modifiers a glyph is unambiguous on its own, so the separator is optional
  * (`⌘K`, `⇧⌘K` are the conventional mac spellings).
  */
