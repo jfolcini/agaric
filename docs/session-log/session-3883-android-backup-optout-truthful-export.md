@@ -24,4 +24,4 @@ Issue #6538, its first two items. The third (About and the update hint) landed i
   - `aapt2 dump xmltree --file AndroidManifest.xml <apk>` shows both attributes.
   - A backup-enabled reinstall comes up with a fresh identity and an empty vault that pairs.
   - The export rows and the bug-report switch read as described at phone width.
-- Not done: a CI step running `aapt dump` on the built APK. It could not be run here, and the patch script's assertion already covers the source.
+- The `aapt2 dump xmltree` check is a line in `docs/BUILD.md` (Production builds), the issue's release-checklist option rather than a CI step: it could not be run here, and the patch script's assertion already covers the source.
