@@ -377,15 +377,7 @@ export function TagFilterPanel(): React.ReactElement {
   // `queryByTags` otherwise). Neither IPC accepts an AbortSignal, so — as before
   // migration — none is forwarded. The client is passed EXPLICITLY as the 2nd arg
   // so no `QueryClientProvider` ancestor is required (bare `render()` tests need no
-  // wrapper). The key carries the live filter inputs (space, tag expression, query
-  // params), so it churns on every filter edit — each tag add/remove, each and/or/not
-  // mode toggle, each prefix-pill change, and each committed composer edit mints a
-  // distinct key. Under an infinite `gcTime` every superseded, now
-  // observer-less entry would retain its full page set for the whole session and
-  // accumulate unbounded across an exploratory tag session. Bound the churn with a
-  // finite `gcTime` (same rationale/value as the merged `DonePanel`, whose monotonic
-  // key churns comparably); the old `usePaginatedQuery` held only a single `useState`
-  // list, so it accumulated nothing across edits.
+  // wrapper).
   const {
     data,
     isFetching,
@@ -407,10 +399,6 @@ export function TagFilterPanel(): React.ReactElement {
       enabled: hasQuery,
       // usePaginatedQuery auto-loaded page 1 on every mount; preserve that.
       refetchOnMount: 'always',
-      // Bound per-edit key churn (see the query-key note above): a superseded
-      // filter combination's cache entry is collected 5 min after its last
-      // observer detaches, instead of lingering for the whole session.
-      gcTime: 5 * 60 * 1000,
       // Stale-while-revalidate parity: usePaginatedQuery's deps-change path reset
       // the cursor but NEVER cleared `items` — only a successful response
       // overwrote them, so the prior results stayed visible (dimmed) during a

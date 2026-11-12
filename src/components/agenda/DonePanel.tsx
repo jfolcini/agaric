@@ -131,12 +131,6 @@ export function DonePanel({
       // cache writes are unchanged, so the #2210 stale-guard still holds).
       // Mirrors the sibling `useAdvancedQuery` migration.
       placeholderData: keepPreviousData,
-      // `invalidationKey` mints a new key on every block-property change; under
-      // an infinite `gcTime` those superseded, observer-less entries would
-      // accumulate unbounded over a long session. Bound the churn (mirrors
-      // `useBacklinkGroups`): the active key keeps an observer while mounted and
-      // is never collected; each prior key is evicted 5 min after going inactive.
-      gcTime: 5 * 60 * 1000,
     },
     queryClient,
   )

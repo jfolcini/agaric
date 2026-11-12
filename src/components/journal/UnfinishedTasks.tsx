@@ -321,12 +321,6 @@ export function UnfinishedTasks({
       // panel: the `loading` skeleton (below) already gates the whole render
       // during a re-drain, so there is no visible list to keep alive.
       placeholderData: keepPreviousData,
-      // Bound the cache: the key carries `todayStr`, which advances every
-      // calendar day, so a session left open across many days would mint a new
-      // (superseded, observer-less) entry per day and never collect it under an
-      // infinite `gcTime`. A finite `gcTime` collects the prior day's
-      // entry shortly after the rollover (same value/rationale as `DonePanel`).
-      gcTime: 5 * 60 * 1000,
     },
     queryClient,
   )
