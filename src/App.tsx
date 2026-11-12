@@ -20,7 +20,7 @@ import { SearchSheetTrigger } from '@/components/mobile/SearchSheetTrigger'
 import { BootGate } from '@/components/pages/BootGate'
 import { shellOwnsHeading, useHeaderLabel, ViewDispatcher } from '@/components/pages/ViewDispatcher'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
+import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { useAndroidBackButton } from '@/hooks/useAndroidBackButton'
 import { useAppBootRecovery } from '@/hooks/useAppBootRecovery'
@@ -157,12 +157,12 @@ function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
 /**
  * The mobile entry point to the nav sidebar.
  *
- * Below the 768px `useIsMobile` breakpoint the sidebar is a Sheet with NO
- * persistent rail (see `Sidebar`'s mobile branch), so this button is the
- * way in; Ctrl+B remains as a secondary.
- * Gated on exactly the same `useIsMobile()` predicate the Sheet branch uses —
- * not `useShouldShowMobileChrome()`, which also needs touch — so the affordance can never be
- * absent while the rail is, and can never appear next to the desktop sidebar.
+ * When the sidebar is a Sheet (below the 768px `useIsMobile` breakpoint, or
+ * on a touch screen in landscape) it has NO persistent rail (see `Sidebar`'s
+ * mobile branch), so this button is the way in; Ctrl+B remains as a secondary.
+ * Gated on the sidebar's own `isMobile`, the predicate the Sheet branch uses,
+ * so the affordance can never be absent while the rail is, and can never
+ * appear next to the desktop sidebar.
  *
  * Self-gating in its own component rather than an inline `isMobile && …` in
  * App: App is already at its cyclomatic-complexity ceiling, and a render
@@ -170,7 +170,7 @@ function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
  */
 function MobileSidebarTrigger(): ReactElement | null {
   const { t } = useTranslation()
-  const isMobile = useIsMobile()
+  const { isMobile } = useSidebar()
   if (!isMobile) return null
   return (
     <SidebarTrigger

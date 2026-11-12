@@ -48,7 +48,7 @@ The Done Panel lists what you completed today, grouped by source page. Useful fo
 
 ## Agenda mode
 
-Flat task list across a date range with filtering, sorting, and grouping.
+Flat task list across a date range with filtering, sorting, and grouping. Its header title is *Tasks*, and the sidebar's Tasks row opens it.
 
 - **Default state filter** opens with TODO and DOING only — DONE / CANCELLED are hidden until you clear the filter. This keeps "what's in flight" the first thing you see.
 - **Default grouping**: by page. Tasks without a page collect into a muted "No page" group at the end.

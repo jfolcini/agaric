@@ -316,7 +316,14 @@ function DaySectionInner({
     >
       {/* Day heading — hidden in daily mode since header shows the date */}
       {!hideHeading && (
-        <div className={cn('flex flex-wrap items-center gap-2', !emptyRow && 'mb-2')}>
+        // On touch a wrapped line sits a hit area's overhang down, so the
+        // heading's and the chips' `touch-hit-area`s do not overlap.
+        <div
+          className={cn(
+            'flex flex-wrap items-center gap-2 [@media(pointer:coarse)]:gap-y-6',
+            !emptyRow && 'mb-2',
+          )}
+        >
           <Heading
             className={cn(
               headingLevel === 'h2'
@@ -328,7 +335,7 @@ function DaySectionInner({
             {isClickable ? (
               <button
                 type="button"
-                className="hover:text-primary hover:underline underline-offset-2 cursor-pointer transition-colors"
+                className="touch-hit-area hover:text-primary hover:underline underline-offset-2 cursor-pointer transition-colors"
                 onClick={() => navigateToDate(entry.date, 'daily')}
                 aria-label={t('journal.goToDailyView', { date: entry.displayDate })}
               >
@@ -355,7 +362,7 @@ function DaySectionInner({
                     key={source}
                     type="button"
                     className={cn(
-                      'inline-flex items-center rounded-sm px-1.5 py-0.5 text-xs font-medium',
+                      'touch-hit-area inline-flex items-center rounded-sm px-1.5 py-0.5 text-xs font-medium',
                       color.light,
                       color.dark,
                       'hover:opacity-80',
@@ -370,7 +377,7 @@ function DaySectionInner({
               {entry.pageId && (backlinkCounts[entry.pageId] ?? 0) > 0 && (
                 <button
                   type="button"
-                  className="inline-flex items-center rounded-sm bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 active:bg-primary/30"
+                  className="touch-hit-area inline-flex items-center rounded-sm bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 active:bg-primary/30"
                   onClick={() => goToDateAndPanel(entry.date, 'references')}
                   aria-label={t('journal.backlinkCountBadge', {
                     count: backlinkCounts[entry.pageId],

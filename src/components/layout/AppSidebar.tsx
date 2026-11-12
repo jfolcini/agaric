@@ -18,8 +18,8 @@
  * remaining props.
  */
 
-import { AlertCircle, ChevronsLeft, Plus, RefreshCw, WifiOff } from 'lucide-react'
-import { memo, type ReactElement } from 'react'
+import { AlertCircle, CheckSquare, ChevronsLeft, Plus, RefreshCw, WifiOff } from 'lucide-react'
+import { type ElementType, memo, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
@@ -44,6 +44,7 @@ import { useMinuteClock } from '@/hooks/useMinuteClock'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { type NavItem, SETTINGS_NAV_ITEM, SIDEBAR_NAV_ITEMS } from '@/lib/nav-items'
 import { cn } from '@/lib/utils'
+import { useJournalStore } from '@/stores/journal'
 import type { View } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { type SyncState, useSyncStore } from '@/stores/sync'
@@ -126,6 +127,9 @@ function AppSidebarInner({
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const { isMobile, setOpenMobile } = useSidebar()
+  const journalMode = useJournalStore((s) => s.mode)
+  const setJournalMode = useJournalStore((s) => s.setMode)
+  const onTasks = currentView === 'journal' && journalMode === 'agenda'
   const now = useMinuteClock()
   const lastSyncedLabel = lastSyncedAt
     ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t, now) })
@@ -158,34 +162,66 @@ function AppSidebarInner({
     if (isMobile) setOpenMobile(false)
   }
 
-  const renderNavItem = (item: NavItem): ReactElement => {
-    const label = t(item.labelKey)
-    return (
-      <SidebarMenuItem key={item.id}>
-        <SidebarMenuButton
-          isActive={currentView === item.id}
-          aria-current={currentView === item.id ? 'page' : undefined}
-          tooltip={label}
-          onClick={() => {
-            onSelectView(item.id)
-            dismissOnMobile()
-          }}
-        >
-          <item.icon />
-          <span>{label}</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    )
+  const renderMenuButton = (
+    key: string,
+    Icon: ElementType,
+    label: string,
+    active: boolean,
+    select: () => void,
+  ): ReactElement => (
+    <SidebarMenuItem key={key}>
+      <SidebarMenuButton
+        isActive={active}
+        aria-current={active ? 'page' : undefined}
+        tooltip={label}
+        onClick={() => {
+          select()
+          dismissOnMobile()
+        }}
+      >
+        <Icon />
+        <span>{label}</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  )
+
+  const renderNavItem = (item: NavItem): ReactElement[] => {
+    if (item.id !== 'journal') {
+      return [
+        renderMenuButton(item.id, item.icon, t(item.labelKey), currentView === item.id, () =>
+          onSelectView(item.id),
+        ),
+      ]
+    }
+    // #6532 — the agenda, retitled Tasks, gets its own row under Journal, so
+    // a phone reaches it without the one-letter header mode menu. Journal
+    // then always opens a dated mode.
+    return [
+      renderMenuButton(
+        item.id,
+        item.icon,
+        t(item.labelKey),
+        currentView === 'journal' && !onTasks,
+        () => {
+          if (journalMode === 'agenda') setJournalMode('daily')
+          onSelectView('journal')
+        },
+      ),
+      renderMenuButton('tasks', CheckSquare, t('journal.tasks'), onTasks, () => {
+        setJournalMode('agenda')
+        onSelectView('journal')
+      }),
+    ]
   }
 
   return (
     /*
      * "icon" is a DESKTOP-only choice: it collapses the sidebar to a 48px
      * icon-only rail rather than fully off-canvas, so the primary nav stays
-     * one click away instead of needing a swipe/click to re-open. Below the
-     * 768px mobile breakpoint the `collapsible` prop has no effect — the
-     * sidebar is always a Sheet, opened from the header hamburger, and 48px
-     * of a phone's width goes to content. See docs/UX.md § Mobile Sidebar.
+     * one click away instead of needing a swipe/click to re-open. Where the
+     * sidebar is a Sheet (a phone, upright or on its side) the `collapsible`
+     * prop has no effect — it opens from the header hamburger, and 48px of a
+     * phone's width goes to content. See docs/UX.md § Mobile Sidebar.
      */
     <Sidebar collapsible="icon">
       {/* The rail is 48px wide, so its header padding drops to fit the 32px
@@ -245,10 +281,10 @@ function AppSidebarInner({
       </SidebarHeader>
       <SidebarContent>
         <FeatureErrorBoundary name="Sidebar">
-          {/* #5269 — four items need no group label. */}
+          {/* #5269 — the few daily items need no group label. */}
           <SidebarGroup>
             <SidebarGroupContent>
-              <SidebarMenu>{SIDEBAR_NAV_ITEMS.map(renderNavItem)}</SidebarMenu>
+              <SidebarMenu>{SIDEBAR_NAV_ITEMS.flatMap(renderNavItem)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
           {/* #4713 — the pinned recent pages, as a collapsible section. Below

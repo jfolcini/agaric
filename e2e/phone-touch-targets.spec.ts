@@ -6,11 +6,12 @@
  * neighbour drawn over the control does not.
  */
 
-import { devices, type Locator } from '@playwright/test'
+import { devices, type Locator, type Page } from '@playwright/test'
 
 import {
   activePopover,
   expect,
+  ipc,
   navigateToView,
   openMobileSidebar,
   openPageMobile,
@@ -69,7 +70,7 @@ test.describe('phone touch targets @mobile', () => {
     const newPage = sheet.getByRole('button', { name: 'New Page', exact: true })
     const rows = [
       newPage,
-      ...['Journal', 'Pages', 'Search', 'Tags'].map((name) =>
+      ...['Journal', 'Tasks', 'Pages', 'Search', 'Tags'].map((name) =>
         sheet.getByRole('button', { name, exact: true }),
       ),
       sheet.getByTestId('sidebar-bookmarks-toggle'),
@@ -137,5 +138,71 @@ test.describe('phone touch targets @mobile', () => {
     await navigateToView(page, 'Settings')
     await openSettingsTab(page, 'Properties')
     await expect44(page.getByRole('button', { name: 'Task cycle help' }), 'Task cycle help')
+  })
+})
+
+// #6532 — the journal's day headings and their count chips sit side by side on
+// one 20 px row, and the agenda's date chip under its row's title: each reaches
+// 44 px as a hit area, so the rows keep their height and a tap on one never
+// lands on its neighbour.
+test.describe('journal headings and chips on a 360 px touch phone @mobile @journal', () => {
+  test.use({
+    viewport: { width: 360, height: 780 },
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+    deviceScaleFactor: iPhone13.deviceScaleFactor,
+    userAgent: iPhone13.userAgent,
+  })
+
+  async function chooseMode(page: Page, mode: RegExp): Promise<void> {
+    await page.getByRole('button', { name: /^Journal view mode/ }).click()
+    await activePopover(page).getByRole('button', { name: mode }).click()
+  }
+
+  async function expectSmallBox(el: Locator, name: string): Promise<void> {
+    expect((await el.boundingBox())?.height, `${name}: drawn height`).toBeLessThan(30)
+  }
+
+  test('week and stream headings, count chips and the agenda date chip', async ({ page }) => {
+    // A Wednesday, so the seed's yesterday, today and tomorrow share a week.
+    await page.clock.setFixedTime(new Date('2026-10-21T10:00:00'))
+    // Mount every day's tree at once instead of on scroll (DaySection).
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await waitForBoot(page)
+    // A reference to today's journal page, for its refs chip.
+    await ipc(page, 'create_block', {
+      blockType: 'content',
+      content: 'See [[00000000000000000000PAGE03]]',
+      parentId: '00000000000000000000PAGE01',
+      index: null,
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    })
+
+    await chooseMode(page, /^Week/)
+    const today = page.locator('section[id="journal-2026-10-21"]')
+    const heading = today.getByRole('button', { name: /^Go to daily view for/ })
+    const due = today.getByRole('button', { name: /Due items?, click to view$/ })
+    const refs = today.getByRole('button', { name: /references?, click to view$/ })
+    // At 360 px this one wraps under the heading.
+    const scheduled = today.getByRole('button', { name: /Scheduled items?, click to view$/ })
+    for (const [el, name] of [
+      [heading, 'week heading'],
+      [due, 'due chip'],
+      [refs, 'refs chip'],
+      [scheduled, 'scheduled chip'],
+    ] as const) {
+      await expect44(el, name)
+      await expectSmallBox(el, name)
+    }
+
+    await chooseMode(page, /^Stream/)
+    const streamHeading = page.getByRole('button', { name: /^Go to daily view for/ }).first()
+    await expect44(streamHeading, 'stream heading')
+    await expectSmallBox(streamHeading, 'stream heading')
+
+    await chooseMode(page, /^Agenda/)
+    const dateChip = page.getByRole('button', { name: 'Edit date', exact: true }).first()
+    await expect44(dateChip, 'agenda date chip')
+    await expectSmallBox(dateChip, 'agenda date chip')
   })
 })
