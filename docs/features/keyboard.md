@@ -56,8 +56,8 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+Z` | Undo (in-editor history when focused; page-level otherwise) |
-| `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
+| `Ctrl+Z` | Undo (in a focused block, its typing first and then, on a page, the page's previous operation; page-level otherwise) |
+| `Ctrl+Y` / `Ctrl+Shift+Z` | Redo, the same way |
 | `Ctrl+Shift+E` | Export current page as Markdown |
 | `Ctrl+Shift+G` | Show current page in the graph (local mode) |
 | `Ctrl+E` / `Ctrl+Shift+M` | Switch the page on screen between editing blocks and editing it as one document ([page mode](editor.md#page-mode)); nothing where the switch is not offered |
