@@ -129,8 +129,7 @@ export function ToolbarFrame({
         // visualViewport effect); desktop: inline, beside its editor.
         isTouch
           ? 'fixed inset-x-0 bottom-0 z-30 gap-1 overflow-x-auto border-t py-1.5 bg-muted/95 backdrop-blur supports-[backdrop-filter]:bg-muted/80'
-          : // `rounded-t-md` matches the `.block-editor` box it heads, which
-            // cannot clip it (`overflow-hidden` would cut ImageResizeToolbar).
+          : // `rounded-t-md` matches the frame it heads (page mode, Edit as Markdown).
             cn('relative rounded-t-md border-b', className),
       )}
       data-testid={testId}

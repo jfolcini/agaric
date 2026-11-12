@@ -5,6 +5,7 @@ import { reloadMeetingLink } from '@/components/attachments/meeting-link'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { HeaderSearchButton } from '@/components/common/HeaderSearchButton'
 import { HistoryNavButtons } from '@/components/common/HistoryNavButtons'
+import { ViewToolbarSlot } from '@/components/FormattingToolbar/view-toolbar'
 import { GlobalDateControls, JournalControls } from '@/components/JournalPage'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { QuickAccessBar } from '@/components/layout/QuickAccessBar'
@@ -721,6 +722,7 @@ function App() {
                 insideScroller
                 className="-mx-4 -mt-4 mb-4 border-b border-border/40 px-4 py-3 space-y-2 has-[[data-sticky-search]]:sticky has-[[data-sticky-search]]:-top-4 has-[[data-sticky-search]]:z-10"
               />
+              <ViewToolbarSlot />
               <div
                 className={cn(
                   'flex flex-1 min-h-0 flex-col',

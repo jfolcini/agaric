@@ -2,14 +2,14 @@
  * EditorSurface — the TipTap-dependent editing UI for the focused block.
  *
  * This is the inner render of `EditableBlock`'s editor `<section>`: the
- * formatting toolbar, the selection bubble menu, the `EditorContent` portal that
- * hosts the roving ProseMirror view, and the drag-drop hint. It is imported ONLY
+ * selection bubble menu, the `EditorContent` portal that hosts the roving
+ * ProseMirror view, and the drag-drop hint. The formatting toolbar it hands to
+ * the view (`useViewToolbar`), which shows one for the whole view (#6562). It is imported ONLY
  * by the lazily-loaded editor-runtime chunk (`RovingEditorHost`), so none of its
  * `@tiptap/*` imports reach the cold-start path (#2939).
  *
  * `EditableBlock` renders this via `EditorSurfaceContext`; it never imports this
- * module directly. Behaviour is byte-for-byte the same as the previous inline
- * render — the toolbars and `EditorContent` receive the identical props.
+ * module directly.
  */
 
 import { EditorContent } from '@tiptap/react'
@@ -21,7 +21,9 @@ import { useBlockActions } from '@/components/block-tree/use-block-actions'
 import { ImageBubbleMenu } from '@/components/editor-toolbar/ImageBubbleMenu'
 import { SelectionBubbleMenu } from '@/components/editor-toolbar/SelectionBubbleMenu'
 import type { EditorSurfaceProps } from '@/components/editor/editor-surface-context'
+import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { FormattingToolbar } from '@/components/FormattingToolbar'
+import { useViewToolbar } from '@/components/FormattingToolbar/view-toolbar'
 
 export function EditorSurface({
   editor,
@@ -34,18 +36,24 @@ export function EditorSurface({
   // The context types `editor` loosely (`unknown`) to stay TipTap-free; here it
   // is always the live TipTap `Editor` for the focused block.
   const ed = editor as Editor
+  // The bar renders outside this tree, where no `ListMarkerProvider` gives the block's list style.
+  const listStyle = useListMarker(blockId).style
+  useViewToolbar(
+    <FormattingToolbar
+      editor={ed}
+      blockId={blockId}
+      currentPriority={currentPriority}
+      listStyle={listStyle}
+      className="rounded-none bg-background"
+      indent={
+        onIndent && onDedent
+          ? { onIndent: () => onIndent(blockId), onOutdent: () => onDedent(blockId) }
+          : undefined
+      }
+    />,
+  )
   return (
     <>
-      <FormattingToolbar
-        editor={ed}
-        blockId={blockId}
-        currentPriority={currentPriority}
-        indent={
-          onIndent && onDedent
-            ? { onIndent: () => onIndent(blockId), onOutdent: () => onDedent(blockId) }
-            : undefined
-        }
-      />
       <SelectionBubbleMenu editor={ed} blockId={blockId} />
       <ImageBubbleMenu editor={ed} />
       <EditorContent editor={ed} />

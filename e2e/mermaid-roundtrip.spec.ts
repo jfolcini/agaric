@@ -47,7 +47,7 @@ function reactNodeView(page: Page) {
  */
 async function pickCodeLanguage(page: Page, language: string): Promise<void> {
   const trigger = page
-    .locator('[data-testid="block-editor"]')
+    .getByTestId('formatting-toolbar')
     .getByRole('button', { name: 'Turn into', exact: true })
   const filter = page.getByRole('textbox', { name: 'Code block language' })
 
@@ -119,8 +119,10 @@ test.describe('Mermaid diagram round-trip (#1438) @editor @markdown', () => {
     await page.keyboard.press('Delete')
     await editor.pressSequentially('graph TD; A-->B;')
 
-    const blockEditor = page.locator('[data-testid="block-editor"]')
-    await blockEditor.getByRole('button', { name: 'Turn into', exact: true }).click()
+    await page
+      .getByTestId('formatting-toolbar')
+      .getByRole('button', { name: 'Turn into', exact: true })
+      .click()
     await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
     const langInput = page.getByRole('textbox', { name: 'Code block language' })
     await expect(langInput).toBeVisible()
@@ -209,7 +211,7 @@ test.describe('Mermaid diagram round-trip (#1438) @editor @markdown', () => {
 
     // Turn into → Code block → javascript: starts on the plain DOM node view.
     await page
-      .locator('[data-testid="block-editor"]')
+      .getByTestId('formatting-toolbar')
       .getByRole('button', { name: 'Turn into', exact: true })
       .click()
     await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()

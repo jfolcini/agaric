@@ -773,6 +773,32 @@ describe('EditableBlock', () => {
       document.body.removeChild(portal)
     })
 
+    it('unmounts and saves when the only visible overlay is the view formatting toolbar', () => {
+      const mockUnmount = vi.fn(() => 'changed')
+      const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
+
+      render(
+        <EditableBlock blockId="B1" content="Hello" isFocused rovingEditor={roving as never} />,
+      )
+
+      // The view's bar (#6562) shows outside the block for as long as it is edited.
+      const slot = document.createElement('div')
+      slot.setAttribute('data-view-toolbar', '')
+      const bar = document.createElement('div')
+      bar.setAttribute('data-editor-portal', '')
+      ;(bar as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
+      slot.append(bar)
+      document.body.append(slot)
+
+      fireEvent.blur(getBlockEditorWrapper(), { relatedTarget: null })
+
+      expect(mockUnmount).toHaveBeenCalledOnce()
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed')
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+
+      document.body.removeChild(slot)
+    })
+
     it('does not unmount when relatedTarget is inside a Radix popover', () => {
       const mockUnmount = vi.fn(() => 'changed')
       const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
