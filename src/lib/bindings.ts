@@ -19,11 +19,8 @@ export const commands = {
 	 *  Tauri command: atomically create a batch of blocks. Delegates to
 	 *  [`create_blocks_batch_inner`].
 	 * 
-	 *  Collapses the per-block `create_block` IPC loop
-	 *  in `src/lib/template-utils.ts::insertTemplateBlocks` /
-	 *  `insertTemplateBlocksFromString` into one round-trip and one
-	 *  writer-lock window. A 10-line template that previously fired 10
-	 *  IPCs now fires 1.
+	 *  `src/lib/template-utils.ts::insertTemplateBlocks` inserts a whole
+	 *  template through it, in one round-trip and one writer-lock window.
 	 * 
 	 *  #5140: the response carries the produced op refs (`WithOps`, one per
 	 *  appended op in append order) so the frontend undo stack can address the
@@ -1937,8 +1934,7 @@ export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte" | "Contains" 
 /**
  *  One row of [`create_blocks_batch_inner`]'s input list.
  * 
- *  Mirrors the per-block argument set the FE used to send to `create_block`
- *  once per descendant / per markdown line in `template-utils.ts`. The
+ *  One block of a `/template` insert (`template-utils.ts`). The
  *  `properties` map carries arbitrary `key -> value_text` pairs that land
  *  as `SetProperty` ops inside the same transaction (mirrors
  *  `import_markdown_inner`'s precedent — see its `set_property_in_tx`
@@ -1961,11 +1957,16 @@ export type CreateBlockSpec = {
 	content: string,
 	/**
 	 *  Optional parent block id. When `Some`, the parent must resolve
-	 *  to a live (non-deleted, non-conflict) block — including parents
-	 *  created EARLIER in the same batch. When `None`, the new block is
-	 *  top-level.
+	 *  to a live (non-deleted, non-conflict) block. When `None` (and no
+	 *  `parent_index`), the new block is top-level.
 	 */
 	parentId: BlockId | null,
+	/**
+	 *  The index of an EARLIER spec in the same batch whose block is this
+	 *  one's parent: a caller cannot know a server-minted id before the
+	 *  batch runs. Exclusive with `parent_id`.
+	 */
+	parentIndex?: number | null,
 	/**
 	 *  Optional 1-based sibling position (stable wire field). `None` appends
 	 *  after the last sibling. #400: converted to the engine's 0-based sibling
@@ -1979,6 +1980,11 @@ export type CreateBlockSpec = {
 	 *  `import_markdown_inner` for parsed markdown property lines.
 	 */
 	properties?: { [key in string]: string },
+	/**
+	 *  Properties held as a number, date, ref or boolean, each written as
+	 *  `set_property` writes it, inside the same transaction.
+	 */
+	typedProperties?: { [key in string]: SetPropertyArgs },
 };
 
 /**

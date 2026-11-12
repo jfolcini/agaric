@@ -1896,6 +1896,8 @@ mod tests {
                 content: format!("line {i}"),
                 parent_id: Some(BlockId::from_trusted(&template)),
                 position: None,
+                parent_index: None,
+                typed_properties: std::collections::HashMap::new(),
                 properties: std::collections::HashMap::new(),
             })
             .collect();

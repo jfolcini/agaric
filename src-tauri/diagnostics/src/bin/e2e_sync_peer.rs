@@ -609,6 +609,8 @@ impl Peer {
                     content: format!("{marker} page {page} block {block} {filler}"),
                     parent_id: Some(page_row.id.clone()),
                     position: None,
+                    parent_index: None,
+                    typed_properties: std::collections::HashMap::new(),
                     properties: std::collections::HashMap::new(),
                 })
                 .collect();

@@ -3371,8 +3371,7 @@ pub async fn purge_blocks_by_ids(
 
 /// One row of [`create_blocks_batch_inner`]'s input list.
 ///
-/// Mirrors the per-block argument set the FE used to send to `create_block`
-/// once per descendant / per markdown line in `template-utils.ts`. The
+/// One block of a `/template` insert (`template-utils.ts`). The
 /// `properties` map carries arbitrary `key -> value_text` pairs that land
 /// as `SetProperty` ops inside the same transaction (mirrors
 /// `import_markdown_inner`'s precedent — see its `set_property_in_tx`
@@ -3391,10 +3390,14 @@ pub struct CreateBlockSpec {
     /// `MAX_CONTENT_LENGTH` per spec.
     pub content: String,
     /// Optional parent block id. When `Some`, the parent must resolve
-    /// to a live (non-deleted, non-conflict) block — including parents
-    /// created EARLIER in the same batch. When `None`, the new block is
-    /// top-level.
+    /// to a live (non-deleted, non-conflict) block. When `None` (and no
+    /// `parent_index`), the new block is top-level.
     pub parent_id: Option<BlockId>,
+    /// The index of an EARLIER spec in the same batch whose block is this
+    /// one's parent: a caller cannot know a server-minted id before the
+    /// batch runs. Exclusive with `parent_id`.
+    #[serde(default)]
+    pub parent_index: Option<u32>,
     /// Optional 1-based sibling position (stable wire field). `None` appends
     /// after the last sibling. #400: converted to the engine's 0-based sibling
     /// `index` at the call site (position 1 → index 0).
@@ -3405,23 +3408,24 @@ pub struct CreateBlockSpec {
     /// `import_markdown_inner` for parsed markdown property lines.
     #[serde(default)]
     pub properties: std::collections::HashMap<String, String>,
+    /// Properties held as a number, date, ref or boolean, each written as
+    /// `set_property` writes it, inside the same transaction.
+    #[serde(default)]
+    pub typed_properties: std::collections::HashMap<String, SetPropertyArgs>,
 }
 
 /// Atomically create N blocks (with optional
 /// per-block properties) in a single `BEGIN IMMEDIATE` transaction.
 ///
-/// Replaces the per-block `create_block` IPC loop the FE used to drive
-/// in `template-utils.ts::insertTemplateBlocks` /
-/// `insertTemplateBlocksFromString` (one IPC per descendant / per
-/// markdown line). The new path is one IPC, one writer-lock window, one
-/// op_log scope.
+/// `template-utils.ts::insertTemplateBlocks` sends a whole template through
+/// it: one IPC, one writer-lock window, one op_log scope.
 ///
 /// Per-spec semantics: each entry in `specs` runs through
 /// [`create_block_in_tx`] (the same helper [`import_markdown_inner`] uses
 /// in `src-tauri/src/commands/pages/markdown.rs`), accumulating
 /// `(BlockRow, OpRecord)` pairs. After
 /// the `CreateBlock` op is appended, every `(key, value)` pair in
-/// `properties` runs through [`set_property_in_tx`] — same precedent as
+/// `properties` and `typed_properties` runs through [`set_property_in_tx`] — same precedent as
 /// the markdown-import loop in `src-tauri/src/commands/pages/markdown.rs`.
 /// All ops enqueue for
 /// background dispatch; one `commit_and_dispatch` at the end drains them
@@ -3441,11 +3445,8 @@ pub struct CreateBlockSpec {
 /// - Empty `specs` list → [`AppError::Validation`].
 /// - `specs.len()` > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) → [`AppError::Validation`].
 ///
-/// **Forward references:** a spec's `parent_id` may reference a block
-/// id created EARLIER in the same batch. `create_block_in_tx`'s parent
-/// validation runs against the live transaction state, so a row
-/// inserted at index `i` is visible to the parent probe at index
-/// `j > i`.
+/// **Nesting:** a spec's `parent_index` names an EARLIER spec whose block
+/// is its parent, so a whole tree lands in one batch (`/template`, #6530).
 #[instrument(skip(pool, device_id, materializer, specs), err)]
 pub async fn create_blocks_batch_inner(
     pool: &SqlitePool,
@@ -3458,74 +3459,35 @@ pub async fn create_blocks_batch_inner(
     }
     crate::commands::ensure_batch_within_cap("specs", specs.len())?;
 
-    // PRE-VALIDATE every spec's pure shape (block_type membership, content
-    // length) BEFORE the loop's first `apply_op_projected` commits a block
-    // into the shared per-space Loro engine. The engine has NO rollback: a
-    // mid-batch shape rejection used to roll back SQL + op_log while specs
-    // `0..k` stayed committed in the LoroDoc — phantom nodes that export
-    // over sync. The loop's own `create_block_in_tx` re-runs these checks
-    // (unchanged), so behaviour is identical for single creates; per-spec
-    // checks that need tx state (parent liveness, depth, cross-space refs,
-    // property validation) still run in-loop and are covered by
-    // `create_block_in_tx`'s validate-before-engine-apply ordering.
-    for spec in &specs {
-        agaric_engine::block_ops::validate_create_block_shape(&spec.block_type, &spec.content)?;
-    }
+    // PRE-VALIDATE every spec's shape (block_type membership, content length,
+    // parent_index) BEFORE the loop's first write. Checks that need tx state
+    // (parent liveness, depth, cross-space refs, property validation) run
+    // in-loop, and the armed engine rollback rewinds what the loop applied.
+    validate_spec_shapes(&specs)?;
 
     let mut tx = CommandTx::begin_immediate(pool, "create_blocks_batch").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
     let mut created: Vec<BlockRow> = Vec::with_capacity(specs.len());
-
     for spec in specs {
-        // Contract — any failure here rolls back the whole tx via
-        // `?`. Mirrors `import_markdown_inner`'s per-block loop.
-        // #400: the spec keeps its stable 1-based `position` wire field;
-        // `create_block_in_tx` now takes a 0-based `index`, so convert
-        // (position 1 → index 0 = first child). `None` still appends.
-        let index = spec.position.map(|p| (p - 1).max(0));
-        let (block, block_op) = create_block_in_tx(
+        let parent_id = match spec.parent_index {
+            Some(index) => usize::try_from(index)
+                .ok()
+                .and_then(|i| created.get(i))
+                .map(|parent| parent.id.clone().into_string()),
+            None => spec.parent_id.clone().map(BlockId::into_string),
+        };
+        // Any failure here rolls back the whole tx via `?`. Boxed: the spec's
+        // create-and-properties future would otherwise inflate every caller's.
+        let block = Box::pin(create_spec_in_tx(
             &mut tx,
-            materializer.loro_state(),
+            materializer,
             device_id,
-            spec.block_type,
-            spec.content,
-            spec.parent_id.map(BlockId::into_string),
-            index,
-            // #2849 PR2: batch creates always mint server ids.
-            None,
-        )
-        .await?;
-        tx.enqueue_background(block_op);
-
-        // Properties — same shape as `import_markdown_inner`. Each
-        // (key, value) pair becomes one `SetProperty` op inside this same
-        // transaction. Reserved keys (`todo_state` / `priority` /
-        // `due_date` / `scheduled_date`) route through the column-write
-        // branch of `set_property_in_tx`, but the date reserved keys need
-        // the `value_date` field shape (not `value_text`) to validate —
-        // #623. The helper types the flat string value per key.
-        for (key, value) in &spec.properties {
-            let (value_text, value_num, value_date, value_ref, value_bool) =
-                agaric_engine::block_ops::typed_property_args_for_string_value(key, value.clone());
-            let (_block, prop_op) = set_property_in_tx(
-                &mut tx,
-                materializer.loro_state(),
-                device_id,
-                block.id.clone().into_string(),
-                key,
-                value_text,
-                value_num,
-                value_date,
-                value_ref,
-                value_bool,
-            )
-            .await?;
-            tx.enqueue_background(prop_op);
-        }
-
-        created.push(block);
+            spec,
+            parent_id,
+        ));
+        created.push(block.await?);
     }
 
     tx.commit_and_dispatch(materializer).await?;
@@ -3533,14 +3495,96 @@ pub async fn create_blocks_batch_inner(
     Ok(created)
 }
 
+/// Refuse a batch whose shape is wrong before its first write: an unknown
+/// `block_type`, oversize content, or a `parent_index` that does not name an
+/// earlier spec or sits beside a `parent_id`.
+fn validate_spec_shapes(specs: &[CreateBlockSpec]) -> Result<(), AppError> {
+    for (i, spec) in specs.iter().enumerate() {
+        agaric_engine::block_ops::validate_create_block_shape(&spec.block_type, &spec.content)?;
+        let Some(parent) = spec.parent_index else {
+            continue;
+        };
+        if spec.parent_id.is_some() {
+            return Err(AppError::validation(format!(
+                "spec {i}: parentId and parentIndex cannot both be set"
+            )));
+        }
+        if usize::try_from(parent).map_or(true, |p| p >= i) {
+            return Err(AppError::validation(format!(
+                "spec {i}: parentIndex {parent} must name an earlier spec"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// One spec of [`create_blocks_batch_inner`]: the block under `parent_id`,
+/// then each of its properties, every op riding `tx`.
+async fn create_spec_in_tx(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    spec: CreateBlockSpec,
+    parent_id: Option<String>,
+) -> Result<BlockRow, AppError> {
+    // #400: the spec keeps its stable 1-based `position` wire field;
+    // `create_block_in_tx` takes a 0-based `index` (position 1 → index 0).
+    // `None` appends.
+    let index = spec.position.map(|p| (p - 1).max(0));
+    let (block, block_op) = create_block_in_tx(
+        tx,
+        materializer.loro_state(),
+        device_id,
+        spec.block_type,
+        spec.content,
+        parent_id,
+        index,
+        // #2849 PR2: batch creates always mint server ids.
+        None,
+    )
+    .await?;
+    tx.enqueue_background(block_op);
+
+    // A flat value is typed by its key: the reserved date keys need the
+    // `value_date` shape, not `value_text`, to validate (#623).
+    let text = spec.properties.into_iter().map(|(key, value)| {
+        let typed = agaric_engine::block_ops::typed_property_args_for_string_value(&key, value);
+        (key, typed)
+    });
+    let typed = spec.typed_properties.into_iter().map(|(key, v)| {
+        let args = (
+            v.value_text,
+            v.value_num,
+            v.value_date,
+            v.value_ref,
+            v.value_bool,
+        );
+        (key, args)
+    });
+    for (key, (value_text, value_num, value_date, value_ref, value_bool)) in text.chain(typed) {
+        let (_block, prop_op) = set_property_in_tx(
+            tx,
+            materializer.loro_state(),
+            device_id,
+            block.id.clone().into_string(),
+            &key,
+            value_text,
+            value_num,
+            value_date,
+            value_ref,
+            value_bool,
+        )
+        .await?;
+        tx.enqueue_background(prop_op);
+    }
+    Ok(block)
+}
+
 /// Tauri command: atomically create a batch of blocks. Delegates to
 /// [`create_blocks_batch_inner`].
 ///
-/// Collapses the per-block `create_block` IPC loop
-/// in `src/lib/template-utils.ts::insertTemplateBlocks` /
-/// `insertTemplateBlocksFromString` into one round-trip and one
-/// writer-lock window. A 10-line template that previously fired 10
-/// IPCs now fires 1.
+/// `src/lib/template-utils.ts::insertTemplateBlocks` inserts a whole
+/// template through it, in one round-trip and one writer-lock window.
 ///
 /// #5140: the response carries the produced op refs (`WithOps`, one per
 /// appended op in append order) so the frontend undo stack can address the

@@ -185,6 +185,8 @@ async fn create_blocks_batch_mid_batch_rejection_leaves_engine_in_lockstep_with_
             content: "valid first spec".into(),
             parent_id: Some("CBB_P".into()),
             position: None,
+            parent_index: None,
+            typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::default(),
         },
         CreateBlockSpec {
@@ -192,6 +194,8 @@ async fn create_blocks_batch_mid_batch_rejection_leaves_engine_in_lockstep_with_
             content: "invalid second spec".into(),
             parent_id: Some("CBB_P".into()),
             position: None,
+            parent_index: None,
+            typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::default(),
         },
     ];
