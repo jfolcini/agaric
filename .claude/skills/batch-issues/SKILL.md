@@ -46,20 +46,17 @@ Each cell is a model and the Agent tool's `effort`. A harness whose Agent tool h
 
 | Item | Builder | Reviewer |
 | --- | --- | --- |
-| Research and read-only discovery (Explore agent), any tier | `haiku` · `high` | — |
-| Mechanical (docs, rename, copy, small UI polish, dep bump, comment sweep) | `sonnet` · `high` | `sonnet` · `high` |
-| Typical scoped fix or feature in one domain | `opus` · `high` | `opus` · `high` |
-| High risk (migration, materializer, security, cross-cutting, ambiguous) | `opus` · `xhigh` | `sonnet` · `max` |
+| Rote or mechanical (read-only discovery with the Explore agent, rename, comment sweep, copy, dep bump) | `haiku` · `high` | `sonnet` · `high` |
+| Easy (docs, small UI polish, a one-file fix whose scope is obvious) | `sonnet` · `high` | `sonnet` · `high` |
+| Typical scoped fix or feature in one domain: the default | `opus` · `high` | `opus` · `high` |
+| Toughest (migration, materializer, sync or concurrency, security, cross-cutting, ambiguous scope, a root cause that defeated `opus`) | `fable` · `high` | `opus` · `xhigh` |
 
-Each builder cell is a point on the Pareto frontier of [Artificial Analysis's Intelligence Index](https://artificialanalysis.ai/) against cost per task for Anthropic models (v4.3.2). Models and efforts off the frontier, Fable 5.1 among them, do not build.
-
-- **Opus `high` is the knee.** Below it, quality drops sharply on code (DeepSWE agrees); above it, cost rises much faster than score.
-- **High risk pays for `xhigh`.** `max` is the last escalation, not a default, because its first token is slow.
-- **Sonnet `max` reviews high-risk diffs.** It is off the frontier on purpose: a second model, so builder and reviewer do not share blind spots, and Anthropic's strongest on Terminal-Bench.
-- **Haiku `high` does discovery**, the cheapest point that reads code reliably. Rerun on `sonnet` when its answer comes back thin or contradicts the code.
+- **Opus `high` is the default.** Pick another row only when the item clearly sits in it.
+- **Fable takes the toughest items**, where a wrong build costs more than the model does. Its reviewer is `opus`, a second model, so builder and reviewer do not share blind spots.
+- **Haiku does rote work only.** Rerun on `sonnet` when its answer comes back thin or contradicts the code.
 - **Explore and Plan agents cannot write files** (they have no Write or Edit tool). Brief them to return the result in their final message, or use a general-purpose agent when a file must exist.
 
-Unsure: one row up. A builder that keeps failing is relaunched one step up the frontier (`sonnet` `high` → `opus` `high` → `opus` `xhigh` → `opus` `max`), not retried. Recheck the frontier when a model ships.
+Unsure: one row up. A builder that keeps failing is relaunched one row up (`haiku` → `sonnet` → `opus` → `fable`), not retried.
 
 ## 2. Build
 
