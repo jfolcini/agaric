@@ -237,6 +237,7 @@ export const sync: Record<string, string> = {
     'This device and {{peer}} run different versions of Agaric. Update both to the latest version, then sync again.',
   'sync.versionMismatchUnnamed':
     'This device and the other device run different versions of Agaric. Update both to the latest version, then sync again.',
+  'sync.openReleasesAction': 'Open releases page',
   'sync.retryAction': 'Retry sync',
   'sync.backOnline': 'Back online. Syncing\u2026',
   'sync.noPeersTitle': 'No devices paired',

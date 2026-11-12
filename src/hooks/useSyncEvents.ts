@@ -22,10 +22,13 @@
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { announce } from '@/lib/announcer'
+import { RELEASES_URL } from '@/lib/config'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { openUrl } from '@/lib/open-url'
 import { isPairingWindowRejection } from '@/lib/pairing-rejections'
+import { isMobilePlatform } from '@/lib/platform'
 import { forEachLivePageStoreGroup } from '@/stores/page-blocks'
 import { retitleHeldPages } from '@/stores/page-rename'
 import { useResolveStore } from '@/stores/resolve'
@@ -332,7 +335,18 @@ export function useSyncEvents(): void {
           logger.debug('useSyncEvents', 'suppressed a pairing-window rejection toast', { message })
           return
         }
-        notify.error(i18n.t('sync.failed', { message }), { id: 'sync-error' })
+        // #6538 — Android does not update itself; a version mismatch there
+        // is fixed by installing the newest APK, so the toast says where.
+        const releasesAction =
+          event.payload.code === 'engine_format_mismatch' && isMobilePlatform()
+            ? {
+                action: {
+                  label: i18n.t('sync.openReleasesAction'),
+                  onClick: () => void openUrl(RELEASES_URL),
+                },
+              }
+            : {}
+        notify.error(i18n.t('sync.failed', { message }), { id: 'sync-error', ...releasesAction })
         announce(i18n.t('announce.syncFailed'))
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:error handler failed', undefined, err)
