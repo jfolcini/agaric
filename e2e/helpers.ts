@@ -823,9 +823,9 @@ export async function openPageMobile(page: Page, title: string) {
  * consecutive samples (with no loading skeleton present) before we return.
  *
  * Why this exists (#968): `BlockTree` renders a loading skeleton with ZERO
- * `sortable-block` rows whenever the per-page store's `loading` flag is true
- * (`store.load()` flips `loading: true` → fetch → `loading: false`). The
- * mobile navigation path can fire a SECOND `load()` shortly AFTER the first
+ * `sortable-block` rows until the per-page store's first `load()` answers (a
+ * reload of a loaded store keeps its rows, #6533). The mobile navigation path
+ * can fire a SECOND `load()` shortly AFTER the first
  * content row paints (a re-mount of `PageEditor`/`BlockTree` as the search
  * sheet tears down and the tab settles, giving a fresh store whose initial
  * `loading: true` blanks the tree again). Under the GH runner's parallel/
@@ -869,8 +869,8 @@ export async function waitForStableBlockRows(page: Page, expectedRows = 1): Prom
   await expect
     .poll(
       async () => {
-        // A visible loading skeleton means the store is mid-(re)load → the row
-        // list is (or is about to be) empty; treat as not-yet-stable.
+        // A visible loading skeleton means a store is on its first load → the
+        // row list is empty; treat as not-yet-stable.
         if ((await skeleton.count()) > 0) return -1
         let last = await rows.count()
         // Not yet fully painted: keep polling until every expected row has
