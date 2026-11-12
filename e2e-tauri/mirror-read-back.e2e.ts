@@ -40,6 +40,7 @@ const TITLE = runScopedMarker('wdio-readback-page')
 const MARKER = runScopedMarker('wdio-readback-block')
 const OUTSIDE = runScopedMarker('wdio-readback-outside')
 const CHECKOUT = runScopedMarker('wdio-readback-checkout')
+const AFTER = runScopedMarker('wdio-readback-after')
 
 const folder = mkdtempSync(path.join(os.tmpdir(), 'wdio-mirror-readback-'))
 
@@ -54,6 +55,29 @@ async function blockContent(id: string): Promise<string> {
 }
 
 const status = () => invoke<MirrorStatus>('get_mirror_status')
+
+/**
+ * Two passes after this call, each shown by a new page's file: the second
+ * began after the first ended. A changed file is first left to settle, which
+ * lists it as pending and diverged a tick before any read-in, so a check that
+ * nothing was read in waits on this.
+ */
+async function twoLaterPasses(label: string): Promise<void> {
+  const [space] = await invoke<{ id: string }[]>('list_spaces')
+  for (const n of [1, 2]) {
+    const title = `${AFTER}-${label}-${n}`
+    await invoke('create_page_in_space', { parentId: null, content: title, spaceId: space?.id })
+    await browser.waitUntil(
+      () =>
+        Promise.resolve(
+          readdirSync(folder, { recursive: true }).some((entry) =>
+            String(entry).endsWith(`${title}.md`),
+          ),
+        ),
+      { timeout: NAV_TIMEOUT, timeoutMsg: `${title}.md was never written` },
+    )
+  }
+}
 
 describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @markdown @settings', () => {
   after(() => {
@@ -92,6 +116,7 @@ describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @mar
       async () => (await status()).pending.some((p) => p.endsWith(`${TITLE}.md`)),
       { timeout: NAV_TIMEOUT, timeoutMsg: 'the edited file was never listed as pending' },
     )
+    await twoLaterPasses('save')
     expect(await blockContent(blockId)).toBe(MARKER)
     expect(readFileSync(written, 'utf8')).toBe(outside)
 
@@ -158,22 +183,7 @@ describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @mar
         timeoutMsg: 'the rewritten files were never all seen and listed as pending',
       },
     )
-    // Two later passes, each shown by a new page's file: the second began
-    // after the first ended, so any read-in has run.
-    const [space] = await invoke<{ id: string }[]>('list_spaces')
-    for (const n of [1, 2]) {
-      const title = `${CHECKOUT}-after-${n}`
-      await invoke('create_page_in_space', { parentId: null, content: title, spaceId: space?.id })
-      await browser.waitUntil(
-        () =>
-          Promise.resolve(
-            readdirSync(folder, { recursive: true }).some((entry) =>
-              String(entry).endsWith(`${title}.md`),
-            ),
-          ),
-        { timeout: NAV_TIMEOUT, timeoutMsg: `${title}.md was never written` },
-      )
-    }
+    await twoLaterPasses('checkout')
 
     const after = await pages()
     expect(new Map([...after].filter(([id]) => before.has(id)))).toEqual(before)
