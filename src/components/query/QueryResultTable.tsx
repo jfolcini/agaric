@@ -110,7 +110,9 @@ export function QueryResultTable({
                 </button>
               </th>
             ))}
-            <th className="px-3 py-1.5 text-left font-medium text-muted-foreground">Page</th>
+            <th className="px-3 py-1.5 text-left font-medium text-muted-foreground">
+              {t('query.column.page')}
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">

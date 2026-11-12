@@ -75,4 +75,20 @@ test.describe('Language preference @settings', () => {
     await expect(page.getByRole('combobox', { name: 'Language' })).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('lang', 'en')
   })
+
+  test.describe('on a Spanish device', () => {
+    test.use({ locale: 'es-ES' })
+
+    // Spanish is a small fraction of the catalog, so System stays English (#6548).
+    test('System stays in English', async ({ page }) => {
+      await openGeneral(page)
+      await page.getByRole('combobox', { name: 'Language' }).click()
+      await page.getByRole('option', { name: 'System', exact: true }).click()
+
+      await navigateToView(page, 'Journal')
+      await openGeneral(page)
+      await expect(page.getByRole('combobox', { name: 'Language' })).toHaveText('System')
+      await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+    })
+  })
 })

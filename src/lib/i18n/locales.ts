@@ -27,11 +27,7 @@ export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number]
 /** The statically-bundled locale, and i18next's `fallbackLng`. */
 export const DEFAULT_LOCALE = 'en' satisfies SupportedLocale
 
-/**
- * The stored preference: a concrete locale, or `'system'` to follow the
- * device. `'system'` is the default, so a Spanish-OS user gets Spanish
- * without ever opening Settings.
- */
+/** The stored preference: a concrete locale, or `'system'`. */
 export type LanguagePreference = 'system' | SupportedLocale
 
 /** Every legal stored value, in the order the Settings select renders them. */
@@ -46,40 +42,15 @@ export function isLanguagePreference(value: string): value is LanguagePreference
 }
 
 /**
- * The device's preferred languages, most-preferred first. `navigator.languages`
- * where the webview provides it, falling back to the single `navigator.language`
- * and finally to nothing at all (SSR / a test environment without a navigator).
- */
-function deviceLanguages(): readonly string[] {
-  if (typeof navigator === 'undefined') return []
-  if (navigator.languages !== undefined && navigator.languages.length > 0) {
-    return navigator.languages
-  }
-  return navigator.language ? [navigator.language] : []
-}
-
-/**
  * Resolve a stored preference to the locale to actually render in.
  *
- * `'system'` matches the device's language list against `SUPPORTED_LOCALES`
- * on the *primary subtag* only — `es-419`, `es-MX` and `es` all resolve to
- * `es`, because Agaric ships one neutral Spanish catalog rather than
- * regional variants. First match wins, so a device listing `['fr', 'es']`
- * gets Spanish rather than the English fallback.
- *
- * `languages` is a parameter so the resolution is testable without stubbing
- * a read-only `navigator` property.
+ * `'system'` resolves to English, whatever the device says, until a second
+ * catalog is substantially translated: following a Spanish device today puts
+ * Spanish toasts and dates inside an English interface. Choosing Español
+ * explicitly still loads it.
  */
-export function resolveLocale(
-  preference: LanguagePreference,
-  languages: readonly string[] = deviceLanguages(),
-): SupportedLocale {
-  if (preference !== 'system') return preference
-  for (const tag of languages) {
-    const primary = tag.split('-')[0]?.toLowerCase() ?? ''
-    if (isSupportedLocale(primary)) return primary
-  }
-  return DEFAULT_LOCALE
+export function resolveLocale(preference: LanguagePreference): SupportedLocale {
+  return preference === 'system' ? DEFAULT_LOCALE : preference
 }
 
 /**

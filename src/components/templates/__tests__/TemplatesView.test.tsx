@@ -27,6 +27,7 @@ import {
   type TypedInvokeHandlers,
 } from '@/__tests__/helpers/invoke'
 import { TemplatesView } from '@/components/templates/TemplatesView'
+import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { useNavigationStore } from '@/stores/navigation'
@@ -132,7 +133,17 @@ describe('TemplatesView', () => {
     expect(screen.getByTestId('template-variable-time')).toHaveTextContent('<% time %>')
     expect(screen.getByTestId('template-variable-datetime')).toHaveTextContent('<% datetime %>')
     expect(screen.getByTestId('template-variable-page-title')).toHaveTextContent('<% page title %>')
-    expect(screen.getByText('Dynamic variables:')).toBeInTheDocument()
+    expect(screen.getByText(t('templates.variablesHintLabel'))).toBeInTheDocument()
+  })
+
+  it('leads with what a template is, before the placeholder hint (#6548)', async () => {
+    stubTemplates()
+
+    render(<TemplatesView />)
+
+    const description = screen.getByText(t('templates.description'))
+    const hint = await screen.findByText(t('templates.variablesHintLabel'))
+    expect(description.compareDocumentPosition(hint)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it('lists the `<% recording %>` placeholder among the variables (#5364)', async () => {

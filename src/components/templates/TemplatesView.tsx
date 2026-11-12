@@ -218,6 +218,8 @@ export function TemplatesView(): React.ReactElement {
 
   return (
     <section className="mx-auto w-full max-w-list space-y-4" aria-label={t('sidebar.templates')}>
+      <p className="text-sm text-muted-foreground">{t('templates.description')}</p>
+
       {/* Create template form — always visible, including empty state */}
       <form
         onSubmit={(e) => {
@@ -247,33 +249,6 @@ export function TemplatesView(): React.ReactElement {
           {t('templates.create')}
         </Button>
       </form>
-
-      {/* #215 — dynamic-variable discoverability hint. Low-chrome muted row;
-          each token carries a tooltip describing what it expands to. */}
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="font-medium cursor-help">{t('templates.variablesHintLabel')}</span>
-          </TooltipTrigger>
-          <TooltipContent>{t('templates.variablesHintIntro')}</TooltipContent>
-        </Tooltip>
-        {TEMPLATE_VARIABLES.map(({ token, descKey }) => (
-          <Tooltip key={token}>
-            <TooltipTrigger asChild>
-              <code
-                className="rounded bg-muted px-1 py-0.5 font-mono text-xs cursor-help"
-                data-testid={`template-variable-${token
-                  .toLowerCase()
-                  .replace(/[^a-z0-9]+/g, '-')
-                  .replace(/^-|-$/g, '')}`}
-              >
-                {token}
-              </code>
-            </TooltipTrigger>
-            <TooltipContent>{t(descKey)}</TooltipContent>
-          </Tooltip>
-        ))}
-      </p>
 
       <ListViewState
         loading={loading}
@@ -376,6 +351,33 @@ export function TemplatesView(): React.ReactElement {
           </>
         )}
       </ListViewState>
+
+      {/* #215 — dynamic-variable discoverability hint. Low-chrome muted row;
+          each token carries a tooltip describing what it expands to. */}
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="font-medium cursor-help">{t('templates.variablesHintLabel')}</span>
+          </TooltipTrigger>
+          <TooltipContent>{t('templates.variablesHintIntro')}</TooltipContent>
+        </Tooltip>
+        {TEMPLATE_VARIABLES.map(({ token, descKey }) => (
+          <Tooltip key={token}>
+            <TooltipTrigger asChild>
+              <code
+                className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem] cursor-help"
+                data-testid={`template-variable-${token
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, '-')
+                  .replace(/^-|-$/g, '')}`}
+              >
+                {token}
+              </code>
+            </TooltipTrigger>
+            <TooltipContent>{t(descKey)}</TooltipContent>
+          </Tooltip>
+        ))}
+      </p>
       <ConfirmDialog
         open={pendingRemoval !== null}
         onOpenChange={(open) => {

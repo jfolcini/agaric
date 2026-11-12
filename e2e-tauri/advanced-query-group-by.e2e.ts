@@ -212,7 +212,7 @@ describe('Agaric real-backend Advanced Query grouping (#5738) @search', () => {
     const grouped = `${BUCKETS.length} groups`
     await expect(total).toHaveText(grouped)
 
-    const addAggregate = $('[data-testid="advanced-query-aggregates"]').$('button=Add aggregate')
+    const addAggregate = $('[data-testid="advanced-query-aggregates"]').$('button=Add summary')
     await addAggregate.waitForClickable({ timeout: ACTION_TIMEOUT })
     await addAggregate.click()
     await waitForGroups(expectedGroups(true), [`Count: ${TASKS.length}`], 'with a Count aggregate')

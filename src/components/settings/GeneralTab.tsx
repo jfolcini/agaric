@@ -47,8 +47,9 @@ const SELECT_TRIGGER_WIDTH = 'sm:w-48'
 
 export function GeneralTab(): React.ReactElement {
   const { t } = useTranslation()
-  // #4555 — the UI language. `system` follows the device; the other values
-  // pin a locale. Anything not yet translated falls back to English.
+  // #4555 — the UI language. `system` resolves to English for now
+  // (`resolveLocale`); the other values pin a locale. Anything not yet
+  // translated falls back to English.
   const { language, setLanguage } = useLanguage()
   // The hook returns `0 | 1` (Sunday | Monday); the Select primitive only
   // deals in strings so we coerce on read/write.

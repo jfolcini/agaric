@@ -65,6 +65,12 @@ function HighlightPrefix({ text, prefix }: { text: string; prefix: string }): Re
   )
 }
 
+const MODE_LABEL_KEY = {
+  and: 'tagFilter.andMode',
+  or: 'tagFilter.orMode',
+  not: 'tagFilter.notMode',
+} as const
+
 /** The "N blocks match …" / "select tags" feedback line under the controls. */
 function FilterFeedback({
   hasQuery,
@@ -97,10 +103,6 @@ function FilterFeedback({
     )
   }
   if (resultCount === 0 && !loading) return null
-  const matchText =
-    resultCount === 1
-      ? t('tagFilter.blockMatchOne', { count: resultCount })
-      : t('tagFilter.blockMatchMany', { count: resultCount })
   return (
     // `aria-live`: flipping the inherited switch changes the count without any
     // other visible cue, so a screen-reader user hears the new count (#4548).
@@ -118,15 +120,10 @@ function FilterFeedback({
     >
       {resultCount > 0 && (
         <>
-          {matchText}
-          {flat && selectedCount > 0 && (
-            <>
-              {' '}
-              {selectedCount}{' '}
-              {selectedCount === 1 ? t('tagFilter.tagSingular') : t('tagFilter.tagPlural')} (
-              {mode.toUpperCase()})
-            </>
-          )}
+          {t('tagFilter.blockMatch', { count: resultCount })}
+          {flat &&
+            selectedCount > 0 &&
+            ` ${t('tagFilter.selectedTags', { count: selectedCount, mode: t(MODE_LABEL_KEY[mode]) })}`}
           {includeInherited && !stale && <> {t('tagFilter.includingInherited')}</>}
         </>
       )}
@@ -207,7 +204,7 @@ function FlatModeToggle({
 }
 
 /**
- * #4548 — the "Include inherited tags" switch. Expression-level: both IPCs take
+ * #4548 — the "Include nested blocks" switch. Expression-level: both IPCs take
  * ONE `include_inherited` for the whole query, so this is the only granularity
  * the wire can express. Off by default so an existing query keeps its result
  * set — with it on, a tag on a page's first block matches the whole page.
@@ -653,18 +650,21 @@ export function TagFilterPanel(): React.ReactElement {
 
   return (
     <div className="tag-filter-panel space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">{t('tagFilter.title')}</h2>
-        {/* #1426 — opt into the nested And/Or/Not composer. */}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={toggleComposer}
-          aria-pressed={composer != null}
-          data-testid="tag-filter-composer-toggle"
-        >
-          {composer != null ? t('tagFilter.composer.hide') : t('tagFilter.composer.show')}
-        </Button>
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">{t('tagFilter.title')}</h2>
+          {/* #1426 — opt into the nested And/Or/Not composer. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleComposer}
+            aria-pressed={composer != null}
+            data-testid="tag-filter-composer-toggle"
+          >
+            {composer != null ? t('tagFilter.composer.hide') : t('tagFilter.composer.show')}
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground">{t('tagFilter.description')}</p>
       </div>
 
       {/* Prefix search */}

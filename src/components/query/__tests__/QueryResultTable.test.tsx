@@ -9,6 +9,7 @@ import { mockInvokeCommands, strictInvokeFallback } from '@/__tests__/helpers/in
 import type { TableColumn } from '@/components/query/QueryResultTable'
 import { QueryResultTable } from '@/components/query/QueryResultTable'
 import { unresolvedBlockLabel } from '@/lib/block-title'
+import { i18n } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
@@ -79,6 +80,27 @@ describe('QueryResultTable', () => {
     expect(within(table).getByText('Status')).toBeInTheDocument()
     expect(within(table).getByText('Priority')).toBeInTheDocument()
     expect(within(table).getByText('Page')).toBeInTheDocument()
+  })
+
+  it('takes the Page column header from the catalog (#6548)', () => {
+    i18n.addResource('en', 'translation', 'query.column.page', '__PAGE_COLUMN__')
+    try {
+      render(
+        <QueryResultTable
+          results={[makeBlock()]}
+          columns={defaultColumns}
+          pageTitles={new Map()}
+          sortKey={null}
+          sortDir="asc"
+          onColumnSort={vi.fn()}
+        />,
+      )
+      expect(
+        within(screen.getByRole('table')).getByRole('columnheader', { name: '__PAGE_COLUMN__' }),
+      ).toBeInTheDocument()
+    } finally {
+      i18n.addResource('en', 'translation', 'query.column.page', 'Page')
+    }
   })
 
   it('renders data rows with correct cell values', () => {

@@ -198,7 +198,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    expect(await screen.findByText(t('donePanel.headerOne'))).toBeInTheDocument()
+    expect(await screen.findByText(t('donePanel.header', { count: 1 }))).toBeInTheDocument()
   })
 
   // 2. Empty panels are clutter (live UX review): the panel renders nothing
@@ -270,7 +270,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    await screen.findByText(t('donePanel.headerOne'))
+    await screen.findByText(t('donePanel.header', { count: 1 }))
 
     const section = screen.getByLabelText(t('donePanel.completedItems'))
     const header = section.querySelector('.done-panel-group-header')
@@ -474,7 +474,7 @@ describe('DonePanel', () => {
     expect(section.querySelector('.done-panel-content')).toBeInTheDocument()
 
     // Click header to collapse
-    const header = screen.getByText(t('donePanel.headerOne'))
+    const header = screen.getByText(t('donePanel.header', { count: 1 }))
     await user.click(header)
 
     // Content should be hidden
@@ -500,7 +500,7 @@ describe('DonePanel', () => {
     const { rerender } = render(<DonePanel date="2025-06-15" />)
     expect(await screen.findByText('visible block')).toBeInTheDocument()
     const section = screen.getByLabelText(t('donePanel.completedItems'))
-    await user.click(screen.getByText(t('donePanel.headerOne')))
+    await user.click(screen.getByText(t('donePanel.header', { count: 1 })))
     expect(section.querySelector('.done-panel-content')).not.toBeInTheDocument()
     expect(mockedQueryByProperty).toHaveBeenCalledTimes(1)
 
@@ -722,7 +722,7 @@ describe('DonePanel', () => {
     // Existing block should still be visible
     expect(screen.getByText('existing block')).toBeInTheDocument()
     // Header still shows correct count from initial load
-    expect(screen.getByText(t('donePanel.headerOne'))).toBeInTheDocument()
+    expect(screen.getByText(t('donePanel.header', { count: 1 }))).toBeInTheDocument()
   })
 
   // 17. batchResolve rejects on load more → new blocks added, old titles preserved

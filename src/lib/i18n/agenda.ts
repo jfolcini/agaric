@@ -7,8 +7,8 @@
  */
 
 export const agenda: Record<string, string> = {
-  'donePanel.headerOne': '1 Completed',
-  'donePanel.header': '{{count}} Completed',
+  'donePanel.header_one': '{{count}} Completed',
+  'donePanel.header_other': '{{count}} Completed',
   'donePanel.loading': 'Loading...',
   'donePanel.loadMore': 'Load more',
   'donePanel.breadcrumbArrow': '\u2192',

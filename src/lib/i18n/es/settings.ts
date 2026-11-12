@@ -16,6 +16,6 @@
 export const settings: Record<string, string> = {
   'settings.languageLabel': 'Idioma',
   'settings.languageHelp':
-    'Sistema usa el idioma de tu dispositivo. Lo que aún no esté traducido se muestra en inglés.',
+    'Sistema usa el inglés hasta que Agaric esté traducido por completo al idioma de tu dispositivo. Lo que aún no esté traducido se muestra en inglés.',
   'settings.languageSystem': 'Sistema',
 }

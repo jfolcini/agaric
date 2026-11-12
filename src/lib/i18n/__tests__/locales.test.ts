@@ -18,25 +18,19 @@ import {
 import { loadLocale, setLocale } from '@/lib/i18n/set-locale'
 
 describe('resolveLocale', () => {
-  it('returns an explicit preference verbatim, ignoring the device', () => {
-    expect(resolveLocale('en', ['es-ES'])).toBe('en')
-    expect(resolveLocale('es', ['en-GB'])).toBe('es')
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
-  it('matches a device language on its primary subtag', () => {
-    expect(resolveLocale('system', ['es-ES'])).toBe('es')
-    expect(resolveLocale('system', ['es-419'])).toBe('es')
-    expect(resolveLocale('system', ['ES-mx'])).toBe('es')
-    expect(resolveLocale('system', ['es'])).toBe('es')
+  it('returns an explicit preference verbatim', () => {
+    expect(resolveLocale('en')).toBe('en')
+    expect(resolveLocale('es')).toBe('es')
   })
 
-  it('takes the first supported language in the device list, not the first entry', () => {
-    expect(resolveLocale('system', ['fr-FR', 'de', 'es-MX'])).toBe('es')
-  })
-
-  it('falls back to the default locale when nothing matches', () => {
-    expect(resolveLocale('system', ['fr-FR', 'de'])).toBe(DEFAULT_LOCALE)
-    expect(resolveLocale('system', [])).toBe(DEFAULT_LOCALE)
+  it('resolves System to English on a Spanish device', () => {
+    vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['es-MX'])
+    vi.spyOn(navigator, 'language', 'get').mockReturnValue('es-MX')
+    expect(resolveLocale('system')).toBe('en')
   })
 })
 
