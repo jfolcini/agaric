@@ -13,13 +13,13 @@ Issue #6532, its first two checkboxes. On a phone the formatting toolbar folded 
 
 - Not a new block-command-bus event: adding `INDENT_BLOCK` to `BLOCK_EVENTS` would change the key list `src/lib/__tests__/block-events.test.ts` pins exactly, and the props reach both editors without it.
 - The `indent` object is a `useMemo` dependency in `FormattingToolbar`; the React Compiler (on in builds, off under Vitest) keeps the callers' inline objects stable. A ref plus `useLayoutEffect` instead trips oxlint's `react(refs)` rule inside `useMemo`.
-- Page mode's touch bar also carries *Block actions* (85), so there Outdent sits under More at 412 px.
+- Page mode's touch bar also carries *Block actions* (85), so there Outdent sits under More at 390 and 412 px, and Indent too at 360 px.
 - *Edit as Markdown* is unchanged: its touch bar is a separate item list and already reaches Indent and Dedent through its block menu.
-- `e2e/page-mode-touch.spec.ts` "on a narrow phone › Block actions under the toolbar's More…" now fails: at 320 px *Undo* and *Redo* no longer hold the slots, so *Block actions* sits on the bar rather than under More. The spec is an existing contract and was left unedited; it needs re-premising.
+- `e2e/page-mode-touch.spec.ts` "on a narrow phone › Block actions under the toolbar's More…": at 320 px *Undo* and *Redo* no longer hold the slots, so *Block actions* sits on the bar. The test guards the overflow route (the row under More opens the block menu on the tapped block, though the popover took the focus), which still happens at 320 px with the cursor in a table, where *Table operations* (95) takes the slot; it now taps into a table cell and checks the tapped block moved up by its id. A 280 px viewport would also overflow it, but the app's header does not fit there.
 
 ## Checks run
 
 - `npx vitest run src/components/FormattingToolbar/__tests__/items.test.ts`: red first (5 failed: TODO dropped before Cycle priority at 355 px, before Undo on touch), then 11 passed; each priority mutation (cycle priority 80, touch Undo 100, indent 80, fine-pointer Undo 55) reddens its own assertions.
 - `e2e/phone-toolbar.spec.ts` (Pixel 7 at 412 px, Galaxy S8 at 360 px, desktop): red first (TODO and Indent not found), then 5 passed. Falsified by a no-op block-mode indent (aria-level stays 1), a no-op page-mode indent (data-depth stays 0), dropping the touch gate (Indent on the desktop bar), and reverting the two slot priorities (TODO not on the bar).
-- Related specs: `formatting-toolbar-mobile`, `block-line-break`, `page-mode-touch`, `phone-bottom-sheets`, `mobile-editor`, `toolbar-controls`: 67 passed, 1 failed (the `page-mode-touch` test above).
+- Related specs: `formatting-toolbar-mobile`, `block-line-break`, `page-mode-touch`, `phone-bottom-sheets`, `mobile-editor`, `toolbar-controls`, `touch-gestures`: green after the re-premise. The re-premised test reddens when the overflow row does not open the menu, and when the menu opens on the page's first block instead of the tapped one.
 - Targeted vitest over the toolbar, page-mode toolbar, source-toolbar parity and i18n suites (46 files, 1402 tests) and `npm run typecheck`: green.

@@ -895,7 +895,7 @@ describe('FormattingToolbar', () => {
       }
     })
 
-    it('Undo/Redo (priority 100) NEVER move into the overflow popover', async () => {
+    it('with a fine pointer, Undo/Redo (priority 100) NEVER move into the overflow popover', async () => {
       const restore = withTightLayout(120)
       try {
         render(<FormattingToolbar editor={makeEditor()} />)

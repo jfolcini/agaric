@@ -65,21 +65,16 @@ describe('the toolbar under width pressure', () => {
     outlives(touch, 'toolbar.todoToggle', 'toolbar.cyclePriority')
   })
 
-  it.each(['toolbar.todoToggle', 'toolbar.internalLink', 'toolbar.insertTag'])(
-    'on touch, %s outlives Undo and Redo',
-    (keeper) => {
-      outlives(true, keeper, 'toolbar.undo')
-      outlives(true, keeper, 'toolbar.redo')
-    },
-  )
-
-  it.each(['toolbar.indent', 'toolbar.outdent'])(
-    'on touch, %s outlives Undo and Redo',
-    (keeper) => {
-      outlives(true, keeper, 'toolbar.undo')
-      outlives(true, keeper, 'toolbar.redo')
-    },
-  )
+  it.each([
+    'toolbar.todoToggle',
+    'toolbar.internalLink',
+    'toolbar.insertTag',
+    'toolbar.indent',
+    'toolbar.outdent',
+  ])('on touch, %s outlives Undo and Redo', (keeper) => {
+    outlives(true, keeper, 'toolbar.undo')
+    outlives(true, keeper, 'toolbar.redo')
+  })
 
   // The bar spans the viewport less its `px-2` padding.
   it.each([

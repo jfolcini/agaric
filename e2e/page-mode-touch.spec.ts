@@ -6,7 +6,7 @@
  * the screen's foot only while the text is edited, its menus open included,
  * and the quick-capture button is there otherwise, on a page and on the
  * journal's day. The toolbar's *Block actions*, inline or under *More* on a
- * narrow phone, opens the block menu on
+ * narrow phone with the cursor in a table, opens the block menu on
  * the block the cursor was tapped into, as no grip, right click or menu key can
  * there. A row's move and typed text are read back after leaving the page and
  * coming back. Typing at the foot of the screen keeps the cursor above the
@@ -292,10 +292,14 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
     test('Block actions under the toolbar’s More opens the block menu on the tapped block', async ({
       page,
     }) => {
-      const ids = await seedPage(page, 'Touch narrow', ['first', 'second'])
+      const table = '| a | b |\n| --- | --- |\n| 1 | 2 |'
+      const ids = await seedPage(page, 'Touch narrow', ['first', table])
       await openInPageMode(page, 'Touch narrow', 2)
 
-      await tapInto(page, ids[1])
+      // In a table the bar gains Table operations, and at 320 px Block actions goes under More.
+      await page.locator(`${EDITOR} [data-page-block-id="${ids[1]}"] td`).first().tap()
+      await expect(page.locator(EDITOR)).toBeFocused()
+      await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 20)))
       await toolbar(page).getByRole('button', { name: 'More', exact: true }).tap()
       // The overflow popover takes the focus from the text.
       const row = page.getByTestId('toolbar-overflow-menu').getByRole('button', {
@@ -306,7 +310,9 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
       const menu = page.getByRole('menu', { name: 'Block actions' })
       await menu.getByRole('menuitem', { name: 'Move & arrange' }).tap()
       await menu.getByRole('menuitem', { name: 'Move Up' }).tap()
-      await expect(pageText(page)).toHaveText(['second', 'first'])
+      const blocks = page.locator(`${EDITOR} [data-page-block]`)
+      await expect(blocks.first()).toHaveAttribute('data-page-block-id', ids[1] as string)
+      await expect(blocks.last()).toHaveAttribute('data-page-block-id', ids[0] as string)
     })
   })
 
