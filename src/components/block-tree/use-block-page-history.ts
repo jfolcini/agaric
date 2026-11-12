@@ -13,10 +13,10 @@
  */
 
 import type { RefObject } from 'react'
-import { useCallback, useRef } from 'react'
+import { useCallback } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-import { performPageRedo, performPageUndo } from '@/hooks/useUndoShortcuts'
+import { performPageRedo, performPageUndo, runBlockPageHistory } from '@/hooks/useUndoShortcuts'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import type { usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -42,8 +42,6 @@ export function useBlockPageHistory({
   edit,
   splitBlock,
 }: UseBlockPageHistoryParams): (direction: 'undo' | 'redo') => boolean {
-  const running = useRef(false)
-
   const run = useCallback(
     async (handle: RovingEditorHandle, blockId: string, pageId: string, redo: boolean) => {
       const ids = visibleIdsRef.current
@@ -83,11 +81,7 @@ export function useBlockPageHistory({
       const blockId = handle?.activeBlockId
       if (!handle || !blockId || !rootParentId) return false
       if (useNavigationStore.getState().currentView !== 'page-editor') return false
-      if (running.current) return true
-      running.current = true
-      void run(handle, blockId, rootParentId, direction === 'redo').finally(() => {
-        running.current = false
-      })
+      runBlockPageHistory(() => run(handle, blockId, rootParentId, direction === 'redo'))
       return true
     },
     [rovingEditorRef, rootParentId, run],

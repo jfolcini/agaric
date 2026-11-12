@@ -149,6 +149,22 @@ export async function performPageUndo(pageId: string): Promise<boolean> {
   }
 }
 
+/**
+ * #6556 — a focused block's chained page undo / redo is in flight. It clears
+ * focus for the reload, so without this the listener below would run a second
+ * page undo for a press (or key repeat) landing meanwhile.
+ */
+let blockPageHistoryRunning = false
+
+/** Runs a block's chained page undo / redo; a press while one runs is dropped. */
+export function runBlockPageHistory(run: () => Promise<void>): void {
+  if (blockPageHistoryRunning) return
+  blockPageHistoryRunning = true
+  void run().finally(() => {
+    blockPageHistoryRunning = false
+  })
+}
+
 /** The redo twin of `performPageUndo`, shared by Ctrl+Y / Ctrl+Shift+Z here and in a block. */
 export async function performPageRedo(pageId: string): Promise<boolean> {
   // #4391 — capture the space in the gesture's own tick, before the redo IPC
@@ -219,7 +235,7 @@ export function useUndoShortcuts(): void {
       // content back, silently re-applying the undone edit and wiping the redo
       // stack. While a block is focused the block's own key handler owns
       // Ctrl+Z and chains to page undo after a flush (#6556).
-      if (useBlockStore.getState().focusedBlockId != null) {
+      if (useBlockStore.getState().focusedBlockId != null || blockPageHistoryRunning) {
         return
       }
 

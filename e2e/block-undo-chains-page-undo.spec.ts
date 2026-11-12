@@ -40,6 +40,30 @@ async function expectEditing(page: Page, blockId: string): Promise<void> {
   expect(await editingId(page)).toBe(blockId)
 }
 
+/** Text the editor history does not record, as a text-rewriting slash command makes. */
+async function insertOutsideHistory(page: Page): Promise<void> {
+  await editor(page).evaluate((el) => {
+    const { view } = (
+      el as HTMLElement & {
+        editor: {
+          view: {
+            state: {
+              tr: {
+                insertText: (
+                  t: string,
+                  at: number,
+                ) => { setMeta: (key: string, value: boolean) => unknown }
+              }
+            }
+            dispatch: (tr: unknown) => void
+          }
+        }
+      }
+    ).editor
+    view.dispatch(view.state.tr.insertText('unsaved ', 1).setMeta('addToHistory', false))
+  })
+}
+
 test.describe('Ctrl+Z in a block with no editor history runs the page undo @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
@@ -143,27 +167,7 @@ test.describe('Ctrl+Z in a block with no editor history runs the page undo @edit
     page,
   }) => {
     await focusBlockById(page, GS_3)
-    // A change the editor history does not record, as a text-rewriting slash command makes.
-    await editor(page).evaluate((el) => {
-      const { view } = (
-        el as HTMLElement & {
-          editor: {
-            view: {
-              state: {
-                tr: {
-                  insertText: (
-                    t: string,
-                    at: number,
-                  ) => { setMeta: (key: string, value: boolean) => unknown }
-                }
-              }
-              dispatch: (tr: unknown) => void
-            }
-          }
-        }
-      ).editor
-      view.dispatch(view.state.tr.insertText('unsaved ', 1).setMeta('addToHistory', false))
-    })
+    await insertOutsideHistory(page)
     await expect(editor(page)).toHaveText(`unsaved ${GS_3_TEXT}`)
 
     await page.keyboard.press('Control+z')
@@ -193,6 +197,38 @@ test.describe('Ctrl+Z in a block with no editor history runs the page undo @edit
     await expect(editor(page)).toHaveText(`two ${GS_3_TEXT} one`)
     await expectEditing(page, GS_3)
   })
+
+  test('a press while the flush is in flight is not a second page undo', async ({ page }) => {
+    await focusBlockById(page, GS_1)
+    await replaceEditorText(page, 'earlier edit')
+    await saveBlock(page, 'Escape')
+    await expect.poll(() => stored(page, GS_1)).toBe('earlier edit')
+    // Past the undo store's grouping window, so the edit is a step of its own.
+    await page.waitForTimeout(600)
+    await focusBlockById(page, GS_3)
+    await insertOutsideHistory(page)
+
+    // A key repeat: the second press lands once the editor is gone, on the page.
+    await editor(page).evaluate(async (el) => {
+      const press = (target: Element) =>
+        target.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'z',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        )
+      press(el)
+      await Promise.resolve()
+      press(document.activeElement ?? document.body)
+    })
+
+    await expect.poll(() => stored(page, GS_3)).toBe(GS_3_TEXT)
+    await expectEditing(page, GS_3)
+    expect(await stored(page, GS_1)).toBe('earlier edit')
+  })
+
   test('typing already saved is one page step after the editor takes it back', async ({ page }) => {
     await focusBlockById(page, GS_3)
     await page.keyboard.press('End')

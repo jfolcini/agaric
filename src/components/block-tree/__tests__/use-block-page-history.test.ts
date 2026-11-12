@@ -10,7 +10,8 @@ import { createPageBlockStore } from '@/stores/page-blocks'
 
 const performPageUndo = vi.fn(async (_pageId: string) => true)
 const performPageRedo = vi.fn(async (_pageId: string) => true)
-vi.mock('@/hooks/useUndoShortcuts', () => ({
+vi.mock('@/hooks/useUndoShortcuts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useUndoShortcuts')>()),
   performPageUndo: (pageId: string) => performPageUndo(pageId),
   performPageRedo: (pageId: string) => performPageRedo(pageId),
 }))
