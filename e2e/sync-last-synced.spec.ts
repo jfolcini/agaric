@@ -1,10 +1,12 @@
+import { finishSyncSession } from './domain'
 import {
-  emitMockEvent,
   expect,
+  keepSyncChannels,
   navigateToView,
   openSettingsTab,
   pairOnePeer,
   syncButton,
+  syncChannelCount,
   syncTooltipLines,
   test,
   waitForBoot,
@@ -16,9 +18,9 @@ import {
  * "5m ago". It runs here because the stale label came from the React Compiler
  * caching it on the timestamp, and vitest runs with the compiler off.
  *
- * The mock answers `start_sync` at once and reports nothing, so the spec emits
- * the `sync:complete` the backend sends when a session finishes; that event is
- * what records the last-synced time.
+ * The mock answers `start_sync` at once and reports nothing, so the spec plays
+ * the backend's end of the session: its `sync:complete`, which records the
+ * last-synced time, and the terminal update on the press's channel.
  */
 
 test('the last synced time counts up in the sidebar and in Settings @sync', async ({ page }) => {
@@ -36,14 +38,10 @@ test('the last synced time counts up in the sidebar and in Settings @sync', asyn
   await expect(cardLastSynced).toHaveText('--')
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000)
 
+  await keepSyncChannels(page)
   await syncButton(page).click()
-  await emitMockEvent(page, 'sync:complete', {
-    type: 'complete',
-    remote_device_id: 'device-b',
-    ops_received: 1,
-    ops_sent: 1,
-    changed_blocks: 0,
-  })
+  await expect.poll(() => syncChannelCount(page)).toBeGreaterThan(0)
+  await finishSyncSession(page)
   await expect(await syncTooltipLines(page)).toHaveText([
     'Sync all devices',
     'Last synced just now',

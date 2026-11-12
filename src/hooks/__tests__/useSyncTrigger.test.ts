@@ -89,6 +89,24 @@ function makePeerRow(overrides: Partial<PeerRef> = {}): PeerRef {
 }
 
 const mockStartSync = vi.mocked(startSync)
+
+/** A `startSync` whose session completes on the channel it was handed (#6551). */
+const finishedSession: typeof startSync = async (peerId, onProgress) => {
+  onProgress?.({
+    kind: 'sync',
+    state: 'complete',
+    remote_device_id: peerId,
+    ops_received: 0,
+    ops_sent: 0,
+  })
+  return {
+    state: 'queued',
+    local_device_id: 'LOCAL',
+    remote_device_id: peerId,
+    ops_received: 0,
+    ops_sent: 0,
+  }
+}
 const mockedAnnounce = vi.mocked(announce)
 
 describe('useSyncTrigger', () => {
@@ -342,6 +360,168 @@ describe('useSyncTrigger', () => {
     })
   })
 
+  // #6551 — `start_sync` resolves once the daemon is woken, before any session
+  // ran: with the peer switched off it still resolves. The answer to a press of
+  // Sync is the session's terminal update on the channel it opened.
+  describe('a pressed Sync answers with the session it started (#6551)', () => {
+    const terminal = (state: 'complete' | 'error'): SyncProgressUpdate => ({
+      kind: 'sync',
+      state,
+      remote_device_id: 'PEER_PRESS_123',
+      ops_received: 0,
+      ops_sent: 0,
+    })
+
+    /** Press Sync against one peer; the command resolves at once, as the backend's does. */
+    async function pressSync() {
+      mockListPeerRefs.mockResolvedValue([makePeerRow({ peer_id: 'PEER_PRESS_123' })])
+      let onProgress: Parameters<typeof startSync>[1]
+      mockStartSync.mockImplementation(async (_peerId, callback) => {
+        onProgress = callback
+        return {
+          state: 'queued',
+          local_device_id: 'L',
+          remote_device_id: 'PEER_PRESS_123',
+          ops_received: 0,
+          ops_sent: 0,
+        }
+      })
+      const { result } = renderHook(() => useSyncTrigger())
+      let run: Promise<void> | undefined
+      act(() => {
+        run = result.current.syncAll({ userInitiated: true })
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      if (onProgress === undefined) throw new Error('syncAll never opened a session')
+      return { result, run, send: onProgress }
+    }
+
+    it('says nothing succeeded while no session has finished, and reports the timeout', async () => {
+      const { result, run } = await pressSync()
+      expect(toast.success).not.toHaveBeenCalled()
+      expect(result.current.syncing).toBe(true)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_100)
+        await run
+      })
+
+      expect(toast.success).not.toHaveBeenCalled()
+      expect(toast.error).toHaveBeenCalledWith(
+        'Sync failed for device PEER_PRESS_1...',
+        expect.objectContaining({ id: 'sync-peer-error:PEER_PRESS_123' }),
+      )
+      expect(useSyncStore.getState().state).toBe('idle')
+      expect(result.current.syncing).toBe(false)
+    })
+
+    it('says "Sync complete" once when the session completes', async () => {
+      const { run, send } = await pressSync()
+      await act(async () => {
+        send(terminal('complete'))
+        await run
+      })
+
+      expect(toast.success).toHaveBeenCalledTimes(1)
+      expect(toast.success).toHaveBeenCalledWith('Sync complete')
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    it('shows the error when the session fails with no report of its own', async () => {
+      const { run, send } = await pressSync()
+      await act(async () => {
+        send(terminal('error'))
+        await run
+      })
+
+      expect(toast.success).not.toHaveBeenCalled()
+      expect(toast.error).toHaveBeenCalledWith(
+        'Sync failed for device PEER_PRESS_1...',
+        expect.objectContaining({ id: 'sync-peer-error:PEER_PRESS_123' }),
+      )
+    })
+
+    // One `start_sync` wakes a round with every paired peer: a second peer asked
+    // only after the first session ended would find its own session running.
+    it('asks for every peer before waiting for any session', async () => {
+      mockListPeerRefs.mockResolvedValue([
+        makePeerRow({ peer_id: 'PEER_A' }),
+        makePeerRow({ peer_id: 'PEER_B' }),
+      ])
+      const sends = new Map<string, NonNullable<Parameters<typeof startSync>[1]>>()
+      mockStartSync.mockImplementation(async (peerId, callback) => {
+        if (callback) sends.set(peerId, callback)
+        return {
+          state: 'queued',
+          local_device_id: 'L',
+          remote_device_id: peerId,
+          ops_received: 0,
+          ops_sent: 0,
+        }
+      })
+      const { result } = renderHook(() => useSyncTrigger())
+      let run: Promise<void> | undefined
+      act(() => {
+        run = result.current.syncAll({ userInitiated: true })
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+
+      expect([...sends.keys()]).toEqual(['PEER_A', 'PEER_B'])
+      await act(async () => {
+        for (const [peerId, send] of sends)
+          send({ ...terminal('complete'), remote_device_id: peerId })
+        await run
+      })
+      expect(toast.success).toHaveBeenCalledTimes(1)
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    it('leaves a failure `sync:error` already reported, and a cancel, to that event', async () => {
+      const { run, send } = await pressSync()
+      // What `useSyncEvents` does with the failure's `sync:error`, which arrives first.
+      act(() => useSyncStore.getState().setState('error', 'Connection timed out'))
+      await act(async () => {
+        send(terminal('error'))
+        await run
+      })
+
+      expect(toast.success).not.toHaveBeenCalled()
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(useSyncStore.getState().error).toBe('Connection timed out')
+    })
+  })
+
+  // #6551 — the scheduled tick does not wait for its session, so its resolved
+  // command says nothing about one: the store is the daemon's events' to write.
+  it('leaves the sync state alone when a scheduled tick only queued a session', async () => {
+    mockListPeerRefs.mockResolvedValue([makePeerRow()])
+    useSyncStore.getState().setState('error', 'Connection timed out')
+    const { result } = renderHook(() => useSyncTrigger())
+
+    await act(async () => {
+      await result.current.syncAll()
+    })
+
+    expect(useSyncStore.getState().state).toBe('error')
+    expect(useSyncStore.getState().error).toBe('Connection timed out')
+  })
+
+  it('drops an `offline` the network has come back from on a scheduled tick', async () => {
+    mockListPeerRefs.mockResolvedValue([makePeerRow()])
+    useSyncStore.getState().setState('offline')
+    const { result } = renderHook(() => useSyncTrigger())
+
+    await act(async () => {
+      await result.current.syncAll()
+    })
+
+    expect(useSyncStore.getState().state).toBe('idle')
+  })
+
   it('silently skips sync when peer list is empty', async () => {
     mockListPeerRefs.mockResolvedValue([])
 
@@ -471,6 +651,7 @@ describe('useSyncTrigger', () => {
       },
     ])
 
+    mockStartSync.mockImplementation(finishedSession)
     const { result } = renderHook(() => useSyncTrigger())
 
     await act(async () => {
@@ -979,6 +1160,7 @@ describe('useSyncTrigger', () => {
         },
       ])
 
+      mockStartSync.mockImplementation(finishedSession)
       const { result } = renderHook(() => useSyncTrigger())
 
       await act(async () => {

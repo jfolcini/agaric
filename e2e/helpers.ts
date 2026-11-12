@@ -1656,6 +1656,43 @@ export function emitMockEvent(page: Page, event: string, payload: unknown): Prom
   )
 }
 
+interface SyncChannelWindow {
+  __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown, opts?: unknown) => Promise<unknown> }
+  __syncChannels?: { onmessage?: (update: unknown) => void }[]
+}
+
+/**
+ * Keep every progress channel `start_sync` is handed. The backend streams a session's
+ * progress, and its end, over that channel after the command returned; the mock streams
+ * nothing, so a spec plays the backend's side with `streamSyncProgress`.
+ */
+export function keepSyncChannels(page: Page): Promise<void> {
+  return page.evaluate(() => {
+    const w = window as unknown as SyncChannelWindow
+    const invoke = w.__TAURI_INTERNALS__.invoke
+    w.__syncChannels = []
+    w.__TAURI_INTERNALS__.invoke = (cmd, args, opts) => {
+      if (cmd === 'start_sync') {
+        w.__syncChannels?.push((args as { progress: { onmessage?: () => void } }).progress)
+      }
+      return invoke(cmd, args, opts)
+    }
+  })
+}
+
+/** How many progress channels `start_sync` has been handed since `keepSyncChannels`. */
+export function syncChannelCount(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as SyncChannelWindow).__syncChannels?.length ?? 0)
+}
+
+/** Send one update down the channel the latest `start_sync` registered, as the backend would. */
+export function streamSyncProgress(page: Page, update: unknown): Promise<void> {
+  return page.evaluate((u) => {
+    const channels = (window as unknown as SyncChannelWindow).__syncChannels ?? []
+    channels.at(-1)?.onmessage?.(u)
+  }, update)
+}
+
 /** Switch the active space through the sidebar SpaceSwitcher. */
 export async function switchToSpace(page: Page, name: string): Promise<void> {
   await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()

@@ -349,8 +349,9 @@ pub async fn cancel_pairing_inner(
 ///
 /// Checks the backoff schedule, probes the daemon's per-peer lock, and wakes
 /// the SyncDaemon (#382) to sync now.  Actual network sync happens in
-/// the daemon; this returns immediately with a "complete" status to
-/// indicate the trigger was accepted.
+/// the daemon; this returns immediately with a "queued" status, because no
+/// session has run yet (#6551). The session's outcome arrives later as the
+/// terminal update on the progress channel `start_sync` registered.
 ///
 /// # Why this takes a pool (#3550)
 ///
@@ -389,7 +390,7 @@ pub async fn start_sync_inner(
     // What it does do (again, since #3550): if the daemon is mid-session with
     // this peer it holds the S-5 lock under `peer_lock_key(endpoint_id)` for the
     // duration of the real network sync, so `try_lock_peer` on that same key
-    // returns `None` and the user gets a message instead of a "complete" that
+    // returns `None` and the user gets a message instead of a "queued" that
     // silently did nothing.
     //
     // What it does NOT do: serialise concurrent wrapper calls. The guard falls
@@ -456,7 +457,7 @@ pub async fn start_sync_inner(
     scheduler.notify_change();
 
     Ok(SyncSessionInfo {
-        state: "complete".into(),
+        state: "queued".into(),
         local_device_id: device_id.to_string(),
         remote_device_id: peer_id,
         ops_received: 0,

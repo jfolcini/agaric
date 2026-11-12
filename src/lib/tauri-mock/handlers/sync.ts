@@ -252,7 +252,7 @@ export const syncHandlers = {
   start_sync: (args) => {
     const a = args as Record<string, unknown>
     return {
-      state: 'syncing',
+      state: 'queued',
       local_device_id: 'mock-device-id-0000',
       remote_device_id: a['peerId'],
       ops_received: 0,
