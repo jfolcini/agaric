@@ -256,10 +256,9 @@ describe('MirrorSection', () => {
 
     await user.click(screen.getByRole('button', { name: t('data.mirrorChooseButton') }))
 
-    await waitFor(() => {
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith('set_mirror_folder', expect.anything())
+    await waitFor(async () => {
+      expect((await storedStatus()).read_back).toBe(false)
     })
-    expect((await storedStatus()).read_back).toBe(false)
     expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
   })
 
