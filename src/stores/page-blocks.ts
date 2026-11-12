@@ -25,6 +25,7 @@
 import { createContext, createElement, useContext, useEffect, useRef } from 'react'
 import { createStore, type StoreApi, useStore } from 'zustand'
 
+import { takeReloadedText } from '@/editor/active-editor'
 import { isNotFound, unwrap, validationCode } from '@/lib/app-error'
 import { commands, type TodoStateBatch, type WithOps } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
@@ -324,8 +325,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           get().blocksById,
         )
 
-        // Preserve focused block's content during sync reload to prevent
-        // visual flash and store/editor divergence
+        // #6533 — the focused block takes the reloaded text when its editor
+        // holds nothing uncommitted, the editor with it. Otherwise it keeps the
+        // text the editor started from, so the store and editor stay one text.
         const focusedBlockId = useBlockStore.getState().focusedBlockId
         let staleFocusedBlock: PageBlockState['staleFocusedBlock'] = null
         if (focusedBlockId) {
@@ -333,12 +335,15 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           if (currentBlock) {
             const fresh = newBlocks.find((b) => b.id === focusedBlockId)
             if (fresh) {
-              if (fresh.content !== currentBlock.content) {
+              if (
+                fresh.content !== currentBlock.content &&
+                !takeReloadedText(focusedBlockId, fresh.content ?? '')
+              ) {
                 staleFocusedBlock = { id: focusedBlockId, content: currentBlock.content }
+                newBlocks = newBlocks.map((b) =>
+                  b.id === focusedBlockId ? { ...b, content: currentBlock.content } : b,
+                )
               }
-              newBlocks = newBlocks.map((b) =>
-                b.id === focusedBlockId ? { ...b, content: currentBlock.content } : b,
-              )
             } else if (preLoadBlocksById.has(focusedBlockId)) {
               // #773 — sync-delete focus reconciliation. The focused block
               // lived in THIS store both when the load STARTED and now (so

@@ -378,3 +378,42 @@ test.describe('a reload of the open page keeps its editor and rows (#6533) @edit
     })
   }
 })
+
+test.describe('a reload brings the peer’s text into a focused block with nothing typed (#6533) @editor @sync', () => {
+  const PEER_TEXT = `Peer: ${GS3_TEXT}`
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+  })
+
+  test('a clean editor shows the peer’s text, keeps the focus, and its next key keeps the peer’s edit', async ({
+    page,
+  }) => {
+    const editor = await focusBlockById(page, GS3)
+    await ipc(page, 'edit_block', { blockId: GS3, toText: PEER_TEXT })
+
+    await emitMockEvent(page, 'sync:complete', syncComplete([PAGE_GS]))
+
+    await expect(editor).toHaveText(PEER_TEXT)
+    await expect(editor).toBeFocused()
+    await page.keyboard.type('X')
+    // Wherever the caret landed, the commit is the peer's text with the key in it.
+    await expect.poll(() => storedContent(page, GS3)).toContain('X')
+    expect((await storedContent(page, GS3)).replace('X', '')).toBe(PEER_TEXT)
+  })
+
+  test('a dirty editor keeps what was typed through the reload', async ({ page }) => {
+    const editor = await focusBlockById(page, GS3)
+    await delayPageLoads(page, 0)
+    // Inside the commit debounce: the typed key is not saved yet.
+    await page.keyboard.type('!')
+    await ipc(page, 'edit_block', { blockId: GS3, toText: PEER_TEXT })
+
+    await emitMockEvent(page, 'sync:complete', syncComplete([PAGE_GS]))
+    await expect.poll(() => loadsSettled(page, PAGE_GS)).toBe(1)
+
+    await expect(editor).toHaveText(`${GS3_TEXT}!`)
+    await expect(editor).toBeFocused()
+  })
+})

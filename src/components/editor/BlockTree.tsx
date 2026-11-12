@@ -660,7 +660,7 @@ export function BlockTree({
   useEffect(() => {
     const editor = rovingEditor.editor
     if (editor == null) return
-    const publish = (): void => setActiveEditor(editor)
+    const publish = (): void => setActiveEditor(editor, rovingEditorRef.current)
     if (editor.isFocused) publish()
     editor.on('focus', publish)
     return () => {

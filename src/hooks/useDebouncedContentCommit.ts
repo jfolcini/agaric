@@ -16,7 +16,8 @@
  *
  * The roving editor is uncontrolled after mount: a store `content` change never
  * re-feeds it (EditableBlock's mount effect keys on `[isFocused, blockId]`, not
- * on `content`), so this commit re-renders the wrapper but leaves the
+ * on `content`; only a reload re-feeds a clean editor, `takeReloadedText`), so
+ * this commit re-renders the wrapper but leaves the
  * ProseMirror document and caret untouched. And it fires from a timer, NOT
  * synchronously inside a ProseMirror `dispatch`, so it cannot trip the #1489
  * "setState inside dispatch → DOMObserver → dispatch" re-render loop.

@@ -71,7 +71,8 @@ export interface PageBlockState {
 
   /**
    * #5278 — the focused block a reload kept at its pre-reload text because the
-   * fresh text differed (a peer's edit, say), with the text it kept. Leaving
+   * fresh text differed (a peer's edit, say) while its editor held uncommitted
+   * text (#6533), with the text it kept. Leaving
    * the block without typing reloads it; `null` when no reload kept anything.
    */
   staleFocusedBlock: { id: string; content: FlatBlock['content'] } | null
