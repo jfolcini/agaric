@@ -87,13 +87,9 @@ describe('Agaric real-backend inbound Markdown mirror (#5363) @markdown', () => 
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the edit made outside never reached the block',
     })
-    // The edit reaches the block before the ingest writes the file back and
-    // clears its diverged entry, so the status is waited for, not read once.
-    await browser.waitUntil(
-      async () => (await invoke<MirrorStatus>('get_mirror_status')).diverged.length === 0,
-      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the ingested file stayed listed as diverged' },
-    )
-    expect((await invoke<MirrorStatus>('get_mirror_status')).failed).toEqual([])
+    const status = await invoke<MirrorStatus>('get_mirror_status')
+    expect(status.diverged).toEqual([])
+    expect(status.failed).toEqual([])
     expect(readFileSync(written, 'utf8')).toBe(outside)
 
     // The open page shows it, and one Ctrl+Z there reverts the ingest.
