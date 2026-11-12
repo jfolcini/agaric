@@ -154,7 +154,12 @@ fn match_ref_to_vault_file(
 /// link, since a PDF written as an image renders broken. A link is labelled by
 /// its label or alt, else the file's name; an Obsidian embed's alt is only its
 /// image size, so it is labelled by the file's name.
-fn attachment_token(att: &import::AttachmentRef, id: &str, filename: &str, mime: &str) -> String {
+pub(super) fn attachment_token(
+    att: &import::AttachmentRef,
+    id: &str,
+    filename: &str,
+    mime: &str,
+) -> String {
     if !att.is_link() && mime.starts_with("image/") {
         return format!("![{}](attachment:{id})", att.alt);
     }

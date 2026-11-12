@@ -22,20 +22,27 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import JSZip from 'jszip'
+
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
   confirmDialog,
   expectAbsent,
+  importFolder,
   importMarkdownPage,
+  invoke,
   navigateTo,
   openDataTab,
   pagesTitled,
   reopenPageByTitle,
   runScopedMarker,
+  switchToSpace,
+  takeDownload,
   waitForAppReady,
   waitForImportResult,
+  waitForToast,
 } from './helpers'
 
 const MARKER = runScopedMarker('wdio-reimport')
@@ -75,5 +82,88 @@ describe('Agaric real-backend re-import merges into the page of its title (#6277
     await blockStaticByMarker(`${MARKER}-beta-edited`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await blockStaticByMarker(`${MARKER}-alpha`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await expectAbsent(`[data-testid="block-static"]*=${MARKER}-gamma`, 'the dropped line')
+  })
+})
+
+describe('Agaric real-backend re-import of an export folder into its own space (#6277 G5) @markdown @pages', () => {
+  it('updates each page in place, keeping its blocks, its files and its template flag', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-g5-folder')
+    const title = `${marker}-review`
+    const spaces = await invoke<{ id: string; name: string }[]>('list_spaces')
+    const personal = spaces.find((space) => space.name === 'Personal')?.id
+    if (personal === undefined) throw new Error(`no Personal space in ${JSON.stringify(spaces)}`)
+    const pageId = await invoke<string>('create_page_in_space', {
+      parentId: null,
+      content: title,
+      spaceId: personal,
+    })
+    const holder = await invoke<{ id: string }>('create_block', {
+      blockType: 'content',
+      content: `${marker}-holder`,
+      parentId: pageId,
+      index: null,
+      scope: { kind: 'active', space_id: personal },
+      blockId: null,
+    })
+    await invoke('add_attachment_with_bytes', {
+      blockId: holder.id,
+      filename: `${marker} report.pdf`,
+      mimeType: 'application/pdf',
+      bytes: [...new TextEncoder().encode('%PDF-1')],
+    })
+    await invoke('set_property', {
+      blockId: pageId,
+      key: 'template',
+      value: {
+        value_text: 'true',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+
+    await switchToSpace('Personal')
+    await openDataTab()
+    const exportButton = $('[data-testid="settings-panel-data"]').$('button*=Export this space')
+    await exportButton.waitForClickable({ timeout: ACTION_TIMEOUT })
+    const since = Date.now()
+    await exportButton.click()
+    await waitForToast('Export complete')
+    const zip = await JSZip.loadAsync(
+      await takeDownload(
+        /^agaric-export-(?!all-spaces-).*\d{4}-\d{2}-\d{2}( \(\d+\))?\.zip$/,
+        since,
+      ),
+    )
+    const files: Record<string, Buffer> = {}
+    for (const [name, entry] of Object.entries(zip.files)) {
+      if (!entry.dir) files[name] = await entry.async('nodebuffer')
+    }
+
+    await importFolder(
+      'import-folder-input',
+      `${marker}-export`,
+      files,
+      'existing page',
+      'Update and import',
+    )
+
+    // Round-trip: one page of the title, its block, file and flag as they were.
+    await navigateTo('Journal')
+    expect(await pagesTitled(title)).toBe(1)
+    await expectAbsent(`span[title="${title} (2)"]`, 'a twin of the page')
+    await reopenPageByTitle(title)
+    await blockStaticByMarker(`${marker}-holder`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const attached = await invoke<{ filename: string }[]>('list_attachments', {
+      blockId: holder.id,
+    })
+    expect(attached.map((file) => file.filename)).toEqual([`${marker} report.pdf`])
+    const properties = await invoke<{ key: string; value_text: string | null }[]>(
+      'get_properties',
+      { blockId: pageId },
+    )
+    expect(properties.find((row) => row.key === 'template')?.value_text).toBe('true')
   })
 })

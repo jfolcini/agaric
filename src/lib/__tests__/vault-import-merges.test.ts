@@ -59,19 +59,19 @@ describe('ImportUnit.merges', () => {
     expect(orgUnit?.merges).toBeUndefined()
   })
 
-  it('is none for a folder pick, whose notes the import reads against the folder', () => {
+  it('is the path a folder pick’s note imports as too (#6277 G5)', () => {
     const md = folderFile('x', 'Plan.md', 'Vault/Plan.md')
 
     const [unit] = mdFilesToUnits([md], indexVaultFiles([md]), false)
 
-    expect(unit?.merges).toBeUndefined()
+    expect(unit?.merges).toBe('Plan.md')
   })
 
-  it('is an Evernote or Joplin note’s name when it has no attachment', () => {
+  it('is an Evernote or Joplin note’s name, with or without attachments', () => {
     const enex = enexNotesToUnits([enexNote('Meeting', false), enexNote('Scan', true)], 'Work.enex')
     const jex = jexNotesToUnits([jexNote('Projects/Plan', false), jexNote('Projects/Scan', true)])
 
-    expect(enex.map((unit) => unit.merges)).toEqual(['Work/Meeting.md', undefined])
-    expect(jex.map((unit) => unit.merges)).toEqual(['Projects/Plan.md', undefined])
+    expect(enex.map((unit) => unit.merges)).toEqual(['Work/Meeting.md', 'Work/Scan.md'])
+    expect(jex.map((unit) => unit.merges)).toEqual(['Projects/Plan.md', 'Projects/Scan.md'])
   })
 })

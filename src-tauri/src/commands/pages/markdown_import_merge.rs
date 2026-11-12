@@ -16,6 +16,10 @@ pub(super) struct ImportFile<'a> {
     /// The titles of the notes of a folder pick, this file's among them;
     /// empty for any other import.
     pub(super) notes: &'a [String],
+    /// The files sent with the file, which a merge maps onto the page's own.
+    pub(super) vault_files: &'a [VaultFile],
+    /// A folder's note: the paths of the pick's notes.
+    pub(super) vault_notes: Option<&'a [String]>,
 }
 
 /// The page an import writes its file into, open in `tx`: the page it
@@ -33,15 +37,22 @@ pub(super) enum ImportPage {
     /// Into this page.
     Write(Box<OpenPage>),
     /// The file merged into the page of its title, which held blocks.
-    Merged(ImportResult),
+    Merged(Box<MergedPage>),
+}
+
+/// A merge's save, and what the file says that the save did not read.
+pub(super) struct MergedPage {
+    pub(super) page_id: String,
+    pub(super) title: String,
+    pub(super) saved: WithOps<PageSourceReport>,
+    pub(super) source: MergeSource,
 }
 
 /// Whether a file merges into the page of its title that holds blocks.
 pub(super) struct MergeRule<'a> {
-    /// Whether a buffer save reads the file as its import does: a Markdown
-    /// file sent with no vault. An import reads a Logseq or Org file as an
-    /// outline, and rewrites a folder's note, or a note with attachments,
-    /// against its vault.
+    /// Whether a buffer save reads the file as its import does, its per-file
+    /// rewrites applied first ([`merge_source`]): a Markdown file. An import
+    /// reads a Logseq or Org file as an outline.
     readable: bool,
     /// The pages earlier files of the import's run created or merged into:
     /// two notes of one title in a run are two pages.
@@ -49,18 +60,11 @@ pub(super) struct MergeRule<'a> {
 }
 
 impl<'a> MergeRule<'a> {
-    /// The rule for a file read in `dialect` with `vault_files`, a folder's
-    /// note when `folder`, after the files of its run that wrote `run_pages`.
-    pub(super) fn new(
-        dialect: ImportDialect,
-        vault_files: Option<&[VaultFile]>,
-        folder: bool,
-        run_pages: &'a [String],
-    ) -> Self {
+    /// The rule for a file read in `dialect`, after the files of its run that
+    /// wrote `run_pages`.
+    pub(super) fn new(dialect: ImportDialect, run_pages: &'a [String]) -> Self {
         Self {
-            readable: dialect == ImportDialect::Markdown
-                && vault_files.is_none_or(<[VaultFile]>::is_empty)
-                && !folder,
+            readable: dialect == ImportDialect::Markdown,
             run_pages,
         }
     }
@@ -76,8 +80,8 @@ impl<'a> MergeRule<'a> {
             format!("an earlier file of this import wrote the page '{name}'")
         } else {
             format!(
-                "a page titled '{name}' is in this space, and a Logseq or Org file, a folder's \
-                 note or a note with attachments does not merge into it"
+                "a page titled '{name}' is in this space, and a Logseq or Org file does not \
+                 merge into it"
             )
         };
         format!("{why}; the file was imported as '{imported_as}'")
@@ -175,24 +179,34 @@ pub(super) async fn import_target(
 /// [`pair_unanchored_lines`], and [`apply_page_source_inner`] saves the file
 /// over the buffer, as one transaction and so one undo, which the op cap
 /// refuses as it refuses any save. The file's `# Title` line is its title, as
-/// on import. Returns the save's report and the ops it appended.
+/// on import, and the file is read as [`merge_source`] reads it. Returns the
+/// save's report and the ops it appended, and what the save did not read.
 pub(super) async fn merge_into_page(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
     page_id: &str,
     file: &ImportFile<'_>,
-) -> Result<WithOps<PageSourceReport>, AppError> {
+) -> Result<(WithOps<PageSourceReport>, MergeSource), AppError> {
     let buffer = get_page_buffer_inner(pool, page_id).await?;
-    let (text, mut anchors) = anchor_free(&import::strip_title_heading(file.content, file.title));
+    let held = held_files(&mut *pool.acquire().await?, page_id).await?;
+    let vault = MergeVault {
+        files: file.vault_files,
+        dir: file.title.rsplit_once('/').map_or("", |(dir, _)| dir),
+        notes: file.vault_notes.map(vault_note_titles),
+    };
     // An anchor naming no block of the page carries no identity here: the
-    // line pairs by its text, as an unanchored one does.
+    // line pairs by its text, as an unanchored one does, and its files are
+    // that new block's.
     let own: HashSet<&str> = buffer
         .line_ids
         .iter()
         .flatten()
         .map(String::as_str)
         .collect();
+    let stripped = import::strip_title_heading(file.content, file.title);
+    let source = merge_source(&stripped, &vault, &held, &own);
+    let (text, mut anchors) = anchor_free(&source.text);
     for anchor in &mut anchors {
         if anchor.as_deref().is_some_and(|id| !own.contains(id)) {
             *anchor = None;
@@ -203,7 +217,7 @@ pub(super) async fn merge_into_page(
         merge: false,
         line_ids,
     };
-    capture_op_refs(Box::pin(apply_page_source_inner(
+    let saved = capture_op_refs(Box::pin(apply_page_source_inner(
         pool,
         device_id,
         materializer,
@@ -212,7 +226,8 @@ pub(super) async fn merge_into_page(
         buffer.source,
         flags,
     )))
-    .await
+    .await?;
+    Ok((saved, source))
 }
 
 /// The [`ImportResult`] of a merge into `page_id`, titled `title`, after its
