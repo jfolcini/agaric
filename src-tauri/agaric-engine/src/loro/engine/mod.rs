@@ -304,6 +304,11 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// well-formed-but-newer-than-supported Loro blob is rejected up front rather
 /// than trusted and left to fail downstream on the projection path. See
 /// `LoroEngine::stamp_format_version` / `LoroEngine::reject_unknown_format_version`.
+///
+/// A bump ships with a migration in the same commit: a build that predates
+/// #6525 skips a snapshot it cannot read and its next save overwrites it, so the
+/// migration makes such a build refuse the vault at the migration check instead
+/// of opening it.
 pub const ENGINE_FORMAT_VERSION: u32 = 6;
 /// Key under [`ENGINE_META_ROOT`] recording the engine format version a doc was
 /// written under (#1584). Stored as a Loro `I64`. Absent ⇒ a pre-#1584 export

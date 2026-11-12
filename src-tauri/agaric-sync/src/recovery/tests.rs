@@ -3746,8 +3746,9 @@ async fn crash_after_a_snapshot_pass_replays_only_the_tail_5418() {
 
     let boot = Materializer::new(pool.clone());
     let registry = &boot.loro_state().registry;
-    let rehydrated =
-        agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id).await;
+    let rehydrated = agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id)
+        .await
+        .expect("rehydrate");
     assert_eq!(
         rehydrated, 1,
         "the pass's snapshot is what boot starts from"
@@ -3945,8 +3946,9 @@ async fn crash_tail_ops_on_blocks_deleted_later_reach_the_engine_5630() {
 
     let boot = Materializer::new(pool.clone());
     let registry = &boot.loro_state().registry;
-    let rehydrated =
-        agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id).await;
+    let rehydrated = agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id)
+        .await
+        .expect("rehydrate");
     assert_eq!(
         rehydrated, 1,
         "the pass's snapshot is what boot starts from"
@@ -4091,8 +4093,9 @@ async fn crash_tail_move_in_move_out_then_delete_the_old_parent_5630() {
 
     let boot = Materializer::new(pool.clone());
     let registry = &boot.loro_state().registry;
-    let rehydrated =
-        agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id).await;
+    let rehydrated = agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id)
+        .await
+        .expect("rehydrate");
     assert_eq!(
         rehydrated, 1,
         "the pass's snapshot is what boot starts from"
@@ -4204,8 +4207,9 @@ async fn replay_over_an_engine_ahead_of_the_cursor_keeps_an_outdented_block_thro
 
     let boot = Materializer::new(pool.clone());
     let registry = &boot.loro_state().registry;
-    let rehydrated =
-        agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id).await;
+    let rehydrated = agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id)
+        .await
+        .expect("rehydrate");
     assert_eq!(rehydrated, 1, "boot starts from the saved engine");
     super::boot::reset_recovery_guard();
     let report = recover_at_boot(&pool, device_id, &boot, registry)
@@ -4281,8 +4285,9 @@ async fn crash_and_boot(
     drop(session);
     let boot = Materializer::new(pool.clone());
     let registry = &boot.loro_state().registry;
-    let rehydrated =
-        agaric_engine::loro::snapshot::rehydrate_registry(pool, registry, device_id).await;
+    let rehydrated = agaric_engine::loro::snapshot::rehydrate_registry(pool, registry, device_id)
+        .await
+        .expect("rehydrate");
     assert_eq!(
         rehydrated, spaces,
         "the pass's snapshot is what boot starts from"
@@ -4739,8 +4744,9 @@ async fn retried_replay_op_keeps_replay_routing_5647() {
 
     let boot = Materializer::new(pool.clone());
     let registry = &boot.loro_state().registry;
-    let rehydrated =
-        agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id).await;
+    let rehydrated = agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id)
+        .await
+        .expect("rehydrate");
     assert_eq!(
         rehydrated, 1,
         "the pass's snapshot is what boot starts from"
