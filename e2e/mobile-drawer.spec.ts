@@ -5,6 +5,9 @@
  *
  * The touches go through Chromium's own input pipeline (CDP
  * `Input.dispatchTouchEvent`), so any document touch listener sees a real finger.
+ *
+ * Also (#6532): the drawer's Tasks row, and which touch screens get the drawer
+ * rather than the pinned sidebar.
  */
 
 import { devices } from '@playwright/test'
@@ -12,6 +15,7 @@ import { devices } from '@playwright/test'
 import { expect, openMobileSidebar, test, waitForBoot } from './helpers'
 
 const iPhone13 = devices['iPhone 13']
+const iPad = devices['iPad Pro 11 landscape']
 
 test.use({
   viewport: { width: 390, height: 844 },
@@ -58,4 +62,40 @@ test('the drawer opens from the header button, not from a left-edge swipe @mobil
   await expect(drawer).toHaveCount(0)
 
   await openMobileSidebar(page)
+})
+
+// #6532 — the agenda, retitled "Tasks", was otherwise only the last entry of a
+// header menu that shows one letter on a phone.
+test.describe('Tasks in the drawer @mobile @journal', () => {
+  test.use({ viewport: { width: 360, height: 780 } })
+
+  test('opens the agenda and closes the drawer', async ({ page }) => {
+    await waitForBoot(page)
+    const sheet = await openMobileSidebar(page)
+    await sheet.getByRole('button', { name: 'Tasks', exact: true }).click()
+    await expect(sheet).toHaveCount(0)
+    await expect(page.getByTestId('date-display')).toHaveText('Tasks')
+  })
+})
+
+// #6532 — a phone on its side is wider than the mobile breakpoint, but a
+// pinned sidebar beside 360 px of height leaves the notes a sliver.
+test.describe('a touch screen under 500 px tall gets the drawer @mobile', () => {
+  test.use({ viewport: { width: 863, height: 360 } })
+
+  test('a phone in landscape', async ({ page }) => {
+    await waitForBoot(page)
+    await expect(page.locator('[data-slot="sidebar"]:not([data-mobile])')).toHaveCount(0)
+    await openMobileSidebar(page)
+  })
+})
+
+test.describe('a touch tablet keeps the pinned sidebar @mobile', () => {
+  test.use({ viewport: { width: 1024, height: 768 }, userAgent: iPad.userAgent })
+
+  test('a tablet in landscape', async ({ page }) => {
+    await waitForBoot(page)
+    await expect(page.locator('[data-slot="sidebar"]:not([data-mobile])')).toBeInViewport()
+    await expect(page.getByTestId('mobile-sidebar-trigger')).toHaveCount(0)
+  })
 })

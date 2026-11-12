@@ -17,6 +17,7 @@ import { AppSidebar, type AppSidebarProps } from '@/components/layout/AppSidebar
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { t } from '@/lib/i18n'
 import { SETTINGS_NAV_ITEM, SIDEBAR_NAV_ITEMS } from '@/lib/nav-items'
+import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
@@ -92,6 +93,7 @@ beforeEach(() => {
   // deterministic `idle` / no-peers / never-synced state. Individual
   // tests override via `seedSyncStore({…})`.
   useSyncStore.getState().reset()
+  useJournalStore.getState().setMode('daily')
 
   // SpaceSwitcher fires `list_spaces` on mount; return the same single
   // seed entry. Other commands fall back to an empty page so any stray
@@ -116,7 +118,8 @@ describe('AppSidebar', () => {
 
   // #5269 — the sidebar is cut down to the daily surfaces. Pin the whole row
   // list, in order, so a row that creeps back (or goes missing) reddens this.
-  it('renders exactly New Page and the four daily views as rows, Sync and Settings as one footer row of icons (#5269)', () => {
+  // #6532 — Tasks, the journal's agenda mode, follows Journal.
+  it('renders exactly New Page, the four daily views and Tasks as rows, Sync and Settings as one footer row of icons (#5269)', () => {
     renderSidebar()
 
     const rows = [...document.querySelectorAll('[data-sidebar="menu-button"]')].map(
@@ -124,7 +127,11 @@ describe('AppSidebar', () => {
     )
     expect(rows).toEqual([
       t('sidebar.newPage'),
-      ...SIDEBAR_NAV_ITEMS.map((item) => t(item.labelKey)),
+      t('sidebar.journal'),
+      t('journal.tasks'),
+      t('sidebar.pages'),
+      t('sidebar.search'),
+      t('sidebar.tags'),
     ])
     expect(SIDEBAR_NAV_ITEMS.map((item) => item.id)).toEqual(['journal', 'pages', 'search', 'tags'])
 
@@ -221,6 +228,43 @@ describe('AppSidebar', () => {
     expect(pagesButton).toHaveAttribute('aria-current', 'page')
     expect(journalButton).not.toHaveAttribute('aria-current', 'page')
     expect(pagesButton).toHaveAttribute('data-active', 'true')
+  })
+
+  // #6532
+  it('opens the journal in agenda mode from Tasks, and marks Tasks, not Journal, current', async () => {
+    const onSelectView = vi.fn()
+    const user = userEvent.setup()
+    const { rerender, props } = renderSidebar({ onSelectView, currentView: 'pages' })
+
+    await user.click(screen.getByRole('button', { name: t('journal.tasks') }))
+
+    expect(onSelectView).toHaveBeenCalledWith('journal')
+    expect(useJournalStore.getState().mode).toBe('agenda')
+    rerender(
+      <SidebarProvider>
+        <AppSidebar {...props} currentView="journal" />
+      </SidebarProvider>,
+    )
+    const tasks = screen.getByRole('button', { name: t('journal.tasks') })
+    const journal = screen.getByRole('button', { name: t('sidebar.journal') })
+    expect(tasks).toHaveAttribute('aria-current', 'page')
+    expect(journal).not.toHaveAttribute('aria-current')
+
+    await user.click(journal)
+
+    expect(useJournalStore.getState().mode).toBe('daily')
+    expect(journal).toHaveAttribute('aria-current', 'page')
+    expect(tasks).not.toHaveAttribute('aria-current')
+  })
+
+  it('keeps a dated journal mode when Journal is chosen', async () => {
+    useJournalStore.getState().setMode('weekly')
+    const user = userEvent.setup()
+    renderSidebar({ currentView: 'pages' })
+
+    await user.click(screen.getByRole('button', { name: t('sidebar.journal') }))
+
+    expect(useJournalStore.getState().mode).toBe('weekly')
   })
 
   it('calls onNewPage / onSyncClick from the New Page and Sync rows', async () => {

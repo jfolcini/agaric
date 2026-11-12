@@ -1,6 +1,7 @@
 import * as React from 'react'
 
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 /**
@@ -10,7 +11,8 @@ import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
  * sub-component renderers. Owns:
  *   - Controlled / uncontrolled `open` state (with cookie persistence).
  *   - `openMobile` Sheet visibility.
- *   - `isMobile` viewport sense (delegated to `useIsMobile`).
+ *   - `isMobile`: whether the sidebar is the Sheet rather than pinned
+ *     (`useIsMobile`, or a touch screen under `SHEET_MAX_HEIGHT` tall).
  *   - `sidebarWidth` + `isResizing`, persisted to localStorage with
  *     min-width clamp and 50-vw soft cap.
  *   - `toggleSidebar` helper that respects the mobile/desktop split.
@@ -24,6 +26,25 @@ export const SIDEBAR_COOKIE_NAME = 'sidebar_state'
 export const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
 export const SIDEBAR_WIDTH_DEFAULT = 224
 export const SIDEBAR_WIDTH_MIN = 120
+/** A phone on its side is wider than the mobile breakpoint, but a pinned
+ *  sidebar beside so short a screen leaves the notes a sliver. */
+const SHEET_MAX_HEIGHT = 500
+
+function isShortViewport(): boolean {
+  return window.innerHeight < SHEET_MAX_HEIGHT
+}
+
+function useIsShortViewport(): boolean {
+  const [isShort, setIsShort] = React.useState(isShortViewport)
+  React.useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const mql = window.matchMedia(`(max-height: ${SHEET_MAX_HEIGHT - 1}px)`)
+    const onChange = () => setIsShort(isShortViewport())
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
+  return isShort
+}
 
 export interface SidebarState {
   state: 'expanded' | 'collapsed'
@@ -50,7 +71,10 @@ export function useSidebarState({
   open: openProp,
   onOpenChange: setOpenProp,
 }: UseSidebarStateOptions): SidebarState {
-  const isMobile = useIsMobile()
+  const isNarrow = useIsMobile()
+  const isTouch = useIsTouch()
+  const isShort = useIsShortViewport()
+  const isMobile = isNarrow || (isTouch && isShort)
   const [openMobile, setOpenMobile] = React.useState(false)
 
   // Sidebar width state — persisted in localStorage. `readPreference` returns

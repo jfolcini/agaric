@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Views
 
-Agaric has a fixed set of views, plus a **Page Editor** view that's reached by navigation. The sidebar lists the daily ones — Journal, Pages, Search, Tags — with Settings in its footer. A row of buttons in the Pages header opens Tags, Graph, Query, Templates and Trash; History opens from the *Open edit history* row in Settings › Data, or for one page from that page's kebab, and Status lives in the Settings › App health tab. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
+Agaric has a fixed set of views, plus a **Page Editor** view that's reached by navigation. The sidebar lists the daily ones — Journal, Tasks (the journal's agenda mode), Pages, Search, Tags — with Settings in its footer. A row of buttons in the Pages header opens Tags, Graph, Query, Templates and Trash; History opens from the *Open edit history* row in Settings › Data, or for one page from that page's kebab, and Status lives in the Settings › App health tab. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
 
 The **Journal** view (default landing) and the **Agenda** mode inside it have their own file: [journal-and-agenda.md](journal-and-agenda.md).
 
