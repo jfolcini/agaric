@@ -104,6 +104,21 @@ describe('PageHeader Copy app link', () => {
     })
   })
 
+  it('is reached by ArrowDown from Open in new tab and runs on Enter', async () => {
+    const user = userEvent.setup()
+    renderHeader()
+    await user.click(screen.getByRole('button', { name: t('pageHeader.pageActions') }))
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: t('tabs.openInNewTab') })).toHaveFocus()
+    })
+
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByRole('menuitem', { name: t('pageHeader.copyAppLink') })).toHaveFocus()
+    await user.keyboard('{Enter}')
+
+    expect(mockedWriteText).toHaveBeenCalledWith(`agaric://page/${PAGE_ID}`)
+  })
+
   it('the copied link, given to the deep-link router, opens the page', async () => {
     const user = userEvent.setup()
     renderHeader()
