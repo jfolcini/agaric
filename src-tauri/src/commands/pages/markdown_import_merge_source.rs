@@ -207,7 +207,7 @@ fn merged_line(line: &str, vault: &MergeVault<'_>, held: &[HeldFile]) -> Merged 
         line = rewrite_relative_md_links(&line, vault.dir);
         line = rewrite_vault_wikilinks(&line, notes);
     }
-    for att in import::detect_attachment_refs(&line.clone(), &import::inline_code_spans(&line)) {
+    for att in import::detect_attachment_refs(&line, &import::inline_code_spans(&line)) {
         if let Some(file) = vault.held(held, &att.original_ref) {
             let token = attachment_token(&att, &file.id, &file.filename, &file.mime);
             line = line.replacen(&att.full_match, &token, 1);
