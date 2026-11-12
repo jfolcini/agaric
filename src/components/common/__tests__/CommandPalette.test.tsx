@@ -241,6 +241,7 @@ afterEach(() => {
   // #82 — the active-editor registry is a module singleton; clear it so
   // a registered mock can't leak into an unrelated test.
   setActiveEditor(null)
+  localStorage.clear()
 })
 
 function openPalette(): void {
@@ -646,7 +647,6 @@ describe('CommandPalette — partitioned query', () => {
     })
 
     expect(await screen.findByTestId('palette-page-header-DAY')).toHaveTextContent('11/11/2026')
-    localStorage.clear()
   })
 
   it('discards stale responses via the generation counter', async () => {

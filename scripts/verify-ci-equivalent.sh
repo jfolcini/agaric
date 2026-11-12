@@ -2335,7 +2335,7 @@ if [ -z "${PRE_COMMIT_REMOTE_NAME:-}" ]; then
     if ! SKIP="$PHASE_A2_SKIP" prek run --from-ref "$RANGE_BASE" --to-ref HEAD --hook-stage pre-push; then
         echo ""
         echo "✗ Pre-push verification FAILED at Phase A2 (pre-push hooks over the push range)."
-        echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+        echo "  Skip one failing hook: SKIP=<hook-id> scripts/push.sh (use sparingly)"
         exit 1
     fi
     echo "  ✓ pre-push hooks over the push range"

@@ -142,13 +142,12 @@ export function FormattingToolbar({
   const groups = useMemo(
     () => ({
       refsAndBlocks: createRefsAndBlocks(editor),
-      structureButtons:
-        isTouch && indent !== undefined
-          ? [
-              ...createStructureButtons(editor),
-              ...createIndentButtons(indent.onIndent, indent.onOutdent),
-            ]
-          : createStructureButtons(editor),
+      structureButtons: [
+        ...createStructureButtons(editor),
+        ...(isTouch && indent !== undefined
+          ? createIndentButtons(indent.onIndent, indent.onOutdent)
+          : []),
+      ],
       metadataButtons: createMetadataButtons(),
       historyButtons: createHistoryButtons(editor, isTouch),
     }),

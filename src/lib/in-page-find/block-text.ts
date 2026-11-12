@@ -86,16 +86,13 @@ export function blockFindText(
 export function findInBlocks(
   blocks: ReadonlyArray<{ id: string; text: string }>,
   compiled: ScanQuery,
-  options: { timeBudgetMs?: number; now?: () => number } = {},
 ): BlockFindResult {
-  const now = options.now ?? Date.now
-  const budget = options.timeBudgetMs ?? REGEX_TIME_BUDGET_MS
   const isRegex = compiled.kind === 'regex'
-  const startedAt = isRegex ? now() : 0
+  const startedAt = isRegex ? Date.now() : 0
   const matches: BlockFindMatch[] = []
   let skippedLongNodes = 0
   for (const block of blocks) {
-    if (isRegex && now() - startedAt > budget) {
+    if (isRegex && Date.now() - startedAt > REGEX_TIME_BUDGET_MS) {
       return { matches, skippedLongNodes, timedOut: true }
     }
     if (isRegex && block.text.length > REGEX_NODE_MAX) {

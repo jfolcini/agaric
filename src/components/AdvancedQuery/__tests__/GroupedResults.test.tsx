@@ -19,7 +19,7 @@
  */
 
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { GroupedResults } from '@/components/AdvancedQuery/GroupedResults'
@@ -56,6 +56,10 @@ function groupKeyText(): string {
 }
 
 describe('GroupedResults header labels (#1447)', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
   it('resolves a Tag group key (block id) to its title via pageTitles', () => {
     const tagId = '01J000000000000000000TAG00'
     render(
@@ -92,7 +96,6 @@ describe('GroupedResults header labels (#1447)', () => {
         pageTitles={new Map([[pageId, '2026-11-11']])}
       />,
     )
-    localStorage.clear()
     expect(groupKeyText()).toBe('11/11/2026')
   })
 

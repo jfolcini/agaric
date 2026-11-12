@@ -308,7 +308,9 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByRole('tab', { name: /daily view/i })).toBeInTheDocument()
     })
-    expect(screen.getAllByRole('button', { name: /add.*block/i }).length).toBeGreaterThanOrEqual(1)
+    expect(
+      (await screen.findAllByRole('button', { name: /add.*block/i })).length,
+    ).toBeGreaterThanOrEqual(1)
   })
 
   // View-transition-wrapper must be a flex column with height
