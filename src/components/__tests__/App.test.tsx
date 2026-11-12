@@ -1104,7 +1104,7 @@ describe('App', () => {
         // Whole-token match: a `className` substring check would also pass on
         // `bg-status-pending-foo`, and `bg-destructive` below is a prefix of
         // every `bg-destructive/NN` opacity variant.
-        expect(dot).toHaveClass('bg-status-pending')
+        expect(dot).toHaveClass('bg-status-pending-foreground')
         // Decorative — text label carries semantics.
         expect(dot).toHaveAttribute('aria-hidden', 'true')
       })
@@ -1212,8 +1212,9 @@ describe('App', () => {
         await user.click(sidebar.getByRole('button', { name: t('sidebar.sync') }))
 
         // Give the async listPeerRefs round-trip a tick to settle, then
-        // assert the dialog never mounted. We check the title text rather
-        // than `queryByRole('alertdialog')` because Radix may briefly
+        // assert the dialog never mounted. We check the dialog's test id (its
+        // title is also the Sync button's no-peers line) rather than
+        // `queryByRole('alertdialog')` because Radix may briefly
         // mount-then-unmount; `findByRole`-with-timeout would mask a
         // genuine regression here, so we use a microtask flush + assert
         // absence.
@@ -1221,7 +1222,7 @@ describe('App', () => {
           // listPeerRefs invocation completed.
           expect(mockedInvoke).toHaveBeenCalledWith('list_peer_refs')
         })
-        expect(screen.queryByText(t('sync.noPeersTitle'))).not.toBeInTheDocument()
+        expect(screen.queryByTestId('no-peers-dialog')).not.toBeInTheDocument()
         // The original sync flow still fires when peers are paired —
         // i.e. the no-peers guard didn't accidentally suppress the
         // happy path.
@@ -1258,7 +1259,7 @@ describe('App', () => {
         })
         // No dialog appeared — the rejection branch must NOT spuriously
         // open the no-peers dialog.
-        expect(screen.queryByText(t('sync.noPeersTitle'))).not.toBeInTheDocument()
+        expect(screen.queryByTestId('no-peers-dialog')).not.toBeInTheDocument()
       })
 
       it('navigates to Settings with the Sync tab pre-selected when CTA is clicked', async () => {
@@ -1292,7 +1293,7 @@ describe('App', () => {
           expect(screen.getByTestId('settings-panel-sync')).toBeInTheDocument()
         })
         expect(window.location.search).toContain('settings=sync')
-        expect(screen.queryByText(t('sync.noPeersTitle'))).not.toBeInTheDocument()
+        expect(screen.queryByTestId('no-peers-dialog')).not.toBeInTheDocument()
       })
 
       it('pre-selects the Sync tab even when Settings is ALREADY the current view (#734)', async () => {
@@ -1350,7 +1351,7 @@ describe('App', () => {
         // Dialog tears down, navigation stays on journal, the URL stays
         // clean (no `settings=sync` was set on the cancel path).
         await waitFor(() => {
-          expect(screen.queryByText(t('sync.noPeersTitle'))).not.toBeInTheDocument()
+          expect(screen.queryByTestId('no-peers-dialog')).not.toBeInTheDocument()
         })
         expect(useNavigationStore.getState().currentView).toBe('journal')
         expect(window.location.search).not.toContain('settings=sync')

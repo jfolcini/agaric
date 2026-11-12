@@ -421,8 +421,9 @@ pub(super) async fn create_import_page(
 /// Make the page of each ref value that names a note of the same folder pick
 /// with no page yet, as a link to that note makes it (#6277 G6): the note
 /// adopts it when it imports ([`import_target`], #5160 D12), so the order a
-/// pick's notes import in loses no ref. Any other title names no page, and
-/// its value is kept as text (D11).
+/// pick's notes import in loses no ref. A bare name names the note a bare
+/// link does ([`vault_note_titles`]). Any other title names no page, and its
+/// value is kept as text (D11).
 async fn create_note_targets(
     tx: &mut CommandTx,
     materializer: &Materializer,
@@ -435,12 +436,14 @@ async fn create_note_targets(
         .iter()
         .map(|title| (agaric_core::tag_norm::name_key(title), title))
         .collect();
+    let bare = file.vault_notes.map(vault_note_titles).unwrap_or_default();
     let mut made: HashMap<String, String> = HashMap::new();
     for name in lines.missing_titles() {
-        let key = agaric_core::tag_norm::name_key(&name);
-        let Some(title) = notes.get(&key) else {
+        let found = notes.get(&agaric_core::tag_norm::name_key(&name)).copied();
+        let Some(title) = found.or_else(|| bare.get(&name.to_lowercase())) else {
             continue;
         };
+        let key = agaric_core::tag_norm::name_key(title);
         if let Some(page_id) = made.get(&key) {
             lines.name_ref(name, page_id.clone());
             continue;

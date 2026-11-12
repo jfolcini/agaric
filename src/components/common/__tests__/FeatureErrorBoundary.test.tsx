@@ -13,6 +13,7 @@
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -149,6 +150,51 @@ describe('FeatureErrorBoundary', () => {
     expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Boom!'))
     consoleErrorSpy.mockRestore()
+  })
+
+  describe('resetKey (#6554)', () => {
+    it('a changed resetKey clears a caught error and renders the children again', () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      shouldThrow = true
+      const { rerender } = render(
+        <FeatureErrorBoundary name="PageEditor" resetKey="A">
+          <Bomb />
+        </FeatureErrorBoundary>,
+      )
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+
+      shouldThrow = false
+      rerender(
+        <FeatureErrorBoundary name="PageEditor" resetKey="B">
+          <Bomb />
+        </FeatureErrorBoundary>,
+      )
+
+      expect(screen.getByTestId('child')).toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('with no error held, a changed resetKey keeps the children mounted', () => {
+      const onMount = vi.fn()
+      function Child() {
+        useEffect(() => onMount(), [])
+        return <div data-testid="child">OK</div>
+      }
+      const { rerender } = render(
+        <FeatureErrorBoundary name="PageEditor" resetKey="A">
+          <Child />
+        </FeatureErrorBoundary>,
+      )
+
+      rerender(
+        <FeatureErrorBoundary name="PageEditor" resetKey="B">
+          <Child />
+        </FeatureErrorBoundary>,
+      )
+
+      expect(screen.getByTestId('child')).toBeInTheDocument()
+      expect(onMount).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('Report bug button', () => {

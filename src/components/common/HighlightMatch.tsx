@@ -31,7 +31,9 @@ export function HighlightMatch({
   return (
     <>
       {text.slice(0, start)}
-      <mark className="bg-highlight rounded-sm">{text.slice(start, start + length)}</mark>
+      <mark className="bg-highlight text-highlight-foreground rounded-sm">
+        {text.slice(start, start + length)}
+      </mark>
       {text.slice(start + length)}
     </>
   )

@@ -1132,6 +1132,10 @@ pub use import_merge::*;
 mod import_merge_source;
 use import_merge_source::*;
 
+#[path = "markdown_import_merge_anchors.rs"]
+mod import_merge_anchors;
+use import_merge_anchors::*;
+
 #[path = "markdown_import_front_matter.rs"]
 mod import_front_matter;
 use import_front_matter::*;

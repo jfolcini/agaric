@@ -22,11 +22,19 @@ interface FeatureErrorBoundaryProps {
    */
   nameKey?: string
   className?: string
+  /**
+   * A change clears a caught error, so a boundary that stays mounted across
+   * items (the page editor's, across pages) does not show one item's panel on
+   * the next. Without an error held, a change does nothing: the children stay
+   * mounted.
+   */
+  resetKey?: unknown
 }
 
 interface FeatureErrorBoundaryState {
   hasError: boolean
   error: Error | null
+  resetKey: unknown
 }
 
 export class FeatureErrorBoundary extends React.Component<
@@ -35,11 +43,19 @@ export class FeatureErrorBoundary extends React.Component<
 > {
   constructor(props: FeatureErrorBoundaryProps) {
     super(props)
-    this.state = { hasError: false, error: null }
+    this.state = { hasError: false, error: null, resetKey: props.resetKey }
   }
 
-  static getDerivedStateFromError(error: Error): FeatureErrorBoundaryState {
+  static getDerivedStateFromError(error: Error): Partial<FeatureErrorBoundaryState> {
     return { hasError: true, error }
+  }
+
+  static getDerivedStateFromProps(
+    props: FeatureErrorBoundaryProps,
+    state: FeatureErrorBoundaryState,
+  ): Partial<FeatureErrorBoundaryState> | null {
+    if (Object.is(props.resetKey, state.resetKey)) return null
+    return { hasError: false, error: null, resetKey: props.resetKey }
   }
 
   override componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
