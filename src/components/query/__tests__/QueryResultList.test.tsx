@@ -141,6 +141,17 @@ describe('QueryResultList', () => {
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 
+  it('shows a journal page in the journal date format, in the row and its name (#6544)', () => {
+    localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+    const results = [makeBlock({ id: 'B1', content: 'Task', parent_id: 'DAY', page_id: 'DAY' })]
+
+    render(<QueryResultList results={results} pageTitles={new Map([['DAY', '2026-11-11']])} />)
+    localStorage.clear()
+
+    expect(screen.getByText('11/11/2026')).toBeInTheDocument()
+    expect(screen.getByRole('option')).toHaveAccessibleName(/11\/11\/2026$/)
+  })
+
   it('does not render page title when pageTitles map lacks page_id', () => {
     const results = [
       makeBlock({ id: 'B1', content: 'No page link', parent_id: 'P1', page_id: 'P1' }),

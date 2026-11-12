@@ -82,6 +82,20 @@ describe('GroupedResults header labels (#1447)', () => {
     expect(groupKeyText()).toBe('Roadmap')
   })
 
+  it('shows a journal Page group in the journal date format (#6544)', () => {
+    localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+    const pageId = '01J000000000000000000PAGE0'
+    render(
+      <GroupedResults
+        groups={[makeGroup({ key: pageId, count: 2 })]}
+        groupBy={{ key: { type: 'Page' } } satisfies GroupSpec}
+        pageTitles={new Map([[pageId, '2026-11-11']])}
+      />,
+    )
+    localStorage.clear()
+    expect(groupKeyText()).toBe('11/11/2026')
+  })
+
   it('falls back to the raw id when a Tag/Page key is unresolved', () => {
     const pageId = '01J0000000000000000FOREIGN'
     render(

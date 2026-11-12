@@ -17,6 +17,7 @@ import {
 import { PageLink } from '@/components/pages/PageLink'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { IconButton } from '@/components/ui/icon-button'
+import { displayPageTitle } from '@/lib/date-utils'
 import { getPageDisplayName, type PageDisplay } from '@/lib/page-display'
 
 /**
@@ -185,6 +186,9 @@ function CollapsibleGroupListInner<G extends GroupItem>({
         // ancestor segments below in a smaller muted line). The `title=""`
         // tooltip preserves the full path on hover.
         const display = getDisplayNameCached(title)
+        // A journal title holds no `/`, so only an unsplit title can be one.
+        const label =
+          display.breadcrumb === undefined ? displayPageTitle(display.label) : display.label
         const toggleLabel = isExpanded ? t('group.collapseGroup') : t('group.expandGroup')
         return (
           <div key={group.page_id} className={groupClassName}>
@@ -211,7 +215,7 @@ function CollapsibleGroupListInner<G extends GroupItem>({
                 </IconButton>
                 <PageLink pageId={group.page_id} title={title} className="flex-1 min-w-0 text-left">
                   <span className="flex min-w-0 flex-col" title={display.title}>
-                    <span className="truncate">{display.label}</span>
+                    <span className="truncate">{label}</span>
                     {display.breadcrumb !== undefined && (
                       <span
                         className="text-xs text-muted-foreground truncate"
@@ -239,7 +243,7 @@ function CollapsibleGroupListInner<G extends GroupItem>({
                 {display.breadcrumb !== undefined ? (
                   <span className="flex min-w-0 flex-col text-left">
                     <span className="truncate">
-                      {display.label} {countLabel}
+                      {label} {countLabel}
                     </span>
                     <span
                       className="text-xs text-muted-foreground truncate font-normal"
@@ -250,7 +254,7 @@ function CollapsibleGroupListInner<G extends GroupItem>({
                   </span>
                 ) : (
                   <>
-                    {display.label} {countLabel}
+                    {label} {countLabel}
                   </>
                 )}
               </button>

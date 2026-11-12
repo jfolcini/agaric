@@ -858,6 +858,27 @@ describe('searchPages — short query (<=2 chars)', () => {
     expect(ids).not.toContain('P3')
   })
 
+  it('finds a journal page by its stored date and shows it in the journal date format (#6544)', async () => {
+    localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+    const { result } = renderHook(() => useBlockResolve())
+    act(() => {
+      result.current.pagesListRef.current = [
+        { id: 'DAY', title: '2026-11-11' },
+        { id: 'P1', title: 'My Page' },
+      ]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('20')
+    })
+    localStorage.clear()
+
+    expect(items.filter((i) => !i.isCreate)).toEqual([
+      expect.objectContaining({ id: 'DAY', label: '11/11/2026', title: '2026-11-11' }),
+    ])
+  })
+
   it('falls back to listAllPagesInSpace when pagesListRef is empty', async () => {
     mockedListAllPagesInSpace.mockResolvedValueOnce([
       {

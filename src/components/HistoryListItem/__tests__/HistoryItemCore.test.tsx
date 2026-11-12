@@ -137,6 +137,15 @@ describe('HistoryItemCore', () => {
     expect(screen.getByText(/Hello world/)).toBeInTheDocument()
   })
 
+  it('shows a created journal page in the journal date format (#6544)', () => {
+    localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+    const entry = makeEntry(1, 'create_block', { block_type: 'page', content: '2026-11-11' })
+    renderCore(<HistoryItemCore entry={entry} />)
+    localStorage.clear()
+    expect(screen.getByText('11/11/2026')).toBeInTheDocument()
+    expect(screen.queryByText('2026-11-11')).not.toBeInTheDocument()
+  })
+
   it('renders property-payload preview with key and value', () => {
     renderCore(
       <HistoryItemCore entry={makeEntry(1, 'set_property', { key: 'priority', value: 'high' })} />,

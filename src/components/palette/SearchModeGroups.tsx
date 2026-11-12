@@ -10,6 +10,7 @@ import type { useTranslation } from 'react-i18next'
 import type { PaletteGroup } from '@/components/palette/types'
 import { SnippetHighlight } from '@/components/search/SnippetHighlight'
 import { CommandGroup, CommandItem } from '@/components/ui/command'
+import { displayPageTitle } from '@/lib/date-utils'
 
 /**
  * Search-mode body — renders the merged groups produced by
@@ -46,7 +47,7 @@ export function SearchModeGroups({
             className="flex items-center gap-2"
           >
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <span className="flex-1 truncate">{group.pageTitle}</span>
+            <span className="flex-1 truncate">{displayPageTitle(group.pageTitle)}</span>
             {group.hasPageNameMatch && (
               // Render the title-match signal as a small
               // pill so it reads as metadata rather than as

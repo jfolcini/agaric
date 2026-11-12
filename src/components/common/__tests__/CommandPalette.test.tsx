@@ -633,6 +633,22 @@ describe('CommandPalette — partitioned query', () => {
     })
   })
 
+  it('shows a journal page result in the journal date format (#6544)', async () => {
+    localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+    mockedSearchBlocksPartitioned.mockResolvedValue(
+      partitionedResp([makePageRow('DAY', '2026-11-11')], []),
+    )
+
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), {
+      target: { value: '2026-11' },
+    })
+
+    expect(await screen.findByTestId('palette-page-header-DAY')).toHaveTextContent('11/11/2026')
+    localStorage.clear()
+  })
+
   it('discards stale responses via the generation counter', async () => {
     // Use fake timers so we can manually drive both debounce windows —
     // without this, the second `fireEvent.change` simply replaces the

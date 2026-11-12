@@ -228,6 +228,21 @@ describe('BlockListItem', () => {
     expect(screen.queryByTestId('page-link-PAGE1')).not.toBeInTheDocument()
   })
 
+  it('shows a journal page breadcrumb in the journal date format (#6544)', () => {
+    localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+    render(
+      <ul>
+        <BlockListItem
+          {...defaultProps({ pageId: 'DAY', pageTitle: '2026-11-11', breadcrumbAsLink: false })}
+        />
+      </ul>,
+    )
+    localStorage.clear()
+
+    expect(screen.getByText(/11\/11\/2026/)).toBeInTheDocument()
+    expect(screen.queryByText(/2026-11-11/)).not.toBeInTheDocument()
+  })
+
   // 5. Hides breadcrumb when pageId is null/undefined
   it('hides breadcrumb when pageId is null', () => {
     render(

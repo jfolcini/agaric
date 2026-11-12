@@ -217,7 +217,7 @@ export function TemplatesView(): React.ReactElement {
   const filtered = templates.filter((tpl) => matchesSearchFolded(tpl.content, search))
 
   return (
-    <section className="space-y-4" aria-label={t('sidebar.templates')}>
+    <section className="mx-auto w-full max-w-list space-y-4" aria-label={t('sidebar.templates')}>
       {/* Create template form — always visible, including empty state */}
       <form
         onSubmit={(e) => {
