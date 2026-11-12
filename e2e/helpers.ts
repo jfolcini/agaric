@@ -823,8 +823,8 @@ export async function openPageMobile(page: Page, title: string) {
  * consecutive samples (with no loading skeleton present) before we return.
  *
  * Why this exists (#968): `BlockTree` renders a loading skeleton with ZERO
- * `sortable-block` rows whenever the per-page store's `loading` flag is true
- * (`store.load()` flips `loading: true` → fetch → `loading: false`). The
+ * `sortable-block` rows until the per-page store's first `load()` answers
+ * (a reload of a loaded store keeps the rows, #6533). The
  * mobile navigation path can fire a SECOND `load()` shortly AFTER the first
  * content row paints (a re-mount of `PageEditor`/`BlockTree` as the search
  * sheet tears down and the tab settles, giving a fresh store whose initial

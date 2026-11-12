@@ -1499,7 +1499,10 @@ export function BlockTree({
   })
   const batchPropertiesInvalidationKey = `${propertyInvalidationKey}|${currentSpaceId ?? ''}`
 
-  if (loading) {
+  // The skeleton covers only the store's first load. A reload (a sync, an MCP
+  // write, an undo) keeps every row and the focused editor mounted (#6533).
+  const firstLoad = loading && blocks.length === 0
+  if (firstLoad) {
     return (
       // #2939 — keep the (headless) editor host mounted across load toggles so
       // the roving editor instance persists like it did when constructed
@@ -1588,7 +1591,7 @@ export function BlockTree({
                   <BlockListRenderer
                     visibleItems={dnd.visibleItems}
                     blocks={blocks}
-                    loading={loading}
+                    loading={firstLoad}
                     rootParentId={rootParentId}
                     isZoomed={zoomedBlockId !== null}
                     onExitZoom={zoomToRoot}
