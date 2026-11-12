@@ -4,16 +4,16 @@
 
 ## Evidence
 
-- Every one of the 878 member files (221 + 329 + 328, 469 distinct names) is byte-identical to a file in the root cache (766 files); no member-only file. Checked with `cmp` per file.
+- Every one of the 878 member files (221 + 329 + 328, 469 distinct names) is byte-identical to a file in the root cache (769 files on `main` after the rebase); no member-only file. Checked with `cmp` per file, and again by blob id after the rebase.
 - `sqlx-macros-core` 0.9.0 `src/query/mod.rs` looks in `SQLX_OFFLINE_DIR`, then the crate's own `.sqlx`, then `workspace_root().join(".sqlx")`, where `workspace_root` runs `cargo metadata` in the crate's directory. A member compiled from the separate `src-tauri/fuzz` workspace therefore still resolves to `src-tauri/.sqlx`.
 - With the member caches deleted, all green: `SQLX_OFFLINE=true cargo check --workspace --all-targets`, the CI fuzz step (`SQLX_OFFLINE=true CARGO_TARGET_DIR=src-tauri/target cargo check --manifest-path src-tauri/fuzz/Cargo.toml --locked`), and `cd agaric-store && SQLX_OFFLINE=true cargo check --tests`. Falsified by deleting one root entry: `agaric-store` failed with "`SQLX_OFFLINE=true` but there is no cached data for this query".
-- `scripts/clippy-sqlx-check.sh` passes, and the queries the macros generated are exactly the 766 committed files. `cargo sqlx prepare --workspace --check -- --workspace --tests` passes with no unused-entry warning.
+- `scripts/clippy-sqlx-check.sh` passes, and the queries the macros generated were exactly the 766 files committed on the base before the rebase; the 3 added since came from `main`, where CI checked them. `cargo sqlx prepare --workspace --check -- --workspace --tests` passes with no unused-entry warning.
 
 ## What changed
 
 - `just gen-sqlx` is one pass. Phase E of `verify-ci-equivalent.sh` and the weekly `full-suite-prek` lane are one `prepare --workspace --check -- --workspace --tests` lane. The `--workspace` on both sides matters: without it the root lane never compiles member test queries or `diagnostics`, which the member lanes used to cover.
 - `clippy-sqlx-check.sh` sets `SQLX_OFFLINE_DIR` itself, so `sqlx-rustc-wrapper.sh` (which split the generated queries per crate) is deleted. The generated dir has to exist before the macros run, or every query fails with "sqlx offline path does not exist".
-- `check-sqlx-cache-drift.sh`, its hook and its pre-push backstop are deleted. The guard flagged an entry deleted from one cache while a sibling cache still had it, and with one cache there is no sibling, so it could never fire. A wrong-scope prune still fails Phase E and CI `lint`.
+- `check-sqlx-cache-drift.sh`, its hook and its pre-push backstop are deleted. The guard flagged an entry deleted from one cache while a sibling cache still had it, and with one cache there is no sibling, so it could never fire. A wrong-scope prune still fails Phase E and CI `lint`. `HOOK_CAP` follows the hook count down from 105 to 104.
 - The member `migrations -> ../migrations` symlinks and the member `dev.db` ignores are deleted, since only the member prepare lanes used them. `sqlx::migrate!("../migrations")` resolves from `CARGO_MANIFEST_DIR`, not through the symlink.
 - Docs, the PR template, CONTRIBUTING, member crate comments, and the approved `AGENTS.md` lines (including the Pre-push bullet's "four `sqlx prepare --check` lanes", the same fact) now say one cache.
 - `classify-changes.sh` and its test no longer list the two deleted scripts.

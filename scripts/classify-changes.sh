@@ -160,9 +160,9 @@ frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|
 # named: `pr-diff-base` in `lint`, `check-bundle-budget` in
 # `vitest-coverage`), so a tooling-only PR is `ci` and pays no suite. The few
 # files a suite consumes are routed to that suite above, data files included,
-# so a re-baseline PR still runs the gate that reads it: the sqlx drift check
-# and the unsafe allowlist to backend; the axe/test-naming hook owners, the
-# bundle-budget guard with its `bundle-budgets.json`, the two coverage
+# so a re-baseline PR still runs the gate that reads it: the unsafe allowlist
+# to backend; the axe/test-naming hook owners, the bundle-budget guard with
+# its `bundle-budgets.json`, the two coverage
 # scripts, and every script a `src/**/*.test.ts` imports or spawns (the seven
 # `check-*.mjs` guards with unit tests in `src/__tests__/`,
 # `scripts/lib/js-scanner.mjs`, and this classifier) to frontend, since only
