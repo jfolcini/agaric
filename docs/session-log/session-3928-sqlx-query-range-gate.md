@@ -1,4 +1,4 @@
-# Session 3925 — pre-push Phase E runs only when the range can change a query
+# Session 3928 — pre-push Phase E runs only when the range can change a query
 
 The last step of #6560's `.sqlx` checkbox, rule (a) of the approved design comment on that issue: pre-push Phase E (`cargo sqlx prepare --workspace --check`, a whole-workspace recompile) ran on every push with a `.rs` file; it now runs only when the pushed range can have changed what the cache records.
 
