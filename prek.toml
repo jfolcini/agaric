@@ -19,7 +19,7 @@ default_install_hook_types = ["pre-commit", "commit-msg", "prepare-commit-msg", 
 [[repos]]
 repo = "builtin"
 # Stage pinning (#817): every stage-less hook below is re-run by Phase A
-# of the pre-push verifier (`prek run --all-files --hook-stage pre-commit`),
+# of the pre-push verifier (`prek run --from-ref <base> --to-ref HEAD --hook-stage pre-commit`),
 # so pinning each to `stages = ["pre-commit"]` makes it run once at commit
 # AND exactly once per push (via Phase A) instead of the previous up-to-3×
 # (pre-commit shim + pre-push shim + Phase A re-run).
@@ -322,29 +322,6 @@ language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
 stages = ["pre-commit"]
-
-# Vitest: smart related-only tests. Pre-push only (#817): test-related-ts.sh
-# collects the changed .ts/.tsx/.mjs files (a change to bindings.ts or the
-# conformance fixtures adds the tests that read them), and — when any
-# match — runs `npx vitest related --run` on them. vitest's `related` then
-# expands that set to every test that transitively imports those files. There
-# is no foundational-module fallback to the full suite (unlike the Rust
-# selector below); the fan-out is purely driven by the import graph, so a
-# widely-imported shared module can still pull in most of the suite — far too
-# slow for the commit path. The pre-push verifier runs it once, scoped to the
-# push range, in Phase C of scripts/verify-ci-equivalent.sh; Phase A
-# additionally passes SKIP=vitest so this hook is not re-run there.
-# WHY: untested TS changes reaching CI — standard toolchain lane, pre-push scoped (#817)
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "vitest"
-name = "vitest"
-entry = "scripts/test-related-ts.sh"
-language = "system"
-pass_filenames = false
-types_or = ["ts", "tsx"]
-stages = ["pre-push"]
 
 # Tauri-mock parity: ensures every IPC command emitted from
 # `src/lib/bindings.ts` (the auto-generated tauri-specta surface) has a
@@ -1321,7 +1298,7 @@ stages = ["pre-commit"]
 # again without going red.
 #
 # Deliberate, not overlooked: Phase A of scripts/verify-ci-equivalent.sh
-# is `prek run --all-files --hook-stage pre-commit`, where nothing is
+# is `prek run --from-ref <base> --to-ref HEAD --hook-stage pre-commit`, where nothing is
 # staged, so every pre-push now also prints the "0 additions/renames
 # staged" line — four extra lines, accurate but uninformative there. That
 # is accepted as the price of the line being visible on the runs that DO
@@ -1593,8 +1570,7 @@ stages = ["pre-commit"]
 # snapshot/recovery/sync system paths, external-integration internals)
 # or the per-site `// allow-raw-tx: <reason>` escape hatch. `#[cfg(test)]`
 # modules and whole test files are skipped — fixtures legitimately open
-# raw transactions. Runs at both pre-commit and pre-push so a raw site
-# can't slip in via either path. Allowlist + escape-hatch rules live in
+# raw transactions. Allowlist + escape-hatch rules live in
 # scripts/check-raw-tx.mjs.
 # WHY: a raw write-tx bypasses the CommandTx convention — #110
 [[repos]]
@@ -1615,7 +1591,7 @@ language = "system"
 # exits 0, exactly like a clean scan. The staged-vs-working-tree reader is
 # pinned by `scripts/lib/rust-scan.test.mjs` instead (#4017).
 files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-raw-tx\.mjs|lib/rust-scan\.mjs|lib/guard-file-source\.mjs)$'
-stages = ["pre-commit", "pre-push"]
+stages = ["pre-commit"]
 
 # #653: the raw-tx guard now also flags a bare `pool.begin()` (DEFERRED)
 # in any file that calls `append_local_op_in_tx` — that pairing breaks the
@@ -1657,7 +1633,7 @@ language = "system"
 # something: the orphan sweep covers the whole baseline. The staged-vs-working-
 # tree wiring is pinned by `scripts/lib/check-dynamic-sql.test.mjs` (#4017).
 files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-dynamic-sql\.mjs|lib/rust-scan\.mjs|lib/guard-file-source\.mjs)$'
-stages = ["pre-commit", "pre-push"]
+stages = ["pre-commit"]
 
 # #1188: the guard's detection regex must tolerate a turbofish between the
 # method name and the call parens (`sqlx::query_scalar::<_, Option<i64>>(`) —
@@ -1698,7 +1674,7 @@ language = "system"
 # that edits only a library still re-runs it; the always_run self-test
 # re-drives its own fixtures, not this hook's live-tree judgment.
 files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-table-ownership\.mjs|lib/rust-scan\.mjs|lib/guard-file-source\.mjs)$'
-stages = ["pre-commit", "pre-push"]
+stages = ["pre-commit"]
 
 # #2895: the ownership guard must match SQL inside `sqlx::query!("…")` macro
 # STRINGS (unlike the code-token sibling guards) while still ignoring comment
@@ -1746,7 +1722,7 @@ entry = "node scripts/check-baseline-paths.mjs"
 language = "system"
 pass_filenames = false
 always_run = true
-stages = ["pre-commit", "pre-push"]
+stages = ["pre-commit"]
 
 # Rust: cargo fmt. Auto-fix formatter (#817): drops `--check` so a
 # formatting miss is rewritten in place + re-staged mechanically instead
@@ -1816,9 +1792,9 @@ name = "cargo clippy"
 #
 # Pre-push only (#817): clippy compiles the whole workspace (+ all targets)
 # and surfaces latent warnings in untouched files, so it's too slow and too
-# broad for the commit path. As a pre-push-staged hook it runs once,
-# directly from the pre-push git shim (not via Phase A, which is
-# pre-commit-stage only).
+# broad for the commit path. It runs once per push: from the pre-push git
+# shim on a raw `git push`, or in Phase A2 of verify-ci-equivalent.sh under
+# `scripts/push.sh`, before the tests.
 entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings'"
 language = "system"
 pass_filenames = false
@@ -1867,27 +1843,6 @@ repo = "local"
 id = "cargo-doc-links"
 name = "cargo doc (doc links, HTML tags)"
 entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && RUSTDOCFLAGS=\"-D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links -D rustdoc::redundant_explicit_links -D rustdoc::invalid_html_tags -D unknown_lints\" cargo doc --workspace --no-deps'"
-language = "system"
-pass_filenames = false
-types = ["rust"]
-stages = ["pre-push"]
-
-# Rust: smart related-only tests. Pre-push only (#817): the related-test
-# selector runs every crate that depends on a changed crate, so a change low in
-# the graph runs most of the suite, which dominated commit latency. The pre-push
-# verifier runs nextest once, scoped to the push range, in Phase D of
-# verify-ci-equivalent.sh;
-# Phase A passes SKIP=cargo-test so it is not re-run there. (As a
-# pre-push-staged prek hook it would invoke the script with the default
-# `--cached` source against an empty index → a no-op at push; the genuine
-# run is Phase D's `--range`.)
-# WHY: untested Rust changes reaching CI — standard toolchain lane (#817)
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "cargo-test"
-name = "cargo nextest run"
-entry = "scripts/test-related-rust.sh"
 language = "system"
 pass_filenames = false
 types = ["rust"]
@@ -2616,7 +2571,7 @@ stages = ["pre-commit"]
 # A single chokepoint hook runs `scripts/verify-ci-equivalent.sh`. It is
 # NOT a full CI mirror: it re-scopes vitest/nextest to the commit range
 # being pushed (Phases C/D), re-runs the pre-commit-stage prek hooks
-# whole-tree but category-aware (Phase A), gates sqlx-prepare/MCP
+# over the push range, category-aware (Phase A), gates sqlx-prepare/MCP
 # phases on whether Rust/MCP paths changed (Phases E/F), and explicitly
 # SKIPS Playwright locally (CI runs it when the diff can affect it).
 # See the script's own header comment for the full phase list and
@@ -2626,10 +2581,14 @@ stages = ["pre-commit"]
 # phase's setup, e.g. Phase B's externalBin placeholder before Phase D's
 # `cargo nextest`).
 #
-# PREFERRED PUSH PATH: `scripts/push.sh` runs this verification BEFORE
-# `git push` opens any SSH connection, then pushes with a
-# `SKIP_CI_VERIFY=<reason>` so this hook short-circuits and the fresh
-# connection is used immediately. Plain `git push` still auto-verifies
+# It stays the LAST pre-push hook in this file: prek runs hooks in file
+# order, so on a raw `git push` the other pre-push hooks (clippy first) have
+# run before it, and its own Phase A2 re-runs them only outside the hook.
+#
+# PREFERRED PUSH PATH: `scripts/push.sh` runs this verification, Phase A2's
+# pre-push hooks included, BEFORE `git push` opens any SSH connection, then
+# pushes with `--no-verify` so the fresh connection is used immediately.
+# Plain `git push` still auto-verifies
 # here, but holds the SSH connection open for the whole run — on a slow
 # verify GitHub closes the idle connection and the pack send fails
 # ("Connection closed by remote host"). Use `scripts/push.sh`.

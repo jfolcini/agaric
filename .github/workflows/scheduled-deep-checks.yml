@@ -3108,8 +3108,7 @@ jobs:
 
       - name: Install cargo plugins via prebuilt binaries
         # cargo-deny/cargo-machete/cargo-audit are invoked by prek Rust hooks.
-        # No cargo-nextest: the `cargo-test` hook is SKIPped below and is a
-        # system hook, so prek never resolves its binary.
+        # No cargo-nextest: no prek hook runs it.
         uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-deny,cargo-machete,cargo-audit
@@ -3200,14 +3199,10 @@ jobs:
         #     run here re-invokes the entire Phase A prek suite + range tests
         #     NESTED inside this prek process (recursion / wasted wall-clock,
         #     and it fail-exits when the on-main push range is empty).
-        #   * vitest / cargo-test — the range-scoped test hooks; the FULL
-        #     vitest + nextest suites run in the `full-suite-frontend` and
-        #     `full-suite-nextest` legs, so these would only re-read
-        #     `--cached` (nothing staged) and add noise.
         # Every REAL category hook still runs unskipped — the backstop holds.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SKIP: no-commit-to-branch,verify-ci-equivalent,vitest,cargo-test
+          SKIP: no-commit-to-branch,verify-ci-equivalent
         run: prek run --all-files --hook-stage pre-push
 
       - name: Run prek manual stage (self-tests + CI-only guards, #4556 Phase 2)
