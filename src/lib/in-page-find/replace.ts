@@ -61,6 +61,7 @@ export function replacementFor(
   // The scan saw at most this much of the text (`scanRegex`); a lookahead must see the same.
   const scanned = text.length > REGEX_NODE_SCAN_MAX ? text.slice(0, REGEX_NODE_SCAN_MAX) : text
   // Sticky, so the one replacement `String.replace` makes is the match at `start`, expanded natively.
+  // content-regex-allow: the user's own find pattern, replacing the one match find showed them
   const re = new RegExp(spec.query, spec.toggles.caseSensitive ? 'uy' : 'iuy')
   re.lastIndex = range.start
   const out = scanned.replace(re, spec.replacement)
