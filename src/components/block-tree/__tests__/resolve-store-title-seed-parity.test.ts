@@ -80,6 +80,7 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import { makePageHeading } from '@/__tests__/fixtures'
+import { seedBookmarks } from '@/__tests__/helpers/bookmarks'
 import { fetchAndCacheLinks } from '@/components/block-tree/use-block-link-resolve'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
@@ -89,7 +90,6 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import type { BacklinkGroup, BlockRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
-import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { createPageBlockStore } from '@/stores/page-blocks'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { resolveTitles } from '@/stores/resolve-titles'
@@ -432,12 +432,12 @@ const WRITERS: readonly Writer[] = [
   {
     name: 'BookmarksSection on-demand lookup',
     source: 'src/components/layout/BookmarksSection.tsx',
-    // The bookmark list is the `starred-pages` preference, which holds PAGE
-    // ids only, so a page row is the only thing `batch_resolve` answers with.
+    // The bookmark list is the `bookmark` page property, which only PAGES
+    // carry, so a page row is the only thing `batch_resolve` answers with.
     supports: ['page'],
     cacheGated: true,
     seed: async (id, blockType, content) => {
-      writePreference(PREFERENCES.starredPages, [id])
+      seedBookmarks(TEST_SPACE_ID, new Map([[id, 1]]))
       mockedBatchResolve.mockResolvedValueOnce([mkResolved(id, blockType, content)])
       render(createElement(SidebarProvider, null, createElement(BookmarksSection)))
       await waitFor(() => expect(mockedBatchResolve).toHaveBeenCalled())

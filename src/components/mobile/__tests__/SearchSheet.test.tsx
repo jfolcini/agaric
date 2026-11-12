@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { seedBookmarks } from '@/__tests__/helpers/bookmarks'
 import { SearchSheet } from '@/components/mobile/SearchSheet'
 import { getPinnedSearchScope, setPinnedSearchScope } from '@/lib/pinned-search-scope'
 import { useNavigationStore } from '@/stores/navigation'
@@ -81,6 +82,8 @@ function resetStores() {
     availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
+  // The page actions read the space's bookmarks (#6544): none.
+  seedBookmarks('SPACE_TEST', new Map())
   useNavigationStore.setState({ currentView: 'pages', selectedBlockId: null })
 }
 

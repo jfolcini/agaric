@@ -30,6 +30,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makePageHeading } from '@/__tests__/fixtures'
+import { bookmarkInvokeHandlers, seedBookmarks } from '@/__tests__/helpers/bookmarks'
 import {
   type CommandReturns,
   mockInvokeCommands,
@@ -45,7 +46,6 @@ import {
 import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
-import { getStarredPages } from '@/lib/starred-pages'
 import { useNavigationStore } from '@/stores/navigation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -76,8 +76,20 @@ const mockedToastError = vi.mocked(toast.error)
 
 const SELECTED = ['P1', 'P2', 'P3']
 
+/** The bookmarks the backend holds, page id → sidebar number (#6544). */
+const held = new Map<string, number>()
+
+/** `handlers` over the bookmark list every toolbar render reads. */
 function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
-  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({ ...bookmarkInvokeHandlers(held), ...handlers }),
+  )
+}
+
+/** Bookmark `ids`, in that order, before the first render. */
+function bookmark(...ids: string[]) {
+  for (const [i, id] of ids.entries()) held.set(id, i + 1)
+  seedBookmarks('SPACE_TEST', held)
 }
 
 /**
@@ -122,6 +134,7 @@ function renderToolbar(overrides: Partial<Parameters<typeof PageBrowserBatchTool
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  held.clear()
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',
     availableSpaces: [
@@ -131,8 +144,9 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  // No catch-all: the toolbar fires nothing until an action is taken, so a
-  // command reaching here is an unmodelled call and says so by name.
+  // No catch-all: past the bookmark list, the toolbar fires nothing until an
+  // action is taken, so a command reaching here is an unmodelled call and
+  // says so by name.
   stubInvoke({})
 })
 
@@ -603,26 +617,31 @@ describe('PageBrowserBatchToolbar', () => {
 
     await user.click(starBtn)
 
-    // Pure-FE: the whole selection is now starred in localStorage, selection
-    // clears, and no backend mutation / list-refresh is triggered.
-    expect(getStarredPages()).toEqual(SELECTED)
+    // Each selected page now carries the bookmark property, numbered in
+    // selection order; the selection clears, and no list refresh is triggered.
+    await waitFor(() =>
+      expect([...held]).toEqual([
+        ['P1', 1],
+        ['P2', 2],
+        ['P3', 3],
+      ]),
+    )
     expect(onClearSelection).toHaveBeenCalledTimes(1)
     expect(onMutated).not.toHaveBeenCalled()
-    expect(mockedInvoke).not.toHaveBeenCalled()
   })
 
   it('renders an Unstar button when every selected page is already starred and unstars on click', async () => {
     const user = userEvent.setup()
-    localStorage.setItem('starred-pages', JSON.stringify(SELECTED))
+    bookmark(...SELECTED)
     const { onClearSelection } = renderToolbar()
 
-    const unstarBtn = screen.getByTestId('page-batch-remove-bookmark-btn')
+    const unstarBtn = await screen.findByTestId('page-batch-remove-bookmark-btn')
     expect(unstarBtn).toBeInTheDocument()
     expect(screen.queryByTestId('page-batch-bookmark-btn')).not.toBeInTheDocument()
 
     await user.click(unstarBtn)
 
-    expect(getStarredPages()).toEqual([])
+    await waitFor(() => expect(held.size).toBe(0))
     expect(onClearSelection).toHaveBeenCalledTimes(1)
   })
 
@@ -630,7 +649,7 @@ describe('PageBrowserBatchToolbar', () => {
     const user = userEvent.setup()
     // Only P1 is starred going in; P2/P3 are not — the selection is NOT
     // fully starred, so the toggle must read as "Star", never "Unstar".
-    localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+    bookmark('P1')
     const { onClearSelection } = renderToolbar()
 
     const starBtn = screen.getByTestId('page-batch-bookmark-btn')
@@ -642,7 +661,13 @@ describe('PageBrowserBatchToolbar', () => {
     // Clicking "Star" on a mixed selection stars the WHOLE selection
     // (least-surprising toggle reading), leaving the already-starred page
     // starred (idempotent) and adding the rest.
-    expect(getStarredPages().toSorted()).toEqual(SELECTED.toSorted())
+    await waitFor(() =>
+      expect([...held]).toEqual([
+        ['P1', 1],
+        ['P2', 2],
+        ['P3', 3],
+      ]),
+    )
     expect(onClearSelection).toHaveBeenCalledTimes(1)
   })
 

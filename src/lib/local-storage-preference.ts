@@ -18,7 +18,7 @@
  *
  * Non-hook writers that go through `writePreference` /
  * `removePreference` (`src/lib/preferences.ts`) broadcast the same way, so
- * lib-level writes (e.g. `starred-pages.ts`) also update mounted hooks.
+ * lib-level writes (e.g. `saved-pages-views.ts`) also update mounted hooks.
  *
  * ## Failure discipline
  *

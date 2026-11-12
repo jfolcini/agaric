@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { emptyPage, makeBlockRow, makeDailyPage, withOps } from '@/__tests__/fixtures'
+import { seedBookmarks } from '@/__tests__/helpers/bookmarks'
 import { type TypedInvokeHandlers, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 
 // ── Mock BlockTree ──────────────────────────────────────────────────
@@ -265,6 +266,10 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
+  // The page actions read the space's bookmarks (#6544): none, in every
+  // space a test switches to.
+  for (const space of ['SPACE_TEST', 'SPACE_PERSONAL', 'SPACE_WORK'])
+    seedBookmarks(space, new Map())
 })
 
 /** Render JournalPage with JournalControls (controls live in App header in production). */

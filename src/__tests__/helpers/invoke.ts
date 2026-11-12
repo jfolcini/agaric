@@ -92,6 +92,11 @@ export function takeUnstubbedInvokes(): string[] {
   return unique
 }
 
+function isBookmarkQuery(args: unknown): boolean {
+  const request = (args as { request?: { key?: unknown } } | undefined)?.request
+  return request?.key === 'bookmark'
+}
+
 /**
  * Dispatcher tail for suites that render page rows.
  *
@@ -106,10 +111,22 @@ export function takeUnstubbedInvokes(): string[] {
  *
  * The Pages header's Trash button polls `count_trash` for its badge (#5269),
  * so every Pages-view render makes that call too; it answers an empty trash.
+ * The Pages rows read the space's bookmarks (`query_by_property` on the
+ * `bookmark` key, #6544); it answers none. A suite that asserts bookmarks
+ * stubs that query itself.
  *
  * Everything else still goes to {@link strictInvokeFallback}.
  */
-export function pageRowInvokeFallback(command: string): Promise<unknown> {
+export function pageRowInvokeFallback(command: string, args?: unknown): Promise<unknown> {
+  if (command === 'query_by_property' && isBookmarkQuery(args)) {
+    const none: CommandReturns['query_by_property'] = {
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    return Promise.resolve(none)
+  }
   if (command === 'load_page_subtree') {
     // Annotated, not merely shaped right: an untyped literal here is the exact
     // drift this module exists to type.
@@ -215,7 +232,7 @@ export function mockInvokeCommands(
      * Anything passed here must still FAIL on a genuinely unknown command —
      * a fallback that resolves is the bug this helper exists to remove.
      */
-    fallback?: (command: string) => Promise<unknown>
+    fallback?: (command: string, args?: unknown) => Promise<unknown>
   } = {},
 ): (command: string, args?: unknown) => Promise<unknown> {
   const fallback = options.fallback ?? strictInvokeFallback
@@ -226,7 +243,7 @@ export function mockInvokeCommands(
     const handler = Object.hasOwn(handlers, command)
       ? (handlers as Readonly<Record<string, InvokeHandler>>)[command]
       : undefined
-    if (!handler) return fallback(command)
+    if (!handler) return fallback(command, args)
     // A handler that throws synchronously should behave like a rejected
     // IPC call, not like a broken mock.
     try {

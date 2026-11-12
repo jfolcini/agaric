@@ -74,7 +74,6 @@ beforeEach(() => {
   // round-trip values through sessionStorage; isolate each test.
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
-  localStorage.removeItem('starred-pages')
   // Compound-filter chips now live in a module-global per-space store that
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.
@@ -93,9 +92,9 @@ beforeEach(() => {
     isReady: true,
   })
   // Default fallback: resolve_page_by_alias returns null (no alias match)
-  mockedInvoke.mockImplementation((cmd: string) => {
+  mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
     if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return pageRowInvokeFallback(cmd)
+    return pageRowInvokeFallback(cmd, args)
   })
 })
 
@@ -147,7 +146,7 @@ describe('PageBrowser', () => {
     // trash count) cannot take page 1's answer.
     function stubFirstPageThenHang() {
       let pageQueries = 0
-      mockedInvoke.mockImplementation((cmd: string) => {
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
           pageQueries += 1
@@ -159,7 +158,7 @@ describe('PageBrowser', () => {
             total_count: 50,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
     }
 
@@ -249,7 +248,7 @@ describe('PageBrowser', () => {
             total_count: items.length,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(
@@ -317,7 +316,7 @@ describe('PageBrowser', () => {
             total_count: hasStub ? 1 : 2,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(<PageBrowser />)
@@ -345,7 +344,7 @@ describe('PageBrowser', () => {
     // ── D22 — duplicate chips are deduped on add ───────────────────────
     it('D22: adding the same filter twice does not duplicate the chip', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
@@ -355,7 +354,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(<PageBrowser />)
@@ -427,7 +426,7 @@ describe('PageBrowser', () => {
             message: 'cursor sort mismatch',
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(<PageBrowser />)

@@ -7,8 +7,8 @@
  * count plus bulk actions when ≥1 page is selected:
  *
  *  - **Trash** — bulk soft-delete via `deleteBlocksByIds`.
- *  - **Bookmark** — toggle the whole selection's bookmarked state (a pure
- *    localStorage feature via `useStarredPages().setMany`; no backend call).
+ *  - **Bookmark** — toggle the whole selection's bookmarked state
+ *    (`useStarredPages().setMany`, one `bookmark` property write per page).
  *    Mixed selections (some starred, some not) are treated as "not fully
  *    bookmarked": the control shows Bookmark (not Remove) and bookmarks the whole
  *    selection — the least-surprising reading of a toggle, and idempotent
@@ -172,7 +172,7 @@ export function PageBrowserBatchToolbar({
 
   // A single toggle: when every selected page is already starred, the button
   // unstars them all; otherwise it stars the whole selection. Clicking then
-  // writes the batch (localStorage, via the hook) and clears the selection.
+  // writes the batch (through the hook) and clears the selection.
   const allStarred = useMemo(
     () => selectedIds.length > 0 && selectedIds.every((id) => starredIds.has(id)),
     [selectedIds, starredIds],
@@ -180,8 +180,8 @@ export function PageBrowserBatchToolbar({
 
   const handleToggleStar = useCallback(() => {
     if (selectedIds.length === 0) return
-    // Pure-FE: `setMany` persists to localStorage and broadcasts the change
-    // (registry write, #2666), so no `notify` / `onMutated` is needed.
+    // `setMany` shows the change in every bookmark surface at once and reports
+    // its own failure, so no `notify` / `onMutated` is needed.
     setMany(selectedIds, !allStarred)
     onClearSelection()
   }, [selectedIds, allStarred, setMany, onClearSelection])
@@ -514,7 +514,7 @@ export function PageBrowserBatchToolbar({
         onDismiss={spaceMove.dismiss}
       />
 
-      {/* Bookmark / unbookmark the whole selection (pure localStorage). One toggle:
+      {/* Bookmark / unbookmark the whole selection. One toggle:
           unstars when every selected page is already starred, else stars. */}
       <Button
         variant="outline"

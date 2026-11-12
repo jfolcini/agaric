@@ -25,6 +25,7 @@
  *    effects).
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { Editor } from '@tiptap/react'
@@ -32,6 +33,8 @@ import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { bookmarkInvokeHandlers, seedBookmarks } from '@/__tests__/helpers/bookmarks'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { CommandPalette } from '@/components/common/CommandPalette'
 import { mergeAndRankGroups } from '@/components/palette/ranking'
 import { setActiveEditor } from '@/editor/active-editor'
@@ -221,6 +224,9 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
+  held.clear()
+  seedBookmarks('SPACE_TEST', held)
+  vi.mocked(invoke).mockImplementation(mockInvokeCommands(bookmarkInvokeHandlers(held)))
   useNavigationStore.setState({ currentView: 'pages', selectedBlockId: null })
   // Default: empty partitions so tests that don't care about results still
   // render a non-crashing palette body.
@@ -303,16 +309,12 @@ function readRecentPagesStore(): Array<{ id: string }> {
 }
 
 /**
- * The one bookmark list. The palette writes it through `useStarredPages`, the
- * same preference the page header's button and the sidebar section use, so
- * this is what "bookmarked" means here — not a field on the recent entry.
+ * The one bookmark list, the `bookmark` page property (#6544), as the backend
+ * holds it: page id → sidebar number. The palette writes it through
+ * `useStarredPages`, as the page header's button and the sidebar section do,
+ * so this is what "bookmarked" means here — not a field on the recent entry.
  */
-function readBookmarkIds(): string[] {
-  const raw = localStorage.getItem('starred-pages')
-  if (raw == null) return []
-  const parsed: unknown = JSON.parse(raw)
-  return Array.isArray(parsed) ? (parsed as string[]) : []
-}
+const held = new Map<string, number>()
 
 describe('CommandPalette — empty state', () => {
   it('shows recent pages when no query is typed', () => {
@@ -379,7 +381,7 @@ describe('CommandPalette — recents bookmarking (Phase 4)', () => {
     const bookmark = await screen.findByTestId('palette-recent-bookmark-PAGE_A')
     fireEvent.click(bookmark)
     // Persisted to the shared bookmark list, not to the recent entry.
-    expect(readBookmarkIds()).toEqual(['PAGE_A'])
+    await waitFor(() => expect([...held]).toEqual([['PAGE_A', 1]]))
     // The palette did NOT navigate away on the bookmark click.
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
@@ -389,7 +391,8 @@ describe('CommandPalette — recents bookmarking (Phase 4)', () => {
       { pageId: 'PAGE_OLD', title: 'Older', visitedAt: '2026-01-01T00:00:00Z' },
       { pageId: 'PAGE_NEW', title: 'Newer', visitedAt: '2026-05-19T00:00:00Z' },
     ])
-    localStorage.setItem('starred-pages', JSON.stringify(['PAGE_OLD']))
+    held.set('PAGE_OLD', 1)
+    seedBookmarks('SPACE_TEST', held)
     render(<CommandPalette />)
     openPalette()
     const old = await screen.findByTestId('palette-recent-PAGE_OLD')
@@ -455,7 +458,7 @@ describe('CommandPalette — action menu (Phase 5)', () => {
     recentRow.setAttribute('aria-selected', 'true')
     fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
     fireEvent.click(await screen.findByTestId('palette-action-bookmark'))
-    expect(readBookmarkIds()).toEqual(['PAGE_R'])
+    await waitFor(() => expect([...held]).toEqual([['PAGE_R', 1]]))
     // Action ran, menu closed; the palette stays open — bookmarking is not a nav action.
     expect(screen.queryByTestId('palette-action-menu')).toBeNull()
     expect(useCommandPaletteStore.getState().open).toBe(true)

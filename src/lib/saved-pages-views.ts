@@ -2,7 +2,7 @@
  * Saved Pages views — localStorage-backed named snapshots of the Pages
  * view's `{ sort, filters }` tuple (#2003 piece 1).
  *
- * Mirrors `starred-pages.ts`: a thin pure adapter over the `PREFERENCES`
+ * A thin pure adapter over the `PREFERENCES`
  * registry (`PREFERENCES.savedPagesViews`, see `src/lib/preferences.ts`),
  * with a bulk-safe single-write pattern for list mutation. All the
  * SSR-guard / try-catch / cross-tab broadcast machinery lives in the

@@ -816,10 +816,11 @@ pub const BUILTIN_PROPERTY_DEFS: [BuiltinPropertyDef; 15] = [
 
 /// The keys the app writes for its own bookkeeping, which a user's rename or
 /// merge moves neither from nor onto (#5841): the built-ins the app sets itself,
-/// the template markers, the image layout, a migration marker and
+/// the template markers, the image layout, a migration marker,
 /// `attachments`, the key a file writes a block's files under (#6277
-/// decision 9). Mirrored by `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts`.
-pub const INTERNAL_PROPERTY_KEYS: [&str; 15] = [
+/// decision 9), and `bookmark`, a page's place in the sidebar's bookmarks
+/// (#6544). Mirrored by `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts`.
+pub const INTERNAL_PROPERTY_KEYS: [&str; 16] = [
     "repeat",
     "created_at",
     "completed_at",
@@ -835,6 +836,7 @@ pub const INTERNAL_PROPERTY_KEYS: [&str; 15] = [
     "image_alignment",
     "image_caption",
     "attachments",
+    "bookmark",
 ];
 
 /// Whether `key` is one of the [`INTERNAL_PROPERTY_KEYS`].
@@ -2733,7 +2735,13 @@ mod tests {
 
     #[test]
     fn internal_keys_are_internal_and_user_keys_are_not() {
-        for key in ["template", "journal-template", "accent_color", "repeat"] {
+        for key in [
+            "template",
+            "journal-template",
+            "accent_color",
+            "repeat",
+            "bookmark",
+        ] {
             assert!(is_internal_property_key(key), "'{key}' is the app's own");
         }
         for key in ["project", "status", "due_date"] {

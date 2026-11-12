@@ -5,7 +5,10 @@ import {
   dragBlock,
   dragBlockTouch,
   expect,
+  ipc,
+  navigateToView,
   openMobileSidebar,
+  openPage,
   test,
   waitForBoot,
 } from './helpers'
@@ -34,8 +37,8 @@ import {
  *   PAGE_MEETINGS ("Meetings")
  *
  * Five seeded pages, none contain `/` so the namespace tree is empty
- * on mount. Persistence lives in localStorage at the `starred-pages`
- * key.
+ * on mount. A bookmark is the page's `bookmark` property, whose number is its
+ * place in the sidebar (#6544).
  */
 
 // Seed ids (`src/lib/tauri-mock/seed.ts`), in the order the reorder specs bookmark them.
@@ -45,13 +48,54 @@ const BOOKMARKED = [
   '00000000000000000000PAGE05', // Meetings
 ]
 
-/** Bookmark the seed pages directly in storage, then boot so the sidebar reads them. */
+/**
+ * Leave the seed pages in the device's old localStorage bookmark list, then
+ * boot: the one-time migration moves them into the `bookmark` property, in
+ * that order, and deletes the list.
+ */
 async function bookmarkSeedPages(page: Page): Promise<void> {
   await page.evaluate(
     (ids) => window.localStorage.setItem('starred-pages', JSON.stringify(ids)),
     BOOKMARKED,
   )
   await waitForBoot(page)
+  await expect
+    .poll(() => storedBookmarkOrder(page))
+    .toEqual(['Quick Notes', 'Projects', 'Meetings'])
+  expect(await page.evaluate(() => window.localStorage.getItem('starred-pages'))).toBeNull()
+}
+
+/** The bookmarked pages' titles as the backend orders them, by the property's number. */
+async function storedBookmarkOrder(page: Page): Promise<string[]> {
+  const { items } = await ipc<{ items: Array<{ id: string; content: string | null }> }>(
+    page,
+    'query_by_property',
+    {
+      request: {
+        key: 'bookmark',
+        valueText: null,
+        valueDate: null,
+        operator: null,
+        cursor: null,
+        limit: 50,
+        excludeParentId: null,
+        contentNonEmpty: null,
+        blockType: 'page',
+        valueTextIn: null,
+        valueDateRange: null,
+        excludeTodoStates: null,
+      },
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    },
+  )
+  const props = await ipc<Record<string, Array<{ key: string; value_num: number | null }>>>(
+    page,
+    'get_batch_properties',
+    { blockIds: items.map((item) => item.id) },
+  )
+  const order = (id: string) =>
+    props[id]?.find((p) => p.key === 'bookmark')?.value_num ?? Number.NaN
+  return items.toSorted((a, b) => order(a.id) - order(b.id)).map((item) => item.content ?? '')
 }
 
 /** The sidebar's bookmark rows (the open buttons, not the remove actions). */
@@ -73,9 +117,6 @@ async function openPagesView(page: import('@playwright/test').Page) {
 test.describe(' + PageBrowser unified Bookmarks + Pages model @pages @mobile', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
-    // Reset starred-pages so each test starts from a clean slate even
-    // if the underlying browser-context survived between tests.
-    await page.evaluate(() => window.localStorage.removeItem('starred-pages'))
   })
 
   test('no Bookmarks header when nothing is bookmarked; Pages still renders', async ({ page }) => {
@@ -116,21 +157,21 @@ test.describe(' + PageBrowser unified Bookmarks + Pages model @pages @mobile', (
     )
   })
 
-  test('the bookmark list persists across reload via localStorage', async ({ page }) => {
+  test('a bookmark is stored on the page and survives navigating away and back', async ({
+    page,
+  }) => {
     await openPagesView(page)
 
     // Star "Projects".
     await page.locator('[data-page-item]:has-text("Projects") .star-toggle').click()
     await expect(page.locator('[data-page-item]').first()).toContainText('Projects')
 
-    // Inspect localStorage directly — the persistence contract.
-    const stored = await page.evaluate(() => window.localStorage.getItem('starred-pages'))
-    expect(stored).not.toBeNull()
-    const parsed = stored ? (JSON.parse(stored) as string[]) : []
-    expect(parsed).toHaveLength(1)
+    // The persistence contract: the page carries the property, and no
+    // device-local list does.
+    await expect.poll(() => storedBookmarkOrder(page)).toEqual(['Projects'])
+    expect(await page.evaluate(() => window.localStorage.getItem('starred-pages'))).toBeNull()
 
-    // Reload the page — starred set should survive.
-    await page.reload()
+    await navigateToView(page, 'Journal')
     await openPagesView(page)
     await expect(page.locator('[data-page-section="starred"]')).toBeVisible()
     await expect(page.locator('[data-page-item]').first()).toContainText('Projects')
@@ -229,6 +270,48 @@ test.describe(' + PageBrowser unified Bookmarks + Pages model @pages @mobile', (
 })
 
 /**
+ * #6544 — a bookmark made from the page header is the page's `bookmark`
+ * property, listed in the sidebar in the property's order, and a drag there
+ * rewrites that order on the page itself, which is what syncs.
+ */
+test.describe('Bookmarks as a page property @pages', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('bookmark pages from the header, reorder them in the sidebar, and the order is stored', async ({
+    page,
+  }) => {
+    const bookmarkButton = page.getByRole('button', { name: 'Bookmark this page' })
+    await openPage(page, 'Quick Notes')
+    await bookmarkButton.click()
+    await openPage(page, 'Projects')
+    await bookmarkButton.click()
+
+    const rows = sidebarBookmarkRows(page)
+    await expect(rows).toHaveText(['Quick Notes', 'Projects'])
+    await expect.poll(() => storedBookmarkOrder(page)).toEqual(['Quick Notes', 'Projects'])
+
+    // Away and back, through the bookmark: the header reads the page as
+    // bookmarked, and the sidebar keeps its order.
+    await navigateToView(page, 'Journal')
+    await rows.nth(0).click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
+    await expect(
+      page.getByRole('button', { name: 'Remove this page from bookmarks' }),
+    ).toBeVisible()
+    await expect(rows).toHaveText(['Quick Notes', 'Projects'])
+
+    await dragBlock(page, rows.nth(1), rows.nth(0))
+
+    await expect(rows).toHaveText(['Projects', 'Quick Notes'])
+    await expect.poll(() => storedBookmarkOrder(page)).toEqual(['Projects', 'Quick Notes'])
+    await navigateToView(page, 'Journal')
+    await expect(rows).toHaveText(['Projects', 'Quick Notes'])
+  })
+})
+
+/**
  * #5359 — the sidebar is the one surface that shows the stored bookmark order,
  * and dragging a row rewrites it. A drag is not a click: the page it moved
  * must not open.
@@ -239,7 +322,7 @@ test.describe('Sidebar bookmark reorder @pages @mobile', () => {
     await bookmarkSeedPages(page)
   })
 
-  test('a mouse drag reorders bookmarks, and the order survives a reload', async ({ page }) => {
+  test('a mouse drag reorders bookmarks, and the order is stored', async ({ page }) => {
     const rows = sidebarBookmarkRows(page)
     await expect(rows).toHaveText(['Quick Notes', 'Projects', 'Meetings'])
 
@@ -249,8 +332,9 @@ test.describe('Sidebar bookmark reorder @pages @mobile', () => {
     // Still on the journal: opening the page would swap this header for its title.
     await expect(page.getByTestId('journal-header')).toBeVisible()
 
-    await page.reload()
-    await expect(sidebarBookmarkRows(page)).toHaveText(['Meetings', 'Quick Notes', 'Projects'])
+    await expect
+      .poll(() => storedBookmarkOrder(page))
+      .toEqual(['Meetings', 'Quick Notes', 'Projects'])
   })
 })
 
@@ -280,8 +364,8 @@ test.describe('Sidebar bookmark reorder on touch (iPhone viewport) @pages @mobil
     // visibility: a closing drawer stays visible through its exit animation.
     await expect(drawer).toHaveAttribute('data-state', 'open')
 
-    await page.reload()
-    const reopened = await openMobileSidebar(page)
-    await expect(sidebarBookmarkRows(reopened)).toHaveText(['Meetings', 'Quick Notes', 'Projects'])
+    await expect
+      .poll(() => storedBookmarkOrder(page))
+      .toEqual(['Meetings', 'Quick Notes', 'Projects'])
   })
 })

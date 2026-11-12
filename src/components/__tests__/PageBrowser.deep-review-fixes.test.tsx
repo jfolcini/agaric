@@ -73,7 +73,6 @@ beforeEach(() => {
   // round-trip values through sessionStorage; isolate each test.
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
-  localStorage.removeItem('starred-pages')
   // Compound-filter chips now live in a module-global per-space store that
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.
@@ -93,9 +92,9 @@ beforeEach(() => {
     isReady: true,
   })
   // Default fallback: resolve_page_by_alias returns null (no alias match)
-  mockedInvoke.mockImplementation((cmd: string) => {
+  mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
     if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return pageRowInvokeFallback(cmd)
+    return pageRowInvokeFallback(cmd, args)
   })
 })
 
@@ -147,7 +146,7 @@ describe('PageBrowser', () => {
           'agaric:pages:savedViews:v1',
           JSON.stringify({ schemaVersion: 1, views: [view] }),
         )
-        mockedInvoke.mockImplementation((cmd: string) => {
+        mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
           if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
           if (cmd === 'list_all_tags_in_space') return listSpaceTags()
           if (cmd === 'list_pages_with_metadata') {
@@ -158,7 +157,7 @@ describe('PageBrowser', () => {
               total_count: 1,
             })
           }
-          return pageRowInvokeFallback(cmd)
+          return pageRowInvokeFallback(cmd, args)
         })
 
         render(<PageBrowser />)
@@ -222,7 +221,7 @@ describe('PageBrowser', () => {
         'agaric:pages:savedViews:v1',
         JSON.stringify({ schemaVersion: 1, views: [savedView] }),
       )
-      mockedInvoke.mockImplementation((cmd: string) => {
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
@@ -232,7 +231,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(<PageBrowser />)
@@ -280,7 +279,7 @@ describe('PageBrowser', () => {
       // Seed the global resolve cache with a tag id → name mapping (tags
       // are preloaded into this cache on boot in production).
       useResolveStore.getState().set('01TAGURGENT', 'urgent', false)
-      mockedInvoke.mockImplementation((cmd: string) => {
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_all_tags_in_space')
           return Promise.resolve([
@@ -294,7 +293,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(<PageBrowser />)
@@ -318,7 +317,7 @@ describe('PageBrowser', () => {
 
     it('E5: an unresolved tag id falls back to the raw id (no broken placeholder)', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_all_tags_in_space')
           return Promise.resolve([
@@ -332,7 +331,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(<PageBrowser />)
@@ -354,7 +353,7 @@ describe('PageBrowser', () => {
     it('E7: count chip counts distinct pages, not grouped rows, in a namespaced vault', async () => {
       // A 3-page namespace subtree collapses to one tree-page row; the
       // count chip numerator must report 3 (distinct pages), not 1 (rows).
-      mockedInvoke.mockImplementation((cmd: string) => {
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
@@ -364,7 +363,7 @@ describe('PageBrowser', () => {
             total_count: 3,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(<PageBrowser />)
@@ -379,7 +378,7 @@ describe('PageBrowser', () => {
       // row). A free-text query matching all three must announce "3
       // results", not the grouped-row count.
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
@@ -393,7 +392,7 @@ describe('PageBrowser', () => {
             total_count: 3,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(<PageBrowser />)
@@ -422,7 +421,7 @@ describe('PageBrowser', () => {
       // (loaded basis), NOT "1 of 10" (mixing loaded numerator with the
       // server total denominator).
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
@@ -433,7 +432,7 @@ describe('PageBrowser', () => {
             total_count: 10,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(<PageBrowser />)
@@ -457,7 +456,7 @@ describe('PageBrowser', () => {
     // ── E15 — delete decrements the count chip exactly once ─────────────
     it('E15: deleting a page decrements the count chip by exactly one', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
@@ -478,7 +477,7 @@ describe('PageBrowser', () => {
             affected_page_ids: [],
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       const { container } = render(<PageBrowser />)
@@ -508,7 +507,7 @@ describe('PageBrowser', () => {
     // ── E16 — clear-all announces a dedicated message ───────────────────
     it('E16: clearing all chips announces a single clear-all message', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
@@ -518,7 +517,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(<PageBrowser />)
@@ -572,7 +571,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       render(<PageBrowser />)
@@ -596,7 +595,7 @@ describe('PageBrowser', () => {
     it('E5: has no a11y violations with a resolved tag chip present', async () => {
       const user = userEvent.setup()
       useResolveStore.getState().set('01TAGURGENT', 'urgent', false)
-      mockedInvoke.mockImplementation((cmd: string) => {
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_all_tags_in_space')
           return Promise.resolve([
@@ -610,7 +609,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return pageRowInvokeFallback(cmd)
+        return pageRowInvokeFallback(cmd, args)
       })
 
       const { container } = render(<PageBrowser />)

@@ -1,27 +1,22 @@
 /**
  * BookmarksSection — the sidebar's collapsible Bookmarks list (#4713).
  *
- * There is ONE bookmark list, the `starred-pages` preference, and this is the
- * sidebar view over it. The page header, the Pages browser rows and its batch
+ * There is ONE bookmark list, the `bookmark` page property (#6544), and this
+ * is the sidebar view over it. The page header, the Pages browser rows and its batch
  * toolbar write the same list, so a page bookmarked anywhere appears here.
  * (It used to be a second list — a `pinned` flag on recent pages, writable
  * only from the command palette — which meant the star and this section were
  * different features with the same name.)
  *
  * Titles come from the app-wide resolve cache rather than from the bookmark
- * entry, so a rename is reflected without rewriting storage. That cache is
- * keyed by `(space, id)`, which is also the space filter: a bookmark from
- * another space does not resolve under the active one and is left out. A
- * bookmark the cache has never held — a page created or synced in since the
- * last preload — is resolved on demand, space-scoped, rather than dropped
- * (#5075).
+ * list, so a rename shows at once. A bookmark the cache has never held — a
+ * page created or synced in since the last preload — is resolved on demand,
+ * space-scoped, rather than dropped (#5075).
  *
- * Bookmarks are device-local (`localStorage`), so they do not sync. Moving
- * them into the DB is the follow-up #4713 defers.
- *
- * The list shows the stored order, and dragging a row (or Space, arrows,
- * Space) rewrites it (#5359). This is the only surface that shows that order;
- * the Pages browser's Bookmarks group follows its own sort.
+ * Bookmarks and their order sync between devices. The list shows the stored
+ * order, and dragging a row (or Space, arrows, Space) rewrites the moved
+ * page's number (#5359). This is the only surface that shows that order; the
+ * Pages browser's Bookmarks group follows its own sort.
  *
  * The disclosure state is a per-client view preference, so it lives in the
  * preferences registry (`PREFERENCES.bookmarksCollapsed`) rather than with
@@ -128,7 +123,7 @@ export function BookmarksSection(): ReactElement {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = usePreference(PREFERENCES.bookmarksCollapsed)
 
-  const { starredIds, toggle, move } = useStarredPages()
+  const { starredIds, loaded, toggle, move } = useStarredPages()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   // Re-resolve when the cache lands new titles, a rename edits one, or a
   // space switch flushes the previous space's entries.
@@ -143,16 +138,19 @@ export function BookmarksSection(): ReactElement {
    * `resolveVersion`, which recomputes the pending set below, which would
    * re-fire the resolve effect for that id forever.
    *
-   * Scoped to the space because switching AWAY flushes that space's cache
-   * (`clearAllForSpace`, `useAppSpaceLifecycle`) while this component stays
-   * mounted and keeps the set. Coming back, those ids are uncached AND already
-   * recorded as asked, so they would be neither rendered nor pending — the
-   * false empty state this whole change exists to remove.
+   * Dropped on every space switch, because switching AWAY flushes that space's
+   * cache (`clearAllForSpace`, `useAppSpaceLifecycle`) while this component
+   * stays mounted and keeps the set. Coming back, those ids are uncached AND
+   * already recorded as asked, so they would be neither rendered nor pending —
+   * the false empty state this whole change exists to remove. The space a
+   * switch lands on may list nothing to ask about, so the reset cannot wait
+   * for its first answer.
    */
   const [asked, setAsked] = useState<{ space: string | null; ids: ReadonlySet<string> }>(() => ({
-    space: null,
+    space: currentSpaceId,
     ids: EMPTY_IDS,
   }))
+  if (asked.space !== currentSpaceId) setAsked({ space: currentSpaceId, ids: EMPTY_IDS })
   const askedIds = asked.space === currentSpaceId ? asked.ids : EMPTY_IDS
 
   /**
@@ -280,13 +278,12 @@ export function BookmarksSection(): ReactElement {
       {!collapsed && (
         <SidebarGroupContent>
           {bookmarks.length === 0 ? (
-            // Claim emptiness only when it is true: every bookmark has been
-            // looked up, and none of them belong to this space. While one is
-            // still pending this would tell a user with bookmarks that they
-            // have none.
+            // Claim emptiness only when it is true: the list has been read
+            // and every bookmark looked up. While one is still pending this
+            // would tell a user with bookmarks that they have none.
             // The hint has no icon-rail layout, and the rail already hides
             // the header that explains it.
-            pendingKey === '' ? (
+            loaded && pendingKey === '' ? (
               <p className="px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
                 {t('bookmarks.emptyHint')}
               </p>

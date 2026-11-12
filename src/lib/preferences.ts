@@ -9,7 +9,7 @@
  * IPC, no block property, no server round-trip. A user's sort choice
  * on their laptop is independent of the same choice on their desktop, and a
  * fresh install starts from `defaultValue`. This is by design (mirrors
- * `tag-colors.ts` / `starred-pages.ts`): these are chrome/ergonomics knobs,
+ * `tag-colors.ts`): these are chrome/ergonomics knobs,
  * not document data, so cross-device drift is acceptable and expected.
  *
  * ## Scope
@@ -58,7 +58,7 @@
  * `useLocalStoragePreference` — and therefore `usePreference` — subscribes
  * per key, so every mounted hook instance re-reads after ANY registry
  * write, whether it came from another hook instance or a non-hook lib
- * writer (e.g. `starred-pages.ts`). Pre-existing raw `storage` listeners
+ * writer (e.g. `saved-pages-views.ts`). Pre-existing raw `storage` listeners
  * (`keyboard-config`, `HelpTab`, `useQuickCaptureShortcut`) keep working
  * unchanged and gain same-tab coverage.
  *
@@ -725,7 +725,11 @@ const INTERNET_FACING_BIND_ACK_PREFERENCE: PreferenceDefinition<string> = {
   serialize: (value) => value,
 }
 
-/** `starred-pages` — starred (favorited) page ids (`src/lib/starred-pages.ts`). */
+/**
+ * `starred-pages` — the device's bookmark list from before bookmarks became a
+ * page property (#6544); `migrateDeviceBookmarks` (`src/lib/starred-pages.ts`)
+ * moves it once and removes it.
+ */
 const STARRED_PAGES_PREFERENCE: PreferenceDefinition<string[]> = {
   key: 'starred-pages',
   scope: 'device',

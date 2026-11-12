@@ -1,175 +1,199 @@
 /**
- * Tests for useStarredPages hook (sub-item b).
+ * useStarredPages — page bookmarks as the synced `bookmark` page property
+ * (#6544), whose number is the page's place in the sidebar list.
  *
- * Validates:
- *  - `isStarred` returns false for an unstarred page.
- *  - `toggle()` adds a page to the starred set.
- *  - `toggle()` again removes the page from the starred set.
- *  - `starredIds` is referentially stable across renders when contents
- *    have not changed (so consuming memos stay quiet).
- *  - `toggle()` writes the canonical localStorage shape (JSON array
- *    under the `starred-pages` key — byte-equivalent to the legacy
- *    bare-lib usage).
- *  - Pre-existing localStorage data is read on mount.
- *  - Cross-instance sync: two mounted hook instances stay in sync via
- *    the shared preference broadcast (#2666 — the registry write
- *    dispatches a synthetic StorageEvent; previously a custom
- *    `starred-pages-changed` window event).
- *  - Malformed localStorage values fall back to an empty set without
- *    throwing.
+ * `invoke` is routed through the real tauri-mock `dispatch`, so every
+ * assertion re-reads the stored property, not the call that wrote it.
  */
 
-import { act, renderHook } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { InvokeArgs } from '@tauri-apps/api/core'
+import { invoke } from '@tauri-apps/api/core'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { useStarredPages } from '@/hooks/useStarredPages'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { blocks, makeBlock, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { useSpaceStore } from '@/stores/space'
 
-const STORAGE_KEY = 'starred-pages'
+const QN = SEED_IDS.PAGE_QUICK_NOTES
+const PROJ = SEED_IDS.PAGE_PROJECTS
+const MEET = SEED_IDS.PAGE_MEETINGS
+const GS = SEED_IDS.PAGE_GETTING_STARTED
+
+/** Store a `bookmark` row on `id` the way a synced peer's write lands. */
+function seedBookmark(id: string, value: { num?: number; text?: string }): void {
+  const held = properties.get(id) ?? new Map<string, Record<string, unknown>>()
+  held.set('bookmark', {
+    block_id: id,
+    key: 'bookmark',
+    value_text: value.text ?? null,
+    value_num: value.num ?? null,
+    value_date: null,
+    value_ref: null,
+    value_bool: null,
+  })
+  properties.set(id, held)
+}
+
+/** The stored bookmark number of `id`, or `undefined` when it carries none. */
+function storedOrder(id: string): unknown {
+  return properties.get(id)?.get('bookmark')?.['value_num']
+}
 
 beforeEach(() => {
-  localStorage.removeItem(STORAGE_KEY)
-})
-
-afterEach(() => {
-  localStorage.removeItem(STORAGE_KEY)
+  vi.clearAllMocks()
+  seedBlocks()
+  vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+    dispatch(cmd, args),
+  )
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
 })
 
 describe('useStarredPages', () => {
-  it('isStarred returns false for an unstarred page', () => {
-    const { result } = renderHook(() => useStarredPages())
-    expect(result.current.isStarred('P1')).toBe(false)
-    expect(result.current.starredIds.size).toBe(0)
-  })
-
-  it('toggle() adds a page to the starred set', () => {
-    const { result } = renderHook(() => useStarredPages())
-
-    act(() => {
-      result.current.toggle('P1')
-    })
-
-    expect(result.current.isStarred('P1')).toBe(true)
-    expect(result.current.starredIds.has('P1')).toBe(true)
-  })
-
-  it('toggle() again removes the page from the starred set', () => {
-    const { result } = renderHook(() => useStarredPages())
-
-    act(() => {
-      result.current.toggle('P1')
-    })
-    expect(result.current.isStarred('P1')).toBe(true)
-
-    act(() => {
-      result.current.toggle('P1')
-    })
-    expect(result.current.isStarred('P1')).toBe(false)
-    expect(result.current.starredIds.size).toBe(0)
-  })
-
-  it('starredIds is referentially stable across renders when contents are unchanged', () => {
-    const { result, rerender } = renderHook(() => useStarredPages())
-
-    const initialSet = result.current.starredIds
-    rerender()
-    expect(result.current.starredIds).toBe(initialSet)
-
-    // After a no-op refresh broadcast (the stored raw value is unchanged),
-    // the set instance should still be the same — the primitive's snapshot
-    // is cached against the raw string, so an equal raw short-circuits.
-    const raw = localStorage.getItem(STORAGE_KEY)
-    act(() => {
-      window.dispatchEvent(
-        new StorageEvent('storage', {
-          key: STORAGE_KEY,
-          oldValue: raw,
-          newValue: raw,
-          storageArea: window.localStorage,
-        }),
-      )
-    })
-    expect(result.current.starredIds).toBe(initialSet)
-  })
-
-  it('toggle() writes JSON-array localStorage shape (byte-equivalent to lib)', () => {
-    const { result } = renderHook(() => useStarredPages())
-
-    act(() => {
-      result.current.toggle('P1')
-    })
-    expect(localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify(['P1']))
-
-    act(() => {
-      result.current.toggle('P2')
-    })
-    expect(localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify(['P1', 'P2']))
-  })
-
-  it('reads pre-existing starred pages from localStorage on mount', () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(['P1', 'P2']))
+  it('lists the space bookmarks by number, then title, reading an imported numeric text', async () => {
+    seedBookmark(QN, { num: 2 })
+    seedBookmark(PROJ, { num: 1 })
+    seedBookmark(MEET, { num: 1 })
+    seedBookmark(GS, { text: '1.5' })
 
     const { result } = renderHook(() => useStarredPages())
 
-    expect(result.current.isStarred('P1')).toBe(true)
-    expect(result.current.isStarred('P2')).toBe(true)
-    expect(result.current.isStarred('P3')).toBe(false)
-    expect(result.current.starredIds.size).toBe(2)
+    await waitFor(() => {
+      expect([...result.current.starredIds]).toEqual([MEET, PROJ, GS, QN])
+    })
+    expect(result.current.isStarred(QN)).toBe(true)
+    expect(result.current.isStarred(SEED_IDS.PAGE_DAILY)).toBe(false)
   })
 
-  it('cross-instance sync: toggle in one instance updates the other', () => {
+  it('toggle() bookmarks a page after the last one, and toggling again removes the property', async () => {
+    seedBookmark(PROJ, { num: 4 })
+    const { result } = renderHook(() => useStarredPages())
+    await waitFor(() => expect(result.current.isStarred(PROJ)).toBe(true))
+
+    act(() => result.current.toggle(QN))
+
+    await waitFor(() => expect([...result.current.starredIds]).toEqual([PROJ, QN]))
+    await waitFor(() => expect(storedOrder(QN)).toBe(5))
+
+    act(() => result.current.toggle(QN))
+
+    await waitFor(() => expect(result.current.isStarred(QN)).toBe(false))
+    await waitFor(() => expect(properties.get(QN)?.has('bookmark')).toBe(false))
+  })
+
+  it('setMany() writes one property per page, in order, and skips pages already bookmarked', async () => {
+    seedBookmark(PROJ, { num: 1 })
+    const { result } = renderHook(() => useStarredPages())
+    await waitFor(() => expect(result.current.isStarred(PROJ)).toBe(true))
+
+    act(() => result.current.setMany([QN, PROJ, MEET], true))
+
+    await waitFor(() => expect([...result.current.starredIds]).toEqual([PROJ, QN, MEET]))
+    await waitFor(() => expect(storedOrder(MEET)).toBe(3))
+    expect(storedOrder(QN)).toBe(2)
+    expect(storedOrder(PROJ)).toBe(1)
+
+    act(() => result.current.setMany([QN, PROJ], false))
+
+    await waitFor(() => expect([...result.current.starredIds]).toEqual([MEET]))
+    await waitFor(() => expect(properties.get(PROJ)?.has('bookmark')).toBe(false))
+    expect(properties.get(QN)?.has('bookmark')).toBe(false)
+    expect(storedOrder(MEET)).toBe(3)
+  })
+
+  it('move() writes only the moved page, between its new neighbours', async () => {
+    seedBookmark(QN, { num: 1 })
+    seedBookmark(PROJ, { num: 2 })
+    seedBookmark(MEET, { num: 3 })
+    const { result } = renderHook(() => useStarredPages())
+    await waitFor(() => expect(result.current.starredIds.size).toBe(3))
+
+    act(() => result.current.move(MEET, PROJ))
+
+    await waitFor(() => expect([...result.current.starredIds]).toEqual([QN, MEET, PROJ]))
+    await waitFor(() => expect(storedOrder(MEET)).toBe(1.5))
+    expect(storedOrder(QN)).toBe(1)
+    expect(storedOrder(PROJ)).toBe(2)
+
+    act(() => result.current.move(PROJ, QN))
+
+    await waitFor(() => expect([...result.current.starredIds]).toEqual([PROJ, QN, MEET]))
+    await waitFor(() => expect(storedOrder(PROJ)).toBe(0))
+  })
+
+  it('move() renumbers the space when no number fits between the new neighbours', async () => {
+    seedBookmark(QN, { num: 1 })
+    seedBookmark(PROJ, { num: 1 })
+    seedBookmark(MEET, { num: 2 })
+    const { result } = renderHook(() => useStarredPages())
+    // Equal numbers order by title: Projects before Quick Notes.
+    await waitFor(() => expect([...result.current.starredIds]).toEqual([PROJ, QN, MEET]))
+
+    act(() => result.current.move(MEET, QN))
+
+    await waitFor(() => expect([...result.current.starredIds]).toEqual([PROJ, MEET, QN]))
+    await waitFor(() => expect(storedOrder(QN)).toBe(3))
+    expect(storedOrder(PROJ)).toBe(1)
+    expect(storedOrder(MEET)).toBe(2)
+  })
+
+  it('a space switch lists the other space bookmarks', async () => {
+    const WORK_PAGE = '00000000000000000WORKPAGE1'
+    blocks.set('SPACE_WORK', makeBlock('SPACE_WORK', 'page', 'Work', null, 1))
+    blocks.set(WORK_PAGE, {
+      ...makeBlock(WORK_PAGE, 'page', 'Plans', null, 2),
+      space_id: 'SPACE_WORK',
+    })
+    seedBookmark(WORK_PAGE, { num: 1 })
+    seedBookmark(QN, { num: 1 })
+    const { result } = renderHook(() => useStarredPages())
+    await waitFor(() => expect([...result.current.starredIds]).toEqual([QN]))
+
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' })
+    })
+
+    await waitFor(() => expect([...result.current.starredIds]).toEqual([WORK_PAGE]))
+  })
+
+  it('every mounted instance sees a toggle', async () => {
     const a = renderHook(() => useStarredPages())
     const b = renderHook(() => useStarredPages())
+    await waitFor(() => expect(b.result.current.loaded).toBe(true))
 
-    expect(a.result.current.isStarred('P1')).toBe(false)
-    expect(b.result.current.isStarred('P1')).toBe(false)
+    act(() => a.result.current.toggle(QN))
 
-    act(() => {
-      a.result.current.toggle('P1')
-    })
-
-    // Both instances pick up the change via the shared preference
-    // broadcast (#2666).
-    expect(a.result.current.isStarred('P1')).toBe(true)
-    expect(b.result.current.isStarred('P1')).toBe(true)
-
-    // Untoggle from B — A also sees the unstar.
-    act(() => {
-      b.result.current.toggle('P1')
-    })
-    expect(a.result.current.isStarred('P1')).toBe(false)
-    expect(b.result.current.isStarred('P1')).toBe(false)
+    await waitFor(() => expect(b.result.current.isStarred(QN)).toBe(true))
+    await waitFor(() => expect(storedOrder(QN)).toBe(1))
   })
 
-  it('move() reorders starredIds in every instance and persists the order', () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(['P1', 'P2', 'P3']))
-    const a = renderHook(() => useStarredPages())
-    const b = renderHook(() => useStarredPages())
-
-    act(() => {
-      a.result.current.move('P3', 'P1')
-    })
-
-    expect([...a.result.current.starredIds]).toEqual(['P3', 'P1', 'P2'])
-    expect([...b.result.current.starredIds]).toEqual(['P3', 'P1', 'P2'])
-    expect(localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify(['P3', 'P1', 'P2']))
-  })
-
-  it('falls back to an empty set when localStorage holds a malformed value', () => {
-    localStorage.setItem(STORAGE_KEY, '{not-valid-json')
-
-    expect(() => renderHook(() => useStarredPages())).not.toThrow()
-
+  it('a write that reached the backend some other way shows after the derived caches reset', async () => {
     const { result } = renderHook(() => useStarredPages())
+    await waitFor(() => expect(result.current.loaded).toBe(true))
     expect(result.current.starredIds.size).toBe(0)
-    expect(result.current.isStarred('P1')).toBe(false)
+
+    seedBookmark(MEET, { num: 1 })
+    act(() => invalidateDerivedCaches())
+
+    await waitFor(() => expect(result.current.isStarred(MEET)).toBe(true))
   })
 
-  it('falls back to an empty set when localStorage holds a non-array JSON value', () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ id: 'P1' }))
-
+  it('a failed write puts back what the backend holds', async () => {
     const { result } = renderHook(() => useStarredPages())
+    await waitFor(() => expect(result.current.loaded).toBe(true))
+    vi.mocked(invoke).mockImplementation((cmd: string, args?: InvokeArgs) =>
+      cmd === 'set_property'
+        ? Promise.reject({ kind: 'database', message: 'disk I/O error' })
+        : Promise.resolve(dispatch(cmd, args)),
+    )
+    const reads = () => vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'query_by_property')
+    expect(reads()).toHaveLength(1)
 
-    expect(result.current.starredIds.size).toBe(0)
-    expect(result.current.isStarred('P1')).toBe(false)
+    act(() => result.current.toggle(QN))
+
+    await waitFor(() => expect(reads()).toHaveLength(2))
+    await waitFor(() => expect(result.current.isStarred(QN)).toBe(false))
   })
 })
