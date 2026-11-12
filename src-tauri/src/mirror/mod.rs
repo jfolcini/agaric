@@ -89,6 +89,8 @@ pub struct MirrorStatus {
     /// Whether the attachments pages link are copied into the folder
     /// ([`assets`]).
     pub copy_files: bool,
+    /// The spaces not mirrored; every other one is, a new one included.
+    pub unmirrored_spaces: Vec<String>,
 }
 
 /// What the mirror's task shares with the commands and the sync sink.
@@ -171,6 +173,7 @@ impl MirrorState {
             folder,
             read_back,
             copy_files,
+            unmirrored,
         } = settings;
         let on = folder.is_some();
         MirrorStatus {
@@ -226,6 +229,7 @@ impl MirrorState {
             read_back,
             pending,
             copy_files,
+            unmirrored_spaces: unmirrored,
         }
     }
 
@@ -450,6 +454,8 @@ pub struct Mirror {
     unrendered: bool,
     /// Copies that could not be written, and why, by path.
     copy_failed: BTreeMap<String, String>,
+    /// The spaces neither written nor read, as of this tick.
+    unmirrored: HashSet<String>,
     /// Each page's file as last seen: a change outside Agaric makes the page
     /// dirty.
     stats: HashMap<String, FileStat>,
@@ -559,6 +565,7 @@ impl Mirror {
             linked_copies: HashSet::new(),
             unrendered: false,
             copy_failed: BTreeMap::new(),
+            unmirrored: HashSet::new(),
             stats: HashMap::new(),
             settling: HashMap::new(),
             refused: HashMap::new(),
@@ -648,6 +655,7 @@ impl Mirror {
             self.copy_files = settings.copy_files;
             self.full_due = true;
         }
+        self.unmirrored = settings.unmirrored.into_iter().collect();
         let Some(folder) = settings.folder else {
             self.state.set_paused(None);
             self.full_due = true;
@@ -806,9 +814,25 @@ impl Mirror {
             self.state.set_paused(Some(why));
             return Ok(false);
         }
+        let unmirrored = self.unmirrored.contains(space_id);
         if let Some(page_id) = self.renamed_from(&bytes) {
-            self.read_renamed_file(ingest, &page_id, space_id, title, path, bytes)
-                .await;
+            if unmirrored {
+                // Left where it is, its page held where it was: a page whose
+                // file moved into a space not mirrored is neither moved there
+                // nor trashed.
+                self.refuse_rename(
+                    &page_id,
+                    path,
+                    bytes,
+                    "the space it was moved to is not mirrored",
+                );
+            } else {
+                self.read_renamed_file(ingest, &page_id, space_id, title, path, bytes)
+                    .await;
+            }
+            return Ok(true);
+        }
+        if unmirrored {
             return Ok(true);
         }
         let created = ingest::create(
@@ -901,10 +925,7 @@ impl Mirror {
         let event = match renamed {
             Ok(event) => event,
             Err(why) => {
-                self.state.file_failed(path, &why);
-                self.refused_new.insert(path.to_owned(), (bytes, why));
-                self.refused_renames
-                    .insert(page_id.to_owned(), path.to_owned());
+                self.refuse_rename(page_id, path, bytes, &why);
                 return;
             }
         };
@@ -919,6 +940,17 @@ impl Mirror {
             tracing::warn!(page_id, error = %e, "cannot save a mirror state file");
         }
         self.pages.insert(page_id.to_owned(), state);
+    }
+
+    /// List the renamed file at `path` as refused, and why, and hold the page
+    /// whose file it is: it is neither written again nor trashed while the
+    /// file stays as it was.
+    fn refuse_rename(&mut self, page_id: &str, path: &str, bytes: Vec<u8>, why: &str) {
+        self.state.file_failed(path, why);
+        self.refused_new
+            .insert(path.to_owned(), (bytes, why.to_owned()));
+        self.refused_renames
+            .insert(page_id.to_owned(), path.to_owned());
     }
 
     /// The pages this device's ops since the watermark touched, the source
@@ -1057,7 +1089,10 @@ impl Mirror {
             .map(|space| (space.id, space.name))
             .collect();
         let mut pages = Vec::new();
-        for (space_id, _) in &spaces {
+        for (space_id, _) in spaces
+            .iter()
+            .filter(|(id, _)| !self.unmirrored.contains(id))
+        {
             let listed =
                 crate::commands::pages::list_all_pages_in_space_inner(&self.pool, space_id, None)
                     .await?;

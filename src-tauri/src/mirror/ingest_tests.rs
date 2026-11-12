@@ -1570,3 +1570,153 @@ async fn a_page_trashed_for_its_deleted_file_and_restored_from_the_trash_is_writ
     assert!(!is_trashed(&fx, &alpha).await, "restored");
     assert!(fx.root.join(ALPHA).exists(), "and written again");
 }
+
+// ── Which spaces are mirrored (#5363 slice 4, setting 2) ────────────────
+
+use crate::commands::mirror::set_mirror_space_inner;
+
+async fn mirror_space(fx: &Fx, space: &str, mirrored: bool) -> MirrorStatus {
+    set_mirror_space_inner(&fx.pool, DEV, &fx.state, space, mirrored)
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_turned_off_loses_its_unchanged_files_and_keeps_its_changed_ones() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    space_b(&fx).await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.page("Beta", &["two"]).await;
+    let other = create_page_in_space_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        None,
+        "Other".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap()
+    .into_string();
+    fx.tick().await;
+    write_at(&fx, "TestSpace/Beta.md", "changed outside\n");
+
+    let status = mirror_space(&fx, TEST_SPACE_ID, false).await;
+    assert_eq!(status.unmirrored_spaces, [TEST_SPACE_ID]);
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert!(!fx.root.join(ALPHA).exists(), "an unchanged file goes");
+    let beta = std::fs::read_to_string(fx.root.join("TestSpace/Beta.md")).unwrap();
+    assert_eq!(beta, "changed outside\n", "a changed one stays");
+    let status = fx.status().await;
+    assert_eq!(
+        status.diverged.len(),
+        1,
+        "and is listed: {:?}",
+        status.diverged
+    );
+    assert!(
+        fx.root.join("TestSpaceB/Other.md").exists(),
+        "the other space is still mirrored"
+    );
+    assert!(!is_trashed(&fx, &alpha).await);
+    assert!(!is_trashed(&fx, &other).await);
+
+    mirror_space(&fx, TEST_SPACE_ID, true).await;
+    for _ in 0..2 {
+        fx.tick().await;
+    }
+    assert!(
+        fx.root.join(ALPHA).exists(),
+        "turned on again, it is written"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_in_an_unmirrored_space_folder_is_left_alone() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    space_b(&fx).await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    mirror_space(&fx, TEST_SPACE_B_ID, false).await;
+    write_at(&fx, "TestSpaceB/Gamma.md", "new\n");
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert!(pages_titled(&fx, "Gamma").await.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(fx.root.join("TestSpaceB/Gamma.md")).unwrap(),
+        "new\n"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_moved_into_an_unmirrored_space_folder_leaves_its_page_where_it_was() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    space_b(&fx).await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    mirror_space(&fx, TEST_SPACE_B_ID, false).await;
+    fx.tick().await;
+
+    rename_at(&fx, ALPHA, "TestSpaceB/Alpha.md");
+    for _ in 0..6 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await, "not trashed");
+    assert_eq!(space_of(&fx, &alpha).await, TEST_SPACE_ID, "nor moved");
+    assert!(
+        fx.root.join("TestSpaceB/Alpha.md").exists(),
+        "the file is left where it is"
+    );
+    assert!(!fx.root.join(ALPHA).exists(), "and not written twice");
+    let failed = fx.status().await.failed;
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(failed[0].message.contains("not mirrored"), "{failed:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_made_after_others_were_turned_off_is_mirrored() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    mirror_space(&fx, TEST_SPACE_ID, false).await;
+    space_b(&fx).await;
+    create_page_in_space_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        None,
+        "Other".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        fx.tick().await;
+    }
+
+    assert!(fx.root.join("TestSpaceB/Other.md").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_change_in_an_unmirrored_space_is_not_pending_for_reading_back() {
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    read_back(&fx, false, false).await.unwrap();
+    fx.write("changed outside\n");
+    mirror_space(&fx, TEST_SPACE_ID, false).await;
+    fx.tick().await;
+
+    assert_eq!(fx.status().await.pending, Vec::<String>::new());
+    assert!(read_back(&fx, true, false).await.unwrap().read_back);
+}

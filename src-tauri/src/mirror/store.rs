@@ -23,6 +23,9 @@ const READ_BACK_KEY: &str = "mirror.read_back";
 /// `app_settings` key: `"true"` when the attachments pages link are copied
 /// into the folder ([`super::assets`]). Absent, they are not.
 const COPY_FILES_KEY: &str = "mirror.copy_files";
+/// `app_settings` key: the ids of the spaces not mirrored, as a JSON array.
+/// Absent, every space is, a new one included.
+const UNMIRRORED_KEY: &str = "mirror.unmirrored_spaces";
 
 /// The file in the mirror's folder that names the device writing it, so a
 /// second device refuses the folder.
@@ -72,14 +75,17 @@ pub struct Settings {
     pub read_back: bool,
     /// Whether the attachments pages link are copied into the folder.
     pub copy_files: bool,
+    /// The spaces neither written nor read, every other one being both.
+    pub unmirrored: Vec<String>,
 }
 
 pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
     let rows = sqlx::query!(
-        "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?)",
+        "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?)",
         FOLDER_KEY,
         READ_BACK_KEY,
         COPY_FILES_KEY,
+        UNMIRRORED_KEY,
     )
     .fetch_all(pool)
     .await?;
@@ -88,11 +94,39 @@ pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
             .find(|row| row.key == key)
             .map(|row| row.value.clone())
     };
+    // Unreadable, it stops the mirror rather than mirror a space by mistake.
+    let unmirrored = match value(UNMIRRORED_KEY) {
+        Some(json) => serde_json::from_str(&json).map_err(|e| {
+            AppError::validation(format!(
+                "the mirror's unmirrored spaces cannot be read: {e}"
+            ))
+        })?,
+        None => Vec::new(),
+    };
     Ok(Settings {
         folder: value(FOLDER_KEY),
         read_back: value(READ_BACK_KEY).as_deref() != Some("false"),
         copy_files: value(COPY_FILES_KEY).as_deref() == Some("true"),
+        unmirrored,
     })
+}
+
+pub async fn set_unmirrored(pool: &SqlitePool, spaces: &[String]) -> Result<(), AppError> {
+    let value = serde_json::to_string(spaces)?;
+    let now = crate::db::now_ms();
+    sqlx::query!(
+        "INSERT INTO app_settings (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             updated_at = excluded.updated_at",
+        UNMIRRORED_KEY,
+        value,
+        now,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub async fn set_read_back(pool: &SqlitePool, read_back: bool) -> Result<(), AppError> {
