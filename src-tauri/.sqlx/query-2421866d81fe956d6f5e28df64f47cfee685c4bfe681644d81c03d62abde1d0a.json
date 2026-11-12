@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE late(parent_id, deleted_at) AS ( SELECT b.parent_id, b.deleted_at FROM blocks b, (SELECT '0123456789ABCDEFGHJKMNPQRSTVWXYZ' AS a) c WHERE b.deleted_at IS NOT NULL AND length(b.id) = 26 AND substr(b.id, 1, 10) > substr(c.a, ((b.deleted_at >> 45) & 31) + 1, 1) || substr(c.a, ((b.deleted_at >> 40) & 31) + 1, 1) || substr(c.a, ((b.deleted_at >> 35) & 31) + 1, 1) || substr(c.a, ((b.deleted_at >> 30) & 31) + 1, 1) || substr(c.a, ((b.deleted_at >> 25) & 31) + 1, 1) || substr(c.a, ((b.deleted_at >> 20) & 31) + 1, 1) || substr(c.a, ((b.deleted_at >> 15) & 31) + 1, 1) || substr(c.a, ((b.deleted_at >> 10) & 31) + 1, 1) || substr(c.a, ((b.deleted_at >> 5) & 31) + 1, 1) || substr(c.a, (b.deleted_at & 31) + 1, 1) ), above_late(id, depth) AS ( SELECT parent_id, 0 FROM late WHERE parent_id IS NOT NULL UNION ALL SELECT b.parent_id, a.depth + 1 FROM above_late a JOIN blocks b ON b.id = a.id WHERE b.parent_id IS NOT NULL AND a.depth < 100 ) SELECT id FROM blocks WHERE deleted_at IS NOT NULL AND deleted_at < ? AND deleted_at NOT IN (SELECT deleted_at FROM late) AND id NOT IN (SELECT id FROM above_late) ORDER BY deleted_at ASC LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2421866d81fe956d6f5e28df64f47cfee685c4bfe681644d81c03d62abde1d0a"
+}
