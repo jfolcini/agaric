@@ -8,7 +8,7 @@
  * Every mounted instance reads one TanStack query per space, so the page
  * header, the Pages browser, the command palette and the sidebar stay in step
  * without a store. A write updates that query at once and then reaches the
- * backend; a failed write re-reads what the backend holds. A change that
+ * backend; a failed write toasts once and re-reads what the backend holds. A change that
  * arrives some other way (sync, MCP, import, undo, a restore from the trash)
  * is re-read through `invalidateNameCaches`, which `invalidateDerivedCaches`
  * calls.
@@ -16,7 +16,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 
+import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
 import {
   type Bookmark,
@@ -87,6 +89,8 @@ export function useStarredPages(): UseStarredPagesReturn {
       queryClient.setQueryData(key, planned.next)
       writeBookmarks(planned).catch((err: unknown) => {
         logger.warn('useStarredPages', 'writing a bookmark failed', { spaceId }, err)
+        // `writeBookmarks` rejects once per call, so a batch shows one toast.
+        notify.error(t('bookmarks.writeFailed'))
         void queryClient.invalidateQueries({ queryKey: key })
       })
     },

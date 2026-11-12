@@ -180,8 +180,8 @@ export function PageBrowserBatchToolbar({
 
   const handleToggleStar = useCallback(() => {
     if (selectedIds.length === 0) return
-    // `setMany` shows the change in every bookmark surface at once and reports
-    // its own failure, so no `notify` / `onMutated` is needed.
+    // `setMany` shows the change in every bookmark surface at once and toasts
+    // once if the write fails, so no `notify` / `onMutated` is needed here.
     setMany(selectedIds, !allStarred)
     onClearSelection()
   }, [selectedIds, allStarred, setMany, onClearSelection])
