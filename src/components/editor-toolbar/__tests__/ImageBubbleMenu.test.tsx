@@ -112,7 +112,7 @@ describe('ImageBubbleMenu', () => {
     fireEvent.change(input, { target: { value: 'a lion' } })
     fireEvent.submit(input.closest('form') as HTMLFormElement)
 
-    expect(imageAttrs()).toEqual({ src: '/cat.png', alt: 'a lion|120' })
+    expect(imageAttrs()).toEqual({ src: '/cat.png', alt: 'a lion|120', title: null })
     // Still selected, so the bubble stays on the image.
     expect(editor.state.selection.from).toBe(5)
     await waitFor(() =>
