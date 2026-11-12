@@ -220,20 +220,60 @@ describe('N9 E19: `$$…$$` mid-line is inline math', () => {
 
 describe('N9 E20: link titles and `<…>` destinations', () => {
   it.each([
-    ['[t](https://x.com "title")', 'https://x.com'],
-    ["[t](https://x.com 'title')", 'https://x.com'],
-    ['[t](https://x.com (title))', 'https://x.com'],
     ['[t](<https://x.com/a b>)', 'https://x.com/a b'],
-    ['[t](<https://x.com> "title")', 'https://x.com'],
     ['[t]( https://x.com )', 'https://x.com'],
   ])('%j links to %j', (md, href) => {
     expect(inline(md)).toEqual([linked('t', href)])
   })
 
-  it('an image drops its title too', () => {
+  // #6530: the title is kept, so the first edit of an imported block writes it back.
+  it.each([
+    ['[t](https://x.com "title")', 'https://x.com', 'title'],
+    ["[t](https://x.com 'title')", 'https://x.com', 'title'],
+    ['[t](https://x.com (title))', 'https://x.com', 'title'],
+    ['[t](<https://x.com> "title")', 'https://x.com', 'title'],
+    ['[t](https://x.com "say \\"hi\\" \\\\ ok")', 'https://x.com', 'say "hi" \\ ok'],
+  ])('%j links to %j titled %j', (md, href, title) => {
+    expect(inline(md)).toEqual([text('t', [{ type: 'link', attrs: { href, title } }])])
+  })
+
+  it('an image keeps its title too', () => {
     expect(inline('![a](https://x.com/i.png "Title")')).toEqual([
-      { type: 'image', attrs: { alt: 'a', src: 'https://x.com/i.png' } },
+      { type: 'image', attrs: { alt: 'a', src: 'https://x.com/i.png', title: 'Title' } },
     ])
+  })
+
+  it.each([
+    [
+      '[link](https://e.com "title") and ![i](p.png "pic")',
+      '[link](https://e.com "title") and ![i](p.png "pic")',
+    ],
+    ["[t](https://x.com 'title')", '[t](https://x.com "title")'],
+    ['[t](https://x.com (a "b"))', '[t](https://x.com "a \\"b\\"")'],
+    // A balanced paren stays as written; an unbalanced one would end the destination.
+    ['[t](https://x.com "a (b)")', '[t](https://x.com "a (b)")'],
+    ['[t](https://x.com (x\\)y))', '[t](https://x.com "x\\)y")'],
+    ['![i](p.png "x\\(y")', '![i](p.png "x\\(y")'],
+    // Titled, so not the bare URL; the text's URL is defused as in any bracketed link.
+    ['[https://x.com](https://x.com "t")', '[https\\://x.com](https://x.com "t")'],
+  ])('%j is written back with its title as %j', (md, written) => {
+    expect(stored(parse(md))).toBe(written)
+    expect(parse(written)).toEqual(parse(md))
+  })
+
+  it('writes the title an editor link mark carries, and none for its `title: null`', () => {
+    const titled = (title: string | null) =>
+      doc(paragraph(text('t', [{ type: 'link', attrs: { href: 'https://x.com', title } }])))
+    expect(stored(titled('Home'))).toBe('[t](https://x.com "Home")')
+    expect(stored(titled(null))).toBe('[t](https://x.com)')
+  })
+
+  it('keeps two neighbouring links to one href with different titles apart', () => {
+    const link = (t: string, title: string) =>
+      text(t, [{ type: 'link', attrs: { href: 'https://x.com', title } }])
+    expect(stored(doc(paragraph(link('a', 'one'), link('b', 'two'))))).toBe(
+      '[a](https://x.com "one")[b](https://x.com "two")',
+    )
   })
 
   it('decodes a backslash before any ASCII punctuation in a destination', () => {

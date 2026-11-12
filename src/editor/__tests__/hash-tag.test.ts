@@ -33,15 +33,18 @@ import { scanNameTokens } from '@/lib/name-tokens'
 
 // The popup is SuggestionList's, tested there. Here a picker's last props
 // stand in for it: `command(item)` is what a tap, click or Enter on a row runs.
-const rendered = vi.hoisted(() => ({
-  props: new Map<unknown, { command: (item: PickerItem) => void; query: string }>(),
-}))
+interface RenderedProps {
+  command: (item: PickerItem) => void
+  query: string
+  items: PickerItem[]
+}
+const rendered = vi.hoisted(() => ({ props: new Map<unknown, RenderedProps>() }))
 vi.mock('@/editor/suggestion-renderer', () => ({
   createSuggestionRenderer: (_label: string, pluginKey: unknown) => ({
-    onStart: (props: { command: (item: PickerItem) => void; query: string }) => {
+    onStart: (props: RenderedProps) => {
       rendered.props.set(pluginKey, props)
     },
-    onUpdate: (props: { command: (item: PickerItem) => void; query: string }) => {
+    onUpdate: (props: RenderedProps) => {
       rendered.props.set(pluginKey, props)
     },
     onKeyDown: () => false,
@@ -472,6 +475,57 @@ describe('the # picker (#5160 D8)', () => {
     expect(pickerOpen(ed, atTagPickerPluginKey)).toBe(true)
     expect(pickerOpen(ed)).toBe(false)
     await vi.waitFor(() => expect(tagItems).toHaveBeenCalledWith('pro'))
+  })
+})
+
+describe('the @ picker ends its query at a space no tag name continues (#6530)', () => {
+  // The rows `searchTags` lists: the matches, under a Create row unless one is exact.
+  const withCreate = async (query: string): Promise<PickerItem[]> => {
+    const q = query.trim().toLowerCase()
+    const matches = TAGS.filter((tag) => tag.label.toLowerCase().includes(q))
+    return q && !matches.some((tag) => tag.label.toLowerCase() === q)
+      ? [{ id: '__create__', label: q.replace(/\s+/g, '-'), isCreate: true }, ...matches]
+      : matches
+  }
+
+  it.each([
+    ['a lone @', 'meet @', ' 5pm tomorrow'],
+    ['an @-mention', 'ping @alice', ' about the review'],
+    ['a tag name', 'see @work', ' later'],
+  ])('closes at the space after %s, so Enter is the block’s', async (_name, opened, rest) => {
+    const { editor: ed, tagItems, createTag } = setup('', { items: withCreate })
+    type(ed, opened)
+    expect(pickerOpen(ed, atTagPickerPluginKey)).toBe(true)
+    await vi.waitFor(() => expect(rendered.props.get(atTagPickerPluginKey)).toBeDefined())
+    await settle()
+    type(ed, rest)
+    expect(pickerOpen(ed, atTagPickerPluginKey)).toBe(false)
+    expect(inline(ed)).toEqual([opened + rest])
+    pressEnter(ed)
+    expect(ed.state.doc.childCount).toBe(2)
+    await settle()
+    expect(tagItems.mock.calls.flat().filter((query) => /\s/.test(query))).toEqual([])
+    expect(createTag).not.toHaveBeenCalled()
+  })
+
+  it('stays open while an existing tag continues the query, with no Create row', async () => {
+    const { editor: ed, createTag } = setup('see ', { items: withCreate })
+    type(ed, '@multi')
+    await vi.waitFor(() =>
+      expect(rendered.props.get(atTagPickerPluginKey)?.items.map((i) => i.id)).toEqual([
+        '__create__',
+        'TAG_MULTI',
+      ]),
+    )
+    type(ed, ' w')
+    expect(pickerOpen(ed, atTagPickerPluginKey)).toBe(true)
+    await vi.waitFor(() => {
+      expect(rendered.props.get(atTagPickerPluginKey)?.query).toBe('multi w')
+      expect(rendered.props.get(atTagPickerPluginKey)?.items).toEqual([TAGS[2]])
+    })
+    rendered.props.get(atTagPickerPluginKey)?.command(TAGS[2] as PickerItem)
+    expect(inline(ed)).toEqual(['see ', '#TAG_MULTI'])
+    expect(createTag).not.toHaveBeenCalled()
   })
 })
 
