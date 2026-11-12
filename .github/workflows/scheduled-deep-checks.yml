@@ -1,9 +1,11 @@
 name: Scheduled deep checks
 
 # Heavy correctness/perf tooling that is too slow for the per-PR critical
-# path (the PR gate is `ci.yml` → `_validate.yml`). Runs weekly + on manual
-# dispatch. None of these jobs is a required check; they surface signal via
-# step summaries and uploaded artifacts, and a maintainer triages survivors.
+# path (the PR gate is `ci.yml` → `_validate.yml`). Runs every lane weekly, the
+# `full-suite` and `android-launch` lanes nightly on the other six days (#6553),
+# and on manual dispatch. None of these jobs is a required check; they surface
+# signal via step summaries and uploaded artifacts, and a maintainer triages
+# survivors.
 #
 # Lanes:
 #   clippy-clean   — cache-busting full-workspace `cargo fmt --all --check` +
@@ -97,7 +99,9 @@ name: Scheduled deep checks
 #                    regression back. Maintainer decision, 2026-09-09.
 #   android-launch — #6050: launches a release-profile x86_64 APK on an
 #                    emulator and fails on a dead process or a crash in
-#                    logcat (`android-launch-smoke.yml`, also called by
+#                    logcat, then checks the system-bar insets and that a
+#                    typed block survives a force-stop (#6553)
+#                    (`android-launch-smoke.yml`, also called by
 #                    `release.yml`). Only a release build reproduces
 #                    `panic = "abort"`, which 0.15.0 crashed on while CI was
 #                    green.
@@ -114,13 +118,17 @@ name: Scheduled deep checks
 #                    breaking. Needs `issues: write`.
 on:
   schedule:
-    # Mondays 04:17 UTC — off-peak, odd minute to avoid the top-of-hour
-    # scheduler stampede. Weekly is enough for trend/triage tooling.
+    # Mondays 04:17 UTC, every lane — off-peak, odd minute to avoid the
+    # top-of-hour scheduler stampede. Weekly is enough for trend/triage tooling.
     #
     # e2e-tauri-weekly is deliberately scheduled earlier (02:43 Mon) so it
     # drains before this lane starts; the two used to share this exact minute
     # and contended for the same runner pool. See #3168.
     - cron: '17 4 * * 1'
+    # The other six days, only `full-suite` and `android-launch` (#6553): a red
+    # whole-tree run then implies one day of commits, not a week's.
+    # `select-lanes` keys on this exact string.
+    - cron: '17 4 * * 0,2-6'
   workflow_dispatch:
     inputs:
       mutants_timeout:
@@ -187,6 +195,12 @@ env:
   # holds the half the workflow cannot check about itself — that BOTH jobs
   # still exist and still read this variable outside comments.
   SLO_BENCHES: interactive_slo
+  # #6553 — the second cron in `on.schedule` (an `on:` block cannot read `env`,
+  # so the string is repeated there) and the lanes it runs. `select-lanes`
+  # selects them and `report-scheduled-failures` judges only them on that cron.
+  # Lane names here are also their job ids, which the reporter's `--scope` needs.
+  NIGHTLY_CRON: '17 4 * * 0,2-6'
+  NIGHTLY_LANES: full-suite android-launch
   # #3960 — the runs the three writers (`file-mutation-survivors`,
   # `file-fuzz-findings`, `report-scheduled-failures`) treat as authoritative:
   # the cron, and a `workflow_dispatch` on `refs/heads/main` with every input
@@ -196,7 +210,9 @@ env:
   # shortened budget can report a still-broken lane as recovered, and a lane
   # subset reports the lanes it did not run as skipped) is a smoke run: the
   # writers still perform every read and `--dry-run` the `gh` writes. Every
-  # declared input appears in it, at its declared default.
+  # declared input appears in it, at its declared default. The nightly cron is
+  # a cron too: its subset writes because the scheduled-failure reporter judges
+  # only the nightly lanes on it (`--scope`), and no other writer runs then.
   #
   # TWO of the three writers read this value directly. `file-mutation-survivors`
   # derives a narrower `LANE_AUTHORITATIVE` from it: since its tracking issue
@@ -249,9 +265,20 @@ jobs:
           # template-injection: this is attacker-controllable in the sense
           # that anything a dispatch input carries reaches the shell.
           LANES: ${{ github.event.inputs.lanes || 'all' }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
           known='clippy-clean bench-smoke bench-slo mutants mutants-frontend fuzz type-aware-lint android-launch full-suite'
+          # A cron run has no `lanes` input; the cron that fired picks them.
+          # An unknown cron fails rather than running every lane.
+          case "$SCHEDULE" in
+            '' | '17 4 * * 1') ;;
+            "$NIGHTLY_CRON") LANES=$NIGHTLY_LANES ;;
+            *)
+              echo "::error::no lane list for cron '$SCHEDULE'; add it to this step"
+              exit 1
+              ;;
+          esac
           sel=$(printf '%s' "$LANES" | tr ',' ' ' | tr -s '[:space:]' ' ' \
                 | sed 's/^ //; s/ $//')
           # Not `sel=all`: `github.event.inputs.lanes || 'all'` already covers
@@ -3034,7 +3061,7 @@ jobs:
   # `scripts/verify-ci-equivalent.sh` Phase A now SKIP the prek hooks whose
   # category (frontend/backend/ci/docs) a given push did not touch — trading
   # whole-tree coverage of the ABSENT categories for a faster gate. The legs
-  # below are the counterweight: on the weekly schedule (and on demand) they
+  # below are the counterweight: nightly (and on demand) they
   # run the FULL, UNSKIPPED prek suite (both pre-commit and pre-push stages)
   # plus the FULL vitest / playwright / nextest / doc-test suites over the
   # entire tree, so a latent breach in an untouched, unchanged-category file
@@ -3082,7 +3109,8 @@ jobs:
           echo "After:" && df -h /
 
       - name: Toolchain (apt, mold, Rust, Node, npm ci)
-        # No rust-shared-key: a weekly lane's cache is evicted before the next run.
+        # No rust-shared-key: a key of its own would hold a whole `target/`
+        # tree in the repo's shared cache quota for this lane alone.
         uses: ./.github/actions/toolchain
 
       - name: Prepare externalBin placeholder (FEAT-4f)
@@ -3222,7 +3250,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Node 22 (the `engines.node` floor)
-        # The Node floor is checked weekly here, not per PR. Pinned to the
+        # The Node floor is checked nightly here, not per PR. Pinned to the
         # exact floor of `engines.node` (^22.22.2), not a floating 22, so the
         # lane tests the lowest version we claim to support — keep in lockstep
         # with package.json.
@@ -3301,7 +3329,8 @@ jobs:
           echo "After:" && df -h /
 
       - name: Toolchain (apt, mold, Rust, Node, npm ci)
-        # No rust-shared-key: a weekly lane's cache is evicted before the next run.
+        # No rust-shared-key: a key of its own would hold a whole `target/`
+        # tree in the repo's shared cache quota for this lane alone.
         uses: ./.github/actions/toolchain
 
       - name: Prepare externalBin placeholder (FEAT-4f)
@@ -3322,20 +3351,6 @@ jobs:
         # same class of gap #2817/#2951 already fixed for the PR-gating
         # `cargo-tests` job and the pre-push Phase D2 doc-test step.
         run: cargo nextest run --workspace --profile ci --partition count:${{ matrix.shard }}/2
-
-      - name: Name every test that passed only on a retry
-        # As in `_validate.yml`'s `cargo-tests` (#6553).
-        if: ${{ !cancelled() }}
-        run: node scripts/nextest-flaky-report.mjs src-tauri/target/nextest/ci/junit.xml >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload the nextest JUnit report
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: nextest-junit-full-suite-${{ matrix.shard }}
-          path: src-tauri/target/nextest/ci/junit.xml
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Cargo doc-tests (full suite)
         # nextest does NOT run doc-tests (they compile as their own per-example
@@ -3373,8 +3388,9 @@ jobs:
           fi
           echo "full-suite: every leg green" >> "$GITHUB_STEP_SUMMARY"
 
-  # android-launch (#6050) — the emulator launch of a release-profile APK. The
-  # called workflow takes no secrets and restores no cache.
+  # android-launch (#6050) — the emulator launch of a release-profile APK and
+  # the on-device checks after it. The called workflow takes no secrets and
+  # restores no cache.
   android-launch:
     needs: select-lanes
     if: needs.select-lanes.outputs.android_launch == 'true'
@@ -3427,6 +3443,7 @@ jobs:
           # file rather than passed as an argv string so a payload containing
           # quotes can never be re-parsed by the shell.
           NEEDS_JSON: ${{ toJSON(needs) }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
           printf '%s' "$NEEDS_JSON" > needs.json
@@ -3442,12 +3459,17 @@ jobs:
           if [ "$CRON_EQUIVALENT" != 'true' ]; then
             extra+=(--dry-run)
           fi
+          # The nightly run is evidence about its own lanes only: every other
+          # lane keeps the state the weekly run left in the issue (#6553).
+          if [ "$SCHEDULE" = "$NIGHTLY_CRON" ]; then
+            extra+=(--scope "select-lanes,${NIGHTLY_LANES// /,}")
+          fi
           node scripts/file-scheduled-failures.mjs "${extra[@]}"
 
       - name: Last-resort notice (the reporter itself broke)
         # Fires only when a step ABOVE in this job failed — i.e. the Node
         # reporter is the thing that broke, so the normal tracking issue was
-        # NOT updated and the week's lane failures went unreported.
+        # NOT updated and the run's lane failures went unreported.
         #
         # Deliberately minimal and Node-free: three `gh` calls, no parsing, no
         # marker block, and a SEPARATE tracking issue so it cannot corrupt the
@@ -3491,7 +3513,7 @@ jobs:
           set -uo pipefail
           title='Scheduled deep checks: the failure reporter is broken (auto-filed, do not rename)'
           body="$(printf '%s\n' \
-            "The \`report-scheduled-failures\` job's own reporting step failed, so the rolling \"failing lanes\" tracking issue was **not** updated for this run — this week's lane results are unreported." \
+            "The \`report-scheduled-failures\` job's own reporting step failed, so the rolling \"failing lanes\" tracking issue was **not** updated for this run — its lane results are unreported." \
             "" \
             "This notice is written by a deliberately minimal bash fallback (no Node, no parsing, no shared code with the reporter) so that a break in \`scripts/file-scheduled-failures.mjs\` cannot also swallow the report of itself (#3359)." \
             "" \

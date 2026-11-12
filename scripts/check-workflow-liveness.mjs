@@ -164,7 +164,13 @@ const HOUR_MS = 3600 * 1000
  *     strictly less sensitive than the watchdog's own 44h self-watch (which
  *     fires on one skip, because its baseline is the 24h-old PREVIOUS run
  *     rather than a ~6h-old newest run). Tightened during review of #3374.
- *   * The weekly lanes (Mon 02:43 / Mon 04:17 / Mon 06:00 / Tue 06:00):
+ *   * `scheduled-deep-checks` (daily 04:17 since #6553, every lane on Monday).
+ *     Re-measured 2026-11-12, because its lag has grown past the table above:
+ *     its 22 scheduled runs from 2026-06-15 started 0.64–8.49h late, and the
+ *     watchdog's own last 15 ticks landed 22:45–02:21. A healthy age is then
+ *     at most ~21.4h and one skipped day reads at least ~34.0h, so the same 30h
+ *     as `branch-protection-assert` fires on a single skip.
+ *   * The weekly lanes (Mon 02:43 / Mon 06:00 / Tue 06:00):
  *     healthy age peaks at ~161h on the Sunday tick before the next run, ~167h
  *     with the watchdog's own lag. One skipped week reads ~185h at the Monday
  *     tick and ~209h at the Tuesday one, so 200h trips one day after a missed
@@ -213,9 +219,9 @@ export const WATCHED = Object.freeze([
   }),
   Object.freeze({
     workflow: 'scheduled-deep-checks.yml',
-    periodHours: 168,
-    maxAgeHours: 200,
-    why: 'weekly Mon 04:17 UTC; its own in-workflow reporter cannot report a run that never started (#3359)',
+    periodHours: 24,
+    maxAgeHours: 30,
+    why: 'daily 04:17 UTC (every lane on Mondays); its own in-workflow reporter cannot report a run that never started (#3359)',
   }),
   Object.freeze({
     workflow: 'scorecard.yml',

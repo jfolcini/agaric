@@ -121,9 +121,10 @@ jobs:
     if: ${{ !cancelled() && needs.verify-version.result == 'success' }}
     uses: ./.github/workflows/e2e-tauri-weekly.yml
 
-  # Launches a release-profile x86_64 APK on an emulator (#6050), beside the
+  # Launches a release-profile x86_64 APK on an emulator (#6050) and checks its
+  # insets and that a typed block survives a force-stop (#6553), beside the
   # desktop matrix. `android-build-and-release` waits for it, so a launch crash
-  # keeps the signed APK, and with it the publish, from happening.
+  # or a lost write keeps the signed APK, and with it the publish, from happening.
   android-launch-smoke:
     needs: verify-version
     if: ${{ !cancelled() && needs.verify-version.result == 'success' }}

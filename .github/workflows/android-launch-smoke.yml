@@ -3,10 +3,12 @@ name: Android launch smoke
 # Builds a release-profile x86_64 APK, installs it on an emulator, starts the
 # app and fails when it dies or logcat shows a crash (#6050). Only a release
 # build reproduces `panic = "abort"`; a debug build unwinds, which is how
-# 0.15.0 crashed on every Android launch with CI green.
+# 0.15.0 crashed on every Android launch with CI green. On the same emulator it
+# then checks the system-bar insets (`android-e2e-safe-area.mjs`, #4301) and
+# that a typed block survives a force-stop (`android-e2e-persist.mjs`, #6553).
 #
 # Runs on a release tag (`release.yml` gates `android-build-and-release` on it)
-# and weekly (`scheduled-deep-checks.yml`), never per PR. `workflow_dispatch`
+# and nightly (`scheduled-deep-checks.yml`), never per PR. `workflow_dispatch`
 # runs it on any branch. It ships nothing: the APK is signed with a throwaway
 # key and discarded, so it takes no secrets and restores no cache.
 
@@ -145,13 +147,18 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Launch the APK on an emulator
-        # No AVD cache: it would be read once a week, and `.github/AGENTS.md`
-        # § Caches says a weekly reader finds the entry evicted.
+      - name: Launch the APK on an emulator, then check insets and persistence
+        # No AVD cache: a key this job alone reads costs every other lane its
+        # share of the repo's cache quota (`.github/AGENTS.md` § Caches).
+        # Each `script` line runs in its own shell and a non-zero exit fails
+        # the step, so a later check never runs on an app that did not launch.
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 34
           arch: x86_64
           target: default
           emulator-boot-timeout: 300
-          script: node scripts/android-launch-smoke.mjs "$RUNNER_TEMP/launch-smoke.apk"
+          script: |
+            node scripts/android-launch-smoke.mjs "$RUNNER_TEMP/launch-smoke.apk"
+            node scripts/android-e2e-safe-area.mjs
+            node scripts/android-e2e-persist.mjs

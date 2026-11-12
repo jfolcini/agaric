@@ -136,7 +136,7 @@ class MainActivity : TauriActivity() {
       // this runs in a user's app — a crash here would be a worse bug than the
       // one it reports. So: the error lands in `adb logcat`, and the un-inset
       // bounds that follow fail assertion 1 of scripts/android-e2e-safe-area.mjs
-      // whenever someone runs it (nothing in CI does — see that file's header).
+      // (`android-launch-smoke.yml` runs it nightly and at release).
       val host = view.parent as? ViewGroup
       if (host == null) {
         Log.e(
