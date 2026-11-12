@@ -1227,6 +1227,23 @@ describe('useSyncEvents', () => {
         unmount()
       })
 
+      it('adds no action to other sync errors on Android', async () => {
+        Object.defineProperty(navigator, 'userAgent', {
+          configurable: true,
+          get: () => 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile Safari/537.36',
+        })
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')({
+          payload: { type: 'error', message: 'connection lost' },
+        })
+
+        const opts = mockedToastError.mock.calls[0]?.[1] as { action?: unknown }
+        expect(opts.action).toBeUndefined()
+        unmount()
+      })
+
       it('leaves the toast unchanged on desktop', async () => {
         const { unmount } = renderHook(() => useSyncEvents())
         await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
