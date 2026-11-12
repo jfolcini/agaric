@@ -3,7 +3,7 @@
 
 ## Import (Settings → Data)
 
-Settings → Data offers one row per source, each with its own button: Markdown, text or Org files, a folder, an **Obsidian vault**, **Evernote** (`.enex`), **Joplin** (`.jex`), and a bibliography file.
+Settings → Data offers one row per source, each with its own button: Markdown, text or Org files, a folder (labelled for a Logseq graph, a Notion export or any Markdown folder, which it tells apart below), an **Obsidian vault**, **Evernote** (`.enex`), **Joplin** (`.jex`), and a bibliography file.
 
 - **Markdown** files. Import is per file: each `.md`, `.markdown`, `.mdx` or `.txt` file is read as Markdown and becomes a page titled by its file name without the extension, and each `.org` file goes through the Org import below. Picking a folder imports every such file inside it independently — each file's relative path builds a namespaced page title, so the folder structure is reflected in page titles. A folder's files that its notes embed or link are their attachments; any other file that is not an image or a PDF is skipped and counted in one warning, and hidden files and folders (`.obsidian/`, `.DS_Store`) are skipped without one.
 - **What import resolves:**
@@ -84,7 +84,7 @@ Two rows: **Export this space** and **Export all spaces** (the whole vault, one 
 
 ### Markdown mirror (Settings → Data)
 
-Off by default, desktop only, and set per device: *Choose folder…* turns it on and *Turn off* stops it.
+Off by default, desktop only, and set per device: *Choose folder…* turns it on and *Turn off* stops it. On a phone the card stays and says the mirror runs in the desktop app only, with no folder picker.
 
 - Every page in every space is written as a `.md` file under the chosen folder, one folder per space with the namespace hierarchy as subfolders, and kept up to date as pages change.
 - Each file holds the page's front matter, then its blocks, as *Edit as Markdown* writes them, with a block id only on a block that a reference, an embed, a ref-typed property or an attachment addresses.

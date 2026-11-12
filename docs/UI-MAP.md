@@ -44,6 +44,7 @@ App
 ├── SpaceTopStripe               (2px accent bar)
 ├── SidebarProvider
 │   ├── AppSidebar               (collapsible left rail)
+│   ├── NoPeersPairing           (lazy NoPeersDialog → PairingDialog, sync-empty fallback)
 │   └── SidebarInset
 │       ├── Header bar           (view-specific controls)
 │       ├── TabBar               (hoisted; desktop & multi-tab only)
@@ -55,8 +56,7 @@ App
 │   ├── KeyboardShortcuts        (lazy, ? hotkey)
 │   ├── WelcomeModal             (lazy, first-run)
 │   ├── BugReportDialog          (lazy)
-│   ├── QuickCaptureDialog       (lazy, global hotkey)
-│   └── NoPeersDialog            (lazy, sync-empty fallback)
+│   └── QuickCaptureDialog       (lazy, global hotkey)
 └── Toaster
 ```
 
@@ -127,7 +127,7 @@ All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on
 | Dialog / popover                          | Trigger                                                                |
 | --- | --- |
 | **ConfirmDialog**                         | Generic confirm; destructive variant focuses Cancel                    |
-| **PairingDialog**                         | Sidebar Sync button (when peers missing → NoPeersDialog routes here)   |
+| **PairingDialog**                         | Settings → Sync & devices *Pair new device*; Sidebar Sync with no peers → NoPeersDialog *Pair a device* (closes the phone drawer) |
 | **BugReportDialog**                       | Help menu / global error flow                                          |
 | **QuickCaptureDialog**                    | Global OS hotkey (default Ctrl+Alt+N)                                  |
 | **PdfViewerDialog**                       | PDF attachment click                                                   |

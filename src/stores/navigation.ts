@@ -98,7 +98,7 @@ interface NavigationStore {
   /**
    * #734 — transient handoff slot for the Settings panel's active tab.
    * Written by the deep-link router (`agaric://settings/<tab>`) and the
-   * NoPeersDialog CTA BEFORE flipping `currentView` to `'settings'`.
+   * welcome modal's actions BEFORE flipping `currentView` to `'settings'`.
    * `SettingsView` subscribes while mounted, so the request lands even
    * when Settings is already the current view (the localStorage +
    * `?settings=` mechanisms are only read in the useState initializer

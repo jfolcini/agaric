@@ -35,6 +35,7 @@ import { commands, type McpStatus } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { isMobilePlatform } from '@/lib/platform'
 
 export function AgentAccessTab(): React.ReactElement {
   const { t } = useTranslation()
@@ -138,7 +139,9 @@ export function AgentAccessTab(): React.ReactElement {
     <div className="agent-access-tab space-y-6">
       <Card>
         <CardContent className="space-y-6">
-          <p className="text-sm text-muted-foreground">{t('agentAccess.description')}</p>
+          <p className="text-sm text-muted-foreground">
+            {t(isMobilePlatform() ? 'agentAccess.descriptionMobile' : 'agentAccess.description')}
+          </p>
 
           {error !== null && (
             <p className="text-sm text-destructive" role="alert">

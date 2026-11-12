@@ -113,6 +113,7 @@ export const settings: Record<string, string> = {
   'settings.quickCapture.saveFailed':
     "Couldn't register shortcut. It may conflict with another app.",
   'quickCapture.dialogTitle': 'Quick capture',
+  'quickCapture.descriptionTouch': "Jot a line down; it lands in today's journal.",
   'quickCapture.captureInputLabel': 'Quick capture content',
   'quickCapture.placeholder': "What's on your mind?",
   'quickCapture.saveButton': 'Capture',
@@ -194,6 +195,9 @@ export const settings: Record<string, string> = {
   'settings.tabAgentAccess': 'Agent access',
   'agentAccess.description':
     'Let agents on this computer (Claude Desktop, Cursor, Continue, …) connect over a local socket. Off by default.',
+  // #6520 — the socket is in the app's own storage, which no other app on a phone can reach.
+  'agentAccess.descriptionMobile':
+    "No app on this phone can reach Agaric's agent socket yet, so agents cannot connect here. Set them up in Agaric on your computer; what they write reaches this phone by sync.",
   'agentAccess.loadFailed': 'Failed to load MCP status',
   'agentAccess.toggleLabel': 'Let agents connect',
   'agentAccess.toggleDescription':

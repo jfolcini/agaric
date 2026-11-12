@@ -21,10 +21,9 @@
  *    `t('quickCapture.saveButton')` button; submitting an empty textarea via Cmd+Enter is a
  *    no-op (matches the disabled-button semantics).
  *
- * Desktop-only by virtue of its trigger being the global shortcut, but
- * the component itself doesn't gate on platform — App.tsx mounts it
- * unconditionally and the dialog only opens when the global shortcut
- * fires (which is itself a no-op on mobile per `registerGlobalShortcut`).
+ * The global shortcut opens it on desktop and the floating quick-capture
+ * button on a touch phone, which is why its description has a touch
+ * wording that names no key.
  *
  * On phones < 768 px (`useIsMobile() === true`) the dialog
  * renders as a bottom Sheet so the textarea + Capture / Cancel buttons
@@ -44,6 +43,7 @@ import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
+import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -64,6 +64,8 @@ export function QuickCaptureDialog({
   const [content, setContent] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  // A phone opens this from the floating button; it has no key combination to press.
+  const touch = useShouldShowMobileChrome()
 
   // Reset content + autofocus the textarea each time the dialog opens.
   // Without the explicit reset, content from a previous capture session
@@ -127,7 +129,9 @@ export function QuickCaptureDialog({
       <Content data-testid="quick-capture-dialog">
         <Header>
           <Title>{t('quickCapture.dialogTitle')}</Title>
-          <Description>{t('settings.quickCapture.description')}</Description>
+          <Description>
+            {t(touch ? 'quickCapture.descriptionTouch' : 'settings.quickCapture.description')}
+          </Description>
         </Header>
         <Body>
           <form

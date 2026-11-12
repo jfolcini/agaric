@@ -1142,10 +1142,7 @@ describe('App', () => {
     // hook itself is unchanged.
     describe('sidebar Sync button — no-peers guard', () => {
       // Reset the `?settings=...` query param + the persisted Settings
-      // tab so each test starts on a known surface — the no-peers CTA
-      // Pre-selects the Sync tab via the URL param mechanism
-      // and we don't want a leftover param from another test polluting
-      // the assertion.
+      // tab so each test starts on a known surface.
       beforeEach(() => {
         window.history.replaceState(window.history.state, '', window.location.pathname)
         localStorage.removeItem('agaric-settings-active-tab')
@@ -1264,7 +1261,8 @@ describe('App', () => {
         expect(screen.queryByTestId('no-peers-dialog')).not.toBeInTheDocument()
       })
 
-      it('navigates to Settings with the Sync tab pre-selected when CTA is clicked', async () => {
+      // #6520 — the CTA is the pairing itself, not a detour through Settings.
+      it('opens the pairing dialog directly when the CTA is clicked, staying on the current view', async () => {
         const user = userEvent.setup()
         mockedInvoke.mockImplementation(async (cmd: string) => {
           if (cmd === 'list_spaces')
@@ -1277,6 +1275,7 @@ describe('App', () => {
         await waitFor(() => {
           expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
         })
+        const viewBefore = useNavigationStore.getState().currentView
 
         const sidebar = getSidebar()
         await user.click(sidebar.getByRole('button', { name: t('sidebar.sync') }))
@@ -1284,50 +1283,11 @@ describe('App', () => {
         const dialog = await screen.findByRole('alertdialog')
         await user.click(within(dialog).getByRole('button', { name: t('sync.noPeersCta') }))
 
-        // Dialog closes and the view switches to Settings. #734 — the CTA
-        // routes through the navigation store's pending-tab slot (not the
-        // `?settings=` URL param), which SettingsView consumes to select
-        // the Sync tab; the panel then mirrors the tab back into the URL.
-        await waitFor(() => {
-          expect(useNavigationStore.getState().currentView).toBe('settings')
-        })
-        await waitFor(() => {
-          expect(screen.getByTestId('settings-panel-sync')).toBeInTheDocument()
-        })
-        expect(window.location.search).toContain('settings=sync')
+        expect(
+          await screen.findByRole('dialog', { name: t('pairing.dialogTitle') }),
+        ).toBeInTheDocument()
         expect(screen.queryByTestId('no-peers-dialog')).not.toBeInTheDocument()
-      })
-
-      it('pre-selects the Sync tab even when Settings is ALREADY the current view (#734)', async () => {
-        // Pre-#734 the CTA wrote `?settings=sync` + setView('settings');
-        // SettingsView only reads the param in its useState initializer,
-        // so with Settings already open the click was a visible no-op.
-        useNavigationStore.setState({ currentView: 'settings', selectedBlockId: null })
-        const user = userEvent.setup()
-        mockedInvoke.mockImplementation(async (cmd: string) => {
-          if (cmd === 'list_spaces')
-            return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
-          if (cmd === 'list_peer_refs') return []
-          return emptyPage
-        })
-
-        render(<App />)
-        await waitFor(() => {
-          expect(screen.getByTestId('settings-panel-general')).toBeInTheDocument()
-        })
-
-        const sidebar = getSidebar()
-        await user.click(sidebar.getByRole('button', { name: t('sidebar.sync') }))
-
-        const dialog = await screen.findByRole('alertdialog')
-        await user.click(within(dialog).getByRole('button', { name: t('sync.noPeersCta') }))
-
-        // The mounted SettingsView consumes the pending slot and flips to
-        // the Sync tab without a remount.
-        await waitFor(() => {
-          expect(screen.getByTestId('settings-panel-sync')).toBeInTheDocument()
-        })
-        expect(useNavigationStore.getState().pendingSettingsTab).toBeNull()
+        expect(useNavigationStore.getState().currentView).toBe(viewBefore)
       })
 
       it('closes the dialog and stays on the current view when Cancel is clicked', async () => {

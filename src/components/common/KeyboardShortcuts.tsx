@@ -473,7 +473,7 @@ export function KeyboardShortcuts({
               // to while mounted. The localStorage write above only lands on a
               // fresh mount; when Settings is already the current view it is
               // ignored, so without this the Keyboard tab never opens. Mirrors
-              // the deep-link router / NoPeersDialog CTA.
+              // the deep-link router / the welcome modal's actions.
               useNavigationStore.getState().setPendingSettingsTab('keyboard')
               useNavigationStore.getState().setView('settings')
             }}

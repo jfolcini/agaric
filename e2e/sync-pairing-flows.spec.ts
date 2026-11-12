@@ -288,7 +288,7 @@ test.describe('Sync pairing flows @sync', () => {
     await expect(dialog.locator('.pairing-retry-expired-btn')).toBeVisible()
   })
 
-  test('Sync button with no paired devices opens NoPeersDialog and its CTA opens Sync settings', async ({
+  test('Sync button with no paired devices opens NoPeersDialog and its CTA opens the pairing dialog', async ({
     page,
   }) => {
     await waitForBoot(page)
@@ -308,15 +308,13 @@ test.describe('Sync pairing flows @sync', () => {
     await expect(page.getByTestId('no-peers-dialog')).toBeVisible()
     await expect(dialog.getByText('No devices paired')).toBeVisible()
 
-    await page.getByTestId('no-peers-dialog-open-settings').click()
+    await page.getByTestId('no-peers-dialog-pair').click()
 
+    // #6520 — the CTA is the pairing itself: the QR and four words, no further click.
     await expect(dialog).toHaveCount(0)
-    await expect(page.locator('header').getByText('Settings')).toBeVisible()
-    await expect(page.getByRole('tab', { name: /Sync.*Devices/i })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    )
-    await expect(page.locator('[data-testid="settings-panel-sync"]')).toBeVisible()
+    const pairing = activeDialog(page)
+    await expect(pairing.getByText('Pair device')).toBeVisible()
+    await expect(pairing.getByText(/alpha/i)).toBeVisible()
   })
 
   test.describe('peer management', () => {

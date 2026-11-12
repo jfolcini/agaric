@@ -232,6 +232,34 @@ describe('AgentAccessTab — rendering', () => {
   })
 })
 
+// #6520 — a phone is a full peer: the tab stays, and says why no agent can connect there.
+describe('AgentAccessTab — on a phone', () => {
+  const ua = navigator.userAgent
+
+  beforeEach(() => {
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      get: () => 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Mobile',
+    })
+  })
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, get: () => ua })
+  })
+
+  it('keeps every section and says why agents cannot connect on this device', async () => {
+    setupInvoke(makeStatus({ enabled: false }))
+
+    render(<AgentAccessTab />)
+
+    expect(await screen.findByRole('switch', { name: TOGGLE })).toBeInTheDocument()
+    expect(screen.getByText('Agents')).toBeInTheDocument()
+    expect(screen.getByText('Recent activity')).toBeInTheDocument()
+    expect(screen.queryByText(/on this computer/)).not.toBeInTheDocument()
+    expect(screen.getByText(/agents cannot connect here/)).toBeInTheDocument()
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Gated on the switch
 // ---------------------------------------------------------------------------
