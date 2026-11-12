@@ -12,14 +12,15 @@ import {
   navigateToView,
   openPage,
   openPageMobile,
+  openSettingsTab,
   test,
   waitForBoot,
 } from './helpers'
 
 /**
  * One formatting toolbar per view, hidden at rest (#6562). Block mode's bar
- * sits pinned under the view header and overlays the scroller's top padding,
- * so focusing a block, moving between blocks and leaving the editor move no
+ * sits pinned under the view header in room the view keeps for it, covering
+ * no content, so focusing a block, moving between blocks and leaving the editor move no
  * text, and a double-click on a word cannot land on a toolbar button. The
  * view owns the bar, so it stays mounted while the focus moves between blocks,
  * and a journal week or stream view, one tree per day, shows exactly one.
@@ -203,6 +204,75 @@ test.describe('block mode formatting toolbar, one per view (#6562) @editor @page
       await expect(editor(page)).toContainText(next)
     }
     expect(await barWatch(page)).toEqual({ missed: 0, same: true })
+  })
+
+  for (const width of [1280, 700]) {
+    test(`at ${width} px the bar covers no content at scroll-top, on a page and in the week view`, async ({
+      page,
+    }) => {
+      // The strip the bar sits in, its border included, against the first content under it.
+      const barBottom = async (): Promise<number> => {
+        const box = await toolbar(page).locator('xpath=..').boundingBox()
+        return box ? box.y + box.height : Number.NaN
+      }
+      const top = async (locator: Locator): Promise<number> =>
+        (await locator.boundingBox())?.y ?? Number.NaN
+
+      await seedPage(page, 'Room page', TEXTS)
+      await openPage(page, 'Room page')
+      // Navigation goes through the sidebar, which collapses below `md`.
+      await page.setViewportSize({ width, height: 800 })
+      await clickRow(page, 'bravo two')
+      expect(await barBottom()).toBeLessThanOrEqual(await top(rows(page).first()))
+
+      await page.keyboard.press('Escape')
+      await page.keyboard.press('Escape')
+      await page.setViewportSize({ width: 1280, height: 800 })
+      await navigateToView(page, 'Journal')
+      await page.getByRole('tab', { name: 'Weekly view' }).click()
+      await page.setViewportSize({ width, height: 800 })
+      const day = page.locator('section[id^="journal-"]', { hasText: 'No blocks for' }).first()
+      await day.getByRole('button', { name: 'Add block', exact: true }).click()
+      await expect(editor(page)).toBeFocused()
+      await page.evaluate(() => {
+        const viewport = document.querySelector(
+          '[data-slot="main-content"] [data-slot="scroll-area-viewport"]',
+        ) as Element
+        viewport.scrollTop = 0
+      })
+      await expect(toolbar(page)).toBeVisible()
+      expect(await barBottom()).toBeLessThanOrEqual(
+        // Below `md` the "Journal" title is screen-reader only; its header row stays.
+        await top(page.locator('[data-slot="feature-page-header"]').first()),
+      )
+    })
+  }
+
+  test('with Tab moving focus, Shift+Tab reaches the bar, Tab goes back, and leaving the bar ends the edit', async ({
+    page,
+  }) => {
+    await navigateToView(page, 'Settings')
+    await openSettingsTab(page, 'Editor')
+    await page.getByRole('switch', { name: 'Tab indents blocks' }).click()
+    await seedPage(page, 'Keys page', TEXTS)
+    await openPage(page, 'Keys page')
+    await clickRow(page, 'bravo two')
+    await page.keyboard.press('End')
+    await page.keyboard.insertText(' edited')
+
+    await page.keyboard.press('Shift+Tab')
+    await expect(toolbar(page).locator(':focus')).toHaveCount(1)
+    await page.keyboard.press('Tab')
+    await expect(editor(page)).toBeFocused()
+    await expect(editor(page)).toHaveText('bravo two edited')
+
+    await page.keyboard.press('Shift+Tab')
+    await expect(toolbar(page).locator(':focus')).toHaveCount(1)
+    const pane = await page.locator('[data-slot="main-content"]').boundingBox()
+    await page.mouse.click((pane?.x ?? 0) + 40, (pane?.y ?? 0) + (pane?.height ?? 0) - 40)
+    await expect(editor(page)).toHaveCount(0)
+    await expect(toolbar(page)).toHaveCount(0)
+    await expect(rows(page)).toHaveText([TEXTS[0] as string, 'bravo two edited', ...TEXTS.slice(2)])
   })
 
   test('a double-click on a word in an unfocused block selects it, writes nothing and opens no picker', async ({

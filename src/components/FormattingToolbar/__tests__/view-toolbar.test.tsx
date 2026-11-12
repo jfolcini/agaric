@@ -14,6 +14,7 @@ import { axe } from 'vitest-axe'
 import { useViewToolbar, ViewToolbarSlot } from '@/components/FormattingToolbar/view-toolbar'
 
 const mounts = vi.fn()
+const blurs = vi.fn()
 
 function Bar({ blockId }: { blockId: string }): React.ReactElement {
   useEffect(() => {
@@ -28,7 +29,7 @@ function Bar({ blockId }: { blockId: string }): React.ReactElement {
 
 // Memoised as a block row is: a row that stays edited does not re-render when another leaves.
 const Surface = memo(({ blockId }: { blockId: string }): React.ReactElement => {
-  useViewToolbar(<Bar blockId={blockId} />)
+  useViewToolbar(<Bar blockId={blockId} />, blurs)
   return <p>{blockId}</p>
 })
 
@@ -42,7 +43,7 @@ function View({
 }): React.ReactElement {
   return (
     <main>
-      <ViewToolbarSlot />
+      <ViewToolbarSlot room />
       {['A', 'B', 'C'].map((id) =>
         id === edited || id === alsoMounted ? <Surface key={id} blockId={id} /> : null,
       )}
@@ -51,10 +52,9 @@ function View({
 }
 
 describe('ViewToolbarSlot', () => {
-  it('renders nothing while no block is edited', async () => {
+  it('shows no bar while no block is edited', async () => {
     const { container } = render(<View edited={null} />)
     expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
-    expect(container.querySelector('[data-view-toolbar]')).toBeNull()
     expect(await axe(container)).toHaveNoViolations()
   })
 
@@ -82,11 +82,28 @@ describe('ViewToolbarSlot', () => {
     expect(bar).toHaveAttribute('data-block-id', 'C')
     expect(mounts).toHaveBeenCalledTimes(1)
   })
+
   it('keeps the bar when a surface leaves after another one took it', () => {
     const { rerender } = render(<View edited="A" />)
     rerender(<View edited="B" alsoMounted="A" />)
     rerender(<View edited="B" />)
 
     expect(screen.getByRole('toolbar')).toHaveAttribute('data-block-id', 'B')
+  })
+
+  it('hands focus leaving the bar to the edited block, with where it went', () => {
+    blurs.mockClear()
+    render(
+      <>
+        <View edited="A" />
+        <input aria-label="Elsewhere" />
+      </>,
+    )
+    screen.getByRole('button', { name: 'Bold' }).focus()
+    const elsewhere = screen.getByRole('textbox', { name: 'Elsewhere' })
+    elsewhere.focus()
+
+    expect(blurs).toHaveBeenCalledOnce()
+    expect(blurs).toHaveBeenCalledWith(elsewhere)
   })
 })

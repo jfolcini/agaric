@@ -722,7 +722,7 @@ function App() {
                 insideScroller
                 className="-mx-4 -mt-4 mb-4 border-b border-border/40 px-4 py-3 space-y-2 has-[[data-sticky-search]]:sticky has-[[data-sticky-search]]:-top-4 has-[[data-sticky-search]]:z-10"
               />
-              <ViewToolbarSlot />
+              <ViewToolbarSlot room={currentView === 'journal' || currentView === 'page-editor'} />
               <div
                 className={cn(
                   'flex flex-1 min-h-0 flex-col',

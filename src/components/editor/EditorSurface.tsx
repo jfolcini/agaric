@@ -30,6 +30,7 @@ export function EditorSurface({
   blockId,
   currentPriority,
   isDragOver,
+  onToolbarBlur,
 }: EditorSurfaceProps): React.ReactElement {
   const { t } = useTranslation()
   const { onIndent, onDedent } = useBlockActions()
@@ -44,13 +45,14 @@ export function EditorSurface({
       blockId={blockId}
       currentPriority={currentPriority}
       listStyle={listStyle}
-      className="rounded-none bg-background"
+      className="mx-auto h-full max-w-reading rounded-none border-b-0 bg-transparent px-0"
       indent={
         onIndent && onDedent
           ? { onIndent: () => onIndent(blockId), onOutdent: () => onDedent(blockId) }
           : undefined
       }
     />,
+    onToolbarBlur,
   )
   return (
     <>

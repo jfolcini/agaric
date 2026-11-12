@@ -10,6 +10,7 @@ import type { Editor } from '@tiptap/core'
 import type { EditorState as ProseMirrorState } from '@tiptap/pm/state'
 import { useCallback, useEffect } from 'react'
 
+import { focusViewToolbar } from '@/editor/editor-portal'
 import { getSelectionProbe } from '@/editor/pm-selection-probe'
 import { linkAtCaret, markerBesideCaret } from '@/editor/revealed-markers'
 import { isTabIndentEnabled } from '@/lib/editor-preferences'
@@ -621,8 +622,18 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       if (
         isTabKey(event) &&
         (isSuggestionPopupVisible() || isQueryHintActive() || !isTabIndentEnabled())
-      )
+      ) {
+        // The view's toolbar renders outside the block (#6562): Shift+Tab still reaches
+        // it first, as it did when it headed the block.
+        if (
+          event.shiftKey &&
+          !isSuggestionPopupVisible() &&
+          !isQueryHintActive() &&
+          focusViewToolbar()
+        )
+          event.preventDefault()
         return
+      }
 
       handleBlockKeyDown(event, editor, {
         onFocusPrev,

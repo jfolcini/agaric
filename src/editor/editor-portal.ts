@@ -8,6 +8,15 @@ export const EDITOR_PORTAL_SELECTOR = '[data-editor-portal]'
 /** The view's formatting toolbar slot (`ViewToolbarSlot`). */
 export const VIEW_TOOLBAR_SELECTOR = '[data-view-toolbar]'
 
+/** Focus the view toolbar's tab stop, if one shows; whether it did. */
+export function focusViewToolbar(): boolean {
+  const stop = document.querySelector<HTMLElement>(
+    `${VIEW_TOOLBAR_SELECTOR} [role="toolbar"] [tabindex="0"]`,
+  )
+  stop?.focus()
+  return stop != null
+}
+
 /**
  * Whether focus leaving `wrapper` (the editor and its toolbar) for `related`
  * (none: nowhere) leaves it still being edited: focus moved to an overlay marked
