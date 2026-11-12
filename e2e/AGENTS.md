@@ -29,7 +29,7 @@ In CI, `scripts/classify-changes.sh` picks the lanes: a diff of only `e2e/*.spec
 
 ## Mock backend
 
-`src/lib/tauri-mock/` is an in-memory backend that activates when `window.__TAURI_INTERNALS__` is absent. It seeds fixed pages and blocks and exports `SEED_IDS` and `resetMock()`. `page.reload()` re-seeds it, so a spec verifies persistence by navigating away and back (`reopenPage`), never by reloading.
+`src/lib/tauri-mock/` is an in-memory backend that activates when `window.__TAURI_INTERNALS__` is absent. It seeds fixed pages and blocks and exports `SEED_IDS` and `resetMock()`. `page.reload()` re-seeds it, so a spec verifies persistence by navigating away and back (`reopenPage`), never by reloading. It answers every command at once; `window.__setMockLatency(ms)` makes it answer `ms` later, to race a handler that awaits an IPC and then moves the editor (`enter-merge-latency.spec.ts`).
 
 ## The mock is a contract, not a convenience
 

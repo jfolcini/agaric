@@ -14,6 +14,7 @@ import {
 } from '@/editor/extensions/list-marker-decoration'
 import { parse } from '@/editor/markdown-serializer'
 import { announce } from '@/lib/announcer'
+import { newBlockId } from '@/lib/block-id'
 import type { ListStyle } from '@/lib/list-style'
 import { clearListStyle, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
@@ -23,6 +24,8 @@ import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore } from '@/stores/page-blocks'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+// The id Enter mints for the block it creates, which the `createBelow` double answers with.
+vi.mock('@/lib/block-id', () => ({ newBlockId: vi.fn(() => 'NEW_1') }))
 vi.mock('@/editor/markdown-serializer', () => ({
   parse: vi.fn((s: string) => ({
     type: 'doc',
@@ -128,7 +131,10 @@ function makeDefaultParams(
       storedMarkdown: '' as string,
       readAsTyped: vi.fn(),
     },
-    setFocused: vi.fn(),
+    // The live focus, which Enter's failure path reads to see whether the user moved on.
+    setFocused: vi.fn((id: string | null) => {
+      useBlockStore.setState({ focusedBlockId: id })
+    }),
     setSelected: vi.fn(),
     handleFlush: vi.fn(() => null as string | null),
     pageStore,
@@ -1309,130 +1315,47 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
     })
   })
 
-  // ------------------------------------------------------------------------
-  // Post-merge setTimeout(setTextSelection) must be cancelled on
-  // unmount to avoid moving the cursor on a stale (next-mounted) editor.
-  // ------------------------------------------------------------------------
-  describe('post-merge setTimeout cleanup (#)', () => {
-    it('does not call setTextSelection after hook unmount', async () => {
-      vi.useFakeTimers()
-      try {
-        const setTextSelection = vi.fn()
-        const fakeEditor = {
-          state: { doc: { content: { size: 20 } } },
-          commands: { setTextSelection },
-        } as unknown as NonNullable<
-          Parameters<typeof useBlockActionOrchestration>[0]['rovingEditor']['editor']
-        >
+  // #6559 — the caret goes to the join before the merge's writes land, so keys
+  // typed while they are in flight go there instead of into an unmounted editor.
+  it('puts the caret at the join on the merge target before the edit answers', async () => {
+    const setTextSelection = vi.fn()
+    const focus = vi.fn()
+    const liveEditor = {
+      state: { doc: { content: { size: 20 } } },
+      commands: { setTextSelection },
+      view: { focus },
+    } as unknown as NonNullable<
+      Parameters<typeof useBlockActionOrchestration>[0]['rovingEditor']['editor']
+    >
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    ;(params.rovingEditor as { editor: unknown }).editor = liveEditor
+    let answer: (ok: boolean) => void = () => undefined
+    params.edit = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          answer = resolve
+        }),
+    )
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
-        const params = makeDefaultParams()
-        params.rovingEditor.unmount = vi.fn(() => 'Beta')
-        // Expose a live editor so the post-merge callback *would* have
-        // something to act on — but we unmount before it fires.
-        ;(params.rovingEditor as { editor: unknown }).editor = fakeEditor
-
-        const { result, unmount } = renderHook(() => useBlockActionOrchestration(params))
-
-        await act(async () => {
-          await result.current.handleMergeWithPrev()
-        })
-
-        // Merge has run; setTextSelection is still queued on the 0ms timer.
-        expect(setTextSelection).not.toHaveBeenCalled()
-
-        // Unmount the hook — cleanup must clear the pending timer.
-        unmount()
-
-        // Advance past the timer; must not throw and must not call
-        // setTextSelection on the (now-stale) editor.
-        expect(() => vi.advanceTimersByTime(10)).not.toThrow()
-        expect(setTextSelection).not.toHaveBeenCalled()
-      } finally {
-        vi.useRealTimers()
-      }
+    let merge: Promise<void> = Promise.resolve()
+    act(() => {
+      merge = result.current.handleMergeWithPrev()
     })
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('A', 'AlphaBeta')
+    expect(params.setFocused).toHaveBeenCalledWith('A')
+    // `pmEndOfFirstBlock` is mocked to 1: the end of 'Alpha's paragraph.
+    expect(setTextSelection).toHaveBeenCalledWith(1)
+    expect(focus).toHaveBeenCalledTimes(1)
+    expect(params.remove).not.toHaveBeenCalled()
 
-    it('calls setTextSelection when the timer fires before unmount', async () => {
-      vi.useFakeTimers()
-      try {
-        const setTextSelection = vi.fn()
-        const fakeEditor = {
-          state: { doc: { content: { size: 20 } } },
-          commands: { setTextSelection },
-        } as unknown as NonNullable<
-          Parameters<typeof useBlockActionOrchestration>[0]['rovingEditor']['editor']
-        >
-
-        const params = makeDefaultParams()
-        params.rovingEditor.unmount = vi.fn(() => 'Beta')
-        ;(params.rovingEditor as { editor: unknown }).editor = fakeEditor
-
-        const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-        await act(async () => {
-          await result.current.handleMergeWithPrev()
-        })
-
-        // Flush the timer while the hook is still mounted — setTextSelection
-        // should run exactly once with the computed PM position.
-        act(() => {
-          vi.advanceTimersByTime(10)
-        })
-
-        expect(setTextSelection).toHaveBeenCalledTimes(1)
-      } finally {
-        vi.useRealTimers()
-      }
+    await act(async () => {
+      answer(true)
+      await merge
     })
-
-    // ----------------------------------------------------------------------
-    // #976 f22: if the user arrow-navigates before the 0ms post-merge timer
-    // fires, the roving editor has remounted onto a DIFFERENT block. The
-    // deferred setTextSelection must be a no-op so the caret is never placed
-    // in the wrong block. The guard keys on `activeBlockId === <merge target>`.
-    // ----------------------------------------------------------------------
-    it('does NOT call setTextSelection when focus moved to another block before the timer fires', async () => {
-      vi.useFakeTimers()
-      try {
-        const setTextSelection = vi.fn()
-        const fakeEditor = {
-          state: { doc: { content: { size: 20 } } },
-          commands: { setTextSelection },
-        } as unknown as NonNullable<
-          Parameters<typeof useBlockActionOrchestration>[0]['rovingEditor']['editor']
-        >
-
-        const params = makeDefaultParams()
-        params.rovingEditor.unmount = vi.fn(() => 'Beta')
-        ;(params.rovingEditor as { editor: unknown }).editor = fakeEditor
-
-        const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-        await act(async () => {
-          // Merge 'B' into 'A' — the post-merge mount sets activeBlockId = 'A'
-          // and the deferred caret targets 'A'.
-          await result.current.handleMergeWithPrev()
-        })
-
-        // Simulate an arrow-navigation that remounts the editor onto a DIFFERENT
-        // block before the queued 0ms timer runs — exactly the race the guard
-        // protects against (handleFocusNext/Prev would do this).
-        act(() => {
-          result.current.handleFocusNext()
-        })
-        expect(params.rovingEditor.activeBlockId).toBe('C')
-
-        // Flush the queued timer. Because activeBlockId ('C') no longer matches
-        // the merge target ('A'), the cursor placement must be skipped.
-        act(() => {
-          vi.advanceTimersByTime(10)
-        })
-
-        expect(setTextSelection).not.toHaveBeenCalled()
-      } finally {
-        vi.useRealTimers()
-      }
-    })
+    expect(params.remove).toHaveBeenCalledWith('B')
+    expect(params.rovingEditor.mount).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -1457,9 +1380,9 @@ describe('merge honors edit() resolving false (store contract)', () => {
 
     expect(params.edit).toHaveBeenCalledTimes(1)
     expect(params.remove).not.toHaveBeenCalled()
-    // Failure cleanup remounts the source block with its captured content.
-    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'Beta')
-    expect(params.setFocused).not.toHaveBeenCalled()
+    // Failure cleanup gives the source block back with its captured content.
+    expect(params.rovingEditor.mount).toHaveBeenLastCalledWith('B', 'Beta')
+    expect(params.setFocused).toHaveBeenLastCalledWith('B')
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
   })
 
@@ -1859,7 +1782,7 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     })
 
     expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
-    expect(params.createBelow).toHaveBeenCalledWith('B')
+    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1')
     expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
   })
 
@@ -1874,8 +1797,9 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     expect(params.createBelow).not.toHaveBeenCalled()
   })
 
-  it('does not set focused when createBelow returns null', async () => {
+  it('gives the block Enter left back when createBelow returns null', async () => {
     const params = makeDefaultParams()
+    params.rovingEditor.getMarkdown = vi.fn(() => 'Beta')
     params.createBelow = vi.fn(async () => null)
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
@@ -1883,7 +1807,8 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
       await result.current.handleEnterSave()
     })
 
-    expect(params.setFocused).not.toHaveBeenCalled()
+    expect(params.setFocused).toHaveBeenLastCalledWith('B')
+    expect(params.rovingEditor.mount).toHaveBeenLastCalledWith('B', 'Beta')
   })
 
   it('announces block creation on Enter', async () => {
@@ -1897,61 +1822,93 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockCreated')
   })
 
-  it('drops the new blank block when Escape cleared focus during its create', async () => {
-    const params = makeDefaultParams()
-    params.createBelow = vi.fn(async () => {
-      useBlockStore.setState({ focusedBlockId: null })
-      return 'NEW_1'
-    })
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
+  // #6559 — the new block is in the store once `createBelow` is called, so
+  // focus moves to it then: keys typed while the create is in flight land in it.
+  describe('while the create is in flight', () => {
+    /** A `createBelow` whose calls all answer `id` once `answer` is called. */
+    function heldCreate() {
+      const answers: Array<(id: string | null) => void> = []
+      const createBelow = vi.fn(
+        () =>
+          new Promise<string | null>((resolve) => {
+            answers.push(resolve)
+          }),
+      )
+      return {
+        createBelow,
+        answer: (id: string | null) => {
+          for (const resolve of answers) resolve(id)
+        },
+      }
+    }
 
-    await act(async () => {
-      await result.current.handleEnterSave()
-    })
+    it('focuses the new block before the create answers', async () => {
+      const held = heldCreate()
+      const params = makeDefaultParams({ createBelow: held.createBelow })
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
 
-    expect(params.remove).toHaveBeenCalledWith('NEW_1', { undoable: false })
-    expect(params.setFocused).not.toHaveBeenCalled()
-    expect(mockedAnnounce).not.toHaveBeenCalled()
-  })
+      let enter: Promise<void> = Promise.resolve()
+      act(() => {
+        enter = result.current.handleEnterSave()
+      })
+      expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
+      expect(mockedAnnounce).not.toHaveBeenCalled()
 
-  it('keeps the new block when the user clicked into it during its create', async () => {
-    const params = makeDefaultParams()
-    params.createBelow = vi.fn(async () => {
-      useBlockStore.setState({ focusedBlockId: 'NEW_1' })
-      return 'NEW_1'
-    })
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    await act(async () => {
-      await result.current.handleEnterSave()
-    })
-
-    expect(params.remove).not.toHaveBeenCalled()
-    expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
-  })
-
-  it('logs when dropping the abandoned blank block fails', async () => {
-    const params = makeDefaultParams()
-    params.createBelow = vi.fn(async () => {
-      useBlockStore.setState({ focusedBlockId: 'A' })
-      return 'NEW_1'
-    })
-    params.remove = vi.fn(async () => {
-      throw new Error('remove incomplete')
-    })
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    await act(async () => {
-      await result.current.handleEnterSave()
+      await act(async () => {
+        held.answer('NEW_1')
+        await enter
+      })
+      expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockCreated')
     })
 
-    expect(mockedLoggerWarn).toHaveBeenCalledWith(
-      'useBlockActionOrchestration',
-      'Enter left a blank block behind after focus moved during its create',
-      { blockId: 'B', newBlockId: 'NEW_1' },
-      expect.any(Error),
-    )
-    expect(params.setFocused).not.toHaveBeenCalled()
+    it('a second Enter creates below the block the first one focused', async () => {
+      const held = heldCreate()
+      vi.mocked(newBlockId).mockReturnValueOnce('NEW_1').mockReturnValueOnce('NEW_2')
+      const params = makeDefaultParams({ createBelow: held.createBelow })
+      const { result, rerender } = renderHook(() => useBlockActionOrchestration(params))
+
+      let first: Promise<void> = Promise.resolve()
+      act(() => {
+        first = result.current.handleEnterSave()
+      })
+      // What the focus change does in BlockTree: the editor mounts on the new block.
+      params.rovingEditor.activeBlockId = 'NEW_1'
+      params.focusedBlockId = 'NEW_1'
+      rerender()
+      let second: Promise<void> = Promise.resolve()
+      act(() => {
+        second = result.current.handleEnterSave()
+      })
+
+      expect(params.createBelow).toHaveBeenCalledTimes(2)
+      expect(params.createBelow).toHaveBeenLastCalledWith('NEW_1', '', 'NEW_2')
+      expect(params.setFocused).toHaveBeenLastCalledWith('NEW_2')
+      expect(mockedLoggerWarn).not.toHaveBeenCalled()
+      await act(async () => {
+        held.answer('NEW_1')
+        await Promise.all([first, second])
+      })
+    })
+
+    it('a create that fails after the user moved on leaves the focus where it is', async () => {
+      const held = heldCreate()
+      const params = makeDefaultParams({ createBelow: held.createBelow })
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+      let enter: Promise<void> = Promise.resolve()
+      act(() => {
+        enter = result.current.handleEnterSave()
+      })
+      useBlockStore.setState({ focusedBlockId: 'C' })
+      await act(async () => {
+        held.answer(null)
+        await enter
+      })
+
+      expect(params.setFocused).toHaveBeenLastCalledWith('NEW_1')
+      expect(params.rovingEditor.mount).not.toHaveBeenCalled()
+      expect(useBlockStore.getState().focusedBlockId).toBe('C')
+    })
   })
 
   it('does not announce when createBelow returns null', async () => {
@@ -1979,7 +1936,7 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     // The current block keeps the before-caret text…
     expect(params.edit).toHaveBeenCalledWith('B', 'hello')
     // …and the new block is created WITH the after-caret text.
-    expect(params.createBelow).toHaveBeenCalledWith('B', 'world')
+    expect(params.createBelow).toHaveBeenCalledWith('B', 'world', 'NEW_1')
     expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
     // The legacy whole-block flush path must NOT run on a mid-text split.
     expect(params.handleFlush).not.toHaveBeenCalled()
@@ -2001,7 +1958,7 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     })
 
     expect(params.handleFlush).toHaveBeenCalled()
-    expect(params.createBelow).toHaveBeenCalledWith('B')
+    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1')
   })
 
   // Store contract (#730 family): edit() RESOLVES false on failure — it never
@@ -2020,15 +1977,15 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
       await result.current.handleEnterSave()
     })
 
-    expect(params.createBelow).toHaveBeenCalledWith('B', 'world')
+    expect(params.createBelow).toHaveBeenCalledWith('B', 'world', 'NEW_1')
     // The compensating delete follows the failed save.
     expect(params.remove).toHaveBeenCalledWith('NEW_1')
     const editOrder = vi.mocked(params.edit).mock.invocationCallOrder[0] ?? -1
     const removeOrder = vi.mocked(params.remove).mock.invocationCallOrder[0] ?? -1
     expect(editOrder).toBeLessThan(removeOrder)
     // The user keeps their complete, unsplit text editable.
-    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'hello world')
-    expect(params.setFocused).not.toHaveBeenCalled()
+    expect(params.rovingEditor.mount).toHaveBeenLastCalledWith('B', 'hello world')
+    expect(params.setFocused).toHaveBeenLastCalledWith('B')
   })
 
   // BlockTree's `remove` wrapper THROWS when the block is still in the store
@@ -2052,8 +2009,8 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
 
     expect(params.remove).toHaveBeenCalledWith('NEW_1')
     expect(preserveEmptyBlockIds.current.has('B')).toBe(false)
-    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'hello world')
-    expect(params.setFocused).not.toHaveBeenCalled()
+    expect(params.rovingEditor.mount).toHaveBeenLastCalledWith('B', 'hello world')
+    expect(params.setFocused).toHaveBeenLastCalledWith('B')
   })
 
   it('writes nothing and restores the original block when a split createBelow fails', async () => {
@@ -2071,8 +2028,8 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     // shortened and there is nothing to compensate.
     expect(params.edit).not.toHaveBeenCalled()
     expect(params.remove).not.toHaveBeenCalled()
-    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'helloworld')
-    expect(params.setFocused).not.toHaveBeenCalled()
+    expect(params.rovingEditor.mount).toHaveBeenLastCalledWith('B', 'helloworld')
+    expect(params.setFocused).toHaveBeenLastCalledWith('B')
   })
 
   // #2786 — the caret-split branch unmounts the roving editor directly
@@ -2239,7 +2196,7 @@ describe('useBlockActionOrchestration listStyle continuation (#4552 slice 3)', (
       await result.current.handleEnterSave()
     })
 
-    expect(params.createBelow).toHaveBeenCalledWith('B')
+    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1')
     expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
     expect(mockedSetListStyle).toHaveBeenCalledTimes(1)
     expect(mockedSetListStyle).toHaveBeenCalledWith('NEW_1', 'ordered')
@@ -2256,7 +2213,7 @@ describe('useBlockActionOrchestration listStyle continuation (#4552 slice 3)', (
     })
 
     expect(params.edit).toHaveBeenCalledWith('B', 'Be')
-    expect(params.createBelow).toHaveBeenCalledWith('B', 'ta')
+    expect(params.createBelow).toHaveBeenCalledWith('B', 'ta', 'NEW_1')
     expect(mockedSetListStyle).toHaveBeenCalledWith('NEW_1', 'bullet')
   })
 
@@ -2268,7 +2225,7 @@ describe('useBlockActionOrchestration listStyle continuation (#4552 slice 3)', (
       await result.current.handleEnterSave()
     })
 
-    expect(params.createBelow).toHaveBeenCalledWith('B')
+    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1')
     expect(mockedSetListStyle).not.toHaveBeenCalled()
     expect(mockedClearListStyle).not.toHaveBeenCalled()
   })

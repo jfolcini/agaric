@@ -161,12 +161,14 @@ type PageBlockSet = StoreApi<PageBlockState>['setState']
  * Per-store dependencies the reducers close over. `set`/`get` are the raw
  * `createStore` initializer args (the un-wrapped `set`, so internal writes keep
  * bypassing the `augmentBlocksUpdate` wrap on `store.setState`, as before).
- * `splitInProgress` and `enqueueMove` are created once per store by the factory.
+ * `splitInProgress`, `createsInFlight` and `enqueueMove` are created once per
+ * store by the factory.
  */
 interface ReducerDeps {
   set: PageBlockSet
   get: () => PageBlockState
   splitInProgress: Set<string>
+  createsInFlight: Map<string, Promise<void>>
   enqueueMove: <T>(blockId: string, run: () => Promise<T>) => Promise<T>
 }
 
@@ -175,6 +177,7 @@ export function createReducers({
   set,
   get,
   splitInProgress,
+  createsInFlight,
   enqueueMove,
 }: ReducerDeps): Pick<
   PageBlockState,
@@ -195,7 +198,7 @@ export function createReducers({
   | 'appendBlock'
 > {
   return {
-    createBelow: async (afterBlockId: string, content = '') => {
+    createBelow: async (afterBlockId: string, content = '', newId = newBlockId()) => {
       const { blocks, rootParentId } = get()
       const idx = blocks.findIndex((b) => b.id === afterBlockId)
       const afterBlock = blocks[idx]
@@ -204,14 +207,13 @@ export function createReducers({
       // #400: insert at the slot right after `afterBlock` among its siblings.
       const afterSlot = siblingSlot(blocks, afterBlock)
 
-      // #2849 PR2 — generate the new block's ULID CLIENT-SIDE so the row can be
+      // #2849 PR2 — the new block's ULID is CLIENT-SIDE so the row can be
       // spliced in OPTIMISTICALLY, BEFORE the create IPC resolves. The backend
       // accepts this id verbatim (`create_block(blockId)`), so the id is stable
       // from insertion: focus/selection assigned to the new block never have to
       // relocate to a server-minted id after the round-trip (option (b)). The
       // provisional parent/depth mirror the anchor's; `position: null` is healed
       // to the backend's dense rank on success.
-      const newId = newBlockId()
       const parentId = afterBlock.parent_id
 
       // Splice the provisional block in NOW (pre-await), reusing PR1's
@@ -248,7 +250,23 @@ export function createReducers({
         return { blocks: newBlocks, touchedIds: [newBlock.id] }
       })
 
+      const anchorCreate = createsInFlight.get(afterBlockId)
+      let answered: () => void = () => undefined
+      createsInFlight.set(
+        newId,
+        new Promise<void>((resolve) => {
+          answered = resolve
+        }),
+      )
+      // Settled once the create answers, before the reconcile or rollback
+      // below: either may load(), which waits for the creates in flight.
+      const settle = () => {
+        createsInFlight.delete(newId)
+        answered()
+      }
       try {
+        // The slot is the anchor's + 1, so the anchor must exist first.
+        if (anchorCreate) await anchorCreate
         // #5415 — no active space: refuse through the rollback below.
         const spaceId = useSpaceStore.getState().currentSpaceId
         if (spaceId == null) throw new Error('No active space; cannot create block')
@@ -268,6 +286,7 @@ export function createReducers({
             )
             .then(unwrap),
         )
+        settle()
 
         // Confirm the provisional insert. Because the block already carries the
         // client id, success is a no-op confirm (no id swap, focus stays); we
@@ -283,6 +302,7 @@ export function createReducers({
         // relocate to a server-minted id.
         return newId
       } catch (err) {
+        settle()
         // Roll back the provisional insert: remove the row + its `blocksById`
         // entry. `rollbackProvisionalMove` restores the exact pre-op snapshot
         // when nothing landed since (the common case), or reconciles via load()
@@ -316,6 +336,8 @@ export function createReducers({
       // which this preserves for every entry but the edited one.
       set((state) => withContent(state, blockId, content))
       try {
+        const pendingCreate = createsInFlight.get(blockId)
+        if (pendingCreate) await pendingCreate
         // #730 — retry a transient pool_busy blip before reverting visible
         // user text. Without this a 50ms back-pressure spike rolled the
         // optimistic edit back and toasted "save failed" for text the user
@@ -396,6 +418,10 @@ export function createReducers({
     },
 
     remove: async (blockId: string, options?: DeleteBlockOptions) => {
+      // Before the splice too: the create's reconcile would find the row gone
+      // and reload the page.
+      const pendingCreate = createsInFlight.get(blockId)
+      if (pendingCreate) await pendingCreate
       const { rootParentId } = get()
       // #4729 — see `DeleteBlockOptions`. Default: a user-initiated delete.
       const undoable = options?.undoable ?? true

@@ -10,6 +10,7 @@ import type { StoreApi } from 'zustand'
 import { makeBlock, makeBlockRow, withOps } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
+  deferred,
   deleteResp,
   strictInvokeFallback,
   stubInvoke,
@@ -1146,6 +1147,132 @@ describe('PageBlockStore', () => {
         'create_block',
         expect.objectContaining({ content: '' }),
       )
+    })
+
+    // #6559 — Enter focuses the new block before its create answers, and IPC
+    // calls are not answered in the order they were made: a write naming that
+    // block waits for its create.
+    it('holds an edit and a create below a block until its create answers', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', position: 0 })] })
+      const createAnswer = deferred<void>()
+      stubInvoke(mockedInvoke, {
+        create_block: async (args) => {
+          if (args['blockId'] === 'NEW') await createAnswer.promise
+          return withOps(
+            makeBlockRow({ id: args['blockId'] as string, content: args['content'] as string }),
+          )
+        },
+        edit_block: (args) =>
+          withOps(
+            makeBlockRow({ id: args['blockId'] as string, content: args['toText'] as string }),
+          ),
+      })
+      const commandsSent = () => mockedInvoke.mock.calls.map(([cmd]) => cmd)
+
+      const created = store.getState().createBelow('A', '', 'NEW')
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'NEW'])
+      const below = store.getState().createBelow('NEW', '', 'BELOW')
+      const edited = store.getState().edit('NEW', 'typed')
+      await Promise.resolve()
+      expect(commandsSent()).toEqual(['create_block'])
+
+      createAnswer.resolve()
+      await Promise.all([created, below, edited])
+      expect(commandsSent()).toEqual(['create_block', 'create_block', 'edit_block'])
+      expect(store.getState().blocks.map((b) => [b.id, b.content])).toEqual([
+        ['A', 'Test block'],
+        ['NEW', 'typed'],
+        ['BELOW', ''],
+      ])
+    })
+
+    it('holds a delete of a block until its create answers', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', position: 0 })] })
+      const createAnswer = deferred<void>()
+      stubInvoke(mockedInvoke, {
+        create_block: async (args) => {
+          await createAnswer.promise
+          return withOps(
+            makeBlockRow({ id: args['blockId'] as string, content: args['content'] as string }),
+          )
+        },
+        delete_block: (args) => deleteResp(args['blockId'] as string),
+      })
+      const commandsSent = () => mockedInvoke.mock.calls.map(([cmd]) => cmd)
+
+      const created = store.getState().createBelow('A', '', 'NEW')
+      const removed = store.getState().remove('NEW')
+      await Promise.resolve()
+      expect(commandsSent()).toEqual(['create_block'])
+
+      createAnswer.resolve()
+      await Promise.all([created, removed])
+      expect(commandsSent()).toEqual(['create_block', 'delete_block'])
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A'])
+    })
+
+    it('holds a load until the creates in flight answer, so it keeps the focused new block', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })] })
+      const createAnswer = deferred<void>()
+      const backendRows = [makeBlockRow({ id: 'A', parent_id: 'PAGE_1', position: 0 })]
+      stubInvoke(mockedInvoke, {
+        create_block: async (args) => {
+          await createAnswer.promise
+          const row = makeBlockRow({
+            id: args['blockId'] as string,
+            parent_id: 'PAGE_1',
+            position: 1,
+          })
+          backendRows.push(row)
+          return withOps(row)
+        },
+        load_page_subtree: () => subtreeResp([...backendRows]),
+      })
+      const commandsSent = () => mockedInvoke.mock.calls.map(([cmd]) => cmd)
+
+      const created = store.getState().createBelow('A', '', 'NEW')
+      mockGlobalBlockState = { focusedBlockId: 'NEW', selectedBlockIds: [] }
+      const loaded = store.getState().load()
+      await Promise.resolve()
+      expect(commandsSent()).toEqual(['create_block'])
+
+      createAnswer.resolve()
+      await Promise.all([created, loaded])
+      expect(commandsSent()).toEqual(['create_block', 'load_page_subtree'])
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'NEW'])
+      expect(mockSetFocused).not.toHaveBeenCalled()
+    })
+
+    it('holds a load for a create that starts while it waits', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })] })
+      const answers = { FIRST: deferred<void>(), SECOND: deferred<void>() }
+      const backendRows = [makeBlockRow({ id: 'A', parent_id: 'PAGE_1', position: 0 })]
+      stubInvoke(mockedInvoke, {
+        create_block: async (args) => {
+          const id = args['blockId'] as 'FIRST' | 'SECOND'
+          await answers[id].promise
+          const row = makeBlockRow({ id, parent_id: 'PAGE_1', position: backendRows.length })
+          backendRows.push(row)
+          return withOps(row)
+        },
+        load_page_subtree: () => subtreeResp([...backendRows]),
+      })
+      const commandsSent = () => mockedInvoke.mock.calls.map(([cmd]) => cmd)
+
+      const first = store.getState().createBelow('A', '', 'FIRST')
+      const loaded = store.getState().load()
+      // A second Enter, below the block the first one made, while the load waits.
+      const second = store.getState().createBelow('FIRST', '', 'SECOND')
+      answers.FIRST.resolve()
+      await first
+      await vi.waitFor(() => expect(commandsSent()).toEqual(['create_block', 'create_block']))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(commandsSent()).toEqual(['create_block', 'create_block'])
+
+      answers.SECOND.resolve()
+      await Promise.all([second, loaded])
+      expect(commandsSent()).toEqual(['create_block', 'create_block', 'load_page_subtree'])
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'FIRST', 'SECOND'])
     })
   })
   describe('edit', () => {
