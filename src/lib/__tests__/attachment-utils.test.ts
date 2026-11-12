@@ -3,15 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const mockReadAttachmentMeta = vi.hoisted(() => vi.fn())
 const mockReadAttachment = vi.hoisted(() => vi.fn())
 const mockNotifyError = vi.hoisted(() => vi.fn())
+const mockNotifyInfo = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', () => ({
   commands: { readAttachmentMeta: mockReadAttachmentMeta },
 }))
 vi.mock('@/lib/ipc-helpers', () => ({ readAttachment: mockReadAttachment }))
-vi.mock('@/lib/notify', () => ({ notify: { error: mockNotifyError } }))
+vi.mock('@/lib/notify', () => ({ notify: { error: mockNotifyError, info: mockNotifyInfo } }))
 
 import { formatSize, openAttachmentLink } from '@/lib/attachment-utils'
 import { t } from '@/lib/i18n'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
 
 describe('attachment-utils', () => {
   describe('formatSize', () => {
@@ -88,6 +90,30 @@ describe('attachment-utils', () => {
 
       expect(downloads).toEqual([])
       expect(mockNotifyError).toHaveBeenCalledWith(t('attachments.loadFailed'))
+    })
+
+    // #6538 — the Android WebView handles no `blob:` download.
+    it('on Android starts no download and says file saving is unavailable', async () => {
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+        'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36',
+      )
+      __resetPlatformCacheForTests()
+      try {
+        const downloads = captureDownloads()
+        mockReadAttachmentMeta.mockResolvedValue({
+          status: 'ok',
+          data: { filename: 'paper.docx', mime_type: 'application/msword' },
+        })
+        mockReadAttachment.mockResolvedValue(new Uint8Array([1]))
+
+        await openAttachmentLink('01ATT')
+
+        expect(downloads).toEqual([])
+        expect(mockNotifyInfo).toHaveBeenCalledWith(t('data.fileSaveUnavailableAndroid'))
+        expect(mockNotifyError).not.toHaveBeenCalled()
+      } finally {
+        __resetPlatformCacheForTests()
+      }
     })
   })
 })

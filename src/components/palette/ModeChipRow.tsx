@@ -7,7 +7,7 @@ import { ArrowLeftRight } from 'lucide-react'
 import type React from 'react'
 import type { useTranslation } from 'react-i18next'
 
-import { Kbd } from '@/components/ui/kbd'
+import { Kbd, KbdChord } from '@/components/ui/kbd'
 import type { PaletteMode } from '@/stores/useCommandPaletteStore'
 
 /**
@@ -87,7 +87,7 @@ export function ModeChipRow({
 }
 
 /**
- * Footer hint — surfaces the modifier-key affordances (Enter / ⌘Enter
+ * Footer hint — surfaces the modifier-key affordances (Enter / mod+Enter
  * / Esc) as `<kbd>` chips so power users can scan the shortcuts
  * without reading prose. Hidden in link mode and commands mode
  * because the modifier-key vocabulary changes per mode.
@@ -113,7 +113,10 @@ export function PaletteFooterHint({
         {t('palette.footerHintOpen')}
       </span>
       <span className="inline-flex items-center gap-1">
-        <Kbd aria-hidden="true">⌘↵</Kbd>
+        {/* The new-tab handler takes Ctrl or ⌘; `KbdChord` shows the one this platform uses. */}
+        <span aria-hidden="true">
+          <KbdChord keys="Ctrl + Enter" />
+        </span>
         {t('palette.footerHintNewTab')}
       </span>
       <span className="inline-flex items-center gap-1">

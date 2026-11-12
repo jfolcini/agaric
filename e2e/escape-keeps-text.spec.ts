@@ -32,12 +32,12 @@ test.describe('Escape keeps the text (#5160 D17) @editor', () => {
 
     await expect(page.locator('[data-testid="block-editor"]')).toHaveCount(0)
     await expect(row).toHaveClass(/block-selected/)
-    await expect(page.getByTestId('batch-toolbar')).toContainText('1')
+    // One selected block brings no batch bar (#6547).
+    await expect(page.getByTestId('batch-toolbar')).toHaveCount(0)
     await expect(row).toHaveText(EDITED)
 
     await page.keyboard.press('Escape')
     await expect(row).not.toHaveClass(/block-selected/)
-    await expect(page.getByTestId('batch-toolbar')).toHaveCount(0)
 
     await reopenPage(page, PAGE)
     await expect(row).toHaveText(EDITED)

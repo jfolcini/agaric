@@ -15,7 +15,6 @@ import { priorityColor } from '@/lib/priority-color'
 import { isUnfit } from '@/lib/property-fit'
 import { formatRepeatLabel } from '@/lib/repeat-utils'
 import { cn } from '@/lib/utils'
-import { useBlockStore } from '@/stores/blocks'
 
 /**
  * Display label for a priority level: `P{level}`, so a level from before the
@@ -519,28 +518,18 @@ function AttachmentBadge({
  *
  * #1968: the collapse chevron is no longer rendered here — it moved into the
  * leading gutter lane as `BlockCollapseControl`, co-located with the drag
- * handle. This component renders only the task marker (suppressed in
- * multi-select mode by the caller).
+ * handle. This component renders only the task marker, in selection mode too
+ * (#6547): hiding it moved the text left under the user's eyes.
  */
 export const BlockInlineControls = React.memo(
   ({ blockId, todoState, onToggleTodo }: BlockInlineControlsProps): React.ReactElement | null => {
-    // Fix 6 / #994 — when a multi-selection is active the row enters "select"
-    // mode. We suppress ONLY the task checkbox here (it doubles as an action
-    // target that would be ambiguous against the selection-scoped gutter
-    // checkbox); bulk task-state changes go through the batch toolbar / context
-    // menu, which apply to the whole selection.
-    //
-    // #1968: the collapse chevron moved OUT of here into the leading gutter lane
-    // (co-located with the drag handle as `BlockCollapseControl`), so this
-    // component now renders only the task marker.
-    const hasSelection = useBlockStore((s) => s.selectedBlockIds.length > 0)
     const isTouch = useIsTouch()
 
     // Only a task has a checkbox, so a plain line keeps no room for one: a
     // task is set by `/todo`, Ctrl+Enter or the block menu. On touch the empty
     // box stays, as the row gap after it lines a plain line's text up with the
     // heading (`BlockListRenderer`).
-    const task = !hasSelection && todoState ? todoState : null
+    const task = todoState || null
     if (task === null && !isTouch) return null
 
     return (
@@ -551,8 +540,6 @@ export const BlockInlineControls = React.memo(
           'inline-controls flex items-center flex-shrink-0 gap-1 min-h-block-line max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
         )}
       >
-        {/* Fix 6: in multiselect mode the task checkbox is suppressed on every
-          row (only the gutter select checkbox shows). */}
         {task !== null && (
           <TaskMarkerButton blockId={blockId} todoState={task} onToggleTodo={onToggleTodo} />
         )}

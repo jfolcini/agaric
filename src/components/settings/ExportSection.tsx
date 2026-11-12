@@ -8,7 +8,7 @@
 
 import { Download } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -17,11 +17,17 @@ import { SettingRow } from '@/components/ui/setting-row'
 import { downloadBlob, exportAllSpacesAsZip, exportGraphAsZip } from '@/lib/export-graph'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { isAndroid } from '@/lib/platform'
 import { sanitizeSpaceNameForFilename } from '@/lib/vault-import'
 import { useSpaceStore } from '@/stores/space'
 
 export function ExportSection(): React.ReactElement {
   const { t } = useTranslation()
+  // #6538 — the Android WebView handles no `blob:` download, so an export
+  // there would write nothing and still toast success.
+  const saveUnavailable = isAndroid()
+  const saveUnavailableId = useId()
+  const describedBy = saveUnavailable ? saveUnavailableId : undefined
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const [exporting, setExporting] = useState(false)
@@ -117,8 +123,19 @@ export function ExportSection(): React.ReactElement {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {saveUnavailable && (
+          <p id={saveUnavailableId} className="text-sm text-muted-foreground">
+            {t('data.fileSaveUnavailableAndroid')}
+          </p>
+        )}
         <SettingRow label={t('data.exportCurrentSpaceLabel')} description={t('data.exportDesc')}>
-          <Button variant="outline" size="sm" disabled={exporting} onClick={handleExportAll}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={saveUnavailable || exporting}
+            aria-describedby={describedBy}
+            onClick={handleExportAll}
+          >
             <Download />
             {exporting ? t('data.exporting') : t('data.exportButton')}
           </Button>
@@ -130,7 +147,8 @@ export function ExportSection(): React.ReactElement {
           <Button
             variant="outline"
             size="sm"
-            disabled={exportingAllSpaces}
+            disabled={saveUnavailable || exportingAllSpaces}
+            aria-describedby={describedBy}
             onClick={handleExportAllSpaces}
             data-testid="export-all-spaces-button"
           >

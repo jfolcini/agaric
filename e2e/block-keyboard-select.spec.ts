@@ -18,8 +18,8 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  * Selection mechanics (mirrors batch-operations.spec.ts):
  *   - Selected blocks get the `block-selected` utility on
  *     [data-testid="block-static"].
- *   - Batch toolbar (`.batch-toolbar`, testid `batch-toolbar`) shows when
- *     selectedBlockIds.length > 0, with the count.
+ *   - Batch toolbar (`.batch-toolbar`, testid `batch-toolbar`) shows from two
+ *     selected blocks (#6547), with the count.
  *   - Entry into block-select mode: Ctrl+Click a static block selects it
  *     (single selection, no editor focused) — the anchor for Shift+Arrow.
  */
@@ -42,8 +42,7 @@ test.describe('Keyboard block multi-selection (#922) @editor', () => {
     const firstStatic = blocks.nth(0).locator('[data-testid="block-static"]')
     await firstStatic.click({ modifiers: ['Control'] })
     await expect(firstStatic).toHaveClass(/block-selected/)
-    await expect(batchToolbar).toBeVisible()
-    await expect(batchToolbar).toContainText('1')
+    await expect(batchToolbar).toHaveCount(0)
 
     // Press Shift+ArrowDown twice — extend the selection down by two blocks.
     await page.keyboard.press('Shift+ArrowDown')
@@ -72,7 +71,7 @@ test.describe('Keyboard block multi-selection (#922) @editor', () => {
 
     const firstStatic = blocks.nth(0).locator('[data-testid="block-static"]')
     await firstStatic.click({ modifiers: ['Control'] })
-    await expect(batchToolbar).toContainText('1')
+    await expect(firstStatic).toHaveClass(/block-selected/)
 
     // Grow down to three blocks…
     await page.keyboard.press('Shift+ArrowDown')

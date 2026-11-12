@@ -42,7 +42,7 @@ import { parsePayloadObject } from '@/lib/history-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { paginationLimit } from '@/lib/safe-limit'
+import { PAGINATION_MAX, paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
@@ -261,9 +261,13 @@ interface UndoStore {
 
   /**
    * #2901 — toast-Undo for a swipe-delete, pinned to THAT delete op (finding
-   * 42). Moved from `SortableBlock`'s `undoSwipeDelete` so the undo store
-   * owns the depth/redo-anchor invariants in one place instead of a row
-   * component reaching around it with raw write IPC calls.
+   * 42). `blockId` may also be the selection roots of one batch delete
+   * (#6547): their rows are undone in one atomic `undoOps`, and only the
+   * roots, as undoing a root restores the selected blocks under it. A batch
+   * of more blocks than one history page holds can be reported as failed;
+   * Trash still has it. Moved from `SortableBlock`'s `undoSwipeDelete` so
+   * the undo store owns the depth/redo-anchor invariants in one place
+   * instead of a row component reaching around it with raw write IPC calls.
    *
    * The tap on the toast first blurs any dirty roving editor, whose flush
    * lands a fresh `edit_block` op ON TOP of the delete — a positional
@@ -319,7 +323,7 @@ interface UndoStore {
    */
   undoDeleteOf: (
     pageId: string,
-    blockId: string,
+    blockId: string | readonly string[],
     reloadPage: () => void | Promise<void>,
   ) => Promise<void>
 }
@@ -744,9 +748,10 @@ export const useUndoStore = create<UndoStore>((set, get) => {
 
   async function undoDeleteOfImpl(
     pageId: string,
-    blockId: string,
+    blockId: string | readonly string[],
     reloadPage: () => void | Promise<void>,
   ): Promise<void> {
+    const blockIds = typeof blockId === 'string' ? [blockId] : blockId
     try {
       // #5415 — the page is open in the active space; with none known the
       // undo is refused through the catch below.
@@ -758,7 +763,9 @@ export const useUndoStore = create<UndoStore>((set, get) => {
           null,
           requireActiveScope(spaceId),
           null,
-          paginationLimit(SWIPE_UNDO_HISTORY_SCAN),
+          // A batch appends one row per selected block, the roots' among them
+          // in no set order, so it scans the widest page.
+          paginationLimit(typeof blockId === 'string' ? SWIPE_UNDO_HISTORY_SCAN : PAGINATION_MAX),
         ),
       )
       // #4328 — newest-first scan for the block's own `delete_block` row,
@@ -770,13 +777,17 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       // the swipe actually appended. `is_replicated` is the only one of
       // `undo_op`'s three reject rules `HistoryEntry` exposes — see the
       // residual note on `undoDeleteOf`'s doc block.
-      const target = history.items.find(
-        (entry) =>
-          entry.op_type === 'delete_block' &&
-          !entry.is_replicated &&
-          historyEntryBlockId(entry.payload) === blockId,
-      )
-      if (!target) {
+      // Each block's newest such row, kept newest-first as `undoOps` takes them.
+      const unfound = new Set(blockIds)
+      const refs: OpRef[] = []
+      for (const entry of history.items) {
+        if (entry.op_type !== 'delete_block' || entry.is_replicated) continue
+        const id = historyEntryBlockId(entry.payload)
+        if (id !== null && unfound.delete(id)) {
+          refs.push({ device_id: entry.device_id, seq: entry.seq })
+        }
+      }
+      if (unfound.size > 0) {
         logger.warn('UndoStore', 'swipe-delete undo: delete op not found in page history', {
           pageId,
           blockId,
@@ -788,7 +799,11 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       // Ref-addressed: the op-log is keyed on `(device_id, seq)` and
       // `HistoryEntry` already carries both, so the toast reverses the exact
       // row it found rather than the Nth row of a differently-filtered walk.
-      unwrap(await commands.undoOp({ device_id: target.device_id, seq: target.seq }))
+      if (refs.length === 1) {
+        unwrap(await commands.undoOp(refs[0] as OpRef))
+      } else {
+        unwrap(await commands.undoOps(refs))
+      }
 
       // #2901 — this targeted undo bypasses the undo store's normal
       // ref-addressed/positional bookkeeping (it reverts a specific historical
@@ -1031,8 +1046,11 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       }))
     },
 
-    undoDeleteOf: (pageId: string, blockId: string, reloadPage: () => void | Promise<void>) =>
-      undoDeleteOfImpl(pageId, blockId, reloadPage),
+    undoDeleteOf: (
+      pageId: string,
+      blockId: string | readonly string[],
+      reloadPage: () => void | Promise<void>,
+    ) => undoDeleteOfImpl(pageId, blockId, reloadPage),
   }
 })
 

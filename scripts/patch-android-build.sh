@@ -12,6 +12,9 @@
 #   - launcher icons: replace Tauri's generic placeholder with the agaric
 #     mushroom (regenerated from app-icon.json -> public/agaric.svg).
 #
+# It also asserts, failing closed, that the tracked manifest still opts out
+# of Auto Backup and device transfer (#6538).
+#
 # The Tauri Android generated folder (`src-tauri/gen/android/`) is listed
 # in `.gitignore` because Tauri regenerates it on `cargo tauri android init`
 # and on a missing-folder state. That means any manual edits we make to
@@ -102,6 +105,31 @@ rm -f "$WRAPPER.bak"
 echo "distributionSha256Sum=$gradle_sha256" >> "$WRAPPER"
 
 echo "patched $WRAPPER — distributionSha256Sum pinned"
+
+# ── Backup opt-out (#6538) ────────────────────────────────────────────
+# The tracked overrides keep the device identity and the vault out of Auto
+# Backup and device transfer: a restore would bring device-id and
+# sync-endpoint.key back on another phone. Nothing to patch, only to assert,
+# and FAILS CLOSED: an `android init` that replaced the manifest, or an
+# override that was not restored, would ship an APK without the opt-out.
+APP_MAIN="src-tauri/gen/android/app/src/main"
+for needle in 'android:allowBackup="false"' 'android:dataExtractionRules="@xml/data_extraction_rules"'; do
+  if ! grep -qF "$needle" "$APP_MAIN/AndroidManifest.xml"; then
+    echo "error: $APP_MAIN/AndroidManifest.xml lacks $needle (#6538)." >&2
+    echo "  Restore the tracked file: git checkout -- $APP_MAIN/AndroidManifest.xml" >&2
+    exit 1
+  fi
+done
+RULES="$APP_MAIN/res/xml/data_extraction_rules.xml"
+for section in '<cloud-backup>' '<device-transfer>'; do
+  if ! grep -qF "$section" "$RULES"; then
+    echo "error: $RULES lacks $section (#6538)." >&2
+    echo "  Restore the tracked file: git checkout -- $RULES" >&2
+    exit 1
+  fi
+done
+
+echo "checked $APP_MAIN — backup and device transfer opted out"
 
 # ── Launcher icons ────────────────────────────────────────────────────
 # `cargo tauri android init` emits Tauri's generic placeholder launcher

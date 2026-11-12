@@ -1215,9 +1215,10 @@ fn build_materializer(
 /// per-space bootstrap. Returns the [`recovery::RecoveryReport`] so the caller
 /// can refresh caches for recovered drafts later.
 ///
-/// `bootstrap_spaces` is boot-fatal (the "every page belongs to a space"
-/// invariant cannot be honoured without it); every other step here is
-/// best-effort and logs on failure.
+/// The peer-epoch load, the snapshot rehydrate (#6525), `recover_at_boot` and
+/// `bootstrap_spaces` (the "every page belongs to a space" invariant cannot be
+/// honoured without it) are boot-fatal; every other step here is best-effort
+/// and logs on failure.
 fn recover_and_bootstrap(
     pools: &db::DbPools,
     device_id: &str,
@@ -1271,12 +1272,15 @@ fn recover_and_bootstrap(
         }
     }
     let started = std::time::Instant::now();
+    // #6525: boot-fatal, like the epoch load above. Going on without a space's
+    // engine would let the first save overwrite the snapshot this build cannot
+    // read, and the periodic save is spawned only after this returns.
     let rehydrated_spaces =
         tauri::async_runtime::block_on(agaric_engine::loro::snapshot::rehydrate_registry(
             &pools.write,
             &loro_state.registry,
             device_id,
-        ));
+        ))?;
     tracing::info!(
         rehydrated_spaces,
         elapsed_ms = started.elapsed().as_millis(),
@@ -3019,6 +3023,20 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The body of the dialog a failed [`boot`] shows.
+fn boot_failure_dialog_body(error: &dyn std::fmt::Display) -> String {
+    format!(
+        "Agaric could not open your vault and had to close.\n\n{error}\n\n\
+         This can happen after a failed or downgraded update, where an \
+         older version cannot open a vault that a newer one upgraded, \
+         or if the vault database is damaged. A pre-migration backup of \
+         the database is kept next to it when possible, so your data \
+         should be recoverable.\n\n\
+         Details are in the log files under your app data directory \
+         (the \"logs\" folder, agaric.log)."
+    )
+}
+
 /// The Tauri `setup` hook: run [`boot`] and turn any failure into a native
 /// dialog + exit.
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -3033,19 +3051,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         tracing::error!(error = %e, "fatal error during application setup");
         // #2919 — a downgrade / failed update, a corrupt vault database,
         // or a failed reprojection reaches here. Show it, then exit.
-        show_fatal_error_dialog(
-            "Agaric failed to start",
-            &format!(
-                "Agaric could not open your vault and had to close.\n\n{e}\n\n\
-                 This can happen after a failed or downgraded update, where an \
-                 older version cannot open a vault that a newer one upgraded, \
-                 or if the vault database is damaged. A pre-migration backup of \
-                 the database is kept next to it when possible, so your data \
-                 should be recoverable.\n\n\
-                 Details are in the log files under your app data directory \
-                 (the \"logs\" folder, agaric.log)."
-            ),
-        );
+        show_fatal_error_dialog("Agaric failed to start", &boot_failure_dialog_body(&e));
         std::process::exit(1);
     }
 
@@ -3680,6 +3686,98 @@ mod boot_path_tests {
         assert!(
             !dir.path().join("mcp-rw-enabled").exists(),
             "the legacy marker is replaced, not kept beside the new one"
+        );
+    }
+
+    const SPACE_6525: &str = "01J0SPACE6525000000000000A";
+
+    /// `(snapshot, updated_at, op_count, applied_through_seq)`.
+    type SnapshotRow = (Vec<u8>, i64, i64, i64);
+
+    async fn snapshot_row(pool: &sqlx::SqlitePool) -> SnapshotRow {
+        sqlx::query_as(
+            "SELECT snapshot, updated_at, op_count, applied_through_seq \
+             FROM loro_doc_state WHERE space_id = ?",
+        )
+        .bind(SPACE_6525)
+        .fetch_one(pool)
+        .await
+        .expect("the seeded loro_doc_state row")
+    }
+
+    /// Boot phases 4 and 5 over a vault whose one `loro_doc_state` row holds
+    /// `snapshot`: the dialog body a failed boot shows (`None` when boot went
+    /// on), and the row before and after.
+    fn boot_over_snapshot(snapshot: Vec<u8>) -> (Option<String>, SnapshotRow, SnapshotRow) {
+        let dir = tempfile::tempdir().expect("throwaway app-data dir");
+        let pools =
+            tauri::async_runtime::block_on(crate::db::init_pools(&dir.path().join("notes.db")))
+                .expect("migrated pools");
+        let before = tauri::async_runtime::block_on(async {
+            sqlx::query(
+                "INSERT INTO loro_doc_state \
+                 (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+                 VALUES (?, ?, 1767225600000, 0, 41)",
+            )
+            .bind(SPACE_6525)
+            .bind(snapshot)
+            .execute(&pools.write)
+            .await
+            .expect("seed the row");
+            snapshot_row(&pools.write).await
+        });
+        let (_lifecycle, materializer) = super::build_materializer(&pools, dir.path());
+        let failure = super::recover_and_bootstrap(&pools, "dev-6525", &materializer)
+            .err()
+            .map(|e| super::boot_failure_dialog_body(&e));
+        let after = tauri::async_runtime::block_on(snapshot_row(&pools.write));
+        (failure, before, after)
+    }
+
+    /// An older build that opened this vault used to skip the snapshot it
+    /// cannot read, and its next save replaced it with a near-empty one
+    /// (#6525). Boot stops instead, names the fix, and leaves the row alone.
+    #[test]
+    fn boot_stops_on_a_snapshot_from_a_newer_build_and_keeps_it_6525() {
+        use agaric_engine::loro::engine::{ENGINE_FORMAT_VERSION, LoroEngine};
+        let mut engine = LoroEngine::with_peer_id("dev-6525").expect("engine");
+        engine
+            .apply_create_block("BLOCK_6525", "content", "written by a newer build", None, 0)
+            .expect("create");
+        let newer = engine
+            .export_snapshot_as_format(i64::from(ENGINE_FORMAT_VERSION) + 1)
+            .expect("export");
+
+        let (failure, before, after) = boot_over_snapshot(newer);
+
+        let dialog = failure.expect("boot must fail on a snapshot from a newer build");
+        assert!(
+            dialog.contains("This vault was last opened by a newer version of Agaric")
+                && dialog.contains("Install that newer version to open it."),
+            "the dialog names the cause and the fix: {dialog}"
+        );
+        assert_eq!(
+            after, before,
+            "the refused snapshot row is left byte-identical"
+        );
+    }
+
+    /// The other arm: bytes that are no snapshot at all also stop boot
+    /// (decided on #6525: no rebuild from the op log).
+    #[test]
+    fn boot_stops_on_an_unreadable_snapshot_and_keeps_it_6525() {
+        let (failure, before, after) = boot_over_snapshot(b"not a loro snapshot".to_vec());
+
+        let dialog = failure.expect("boot must fail on an unreadable snapshot");
+        assert!(
+            dialog.contains(&format!(
+                "The saved state of space {SPACE_6525} cannot be read"
+            )),
+            "the dialog names the unreadable space: {dialog}"
+        );
+        assert_eq!(
+            after, before,
+            "the unreadable snapshot row is left byte-identical"
         );
     }
 }

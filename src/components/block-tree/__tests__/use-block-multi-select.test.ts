@@ -39,11 +39,13 @@ const originalOnNewAction = useUndoStore.getState().onNewAction
 // name-cache fan-out `performPageUndo` runs AFTER it settles). Restored here
 // alongside `onNewAction` so a stub can never leak into a later file.
 const originalUndo = useUndoStore.getState().undo
+const originalUndoDeleteOf = useUndoStore.getState().undoDeleteOf
 afterEach(() => {
   useUndoStore.setState({
     ...useUndoStore.getState(),
     onNewAction: originalOnNewAction,
     undo: originalUndo,
+    undoDeleteOf: originalUndoDeleteOf,
     pages: new Map(),
   })
 })
@@ -400,9 +402,45 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
       await result.current.handleBatchDelete()
     })
 
-    // C4 (#217): batch delete is reversible via the page op-log, so the
-    // toast names the Ctrl+Z escape hatch instead of the bare count.
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('blockTree.deletedMessageUndo')
+    // #6547: the toast carries the Undo, as a single block's delete does.
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+      'blockTree.deletedMessageUndo',
+      expect.objectContaining({ action: expect.objectContaining({ label: 'action.undo' }) }),
+    )
+  })
+
+  // #6547 — undoing a selected child as well as its selected parent would fail
+  // the whole atomic undo, so the Undo hands the store the selection roots.
+  it("the toast's Undo takes back the selection roots' deletes and reloads the page", async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'P1', depth: 0 }),
+        makeBlock({ id: 'P1_C', parent_id: 'P1', depth: 1 }),
+        makeBlock({ id: 'P2', depth: 0 }),
+      ],
+    })
+    const undoDeleteOf = vi.fn().mockResolvedValue(undefined)
+    useUndoStore.setState({ undoDeleteOf })
+    const load = vi.spyOn(pageStore.getState(), 'load').mockResolvedValue(undefined)
+    const params = makeDefaultParams({ selectedBlockIds: ['P1', 'P1_C', 'P2'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+    const opts = vi.mocked(toast.success).mock.calls[0]?.[1] as unknown as {
+      action: { onClick: () => void }
+    }
+    opts.action.onClick()
+
+    expect(undoDeleteOf).toHaveBeenCalledExactlyOnceWith(
+      'PAGE_1',
+      ['P1', 'P2'],
+      expect.any(Function),
+    )
+    const [, , reloadPage] = undoDeleteOf.mock.calls[0] as [string, string[], () => Promise<void>]
+    await reloadPage()
+    expect(load).toHaveBeenCalledTimes(1)
   })
 
   // #2653 — the backend recursive CTE soft-deletes every selected root AND its

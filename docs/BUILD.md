@@ -305,6 +305,8 @@ node scripts/check-android-so-alignment.mjs <app.apk|lib.so>   # 0 clean / 2 fin
 
 The guard also checks the second half of the requirement on APKs: a library the archive **stores** uncompressed is mmap'd in place, so its payload must begin on a 16 KB boundary too. That is zipalign's job — `zipalign -P 16`, not `-p`, which is documented as 4 KB and cannot be combined with `-P`. Both Android CI jobs run the guard, and `release.yml` runs it again on the signed asset.
 
+**Android backup opt-out (#6538).** The tracked manifest keeps the app data, with the device identity, out of Auto Backup and device transfer, and `scripts/patch-android-build.sh` fails the build if the override is lost. On a release APK, `aapt2 dump xmltree --file AndroidManifest.xml <app.apk>` must show `allowBackup` false and `dataExtractionRules` on the `application` element.
+
 ## Releasing
 
 One command, from a clean `main`. First burn down, in an ordinary PR, every kill-date marker at or below the new version: the `remove-after-markers` hook fails the bump commit itself and names each one.
@@ -442,7 +444,7 @@ Run after touching any `#[tauri::command]` signature or any `specta::Type` deriv
 ## Troubleshooting
 
 - **Android: stale database crashes on launch.** Wipe and re-install: `adb shell pm clear com.agaric.app`.
-- **Android: release APK won't install.** Likely a signing mismatch — uninstall the previous build first (signatures from different keystores conflict).
+- **Android: release APK won't install.** Likely a signing mismatch (signatures from different keystores conflict). Sync the phone with a computer first: uninstalling deletes the app-private `notes.db`, and the manifest keeps it out of Auto Backup and device transfer (#6538). Then uninstall the previous build, install, and pair again.
 - **Rust compilation errors after SQL changes.** Run `just gen-sqlx` and commit the cache.
 - **TypeScript errors after Rust type changes.** Run `just gen-bindings` and commit `src/lib/bindings.ts`.
 - **WebView not found (Linux).** `libwebkit2gtk-4.1-dev` must be installed; older `4.0` won't work. Missing WebKit/GTK development headers block compiling and testing the Rust workspace, not only launching the Tauri app. On a disposable Debian/Ubuntu VM, run `bash scripts/setup.sh --install-system-deps`; local setup intentionally leaves privileged package installation to you.

@@ -8,7 +8,6 @@
  */
 export type { ShortcutBinding } from '@/lib/keyboard-config/catalog'
 export { DEFAULT_SHORTCUTS } from '@/lib/keyboard-config/catalog'
-export { formatChordTokens } from '@/lib/keyboard-config/format-chord'
 export {
   headingChordLevel,
   isEditableTarget,

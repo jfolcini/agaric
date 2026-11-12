@@ -178,12 +178,9 @@ export const block: Record<string, string> = {
   'blockTree.updateFailedMessage': '{{failCount}} of {{totalCount}} failed to update',
   'blockTree.setStateMessage': 'Set {{successCount}} block(s) to {{state}}',
   'blockTree.deleteFailedMessage': '{{failCount}} of {{totalCount}} failed to delete',
-  // C4 (#217): the batch delete is reversible via the page-level op-log
-  // (delete_blocks_by_ids appends one DeleteBlock op per root that
-  // undo_page_op replays). Spell out the Ctrl+Z escape hatch in the toast
-  // so the destructive action reads as recoverable.
-  'blockTree.deletedMessageUndo_one': 'Deleted {{count}} block — Ctrl+Z to undo',
-  'blockTree.deletedMessageUndo_other': 'Deleted {{count}} blocks — Ctrl+Z to undo',
+  // The toast carries its own Undo action (#6547); Ctrl+Z does not reach it in the journal.
+  'blockTree.deletedMessageUndo_one': 'Deleted {{count}} block',
+  'blockTree.deletedMessageUndo_other': 'Deleted {{count}} blocks',
   'blockTree.setTaskStateFailed': 'Failed to set task state',
   'blockTree.setListStyleFailed': 'Failed to set list style',
   'blockTree.clearListStyleFailed': 'Failed to clear list style',

@@ -64,10 +64,12 @@ describe('buildActionMenuActions', () => {
     expect(buildActionMenuActions('recent', false, t)[0]?.label).toBe('palette.actionOpen')
   })
 
-  it('carries the Enter / ⌘Enter hint chips on open / new-tab', () => {
+  // The hint is a catalog-style chord; `PaletteActionMenu` renders `Ctrl` as
+  // the platform mod key (#6548), so the per-platform output is pinned there.
+  it('carries the Enter / Ctrl+Enter hint chords on open / new-tab', () => {
     const [open, newTab] = buildActionMenuActions('page', false, t)
     expect(open?.hint).toBe('↵')
-    expect(newTab?.hint).toBe('⌘↵')
+    expect(newTab?.hint).toBe('Ctrl + Enter')
   })
 
   it('the bookmark label is locale-keyed and flips with the flag', () => {

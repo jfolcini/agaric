@@ -22,8 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { formatChordTokens, getShortcutKeys } from '@/lib/keyboard-config'
-import { isMac } from '@/lib/platform'
+import { getShortcutKeys } from '@/lib/keyboard-config'
 import { accentVar } from '@/lib/space-accent'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
@@ -57,13 +56,9 @@ const CREATE_SENTINEL = '__create__'
  */
 const MAX_HOTKEY_SPACES = 9
 
-/**
- * The hint chip for the Nth space's `switchSpaceN` binding: glyphs on macOS
- * (`⌥1`), the spelled-out chord elsewhere (`Alt+1`).
- */
+/** The hint chip for the Nth space's `switchSpaceN` binding (`Alt+1`). */
 function spaceHotkeyHint(index: number): string {
-  const keys = getShortcutKeys(`switchSpace${index + 1}`)
-  return isMac() ? formatChordTokens(keys).join('') : keys.replaceAll(' + ', '+')
+  return getShortcutKeys(`switchSpace${index + 1}`).replaceAll(' + ', '+')
 }
 
 interface SpaceSwitcherProps {
@@ -96,7 +91,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
   return (
     <Select value={currentSpaceId ?? ''} onValueChange={handleValueChange}>
       {/*
-       * Surface the `Alt+1..9` / `⌥1..9` space-switching
+       * Surface the `Alt+1..9` space-switching
        * shortcuts via a tooltip on the trigger so users discover
        * them without opening the `?` keyboard help dialog. The
        * tooltip wraps a `<span>` rather than the SelectTrigger
@@ -155,7 +150,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
         {/*
          * Stack the existing shortcut hint above a list of
          * the first five space → digit mappings so the user can see
-         * what each `Alt+1..5` / `⌥1..5` chord switches to without
+         * what each `Alt+1..5` chord switches to without
          * re-opening the dropdown. The dropdown rows still carry the
          * digit-hint chip via `SelectItem`'s `endContent` slot — that
          * Is contribution and is kept untouched.
@@ -179,8 +174,8 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
             endContent={
               idx < MAX_HOTKEY_SPACES ? (
                 /*
-                 * Right-aligned digit-hint chip (`Alt+1` /
-                 * `⌥1`) for the first nine spaces. Rendered via
+                 * Right-aligned digit-hint chip (`Alt+1`) for the
+                 * first nine spaces. Rendered via
                  * `SelectItem`'s `endContent` slot so it stays out of
                  * `<SelectPrimitive.ItemText>` and therefore out of
                  * Radix's auto-mirror into the trigger label.
