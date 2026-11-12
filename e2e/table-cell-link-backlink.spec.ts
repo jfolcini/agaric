@@ -34,7 +34,17 @@ test.describe('A link in a table cell @editor @pages', () => {
     await expect(page.getByRole('grid', { name: 'Insert table' })).toBeFocused()
     await page.keyboard.press('Enter')
 
-    // The caret sits in the first header cell of the new table.
+    // The caret reaches the first header cell a moment after the grid closes; a key sent
+    // before that is lost.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const node = window.getSelection()?.anchorNode
+          const el = node instanceof Element ? node : node?.parentElement
+          return el?.closest('[data-testid="block-editor"] th') != null
+        }),
+      )
+      .toBe(true)
     await page.keyboard.type('[[Meetings|the meetings]]', { delay: 30 })
     await expect(
       page.locator(
