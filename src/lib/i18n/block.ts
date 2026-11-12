@@ -182,8 +182,8 @@ export const block: Record<string, string> = {
   // (delete_blocks_by_ids appends one DeleteBlock op per root that
   // undo_page_op replays). Spell out the Ctrl+Z escape hatch in the toast
   // so the destructive action reads as recoverable.
-  'blockTree.deletedMessageUndo_one': 'Deleted {{count}} block — Ctrl+Z to undo',
-  'blockTree.deletedMessageUndo_other': 'Deleted {{count}} blocks — Ctrl+Z to undo',
+  'blockTree.deletedMessageUndo_one': 'Deleted {{count}} block',
+  'blockTree.deletedMessageUndo_other': 'Deleted {{count}} blocks',
   'blockTree.setTaskStateFailed': 'Failed to set task state',
   'blockTree.setListStyleFailed': 'Failed to set list style',
   'blockTree.clearListStyleFailed': 'Failed to clear list style',

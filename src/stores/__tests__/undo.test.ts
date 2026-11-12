@@ -2125,6 +2125,65 @@ describe('useUndoStore', () => {
         err,
       )
     })
+
+    // #6547 — the batch bar's Undo: the roots of one batch delete.
+    describe('a batch delete', () => {
+      const ROOT_A = { device_id: 'dev-1', seq: 6 }
+      const ROOT_B = { device_id: 'dev-1', seq: 7 }
+
+      it("undoes every root's own delete in one undoOps, newest first", async () => {
+        mockedListPageHistory.mockResolvedValue(
+          ok(
+            historyPage([
+              historyEntry('delete_block', 'ROOT_B', ROOT_B),
+              historyEntry('delete_block', 'ROOT_A', ROOT_A),
+              historyEntry('delete_block', 'ROOT_A', { device_id: 'dev-1', seq: 2 }),
+            ]),
+          ),
+        )
+        mockedUndoOps.mockResolvedValue(
+          ok([makeUndoResult({ seq: 7 }), makeUndoResult({ seq: 6 })]),
+        )
+
+        await useUndoStore.getState().undoDeleteOf('page1', ['ROOT_A', 'ROOT_B'], mockLoad)
+
+        expect(mockedUndoOps).toHaveBeenCalledExactlyOnceWith([ROOT_B, ROOT_A])
+        expect(mockedUndoOp).not.toHaveBeenCalled()
+        expect(mockedToastError).not.toHaveBeenCalled()
+        expect(mockLoad).toHaveBeenCalledTimes(1)
+      })
+
+      it('undoes nothing when one root has no delete row in the scan', async () => {
+        mockedListPageHistory.mockResolvedValue(
+          ok(historyPage([historyEntry('delete_block', 'ROOT_A', ROOT_A)])),
+        )
+
+        await useUndoStore.getState().undoDeleteOf('page1', ['ROOT_A', 'ROOT_B'], mockLoad)
+
+        expect(mockedUndoOps).not.toHaveBeenCalled()
+        expect(mockedUndoOp).not.toHaveBeenCalled()
+        expect(mockedToastError).toHaveBeenCalledTimes(1)
+        expect(mockLoad).not.toHaveBeenCalled()
+      })
+
+      it('surfaces an error and reloads nothing when undoOps rejects', async () => {
+        mockedListPageHistory.mockResolvedValue(
+          ok(
+            historyPage([
+              historyEntry('delete_block', 'ROOT_B', ROOT_B),
+              historyEntry('delete_block', 'ROOT_A', ROOT_A),
+            ]),
+          ),
+        )
+        mockedUndoOps.mockRejectedValue(new Error('already reversed'))
+
+        await useUndoStore.getState().undoDeleteOf('page1', ['ROOT_A', 'ROOT_B'], mockLoad)
+
+        expect(mockedToastError).toHaveBeenCalledTimes(1)
+        expect(mockedToastDefault).not.toHaveBeenCalled()
+        expect(mockLoad).not.toHaveBeenCalled()
+      })
+    })
   })
 })
 

@@ -1,7 +1,9 @@
 /**
  * BlockBatchActionMenu — batch operations toolbar for multi-selected blocks.
  *
- * Renders a sticky toolbar when blocks are selected with:
+ * Renders a sticky toolbar from two selected blocks (#6547: the one block
+ * Escape selects acts through its own menu and keys, and a bar for it shifted
+ * the page) with:
  *   - Count of selected blocks
  *   - TODO state buttons (Clear / TODO / DOING / DONE)
  *   - Delete button with confirmation dialog
@@ -18,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
+import { useBlockStore } from '@/stores/blocks'
 
 interface BlockBatchActionMenuProps {
   selectedBlockIds: string[]
@@ -47,7 +50,10 @@ export function BlockBatchActionMenu({
   onClearSelection,
 }: BlockBatchActionMenuProps): React.ReactElement | null {
   const { t } = useTranslation()
-  if (selectedBlockIds.length === 0) return null
+  // The whole selection, not this tree's share: one block selected in each of
+  // two journal days is a selection of two, and each day's bar acts on its own.
+  const selectionSize = useBlockStore((s) => s.selectedBlockIds.length)
+  if (selectedBlockIds.length === 0 || selectionSize < 2) return null
 
   return (
     <>
