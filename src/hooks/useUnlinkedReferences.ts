@@ -195,12 +195,10 @@ export function useUnlinkedReferences(
         // the client's `staleTime: Infinity` (no time-based refetch) but force a
         // fresh fetch whenever the panel mounts.
         refetchOnMount: 'always',
-        // #3316 item 2: override the client's `gcTime: Infinity` for THIS hook,
-        // matching `useBacklinkGroups.ts` and `useSearchResults.ts`. The module
-        // header used to argue no bound was needed because there is no
-        // `invalidationKey` in the key — but `pageId` (and now `groupLimit`) are
-        // in the key too, so a session that visits N pages mints N entries that
-        // an infinite `gcTime` would never collect. `staleTime: Infinity` is
+        // #3316 item 2: a finite `gcTime` for THIS hook, matching
+        // `useBacklinkGroups.ts` and `useSearchResults.ts`. `pageId` and
+        // `groupLimit` are in the key, so a session that visits N pages mints N
+        // entries that an infinite `gcTime` would never collect. `staleTime: Infinity` is
         // still inherited, so this changes nothing about refetch timing: only
         // the eviction of superseded, observer-less entries.
         gcTime: 5 * 60 * 1000,

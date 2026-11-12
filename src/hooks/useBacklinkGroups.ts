@@ -166,8 +166,8 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
         // the client's `staleTime: Infinity` (no time-based refetch) but force a
         // fresh fetch whenever the panel mounts.
         refetchOnMount: 'always',
-        // Override the client's `gcTime: Infinity` for THIS hook, as
-        // `useUnlinkedReferences` does: `targetId`, `filters`, `sort` and `kind`
+        // A finite `gcTime` for THIS hook, as `useUnlinkedReferences` sets:
+        // `targetId`, `filters`, `sort` and `kind`
         // are in the key, so a session that visits N pages or tries N filter
         // combinations leaves N observer-less entries an infinite gcTime would
         // never collect. `staleTime: Infinity` is still inherited, so refetch

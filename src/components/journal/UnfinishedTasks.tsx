@@ -323,8 +323,8 @@ export function UnfinishedTasks({
       placeholderData: keepPreviousData,
       // Bound the cache: the key carries `todayStr`, which advances every
       // calendar day, so a session left open across many days would mint a new
-      // (superseded, observer-less) entry per day and never collect it under the
-      // client's `gcTime: Infinity`. A finite `gcTime` collects the prior day's
+      // (superseded, observer-less) entry per day and never collect it under an
+      // infinite `gcTime`. A finite `gcTime` collects the prior day's
       // entry shortly after the rollover (same value/rationale as `DonePanel`).
       gcTime: 5 * 60 * 1000,
     },

@@ -23,9 +23,7 @@
  * entry instead of being grafted onto the new result set. The client is passed
  * EXPLICITLY as the 2nd arg so no `QueryClientProvider` ancestor is required
  * (bare `renderHook` / `render` tests need no wrapper). `listPagesWithMetadata`
- * takes no AbortSignal, so — as before migration — none is forwarded. There is
- * no `useBlockPropertyEvents` `invalidationKey` in the key, so no monotonic-key
- * growth and no bounded `gcTime` is needed (inherits the client's Infinity).
+ * takes no AbortSignal, so — as before migration — none is forwarded.
  */
 
 import { type InfiniteData, keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'

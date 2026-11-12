@@ -40,9 +40,10 @@ export const queryClient = new QueryClient({
       // `block:properties-changed` events, not the clock. Favour cache hits +
       // explicit event invalidation over time-based refetch.
       staleTime: Number.POSITIVE_INFINITY,
-      // Session-lifetime cache, matching the module-level `Map`s this client
-      // replaces (they never GC'd within a session).
-      gcTime: Number.POSITIVE_INFINITY,
+      // Keys carry typed text (queries, searches, filter sets), so an entry
+      // nothing observes must go. The two property caches keep theirs for the
+      // session (`setQueryDefaults` in each module).
+      gcTime: 5 * 60 * 1000,
       // There is no server: nothing to refetch on focus/reconnect.
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,

@@ -380,7 +380,7 @@ export function TagFilterPanel(): React.ReactElement {
   // wrapper). The key carries the live filter inputs (space, tag expression, query
   // params), so it churns on every filter edit — each tag add/remove, each and/or/not
   // mode toggle, each prefix-pill change, and each committed composer edit mints a
-  // distinct key. Under the client's `gcTime: Infinity` every superseded, now
+  // distinct key. Under an infinite `gcTime` every superseded, now
   // observer-less entry would retain its full page set for the whole session and
   // accumulate unbounded across an exploratory tag session. Bound the churn with a
   // finite `gcTime` (same rationale/value as the merged `DonePanel`, whose monotonic

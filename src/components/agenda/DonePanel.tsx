@@ -132,8 +132,8 @@ export function DonePanel({
       // Mirrors the sibling `useAdvancedQuery` migration.
       placeholderData: keepPreviousData,
       // `invalidationKey` mints a new key on every block-property change; under
-      // the client's `gcTime: Infinity` those superseded, observer-less entries
-      // would accumulate unbounded over a long session. Bound the churn (mirrors
+      // an infinite `gcTime` those superseded, observer-less entries would
+      // accumulate unbounded over a long session. Bound the churn (mirrors
       // `useBacklinkGroups`): the active key keeps an observer while mounted and
       // is never collected; each prior key is evicted 5 min after going inactive.
       gcTime: 5 * 60 * 1000,
