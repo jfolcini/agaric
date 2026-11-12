@@ -683,8 +683,9 @@ pub(crate) fn op_created_at_ms(row: &sqlx::sqlite::SqliteRow, fallback_ms: i64) 
 ///
 /// This is the signal the op-log rebuild ([`recover_blocks_from_op_log`]) uses
 /// to decide whether it is about to silently drop remote-authored content. The
-/// op_log is strictly device-local (remote ops never land in it post-#490-M1),
-/// so a full-log replay reconstructs **only** locally-authored blocks. A
+/// op_log holds a foreign device's ops only as audit records
+/// (`is_replicated = 1`) that the replay skips, so a full-log replay
+/// reconstructs **only** locally-authored blocks. A
 /// non-empty `loro_doc_state` means the device has synced: the engine holds the
 /// complete convergent state — including every remote-authored block, property,
 /// and tag — that this rebuild cannot see. The count is emitted as a loud log so
@@ -1195,8 +1196,9 @@ async fn rebuild_caches_after_engine_reproject(pool: &SqlitePool) {
 
 /// #2504: engine-first disaster rebuild of the SQL primary state.
 ///
-/// [`recover_blocks_from_op_log`] rebuilds `blocks` by replaying the strictly
-/// device-local op_log (post-#490-M1 remote ops never land in it), so on a
+/// [`recover_blocks_from_op_log`] rebuilds `blocks` by replaying only the
+/// locally-authored op_log rows (a foreign device's are `is_replicated = 1`
+/// audit records the replay skips), so on a
 /// device that has ever synced it reconstructs **only locally-authored content**
 /// and silently drops every remote-authored block, property, and tag. The
 /// complete convergent state lives instead in the per-space Loro engine
@@ -6840,7 +6842,7 @@ mod tests {
     }
 
     /// #2504 (pins the disaster-path gap): [`recover_blocks_from_op_log`]
-    /// rebuilds from the strictly device-local op_log, so it reconstructs ONLY
+    /// replays only the locally-authored op_log rows, so it reconstructs ONLY
     /// locally-authored content. Remote-authored content lives solely in the
     /// per-space Loro engine snapshots (`loro_doc_state`) and is NOT reprojected
     /// by this replay — it is silently dropped on recovery.
@@ -6859,8 +6861,8 @@ mod tests {
 
         // A synced device: the engine holds convergent state (stands in for
         // remote-authored content) in `loro_doc_state`, but the op_log carries
-        // ONLY the block this device authored locally — remote ops never land in
-        // the op_log (#490-M1), so there is deliberately no op for "remote-b".
+        // ONLY the block this device authored locally — a remote op is at most an
+        // audit row the replay skips, so there is deliberately no op for "remote-b".
         sqlx::query(
             "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count) \
              VALUES ('space-1', ?, 0, 7)",

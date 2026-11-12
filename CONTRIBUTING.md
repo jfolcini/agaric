@@ -32,7 +32,7 @@ After bootstrap, every `git commit` runs the fast subset (lint + format + static
 
 **Push with `just push` (or [`scripts/push.sh`](scripts/push.sh)), not raw `git push`, for anything that changes `.rs`.** A raw `git push` opens and holds the SSH connection *before* the multi-minute verify runs, so GitHub closes the idle connection and the upload fails (`Connection to github.com closed by remote host`) even though the gate passed in full. The wrapper runs the verifier first, then pushes on a fresh connection (forwarding all `git push` args). For a genuine docs-only fix you can instead skip the gate with `SKIP_CI_VERIFY='<reason ≥8 chars>' git push`.
 
-> **Claude Code on the web / cloud VMs:** bootstrap runs **automatically**. The repo ships a `SessionStart` hook ([`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh)) that runs `scripts/setup.sh --install-system-deps` when `CLAUDE_CODE_REMOTE=true`, so a fresh cloud session lands build- and commit-ready with no manual step. That flag — remote-only, never used by local setup — installs the Linux WebKit/GTK development packages the Rust workspace needs to *compile and test*, not merely to run the app. For the fastest startup you can *also* paste `bash scripts/setup.sh --install-system-deps` into your environment's **Setup script** field in the web UI — that runs once and is filesystem-cached across sessions. (One sandbox caveat: prek's three git-cloned hooks — gitleaks, actionlint, conventional-pre-commit — can't be provisioned when the session's git credential is scoped to a single repo, so they stay unwired locally and run in CI instead. Every other hook works.)
+> **Claude Code on the web / cloud VMs:** bootstrap runs **automatically**. The repo ships a `SessionStart` hook ([`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh)) that runs `scripts/setup.sh --install-system-deps` when `CLAUDE_CODE_REMOTE=true`, so a fresh cloud session lands build- and commit-ready with no manual step. That flag — remote-only, never used by local setup — installs the Linux WebKit/GTK development packages the Rust workspace needs to *compile and test*, not merely to run the app. For the fastest startup you can *also* paste `bash scripts/setup.sh --install-system-deps` into your environment's **Setup script** field in the web UI — that runs once and is filesystem-cached across sessions. (The git hooks are wired in the background once the pre-commit-stage tools are installed; until then commits run no hooks. See [`docs/BUILD.md`](docs/BUILD.md#claude-code-on-the-web).)
 
 If you'd rather wire just the git hooks by hand (e.g. you already have the toolchain): `cargo install --locked prek && prek install` (add `-f` to overwrite stale shims). **If you cannot install prek at all** (e.g. no Rust toolchain): your patch is welcome anyway; CI runs the same gate on the PR.
 
@@ -50,8 +50,6 @@ just                          # list every recipe (alias for `just --list`)
 ```
 
 The hooks shell out to a handful of host-installed binaries (lychee, typos-cli, shellcheck, zizmor, taplo-cli, …). Install them once via [`docs/BUILD.md` → Developer tools (prek hook host-binaries)](docs/BUILD.md#developer-tools-prek-hook-host-binaries) so a local `prek run --all-files` is green; otherwise individual hooks fail with `command not found`.
-
-**If you cannot install prek locally** (e.g., contributor without Rust toolchain): your patch is welcome anyway; CI will run the same gate on the PR. Open the PR and iterate based on CI feedback.
 
 ### Editor setup (VS Code)
 
@@ -77,14 +75,14 @@ so once `uv` is on your `PATH` no extra setup is required. The server must be **
 ```bash
 cargo tauri dev              # Dev mode with hot reload
 npm run test                 # Vitest (frontend)
-npm run typecheck            # TypeScript (all four tsconfig projects) — NOT `npx tsc --noEmit`
+npm run typecheck            # TypeScript (every tsconfig project) — NOT `npx tsc --noEmit`
 cd src-tauri && cargo nextest run --workspace   # Rust tests (bare form is package-scoped only, #3212)
 prek run --all-files         # Full local gate (mirror of CI's `validate` job)
 ```
 
 With the optional [`just`](#optional-just-task-runner) runner installed, the same commands are `just dev`, `just test-fe`, `just typecheck`, `just test-be`, and `just check` (and `just test` runs both test suites plus the Rust doc-tests); run `just --list` for the rest.
 
-**Use `npm run typecheck`, not `npx tsc --noEmit`.** The root `tsconfig.json` is solution-style (`"files": []` + four `references`), and `--noEmit` does not follow project references — only `--build`/`-b` does. So `npx tsc --noEmit` checks an empty program and **always exits 0**, however broken the code is (#3805). `npm run typecheck` is `tsc -b --noEmit`, the same command the pre-commit hook runs, so a local green means the hook will be green too.
+**Use `npm run typecheck`, not `npx tsc --noEmit`.** The root `tsconfig.json` is solution-style (`"files": []` plus `references` to every project), and `--noEmit` does not follow project references — only `--build`/`-b` does. So `npx tsc --noEmit` checks an empty program and **always exits 0**, however broken the code is (#3805). `npm run typecheck` is `tsc -b --noEmit`, the same command the pre-commit hook runs, so a local green means the hook will be green too.
 
 ### Fixing a format check failure
 
@@ -196,4 +194,4 @@ The maintainer uses a PLAN → BUILD → REVIEW → MERGE → COMMIT → LOG pip
 
 ## Asking questions
 
-Open a GitHub Discussion or a draft PR with `[WIP]` in the title. Please do not ping the maintainer privately for code-review questions — keeping them in the open lets future contributors benefit.
+Open a draft PR with `[WIP]` in the title (Discussions are not enabled on this repo). Please do not ping the maintainer privately for code-review questions — keeping them in the open lets future contributors benefit.

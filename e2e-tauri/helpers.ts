@@ -774,7 +774,8 @@ export async function waitForImportResult(summary: string): Promise<void> {
 /**
  * Pick the folder `folder` holding `files` (keyed by their paths inside it) in
  * the Data tab's folder-pick input `inputTestId` and wait until the result
- * region reads `summary`.
+ * region reads `summary`; with `confirm`, first confirm the dialog listing
+ * the pages the import updates with that button (#6277 G5).
  * WebKitWebDriver cannot pick a folder (Send Keys with a directory hands the
  * input the directory itself as one File), so the input's FileList is set in
  * the page, each File carrying the `webkitRelativePath` a folder picker gives.
@@ -784,6 +785,7 @@ export async function importFolder(
   folder: string,
   files: Record<string, Buffer>,
   summary: string,
+  confirm?: string,
 ): Promise<void> {
   await openDataTab()
   await $(`[data-testid="${inputTestId}"]`).waitForExist({ timeout: ACTION_TIMEOUT })
@@ -811,6 +813,7 @@ export async function importFolder(
     inputTestId,
     entries,
   )
+  if (confirm !== undefined) await confirmDialog(confirm)
   await waitForImportResult(summary)
 }
 

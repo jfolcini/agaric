@@ -254,6 +254,34 @@ async fn a_save_from_a_stale_editor_does_not_undo_what_agaric_wrote_since() {
     assert_eq!(fx.contents(&page).await, ["A", "B", "c"]);
 }
 
+/// A stale save that only deletes lines explains itself against both texts:
+/// the older one is still its base, so a block Agaric added since is kept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stale_save_that_only_deletes_lines_keeps_a_block_agaric_added_since() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["a", "b", "c"]).await;
+    fx.tick().await;
+    let opened = fx.read();
+    create_block_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        "content".into(),
+        "d".into(),
+        Some(BlockId::from_trusted(&page)),
+        None,
+    )
+    .await
+    .unwrap();
+    fx.tick().await;
+    assert!(fx.read().contains("\nd"), "{}", fx.read());
+
+    fx.write(opened.replacen("b\n\n", "", 1));
+    fx.settle_file().await;
+
+    assert_eq!(fx.contents(&page).await, ["a", "c", "d"]);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_new_line_is_a_new_block_and_saving_the_file_again_adds_no_twin() {
     let mut fx = Fx::new().await;

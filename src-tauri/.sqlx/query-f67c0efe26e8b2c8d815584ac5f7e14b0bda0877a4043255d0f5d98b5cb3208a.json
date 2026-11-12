@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT a.id AS \"id!\", a.filename AS \"filename!\",\n                  a.mime_type AS \"mime!\", a.content_hash\n           FROM attachments a JOIN blocks b ON b.id = a.block_id\n           WHERE (b.id = ?1 OR b.page_id = ?1) AND a.deleted_at IS NULL\n             AND b.deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "filename!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "filename"
+          }
+        }
+      },
+      {
+        "name": "mime!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "mime_type"
+          }
+        }
+      },
+      {
+        "name": "content_hash",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "content_hash"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "f67c0efe26e8b2c8d815584ac5f7e14b0bda0877a4043255d0f5d98b5cb3208a"
+}

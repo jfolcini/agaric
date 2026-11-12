@@ -369,3 +369,68 @@ async fn a_folder_ref_value_naming_a_later_note_names_its_page() {
     assert_eq!(owner, Some(beta));
     mat.shutdown();
 }
+
+/// #6277 G6 review — two spellings of one later note in a ref value name one
+/// page: the note adopts it, and no empty twin is left for either ref.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_spellings_of_a_later_note_in_ref_values_name_one_page() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "owner".into(),
+        "ref".into(),
+        None,
+    )
+    .await
+    .unwrap();
+    let notes = [
+        (
+            "Alpha.md",
+            "milk\n  owner:: [[Ns/Beta]]\n\neggs\n  owner:: [[ns/beta]]\n",
+        ),
+        ("Ns/Beta.md", "bread\n"),
+    ];
+    let paths: Vec<String> = notes.iter().map(|(path, _)| (*path).to_string()).collect();
+    for (path, md) in notes {
+        import_markdown_with_progress(
+            &pool,
+            DEV,
+            &mat,
+            dir.path(),
+            md.into(),
+            Some(path.into()),
+            TEST_SPACE_ID.into(),
+            ImportDialect::Markdown,
+            Some(Vec::new()),
+            Some(paths.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+    }
+
+    let pages: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'page' AND deleted_at IS NULL \
+         AND lower(content) = 'ns/beta'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pages, ["Ns/Beta"], "one page for the note");
+    let (beta, _) = restored(&pool, "Ns/Beta").await;
+    let owners: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT value_ref FROM block_properties WHERE key = 'owner' ORDER BY block_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(owners, [Some(beta.clone()), Some(beta)]);
+    mat.shutdown();
+}

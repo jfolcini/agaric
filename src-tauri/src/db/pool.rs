@@ -426,7 +426,7 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, agaric_core::error::A
         recover_derived_state_from_op_log(&write_pool, blocks_recovered).await?;
 
     // #2504: engine-first rebuild. The two op-log passes above reconstruct only
-    // device-local content (the op_log is strictly device-local post-#490-M1),
+    // locally-authored content (the replay skips the op_log's `is_replicated = 1` audit records),
     // so on a synced device every remote-authored block/property/tag is missing.
     // Reproject the SQL primary state authoritatively from the per-space Loro
     // engine snapshots (`loro_doc_state` — the complete convergent state), on top

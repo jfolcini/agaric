@@ -270,8 +270,9 @@ pub async fn prepare_outgoing(
 ) -> Result<Option<LoroSyncMessage>, AppError> {
     // #1257 freshness gate. Snapshot the engine-live block id set under
     // the guard, then drop the guard BEFORE the SQL round-trip (the guard
-    // is not `Send` across an `.await`, and the read is a pure snapshot —
-    // the daemon is dormant so nothing mutates the engine concurrently).
+    // is not `Send` across an `.await`, and the read is a pure snapshot — a
+    // local write landing during the SQL round-trip is not seen until the
+    // next export).
     let live_block_ids: Vec<String> = {
         let mut guard = registry.for_space(space_id, device_id)?;
         guard.engine_mut().live_block_ids()?

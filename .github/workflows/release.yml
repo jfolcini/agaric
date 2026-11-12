@@ -2362,8 +2362,8 @@ jobs:
   # `latest.json` manifest the configured updater endpoint serves, then upload
   # it to the draft release. Without this, every installed app's update check
   # 404s on `releases/latest/download/latest.json`. Runs after all four desktop
-  # cells finish; Android is excluded (it updates via the Play Store / APK, not
-  # Tauri's updater).
+  # cells finish; Android is excluded (it updates by installing a newer APK, not
+  # through Tauri's updater).
   generate-latest-json:
     needs: [verify-version, validate, build-and-release]
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' }}
