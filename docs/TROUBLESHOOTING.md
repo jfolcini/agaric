@@ -68,21 +68,20 @@ Pre-push Phase E and CI's sqlx cache check (`scripts/clippy-sqlx-check.sh` in `l
 ### Cause
 
 sqlx verifies queries at compile time against an offline cache (one JSON per
-query). There is one such cache per crate that holds query macros — the root
-`src-tauri/.sqlx/` plus a crate-local cache in each workspace member. A new or
+query) in `src-tauri/.sqlx/`, which every workspace crate resolves from. A new or
 changed query macro has no matching cache entry, so the offline check fails.
 Regenerating needs a live `DATABASE_URL`; the `.env` in `src-tauri/` points it
 at `sqlite:dev.db`.
 
 ### Fix
 
-Regenerate every cache in one step:
+Regenerate the cache:
 
 ```bash
 just gen-sqlx
 ```
 
-Commit the regenerated `.sqlx/` directories alongside the Rust change. If
+Commit the regenerated `src-tauri/.sqlx/` alongside the Rust change. If
 `dev.db` does not exist (see [section 5](#5-devdb-does-not-exist)), create it
 with the canonical script first:
 

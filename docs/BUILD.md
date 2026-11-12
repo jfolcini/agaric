@@ -42,7 +42,7 @@ A few specifics for that environment:
 
 - **Disk.** Every worktree builds its own large `target/`; check `df -h` before a full run, and reclaim with `rm -rf src-tauri/target/debug/incremental` or by deleting finished worktrees' `target/`. The dev profile's `split-debuginfo = "unpacked"` (`src-tauri/Cargo.toml`) leaves debug info in per-object `*.o` / `*.dwo` files under `src-tauri/target/debug/deps`, and stale ones pile up across builds until they fill most of the disk allowance; between cargo runs, `find src-tauri/target/debug/deps -maxdepth 1 -type f \( -name '*.o' -o -name '*.dwo' \) -mmin +30 -delete` reclaims them safely (binaries read them only for debug symbols). `CARGO_PROFILE_DEV_DEBUG=0` (test builds inherit it) shrinks the tree; set it for the whole session, because toggling it rebuilds everything. "linking with `cc` failed" mid-build usually means ENOSPC, not a broken toolchain.
 - **Never share a target dir between worktrees**, through `CARGO_TARGET_DIR` or a symlinked `target`, not even one build at a time. Workspace crates get the same artifact names in every checkout, so one tree takes another's artifacts as fresh and builds or tests the wrong source. Recovery: `cargo clean -p` every workspace member in the shared dir, and re-run every gate that went through it.
-- **Memory.** One cargo process at a time ([AGENTS.md § Pre-commit & CI](../AGENTS.md#pre-commit--ci)). A killed `just gen-sqlx` can leave `.sqlx/` entries deleted: `git checkout -- src-tauri/.sqlx src-tauri/agaric-store/.sqlx src-tauri/agaric-engine/.sqlx src-tauri/agaric-sync/.sqlx`, then re-run it.
+- **Memory.** One cargo process at a time ([AGENTS.md § Pre-commit & CI](../AGENTS.md#pre-commit--ci)). A killed `just gen-sqlx` can leave `.sqlx/` entries deleted: `git checkout -- src-tauri/.sqlx`, then re-run it.
 
 ### Hook toolchain
 
@@ -262,7 +262,7 @@ Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — 
 | C | `vitest related` (`test-related-ts.sh --range`) | Push range |
 | D | `cargo nextest related` (`test-related-rust.sh --range`) | Push range; only if Rust changed |
 | D2 | `cargo test --doc --workspace` | Only if Rust changed |
-| E | `cargo sqlx prepare --check`, all 4 lanes (root + `agaric-store`/`agaric-engine`/`agaric-sync`) | Only if Rust changed |
+| E | `cargo sqlx prepare --workspace --check` against `src-tauri/.sqlx` | Only if Rust changed |
 | F | `agaric-mcp` release build + MCP UDS smoke + externalBin verify | Only if MCP paths changed |
 | G | `cargo audit` + `npm audit signatures` (warn-only here; both block in CI) | Always |
 
@@ -429,7 +429,7 @@ There is **no Play Store upload step** in the release pipeline. The `android-bui
 just gen-sqlx
 ```
 
-Run after touching any `sqlx::query!` / `sqlx::query_as!` call. Commit the regenerated `.sqlx/` caches alongside the Rust changes; a stale cache is caught by pre-push Phase E and by CI's `lint` job (`scripts/clippy-sqlx-check.sh`, root plus each member crate that holds query macros). `just gen-sqlx` regenerates all of them: first the workspace-wide `cargo sqlx prepare --workspace -- --workspace --tests` at the root (the second `--workspace`, passed to *cargo* after the `--`, is what captures leaf crates nothing depends on — a bare `cargo sqlx prepare` silently drops them and reddens CI's root-cache check), then one crate-local pass per member crate against a throwaway migrated DB.
+Run after touching any `sqlx::query!` / `sqlx::query_as!` call. Commit the regenerated `src-tauri/.sqlx` cache alongside the Rust changes; it is the only one, because sqlx's offline lookup falls back to the workspace root's `.sqlx` for every member crate and for the separate `src-tauri/fuzz` workspace. A stale cache is caught by pre-push Phase E and by CI's `lint` job (`scripts/clippy-sqlx-check.sh`). `just gen-sqlx` runs `cargo sqlx prepare --workspace -- --workspace --tests`: the second `--workspace`, passed to *cargo* after the `--`, is what captures leaf crates nothing depends on — a bare `cargo sqlx prepare` silently drops them and reddens CI's cache check.
 
 ## TypeScript bindings (specta)
 

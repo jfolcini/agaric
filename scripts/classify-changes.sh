@@ -140,29 +140,29 @@ printf '  %s\n' "${changed[@]}" >&2
 docs_re='^(docs/|.*\.md$|LICENSE([.-].*)?$|NOTICE$|AUTHORS$|CHANGELOG$)'
 
 # `^src-tauri/` already subsumes the Cargo/migrations alternatives; they are
-# listed so the intent is legible. `clippy-sqlx-check.sh` (with its rustc
-# wrapper) is `lint`'s clippy + sqlx cache step; `sqlx-offline-check` is the
+# listed so the intent is legible. `clippy-sqlx-check.sh` is
+# `lint`'s clippy + sqlx cache step; `sqlx-offline-check` is the
 # composite the weekly lane runs.
-backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/|^scripts/(check-sqlx-cache-drift|check-unsafe-allowlist|clippy-sqlx-check|sqlx-rustc-wrapper)\.sh$|^scripts/coverage-ratchet\.mjs$|^scripts/coverage-baseline\.json$|^\.github/actions/sqlx-offline-check/)'
+backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/|^scripts/(check-unsafe-allowlist|clippy-sqlx-check)\.sh$|^scripts/coverage-ratchet\.mjs$|^scripts/coverage-baseline\.json$|^\.github/actions/sqlx-offline-check/)'
 # Backend paths only `lint` reads, so they run its Rust half and no Rust
 # suite, bundle build or real-backend lane: the benches (`test = false`, so
 # nextest never builds them; clippy `--all-targets` does), the fuzz crate (its
 # own workspace; `lint` cargo-checks it), the clippy / cargo-deny / OSV
 # configs, the cargo-audit and cargo-mutants configs (`lint` and the weekly
-# lane), the guard baselines its prek hooks ratchet against and the two
-# guards in `backend_re` above, the `.env.example` `scripts/setup.sh` copies,
+# lane), the guard baselines its prek hooks ratchet against and the
+# guard in `backend_re` above, the `.env.example` `scripts/setup.sh` copies,
 # and the clippy + sqlx scripts and sqlx composite above. Nothing else under `src-tauri/.cargo/`: a
 # `config.toml` there would set every build's flags.
-rust_lint_only_re='^(src-tauri/(benches/|fuzz/|clippy\.toml$|deny\.toml$|osv-scanner\.toml$|\.cargo/(audit|mutants)\.toml$|(dynamic-sql|migrations-test-coverage|table-ownership)-baseline\.txt$|unsafe-allowlist\.txt$|\.env\.example$)|scripts/(check-sqlx-cache-drift|check-unsafe-allowlist|clippy-sqlx-check|sqlx-rustc-wrapper)\.sh$|\.github/actions/sqlx-offline-check/)'
+rust_lint_only_re='^(src-tauri/(benches/|fuzz/|clippy\.toml$|deny\.toml$|osv-scanner\.toml$|\.cargo/(audit|mutants)\.toml$|(dynamic-sql|migrations-test-coverage|table-ownership)-baseline\.txt$|unsafe-allowlist\.txt$|\.env\.example$)|scripts/(check-unsafe-allowlist|clippy-sqlx-check)\.sh$|\.github/actions/sqlx-offline-check/)'
 frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$|^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/axe-presence-baseline\.txt$|^scripts/(coverage-ratchet|print-coverage-thresholds|check-bundle-budget(\.test)?)\.mjs$|^scripts/(bundle-budgets|coverage-baseline)\.json$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|mutation-reports|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$|^scripts/classify-changes\.sh$|^src-tauri/src/commands/(queries|blocks/queries|pages/metadata)\.rs$|^src-tauri/agaric-store/src/(fts/(toggle_filter|metadata_filter)|query/engine)\.rs$)'
 # `scripts/` and `.claude/` are tooling: the guards and their manual-stage
 # self-tests run in `lint` (a `scripts/*.test.mjs` runs wherever it is
 # named: `pr-diff-base` in `lint`, `check-bundle-budget` in
 # `vitest-coverage`), so a tooling-only PR is `ci` and pays no suite. The few
 # files a suite consumes are routed to that suite above, data files included,
-# so a re-baseline PR still runs the gate that reads it: the sqlx drift check
-# and the unsafe allowlist to backend; the axe/test-naming hook owners, the
-# bundle-budget guard with its `bundle-budgets.json`, the two coverage
+# so a re-baseline PR still runs the gate that reads it: the unsafe allowlist
+# to backend; the axe/test-naming hook owners, the bundle-budget guard with
+# its `bundle-budgets.json`, the two coverage
 # scripts, and every script a `src/**/*.test.ts` imports or spawns (the seven
 # `check-*.mjs` guards with unit tests in `src/__tests__/`,
 # `scripts/lib/js-scanner.mjs`, and this classifier) to frontend, since only
