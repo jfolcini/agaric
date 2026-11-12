@@ -19,14 +19,19 @@
 import type { Editor } from '@tiptap/react'
 
 import { parse } from '@/editor/markdown-serializer'
-import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { logger } from '@/lib/logger'
 
-/** What a reload reads of a block tree's roving editor to hand it the block's new text. */
-type RovingText = Pick<
-  RovingEditorHandle,
-  'activeBlockId' | 'getMarkdown' | 'storedMarkdown' | 'markCommitted'
->
+/**
+ * What a reload reads of a block tree's roving editor to hand it the block's
+ * new text: the four members of `RovingEditorHandle` it needs, spelled here
+ * because importing that type would close an import cycle through the stores.
+ */
+interface RovingText {
+  activeBlockId: string | null
+  getMarkdown: () => string | null
+  storedMarkdown: string
+  markCommitted: (markdown: string) => void
+}
 
 let activeEditor: Editor | null = null
 let activeRoving: RovingText | null = null
