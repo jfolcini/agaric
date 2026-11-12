@@ -230,7 +230,8 @@ intersected with full-text, returned as a keyset-paginated page of blocks.
    `WhereClause` (an `unsupported()` result is rejected defensively).
 4. **Assemble** — `FROM blocks b WHERE b.space_id = ? AND b.deleted_at IS NULL
    AND <not under a template page> AND (<compiled>)`, the template guard
-   dropped when the filter names the `template` property (as the agenda does,
+   dropped when the filter asks for blocks carrying the `template` property,
+   not when it negates it (as the agenda does,
    a template's placeholder blocks are not notes), with the anonymous `?`
    placeholders renumbered to explicit `?N` so the space, filter, keyset (and
    MATCH) binds never collide (mirroring `compile_pages_filters`).

@@ -1,5 +1,5 @@
 {
-  "description": "#6548 — an advanced query leaves template pages and the placeholder blocks under them out of its result, as the agenda does, unless the filter names the `template` property. S3 is a template page (its `template` property is set by the one op) holding the placeholder S4; S1/S2 are an ordinary page and block. The empty filter must return S2 and S1 only, so a stack that lists placeholders reds. Naming `template` in a `has-property` leaf returns the template page itself, and naming it inside `has-parent-matching` returns its placeholder, so a stack that drops the exclusion unconditionally (hiding templates from a query that asks for them) reds too.",
+  "description": "#6548 — an advanced query leaves template pages and the placeholder blocks under them out of its result, as the agenda does, unless the filter names the `template` property. S3 is a template page (its `template` property is set by the one op) holding the placeholder S4; S1/S2 are an ordinary page and block. The empty filter must return S2 and S1 only, so a stack that lists placeholders reds. Naming `template` in a `has-property` leaf returns the template page itself, and naming it inside `has-parent-matching` returns its placeholder, so a stack that drops the exclusion unconditionally (hiding templates from a query that asks for them) reds too; `NOT has-property template` asks to leave them out and keeps the exclusion.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -99,6 +99,14 @@
       "name": "advanced_under_a_template_lists_its_placeholders",
       "rows": ["B4"],
       "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_not_a_template_skips_templates",
+      "rows": ["B2", "B1"],
+      "total_count": 2
     }
   ],
   "name": "query_advanced_excludes_templates",
@@ -170,6 +178,29 @@
       },
       "command": "run_advanced_query",
       "name": "advanced_under_a_template_lists_its_placeholders"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "child": {
+              "primitive": {
+                "key": "template",
+                "predicate": {
+                  "type": "Exists"
+                },
+                "type": "HasProperty"
+              },
+              "type": "Leaf"
+            },
+            "type": "Not"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "name": "advanced_not_a_template_skips_templates"
     }
   ],
   "seed": {

@@ -3380,3 +3380,49 @@ async fn query_naming_the_template_property_still_lists_templates_6548() {
         "the placeholder block is listed"
     );
 }
+
+/// #6548: "not a template", negated, as `NotExists` or as `Ne`, asks to leave
+/// templates out, so it keeps the guard and the placeholder block stays out.
+#[tokio::test]
+async fn query_negating_the_template_property_still_excludes_templates_6548() {
+    use crate::filters::primitive::{PropertyPredicate, PropertyValue};
+    let (pool, _d) = test_pool().await;
+    seed_with_template_page(&pool).await;
+    let template = |predicate| {
+        leaf(FilterPrimitive::HasProperty {
+            key: "template".to_string(),
+            predicate,
+        })
+    };
+    let expected = set(&[
+        "01B1000000000000000000000",
+        "01B2000000000000000000000",
+        "01B3000000000000000000000",
+        "01B4000000000000000000000",
+        TAG_RED,
+        TAG_BLUE,
+        PLAIN_PAGE,
+        PLAIN_CHILD,
+    ]);
+
+    for (label, filter) in [
+        (
+            "NOT has-property template",
+            FilterExpr::Not {
+                child: Box::new(template(PropertyPredicate::Exists)),
+            },
+        ),
+        ("template NotExists", template(PropertyPredicate::NotExists)),
+        (
+            "template Ne true",
+            template(PropertyPredicate::Ne {
+                value: PropertyValue::Text {
+                    value: "true".to_string(),
+                },
+            }),
+        ),
+    ] {
+        let resp = compile_and_run(&pool, req(filter)).await.unwrap();
+        assert_eq!(ids(&resp), expected, "{label} leaves the placeholder out");
+    }
+}

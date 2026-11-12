@@ -2205,26 +2205,33 @@ function searchRegexMatches(re: RegExp | null, b: Record<string, unknown>): bool
 
 /**
  * Mirror of `names_template_property` (`agaric-store/src/query/engine.rs`):
- * whether the filter names the `template` property anywhere, the one way an
- * advanced query asks for template pages and the blocks under them.
+ * whether the filter selects blocks that carry the `template` property, the
+ * one way an advanced query asks for template pages and the blocks under them.
+ * `positive` flips under each `Not`: "not a template" asks to leave them out.
  */
-function namesTemplateProperty(expr: Record<string, unknown>): boolean {
+function namesTemplateProperty(expr: Record<string, unknown>, positive = true): boolean {
   switch (expr['type'] as string) {
     case 'Leaf': {
       const p = (expr['primitive'] as Record<string, unknown> | undefined) ?? {}
-      if (p['type'] === 'HasProperty') return p['key'] === 'template'
+      if (p['type'] === 'HasProperty') {
+        const op = (p['predicate'] as Record<string, unknown> | undefined)?.['type']
+        const absent = op === 'NotExists' || op === 'Ne'
+        return p['key'] === 'template' && positive !== absent
+      }
       if (p['type'] === 'HasParentMatching') {
-        return namesTemplateProperty((p['matcher'] as Record<string, unknown> | undefined) ?? {})
+        const matcher = (p['matcher'] as Record<string, unknown> | undefined) ?? {}
+        return namesTemplateProperty(matcher, positive)
       }
       return false
     }
     case 'And':
     case 'Or': {
       const children = (expr['children'] as Array<Record<string, unknown>> | undefined) ?? []
-      return children.some(namesTemplateProperty)
+      return children.some((child) => namesTemplateProperty(child, positive))
     }
     case 'Not': {
-      return namesTemplateProperty((expr['child'] as Record<string, unknown> | undefined) ?? {})
+      const child = (expr['child'] as Record<string, unknown> | undefined) ?? {}
+      return namesTemplateProperty(child, !positive)
     }
     default: {
       return false
