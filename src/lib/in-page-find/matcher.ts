@@ -104,8 +104,10 @@ export interface FindMatch {
   node: Text
   /** Inclusive start offset within `node.nodeValue`. */
   start: number
-  /** Exclusive end offset within `node.nodeValue`. */
+  /** Exclusive end offset within `endNode` (else `node`). */
   end: number
+  /** The text node the match ends in, when it is not `node` (a match across a mark, #6557). */
+  endNode?: Text
 }
 
 /** Toggle state for a find run. */

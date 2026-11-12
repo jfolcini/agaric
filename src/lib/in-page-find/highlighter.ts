@@ -126,7 +126,7 @@ function rangeFor(match: FindMatch): Range | null {
   try {
     const range = doc.createRange()
     range.setStart(match.node, match.start)
-    range.setEnd(match.node, match.end)
+    range.setEnd(match.endNode ?? match.node, match.end)
     return range
   } catch {
     // Offsets exceeded nodeValue.length (node was edited between
