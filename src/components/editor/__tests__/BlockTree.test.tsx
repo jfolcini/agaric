@@ -4139,7 +4139,7 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
   // #2662 — Turn into must notify the undo store the same way every other
   // content-edit mutation does. `pageStore.edit()` funnels every successful
   // write through `notifyUndoNewAction` (page-blocks-reducers.ts), which
-  // resets the page's redo stack (undo.ts:94-99, the #731 comment on why
+  // resets the page's redo stack (`reanchorAfterRemoteOps` in undo.ts, the #731 note on why
   // unaccounted-for ops shift the positional indexing). Pre-fix,
   // `handleTurnInto` wrote via a raw `editBlock` IPC call that never touched
   // the undo store, so a conversion left a stale redo entry that could later
@@ -4169,7 +4169,7 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
     // #4668 — the refs arm, not the bare-pageId one: `edit_block` answers a
     // `WithOps<BlockRow>`, so `op_refs` is always present and
     // `notifyUndoNewAction` forwards it with the content-edit coalesce key
-    // (page-blocks-reducers.ts:308). The single-argument shape was reachable
+    // (`edit` in page-blocks-reducers.ts). The single-argument shape was reachable
     // only through a stub the backend could not have produced.
     await waitFor(() => {
       expect(onNewAction).toHaveBeenCalledWith('PAGE_1', [], 'edit:b1')

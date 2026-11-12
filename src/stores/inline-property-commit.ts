@@ -1,45 +1,20 @@
 /**
- * inline-property-commit — the async "commit `key:: value` lines, then strip"
- * save flow shared by EVERY unmount-save path (#2675).
+ * The async "commit `key:: value` lines, then strip" save flow shared by every
+ * unmount-save path (#2675): `useBlockFlush`, `useEditorBlur` and
+ * EditableBlock's `persistUnmount`. The `::` flow must behave the same on all
+ * of them, so each calls this instead of a raw `edit()` when the content
+ * carries property lines. The checkbox fold and typed tags live here too.
  *
- * A block's serialized content is committed from three distinct places:
+ * `flushSeqByBlock` is a per-block sequence token (#1591): every save bumps it,
+ * and an async run re-reads it after its awaits and bails before `edit()` if a
+ * newer save took over, so a late save never clobbers a newer one. Module-level
+ * because the save paths live in different components; ULID keys cannot
+ * collide across pages.
  *
- *   1. `useBlockFlush` (BlockTree's imperative flush — keyboard boundary
- *      navigation, DnD, zoom change, collapse, container pointer-down),
- *   2. `useEditorBlur` Step 5 (DOM blur — clicking another block, the
- *      sidebar, anywhere outside the editor: the DOMINANT save path),
- *   3. `persistUnmount` in EditableBlock (programmatic focus moves — the
- *      auto-mount effect and `handleFocus`, e.g. Enter-to-create).
- *
- * The documented `::` flow ("pick a key, type the value, it commits when the
- * block is saved") must behave identically on all three, so the parse →
- * `set_property` → strip-only-on-success routine lives here and each path
- * calls it instead of a raw `edit()` when the content carries property lines.
- * The chain's other async flows live here too: the checkbox fold and the
- * typed tags (`commitTypedTags`).
- *
- * ## Supersession (the flush sequence token)
- *
- * `flushSeqByBlock` is the per-block sequence token previously private to
- * `useBlockFlush` (#1591): every save that goes async bumps the block's token
- * before awaiting IPCs and re-reads it afterwards — if a newer save on the
- * SAME block bumped it in the meantime, the stale run bails before calling
- * `edit()`, so a late-resolving save can never clobber a newer one. It is
- * module-level (not a hook ref) because the three save paths above live in
- * different components; block ids are ULIDs, so a global map cannot collide
- * across pages, and it also guards the same block edited from two mounted
- * trees. Sync saves (plain edit / split) bump the token too, via
- * `bumpFlushSeq`, so they invalidate any in-flight async run.
- *
- * ## Draft-row gating
- *
- * `commitInlineProperties` resolves `false` ONLY when the final content
- * `edit()` failed (the typed text is not durably committed — callers must
- * keep/re-seed the block's draft row, mirroring their plain-edit handling).
- * Property-write failures alone resolve `true`: the failed lines stay
- * LITERAL in the committed content, so the text is durable. A superseded run
- * also resolves `true` — the newer save session owns the block's content and
- * draft lifecycle.
+ * The commit functions resolve `false` only when the final `edit()` failed,
+ * so the caller keeps the block's draft row. A failed property write leaves its
+ * line literal in the saved text and resolves `true`; so does a superseded run,
+ * whose newer save owns the content and the draft.
  */
 
 import { unwrap } from '@/lib/app-error'
@@ -67,14 +42,9 @@ import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 /**
- * The minimal structural surface `commitCheckboxState` needs from a page block
- * store: a Zustand-style `setState` over an object carrying `blocks` for the
- * optimistic write, and `getState().load()` for a repeating task's next
- * occurrence. Declared here (instead of importing the concrete
- * `StoreApi<PageBlockState>` from `@/stores/page-blocks`) so this `lib/`
- * module never imports the `stores/` tier (#3121's lower-tier-never-imports-
- * higher rule) — the real page-block store structurally satisfies this
- * as-is, so every caller passes it unchanged.
+ * The slice of a page block store `commitCheckboxState` touches: the
+ * optimistic `blocks` write, `blocksById`, and `load()` for a repeating task's
+ * next occurrence. The real store satisfies it as-is.
  */
 export interface PageBlockStoreLike {
   setState: (updater: (state: { blocks: FlatBlock[] }) => { blocks: FlatBlock[] }) => void
@@ -84,17 +54,15 @@ export interface PageBlockStoreLike {
   }
 }
 
-/** Per-block flush sequence tokens — see the module docstring. */
+/** Per-block flush sequence tokens; see the module doc. */
 const flushSeqByBlock = new Map<string, number>()
 
 /**
- * The key a typed `key:: value` line names and its definition in `spaceId`
- * (#5160 D13): the definition spelled so, else the one definition the key
- * folds to (`foldPropertyKey`), the built-in keys' included
- * (`list_property_defs` lists them). Two that fold alike are never guessed between, and a key none folds
- * to is a custom key: both stay as typed. `listDefs` answers every
- * definition; a key with no definition spelled so needs the list, since a
- * definition spelled otherwise (`repeat-until`) may fold to it. Mirrors
+ * The key a typed `key:: value` line names, and its definition in `spaceId`
+ * (#5160): the definition spelled so, else the one definition the key folds to
+ * (`foldPropertyKey`), built-ins included. Two that fold alike are never
+ * guessed between, and a key nothing folds to is custom; both stay as typed.
+ * `listDefs` is asked only when no definition is spelled so. Mirrors
  * `PropertyLines::canonical_key` in the backend.
  */
 async function resolveTypedKey(
@@ -112,11 +80,9 @@ async function resolveTypedKey(
 }
 
 /**
- * Bump and return the block's flush sequence token. Call synchronously at the
- * start of EVERY save of the block's content (async property/checkbox flows
- * capture the returned value for their post-await stale check; sync plain
- * edits / splits bump without capturing, purely to invalidate in-flight
- * async runs).
+ * Bump and return the block's flush token. Call synchronously at the start of
+ * every save of its content; async flows keep the value for their stale check,
+ * sync saves bump only to invalidate runs in flight.
  */
 export function bumpFlushSeq(blockId: string): number {
   const next = (flushSeqByBlock.get(blockId) ?? 0) + 1
@@ -124,32 +90,18 @@ export function bumpFlushSeq(blockId: string): number {
   return next
 }
 
-/** Read the block's current flush sequence token (stale-run check). */
+/** The block's current flush token, for the stale-run check. */
 export function readFlushSeq(blockId: string): number | undefined {
   return flushSeqByBlock.get(blockId)
 }
 
 /**
- * Commit the parsed inline property lines via the typed property API, then
- * persist `content` with ONLY the succeeded lines stripped. See
- * `use-block-flush.ts` step 5 and `inline-property-parse.ts` for the rules.
- *
- * - Each line: its key as the definition it folds to (`resolveTypedKey`,
- *   #5160 D13, the definitions listed at most once per save) →
- *   `buildInlinePropertySetParams` (honours
- *   the definition type; `null` params = value not representable → treated
- *   as a rejected write) → `setProperty` (upsert; the backend enforces select
- *   membership etc.).
- * - A line is stripped ONLY after its write succeeds; failures leave it
- *   literal so nothing typed is ever lost, and produce ONE toast total,
- *   naming the lines kept as text (D11).
- * - `mySeq` is the token captured from `bumpFlushSeq(blockId)` at save start;
- *   if a newer save bumped it while our IPCs were in flight, we bail without
- *   calling `edit()` (properties already written stand — idempotent upserts
- *   a newer flush would re-issue anyway).
- * - On success the `set_property` op refs seed the ref-addressed undo stack
- *   (the content strip gets its own entry from `edit()`'s own undo
- *   notification), keyed on `rootParentId`; pass `null` to skip the seed.
+ * Write the parsed property lines through the typed property API, then save
+ * `content` with only the succeeded lines stripped. A line whose value does not
+ * fit its definition, or whose write fails, stays literal so nothing typed is
+ * lost, and all such lines share one toast. A run superseded during its IPCs
+ * (`mySeq`) skips `edit()`; the written properties stand. The `set_property`
+ * refs seed the undo stack under `rootParentId` (`null` skips that).
  */
 export async function commitInlineProperties(opts: {
   blockId: string
@@ -163,11 +115,8 @@ export async function commitInlineProperties(opts: {
   const strippedLines = new Set<number>()
   const opRefs: OpRef[] = []
   const keptAsText: string[] = []
-  // #3647 — the backend's reason for rejecting a `repeat:: …` line, if one
-  // carried a malformed rule. Preferred over the generic toast: it names which
-  // rule is wrong and why, right where the user typed it. The rejected line
-  // stays LITERAL in the committed content (see `strippedLines`), so the text
-  // they now know how to fix is still on screen.
+  // The backend's reason for a malformed `repeat::` rule, preferred over the
+  // generic toast because it says what to fix in the line left on screen (#3647).
   let repeatReason: string | null = null
   // The block is on a page of the active space, whose definitions apply.
   const spaceId = useSpaceStore.getState().currentSpaceId
@@ -211,21 +160,16 @@ export async function commitInlineProperties(opts: {
       repeatReason ?? i18n.t('blockTree.propertyKeptAsText', { lines: keptAsText.join(', ') }),
     )
   }
-  // A newer save on this block superseded us while the IPCs were in flight —
-  // bail without calling `edit()` so we don't clobber it. The newer session
-  // owns the block's content + draft lifecycle, so resolve `true` (callers
-  // must not re-seed a draft row with OUR stale content — that would
-  // resurrect the stripped line at next boot over the newer content).
+  // Superseded: skip `edit()` and resolve `true`. Re-seeding a draft with this
+  // stale content would resurrect the stripped line over the newer text.
   if (readFlushSeq(blockId) !== mySeq) return true
   const outcome = edit(blockId, stripPropertyLines(content, strippedLines))
-  // Seed the undo stack with the set_property op refs so Ctrl+Z can revert
-  // the property write itself; `onNewAction` ignores an empty refs array.
+  // So Ctrl+Z can revert the property write; `onNewAction` ignores empty refs.
   if (strippedLines.size > 0 && rootParentId) {
     useUndoStore.getState().onNewAction(rootParentId, opRefs)
   }
   const ok = await Promise.resolve(outcome).catch((err: unknown) => {
-    // Store actions resolve false rather than reject; treat an escaped
-    // rejection as a failed save (the safe direction for draft gating).
+    // Store actions resolve `false`; an escaped rejection counts as a failed save.
     logger.warn('BlockTree', 'content edit rejected after inline property commit', { blockId }, err)
     return false as const
   })
@@ -233,38 +177,19 @@ export async function commitInlineProperties(opts: {
 }
 
 /**
- * Commit a folded leading checkbox marker (`- [ ] ` / `- [x] ` / `- [/] ` /
- * `- [-] `) via the typed `set_todo_state` command, then persist the
- * marker-stripped content — mirroring `commitInlineProperties`'s "commit,
- * then strip on success" shape (#1074) so all three unmount-save paths
- * (`useBlockFlush`, `useEditorBlur` Step 5, `persistUnmount`) agree on
- * checkbox folding instead of only one of them doing it (#3278).
+ * Fold a leading checkbox marker (`- [ ] `, `- [x] `, `- [/] `, `- [-] `) into
+ * `set_todo_state`, then save the marker-stripped content, so every
+ * unmount-save path folds it alike (#3278).
  *
- * - AWAITS `set_todo_state` before stripping the marker or writing the
- *   optimistic `todo_state`: a rejected state write must not silently lose
- *   the task state (marker stripped, state never committed) nor leave a
- *   phantom checked box the backend never recorded.
- * - On SUCCESS: adopts the backend echo for `todo_state` (falls back to the
- *   sent state), optimistically writes it into `pageStore`, strips the
- *   marker via `edit(cleanContent)`, records the undo entry and, for DONE,
- *   reloads the page if the task repeats (`reloadIfRepeating`). A block the
- *   store does not hold as a task loses its list style first (#5691 D3: a
- *   task is a list kind, exclusive with bulleted and numbered); the entry
- *   holds the refs of both writes (#6156).
- * - On FAILURE (state write rejected): persists the RAW content (marker
- *   intact) via `edit(content)` so the box stays re-parseable, and writes no
- *   optimistic state.
- * - `mySeq` / `readFlushSeq` guard against a newer flush on the same block
- *   clobbering this stale run — see the module docstring. A superseded run
- *   (success or failure) bails without calling `edit()` and resolves `true`
- *   (the newer session owns the block's content + draft lifecycle), mirroring
- *   `commitInlineProperties`'s supersede handling.
- * - `pageStore` is optional: callers/tests that never produce checkbox-marker
- *   content may omit it; when present, only its `blocks` array, `blocksById`
- *   and `load()` are touched.
- *
- * Resolves `false` ONLY when the final content `edit()` failed (mirroring
- * `commitInlineProperties`'s draft-gating contract).
+ * The state write is awaited first: a rejected one must neither lose the task
+ * (marker stripped, state never set) nor show a box the backend never recorded.
+ * On success it adopts the echo, writes it into `pageStore`, strips the marker
+ * and records one undo entry; a block not already a task loses its list style
+ * first, as a task is a list kind exclusive with bulleted and numbered (#5691),
+ * and both writes share the entry (#6156). DONE on a repeating task reloads
+ * the page. On failure the raw content, marker intact, is saved so the box
+ * stays re-parseable. Superseded runs and the `false` result behave as in
+ * `commitInlineProperties`.
  */
 export async function commitCheckboxState(opts: {
   blockId: string
@@ -283,16 +208,13 @@ export async function commitCheckboxState(opts: {
   try {
     const echo = unwrap(await commands.setTodoState(blockId, todoState))
     const cleared = wasTask ? [] : await clearListStyles([blockId])
-    // A newer flush on this block superseded us while the IPC was in
-    // flight — bail without applying so we don't clobber it.
     if (readFlushSeq(blockId) !== mySeq) return true
     const settledState = typeof echo.todo_state === 'string' ? echo.todo_state : todoState
     pageStore?.setState((s) => ({
       blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: settledState } : b)),
     }))
-    // Strip the marker only now that the state is committed.
     const outcome = edit(blockId, cleanContent)
-    // The state and the style it takes off are one undo entry (#6156), which the edit's joins.
+    // The edit's undo entry joins this one: state and style revert together (#6156).
     if (rootParentId) {
       useUndoStore.getState().onNewAction(rootParentId, [...echo.op_refs, ...cleared])
     }
@@ -309,8 +231,7 @@ export async function commitCheckboxState(opts: {
     return ok !== false
   } catch (err: unknown) {
     if (readFlushSeq(blockId) !== mySeq) {
-      // A newer flush on this block superseded us — don't clobber it with
-      // this stale run's raw content, but still surface the error.
+      // Superseded: do not clobber the newer save, but still report the error.
       logger.error(
         'BlockTree',
         'Failed to set task state from checkbox syntax (superseded)',
@@ -320,10 +241,8 @@ export async function commitCheckboxState(opts: {
       notify.error(i18n.t('blockTree.setTaskStateFailed'))
       return true
     }
-    // State write failed — do NOT strip the marker. Persist the raw content
-    // (with the `- [ ] `/`- [x] ` marker intact) so the task state stays
-    // recoverable, and write no optimistic `todo_state` (nothing to roll
-    // back since we deferred it past the await).
+    // Keep the marker so the task state stays recoverable; no optimistic
+    // state was written, so nothing to roll back.
     logger.error('BlockTree', 'Failed to set task state from checkbox syntax', { blockId }, err)
     notify.error(i18n.t('blockTree.setTaskStateFailed'))
     const outcome = edit(blockId, content)
@@ -351,11 +270,10 @@ async function saved(outcome: Promise<boolean> | void, blockId: string): Promise
 }
 
 /**
- * The id of each of `names` in `spaceId`, keyed lowercased: the existing tag
- * of that name in any case, as the typed tag picks one, else the create's
- * answer for its dashed name (#6278 I4). A name whose lookup or create fails
- * is missing. Stops creating once `current` says a newer save of the block
- * took over.
+ * The id of each of `names` in `spaceId`, keyed lowercased: the existing tag of
+ * that name in any case, else the create's answer for its dashed name (#6278).
+ * A name whose lookup or create fails is missing. Stops creating once
+ * `current` says a newer save took over.
  */
 async function tagIds(
   names: string[],
@@ -391,10 +309,9 @@ async function tagIds(
 }
 
 /**
- * Once `content` is saved as text, write its `tags` as the tags they name
- * (#5160 follow-up 7a). Saving first keeps the text durable and on screen
- * while the lookup runs. Resolves `false` only when that save failed, the
- * draft-gating contract of the other branches.
+ * Once `content` is saved as text, write its `tags` as the tags they name.
+ * Saving first keeps the text durable while the lookup runs. Resolves `false`
+ * only when that save failed.
  */
 export async function commitTypedTags(opts: {
   blockId: string

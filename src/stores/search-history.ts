@@ -1,15 +1,7 @@
 /**
- * Search history store.
- *
- * Zustand-persisted, per-space MRU list of submitted search queries.
- * Mirrors the existing `agaric:`-prefixed pattern (see
- * `stores/recent-pages.ts:99`) and partitions by space so a query
- * referencing space-specific paths / tags doesn't surface cross-space.
- *
- * Capped at [`MAX_HISTORY`] entries per space (recommendation locked in
- * By open Q2). Submitting the same query twice moves the
- * existing entry to the front (MRU dedup); duplicate strings never
- * accumulate.
+ * Search history: a persisted per-space MRU of submitted queries, partitioned
+ * so a query naming one space's pages or tags never shows in another. A
+ * resubmitted query moves to the front.
  */
 
 import { create } from 'zustand'
@@ -17,30 +9,16 @@ import { persist } from 'zustand/middleware'
 
 import { safePersistStorage } from '@/lib/safe-persist-storage'
 
-/**
- * Maximum history entries per space.
- *
- * 20 is the plan-recommended value (Q2). Adjustable post-launch if
- * usage tells us more depth is wanted; raising it is wire-compat-safe
- * because the cap only fires inside the `push` reducer.
- */
+/** Entries kept per space; the cap applies only in `push`, so raising it is safe. */
 export const MAX_HISTORY = 20
 
-/**
- * Sentinel space key for callers that pre-date the per-space split
- * (e.g. unit tests; the storybook fixtures). Mirrors
- * `recent-pages.ts`'s `__legacy__` partition.
- */
+/** Key for callers with no space (tests, fixtures), like `recent-pages`' `__legacy__`. */
 export const LEGACY_HISTORY_SPACE_KEY = '__legacy__'
 
 interface SearchHistoryState {
   /** Per-space MRU lists. Keyed by space id (or `__legacy__`). */
   bySpace: Record<string, string[]>
-  /**
-   * When `false`, `push` is a no-op (recording is paused) and
-   * the dropdown shows the disabled notice. Persisted alongside the
-   * history so the preference survives reloads.
-   */
+  /** When `false`, `push` records nothing and the dropdown says so. Persisted. */
   historyEnabled: boolean
   /** Push a submitted query onto the active-space MRU list. No-op on empty. */
   push: (spaceId: string | null | undefined, query: string) => void
@@ -51,7 +29,7 @@ interface SearchHistoryState {
    * No-op when the query isn't present. Other spaces untouched.
    */
   removeEntry: (spaceId: string | null | undefined, query: string) => void
-  /** toggle whether new submissions are recorded. */
+  /** Toggle whether new submissions are recorded. */
   setHistoryEnabled: (enabled: boolean) => void
 }
 
@@ -61,14 +39,10 @@ function spaceKey(spaceId: string | null | undefined): string {
 }
 
 /**
- * Coerce arbitrary persisted JSON into a valid `bySpace` shape.
- *
- * `localStorage` can hold anything (manual edits, a corrupt write, a
- * future-shape downgrade). Hydrating it with a bare `as` cast lets a
- * malformed blob poison the store and crash the reducers / selectors.
- * This drops everything that isn't a string-keyed map of string
- * arrays, and within each array drops non-string / empty / duplicate
- * entries and clamps to `MAX_HISTORY`.
+ * Coerce persisted JSON into a valid `bySpace`: `localStorage` can hold
+ * anything, and a bare cast lets a malformed blob crash the reducers. Keeps
+ * string arrays only, dropping empty and duplicate entries, capped at
+ * `MAX_HISTORY`.
  */
 export function coerceBySpace(raw: unknown): Record<string, string[]> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
@@ -91,14 +65,9 @@ export function coerceBySpace(raw: unknown): Record<string, string[]> {
 }
 
 /**
- * CR-PERSIST (#1609) — coerce an entire persisted search-history blob
- * field-by-field. Shared by `migrate` (version-mismatched blobs) and `merge`
- * (same-version blobs): zustand's persist middleware only calls `migrate`
- * when the stored version DIFFERS from `options.version`, so a corrupt blob
- * that still carries `version: 1` (or a non-numeric version) bypasses
- * `migrate` entirely and reaches the default shallow `merge` raw — coercing
- * in `merge` as well closes that path. The coercion is idempotent, so the
- * migrate→merge double pass on version-mismatched blobs is harmless.
+ * Coerce a whole persisted blob field by field (#1609). Both `migrate` and
+ * `merge` call it: zustand runs `migrate` only on a version mismatch, so a
+ * corrupt blob with the current version reaches `merge` raw. Idempotent.
  */
 function coercePersistedSearchHistory(
   persisted: unknown,
@@ -120,14 +89,12 @@ export const useSearchHistoryStore = create<SearchHistoryState>()(
       historyEnabled: true,
       push: (spaceId, query) =>
         set((state) => {
-          // Recording paused: drop the submission silently.
           if (!state.historyEnabled) return state
           const trimmed = query.trim()
           if (trimmed.length === 0) return state
           const key = spaceKey(spaceId)
           const existing = state.bySpace[key] ?? []
-          // Dedupe by exact match (case-sensitive — preserves
-          // syntax like `tag:#Urgent` vs `tag:#urgent`).
+          // Case-sensitive, so `tag:#Urgent` and `tag:#urgent` stay distinct.
           const filtered = existing.filter((q) => q !== trimmed)
           const next = [trimmed, ...filtered].slice(0, MAX_HISTORY)
           return { bySpace: { ...state.bySpace, [key]: next } }
@@ -143,7 +110,7 @@ export const useSearchHistoryStore = create<SearchHistoryState>()(
           const existing = state.bySpace[key]
           if (!existing) return state
           const next = existing.filter((q) => q !== query)
-          // No change → keep the same reference so selectors don't fire.
+          // Unchanged: keep the reference so selectors do not fire.
           if (next.length === existing.length) return state
           return { bySpace: { ...state.bySpace, [key]: next } }
         }),
@@ -157,26 +124,10 @@ export const useSearchHistoryStore = create<SearchHistoryState>()(
         bySpace: state.bySpace,
         historyEnabled: state.historyEnabled,
       }),
-      // Phase 4.R1 — no-op migrate placeholder. Locks the
-      // contract: a future `version: 2` bump MUST replace this with
-      // a real migration. Without the placeholder, zustand's persist
-      // middleware silently wipes the persisted state on a version
-      // mismatch and the user loses their MRU history.
-      //
-      // Validate/coerce the persisted blob on read so a corrupt
-      // `localStorage` payload can't poison the store.
-      //
-      // CR-PERSIST (#1609): zustand only invokes `migrate` on a version
-      // MISMATCH — it is NOT run for every load. A corrupt blob still
-      // tagged `version: 1` bypasses `migrate` and reaches `merge` raw, so
-      // the field-by-field coercion is shared with `merge` below.
+      // Both coerce (#1609): zustand calls `migrate` only on a version mismatch
+      // and hands a same-version blob straight to `merge`. A version bump
+      // without a real migration here would wipe every history.
       migrate: (persisted, _version) => coercePersistedSearchHistory(persisted),
-      // CR-PERSIST (#1609) — zustand skips `migrate` when the stored
-      // version equals `options.version` (or isn't a number), handing the
-      // raw blob straight to `merge`. Coerce here too so a corrupt
-      // `localStorage` payload that still says `version: 1` (e.g. a
-      // malformed `bySpace`, a non-boolean `historyEnabled`) can't poison
-      // the store on rehydrate.
       merge: (persisted, current) => ({
         ...current,
         ...coercePersistedSearchHistory(persisted),
@@ -185,11 +136,7 @@ export const useSearchHistoryStore = create<SearchHistoryState>()(
   ),
 )
 
-/**
- * Selector — returns the MRU list for a given space without
- * triggering re-renders on writes that target a different space.
- * Stable when the underlying array reference is unchanged.
- */
+/** The MRU for a space; the reference changes only when that space's list does. */
 export function selectHistoryForSpace(
   state: SearchHistoryState,
   spaceId: string | null | undefined,
@@ -197,6 +144,5 @@ export function selectHistoryForSpace(
   return state.bySpace[spaceKey(spaceId)] ?? EMPTY_HISTORY
 }
 
-// Shared empty-array sentinel — same reference across calls so
-// useStore selectors don't fire on every render.
+// One frozen reference, so selectors do not fire on every render.
 const EMPTY_HISTORY: ReadonlyArray<string> = Object.freeze([])

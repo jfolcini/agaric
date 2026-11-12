@@ -1,19 +1,9 @@
 /**
- * Advanced-query working-set store (#1280 D1).
- *
- * The first dedicated advanced-query surface (`AdvancedQueryView`) lets the user
- * compose a flat conjunction of filter chips over the shared filter vocabulary
- * and run it against the live `run_advanced_query` engine. The chips are the
- * only working state in v1 (sort/group/aggregate controls, nested And/Or/Not and
- * saved views are D2/D3 follow-ups), so this store mirrors
- * `pageBrowserFilters.ts`: a per-space, in-memory chip list, deliberately kept
- * SEPARATE from the Pages chip store so the two surfaces don't share a working
- * set.
- *
- * Like the Pages store it is NOT persisted — the chips are a transient working
- * set, intentionally cleared on app restart — and it is partitioned by space id
- * (chip values reference space-scoped ids, so a space switch reads the new
- * space's slice and chips never cross spaces).
+ * Advanced-query working set (#1280): the chips, the nested And/Or/Not builder
+ * tree and the sort, group, aggregate and full-text controls of
+ * `AdvancedQueryView`. Kept apart from the Pages chip store so the two
+ * surfaces do not share a working set, partitioned by space because values
+ * hold space-scoped ids, and not persisted: it clears on restart.
  */
 
 import { create } from 'zustand'
@@ -23,25 +13,17 @@ import type { PageFilterWithKey } from '@/lib/filters/page-filter-with-key'
 import { isFilterExpr } from '@/lib/inline-query-spec'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
-/**
- * #1280 D3 — the nested boolean builder model.
- *
- * The flat chip conjunction is replaced (in the Advanced Query surface) by an
- * arbitrary And/Or/Not tree the user composes by hand. Both node kinds carry a
- * stable `id` (sourced from the same monotonic `nextAddId` counter the chips
- * use) so React keys stay distinct across re-mounts and reorders, and a
- * `negated` flag that wraps the node's compiled `FilterExpr` in `Not`.
- *
- * The model is deliberately decoupled from the wire `FilterExpr`: a group
- * holds an explicit ordered child list (leaves and sub-groups intermixed) plus
- * its own `op`, so the UI can render/edit it directly. `builderTreeToFilterExpr`
- * compiles it to the engine shape — see that function for the mapping rules.
+/*
+ * The builder tree is decoupled from the wire `FilterExpr`: a group holds its
+ * own `op` and an ordered child list the UI edits directly, and
+ * `builderTreeToFilterExpr` compiles it. Node ids come from the store's
+ * monotonic `nextAddId`, React keys only.
  */
 
 /** A single filter-primitive leaf in the builder tree. */
 export interface BuilderLeafNode {
   kind: 'leaf'
-  /** Stable React-key-only id (from `nextAddId`). */
+  /** React-key-only id (from `nextAddId`). */
   id: number
   /** The wire primitive this leaf compiles to (`{type:'Leaf', primitive}`). */
   primitive: FilterPrimitive
@@ -52,7 +34,7 @@ export interface BuilderLeafNode {
 /** A boolean group (And/Or over its children), optionally negated. */
 export interface BuilderGroupNode {
   kind: 'group'
-  /** Stable React-key-only id (from `nextAddId`). */
+  /** React-key-only id (from `nextAddId`). */
   id: number
   /** Combinator over `children` — `And` (every child) or `Or` (any child). */
   op: 'And' | 'Or'
@@ -66,23 +48,15 @@ export interface BuilderGroupNode {
 export type BuilderNode = BuilderLeafNode | BuilderGroupNode
 
 /**
- * A path into the builder tree as a list of child indices from the root group.
- * The empty path `[]` addresses the root group itself; `[0]` its first child,
- * `[0, 2]` the third child of that child (which must be a group), etc.
+ * Child indices from the root group: `[]` is the root, `[0, 2]` the third
+ * child of its first child (which must be a group).
  */
 export type BuilderPath = readonly number[]
 
 /**
- * Compile a single builder node to a wire `FilterExpr`.
- *
- * Mapping rules:
- *   - leaf  → `{type:'Leaf', primitive}`
- *   - group → `{type:'And'|'Or', children: children.map(compile)}` (the op
- *     drives And vs Or); an empty group therefore compiles to `And{[]}` (TRUE)
- *     or `Or{[]}` (FALSE) per the engine's identity semantics.
- *   - `negated` on either kind wraps the compiled expr in `{type:'Not', child}`,
- *     applied AFTER the leaf/group is built (so a negated group negates the
- *     whole And/Or, and a negated leaf negates just that primitive).
+ * Compile one node: a leaf to `Leaf`, a group to `And`/`Or` over its compiled
+ * children (an empty one is the engine's TRUE or FALSE), and `negated` wraps
+ * the result in `Not`, outermost.
  */
 function compileNode(node: BuilderNode): FilterExpr {
   const inner: FilterExpr =
@@ -92,32 +66,15 @@ function compileNode(node: BuilderNode): FilterExpr {
   return node.negated ? { type: 'Not', child: inner } : inner
 }
 
-/**
- * Compile the builder tree (rooted at a group node) to a wire `FilterExpr`.
- *
- * A clean/default builder is a single root `And` group with no children, which
- * compiles to `And{ children: [] }` — the engine's TRUE expression ("match
- * everything"), identical to today's empty flat conjunction.
- */
+/** Compile the builder tree; the default empty root `And` matches everything. */
 export function builderTreeToFilterExpr(root: BuilderGroupNode): FilterExpr {
   return compileNode(root)
 }
 
 /**
- * #1460 saved-views — INVERSE of {@link compileNode}: rebuild a builder
- * {@link BuilderNode} from a wire `FilterExpr`.
- *
- * `compileNode` applies `Not` as the OUTERMOST wrapper (after the leaf/group
- * is built), so deserialization peels a leading `Not` and sets `negated=true`
- * on the node it wraps. A doubled `Not` (which our own compile never emits, but
- * a hand-written / future spec could) toggles back to `negated=false` so the
- * 3-valued semantics stay faithful. The remaining shapes map 1:1:
- *   - `Leaf{primitive}`        → leaf node
- *   - `And{children}` / `Or`   → group node carrying that op
- *
- * `allocId` mints a fresh, store-unique React-key id per node (the store passes
- * a closure over its monotonic `nextAddId`); ids are otherwise compile-invisible
- * (`compileNode` drops them), so any unique sequence round-trips identically.
+ * Inverse of {@link compileNode} for saved views (#1460). A leading `Not` sets
+ * `negated` on what it wraps; a doubled `Not` toggles back, keeping the
+ * three-valued semantics. `allocId` mints the React-key ids, which compile drops.
  */
 function filterExprToBuilderNode(expr: FilterExpr, allocId: () => number): BuilderNode {
   if (expr.type === 'Not') {
@@ -127,7 +84,6 @@ function filterExprToBuilderNode(expr: FilterExpr, allocId: () => number): Build
   if (expr.type === 'Leaf') {
     return { kind: 'leaf', id: allocId(), primitive: expr.primitive, negated: false }
   }
-  // And | Or — a group node.
   return {
     kind: 'group',
     id: allocId(),
@@ -138,28 +94,18 @@ function filterExprToBuilderNode(expr: FilterExpr, allocId: () => number): Build
 }
 
 /**
- * #1460 saved-views — rebuild a root builder {@link BuilderGroupNode} from a
- * persisted wire `FilterExpr` (the inverse of {@link builderTreeToFilterExpr}).
- *
- * The builder invariant is that the ROOT is always a group. Trees produced by
- * our own builder therefore always serialize to a group-shaped root
- * (`And`/`Or`, optionally wrapped in a single `Not`), which round-trips exactly.
- * A defensive fallback wraps any non-group root expr (a bare `Leaf`, or a `Not`
- * peeling down to a leaf) in a synthetic root `And` group so the invariant holds
- * for hand-authored / foreign specs without throwing.
+ * Rebuild a root group from a saved `FilterExpr` (#1460). The root must be a
+ * group, so a hand-written spec with a leaf root is wrapped in an `And`.
  */
 export function filterExprToBuilderTree(expr: FilterExpr, allocId: () => number): BuilderGroupNode {
   const node = filterExprToBuilderNode(expr, allocId)
   if (node.kind === 'group') return node
-  // Non-group root (defensive): wrap the leaf in a fresh root `And` group.
   return { kind: 'group', id: allocId(), op: 'And', negated: false, children: [node] }
 }
 
 /**
- * #1460 saved-views — the shape a saved view stores, as JSON
- * (`PREFERENCES.savedQueryViews`). Captures everything the builder + D2 controls
- * produce EXCEPT pagination (cursor/limit), so a load fully reconstructs the
- * working state.
+ * A saved view's JSON (`PREFERENCES.savedQueryViews`, #1460): the whole
+ * working state except pagination.
  */
 export interface SavedQuerySpec {
   /** The compiled wire `FilterExpr` (from {@link builderTreeToFilterExpr}). */
@@ -174,10 +120,7 @@ export interface SavedQuerySpec {
   aggregates: AggregateSpec[]
 }
 
-/**
- * Serialize the current builder tree + controls into a {@link SavedQuerySpec}
- * (ready to `JSON.stringify` into a saved view).
- */
+/** The builder tree and controls as a {@link SavedQuerySpec}. */
 export function serializeQuerySpec(
   builder: BuilderGroupNode,
   controls: AdvancedQueryControls,
@@ -192,9 +135,8 @@ export function serializeQuerySpec(
 }
 
 /**
- * Parse a saved view's spec JSON into a {@link SavedQuerySpec}.
- * Throws on malformed JSON or a missing/invalid `filter` field so callers can
- * surface a load error toast rather than hydrate a half-built view.
+ * Parse a saved view's spec JSON. Throws on malformed JSON or an invalid
+ * `filter`, so the caller toasts rather than hydrate a half-built view.
  */
 export function parseQuerySpec(raw: string): SavedQuerySpec {
   const parsed: unknown = JSON.parse(raw)
@@ -214,16 +156,11 @@ export function parseQuerySpec(raw: string): SavedQuerySpec {
   }
 }
 
-/**
- * The non-chip working set of an advanced query: the controls D2 exposes on top
- * of the flat chip conjunction. Held per-space alongside `filtersBySpace` and,
- * like the chips, NOT persisted (a transient working set cleared on restart).
- */
+/** The non-chip controls, per space and not persisted, like the chips. */
 export interface AdvancedQueryControls {
   /**
-   * Optional full-text term. Empty string ⇒ no FTS intersect (purely
-   * structural). When set, the engine intersects an FTS5 `MATCH` with the
-   * structural filter and `SortSource::Relevance` becomes valid.
+   * Full-text term; empty means none. When set, the engine intersects an FTS5
+   * `MATCH` and `SortSource::Relevance` becomes valid.
    */
   fulltext: string
   /** Ordered sort keys. Empty ⇒ the engine's default keyset. */
@@ -237,11 +174,11 @@ export interface AdvancedQueryControls {
 interface AdvancedQueryState {
   /** Per-space active chip lists, keyed by space id (`__legacy__` for no-space). */
   filtersBySpace: Record<string, PageFilterWithKey[]>
-  /** Per-space nested boolean builder trees (#1280 D3), keyed by space id. */
+  /** Per-space builder trees, keyed by space id. */
   buildersBySpace: Record<string, BuilderGroupNode>
   /** Per-space non-chip controls (fulltext/sort/groupBy/aggregates). */
   controlsBySpace: Record<string, AdvancedQueryControls>
-  /** Monotonic counter for the React-key-only `_addId` / node `id` so keys stay unique across re-mounts. */
+  /** Monotonic source of chip `_addId`s and node ids, so React keys stay unique. */
   nextAddId: number
   /** Append a chip to the space's list, de-duping structurally-identical chips. */
   addFilter: (spaceKey: string, filter: FilterPrimitive) => void
@@ -270,25 +207,16 @@ interface AdvancedQueryState {
   /** Replace the aggregate specs for the space. */
   setAggregates: (spaceKey: string, aggregates: AggregateSpec[]) => void
   /**
-   * #1460 saved-views — atomically replace a space's builder tree AND controls
-   * from a deserialized {@link SavedQuerySpec}. Fresh React-key ids are minted
-   * from `nextAddId` so the loaded tree never collides with existing node keys.
+   * Replace a space's builder tree and controls from a saved view (#1460),
+   * minting fresh node ids so they never collide with existing keys.
    */
   loadView: (spaceKey: string, spec: SavedQuerySpec) => void
 }
 
-/**
- * Stable frozen empty fallback for an absent slice. Returning a fresh `[]` each
- * call would retrigger every consumer via `Object.is`, so the reference must
- * stay stable (mirrors `pageBrowserFilters`' `EMPTY_FILTERS`).
- */
+/** Stable empty fallback: a fresh `[]` per call would fail `Object.is` and re-render every consumer. */
 const EMPTY_FILTERS: readonly PageFilterWithKey[] = Object.freeze([])
 
-/**
- * Stable frozen default controls for an absent slice (same referential-stability
- * rationale as `EMPTY_FILTERS`). Nested arrays are frozen too so the selector is
- * a pure read.
- */
+/** Stable default controls, frozen through, for the same reason. */
 const EMPTY_SORT: readonly SortKey[] = Object.freeze([])
 const EMPTY_AGGREGATES: readonly AggregateSpec[] = Object.freeze([])
 const EMPTY_CONTROLS: Readonly<AdvancedQueryControls> = Object.freeze({
@@ -299,12 +227,8 @@ const EMPTY_CONTROLS: Readonly<AdvancedQueryControls> = Object.freeze({
 })
 
 /**
- * The clean/default builder: a single root `And` group with no children. Compiles
- * to `And{[]}` (TRUE), so an untouched builder "matches everything" exactly like
- * the empty flat conjunction it replaces. Frozen and shared as the stable
- * fallback for an absent slice (referential idempotency, like `EMPTY_CONTROLS`);
- * the root id is `0`, which the `nextAddId` counter (starting at `1`) never
- * re-issues, so it never collides with a user-added node's key.
+ * The default builder, one empty root `And` ("match everything"), frozen and
+ * shared as the stable fallback. Its id `0` is one `nextAddId` never issues.
  */
 const EMPTY_BUILDER: Readonly<BuilderGroupNode> = Object.freeze({
   kind: 'group',
@@ -314,11 +238,7 @@ const EMPTY_BUILDER: Readonly<BuilderGroupNode> = Object.freeze({
   children: Object.freeze([]) as unknown as BuilderNode[],
 })
 
-/**
- * Per-space chip selector. Pass `currentSpaceId` from `useSpaceStore`; `null`
- * (pre-bootstrap) maps to the `__legacy__` slot. Returns the stable frozen empty
- * array for an absent slice so the selector is referentially idempotent.
- */
+/** Per-space chips; a null space maps to `__legacy__`. */
 export function selectAdvancedQueryFiltersForSpace(
   state: AdvancedQueryState,
   spaceId: string | null,
@@ -327,11 +247,7 @@ export function selectAdvancedQueryFiltersForSpace(
   return state.filtersBySpace[key] ?? (EMPTY_FILTERS as PageFilterWithKey[])
 }
 
-/**
- * Per-space controls selector. Returns the stable frozen default controls for an
- * absent slice so the selector is referentially idempotent (mirrors the chip
- * selector above).
- */
+/** Per-space controls, or the stable defaults. */
 export function selectAdvancedQueryControlsForSpace(
   state: AdvancedQueryState,
   spaceId: string | null,
@@ -340,11 +256,7 @@ export function selectAdvancedQueryControlsForSpace(
   return state.controlsBySpace[key] ?? (EMPTY_CONTROLS as AdvancedQueryControls)
 }
 
-/**
- * Per-space builder-tree selector. Returns the stable frozen default builder
- * (a single empty root `And` group) for an absent slice so the selector is
- * referentially idempotent (mirrors the chip/controls selectors above).
- */
+/** Per-space builder tree, or the stable default. */
 export function selectAdvancedQueryBuilderForSpace(
   state: AdvancedQueryState,
   spaceId: string | null,
@@ -354,12 +266,9 @@ export function selectAdvancedQueryBuilderForSpace(
 }
 
 /**
- * Structurally clone the root group and apply `mutate` to the group node
- * addressed by `path`, walking child indices from the root. Returns the new
- * root. Every node on the path is shallow-copied (immutable update for React);
- * untouched subtrees keep their identity. Throws if the path traverses a leaf or
- * an out-of-range index — callers pass paths sourced from the rendered tree, so
- * an invalid path is a programmer error, not user input.
+ * Copy the path from the root to the group at `path` and apply `mutate` to it;
+ * untouched subtrees keep their identity. A path through a leaf or out of range
+ * throws: paths come from the rendered tree, so that is a programmer error.
  */
 function updateGroupAt(
   root: BuilderGroupNode,
@@ -367,8 +276,6 @@ function updateGroupAt(
   mutate: (group: BuilderGroupNode) => BuilderGroupNode,
 ): BuilderGroupNode {
   if (path.length === 0) return mutate(root)
-  // `path.length > 0`, so index 0 exists; `?? 0` only satisfies the
-  // `noUncheckedIndexedAccess` narrowing.
   const index = path[0] ?? 0
   const rest = path.slice(1)
   const child = root.children[index]
@@ -381,11 +288,7 @@ function updateGroupAt(
   return { ...root, children }
 }
 
-/**
- * Apply `mutate` to the node (leaf OR group) addressed by `path`, returning the
- * new root. The empty path addresses the root group itself. Throws on an
- * out-of-range or leaf-traversing path (programmer error — see `updateGroupAt`).
- */
+/** Apply `mutate` to the node, leaf or group, at `path`; throws as `updateGroupAt` does. */
 function updateNodeAt(
   root: BuilderGroupNode,
   path: BuilderPath,
@@ -412,16 +315,9 @@ function updateNodeAt(
 }
 
 /**
- * #1478 — pure tree-edit operations, shared between the store actions (which
- * apply them to a per-space slice + the global `nextAddId` counter) and the
- * self-contained `has-parent-matching` mini-builder (which holds a local
- * `BuilderGroupNode` in React state with its OWN id counter, so its node ids
- * never need to coordinate with the global one — they compile away anyway, since
- * `compileNode` drops the `id`).
- *
- * Each takes the explicit `id` to stamp on the new node so the caller owns id
- * allocation (the store passes `nextAddId + 1`; the mini-builder passes a local
- * monotonic counter).
+ * Pure tree edits, shared by the store and the `has-parent-matching`
+ * mini-builder, which keeps its own tree and id counter (#1478). The caller
+ * passes the new node's id.
  */
 export function addLeafToTree(
   root: BuilderGroupNode,
@@ -470,16 +366,11 @@ export function toggleNegateInTree(root: BuilderGroupNode, path: BuilderPath): B
   return updateNodeAt(root, path, (node) => ({ ...node, negated: !node.negated }))
 }
 
-/**
- * #1478 — a fresh empty root `And` group with the given id, for the mini-builder's
- * initial local state (a NON-frozen copy of `EMPTY_BUILDER`, so the local id
- * counter can seed a distinct root id and the tree is freely re-`set`).
- */
+/** A fresh, unfrozen empty root `And` for the mini-builder's local state (#1478). */
 export function makeEmptyRoot(id = 0): BuilderGroupNode {
   return { kind: 'group', id, op: 'And', negated: false, children: [] }
 }
 
-/** Merge a partial controls patch into a space's slice (defaulting from EMPTY). */
 function patchControls(
   state: AdvancedQueryState,
   spaceKey: string,
@@ -500,10 +391,7 @@ export const useAdvancedQueryStore = create<AdvancedQueryState>()((set) => ({
   addFilter: (spaceKey, filter) =>
     set((state) => {
       const current = state.filtersBySpace[spaceKey] ?? []
-      // Dedupe: strip the React-key-only `_addId` and compare a stable JSON
-      // serialisation. Re-applying a structurally-identical chip is a no-op —
-      // it would ship a duplicate Leaf to the IPC (an AND of a condition with
-      // itself) and add a redundant pill.
+      // A structurally identical chip would AND a condition with itself.
       const incoming = JSON.stringify(filter)
       if (current.some(({ _addId, ...rest }) => JSON.stringify(rest) === incoming)) {
         return state
@@ -557,7 +445,6 @@ export const useAdvancedQueryStore = create<AdvancedQueryState>()((set) => ({
     }),
   removeNode: (spaceKey, path) =>
     set((state) => {
-      // The root is never removed (it's the container); use `clearBuilder`.
       if (path.length === 0) return state
       const root = state.buildersBySpace[spaceKey] ?? EMPTY_BUILDER
       const next = removeNodeFromTree(root, path)
@@ -579,7 +466,6 @@ export const useAdvancedQueryStore = create<AdvancedQueryState>()((set) => ({
   clearBuilder: (spaceKey) =>
     set((state) => {
       const current = state.buildersBySpace[spaceKey]
-      // Already pristine (no slice, or an empty default-shaped root) ⇒ no churn.
       if (
         current == null ||
         (current.children.length === 0 && current.op === 'And' && !current.negated)
@@ -607,8 +493,7 @@ export const useAdvancedQueryStore = create<AdvancedQueryState>()((set) => ({
     set((state) => ({ controlsBySpace: patchControls(state, spaceKey, { aggregates }) })),
   loadView: (spaceKey, spec) =>
     set((state) => {
-      // Mint fresh React-key ids from the shared monotonic counter so the
-      // hydrated tree's node keys never collide with existing/other-space nodes.
+      // Fresh ids, so the loaded tree's keys collide with no existing node.
       let id = state.nextAddId
       const allocId = (): number => {
         id += 1

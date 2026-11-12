@@ -1,15 +1,7 @@
 /**
- * Sync store -- manages peer-to-peer sync state.
- *
- * Tracks sync lifecycle (idle/syncing/error/offline), connected peers,
- * operation counters, and each peer's in-flight session progress.
- *
- * #1076: the `discovering` and `pairing` members were removed — they
- * were dead. The only writers of `state` are `mapBackendState`
- * (useSyncEvents.ts, returns idle/syncing/error) and the offline guard
- * in `useSyncTrigger`; nothing ever produced `discovering`/`pairing`, so
- * every UI branch keyed on them was unreachable. Do NOT re-add a member
- * here without a corresponding writer, or you reintroduce dead UI.
+ * Sync store: the sync lifecycle (idle, syncing, error, offline), connected
+ * peers, op counters, and each peer's in-flight session progress. Add a
+ * `state` member only together with something that writes it (#1076).
  */
 
 import { create } from 'zustand'
@@ -69,7 +61,6 @@ interface SyncStore {
   opsSent: number
   peerProgress: Record<string, PeerSyncProgress>
 
-  // Actions
   setState: (state: SyncState, error?: string | null) => void
   setPeers: (peers: PeerInfo[]) => void
   updateLastSynced: (timestamp: string) => void

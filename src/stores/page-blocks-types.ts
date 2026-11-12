@@ -1,10 +1,6 @@
 /**
- * Shared types for the per-page block store.
- *
- * Extracted from `page-blocks.ts` (#2254) so the store core, the reducers
- * module (`page-blocks-reducers.ts`) and the optimistic structural-move core
- * (`page-blocks-move.ts`) can all reference `PageBlockState` without a circular
- * import (core imports the reducers; the reducers reference the state type).
+ * Types for the per-page block store, apart so the core, the reducers and the
+ * move core can share `PageBlockState` without an import cycle.
  */
 
 import type { BlockRow, PageSourceReport, PasteInput, PasteSplice } from '@/lib/bindings'
@@ -13,27 +9,14 @@ import type { FlatBlock } from '@/lib/tree-utils'
 export type { FlatBlock }
 
 /**
- * #4729 — options for `PageBlockState.remove`.
- *
- * `undoable: false` marks the delete as HOUSEKEEPING: one the app decided on,
- * not one the user asked for. The `DeleteBlock` op is still appended, the row
- * is still soft-deleted, it still syncs and it still lands in Trash — the ONLY
- * difference is that the undo store is not notified, so the delete neither
- * takes the next Ctrl+Z nor invalidates a pending Ctrl+Y.
- *
- * That is deliberate, and it is the point: an invisible cleanup that occupies
- * the undo stack means the user's next Ctrl+Z reverts the cleanup instead of
- * their own last edit. A block removed this way is not Ctrl+Z-recoverable;
- * Trash is its recovery affordance, which is the right one for something the
- * user never asked for and did not see happen.
- *
- * The only caller is the leaked-empty-block cleanup that fires on focus-leave
- * (`src/stores/empty-block-cleanup.ts`). Every user-initiated delete —
- * `handleDeleteBlock`, the merge paths, Escape-cancel, swipe-delete — keeps
- * the default and stays undoable.
+ * Options for `PageBlockState.remove`. `undoable: false` marks housekeeping
+ * the user did not ask for (the leaked-empty-block cleanup, #4729): the delete
+ * still appends its op, syncs and lands in Trash, but the undo store is not
+ * told, so it neither takes the next Ctrl+Z nor drops a pending Ctrl+Y. Trash
+ * is its recovery. Every user-initiated delete keeps the default.
  */
 export interface DeleteBlockOptions {
-  /** Default `true`. `false` = housekeeping (see the interface doc). */
+  /** Default `true`; `false` is housekeeping. */
   undoable?: boolean
 }
 
@@ -41,137 +24,115 @@ export interface PageBlockState {
   /** Ordered flat-tree of blocks for this page (depth-annotated). */
   blocks: FlatBlock[]
   /**
-   * O(1) lookup index over `blocks`, keyed by block id (G).
-   * Always rebuilt from `blocks` on every mutation that touches the array;
-   * the array is the source of truth for ordering, the Map is a derived cache.
-   * Mutations produce a new Map reference so Zustand selector subscribers fire.
+   * Id index over `blocks`, which stays the truth for order. Every write that
+   * changes the array writes a new Map, so selector subscribers fire.
    */
   blocksById: Map<string, FlatBlock>
   /** The root parent ID for this page. */
   rootParentId: string | null
-  /** Loading state. */
   loading: boolean
   /**
-   * How many loads brought a snapshot in (a failed or superseded one does not
-   * count). A reload keeps the tree's rows mounted (#6533), so what the tree
-   * reads beside the blocks, their properties, is read again when this moves.
+   * Loads that brought a snapshot in (failed or superseded ones do not count).
+   * A reload keeps rows mounted (#6533), so what the tree reads beside the
+   * blocks, their properties, is re-read when this moves.
    */
   completedLoads: number
 
   /**
-   * #1258 — total active descendant count when the backend truncated the
-   * page at its `PAGE_SUBTREE_MAX_BLOCKS` safety cap; `null` when the full
-   * page was returned. `blocks.length` is the truncated (capped) count, so
-   * the UI can show "showing the first {blocks.length} of {truncatedTotal}".
-   * The backend orders the cap by a flat (position, id) key, so a deeply
-   * nested child whose parent row was cut is dropped from `blocks` by
-   * `buildFlatTree`; this signal is the only honest indication of that loss.
+   * The true descendant count when the backend truncated the page at
+   * `PAGE_SUBTREE_MAX_BLOCKS`, else `null` (#1258). The cap orders by a flat
+   * (position, id) key, so a child whose parent row was cut is dropped from
+   * `blocks`; this is the only honest signal of that loss.
    */
   truncatedTotal: number | null
 
   /**
-   * #5278 — the focused block a reload kept at its pre-reload text because the
-   * fresh text differed (a peer's edit, say) while its editor held uncommitted
-   * text (#6533), with the text it kept. Leaving
-   * the block without typing reloads it; `null` when no reload kept anything.
+   * The focused block a reload kept at its pre-reload text, because the fresh
+   * text differed while its editor held uncommitted text (#5278, #6533), with
+   * the text kept. Leaving it without typing reloads it.
    */
   staleFocusedBlock: { id: string; content: FlatBlock['content'] } | null
 
-  /** O(1) helper — `state.blocksById.get(id)`. */
+  /** `state.blocksById.get(id)`. */
   getBlockById: (id: string) => FlatBlock | undefined
 
   /** Load the full block subtree from the backend. */
   load: () => Promise<void>
 
   /**
-   * Create a new block below the given block. Returns the new block ID. The row
-   * is in the store when the call returns, so a caller that passes `blockId`
-   * can focus it before the create answers.
+   * Create a block below `afterBlockId`; resolves its id, or `null` on failure.
+   * The row is in the store when the call returns, so a caller that passes
+   * `blockId` can focus it before the create answers.
    */
   createBelow: (afterBlockId: string, content?: string, blockId?: string) => Promise<string | null>
-  /** Edit a block's content. Resolves `true` on success, `false` if the
-   * write failed (the optimistic update is rolled back and a generic
-   * save-failed toast is shown). Callers that need a context-specific error
-   * (e.g. the query builder) can branch on the returned boolean.
-   * `merge: false` makes the edit an undo entry of its own, as a paste is,
-   * instead of joining the block's typing session. `undoGroup` joins the edit
-   * to the undo entry of the edits before it with the same key, whatever block
-   * they changed (a replace-all); with `merge: false` it starts that entry. */
+  /**
+   * Edit a block's content; `false` when the write failed (rolled back and
+   * toasted), so a caller can show its own error. `merge: false` makes the edit
+   * an undo entry of its own, as a paste is, instead of joining the block's
+   * typing session. `undoGroup` joins the edit to the entry of earlier edits
+   * with the same key, whatever block they changed (a replace-all); with
+   * `merge: false` it starts that entry.
+   */
   edit: (
     blockId: string,
     content: string,
     options?: { merge?: boolean; undoGroup?: string },
   ) => Promise<boolean>
-  /**
-   * Delete a block (and its descendants from the flat tree).
-   *
-   * `options` defaults to a user-initiated delete — see {@link DeleteBlockOptions}.
-   */
+  /** Delete a block and its subtree; `options` default to a user-initiated delete. */
   remove: (blockId: string, options?: DeleteBlockOptions) => Promise<void>
 
   /**
-   * Auto-split: given a block ID and markdown with newlines, split into
-   * multiple blocks. First line edits the original, subsequent lines
-   * create new blocks below.
-   *
-   * Resolves `true` only when the plan fully committed (noop included);
-   * `false` on any failed write — mirroring `edit`'s resolve-false contract
-   * so blur-path callers can gate the crash-recovery draft discard on it.
+   * Split `markdown` with newlines into blocks: the first line edits the
+   * original, the rest are created below. `true` only when the plan fully
+   * committed (a noop included), so the blur path can gate its draft discard.
    */
   splitBlock: (blockId: string, markdown: string) => Promise<boolean>
 
   /**
-   * Reorder: move block to a 0-based sibling slot (#400). `newIndex` is an
-   * insertion slot among the block's same-parent siblings (0 = first / top).
-   * Applies an optimistic local splice — no `load()` (R5 / #404).
+   * Move a block to sibling slot `newIndex` (0 = first) under the same parent,
+   * splicing locally without a `load()` (#404).
    */
   reorder: (blockId: string, newIndex: number) => Promise<void>
 
   /**
-   * Move block under a new parent at a 0-based sibling slot (#400). Structural,
-   * so it reloads the tree (`load()`).
+   * Move a block under a new parent at sibling slot `newIndex`, splicing
+   * optimistically when the target is loaded and outside its subtree, else
+   * reloading.
    */
   moveToParent: (blockId: string, newParentId: string | null, newIndex: number) => Promise<void>
 
   /**
-   * #914 — multi-select drag. Move a set of blocks (`ids`, in document order)
-   * under `newParentId`, landing contiguously starting at the 0-based sibling
-   * slot `newIndex`, preserving their relative order. Structural (it issues one
-   * `move_block` IPC per block and then reloads the tree), atomic from the
-   * user's view: a single drag gesture relocates the whole selection.
-   *
-   * Callers pass the SELECTION ROOTS only (see `computeSelectionRoots`) — a
-   * block already nested inside another moved block must NOT be listed; it
-   * travels inside its ancestor's subtree.
+   * Move the selection roots `ids` under `newParentId`, landing contiguously
+   * from slot `newIndex` in their document order, in one `move_blocks_batch`
+   * transaction (#914, #2274). A block nested in another moved block must not
+   * be listed (`computeSelectionRoots`); it travels with its ancestor.
    */
   moveBlocks: (ids: string[], newParentId: string | null, newIndex: number) => Promise<void>
 
   /**
-   * Indent: make block a child of its previous sibling (same depth).
-   * Resolves `true` when the move committed, `false` on a no-op or a caught
-   * backend error (which also toasts) — so callers can announce accurately.
+   * Make a block the last child of its previous sibling. `true` when the move
+   * committed, `false` on a no-op or a failure (toasted), so callers announce
+   * accurately.
    */
   indent: (blockId: string) => Promise<boolean>
-  /** Dedent: move block up one level to grandparent. Returns success (see `indent`). */
+  /** Move a block up one level, after its parent. Success as for `indent`. */
   dedent: (blockId: string) => Promise<boolean>
 
-  /** Move block up among its siblings. Returns success (see `indent`). */
+  /** Move a block up among its siblings, or out before its parent as the first child. Success as for `indent`. */
   moveUp: (blockId: string) => Promise<boolean>
-  /** Move block down among its siblings. Returns success (see `indent`). */
+  /** Move a block down among its siblings, or out after its parent as the last child. Success as for `indent`. */
   moveDown: (blockId: string) => Promise<boolean>
 
   /**
-   * #913 / #5140 — paste clipboard text (an HTML paste's as Document text) right after
+   * Paste clipboard text (an HTML paste's as Document text) after
    * `anchorBlockId`, as one `paste_blocks` command and one undo entry, then
-   * reload the tree. The backend parses the text, lands the top-level blocks
-   * as siblings after the anchor and nests the rest under them. Resolves the
-   * pasted content ids in document order (empty when the anchor is not on this
-   * page or the command failed, which toasts).
+   * reload (#913, #5140). Resolves the pasted content ids in document order,
+   * empty when the anchor is not on this page or the command failed (toasted).
    *
-   * #5160 D4 — with a `splice` the paste goes into the anchor's text: the
-   * anchor becomes the first pasted block (`before` + its content) and is the
-   * first id resolved; `after` ends the last one. The anchor's new text is in
-   * the store, and handed to `onSpliced`, before the reload.
+   * With a `splice` the paste goes into the anchor's text: the anchor becomes
+   * the first pasted block (`before` + its content) and the first id; `after`
+   * ends the last one. The anchor's new text reaches the store and `onSpliced`
+   * before the reload (#5160).
    */
   pasteBlocks: (
     anchorBlockId: string,
@@ -181,23 +142,20 @@ export interface PageBlockState {
   ) => Promise<string[]>
 
   /**
-   * #976 item 13 / #5140 — copy `blockId` and its content subtree right after
-   * the original, as one `duplicate_block` command and one undo entry, then
-   * reload the tree. A block not on this page is a no-op; a failed command
-   * toasts.
+   * Copy `blockId` and its subtree right after it, as one `duplicate_block`
+   * command and one undo entry, then reload. A block not on this page is a
+   * no-op; a failure toasts.
    */
   duplicateBlock: (blockId: string) => Promise<void>
 
   /**
-   * #5140 — save the page edited as its source buffer, as one
-   * `apply_page_source` command and one undo entry, then reload the tree.
-   * `source` is the buffer's text, in the Document dialect (#5691), and
-   * `lineIds` the block id each of its lines carries (#5160 A); `baseSource`
-   * is the `source` of the `get_page_buffer` the buffer was loaded from;
-   * `merge` folds in what changed on the page since `baseSource` instead of
-   * refusing a stale base. Rejects with the
-   * backend's error untouched (no toast), so the caller can tell a stale base
-   * (`RequiresRefresh`) from a buffer it must fix.
+   * Save the page edited as its source, as one `apply_page_source` command and
+   * one undo entry, then reload (#5140). `source` is the buffer in the Document
+   * dialect, `lineIds` the block id each line carries, `baseSource` the
+   * `get_page_buffer` source it was loaded from; `merge` folds in what changed
+   * since instead of refusing a stale base. Rejects with the backend's error
+   * untouched (no toast), so the caller can tell `RequiresRefresh` from a
+   * buffer it must fix.
    */
   applyPageSource: (
     source: string,
@@ -207,13 +165,8 @@ export interface PageBlockState {
   ) => Promise<PageSourceReport>
 
   /**
-   * Append a single backend-returned `BlockRow` to the
-   * in-memory flat tree at depth 0 (top-level child of this page).
-   *
-   * Used by callers that already have the freshly-created row in hand and
-   * would otherwise re-fetch the entire page just to surface it. Pure FE
-   * splice — no IPC, no undo notification (the calling create path owns
-   * both side effects).
+   * Append a backend-returned row at depth 0 without re-fetching the page. No
+   * IPC and no undo notification: the calling create path owns both.
    */
   appendBlock: (row: BlockRow) => void
 }

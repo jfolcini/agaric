@@ -1,18 +1,12 @@
 /**
- * Space store — Zustand state for the active space (Phase 1).
+ * Space store: the active space. A space is a top-level page tagged
+ * `is_space = true` that partitions content (`Personal`, `Work`, ...) and
+ * scopes pickers, search and lists.
  *
- * A "space" is a top-level page block tagged `is_space = true` that
- * partitions user content into independent contexts (`Personal`, `Work`,
- * and any user-created spaces). The active space scopes pickers, search,
- * and list queries in later phases; Phase 1 only ships the data model
- * and the sidebar `SpaceSwitcher` UI surface.
- *
- * Persisted slice: `{ currentSpaceId }`. `availableSpaces` is rehydrated
- * on each boot via `refreshAvailableSpaces()` so it always reflects the
- * latest server truth. `isReady` is derived, not persisted — every boot
- * starts at `false` and flips to `true` once the first refresh resolves.
- * The space a launch opens in is the device's default space when one is set
- * (`PREFERENCES.defaultSpace`, Settings › Spaces), else the persisted one.
+ * Only `currentSpaceId` persists; `availableSpaces` is re-fetched every boot,
+ * and `isReady` flips once the first refresh resolves. A launch opens the
+ * device's default space when one is set (`PREFERENCES.defaultSpace`), else
+ * the persisted one.
  */
 
 import { create } from 'zustand'
@@ -29,36 +23,20 @@ import { safePersistStorage } from '@/lib/safe-persist-storage'
 
 const LOG_MODULE = 'stores/space'
 
-/**
- * Fallback accent token used when no space is active yet
- * (boot pre-bootstrap edge case) or when the active space carries no
- * `accent_color` property. `accent-blue` matches the Work seed default
- * so the UI feels coherent when nothing has been picked.
- */
+/** Accent token when no space is active or it has no `accent_color`; matches the Work seed. */
 export const DEFAULT_ACCENT_TOKEN = 'accent-blue'
 
 /**
- * Reserved key for the no-active-space slot in per-space partition maps
- * (`tabsBySpace`, `recentPagesBySpace`, `currentDateBySpace`, …). Used
- * by `createSpaceSubscriber` and the per-space stores when
- * `currentSpaceId` is `null` (pre-bootstrap, or migrated v0 data that
- * predates spaces).
+ * Key of the no-space slot in per-space maps (`tabsBySpace`, ...), used while
+ * `currentSpaceId` is `null`: before bootstrap, or data from before spaces.
  */
 export const LEGACY_SPACE_KEY = '__legacy__'
 
 /**
- * #2921 — outcome of the most recent `refreshAvailableSpaces()` call.
- * `refreshAvailableSpaces()` itself never rejects (non-boot callers —
- * `useSyncEvents`' fire-and-forget refresh after a sync, `SpacesTab`'s
- * awaited-but-uncaught refresh — rely on that contract), so a caller that
- * needs to react to a HARD failure (no usable prior snapshot: empty
- * `availableSpaces` AND `currentSpaceId === null`) reads this field
- * instead. The boot store's `boot()` is the one production reader: it
- * awaits `refreshAvailableSpaces()` then checks this to decide between
- * transitioning to `'ready'` or surfacing BootGate's error/retry screen.
- * A SOFT failure (a usable snapshot exists) reports `{ kind: 'ok' }` —
- * same as success — because the app stays usable on the prior snapshot;
- * only the deduped toast in `refreshAvailableSpaces` marks that case.
+ * Outcome of the last `refreshAvailableSpaces()`, which never rejects
+ * (#2921). A hard failure (no prior snapshot to keep using) is recorded here
+ * for `boot()` to show BootGate's retry screen; a soft one, with a snapshot,
+ * reports `ok` and only toasts.
  */
 export type SpaceRefreshOutcome = { kind: 'ok' } | { kind: 'hard-error'; error: unknown }
 
@@ -77,24 +55,16 @@ interface SpaceState {
   /** Fetch every space and reconcile `currentSpaceId` against the result. */
   refreshAvailableSpaces: () => Promise<void>
   /**
-   * Derived selector returning the active space's
-   * `accent_color` token (e.g. `accent-emerald`, `accent-blue`), or
-   * [`DEFAULT_ACCENT_TOKEN`] when no space is active or the active
-   * space has no explicit accent. Reads `availableSpaces` so the
-   * value refreshes for free whenever `refreshAvailableSpaces()` is
-   * called (e.g. after the user recolours a space in Settings ›
-   * Spaces). Pure selector — no side effects, no IPC.
+   * The active space's `accent_color` token, or `DEFAULT_ACCENT_TOKEN`. Reads
+   * `availableSpaces`, so it follows every refresh. Pure.
    */
   getCurrentAccent: () => string
 }
 
 /**
- * Reconcile `currentSpaceId` against a freshly-fetched list of spaces. The
- * first reconcile after launch opens the device's default space when it
- * still exists; afterwards the current space stays. When the current space
- * no longer exists (e.g. deleted on another device), fall back to the
- * default space, then to the first space in the alphabetical list. Returns
- * the id to store, or `null` when no spaces exist yet.
+ * The space to make current after a fetch: on the first reconcile of a launch,
+ * the device's default space if it exists; else the current one if it still
+ * exists; else the default, then the first alphabetically. `null` with no spaces.
  */
 function reconcileCurrentSpaceId(
   current: string | null,
@@ -120,11 +90,8 @@ function sameSpaces(a: SpaceRow[], b: SpaceRow[]): boolean {
 }
 
 export const useSpaceStore = create<SpaceState>()(
-  // `subscribeWithSelector` lets `createSpaceSubscriber` (and any future
-  // narrow subscriber) listen on a single selector — currentSpaceId —
-  // instead of waking on every space-store write (`availableSpaces`
-  // refresh, `isReady` flip). See design-system-perf-review-2026-05-09
-  // item 13.
+  // Lets `createSpaceSubscriber` listen on `currentSpaceId` alone instead of
+  // waking on every write.
   subscribeWithSelector(
     persist(
       (set, get) => ({
@@ -141,11 +108,7 @@ export const useSpaceStore = create<SpaceState>()(
           const { currentSpaceId, availableSpaces } = get()
           if (currentSpaceId === null) return DEFAULT_ACCENT_TOKEN
           const active = availableSpaces.find((s) => s.id === currentSpaceId)
-          // `accent_color` is `string | null` on the wire — fall back to
-          // the default when unset (or when the row was filtered out
-          // between the IPC and the selector call). Empty string is also
-          // treated as "unset" so a malformed payload doesn't blank the
-          // chip.
+          // Unset, empty, or the row is gone: the default, so the chip never blanks.
           const token = active?.accent_color
           if (token == null || token === '') return DEFAULT_ACCENT_TOKEN
           return token
@@ -154,9 +117,7 @@ export const useSpaceStore = create<SpaceState>()(
         refreshAvailableSpaces: async () => {
           try {
             const raw = unwrap(await commands.listSpaces())
-            // Defensive — IPC boundary hardening (AGENTS pitfall #25).
-            // Any non-array response is treated as "no spaces" so the
-            // UI never crashes on a shape mismatch.
+            // A non-array response reads as no spaces, so a shape mismatch cannot crash the UI.
             if (!Array.isArray(raw)) {
               logger.warn(
                 LOG_MODULE,
@@ -192,14 +153,9 @@ export const useSpaceStore = create<SpaceState>()(
               isReady: true,
               lastRefreshOutcome: { kind: 'ok' },
             })
-            // When the previously-active space disappeared from the
-            // server-truth list (e.g. deleted on another device and synced
-            // down) we silently fall back to another space. Tell the user
-            // once via a one-shot toast so they understand why the active
-            // space changed without their action. Skip on first boot
-            // (`prevCurrent === null`), when a launch opens the default space
-            // over a still-existing one, and when the fallback finds no space
-            // to switch to (`nextCurrent === null`).
+            // The active space vanished (deleted on another device): say why
+            // it changed, once. Not on first boot, nor when a launch opens the
+            // default space, nor with no space to fall back to.
             if (
               prevCurrent !== null &&
               nextCurrent !== null &&
@@ -211,24 +167,14 @@ export const useSpaceStore = create<SpaceState>()(
               }
             }
           } catch (err) {
-            // #2921 — distinguish a HARD failure (no usable prior snapshot
-            // to fall back on) from a SOFT one (a snapshot exists — either
-            // rehydrated from persisted `currentSpaceId` or from an earlier
-            // successful refresh this session). Never freeze the UI in
-            // EITHER case — `isReady` still flips so components gated on it
-            // (SearchPanel, PageBrowser, CommandPalette, …) don't hang —
-            // but a HARD failure additionally records `lastRefreshOutcome`
-            // so the boot store can read it right after its own `await`
-            // returns and surface BootGate's error/retry screen instead of
-            // silently landing on `ready` with an empty space list (the
-            // every-page-load-no-ops / perpetual-skeleton bug).
+            // `isReady` flips either way so gated views do not hang. A hard
+            // failure (no snapshot to keep using) is recorded for `boot()`, so
+            // it shows the retry screen instead of an empty app (#2921).
             logger.warn(LOG_MODULE, 'failed to load spaces', undefined, err)
             const { availableSpaces, currentSpaceId } = get()
             const hasUsableSnapshot = availableSpaces.length > 0 || currentSpaceId !== null
             if (hasUsableSnapshot) {
-              // SOFT — tell the user via a deduped toast (stable `id`) so a
-              // repeating background refresh failure (e.g. sync polling)
-              // doesn't stack toasts.
+              // Soft: a deduped toast, so a repeating background failure does not stack.
               notify.error(i18n.t('error.spacesLoadFailed'), { id: 'spaces-load-failed' })
             }
             set({
@@ -243,9 +189,7 @@ export const useSpaceStore = create<SpaceState>()(
       {
         name: 'agaric:space',
         storage: safePersistStorage,
-        // Persist only the id — `availableSpaces` is server truth and must
-        // be re-fetched every boot so a space deleted on another device
-        // doesn't linger in the switcher.
+        // `availableSpaces` is re-fetched, so a space deleted elsewhere does not linger.
         partialize: (state) => ({ currentSpaceId: state.currentSpaceId }),
       },
     ),

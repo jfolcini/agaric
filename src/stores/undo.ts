@@ -1,35 +1,17 @@
 /**
- * Undo store — Zustand state for session-scoped, per-page undo/redo.
+ * Undo store — session-scoped, per-page undo/redo.
  *
- * #2468 — page-level undo is REF-ADDRESSED: every migrated mutating command
- * (`create_block` / `edit_block` / `delete_block` / `move_block` /
- * `set_property` / `delete_property` / `add_tag` / `remove_tag`) returns the
- * exact `OpRef`(s) it appended to the op log, and the call site forwards them
- * into `onNewAction(pageId, opRefs)`. Ctrl+Z then submits those CAPTURED refs
- * via `undoOp` / `undoOps` instead of a positional depth — ops landing between
- * capture and undo (a sync burst, a debounced flush, another pane) can no
- * longer shift the target (the #2446 race class).
+ * Undo is ref-addressed (#2468): mutating commands return the `OpRef`s they
+ * appended, the call site passes them to `onNewAction`, and Ctrl+Z reverts
+ * those exact refs through `undoOp` / `undoOps`, so ops landing between
+ * capture and undo (sync, a debounced flush, another pane) cannot shift the
+ * target. Entries without refs, and history from before the page was tracked,
+ * fall back to the positional `undoPageGroup(pageId, depth, windowMs)`.
  *
- * The old positional path (`undoPageGroup(pageId, depth, windowMs)`) is kept
- * as the DOCUMENTED FALLBACK, used only where refs are unavailable:
- *   - actions whose call sites do not thread refs — their
- *     `onNewAction(pageId)` call pushes a ref-less fallback entry;
- *   - history that predates FE tracking (empty undo stack: ops from before
- *     the page entry existed, e.g. a previous app session).
- * `undoDepth` is demoted to display/fallback state: it still counts undone
- * ops so the positional anchor stays coherent across mixed ref/positional
- * undos, but ref-addressed undo never reads it for targeting.
- *
- * New user actions clear the redo stack (standard undo semantics).
- *
- * **Batch undo/redo**: consecutive actions within UNDO_GROUP_WINDOW_MS
- * coalesce at CAPTURE time into one undo entry whose ref-set accumulates;
- * Ctrl+Z reverts the whole entry through ONE `undoOps` IPC (atomic). This
- * makes recurrence-triggered operations (8-10 ops in rapid succession) feel
- * like a single action. A mixed burst (ref-carrying + ref-less action inside
- * one window) degrades the merged entry to the positional fallback — which
- * groups by the same window on the backend, so one Ctrl+Z still reverts the
- * whole burst (the pre-#2468 behavior for everything).
+ * Actions within `UNDO_GROUP_WINDOW_MS` coalesce into one entry that one
+ * Ctrl+Z reverts atomically; a ref-less action in the burst degrades the entry
+ * to the positional fallback, which the backend groups by the same window.
+ * A new action clears the redo stack.
  */
 
 import { create } from 'zustand'
@@ -51,64 +33,29 @@ export type { OpRef, UndoResult }
 export const MAX_REDO_STACK = 100
 
 /**
- * Bound on the ref-addressed undo stack (#2468). Entries older than the cap
- * fall off the bottom; once the stack drains past them, undo continues on the
- * positional fallback (`undoDepth` keeps counting across both paths), so the
- * cap bounds memory without shortening how far back Ctrl+Z can reach.
+ * Entries past the cap fall off the bottom; undo then continues positionally
+ * (`undoDepth` counts across both paths), so the cap bounds memory, not reach.
  */
 export const MAX_UNDO_STACK = 100
 
 /**
- * Cap on the number of refs a single COALESCED undo entry may accumulate
- * (#3323).
- *
- * `onNewAction`'s capture-time coalescing (`sameKeyGroup`, below) is
- * deliberately TIME-UNBOUNDED — a block's mid-typing debounced commits can
- * pause far longer than `UNDO_GROUP_WINDOW_MS` and still belong to the same
- * edit session — so unlike `MAX_UNDO_STACK` (which bounds ENTRY count on the
- * push branch), nothing bounded ref count on the merge branch. On Ctrl+Z the
- * WHOLE entry submits in one `undoOps` IPC (`undoByRefs`), and the backend
- * rejects a batch above `MAX_REVERT_OPS = 1000`
- * (`src-tauri/src/commands/history.rs`) with a `Validation` error; on
- * rejection the entry stays on top of the stack unchanged (see `undoByRefs`),
- * so every subsequent Ctrl+Z on that page failed identically forever before
- * this cap existed. Below that hard cliff it is a latency problem too: a
- * large ref-set is one `BEGIN IMMEDIATE` transaction with in-tx Loro engine
- * fanout holding the single writer lock, well past what `interactive_slo`
- * budgets for a `revert_ops` call.
- *
- * Kept well under `MAX_REVERT_OPS`. Once a merge would cross this cap,
- * `onNewAction` pushes a FRESH entry instead of extending the top one — the
- * next Ctrl+Z reverts the newest chunk, and the press after that reverts the
- * previous chunk: strictly better than a hard `undoOps` failure.
+ * Cap on the refs one coalesced entry may accumulate (#3323). Same-key
+ * coalescing is time-unbounded, and the whole entry reverts in one `undoOps`
+ * call, which the backend rejects above `MAX_REVERT_OPS`
+ * (`src-tauri/src/commands/history.rs`), wedging Ctrl+Z on that page. Past
+ * the cap `onNewAction` pushes a fresh entry, so each Ctrl+Z reverts one chunk.
  */
 export const MAX_COALESCED_UNDO_REFS = 200
 
 /**
- * Time window (ms) within which consecutive same-device ops are grouped for
- * batch undo.
- *
- * Bumped from 200 ms → 500 ms. The original 200 ms window was
- * sized for the in-memory recurrence-op burst (8-10 ops fired
- * back-to-back). Under realistic load — slow disks, larger transactions,
- * mobile/Android backends — those bursts can stretch past 200 ms and the
- * grouping silently breaks, leaving the user with one Ctrl+Z per op
- * instead of one Ctrl+Z per logical action. 500 ms is still well under
- * any plausible "two intentional user actions" gap and gives the burst
- * room to land as a single group.
- *
- * #2468 — the same window now also drives CAPTURE-time coalescing in
- * `onNewAction` (consecutive notifications within the window accumulate one
- * entry's ref-set), mirroring the backend's op-timestamp grouping that the
- * positional fallback still uses.
+ * Window (ms) within which consecutive ops group into one undo: wide enough
+ * for a recurrence burst on a slow device, narrow enough not to merge two
+ * intentional actions. Drives capture-time coalescing in `onNewAction` and
+ * the backend's grouping for the positional fallback.
  */
 export const UNDO_GROUP_WINDOW_MS = 500
 
-/**
- * Returns true if two ISO-8601 timestamps are within UNDO_GROUP_WINDOW_MS
- * of each other. Used to detect ops created in rapid succession
- * (e.g. recurrence ops triggered by set_todo_state).
- */
+/** Whether two ISO-8601 timestamps are within `UNDO_GROUP_WINDOW_MS` of each other. */
 export function isWithinUndoGroup(ts1: string, ts2: string): boolean {
   const d1 = new Date(ts1).getTime()
   const d2 = new Date(ts2).getTime()
@@ -116,60 +63,37 @@ export function isWithinUndoGroup(ts1: string, ts2: string): boolean {
   return Math.abs(d1 - d2) <= UNDO_GROUP_WINDOW_MS
 }
 
-/**
- * One undoable action group on a page's undo stack (#2468).
- */
+/** One undoable action group on a page's undo stack. */
 export interface UndoStackEntry {
   /**
-   * The op refs this action group appended, in APPEND order (oldest-first;
-   * `undo()` submits them newest-first). `null` marks a POSITIONAL-FALLBACK
-   * entry — the call site did not thread refs (see the module doc), so
-   * undoing it goes through `undoPageGroup`.
+   * Refs in append order (oldest first); `undo()` submits them newest first.
+   * `null` marks a positional-fallback entry.
    */
   refs: OpRef[] | null
-  /**
-   * Epoch-ms of the LAST action coalesced into this entry. Capture-time
-   * grouping is a sliding window anchored here, mirroring the backend's
-   * consecutive-gap grouping in `undo_page_group`.
-   */
+  /** Epoch ms of the last action coalesced in; the capture window slides from here. */
   at: number
   /**
-   * #2600 — optional "session" key. Consecutive actions carrying the SAME
-   * defined key coalesce into one entry REGARDLESS of elapsed time (in
-   * addition to the timed window), so a block's mid-typing debounced commits +
-   * its final blur commit revert as a single Ctrl+Z. Content edits pass
-   * `edit:<blockId>`; actions that omit the key keep the pure timed-window
-   * behavior (#2468). `undefined` never matches (including another `undefined`).
+   * Consecutive actions with the same defined key coalesce regardless of
+   * elapsed time, so a block's debounced typing commits and its blur commit
+   * undo as one (`edit:<blockId>`). `undefined` never matches.
    */
   coalesceKey?: string | undefined
 }
 
 interface PageUndoState {
-  /**
-   * Undo targets, newest first (index 0 = what the next Ctrl+Z reverts).
-   * Seeded by `onNewAction`; drained by `undo()`; re-fed by `redo()` (a
-   * redone group's `new_op_ref`s become the new undo targets).
-   */
+  /** Undo targets, newest first. `redo()` pushes each redone group back on. */
   undoStack: UndoStackEntry[]
   /**
-   * Redo targets, most recent undo first. Each entry is an undo's
-   * `new_op_ref` — the appended REVERSE op (`is_undo = 1`) that
-   * `redo_page_op` reverses to re-apply the original action. NOT the original
-   * forward op's ref: `redo_page_op` refuses to reverse a forward op (#659).
+   * Each entry is an undo's `new_op_ref` (the reverse op), which
+   * `redo_page_op` reverses; it refuses the original forward op (#659).
    */
   redoStack: OpRef[]
   /**
-   * How many ops we've undone from the page's history. #2468 — demoted to
-   * display/fallback state: it anchors the POSITIONAL fallback
-   * (`undoPageGroup`) for ref-less entries and pre-tracking history, and is
-   * still advanced by ref-addressed undos so the two paths stay coherent
-   * when interleaved. Ref-addressed targeting never reads it.
+   * Ops undone so far: the positional fallback's anchor. Ref-addressed undos
+   * advance it too, so interleaved paths stay coherent; they never read it.
    */
   undoDepth: number
-  /**
-   * Group sizes for batch redo. Each entry records how many single-op undos
-   * were performed in one batch. Redo pops the last entry to replay the group.
-   */
+  /** Ops per batch undo, so redo replays the whole group. */
   redoGroupSizes: number[]
 }
 
@@ -178,24 +102,14 @@ interface UndoStore {
   pages: Map<string, PageUndoState>
 
   /**
-   * Undo the last undoable action group on the given page.
-   *
-   * #2468 — if the top undo-stack entry carries captured refs, it is
-   * reverted BY REF: one `undoOp` IPC for a single-op entry, ONE atomic
-   * `undoOps` IPC for a coalesced multi-op entry. Ref-less entries and an
-   * empty stack (history predating FE tracking) fall back to the positional
-   * `undoPageGroup` path (#2190 semantics preserved). Reconciles local
-   * undo/redo state from the batch response. Returns the first (newest)
-   * UndoResult or null.
+   * Undo the top entry: by ref (`undoOp`, or one atomic `undoOps` for a
+   * coalesced entry), else positionally. Returns the newest `UndoResult` or null.
    */
   undo: (pageId: string) => Promise<UndoResult | null>
 
   /**
-   * Redo the last undone op (or group) on the given page.
-   * Uses recorded group sizes to replay the correct number of ops.
-   * #2468 — the redone ops' `new_op_ref`s are pushed back onto the undo
-   * stack as ONE ref entry, so the next Ctrl+Z re-undoes the group by ref.
-   * Returns the first UndoResult or null.
+   * Redo the last undone group; its new refs return to the undo stack as one
+   * entry. Returns the first `UndoResult` or null.
    */
   redo: (pageId: string) => Promise<UndoResult | null>
 
@@ -203,30 +117,12 @@ interface UndoStore {
   canRedo: (pageId: string) => boolean
 
   /**
-   * Called after any user mutation on a page.
-   * Clears the redo stack and group sizes (standard: new action invalidates
-   * redo history) and resets the positional anchor (`undoDepth`) to 0.
-   *
-   * #2468 — `opRefs` carries the op ref(s) the mutation's IPC response
-   * reported (`WithOps.op_refs`); the action is pushed onto the page's undo
-   * stack as a ref-addressed entry. Omit it for commands that don't surface
-   * refs (positional-fallback entry). Consecutive calls within
-   * `UNDO_GROUP_WINDOW_MS` coalesce into the top entry (ref-sets accumulate;
-   * a ref-less participant degrades the merged entry to the fallback).
-   *
-   * An EMPTY `opRefs` array means the command was an idempotent no-op
-   * (`add_tag` on an already-tagged block, …): nothing was appended, nothing
-   * is undoable — the call is ignored entirely (no entry push, and no redo
-   * invalidation for an action that changed nothing). Callers should skip
-   * the notification themselves in that case; this guard is defense-in-depth.
-   *
-   * #2600 — `coalesceKey` (optional) groups consecutive actions that share the
-   * same defined key into ONE entry regardless of elapsed time (content edits
-   * pass `edit:<blockId>`), so a block's debounced mid-typing commits fold into
-   * a single undo step. Omit it for the pure timed-window behavior (#2468).
-   *
-   * #5160 D4 — `merge: false` never joins the top entry: a paste, which its
-   * toast's Undo reverts, must not take along the typing flushed just before it.
+   * Record a user mutation on a page: push or coalesce an undo entry and clear
+   * redo. `opRefs` are the refs the IPC reported; omit them for a command that
+   * reports none (positional-fallback entry). An empty array is an idempotent
+   * no-op and is ignored. `coalesceKey` groups same-key actions regardless of
+   * time; `merge: false` never joins the top entry, so a paste's toast Undo
+   * does not take the typing flushed just before it.
    */
   onNewAction: (
     pageId: string,
@@ -239,87 +135,28 @@ interface UndoStore {
   clearPage: (pageId: string) => void
 
   /**
-   * #731 — re-anchor undo state after a sync applied remote ops to a page.
-   *
-   * The POSITIONAL fallback (`undoPageGroup`) selects ops by newest-first
-   * offset across ALL devices; remote ops landing between two Ctrl+Z presses
-   * shift that indexing, and stale `redoStack` OpRefs may target ops the
-   * remote write superseded. When `useSyncEvents` reloads a page's blocks
-   * after `sync:complete` (ops_received > 0), it must also drop that page's
-   * undo anchors here. Reset to the pristine baseline (empty undo stack,
-   * depth 0, empty redo stack + group sizes) — identical to a fresh page,
-   * but only for pages whose op-log actually changed. No-op for pages with
-   * no recorded undo state.
-   *
-   * #2468 note — captured LOCAL refs technically stay valid under remote
-   * traffic (that's the point of ref addressing), but a remote write may
-   * have SUPERSEDED the state a captured op mutated; reverting it after the
-   * user has seen the synced content is surprising. We deliberately keep the
-   * conservative #731 full reset; relaxing it is future work.
+   * Reset a page's undo state after sync applied remote ops to it (#731):
+   * remote ops shift the positional fallback, and stale redo refs may target
+   * superseded ops. Captured refs would stay valid, but reverting a change the
+   * user has since seen overwritten is surprising, so this resets fully. No-op
+   * for a page with no undo state.
    */
   reanchorAfterRemoteOps: (pageId: string) => void
 
   /**
-   * #2901 — toast-Undo for a swipe-delete, pinned to THAT delete op (finding
-   * 42). `blockId` may also be the selection roots of one batch delete
-   * (#6547): their rows are undone in one atomic `undoOps`, and only the
-   * roots, as undoing a root restores the selected blocks under it. A batch
-   * of more blocks than one history page holds can be reported as failed;
-   * Trash still has it. Moved from `SortableBlock`'s `undoSwipeDelete` so
-   * the undo store owns the depth/redo-anchor invariants in one place
-   * instead of a row component reaching around it with raw write IPC calls.
+   * Toast Undo for a swipe or batch delete (#2901). Undoes the block's newest
+   * `delete_block` op by its `(device_id, seq)` ref, not the top of the stack:
+   * tapping the toast blurs a dirty editor, whose flush lands an `edit_block`
+   * above the delete. For a batch, `blockId` is the selection roots, undone in
+   * one atomic `undoOps`; a batch larger than one history page can report
+   * failure (Trash still has it).
    *
-   * The tap on the toast first blurs any dirty roving editor, whose flush
-   * lands a fresh `edit_block` op ON TOP of the delete — a positional
-   * depth-0 group undo (`performActivePageUndo`) would then reverse the
-   * user's typed edit (or group the flush-edit with the delete and revert
-   * BOTH). Instead: locate the block's newest `delete_block` op in the page
-   * history and undo THAT EXACT OP by its `(device_id, seq)` ref.
+   * The scan cannot see `is_undo` (`HistoryEntry` lacks it), so an undo op
+   * newer than the swipe's delete would be picked and refused; the swipe path
+   * cannot produce that order, as the block was alive when swiped.
    *
-   * #4328 — the ref is the whole point. This used to feed the entry's
-   * INDEX in the `listPageHistory` result straight into `undoPageOp`'s
-   * `undo_depth`, which only works while both queries admit the same
-   * op-log rows — and they never did: `list_page_history` carries neither
-   * `is_undo = 0` nor `is_replicated = 0`, while all three positional-undo
-   * queries carry both. So every reverse op already in the page's log (one
-   * prior Ctrl+Z is enough) and every foreign audit row (`is_replicated =
-   * 1`, migration 0099) shifted the mapping by one, and `HistoryEntry` does
-   * not expose `is_undo`, so no client-side correction was even
-   * expressible. The old `[index, index + 1]` probe window absorbed a skew
-   * of exactly one and rolled a mis-undo back via `redoPageOp`; past that
-   * the toast just reported failure. `undoOp` (#2468) addresses the op by
-   * the identity the op-log is actually keyed on — `(device_id, seq)`,
-   * already present on every `HistoryEntry` — so no window, no rollback
-   * probe, and no future filter divergence between the two queries can
-   * make this mis-target again. It also means the backend's own reject
-   * rules (replicated / already-reversed / is-an-undo-op) apply to the
-   * exact row the toast promised, instead of to whatever row the count
-   * happened to land on.
-   *
-   * Residual, deliberately NOT closed here: the SELECTION scan can still
-   * only filter on what `HistoryEntry` carries, which is `is_replicated`
-   * but not `is_undo`. So if a page ever held an `is_undo = 1`
-   * `delete_block` for THIS block NEWER than the swipe's own row, the scan
-   * would pick it and `undo_op` would refuse it (`reversing an undo op is
-   * redo's job`, #659) — a visible failure, not a wrong undo. That ordering
-   * is not constructible from the swipe path itself: the block must be
-   * ALIVE to be swiped, so the swipe's `delete_block` is by construction
-   * the newest delete on it, and the toast lives 5 s. Closing it for real
-   * means adding `is_undo` to `HistoryEntry` (op-log column exists; it
-   * would touch the two `agaric-store` history queries, the generated
-   * bindings and the tauri-mock), which buys nothing for TARGETING now
-   * that targeting is by ref.
-   *
-   * `reloadPage` refreshes the page's block subtree after a successful
-   * targeted undo. This store deliberately does NOT import `getPageStore`
-   * from `@/stores/page-blocks` to fetch it directly: `page-blocks.ts`
-   * already imports `useUndoStore` (for `onNewAction` on stale-space heals),
-   * so an `undo.ts -> page-blocks.ts` import would close a module cycle
-   * (`check-import-cycles.mjs`, #761) and reverse the documented one-way
-   * store layering (`docs/architecture/frontend.md`, #2465). The caller —
-   * `SortableBlock`, which already sits inside a `PageBlockStoreProvider` —
-   * supplies the reload as a callback instead:
-   * `() => getPageStore(pageId)?.getState().load()`.
+   * `reloadPage` is a callback because importing `page-blocks` here would
+   * close an import cycle (`page-blocks` imports this store).
    */
   undoDeleteOf: (
     pageId: string,
@@ -333,22 +170,14 @@ function emptyPageState(): PageUndoState {
   return { undoStack: [], redoStack: [], undoDepth: 0, redoGroupSizes: [] }
 }
 
-/**
- * Get existing page state or create a default.
- * NOTE: The returned object is NOT automatically stored in the Map.
- * Caller must use set() to persist any changes.
- */
+/** Existing page state or a default; the default is not stored, so persist through `set()`. */
 function getOrCreatePage(pages: Map<string, PageUndoState>, pageId: string): PageUndoState {
   const existing = pages.get(pageId)
   if (existing) return existing
   return emptyPageState()
 }
 
-/**
- * Return a new `pages` Map with the entry for `pageId` replaced by the
- * result of `updater(current)`. If the updater returns `undefined`, the
- * entry is deleted. Pure — no closure over `set` / `get`.
- */
+/** Copy of `pages` with `pageId`'s entry replaced by `updater(current)`; `undefined` deletes it. */
 function setPageState(
   pages: Map<string, PageUndoState>,
   pageId: string,
@@ -365,23 +194,11 @@ function setPageState(
 }
 
 /**
- * Fold a batch undo response into a page's redo bookkeeping — shared by the
- * ref-addressed and positional undo paths.
- *
- * Pushes each op's `new_op_ref` — the appended REVERSE op (flagged
- * `is_undo = 1`) — onto the redo stack in response order. Redo means
- * "reverse the undo op", and `redo_page_op` REJECTS a forward-op ref (#659),
- * so the stack must carry the reverse ops' refs, NOT `reversed_op` (the
- * original forward op). Newest-first ops are pushed first, so the OLDEST
- * op's reverse ends up at the front — the order `performSingleRedo` pops for
- * a correct oldest-first redo replay. Advances `undoDepth` by the number of
- * reverted ops so the next positional fallback seeds at the next-older
- * group, and records the group size for redo.
- *
- * #1561 — clamp the recorded group size to what the redo stack can back
- * (`redoStack.length - sum(existing redoGroupSizes)`) in case
- * `reanchorAfterRemoteOps` / `onNewAction` reset the entry mid-flight,
- * preserving the invariant `sum(redoGroupSizes) <= redoStack.length`.
+ * Fold a batch undo response into redo bookkeeping. Pushes each reverse op's
+ * `new_op_ref` (never `reversed_op`: `redo_page_op` rejects forward ops, #659),
+ * so the oldest op's reverse ends up on top, the order redo replays. Advances
+ * `undoDepth` and records the group size, clamped to what the redo stack backs
+ * so `sum(redoGroupSizes) <= redoStack.length` survives a mid-flight reset (#1561).
  */
 function applyUndoResults(current: PageUndoState, results: UndoResult[]): PageUndoState {
   let redoStack = current.redoStack
@@ -398,11 +215,8 @@ function applyUndoResults(current: PageUndoState, results: UndoResult[]): PageUn
 }
 
 /**
- * Remove `entry` from an undo stack by IDENTITY. If a concurrent
- * `onNewAction` / `reanchorAfterRemoteOps` replaced or reset the stack while
- * the undo IPC was in flight, the object is gone and the stack is returned
- * untouched — the reset already established the state the interleaver wanted
- * (mirrors the #1561/#1692 reconcile-onto-live-state discipline).
+ * Remove `entry` by identity. If a concurrent reset replaced the stack while
+ * the IPC was in flight, the entry is gone and the reset's state wins.
  */
 function withoutEntry(undoStack: UndoStackEntry[], entry: UndoStackEntry): UndoStackEntry[] {
   const idx = undoStack.indexOf(entry)
@@ -411,55 +225,18 @@ function withoutEntry(undoStack: UndoStackEntry[], entry: UndoStackEntry): UndoS
 }
 
 /**
- * #3353 (follow-up to #3323) — is this a NON-RETRYABLE revert/replay
- * failure? Resubmitting the identical ref against one of these gets the
- * identical rejection, so `undoByRefs` / `performSingleRedo` must drop the
- * dead entry instead of leaving it on top of the stack (where it would fail
- * identically on every subsequent Ctrl+Z / Ctrl+Shift+Z, wedging the page):
+ * Whether a revert or replay failure repeats identically on retry, so the
+ * caller drops the entry instead of wedging Ctrl+Z on it (#3353): `validation`
+ * (oversized batch, duplicate or already-reversed ref, not an undo op,
+ * replicated op), `not_found` (op compacted away), `non_reversible`.
  *
- * - `validation` (#3323) — oversized batch past `MAX_REVERT_OPS`, a
- *   duplicate ref, a target that's already reversed. On the redo path
- *   (#3546) also "not an undo op" and "replicated audit op"
- *   (`redo_page_op_inner`, `src-tauri/src/commands/history.rs`).
- * - `not_found` — the op ref no longer exists (`verify_undo_targets_in_tx`,
- *   `src-tauri/src/commands/history.rs`); reachable once a session outlives
- *   the 90-day `op_log_compact` retention.
- * - `non_reversible` — the backend found no applicable inverse
- *   (`purge_block`, an unreconstructible `edit_block`, or a reverse-move
- *   the preflight refused).
- *
- * #3546 — "permanent" is exact for `not_found` and for the `validation`
- * verdicts above, which are functions of immutable op-log history. Two
- * `validation` refusals read the current tree instead (#6051): a revived page
- * or tag name that a live page or tag of the space now holds
- * (`DuplicatePageTitle`), and a restored alias another page now holds
- * (`DuplicatePageAlias`). The name clash is NOT permanent and keeps its entry:
- * its toast names the title, and once the user renames or deletes the holder
- * the same Ctrl+Z succeeds. The alias clash is dropped, since its toast is the
- * generic copy and a retained entry would fail blind.
- *
- * "Permanent" is NOT exact for every `non_reversible` arm:
- * `reverse_move_preflight` also rejects when the prior parent is merely
- * SOFT-DELETED (a trash restore revives it — and
- * `TrashView` never touches this store, so the dropped entry really would
- * have worked afterwards), when it has transiently become a descendant of
- * the moved block (a later move breaks the cycle), or when it is in another
- * space than the block (moving the page back makes it reversible, #6047).
- * Those are temporarily, not permanently, impossible.
- *
- * They are dropped anyway, deliberately. The `{ kind, message }` envelope
- * carries no sub-kind to separate them from the genuinely irreversible arms
- * (`AppError::NonReversible` has no `code` field, and its `op_type` reads
- * `"move_block"` for the permanent create-payload arm too — see
- * `reverse/batch.rs`), so retaining "the transient ones" is not expressible
- * here. Retaining ALL of them restores exactly the #3353 wedge; dropping
- * costs at most one undo the user could have recovered by first restoring a
- * block from trash, which no signal tells us to wait for. Distinguishing
- * them would need a new backend sub-kind, not a frontend change.
- *
- * Deliberately narrower than "any AppError": a TRANSIENT failure
- * (`pool_busy`, `database`, a dropped IPC) deserves a retry with the entry
- * intact, so only this class is dropped here.
+ * A taken page or tag name (`DuplicatePageTitle`, #6051) keeps its entry: its
+ * toast names the holder, and the same Ctrl+Z works once that is renamed. A
+ * taken alias (`DuplicatePageAlias`) is dropped: its toast is generic, so a
+ * kept entry would fail blind. Some `non_reversible` moves are only temporarily impossible (prior parent in
+ * trash, now a descendant, in another space), but the error carries no
+ * sub-kind to tell them apart, and keeping them all restores the wedge. A
+ * transient error (`pool_busy`, `database`, a dropped IPC) keeps its entry.
  */
 function isPermanentRevertFailure(err: unknown): boolean {
   return (
@@ -470,17 +247,9 @@ function isPermanentRevertFailure(err: unknown): boolean {
 }
 
 /**
- * #2901 — how far back `undoDeleteOf`'s toast-Undo scans page history for its
- * delete op. The delete is the newest op at swipe time; only ops landing in
- * the toast's 5s window (typically the tap's own blur-flush edit, a Ctrl+Z's
- * reverse row, or a sync burst's audit rows) can sit above it, so a small
- * window is plenty.
- *
- * #4328 — this bounds the SEARCH only. It used to also bound the accuracy of
- * the result, because the entry's index in this page doubled as the
- * `undo_page_op` depth; the scan now yields the entry's `(device_id, seq)`
- * and `undoOp` takes it from there, so a row admitted here that the undo
- * queries would skip costs a wasted comparison, not a wrong target.
+ * How far back `undoDeleteOf` scans for its delete op. Only ops landing in
+ * the toast's lifetime can sit above it, so a small window suffices; it bounds
+ * the search, not the target, which is found by ref.
  */
 const SWIPE_UNDO_HISTORY_SCAN = 50
 
@@ -500,40 +269,19 @@ export const useUndoStore = create<UndoStore>((set, get) => {
   /** Guard: page IDs with undo currently in progress. */
   const undoInProgress = new Set<string>()
   /**
-   * #2912 — the SPECIFIC `UndoStackEntry` object each page's in-flight `undo()`
-   * is reverting. `undo()` reconciles by removing the reverted entry BY IDENTITY
-   * (`withoutEntry`), so if `onNewAction` coalesces a just-committed edit into
-   * that very object it builds a NEW merged `{ refs: [...] }` that REPLACES it —
-   * the identity match then misses, leaving an entry whose ref-set still
-   * contains the ops the in-flight undo already reversed. Every later Ctrl+Z on
-   * it resubmits an already-reversed ref, which the backend's atomic `undoOps`
-   * aborts (`undo.batchUnavailable`) — undo is dead for the page until a reset.
-   *
-   * Chose the "prevent coalescing" approach over reconciling by ref VALUE: it is
-   * local to the two spots that already share this closure (`undo()` records,
-   * `onNewAction` checks) and leaves every reconcile path (`withoutEntry`,
-   * `applyUndoResults`, the undoOps-failure "entry stays on stack" contract)
-   * byte-for-byte unchanged, so blast radius stays minimal. Recorded here,
-   * checked in `onNewAction`, cleared when the undo settles (success or failure).
+   * The entry each page's in-flight `undo()` is reverting. `undo()` removes it
+   * by identity, so `onNewAction` must not coalesce into it: the merged
+   * replacement would keep the already-reversed refs, and every later Ctrl+Z
+   * would fail on them (#2912).
    */
   const undoInProgressEntry = new Map<string, UndoStackEntry>()
   /** Guard: page IDs with redo currently in progress. */
   const redoInProgress = new Set<string>()
 
-  // ---------------------------------------------------------------------------
-  // Single-op helpers (extracted from the original undo/redo actions)
-  // ---------------------------------------------------------------------------
-
   /**
-   * Perform a single redo operation (one op at a time).
-   * Handles optimistic updates and rollback on error.
-   *
-   * #3546 — the outcome is a tagged union, not `UndoResult | null`, because
-   * the two failure shapes have to be accounted for DIFFERENTLY by the
-   * caller: `'retained'` pushed the ref back onto `redoStack` (so it still
-   * counts toward the group's residual size), `'dropped'` did not (so the
-   * residual must shrink by one, or `sum(redoGroupSizes)` would exceed
-   * `redoStack.length`).
+   * Redo one op, popping it optimistically. `retained` (ref back on
+   * `redoStack`) and `dropped` (discarded) differ because the caller shrinks
+   * the group's residual size only for a drop.
    */
   type RedoAttempt =
     | { status: 'ok'; result: UndoResult }
@@ -553,9 +301,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
 
       const [first, ...remainingStack] = pageState.redoStack
 
-      // Optimistic update: pop from redo stack and decrement undoDepth. Read
-      // from the functional updater's `current` for consistency with the
-      // success/rollback paths (derive from live state, not the snapshot).
+      // Derive from the updater's live `current`, as the rollback path does.
       set((s) => ({
         pages: setPageState(s.pages, pageId, (current) => {
           const base = current ?? pageState
@@ -575,31 +321,18 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     try {
       const result = unwrap(await commands.redoPageOp(opRef.device_id, opRef.seq))
 
-      // On success: state already updated optimistically
       return { status: 'ok', result }
     } catch (err) {
       logger.error('UndoStore', 'redo operation failed', { pageId }, err)
-      // #6051 — a redo can revive a taken name too (redoing the undo of a
-      // create); that refusal says why. Other failures stay silent here.
+      // A redo can revive a taken name too (#6051); that refusal says why.
       const reason = takenNameReason(err)
       if (reason !== null) notify.warning(reason)
-      // #3546 — redo carried the same wedge #3353 fixed on the undo path.
-      // `redo_page_op` rejects NON-RETRYABLY for three reasons of its own
-      // (`redo_page_op_inner`, `src-tauri/src/commands/history.rs`): the
-      // op_log row is gone (`not_found`), the target is not an undo op or
-      // is a replicated audit row (`validation`, #659/#2549), or the undo
-      // op has no computable reverse (`non_reversible`). None of those can
-      // change for a ref already sitting in a session-scoped redo stack, so
-      // rolling the ref back on made every subsequent Ctrl+Shift+Z reissue
-      // the same doomed IPC — redo dead for the page until a reset. Same
-      // bug, same predicate, same fix as `undoByRefs`. A taken name (#6051)
-      // is the refusal that can change: the predicate keeps that ref, and
-      // the same redo succeeds once the name is free.
+      // A permanent rejection drops the ref, or every later Ctrl+Shift+Z
+      // reissues the same doomed IPC (#3546). A taken name is kept: the same
+      // redo succeeds once the name is free.
       const retain = !isPermanentRevertFailure(err)
-      // `undoDepth` is restored either way: the redo did NOT happen, so the
-      // op is still undone and the positional anchor must reflect that. Only
-      // the ref's place on `redoStack` differs — mirroring `undoByRefs`,
-      // which likewise touches only the stack and leaves depth alone.
+      // The redo did not happen, so `undoDepth` is restored either way; only
+      // the ref's place on `redoStack` differs.
       set((state) => ({
         pages: setPageState(state.pages, pageId, (current) =>
           current
@@ -615,31 +348,15 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Undo paths — ref-addressed (#2468) and positional fallback (#2190)
-  // ---------------------------------------------------------------------------
-
   /**
-   * #2468 — revert a captured-ref entry: ONE `undoOp` IPC for a single ref,
-   * ONE atomic `undoOps` IPC for a coalesced ref-set (submitted newest-first;
-   * the backend returns results newest-first either way).
-   *
-   * On failure, redo/depth are always left untouched, and the atomic-abort
-   * contract of `undoOps` guarantees the backend reverted nothing either. For
-   * a TRANSIENT failure (`pool_busy`, a dropped IPC) the entry itself is also
-   * left on the stack so a later Ctrl+Z retries it. For a NON-RETRYABLE
-   * rejection (#3323/#3353: validation, not_found, or non_reversible)
-   * resubmitting the identical refs gets the identical rejection, so the
-   * entry is DROPPED from the stack here (see the
-   * `isPermanentRevertFailure` branch below — and its doc for the one
-   * `non_reversible` arm that is only temporarily impossible) instead of
-   * waiting for it to self-heal on the next `onNewAction` /
-   * `reanchorAfterRemoteOps` reset.
+   * Revert a captured-ref entry: one `undoOp`, or one atomic `undoOps` for a
+   * coalesced set. On failure redo and depth are untouched (the backend
+   * reverted nothing); a transient failure leaves the entry for a retry, a
+   * permanent one drops it (`isPermanentRevertFailure`).
    */
   async function undoByRefs(pageId: string, entry: UndoStackEntry): Promise<UndoResult | null> {
     const refs = entry.refs as OpRef[]
-    // Captured refs accumulate in APPEND order; submit newest-first to match
-    // the backend's revert order (and its newest-first response contract).
+    // Newest first, the backend's revert order.
     const newestFirst = refs.toReversed()
 
     let results: UndoResult[]
@@ -651,15 +368,9 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       }
     } catch (err) {
       logger.error('UndoStore', 'undo_op failed', { pageId, refCount: newestFirst.length }, err)
-      // #6051 — an undo reviving a taken name says which name.
+      // An undo reviving a taken name says which name (#6051).
       notify.warning(takenNameReason(err) ?? t('undo.batchUnavailable'))
-      // #3323/#3353 — a NON-RETRYABLE failure (validation, not_found, or
-      // non_reversible — see `isPermanentRevertFailure`) gets the identical
-      // rejection on retry, wedging Ctrl+Z on this page. Drop the dead entry
-      // so the stack can move on to the next one. Narrower than a blanket
-      // drop-on-any-error: a TRANSIENT failure (pool_busy, a dropped IPC)
-      // deserves a retry with the entry intact, so only that class is
-      // dropped here.
+      // A permanent failure would wedge Ctrl+Z on this entry; drop it.
       if (isPermanentRevertFailure(err)) {
         set((state) => ({
           pages: setPageState(state.pages, pageId, (current) =>
@@ -681,11 +392,9 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       return null
     }
 
-    // Reconcile in ONE set: pop the reverted entry (identity-matched — see
-    // `withoutEntry` for the mid-flight-reset seam) and fold the batch
-    // response into redo bookkeeping. If `clearPage` cleared the page entry
-    // mid-flight, `current` is undefined and we drop the result rather than
-    // re-seeding (#753/#1677).
+    // Pop the entry by identity and fold the response into redo state. A
+    // `clearPage` mid-flight leaves `current` undefined: drop the result
+    // rather than re-seed (#753).
     set((state) => ({
       pages: setPageState(state.pages, pageId, (current) => {
         if (!current) return current
@@ -700,19 +409,16 @@ export const useUndoStore = create<UndoStore>((set, get) => {
   }
 
   /**
-   * Positional fallback (#2190 path, documented fallback under #2468).
-   * `entry` is the ref-less undo-stack entry being reverted, or null when the
-   * stack is empty (history predating FE tracking — nothing to pop).
+   * Positional fallback. `entry` is the ref-less entry being reverted, or null
+   * for an empty stack.
    */
   async function undoPositional(
     pageId: string,
     entry: UndoStackEntry | null,
     initialDepth: number,
   ): Promise<UndoResult | null> {
-    // #2190 — ONE IPC reverts the entire consecutive same-device,
-    // within-window undo group in a single IMMEDIATE transaction. The backend
-    // resolves the subtree + the group's op refs once and returns one
-    // `UndoResult` per reverted op, newest-first.
+    // One IPC reverts the whole same-device, within-window group atomically and
+    // returns one result per op, newest first.
     let results: UndoResult[]
     try {
       results = unwrap(await commands.undoPageGroup(pageId, initialDepth, UNDO_GROUP_WINDOW_MS))
@@ -725,11 +431,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     // Empty group — the seed op doesn't exist (nothing left to undo).
     if (results.length === 0) return null
 
-    // Reconcile state from the batch response in one `set` (see
-    // `applyUndoResults`), popping the fallback entry that was reverted
-    // (identity-matched; a mid-flight reset wins — #1561/#1692). A page
-    // entry cleared mid-flight drops the result rather than re-seeding
-    // (#753/#1677).
+    // Same reconcile as `undoByRefs`.
     set((state) => ({
       pages: setPageState(state.pages, pageId, (current) => {
         if (!current) return current
@@ -742,10 +444,6 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     return results[0] ?? null
   }
 
-  // ---------------------------------------------------------------------------
-  // Swipe-delete toast undo (#2901, finding 42) — see `undoDeleteOf` doc above.
-  // ---------------------------------------------------------------------------
-
   async function undoDeleteOfImpl(
     pageId: string,
     blockId: string | readonly string[],
@@ -753,8 +451,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
   ): Promise<void> {
     const blockIds = typeof blockId === 'string' ? [blockId] : blockId
     try {
-      // #5415 — the page is open in the active space; with none known the
-      // undo is refused through the catch below.
+      // With no active space known, the catch below refuses the undo.
       const spaceId = useSpaceStore.getState().currentSpaceId
       if (spaceId == null) throw new Error('No active space; cannot undo')
       const history = unwrap(
@@ -768,16 +465,9 @@ export const useUndoStore = create<UndoStore>((set, get) => {
           paginationLimit(typeof blockId === 'string' ? SWIPE_UNDO_HISTORY_SCAN : PAGINATION_MAX),
         ),
       )
-      // #4328 — newest-first scan for the block's own `delete_block` row,
-      // skipping REPLICATED rows. A peer's delete of the same block is
-      // ingested as an append-only audit row (`is_replicated = 1`, migration
-      // 0099) that was never applied locally; `undo_op` rejects it outright
-      // (`verify_undo_targets_in_tx`, #2481), so selecting it would turn the
-      // toast into a guaranteed error. The local row underneath it is the one
-      // the swipe actually appended. `is_replicated` is the only one of
-      // `undo_op`'s three reject rules `HistoryEntry` exposes — see the
-      // residual note on `undoDeleteOf`'s doc block.
-      // Each block's newest such row, kept newest-first as `undoOps` takes them.
+      // Newest first, each block's own local `delete_block` row. A peer's
+      // delete arrives as a replicated audit row that `undo_op` rejects
+      // (#4328); the local row beneath it is the swipe's.
       const unfound = new Set(blockIds)
       const refs: OpRef[] = []
       for (const entry of history.items) {
@@ -796,21 +486,14 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         return
       }
 
-      // Ref-addressed: the op-log is keyed on `(device_id, seq)` and
-      // `HistoryEntry` already carries both, so the toast reverses the exact
-      // row it found rather than the Nth row of a differently-filtered walk.
       if (refs.length === 1) {
         unwrap(await commands.undoOp(refs[0] as OpRef))
       } else {
         unwrap(await commands.undoOps(refs))
       }
 
-      // #2901 — this targeted undo bypasses the undo store's normal
-      // ref-addressed/positional bookkeeping (it reverts a specific historical
-      // op, not the top-of-stack entry), so treat it as a new action: stale
-      // depth/redo anchors can no longer target ops the targeted undo just
-      // shifted. Formerly a cross-module call from `SortableBlock`; now
-      // internal to the store that owns it.
+      // This undo bypasses the stack, so stale depth and redo anchors could
+      // target the ops it shifted; treat it as a new action.
       get().onNewAction(pageId)
       notify(t('undo.op.deleteBlock', { defaultValue: t('undo.undoneMessage') }), {
         duration: 1500,
@@ -823,10 +506,6 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Store actions
-  // ---------------------------------------------------------------------------
-
   return {
     pages: new Map(),
 
@@ -837,29 +516,19 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       }
       undoInProgress.add(pageId)
       try {
-        // Snapshot the undo target: the top stack entry (newest action), plus
-        // the positional anchor the fallback seeds at (0 = most recent
-        // undoable op) in case the entry is ref-less or the stack is empty.
         const pageState = getOrCreatePage(get().pages, pageId)
         const top = pageState.undoStack[0] ?? null
         const initialDepth = pageState.undoDepth
 
-        // #2912 — record the exact object we're about to revert so a
-        // concurrent `onNewAction` (a debounced blur-commit resolving mid-undo)
-        // won't coalesce into it and defeat the identity-based reconcile below.
+        // Mark the entry so a concurrent `onNewAction` will not coalesce into it.
         if (top) undoInProgressEntry.set(pageId, top)
 
-        // Optimistically ensure a page entry exists BEFORE the await so a
-        // `clearPage` landing mid-flight is detectable on the success path
-        // (`current` becomes undefined) — mirrors the pre-#2190 optimistic
-        // marker and the #753 "don't re-seed after an explicit clear" fix.
+        // Ensure the entry exists before the await, so a `clearPage` landing
+        // mid-flight shows as `current` undefined on the success path (#753).
         set((s) => ({
           pages: setPageState(s.pages, pageId, (current) => current ?? emptyPageState()),
         }))
 
-        // #2468 — ref-addressed when the captured entry carries refs;
-        // positional fallback for ref-less entries and for pre-tracking
-        // history (empty stack).
         if (top && top.refs !== null && top.refs.length > 0) {
           return await undoByRefs(pageId, top)
         }
@@ -877,24 +546,17 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         const pageState = getOrCreatePage(get().pages, pageId)
         if (pageState.redoStack.length === 0) return null
 
-        // Determine group size from the most recent batch undo
         const groupSize =
           pageState.redoGroupSizes.length > 0 ? (pageState.redoGroupSizes.at(-1) as number) : 1
 
         let firstResult: UndoResult | null = null
         let redoneCount = 0
-        // #2468 — each redo appends a NEW op that re-applies the original
-        // action; its ref is the next undo target (`undo_op` accepts it, and
-        // the original forward op would be rejected as already-reversed).
-        // Collect the replayed group's refs in replay (oldest-first append)
-        // order so they re-enter the undo stack as ONE coalesced entry.
+        // Each redo appends a new op whose ref is the next undo target; the
+        // group's refs re-enter the undo stack as one entry, oldest first.
         const newUndoRefs: OpRef[] = []
 
-        // #3546 — refs `performSingleRedo` DISCARDED as non-retryable. They
-        // left `redoStack` without being replayed, so they must come off the
-        // group's residual size too: counting them as "still pending" would
-        // leave `sum(redoGroupSizes) > redoStack.length` and hand a later
-        // redo a group size no refs can satisfy.
+        // Refs dropped as permanent left `redoStack` unreplayed, so they come
+        // off the group's residual size too (#3546).
         let droppedCount = 0
 
         for (let i = 0; i < groupSize; i++) {
@@ -916,27 +578,15 @@ export const useUndoStore = create<UndoStore>((set, get) => {
           set((state) => ({
             pages: setPageState(state.pages, pageId, (current) => {
               if (!current) return current
-              // Reconcile the group-size accounting for what actually redid.
-              // A full group (redoneCount === groupSize) pops its entry. On a
-              // PARTIAL redo (a mid-group `performSingleRedo` failure rolled
-              // the remaining ops back onto the redo stack), keep a smaller
-              // residual entry equal to the ops still pending, so a later
-              // redo replays exactly those — rather than dropping the whole
-              // entry and orphaning `redoStack` refs from their group
-              // accounting (which would break the
-              // `sum(redoGroupSizes) <= redoStack.length` pairing the undo
-              // path relies on).
+              // A partial redo keeps a residual entry for the ops still
+              // pending, preserving `sum(redoGroupSizes) <= redoStack.length`.
               let redoGroupSizes = current.redoGroupSizes
               if (redoGroupSizes.length > 0) {
                 const trimmed = redoGroupSizes.slice(0, -1)
                 redoGroupSizes = residual > 0 ? [...trimmed, residual] : trimmed
               }
-              // #2468 — the redone group becomes the next undo target: push
-              // its refs as ONE ref-addressed entry so undo→redo→undo cycles
-              // stay ref-addressed end-to-end. Guarded on a NON-EMPTY ref set
-              // (#3546): a redo that only dropped a dead ref replayed nothing,
-              // and a `{ refs: [] }` entry would be neither ref-addressable
-              // nor a legitimate positional-fallback target.
+              // A redo that replayed nothing pushes no entry: `{ refs: [] }`
+              // is neither ref-addressable nor a positional target.
               const undoStack =
                 newUndoRefs.length > 0
                   ? [{ refs: newUndoRefs, at: Date.now() }, ...current.undoStack].slice(
@@ -962,10 +612,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     },
 
     onNewAction: (pageId, opRefs, coalesceKey, { merge = true } = {}) => {
-      // Idempotent no-op (`op_refs: []` — e.g. add_tag on an already-tagged
-      // block): the backend appended nothing, so there is nothing to undo and
-      // no reason to invalidate redo history. Ignore entirely (see interface
-      // doc — callers should already skip the notification).
+      // `op_refs: []` is an idempotent no-op: nothing to undo, redo stays valid.
       if (opRefs !== undefined && opRefs.length === 0) return
 
       const now = Date.now()
@@ -973,18 +620,9 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         pages: setPageState(state.pages, pageId, (current) => {
           const base = current ?? emptyPageState()
           const top = base.undoStack[0]
-          // #2912 — never coalesce into the entry a concurrent `undo()` is
-          // reverting. `undo()` reconciles by removing that exact object by
-          // identity; replacing it here with a merged `{ refs: [...] }` would
-          // orphan the reverted ops on the surviving entry (see
-          // `undoInProgressEntry`). When the top IS that in-flight object, skip
-          // BOTH grouping paths and push a FRESH entry — it lands above the
-          // in-flight one, which the undo's reconcile then removes cleanly.
+          // Never coalesce into the entry an in-flight `undo()` is reverting
+          // (see `undoInProgressEntry`); push a fresh entry above it instead.
           const topIsInFlightUndo = top !== undefined && undoInProgressEntry.get(pageId) === top
-          // #2600 — a defined `coalesceKey` matching the top entry's key
-          // extends its group REGARDLESS of elapsed time (a block's mid-typing
-          // debounced commits pause longer than the timed window), in addition
-          // to the #2468 timed window for ref bursts. `undefined` never matches.
           const sameKeyGroup =
             !topIsInFlightUndo &&
             top !== undefined &&
@@ -995,10 +633,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
             top !== undefined &&
             now - top.at <= UNDO_GROUP_WINDOW_MS &&
             now >= top.at
-          // #3323 — see `MAX_COALESCED_UNDO_REFS` doc: only refs-carrying
-          // merges can grow unbounded (a ref-less merge degrades to the
-          // positional fallback and never accumulates a `refs` array), so the
-          // cap only needs to gate that case.
+          // Only a ref-carrying merge grows; a ref-less one degrades to positional.
           const withinCoalesceCap =
             top === undefined ||
             top.refs === null ||
@@ -1006,13 +641,9 @@ export const useUndoStore = create<UndoStore>((set, get) => {
             top.refs.length + opRefs.length <= MAX_COALESCED_UNDO_REFS
           let undoStack: UndoStackEntry[]
           if (merge && top !== undefined && (sameKeyGroup || withinWindow) && withinCoalesceCap) {
-            // Capture-time coalescing: this action joins the top entry's group
-            // (`at` advances to the newest action; the entry adopts this
-            // action's `coalesceKey` so the session identity tracks the latest
-            // commit). The merged entry stays ref-addressed only when BOTH
-            // sides carry refs; a ref-less participant degrades the whole group
-            // to the positional fallback, which the backend groups over the
-            // same window — one Ctrl+Z still reverts the burst, positionally.
+            // The merged entry stays ref-addressed only if both sides carry
+            // refs; otherwise the positional fallback reverts the burst, which
+            // the backend groups over the same window.
             const merged: UndoStackEntry =
               top.refs !== null && opRefs !== undefined
                 ? { refs: [...top.refs, ...opRefs], at: now, coalesceKey }
@@ -1037,9 +668,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
 
     reanchorAfterRemoteOps: (pageId: string) => {
       set((state) => ({
-        // Only re-anchor pages that already carry undo state — a page the
-        // user never touched has no stale anchor to fix, and creating a
-        // pristine entry for it would needlessly grow the Map.
+        // A page the user never touched has no stale anchor; do not create one.
         pages: setPageState(state.pages, pageId, (current) =>
           current ? emptyPageState() : current,
         ),

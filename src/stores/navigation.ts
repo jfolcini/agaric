@@ -1,42 +1,15 @@
 /**
- * Navigation store — Zustand state for the active sidebar view + selected
- * Block highlight (split).
+ * Navigation store: the current view, the one-shot `selectedBlockId`, the
+ * handoff slots views consume on mount, and the header's Back / Forward
+ * history.
  *
- * Owns these pieces of state:
+ * `currentView` mirrors the active space's `currentViewBySpace` slot, so each
+ * space returns to the view last used in it; both persist, the flat field
+ * serving the no-space boot path. `selectedBlockId` and the handoff slots are
+ * transient and never persisted.
  *
- *  - `currentView` — which top-level view is rendered (`'journal'`,
- *    `'pages'`, `'page-editor'`, …). The active-space mirror of
- *    `currentViewBySpace[currentSpaceId]`. Persisted to localStorage so
- *    a re-launch lands on the same view the user was using.
- * `currentViewBySpace` — per-space view slice. Switching
- *    space pulls `currentViewBySpace[newKey]` into the flat
- *    `currentView` field via the space-switch subscriber, so a user who
- *    last used `Search` in Personal lands on `Search` when they switch
- *    back to Personal — even if they were on `pages` in Work in the
- *    meantime. Persisted; the flat `currentView` is also persisted so
- *    legacy reads (and the no-active-space boot path) keep working.
- *  - `selectedBlockId` — optional block ID to highlight / scroll-to /
- *    focus after navigation. Set by `navigateToPage(…, blockId)` (which
- *    lives in `useTabsStore`) and consumed by `PageEditor` / the journal
- *    day's `DayPageEditor`, or page mode's editor in either, as a one-shot. NOT persisted — block-level selection is
- *    a transient UI affordance, not a layout choice.
- *  - `navHistoryBySpace` — the header's Back / Forward history per space,
- *    in memory only. Written by `./navigation-history`, which records and
- *    replays it across this store, tabs and journal.
- *
- * Tab state (page stacks, tabsBySpace, activeTabIndex, navigateToPage,
- * goBack, openInNewTab, closeTab, switchTab, replacePage) lives in
- * `useTabsStore` (`./tabs`). The split is asymmetric: tab actions
- * forward to this store via `useNavigationStore.getState().setView(...)`
- * when they imply a view change; this store's actions never reach back
- * into tabs.
- *
- * Persist contract — bumped from `version: 2` to `version: 3`.
- * The v2→v3 migrate function seeds `currentViewBySpace[__legacy__]`
- * from the rehydrated flat `currentView` so users carrying v2 data
- * land on their last view (under the `__legacy__` slot) until the
- * space subscriber pulls the right per-space slot on first space
- * switch.
+ * Tab state lives in `useTabsStore` (`./tabs`). Tab actions call `setView`
+ * here; this store never calls back into tabs.
  */
 
 import { create } from 'zustand'
@@ -48,9 +21,7 @@ import type { JournalMode } from '@/stores/journal'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 import type { View } from '@/types/view'
 
-// #4006 — the view-id literal lives in `@/types/view` so `lib/`-tier
-// consumers can depend on it without importing `stores/`. Re-exported here
-// unchanged so every existing importer of this module keeps working.
+// The view-id type lives in `@/types/view` so `lib/` can use it without importing `stores/`.
 export type { View } from '@/types/view'
 
 /**
@@ -87,47 +58,33 @@ interface NavigationStore {
   /** Optional block ID to highlight/scroll to after navigation. */
   selectedBlockId: string | null
   /**
-   * Phase 5 follow-up — transient handoff slot consumed by
-   * `PageBrowser` on mount. Written by `CommandPalette`'s
-   * "Reveal in Pages view" action so the user lands on a pages list
-   * already filtered to the page in question. The view reads and
-   * clears this slot exactly once (same pattern as
-   * `useCommandPaletteStore.pendingViewQuery`).
+   * Handoff slot: `CommandPalette`'s "Reveal in Pages view" writes it and
+   * `PageBrowser` consumes and clears it on mount.
    */
   pendingPageBrowserFilter: string | null
   /**
-   * #734 — transient handoff slot for the Settings panel's active tab.
-   * Written by the deep-link router (`agaric://settings/<tab>`) and the
-   * welcome modal's actions BEFORE flipping `currentView` to `'settings'`.
-   * `SettingsView` subscribes while mounted, so the request lands even
-   * when Settings is already the current view (the localStorage +
-   * `?settings=` mechanisms are only read in the useState initializer
-   * and therefore no-op without a remount). Consumed-and-cleared
-   * exactly once; NOT persisted (excluded from `partialize`).
+   * Handoff slot for the Settings tab, written by the deep-link router and the
+   * welcome modal before switching to `'settings'` (#734). `SettingsView`
+   * subscribes while mounted, so it lands even when Settings is already shown.
    */
   pendingSettingsTab: string | null
   /**
-   * #6206 — transient handoff slot: the property key whose values that don't
-   * fit Settings › Properties opens, written by a mark on such a value before
-   * it opens that tab. `UnfitPropertyValues` consumes and clears it when it
-   * opens the dialog. NOT persisted (excluded from `partialize`).
+   * Handoff slot: the property key whose unfit values Settings › Properties
+   * opens, consumed by `UnfitPropertyValues` (#6206).
    */
   pendingPropertyReview: string | null
   /**
-   * #6535 — transient handoff slot: the page whose history the page menu's
-   * *Page history* row opens, written before it switches to `'history'`.
-   * `HistoryView` consumes and clears it. NOT persisted (excluded from
-   * `partialize`).
+   * Handoff slot: the page the page menu's *Page history* opens, consumed by
+   * `HistoryView` (#6535).
    */
   pendingHistoryPage: HistoryPageScope | null
   /**
-   * Back / Forward history per space (a page id means nothing in another
-   * space). In memory only: excluded from `partialize`, so it starts empty
-   * on each launch.
+   * Back / Forward history per space, since a page id means nothing in
+   * another space. In memory only.
    */
   navHistoryBySpace: Record<string, NavHistory>
 
-  /** Switch sidebar view. DON'T touch tabs (preserve them across view changes). */
+  /** Switch view; tabs are left as they are. */
   setView: (view: View) => void
   /** Set the selected block id (or `null`). */
   setSelectedBlockId: (id: string | null) => void
@@ -148,11 +105,9 @@ interface NavigationStore {
 type NavigationState = NavigationStore
 
 /**
- * Every member of the `View` union — used by the CR-PERSIST coercers.
- * Derived from a `satisfies Record<View, true>` literal so that adding a
- * `View` member without listing it here is a compile error — a missing
- * member would make `coerceView` silently rewrite that view to the
- * `'journal'` default on every load.
+ * Every `View` member. The `satisfies Record<View, true>` makes a missing one
+ * a compile error; otherwise `coerceView` would rewrite that view to
+ * `'journal'` on every load.
  */
 const ALL_VIEWS = Object.keys({
   journal: true,
@@ -169,14 +124,9 @@ const ALL_VIEWS = Object.keys({
 } satisfies Record<View, true>) as readonly View[]
 
 /**
- * CR-PERSIST — coerce an arbitrary persisted JSON value into a valid `View`,
- * or `null` if it isn't one. `localStorage` can hold anything (manual edits,
- * a corrupt write, a future-shape downgrade); hydrating a bare cast lets a
- * malformed blob reach `ViewDispatcher` as `currentView`.
- *
- * Exported because `useTabsStore` persists a `View` too — each tab's
- * `enteredFrom` (the view its page stack was opened from, #4287) — and must
- * coerce it through the same single source of truth for "is this a view id".
+ * A persisted value as a valid `View`, or `null`: `localStorage` can hold
+ * anything, and a bare cast lets garbage reach `ViewDispatcher`. Exported for
+ * the tabs store, which persists a `View` as each tab's `enteredFrom`.
  */
 export function coerceView(raw: unknown): View | null {
   return typeof raw === 'string' && (ALL_VIEWS as readonly string[]).includes(raw)
@@ -184,7 +134,7 @@ export function coerceView(raw: unknown): View | null {
     : null
 }
 
-/** CR-PERSIST — coerce a persisted value into a `Record<string, View>`, dropping invalid slots. */
+/** Coerce a persisted value into a `Record<string, View>`, dropping invalid slots. */
 function coerceViewBySpace(raw: unknown): Record<string, View> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
   const out: Record<string, View> = {}
@@ -196,18 +146,10 @@ function coerceViewBySpace(raw: unknown): Record<string, View> {
 }
 
 /**
- * CR-PERSIST (#753) — coerce an entire persisted navigation blob
- * field-by-field. Shared by `migrate` (version-mismatched blobs) and
- * `merge` (same-version blobs): zustand's persist middleware only calls
- * `migrate` when the stored version DIFFERS from `options.version`, so a
- * corrupt blob that still carries `version: 3` (or a non-numeric
- * version) bypasses `migrate` entirely and reaches the default shallow
- * `merge` raw — coercing in `merge` as well closes that path. The
- * coercion is idempotent, so the migrate→merge double pass on
- * version-mismatched blobs is harmless.
- *
- * `selectedBlockId` is always reset to `null` — it's a one-shot UI
- * affordance and is excluded from `partialize` anyway.
+ * Coerce a whole persisted blob field by field (#753). Both `migrate` and
+ * `merge` call it: zustand runs `migrate` only on a version mismatch, so a
+ * corrupt blob with the current version reaches `merge` raw. Idempotent.
+ * `selectedBlockId` always comes back `null`.
  */
 function coercePersistedNavigation(
   persisted: unknown,
@@ -219,9 +161,7 @@ function coercePersistedNavigation(
   >
   const currentView = coerceView(blob['currentView']) ?? 'journal'
   const persistedBySpace = coerceViewBySpace(blob['currentViewBySpace'])
-  // V2 → v3: seed `currentViewBySpace[__legacy__]` from the
-  // flat `currentView` so a returning v2 user lands on their last view
-  // until the space subscriber pulls the proper per-space slot.
+  // A v2 blob seeds the `__legacy__` slot from the flat view.
   const currentViewBySpace =
     version < 3 && Object.keys(persistedBySpace).length === 0
       ? { [LEGACY_SPACE_KEY]: currentView }
@@ -235,16 +175,9 @@ export function selectNavHistory(state: NavigationState, spaceKey: string): NavH
 }
 
 /**
- * Per-space view selector. Pass `currentSpaceId` from
- * `useSpaceStore`.
- *
- * Reads the per-space slice keyed by `spaceId`, falling back to the flat
- * `state.currentView` field when the slice is missing. The flat field is
- * the active-space mirror — `setView` writes both, and the space-switch
- * subscriber swaps the flat field on `currentSpaceId` change. The
- * fall-back lets a partial `setState({ currentView })` (common in tests)
- * still render through this selector while the per-space slice
- * partitions data between non-active spaces.
+ * The view for `spaceId`, falling back to the flat `currentView` mirror when
+ * the slice is missing, so a partial `setState({ currentView })` (tests) still
+ * renders.
  */
 export function selectCurrentViewForSpace(state: NavigationState, spaceId: string | null): View {
   if (spaceId == null) return state.currentView
@@ -252,16 +185,9 @@ export function selectCurrentViewForSpace(state: NavigationState, spaceId: strin
 }
 
 /**
- * Per-space primitive owning the `currentViewBySpace` map, the derived flat
- * `currentView` mirror, and the space-change flush/pull reconcile. `setView`
- * calls `applyActive` instead of hand-writing both fields; `attach` (below)
- * wires the subscriber.
- *
- * The fresh-space default is direction-aware: the initial `__legacy__` → real
- * hydration is NOT a user switch (the space store merely waking up), so it
- * keeps the current view rather than flipping it; a genuine real→real switch
- * to a never-visited space defaults to `page-editor`. `currentView` is always a
- * safe seed (it is persisted), so `seedOnFirstFire` keeps its default (`true`).
+ * Per-space slice of the view. A switch to a never-visited space opens the
+ * page editor, but the first `__legacy__` → real space hydration is the space
+ * store waking up, not a switch, and keeps the current view.
  */
 const navigationSlice = createPerSpaceSlice<NavigationState, View>({
   readMirror: (state) => state.currentView,
@@ -323,33 +249,15 @@ export const useNavigationStore = create<NavigationStore>()(
       name: 'agaric:navigation',
       version: 3,
       storage: safePersistStorage,
-      // selectedBlockId is intentionally NOT persisted — it is a one-shot
-      // UI affordance consumed and cleared by PageEditor / DayPageEditor (or
-      // page mode's editor) on mount, not a setting that should survive relaunch.
       partialize: (state) => ({
         currentView: state.currentView,
         currentViewBySpace: state.currentViewBySpace,
       }),
       migrate: (persisted: unknown, version: number) =>
-        // V0 → v1: the v1 migration moved tab data into the
-        // per-space slices — that logic now lives in `useTabsStore` and
-        // is irrelevant to this store post-split.
-        //
-        // V1 → v2: strip the now-removed tab fields from the
-        // persisted blob so the rehydrated shape matches the slimmer v2
-        // contract (`currentView` only).
-        //
-        // CR-PERSIST (#753): EVERY version is coerced field-by-field
-        // instead of bare-cast (previously a v>=3 blob was returned
-        // `as NavigationState` unvalidated). Note zustand only invokes
-        // `migrate` on a version MISMATCH — same-version blobs are
-        // coerced by `merge` below.
+        // Older blobs carried tab fields, now in `useTabsStore`; coercion drops
+        // them. zustand calls `migrate` only on a version mismatch.
         coercePersistedNavigation(persisted, version) as NavigationState,
-      // CR-PERSIST (#753) — zustand skips `migrate` when the stored
-      // version equals `options.version` (or isn't a number), handing the
-      // raw blob straight to `merge`. Coerce here too so a corrupt
-      // `localStorage` payload that still says `version: 3` (e.g.
-      // `currentView: 42`) can't reach `ViewDispatcher`.
+      // A same-version blob skips `migrate`, so coerce here too (#753).
       merge: (persisted, current) => ({
         ...current,
         ...coercePersistedNavigation(persisted, 3),
@@ -358,13 +266,5 @@ export const useNavigationStore = create<NavigationStore>()(
   ),
 )
 
-/**
- * Wire the flat `currentView` ↔ per-space-slice flush/pull so the active view
- * swaps with the per-space slice whenever the user switches space (mirrors the
- * recent-pages and tabs stores). The flush/pull/first-fire logic lives in the
- * shared `createPerSpaceSlice` primitive (`navigationSlice`); the
- * direction-aware fresh-space default (keep the current view on the initial
- * `__legacy__` → real hydration, default to `page-editor` on a real switch)
- * is expressed by its `fallback`.
- */
+/** Swap the flat `currentView` with the per-space slice on every space switch. */
 navigationSlice.attach(useNavigationStore)

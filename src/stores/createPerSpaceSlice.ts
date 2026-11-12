@@ -1,34 +1,15 @@
 /**
- * createPerSpaceSlice — the per-space "map + derived active mirror + reconcile"
- * primitive.
+ * The per-space "map + derived active mirror + reconcile" primitive. Stores
+ * partitioned by space keep a per-space map (the truth) and a flat field
+ * mirroring the active space; hand-rolling that per store let an action
+ * persist a stale mirror into the wrong space, and a rehydrate leave the
+ * mirror holding another space's value.
  *
- * Several stores (`recent-pages`, `tabs`, `navigation`, …) partition their
- * state by the active space. Each historically encoded the SAME shape by hand:
- *
- *   1. a per-space `Record<string, T>` map (the canonical source of truth),
- *   2. a top-level FLAT field mirroring the active space's slice that every
- *      action had to rewrite in lock-step, and
- *   3. a hand-written `reconcile…OnSpaceChange(prev, new)` flush/pull wired
- *      through {@link createSpaceSubscriber}.
- *
- * Re-deriving that shape per store produced real defects — see the
- * `recent-pages` "write-time corruption" (Defect 1: an action reading the stale
- * flat mirror and persisting it into the wrong space's slice) and "Defect 2"
- * (a rehydrate leaving the flat mirror holding a different space's list). This
- * primitive owns all three pieces ONCE so no store re-invents the footgun:
- *
- *   - `applyActive(state, value)` composes the state patch that writes `value`
- *     into the active space's slice AND derives the flat mirror from it in a
- *     single, atomic update. Actions call this instead of hand-writing the
- *     mirror, so the mirror can never drift from its slice.
- *   - `attach(store)` wires the space-change reconcile through
- *     {@link createSpaceSubscriber}. On a real switch it flushes the outgoing
- *     mirror into the outgoing slice and pulls the incoming slice (or a
- *     fallback) into the mirror. On the first fire it seeds an absent slice
- *     from the rehydrated mirror, otherwise pulls the slice into the mirror
- *     (the Defect-2 fix).
- *
- * The map remains the single source of truth; the mirror is always derived.
+ * `applyActive` writes the active slice and derives the mirror in one update,
+ * so they cannot drift. `attach` wires the space-change reconcile: a real
+ * switch flushes the outgoing mirror into its slice and pulls the incoming
+ * slice (or a fallback); the first fire seeds an absent slice from the
+ * rehydrated mirror, or else pulls the slice into the mirror.
  */
 
 import type { StoreApi } from 'zustand'
@@ -42,102 +23,65 @@ export interface PerSpaceSwitchContext<T> {
   newKey: string
   /** The space being switched FROM. */
   prevKey: string
-  /** The active mirror value at switch time (the outgoing space's slice). */
+  /** The mirror at switch time: the outgoing space's value. */
   current: T
 }
 
 export interface PerSpaceSliceOptions<State, T> {
-  /**
-   * Read the active mirror value out of the flat state field(s). For a
-   * single-field mirror this is `(s) => s.someFlatField`; for a composite
-   * mirror (e.g. tabs' `{ tabs, activeTabIndex }`) it assembles the value
-   * from every flat field it spans.
-   */
+  /** The mirror value, assembled from every flat field it spans. */
   readMirror: (state: State) => T
-  /**
-   * Project an active value into a state patch that updates the flat
-   * mirror field(s). The inverse of {@link readMirror}. May transform the
-   * value (e.g. an ISO-string slice → a `Date` mirror).
-   */
+  /** The state patch writing `value` into the flat mirror; the inverse of {@link readMirror}. */
   writeMirror: (value: T) => Partial<State>
   /** Read the per-space slice for `key`, or `undefined` when the space has none yet. */
   getSlice: (state: State, key: string) => T | undefined
   /** State patch that writes `value` into the per-space slice for `key`. */
   setSlice: (state: State, key: string, value: T) => Partial<State>
   /**
-   * Value pulled into the mirror when the incoming space has no slice yet
-   * (the fresh-space default). Receives the switch context so a store can
-   * vary the default by direction — e.g. navigation keeps the current view on
-   * the initial `__legacy__` → real-space hydration, but defaults to
-   * `page-editor` on a genuine user-initiated switch.
+   * The mirror's value for a space with no slice yet. Gets the switch context
+   * so a store can vary it by direction (navigation keeps the view on the
+   * first `__legacy__` → real hydration).
    */
   fallback: (ctx: PerSpaceSwitchContext<T>) => T
-  /**
-   * Optional cross-store side effect run AFTER a real (prev ≠ new) switch has
-   * been applied — e.g. tabs clears the navigation store's transient
-   * `selectedBlockId` so a highlight from the previous space doesn't bleed in.
-   */
+  /** Cross-store side effect after a real switch (tabs clears `selectedBlockId`). */
   onSwitch?: (prevKey: string, newKey: string) => void
   /**
-   * Whether the first fire may seed an ABSENT slice for `newKey` from the flat
-   * mirror. Defaults to `true` (the v0→v1 carry: the persisted flat field is
-   * the last-active value and is a safe seed — navigation/tabs).
-   *
-   * `recent-pages` overrides this to `(key) => key === LEGACY_SPACE_KEY`: its
-   * flat mirror can hold a *foreign* space's list after a rehydrate, so seeding
-   * a real space's slice from it would persist cross-space data (the "write-time
-   * corruption" defect). When seeding is declined the mirror is instead reset to
-   * the fallback and the slice is left absent.
+   * Whether the first fire may seed an absent slice from the mirror; default
+   * yes. `recent-pages` allows only `__legacy__`: its mirror can hold another
+   * space's list after a rehydrate. Declined, the mirror resets to the fallback
+   * and the slice stays absent.
    */
   seedOnFirstFire?: (newKey: string) => boolean
   /**
-   * Equality used to skip a redundant mirror pull on the first fire. Defaults
-   * to `Object.is`, which is exact for the reference-stable single-field
-   * mirrors (`recent-pages`, `navigation`); composite mirrors that rebuild a
-   * fresh object per read simply always pull on the (import-time only) first
-   * fire, which is harmless.
+   * Equality that skips a redundant first-fire pull; default `Object.is`. A
+   * composite mirror built fresh per read just always pulls, once at import.
    */
   equals?: (a: T, b: T) => boolean
   /**
-   * Whether a REAL switch also seeds the incoming space's slice with the
-   * value it just pulled into the mirror. Defaults to `false` — see the
-   * flush/pull comment in `attach`: leaving a fresh space's slice absent is
-   * what stops "switch in and straight back out" from writing an empty seed
-   * that masks future data.
-   *
-   * `journal` opts in (#3322): its fresh-space fallback is *today* + `daily`,
-   * which is a real value rather than an empty one, and seeding it means the
-   * next flush round-trips even if the user never touches the view. Making it
-   * an explicit option is what let journal adopt this primitive at all —
-   * before, it hand-rolled the whole reconcile just to keep this one
-   * behaviour.
+   * Whether a real switch also seeds the incoming slice with the value pulled
+   * into the mirror; default no, so switching in and straight out writes no
+   * empty seed that masks later data. `journal` opts in: its fallback (today,
+   * daily) is a real value (#3322).
    */
   seedOnSwitch?: boolean
 }
 
 export interface PerSpaceSlice<State, T> {
-  /**
-   * Compose the state patch an action applies to write `value` into the
-   * ACTIVE space's slice and derive the flat mirror from it in one update.
-   * The active space is resolved via {@link activeSpaceKey} at call time.
-   */
+  /** The patch writing `value` into the active space's slice and the mirror, in one update. */
   applyActive: (state: State, value: T) => Partial<State>
   /** The active space's slice, or `undefined` when it has none yet. */
   readActiveSlice: (state: State) => T | undefined
   /**
-   * Wire the space-change reconcile through {@link createSpaceSubscriber} and
-   * return the reconcile callback (so a store can re-export it for tests that
-   * drive the first-fire path directly). Call once, at module scope, after the
-   * store is created.
+   * Wire the reconcile through {@link createSpaceSubscriber} and return it, so
+   * a store can export it for tests of the first-fire path. Call once at
+   * module scope, after the store is created.
    */
   attach: (store: StoreApi<State>) => (prevKey: string, newKey: string) => void
 }
 
 /**
- * Build the per-space primitive from a store-specific projection. The returned
- * `applyActive` / `readActiveSlice` are pure (no store handle needed, so
- * actions can use them inside the `create()` initializer); `attach` binds the
- * reconcile to the created store.
+ * Build the primitive from a store's projection. `applyActive` and
+ * `readActiveSlice` need no store handle, so actions use them inside
+ * `create()`; `attach` binds the reconcile to the created store.
  */
 export function createPerSpaceSlice<State, T>(
   options: PerSpaceSliceOptions<State, T>,
@@ -158,45 +102,32 @@ export function createPerSpaceSlice<State, T>(
     const reconcile = (prevKey: string, newKey: string): void => {
       const state = store.getState()
 
-      // First fire (`prevKey === newKey`, via `fireImmediately`): the space
-      // store just woke up / rehydrated. Materialise the invariant that the
-      // active slice and the mirror agree.
+      // First fire (`fireImmediately`): make the active slice and mirror agree.
       if (prevKey === newKey) {
         const slice = getSlice(state, newKey)
         if (slice !== undefined) {
-          // The mirror holds a different (stale, possibly foreign) value than
-          // the active slice — pull the slice into the mirror (Defect 2).
+          // The mirror may hold a stale or foreign value: pull the slice.
           if (!eq(slice, readMirror(state))) store.setState(writeMirror(slice))
           return
         }
-        // No slice yet.
         const mirror = readMirror(state)
         if (seedOnFirstFire(newKey)) {
-          // Seed the slice from the rehydrated flat mirror (the v0→v1
-          // flat-only carry). The mirror already holds this value, so only
-          // the map changes.
+          // Seed the slice from the rehydrated mirror, which already holds it.
           store.setState(setSlice(state, newKey, mirror))
         } else {
-          // The mirror may be foreign (recent-pages) — don't persist it into
-          // this space's slice. Reset the mirror to the fallback and leave the
-          // slice absent (its selector falls back).
+          // The mirror may be foreign: reset it and leave the slice absent.
           const fresh = fallback({ newKey, prevKey, current: mirror })
           if (!eq(fresh, mirror)) store.setState(writeMirror(fresh))
         }
         return
       }
 
-      // Real switch: flush the outgoing mirror into the outgoing slice, then
-      // pull the incoming slice — or the fresh-space fallback — into the
-      // mirror. By default the incoming slice is NOT seeded: a fresh space
-      // keeps an absent slice (its selector falls back), so switching in and
-      // straight back out can't leave an empty seed masking future data.
-      // `seedOnSwitch` opts out of that (see its doc).
+      // Real switch: flush the outgoing mirror, pull the incoming slice or the
+      // fallback; seed it only with `seedOnSwitch`.
       const current = readMirror(state)
       const flushed = setSlice(state, prevKey, current)
-      // Read the incoming slice from the POST-FLUSH state so the two patches
-      // compose: both `setSlice` calls spread the same underlying map, so
-      // seeding off the pre-flush state would drop the outgoing write.
+      // Read from the post-flush state: both `setSlice` patches spread the same
+      // map, so seeding off the pre-flush state would drop the flush.
       const afterFlush = { ...state, ...flushed }
       const incoming = getSlice(afterFlush, newKey) ?? fallback({ newKey, prevKey, current })
       const seeded = seedOnSwitch ? setSlice(afterFlush, newKey, incoming) : {}

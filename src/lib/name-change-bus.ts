@@ -79,7 +79,7 @@
  * to read first:
  *
  *  - SKIP the notification. Cheapest, and what
- *    `src/stores/page-rename.ts:87` and `src/components/TagList.tsx:156` do.
+ *    `renamePage` in `src/stores/page-rename.ts` and `src/components/TagList.tsx:156` do.
  *  - Fall back to {@link invalidateNameCaches}. Conservative, and what
  *    `src/components/TagList.tsx:197`, `src/components/TagList.tsx:236`,
  *    `usePageDeleteAction`'s `handleConfirm`, and — since #4524, through the

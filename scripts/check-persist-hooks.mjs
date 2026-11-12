@@ -679,7 +679,7 @@ function runSelfTest() {
     )
 
     // 3. Non-scalar, merge present but migrate missing → violation, only migrate listed
-    //    (the search-history.ts:173-183 shape: migrate alone is NOT sufficient either,
+    //    (the `useSearchHistoryStore` persist-options shape: migrate alone is NOT sufficient either,
     //    but this proves the converse omission is caught too).
     w(
       'badMigrateOnly.ts',
@@ -974,7 +974,7 @@ function runSelfTest() {
       JSON.stringify(hit('badMergeOnly.ts')),
     )
     expect(
-      'Record field with merge but no migrate is flagged, missing = [migrate] only (search-history.ts:173-183 shape)',
+      'Record field with merge but no migrate is flagged, missing = [migrate] only (useSearchHistoryStore persist-options shape)',
       hit('badMigrateOnly.ts').length === 1 &&
         hit('badMigrateOnly.ts')[0].missing.join(',') === 'migrate',
       JSON.stringify(hit('badMigrateOnly.ts')),

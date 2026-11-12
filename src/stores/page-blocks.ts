@@ -1,24 +1,15 @@
 /**
- * Per-page block store — Zustand store instances scoped to individual pages.
- *
- * Each mounted BlockTree gets its own store via React context. This fixes
- * the multi-BlockTree conflict in weekly/monthly journal views where a
- * single global store caused the last load() to win for all instances.
- *
- * Pattern: createStore() factory + React context + module-level registry.
- *
- * ## Usage
+ * Per-page block store: one Zustand store per mounted `BlockTree`, handed down
+ * by `PageBlockStoreProvider`, so the journal week and month views, which mount
+ * one tree per day, do not share one store where the last `load()` wins.
  *
  * ```tsx
- * // Provider at BlockTree call site (PageEditor, DaySection)
  * <PageBlockStoreProvider pageId={pageId}>
  *   <BlockTree ... />
  * </PageBlockStoreProvider>
  *
- * // Consumer inside the provider tree
  * const blocks = usePageBlockStore((s) => s.blocks)
- * const store = usePageBlockStoreApi()
- * store.getState().load()
+ * usePageBlockStoreApi().getState().load()
  * ```
  */
 
@@ -45,15 +36,11 @@ import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
-// #2254 — `PageBlockState` and `FlatBlock` now live in `page-blocks-types.ts`;
-// re-export them so every existing consumer keeps importing from `page-blocks`.
 export type { FlatBlock, PageBlockState } from '@/stores/page-blocks-types'
 
 /**
- * Augment an external `setState` partial so that callers passing only
- * `{ blocks: [...] }` get `blocksById` derived automatically. If the caller
- * supplies an explicit `blocksById` (e.g. fine-grained tests of the invariant),
- * it is honoured as-is.
+ * Derive `blocksById` for an external `setState` partial that sets only
+ * `blocks`; an explicit `blocksById` is honoured as-is.
  */
 function augmentBlocksUpdate<T extends Partial<PageBlockState> | PageBlockState | null | undefined>(
   update: T,
@@ -68,15 +55,10 @@ function augmentBlocksUpdate<T extends Partial<PageBlockState> | PageBlockState 
 }
 
 /**
- * #713 — ownership gate for document-level BlockTree listeners.
- *
- * Journal week/month views mount one BlockTree (and one copy of every
- * document-level listener) per day, all sharing the GLOBAL `focusedBlockId`
- * from `useBlockStore`. A tree's listener may only act when its OWN page
- * store actually contains the focused block; otherwise N trees race
- * conflicting IPCs (e.g. todo cycling computed from a store where the block
- * doesn't exist → `current = null` → wrong next state). Non-owning trees
- * must return WITHOUT side effects and WITHOUT `preventDefault()`.
+ * Whether this tree's store holds `blockId` (#713). The journal views mount
+ * one tree, and one copy of each document listener, per day, all sharing the
+ * global `focusedBlockId`; a non-owning tree must act on nothing and call no
+ * `preventDefault()`, or the trees race conflicting IPCs.
  */
 export function storeOwnsBlock(
   store: StoreApi<PageBlockState>,
@@ -86,23 +68,10 @@ export function storeOwnsBlock(
 }
 
 /**
- * #713 / #2903 — STRUCTURAL enforcement of the ownership gate above.
- *
- * Registers a `document` listener whose handler runs ONLY when `store` owns
- * `blockId` (per {@link storeOwnsBlock}). A non-owning tree's handler is never
- * invoked, so it can neither perform side effects nor `preventDefault()` — the
- * exact #713 contract, now impossible to forget rather than hand-applied at
- * each call site. Returns a cleanup function that removes the exact listener
- * (feed it straight back from a `useEffect` so add/remove timing — and thus
- * leak-safety across the many BlockTrees a journal week/month mounts — is
- * preserved).
- *
- * The gate id is the block the caller wants ownership of (the focused block for
- * the focus-scoped chords), captured when the listener is registered —
- * identical to reading it from the closed-over render value inside a raw
- * handler. Because `storeOwnsBlock` is a `blockId is string` type guard, the
- * owned id is handed to `handler` already narrowed to `string`, so handlers can
- * use it without re-checking for null.
+ * Register a `document` listener whose handler runs only when `store` owns
+ * `blockId` ({@link storeOwnsBlock}), so the #713 gate cannot be forgotten at
+ * a call site. `blockId` is captured at registration and reaches `handler`
+ * narrowed to `string`. Returns the cleanup; return it from a `useEffect`.
  */
 export function addOwnedBlockListener<K extends keyof DocumentEventMap>(
   store: StoreApi<PageBlockState>,
@@ -112,8 +81,6 @@ export function addOwnedBlockListener<K extends keyof DocumentEventMap>(
   options?: boolean | AddEventListenerOptions,
 ): () => void {
   const listener = (event: DocumentEventMap[K]): void => {
-    // The #713 gate. Non-owning tree (incl. a null blockId) → return before the
-    // handler runs: no side effects, no preventDefault.
     if (!storeOwnsBlock(store, blockId)) return
     handler(event, blockId)
   }
@@ -123,15 +90,13 @@ export function addOwnedBlockListener<K extends keyof DocumentEventMap>(
 
 /**
  * Clear the task state of those of `ids` that hold one, as making them
- * bulleted or numbered does (#5691 D3: a task is a third list kind, exclusive
- * with bulleted and numbered). Call it once the list style is written, so a
- * refused write clears nothing. Resolves whether it cleared them all; a
- * failure is logged and told.
+ * bulleted or numbered does: a task is a third list kind, exclusive with
+ * both (#5691). Call it once the list style is written, so a refused write
+ * clears nothing. Resolves whether it cleared them all; a failure is logged
+ * and told.
  *
- * The clear joins the undo entry the list style's write recorded just before
- * (#6156), by the op refs the batch returns, each recording the state it
- * cleared, so that entry stays ref-addressed: its Ctrl+Z gives back the task
- * with the style.
+ * The clear joins the list style's undo entry by the op refs the batch
+ * returns, so one Ctrl+Z gives back the task with the style (#6156).
  */
 export async function clearTaskStates(
   pageStore: StoreApi<PageBlockState>,
@@ -156,57 +121,35 @@ export async function clearTaskStates(
   return cleared.updated === tasks.length
 }
 
-// ── Store factory ────────────────────────────────────────────────────────
-
 export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
   /** Guard: block IDs currently being split. Prevents re-entrant splitBlock calls. */
   const splitInProgress = new Set<string>()
 
   /**
-   * #6559 — the blocks whose `create_block` has not answered, each with a
-   * promise that settles when it does. Enter focuses the block it creates at
-   * once, and IPC calls are not answered in the order they were made, so a
-   * write naming such a block, and a load whose snapshot would leave it out,
-   * wait for it.
+   * Blocks whose `create_block` has not answered, each with a promise that
+   * settles when it does (#6559). Enter focuses the new block at once and IPC
+   * answers arrive out of order, so a write naming such a block, and a load
+   * whose snapshot would leave it out, wait for it.
    */
   const createsInFlight = new Map<string, Promise<void>>()
 
   /**
-   * #774 — per-block mover serialization queue. The sibling-slot movers
-   * (`moveUp`/`moveDown`/`indent`/`dedent`/`reorder`) capture their target
-   * indices from `get()` state at the START of the action body, BEFORE the
-   * `move_block` IPC awaits. A rapid double moveUp/moveDown fired before the
-   * first resolved therefore computed BOTH requests from the same pre-move
-   * snapshot: the second re-stated the first move's slot, so the two presses
-   * collapsed into one backend move (lost intent — FE/BE stayed consistent,
-   * but the block only moved one slot). Chaining each block's movers so the
-   * next one runs only after the previous settles makes the second request
-   * read the post-first-move state and target the correct next slot.
-   *
-   * Keyed by block id — moves of DIFFERENT blocks stay concurrent. The chain
-   * swallows the predecessor's rejection (each mover owns its own try/catch
-   * and never throws) before running the next link, so one failed move does
-   * not strand the queue.
+   * Per-block mover queue (#774). Movers read their target slot from `get()`
+   * before the `move_block` await, so two quick presses would compute both
+   * requests from one snapshot and move one slot. Chaining each block's movers
+   * makes the second read the state after the first. Moves of different
+   * blocks stay concurrent; movers never throw, so a failed move does not
+   * strand the queue.
    */
   const moverQueue = new Map<string, Promise<unknown>>()
   function enqueueMove<T>(blockId: string, run: () => Promise<T>): Promise<T> {
     const prev = moverQueue.get(blockId)
-    // When NO move for this block is in flight, run SYNCHRONOUSLY (up to the
-    // first await inside `run`). This preserves the existing contract that a
-    // mover captures its pre-await `get()` snapshot and dispatches its
-    // `move_block` IPC synchronously with the call — the #714 stale-capture
-    // races depend on it, and a lone move must not eat an extra microtask.
-    // #2849 — each mover now also applies its OPTIMISTIC provisional splice
-    // (`applyProvisionalMove`) inside this synchronous window, BEFORE its await.
-    // Because that splice is the first thing `run` does, this serializer already
-    // covers the provisional-apply window: a queued second press does not start
-    // until the predecessor settles (below), so it computes against the
-    // already-applied provisional first move — never a pre-move snapshot.
-    // Only when a predecessor is still settling do we chain, so the queued
-    // second press reads the post-first-move state (the #774 fix).
+    // With nothing in flight, run synchronously: a mover dispatches its IPC
+    // and applies its provisional splice before its first await, and a lone
+    // move must not wait a microtask. Chain only behind a settling predecessor,
+    // so the queued press computes against the predecessor's applied move.
     const next: Promise<T> = prev ? prev.then(run, run) : run()
-    // Keep the queue map from growing unbounded: once THIS link is the tail,
-    // drop it so an idle block leaves no retained promise.
+    // Drop the tail once it settles, so an idle block retains no promise.
     moverQueue.set(blockId, next)
     void next.finally(() => {
       if (moverQueue.get(blockId) === next) moverQueue.delete(blockId)
@@ -215,14 +158,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
   }
 
   /**
-   * #753 — load generation counter. `rootParentId` is immutable for the
-   * lifetime of a per-page store, so the old "discard if rootParentId
-   * changed" guard never fired for the real race: two overlapping
-   * `load()` calls for the SAME page (sync:complete reload racing a
-   * mount load) resolved last-write-wins, letting the staler snapshot
-   * clobber the fresher one. Each `load()` claims a generation at start;
-   * after every await it checks it is still the newest claimant and
-   * discards its result otherwise (latest-started load wins).
+   * Load generation (#753): two overlapping `load()`s for the same page (a
+   * sync reload racing the mount load) must not let the staler snapshot win.
+   * Each load claims a generation and discards its result if a newer one began.
    */
   let loadGeneration = 0
 
@@ -238,26 +176,10 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     getBlockById: (id: string) => get().blocksById.get(id),
 
     load: async () => {
-      // FE-H-22 — fail closed during pre-bootstrap. Earlier we forwarded
-      // `useSpaceStore.getState().currentSpaceId ?? ''` to `listBlocks`
-      // and relied on the backend treating `''` as a no-match SQL
-      // filter. That contract is unwritten; a backend change to
-      // interpret `''` as wildcard would silently leak cross-space
-      // blocks into the page tree. Skip the fetch — the boot sequence
-      // hydrates the space store before any BlockTree mounts, so this
-      // branch is a defensive no-op rather than a hot path.
-      // #2921 — still clear `loading`. A prior version left the initial
-      // `loading: true` untouched here, which was fine when boot always
-      // reached `currentSpaceId != null` before any tree mounted — but a
-      // hard space-load failure now routes through BootGate's error
-      // screen instead, and a refresh that legitimately returns zero
-      // spaces leaves `currentSpaceId` `null` on first boot with no
-      // persisted id to fall back on (`reconcileCurrentSpaceId` returns
-      // `null` when `available` is empty). Without this, a tree that
-      // mounts in that window is stuck
-      // on its initial skeleton forever, since nothing else ever calls
-      // `load()` again for it. `blocks`/`blocksById` are left as-is
-      // (empty on a fresh store) — there is nothing to show yet.
+      // No active space yet: fail closed rather than send an empty space id,
+      // which the backend might one day read as a wildcard. Clear `loading`
+      // (#2921): with zero spaces nothing else would call `load()` again, and
+      // the tree would sit on its skeleton forever.
       const spaceId = useSpaceStore.getState().currentSpaceId
       if (spaceId == null) {
         set({ loading: false })
@@ -269,53 +191,21 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       // snapshot, and read as deleted: its row dropped, the focus on it cleared.
       // A second Enter can start another create while this waits.
       while (createsInFlight.size > 0) await Promise.all(createsInFlight.values())
-      // #753 — claim a generation (see `loadGeneration` doc above).
       const generation = ++loadGeneration
-      // #6533 — what the focused editor was based on as this load started.
+      // What the focused editor was based on as this load started (#6533).
       const startFocusedId = useBlockStore.getState().focusedBlockId
       const startBaseline = startFocusedId ? reloadBaseline(startFocusedId) : null
       set({ loading: true })
       try {
         const start = performance.now()
-        // #773 — capture the index as of load START. The backend snapshot
-        // below can only know about blocks that existed when its query ran,
-        // so "absent from the snapshot" is evidence of remote deletion ONLY
-        // for blocks that were already here before the await. A block
-        // optimistically spliced in mid-flight (createBelow committing while
-        // this SELECT is in flight, then focused via Enter) lands in the
-        // commit-time map but never in the snapshot — it must NOT trip the
-        // focus-clear branch.
+        // Index as of load start (#773): the snapshot can only miss blocks that
+        // existed before the await, so absence proves remote deletion only for
+        // those. A block created and focused mid-flight is in neither.
         const preLoadBlocksById = get().blocksById
-        // Single-SELECT descendant load via the materializer-maintained
-        // `page_id` index — replaces the recursive per-parent
-        // `listBlocks` walk that silently clamped each level to 100.
-        // #2850 — the ONLY seam a speculative hover/focus prefetch gets:
-        // if a live one-shot prefetch promise was parked for this exact
-        // `(spaceId, rootParentId)`, consume (and thereby delete) it instead
-        // of firing a fresh IPC.
-        //
-        // CRITICAL — consume ONLY on the initial navigation load
-        // (`generation === 1`). `load()` is ALSO the reload path driven by
-        // sync/remote `blocks:changed` (`useSyncEvents`), undo/redo
-        // (`useUndoShortcuts`), header ops, and post-move. A prefetch can be
-        // parked for the CURRENTLY-OPEN page (palette-highlight its recents
-        // row then Escape — which cancels only the dwell timer, not an
-        // already-fired prefetch; a viewport/hover auto-prefetch of the open
-        // row; a self-link), and it lives up to `PREFETCH_TTL_MS`. Serving
-        // that pre-mutation snapshot to a reload fired precisely to show the
-        // NEW state (e.g. Ctrl+Z, or a just-synced remote edit) would render
-        // stale content for one cycle. Gating on `generation === 1` (the
-        // store's first-ever real load, i.e. genuine navigation — reloads
-        // reuse the store at generation >= 2) confines the handoff to the
-        // first-open latency it was designed for; a prefetch left parked for
-        // the open page simply expires unconsumed. EVERYTHING below this line
-        // is unchanged and runs identically regardless of which source
-        // produced `subtree`: the `#753` generation guard, focused-block
-        // preservation, the #798 selection prune, and the `PageNotInSpace`
-        // rejection/heal in the catch block.
-        // #2110 (M4) — trace the page-open data load. `loadPageSubtree`
-        // dispatches its IPC synchronously inside the callback, so the backend
-        // command + SQLite/materializer spans parent under this interaction.
+        // Serve a parked hover/focus prefetch only on the first load
+        // (`generation === 1`, #2850). Every later `load()` is a reload fired
+        // to show new state (sync, undo, a move), and a prefetch parked for the
+        // open page would hand it the pre-mutation snapshot.
         const subtree = await traceInteraction(
           INTERACTIONS.PAGE_OPEN,
           () =>
@@ -325,25 +215,19 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
               .then(unwrap),
         )
         const allBlocks = subtree.blocks
-        // Defensive: discard if rootParentId changed (shouldn't happen with per-page stores)
         if (get().rootParentId !== rootParentId) return
-        // #753 — a newer load() started while this snapshot was in
-        // flight; discard the stale result and let the newer load own
-        // the store (including its `loading` flag).
+        // A newer load started; it owns the store, `loading` included (#753).
         if (generation !== loadGeneration) return
-        // #3321 — reconcile against the rows we already hold instead of
-        // replacing every object reference. `buildFlatTree` allocates a fresh
-        // object per block, which memo-missed every mounted row on a reload
-        // that changed one block; `reuseUnchangedBlocks` hands back the
-        // previous object for every field-identical row. See its doc comment.
+        // Reuse the held object for every unchanged row, so a reload that
+        // changed one block does not memo-miss every mounted row (#3321).
         let newBlocks = reuseUnchangedBlocks(
           buildFlatTree(allBlocks, rootParentId),
           get().blocksById,
         )
 
-        // #6533 — the focused block takes the reloaded text when its editor
-        // holds nothing uncommitted, the editor with it. Otherwise it keeps the
-        // text the editor started from, so the store and editor stay one text.
+        // The focused block takes the reloaded text when its editor holds
+        // nothing uncommitted, the editor with it; otherwise it keeps the text
+        // the editor started from, so store and editor stay one text (#6533).
         const focusedBlockId = useBlockStore.getState().focusedBlockId
         let staleFocusedBlock: PageBlockState['staleFocusedBlock'] = null
         if (focusedBlockId) {
@@ -365,54 +249,17 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
                 )
               }
             } else if (preLoadBlocksById.has(focusedBlockId)) {
-              // #773 — sync-delete focus reconciliation. The focused block
-              // lived in THIS store both when the load STARTED and now (so
-              // this store owns the focus, mirroring the storeOwnsBlock gate
-              // from #713) but is gone from the fresh backend snapshot — a
-              // remote sync deleted it. Clear the global focus, otherwise
-              // every tree fail-closes on the phantom id and block chords go
-              // dead until the user clicks. Stores that never held the block
-              // (other pages, fresh mounts where blocksById is still empty)
-              // skip this branch, so ordinary navigation loads cannot
-              // spuriously clear focus that is managed elsewhere. The
-              // load-START check (`preLoadBlocksById`) keeps blocks created
-              // and focused while this load was in flight — invisible to the
-              // backend snapshot, so their absence proves nothing — from
-              // being mistaken for remote deletions. `setFocused(null)` also
-              // clears the coupled selection state, matching every other
-              // focus-clear path in the app.
-              //
-              // #2849 — this same load-START discipline also covers a block the
-              // user OPTIMISTICALLY removed/moved before or during this load. A
-              // block spliced out pre-await is absent from `blocksById` at
-              // commit time, so the `if (currentBlock)` gate above short-circuits
-              // and focus is left for the remove() caller to manage; a block
-              // optimistically MOVED is still present (moves never delete), so it
-              // hits the content-preserve branch, never this clear. Only a block
-              // that was here at load START and is genuinely gone from the fresh
-              // snapshot reaches this clear.
+              // Here at load start, gone from the snapshot: a remote delete
+              // (#773). Clear focus, or every tree fail-closes on the phantom
+              // id and block chords go dead. Blocks created mid-load, or
+              // removed optimistically before it, never reach this branch.
               useBlockStore.getState().setFocused(null)
             }
           }
         }
 
-        // #798 — prune remotely-deleted ids from the global multi-selection.
-        // Mirrors the #773 focus reconciliation above but for the coupled
-        // selection set: a NON-focused block that lived in THIS store when
-        // the load STARTED (`preLoadBlocksById`) but is gone from the fresh
-        // backend snapshot was remotely deleted. Left in `selectedBlockIds`,
-        // batch ops would target a dead block (a silent backend no-op via
-        // idempotency, but selection-count badges would lie). Surviving ids
-        // and ids this store never owned (managed by another tree, or
-        // optimistically created mid-load and absent from the snapshot — same
-        // load-START guard as #773) are preserved untouched, and the update
-        // only fires when something actually changed. #2849 — the same
-        // load-START discipline covers optimistic remove/move: an id
-        // optimistically MOVED still survives (present in the snapshot); an id
-        // optimistically REMOVED before load START is treated as "never owned"
-        // here (absent from `preLoadBlocksById`) and left for the remove()
-        // caller's own selection cleanup, exactly like a block owned by another
-        // tree.
+        // Prune remotely deleted ids from the selection by the same load-start
+        // rule (#798): ids this store never held, or created mid-load, stay.
         const survivingIds = new Set(newBlocks.map((b) => b.id))
         const { selectedBlockIds, setSelected } = useBlockStore.getState()
         if (selectedBlockIds.length > 0) {
@@ -422,10 +269,8 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           if (pruned.length !== selectedBlockIds.length) setSelected(pruned)
         }
 
-        // #1258 — surface the backend truncation signal. `truncated` means
-        // the page exceeded PAGE_SUBTREE_MAX_BLOCKS and `subtree.total` is the
-        // true descendant count; store it so BlockTree can render a
-        // non-blocking notice. `null` clears any prior page's signal.
+        // The page exceeded `PAGE_SUBTREE_MAX_BLOCKS`; `total` is the true
+        // count for BlockTree's notice (#1258). `null` clears a prior signal.
         const truncatedTotal = subtree.truncated ? subtree.total : null
         set({
           blocks: newBlocks,
@@ -442,54 +287,20 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         })
       } catch (err) {
         if (get().rootParentId !== rootParentId) return
-        // #753 — a stale failed load must not stomp the newer load's
-        // `loading: true` (or double-toast for a snapshot nobody wants).
+        // A stale failed load must not stomp the newer load's `loading` (#753).
         if (generation !== loadGeneration) return
         set({ loading: false })
-        // #2802 / #2810 — space-membership rejection. `load_page_subtree`
-        // scopes the fetch to the ACTIVE space and rejects with a
-        // `ValidationCode.PageNotInSpace`-coded AppError ("block '…' not in
-        // current space '…'", `load_page_subtree_inner` in
-        // src-tauri/src/commands/pages/listing.rs; the tauri-mock mirrors the
-        // shape) when the page no longer belongs to it — i.e. the page was
-        // moved to another space and a stale old-space reference (a surviving
-        // tab-stack entry or recent-pages item) was just followed. That is
-        // expected staleness, not a load failure: show a soft notice instead
-        // of the raw error toast, and self-heal the stale state the same way
-        // the delete flow handles "this page is no longer valid in the
-        // current view" (`usePageDeleteAction` and #2803's move handler →
-        // `removePages`): drop the page from the active space's recent-pages
-        // MRU (the click itself just re-recorded it via `recordVisit`) and
-        // drop it from every tab of the active space via `removePages`, which
-        // also leaves the editor for the view the stack was opened from when no
-        // tab is left (#4287; `pages` when that origin is unknown). Popping only
-        // the active tab would land on another tab holding the same page, which
-        // PageEditor renders without reloading (#5753). Delete and the
-        // page-header move purge only the active space's tabs, and never
-        // recent-pages; the Pages view's batch move purges neither, so stale
-        // refs heal lazily here at the rejection point. The active space is
-        // NOT switched to follow the page (see #2785's note in
-        // PageHeader.handleMoveToSpace). #2810 — key
-        // the heal on the structured `PageNotInSpace` code rather than the
-        // generic `kind: 'validation'` (message-regexing was retired in
-        // #2251): a malformed id is `kind: 'ulid'` (`BlockId::from_string`), and any
-        // future uncoded/differently-coded validation on this command path
-        // must NOT silently reroute into this heal. A well-formed id that
-        // matches NO row (page hard-purged) surfaces the same
-        // `PageNotInSpace` rejection — an equally dead reference for which
-        // this cleanup is the sane outcome. #5243 — a TRASHED page is the
-        // same stale reference, refused as `kind: 'not_found'`; it heals
-        // identically under its own notice.
+        // The page left the active space (`PageNotInSpace`), or is trashed
+        // (`not_found`): a stale tab or recents reference was followed. Show a
+        // soft notice and heal: drop it from recents and from every tab
+        // (`removePages`; popping only the active tab would land on another
+        // tab holding the same page, #5753). Keyed on the structured code, so
+        // another validation error never reroutes here (#2810).
         const trashed = isNotFound(err)
         if (trashed || validationCode(err) === ValidationCode.PageNotInSpace) {
-          // Heal only when the space this load was SCOPED to is still the
-          // active space. The rejection can land after the user already
-          // switched spaces (e.g. followed the page into its new home) —
-          // `removeRecentPage` keys on the CURRENT active space and
-          // `removePages` prunes the CURRENT active slice, so healing then would
-          // purge a legitimate recents entry / pop a legitimate tab in the
-          // wrong space. Skipping is safe: the heal is lazy by design and
-          // re-fires the next time the stale reference is followed.
+          // Heal only if the space this load was scoped to is still active:
+          // both removals act on the current space, and the heal re-fires the
+          // next time the stale reference is followed.
           if (useSpaceStore.getState().currentSpaceId !== spaceId) return
           logger.warn('page-blocks', 'stale page reference — healing', {
             rootParentId: rootParentId ?? '',
@@ -515,17 +326,13 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       }
     },
 
-    // #2254 — the ~13 mutation reducers moved verbatim to
-    // `page-blocks-reducers.ts` (behavior-preserving). They close over this
-    // store's `set`/`get` plus the per-store `splitInProgress` guard,
-    // `createsInFlight` and `enqueueMove` serializer created above.
+    // Mutation reducers close over this store's `set`/`get`, the split guard,
+    // `createsInFlight` and the mover queue.
     ...createReducers({ set, get, splitInProgress, createsInFlight, enqueueMove }),
   }))
 
-  // G — escape hatch for external callers (tests, ad-hoc setState).
-  // Wrap `store.setState` so callers passing only `{ blocks: [...] }` get
-  // `blocksById` derived automatically. Internal `set(...)` calls inside the
-  // factory already maintain the Map atomically and bypass this wrap.
+  // External `setState` (tests, ad-hoc callers) derives `blocksById` from
+  // `blocks`; the factory's own `set` keeps the map itself.
   const origSetState = store.setState
   store.setState = ((partial: unknown, replace?: unknown) => {
     if (typeof partial === 'function') {
@@ -544,57 +351,29 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
   return store
 }
 
-// ── Store registry ───────────────────────────────────────────────────────
-
 /**
- * #1075 — single source of truth for per-page stores.
+ * Registry of per-page stores (#1075). `getPageStore(pageId)` returns the very
+ * instance the provider gives its context, so a reload from outside the tree
+ * (sync, undo) reloads what the editor renders.
  *
- * The store a `PageBlockStoreProvider` hands to its React context (created
- * once in `useRef`) is the SAME instance this registry exposes via
- * {@link getPageStore}. Global hooks (useSyncEvents, useUndoShortcuts,
- * useJournalBlockCreation) that must reload a specific page from OUTSIDE a
- * provider tree resolve that exact instance — so `getPageStore(pageId)
- * .getState().load()` reloads the very store the editor is rendering from,
- * preserving the in-place reload the undo path (`refreshAfterUndoRedo`)
- * depends on.
- *
- * **Ref-counting (the same-pageId race).** Each pageId owns ONE slot tagged
- * with a reference count. A provider's mount EFFECT either creates the slot
- * (count 1) or, when one already exists, adopts its own store into the slot
- * and bumps the count; its cleanup decrements and deletes the slot only when
- * the count returns to zero. This is purely a reference-count over the
- * existing `useEffect`-timed registration — NOT a timing change — so a
- * transient remount for the same pageId (old provider unmounting while the new
- * one mounts, in either order) can never drop a slot a still-mounted provider
- * needs. The monthly view mounts up to 30 PageBlockStoreProviders for
- * DISTINCT pageIds (one slot each, count 1); only a genuine same-pageId
- * overlap shares a slot.
- *
- * External consumers MUST go through {@link getPageStore} /
- * {@link forEachPageStore} rather than reading the map directly.
+ * Each pageId has one ref-counted slot: a provider's mount effect creates it
+ * or adopts its store into it, and the cleanup deletes it at zero, so a
+ * same-page remount (old and new provider, either order) cannot drop a slot a
+ * mounted provider needs. Read it through {@link getPageStore} /
+ * {@link forEachPageStore}.
  */
 interface PageBlockRegistrySlot {
-  /**
-   * Canonical store consumers see — the most-recently-mounted live provider's
-   * store. Always references an entry in {@link liveStores} (never an
-   * unmounted store while any provider for the pageId remains).
-   */
+  /** The newest live provider's store; always one of {@link liveStores}. */
   store: StoreApi<PageBlockState>
   refCount: number
   /**
-   * #1560 — every still-mounted provider's store for this pageId, in mount
-   * order (newest last). Lets `unregisterPageStore` re-point `store` to a
-   * surviving provider when the slot owner unmounts out of order, instead of
-   * stranding the slot on an unmounted store. Length stays in lockstep with
-   * `refCount`.
+   * Every mounted provider's store for this pageId, oldest first, so an
+   * out-of-order unmount can re-point `store` at a survivor (#1560).
    */
   liveStores: StoreApi<PageBlockState>[]
   /**
-   * #4550 — one Zustand unsubscribe per entry in {@link liveStores}, so
-   * {@link unregisterPageStore} can detach the fan-out listener for exactly
-   * the store that unmounted. Keyed by store rather than index-aligned:
-   * `liveStores` is spliced by `lastIndexOf`, and a parallel array would
-   * silently drift the first time an out-of-order unmount hit it.
+   * The fan-out unsubscribe per live store. Keyed by store, not index-aligned:
+   * `liveStores` is spliced by `lastIndexOf`, and a parallel array would drift.
    */
   mirrorUnsubscribes: Map<StoreApi<PageBlockState>, () => void>
 }
@@ -602,40 +381,17 @@ interface PageBlockRegistrySlot {
 const pageBlockSlots = new Map<string, PageBlockRegistrySlot>()
 
 /**
- * #4550 — re-entrancy guard for {@link mirrorToSiblings}, keyed by pageId.
- *
- * The fan-out writes into sibling stores, and each of those writes fires that
- * sibling's OWN subscription. The identity checks inside `mirrorToSiblings`
- * would terminate the bounce after one extra hop anyway; this makes "one hop,
- * then stop" a property of the code rather than of the data.
+ * Per-page re-entrancy guard for {@link mirrorToSiblings}: each mirrored write
+ * fires the sibling's own subscription, and this stops it after one hop.
  */
 const mirroringPages = new Set<string>()
 
 /**
- * #4550 — fan a page store's post-write block state out to every OTHER
- * provider mounted for the same pageId.
- *
- * **Why this is needed at all.** The slot registry is ref-counted and
- * tolerates several providers for one pageId, but a slot shares a SLOT, not
- * state: each provider constructs its own store (`createPageBlockStore` in a
- * `useRef`), and `getPageStore` / `forEachPageStore` expose only `slot.store`
- * — the most-recently-mounted one. Two providers for one pageId are two
- * independent Zustand stores with two independent `blocksById`. Without this,
- * editing a page in its own tab left an `{{embed}}` of that same page
- * rendering pre-edit content until something remounted it, and an embed is
- * precisely the case that makes a second provider for one pageId ordinary
- * rather than a transient race.
- *
- * **Why it cannot disturb the journal week / month views.** Those mount one
- * provider per DAY page — DISTINCT pageIds, one slot each, `refCount === 1`.
- * The `liveStores.length < 2` bail below is therefore taken on every write in
- * those views and the whole mechanism is inert for them. The only slots that
- * ever hold two stores are a genuine same-pageId overlap: the #1560 transient
- * remount, and an embed of a page that is also mounted elsewhere.
- *
- * Only the block payload is mirrored — never `loading`. A freshly-mounted
- * embed store setting `loading: true` must not flash a skeleton over a source
- * page sitting there fully rendered.
+ * Fan a store's block state out to the other providers mounted for the same
+ * pageId (#4550). Each provider builds its own store, so without this an
+ * `{{embed}}` of a page open in a tab kept rendering pre-edit content. Slots
+ * with one store (the journal views' day pages) bail at once. `loading` is
+ * never mirrored, so a mounting embed cannot flash a skeleton over the source.
  */
 function mirrorToSiblings(
   pageId: string,
@@ -652,18 +408,14 @@ function mirrorToSiblings(
     for (const target of slot.liveStores) {
       if (target === source) continue
       const targetState = target.getState()
-      // Already identical (the common case once one hop has run) — skip
-      // rather than churn a fresh reference through every subscriber.
       if (
         targetState.blocks === state.blocks &&
         targetState.truncatedTotal === state.truncatedTotal
       ) {
         continue
       }
-      // `blocksById` is passed explicitly so the mirrored store SHARES the
-      // source's map reference instead of rebuilding an equal-but-distinct
-      // one — `augmentBlocksUpdate` would otherwise derive a fresh Map and
-      // memo-miss rows that did not actually change.
+      // Share the source's map, or `augmentBlocksUpdate` builds a fresh one and
+      // memo-misses unchanged rows.
       target.setState({
         blocks: state.blocks,
         blocksById: state.blocksById,
@@ -676,20 +428,10 @@ function mirrorToSiblings(
 }
 
 /**
- * Register a provider's store under `pageId`, returning the canonical store
- * for that page. Called from the provider's mount `useEffect`.
- *
- * If no slot exists, this provider's store becomes the canonical one
- * (refCount 1). If a slot already exists (a concurrent same-pageId provider),
- * the slot ADOPTS this newest provider's store and bumps the count — so
- * `getPageStore` tracks the most-recently-mounted (active) provider while the
- * count keeps the slot alive for any older provider still mounted.
- *
- * #4550 — every registered store also gets a subscription that fans its block
- * writes out to the slot's other stores ({@link mirrorToSiblings}). Nothing
- * else about the registration changes: no seeding, no timing change, and for
- * the overwhelmingly common `refCount === 1` slot the subscription's body
- * bails on its first line.
+ * Register a provider's store under `pageId` from its mount effect. A new slot
+ * starts at 1; an existing one adopts this newest store and bumps the count,
+ * so `getPageStore` tracks the active provider. Every store also subscribes
+ * {@link mirrorToSiblings}.
  */
 function registerPageStore(pageId: string, store: StoreApi<PageBlockState>): void {
   const slot = pageBlockSlots.get(pageId)
@@ -714,30 +456,20 @@ function registerPageStore(pageId: string, store: StoreApi<PageBlockState>): voi
 }
 
 /**
- * Release one reference to `pageId`'s slot (from the provider's cleanup).
- * Deletes the slot — and clears the page's session undo state (#753) — only
- * when the LAST reference drops, so a stale unmount cannot clobber a slot a
- * newer mount still holds.
- *
- * #1560 — providers for the same pageId can unmount out of order (the
- * slot-owning newest provider first). The caller passes the unmounting
- * provider's `store` so we can drop exactly that entry and, when it was the
- * canonical `slot.store`, re-point the slot at a still-live provider instead
- * of leaving `slot.store` dangling at an unmounted store.
+ * Release one reference from the provider's cleanup. Out-of-order unmounts
+ * drop exactly `store` and re-point the slot at a live one (#1560); the last
+ * reference deletes the slot and the page's session undo state.
  */
 function unregisterPageStore(pageId: string, store: StoreApi<PageBlockState>): void {
   const slot = pageBlockSlots.get(pageId)
   if (!slot) return
   const idx = slot.liveStores.lastIndexOf(store)
   if (idx !== -1) slot.liveStores.splice(idx, 1)
-  // #4550 — detach this store's fan-out listener. An unmounted provider's
-  // store must not keep mirroring into (or being mirrored from) the slot.
+  // An unmounted store must neither mirror nor be mirrored.
   slot.mirrorUnsubscribes.get(store)?.()
   slot.mirrorUnsubscribes.delete(store)
   slot.refCount -= 1
   if (slot.refCount > 0) {
-    // If the slot owner just unmounted out of order, adopt the newest
-    // surviving provider so the slot never references an unmounted store.
     const newest = slot.liveStores.at(-1)
     if (slot.store === store && newest !== undefined) {
       slot.store = newest
@@ -745,27 +477,20 @@ function unregisterPageStore(pageId: string, store: StoreApi<PageBlockState>): v
     return
   }
   pageBlockSlots.delete(pageId)
-  // #753 — drop the page's session undo state alongside the registry slot.
-  // PageEditor already clears on navigation away, but journal day pages
-  // (DaySection mounts one provider per day) had NO clear path — every
-  // visited day accumulated up to MAX_REDO_STACK OpRefs in the undo store for
-  // the whole session.
+  // Journal day pages have no navigation-away clear, so without this every
+  // visited day kept its undo state for the session (#753).
   useUndoStore.getState().clearPage(pageId)
 }
 
 /**
- * Resolve the live store for `pageId` from outside a provider tree. Returns
- * the EXACT instance the active provider hands to its React context, or
- * `undefined` when no provider for that page is mounted.
+ * The live store for `pageId` from outside a provider tree, the very instance
+ * the active provider gives its context; `undefined` when none is mounted.
  */
 export function getPageStore(pageId: string): StoreApi<PageBlockState> | undefined {
   return pageBlockSlots.get(pageId)?.store
 }
 
-/**
- * Iterate every currently-mounted page store (one per pageId). Replaces the
- * old `pageBlockRegistry.entries()` fan-out in useSyncEvents.
- */
+/** Every mounted page store, one per pageId. */
 export function forEachPageStore(
   fn: (pageId: string, store: StoreApi<PageBlockState>) => void,
 ): void {
@@ -773,17 +498,10 @@ export function forEachPageStore(
 }
 
 /**
- * #4550 — iterate every mounted pageId with ALL of its live provider stores,
- * not just `slot.store`.
- *
- * `forEachPageStore` hands out the most-recently-mounted store per pageId,
- * which is the right shape for "give me THE store for this page" but the
- * wrong shape for an out-of-band reload: if a page is open in a tab AND
- * embedded somewhere, only one of the two stores is the slot's, and the other
- * would keep serving the pre-sync snapshot for the rest of the session. The
- * per-pageId callback shape (rather than one call per store) is deliberate —
- * callers that must run a page-scoped side effect exactly once, such as
- * `reanchorAfterRemoteOps`, need the pageId boundary.
+ * Every mounted pageId with all its live stores (#4550). An out-of-band reload
+ * must reach each one, or a page open in a tab and embedded elsewhere keeps a
+ * stale copy; the per-page shape lets a caller run a page-scoped side effect
+ * (`reanchorAfterRemoteOps`) once.
  */
 export function forEachLivePageStoreGroup(
   fn: (pageId: string, stores: readonly StoreApi<PageBlockState>[]) => void,
@@ -791,17 +509,9 @@ export function forEachLivePageStoreGroup(
   for (const [pageId, slot] of pageBlockSlots) fn(pageId, slot.liveStores)
 }
 
-// ── React context ────────────────────────────────────────────────────────
-
 export const PageBlockContext = createContext<StoreApi<PageBlockState> | null>(null)
 
-/**
- * Provider that creates a per-page store instance and registers it.
- *
- * Wrap each BlockTree call site in this provider:
- * - PageEditor: `<PageBlockStoreProvider pageId={pageId}>`
- * - DaySection: `<PageBlockStoreProvider pageId={entry.pageId}>`
- */
+/** Creates and registers the per-page store; wrap each `BlockTree` call site in it. */
 export function PageBlockStoreProvider({
   pageId,
   children,
@@ -809,15 +519,10 @@ export function PageBlockStoreProvider({
   pageId: string
   children: React.ReactNode
 }): React.ReactElement {
-  // #4406 — the classic React-documented lazy-ref-initialization exception
-  // (react.dev: "if (!ref.current) ref.current = new Thing()"), extended to
-  // re-init when `pageId` changes rather than only on first render. Every
-  // downstream use of `store` in this component is tainted by the same read
-  // and shares this same finding; oxlint's react(refs) rule has no special
-  // case for the documented pattern, so each tainted site carries its own
-  // #4406 disable rather than a restructuring: replacing this with the
-  // state-adjustment-during-render idiom would add an extra discarded render
-  // on every `pageId` change to a hot per-page-mount path.
+  // React's lazy-ref-init idiom, re-initialised when `pageId` changes; the
+  // state-adjustment-during-render alternative adds a discarded render to
+  // every page mount. oxlint's react(refs) rule has no case for it, so each
+  // read carries its own disable (#4406).
   const storeRef = useRef<{ store: StoreApi<PageBlockState>; pageId: string } | null>(null)
   // oxlint-disable-next-line react/refs -- React's documented lazy-ref-init idiom (`if (!ref.current) ref.current = new Thing()`), widened to re-init when `pageId` changes; see the note above and #4406
   if (!storeRef.current || storeRef.current.pageId !== pageId) {
@@ -826,15 +531,8 @@ export function PageBlockStoreProvider({
 
   const store = storeRef.current.store
 
-  // #1075 — register THIS provider's context store in the ref-counted slot
-  // registry, on the SAME `useEffect` timing as before (no useLayoutEffect).
-  // `store` is the very instance the context provides below (created once in
-  // `useRef`), so `getPageStore(pageId)` returns exactly what consumers inside
-  // the tree see — one source of truth. Ref-counting (register/unregister)
-  // handles ONLY the same-pageId mount/unmount race: a transient remount can
-  // never drop a slot a still-mounted provider needs. `store` is stable for a
-  // given pageId (storeRef swaps it only when pageId changes), so including it
-  // in the deps adds no extra runs.
+  // Register on effect timing (#1075); `store` changes only with `pageId`, so
+  // the dep adds no runs.
   useEffect(() => {
     registerPageStore(pageId, store)
     return () => {
@@ -849,11 +547,7 @@ export function PageBlockStoreProvider({
   return createElement(PageBlockContext.Provider, { value: store }, children)
 }
 
-/**
- * Hook to subscribe to per-page block state with a selector.
- *
- * Must be called inside a PageBlockStoreProvider.
- */
+/** Subscribe to per-page block state; throws outside a `PageBlockStoreProvider`. */
 export function usePageBlockStore<T>(selector: (state: PageBlockState) => T): T {
   const store = useContext(PageBlockContext)
   if (!store) throw new Error('usePageBlockStore must be used within a PageBlockStoreProvider')
@@ -861,31 +555,21 @@ export function usePageBlockStore<T>(selector: (state: PageBlockState) => T): T 
 }
 
 /**
- * #1445 — a no-provider fallback store. Some components that host per-page UI
- * (e.g. `SortableBlock`) are also rendered in isolation by tests WITHOUT a
- * `PageBlockStoreProvider`. `usePageBlockStoreOptional` subscribes to this
- * empty store in that case so the hook stays unconditional (rules of hooks)
- * and never throws — selectors simply see an empty page (no blocks, null root).
+ * Fallback for `usePageBlockStoreOptional` outside a provider (#1445): the hook
+ * stays unconditional and selectors see an empty page.
  */
 const emptyPageBlockStore = createPageBlockStore('')
 
 /**
- * Like {@link usePageBlockStore}, but tolerant of being called OUTSIDE a
- * `PageBlockStoreProvider`: instead of throwing it falls back to a shared empty
- * store. Use this for optional, non-critical reads (e.g. resolving the
- * containing page id for a context-menu affordance) where the absence of a
- * provider should degrade gracefully rather than crash.
+ * Like {@link usePageBlockStore}, but outside a provider it reads an empty
+ * store instead of throwing; for optional reads that should degrade gracefully.
  */
 export function usePageBlockStoreOptional<T>(selector: (state: PageBlockState) => T): T {
   const store = useContext(PageBlockContext)
   return useStore(store ?? emptyPageBlockStore, selector)
 }
 
-/**
- * Hook to get the raw StoreApi for imperative access (getState/setState).
- *
- * Must be called inside a PageBlockStoreProvider.
- */
+/** The raw `StoreApi` for imperative access; throws outside a `PageBlockStoreProvider`. */
 export function usePageBlockStoreApi(): StoreApi<PageBlockState> {
   const store = useContext(PageBlockContext)
   if (!store) throw new Error('usePageBlockStoreApi must be used within a PageBlockStoreProvider')

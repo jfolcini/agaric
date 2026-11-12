@@ -1,33 +1,10 @@
 /**
- * Boot store — manages application startup state machine.
- *
- * Transitions: `booting → ready | error`. After session 731's Phase 2
- * (the artificial `invoke('list_blocks')` handshake was dropped), the
- * BootGate transitions to `ready` as soon as the space store has
- * hydrated. The space store's `refreshAvailableSpaces()` call is the
- * single source of truth for "the app has enough state to render
- * space-scoped views without racing." Pulling that call into
- * `boot()` itself means downstream consumers (JournalPage,
- * useCalendarPageDates, useDuePanelData, …) see a non-null
- * `currentSpaceId` on their first mount, avoiding the empty-fetch /
- * hide-component / refetch flicker that the IPC handshake used to
- * mask incidentally.
- *
- * #2921 — the `error` state now has a real production driver. The space
- * store's `refreshAvailableSpaces()` never rejects (non-boot callers —
- * `useSyncEvents`' fire-and-forget refresh after a sync, `SpacesTab`'s
- * awaited-but-uncaught refresh — rely on that contract) but records a
- * `lastRefreshOutcome` of `{ kind: 'hard-error', error }` when it hit a
- * HARD failure (`listSpaces()` rejected AND there is no usable prior
- * snapshot — no persisted `currentSpaceId`, no in-memory
- * `availableSpaces`). `boot()` reads that field right after its own
- * `await` returns and flips to `error` so BootGate's retry/diagnostics
- * screen renders instead of the app silently landing on `ready` with an
- * empty space list, where every page load no-ops and leaves the initial
- * `loading: true` skeleton spinning forever. A SOFT failure (a usable
- * snapshot exists) reports `{ kind: 'ok' }` — same as success — since the
- * space store already keeps the app usable on the prior snapshot in that
- * case (plus its own deduped toast).
+ * Boot state machine: `booting → ready | error`. `boot()` awaits the space
+ * store's first `refreshAvailableSpaces()`, so space-scoped views see a
+ * non-null `currentSpaceId` on first mount instead of fetching empty and
+ * refetching. That refresh never rejects; a hard failure (no snapshot to keep
+ * using) is read from `lastRefreshOutcome` and shows BootGate's retry screen
+ * instead of an app whose every page load no-ops (#2921).
  */
 
 import { create } from 'zustand'
@@ -46,12 +23,10 @@ import { useSpaceStore } from '@/stores/space'
 type BootState = 'booting' | 'ready' | 'error'
 
 /**
- * #5438 — start the first journal view's fetches alongside `list_spaces`
- * instead of one render after it: the month's page map, then today's
- * subtree. The persisted space id is only a hint; the space the app lands in
- * comes from `refreshAvailableSpaces`, and when the two differ the prefetch
- * is never read (one caught IPC). `useCalendarPageDates` seeds from the
- * settled page map; `page-blocks.ts` `load()` consumes the subtree once.
+ * Start the first journal view's fetches alongside `list_spaces` instead of a
+ * render later (#5438): the month's page map, then today's subtree. The
+ * persisted space id is only a hint; if the app lands elsewhere the prefetch
+ * goes unread. `useCalendarPageDates` and `load()` consume it.
  */
 function prefetchBootJournal(): void {
   const spaceId = useSpaceStore.getState().currentSpaceId
@@ -76,9 +51,8 @@ function prefetchBootJournal(): void {
 }
 
 /**
- * #5419 — the boot-timing milestone `scripts/measure-boot.mjs` reads from the
- * Rust log. Production drops `logger.info`, so this goes straight to the
- * backend sink, which `main.tsx` sets to `logFrontend`.
+ * The boot milestone `scripts/measure-boot.mjs` reads from the Rust log
+ * (#5419). Production drops `logger.info`, so it goes to the backend sink.
  */
 function logBootResolved(outcome: 'ready' | 'error'): void {
   const sink = getLogBackendSink()
@@ -94,13 +68,9 @@ interface BootStore {
   state: BootState
   error: string | null
   /**
-   * Kicks off space-store hydration and flips to `ready` on completion,
-   * or to `error` (with a display-ready message) on a hard space-load
-   * failure. Returns a Promise so the BootGate retry button can `await`
-   * the transition and gate its disabled-during-refresh UI on it.
-   * Re-invoking `boot()` (the retry path) simply re-runs the same
-   * hydration — a subsequent success clears `error` and moves to
-   * `ready`.
+   * Hydrate the space store and move to `ready`, or to `error` with a
+   * display-ready message on a hard failure. Awaitable, so BootGate's retry
+   * can disable itself meanwhile; a retry that succeeds clears `error`.
    */
   boot: () => Promise<void>
 }
@@ -109,10 +79,7 @@ export const useBootStore = create<BootStore>((set) => ({
   state: 'booting',
   error: null,
   boot: async () => {
-    // `refreshAvailableSpaces` never rejects (see module doc) — it
-    // resolves for the happy path AND the soft-failure path, and records
-    // its outcome for the hard-failure path instead of throwing. Read
-    // that outcome after the await settles rather than try/catch.
+    // `refreshAvailableSpaces` never rejects; it records a hard failure instead.
     prefetchBootJournal()
     await useSpaceStore.getState().refreshAvailableSpaces()
     const outcome = useSpaceStore.getState().lastRefreshOutcome

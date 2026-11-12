@@ -1,26 +1,9 @@
 /**
- * Page-browser compound-filter store.
- *
- * The Pages view's compound filter chips used to live in `PageBrowser`'s local
- * `useState`. Creating a page opens the editor, which unmounts the Pages view
- * (`ViewDispatcher` is a `switch` over `currentView`), so navigating back reset
- * the chips to empty — and switching space while the view stayed mounted leaked
- * one space's chips onto another. This in-memory, per-space store lifts the
- * chips out of component state so they:
- *
- * - survive the navigation round-trip within a session (create → editor → back),
- * - stay partitioned by space (chip values reference space-scoped ids — tags,
- *   pages — so a space switch reads the new space's slice, the default if none, and
- *   chips never cross spaces),
- * - survive an app restart (#1750): persisted to localStorage so the same
- *   "I set up a filter" gesture has the same lifetime as the graph view's
- *   filters (which already persist via `GraphFilterBar`'s `agaric:graph-filters`
- *   key). Backlinks deliberately stay page-scoped and reset on navigation; the
- *   two surfaces that own a durable filter set (graph + pages) now persist
- *   consistently.
- *
- * A space with no stored slice reads as `DEFAULT_PAGE_FILTERS` (#5370); a
- * stored `[]` is the user having removed it, so it stays empty.
+ * Pages view filter chips, per space and persisted (#1750). Out of component
+ * state because opening the editor unmounts the view and reset them, and a
+ * space switch leaked one space's chips into another; persisted so they last
+ * as long as the graph view's filters. A space with no stored slice reads as
+ * `DEFAULT_PAGE_FILTERS` (#5370); a stored `[]` is the user having removed it.
  */
 
 import { create } from 'zustand'
@@ -35,10 +18,7 @@ import { LEGACY_SPACE_KEY } from '@/stores/space'
 interface PageBrowserFiltersState {
   /** Per-space active chip lists, keyed by space id (`__legacy__` for no-space). */
   filtersBySpace: Record<string, PageFilterWithKey[]>
-  /**
-   * Monotonic counter for the React-key-only `_addId`. Lives in the store (was a
-   * `useRef` in `PageBrowser`) so chip keys stay unique across re-mounts.
-   */
+  /** Monotonic source of the React-key-only `_addId`, so chip keys stay unique across mounts. */
   nextAddId: number
   /** Append a chip to the space's list, de-duping structurally-identical chips. */
   addFilter: (spaceKey: string, filter: FilterPrimitive) => void
@@ -59,19 +39,15 @@ export function isExcludeJournalPagesFilter(filter: FilterPrimitive): boolean {
 }
 
 /**
- * Stable frozen fallback for an absent slice. Returning a fresh array from the
- * selector each call would retrigger every consumer via `Object.is`, so the
- * reference must stay stable (mirrors `recent-pages`' `EMPTY_PAGE_REFS`).
- * `_addId` 0 is never minted: `addFilter` pre-increments from 0.
+ * Stable default for an absent slice: a fresh array per call would fail
+ * `Object.is` and re-render every consumer. `_addId` 0 is never minted, as
+ * `addFilter` pre-increments.
  */
 const DEFAULT_PAGE_FILTERS: readonly PageFilterWithKey[] = Object.freeze([
   { ...EXCLUDE_JOURNAL_PAGES_FILTER, _addId: 0 },
 ])
 
-/**
- * Light structural check — a full `FilterPrimitive` discriminant match isn't
- * worth duplicating here (mirrors `isFilterPrimitiveLike` in `lib/preferences.ts`).
- */
+/** Light structural check; a full `FilterPrimitive` match is not worth duplicating here. */
 function isPageFilterWithKeyLike(value: unknown): value is PageFilterWithKey {
   if (value === null || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
@@ -79,10 +55,9 @@ function isPageFilterWithKeyLike(value: unknown): value is PageFilterWithKey {
 }
 
 /**
- * Coerce an arbitrary persisted value into a valid `filtersBySpace` shape,
- * dropping non-array slices and any entry that doesn't look like a
- * `PageFilterWithKey` (mirrors `coerceBySpace` in `stores/search-history.ts`).
- * An empty slice is kept: dropping it would bring the default back.
+ * Coerce a persisted value into a valid `filtersBySpace`, dropping non-array
+ * slices and entries that do not look like a chip. An empty slice is kept:
+ * dropping it would bring the default back.
  */
 function coerceFiltersBySpace(raw: unknown): Record<string, PageFilterWithKey[]> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
@@ -101,15 +76,9 @@ function coerceNextAddId(raw: unknown): number {
 }
 
 /**
- * CR-PERSIST — coerce an entire persisted page-browser-filters blob
- * field-by-field. Shared by `migrate` (version-mismatched blobs) and `merge`
- * (same-version blobs): zustand's persist middleware only calls `migrate`
- * when the stored version DIFFERS from `options.version`, so a corrupt blob
- * that still carries `version: 1` (or a non-numeric version) bypasses
- * `migrate` entirely and reaches the default shallow `merge` raw — coercing
- * in `merge` as well closes that path (mirrors `search-history.ts`). The
- * coercion is idempotent, so the migrate→merge double pass on
- * version-mismatched blobs is harmless.
+ * Coerce a whole persisted blob field by field. Both `migrate` and `merge`
+ * call it: zustand runs `migrate` only on a version mismatch, so a corrupt blob
+ * with the current version reaches `merge` raw. Idempotent.
  */
 function coercePersistedPageBrowserFilters(
   persisted: unknown,
@@ -128,11 +97,7 @@ function filtersForKey(state: PageBrowserFiltersState, spaceKey: string): PageFi
   return state.filtersBySpace[spaceKey] ?? (DEFAULT_PAGE_FILTERS as PageFilterWithKey[])
 }
 
-/**
- * Per-space chip selector. Pass `currentSpaceId` from `useSpaceStore`; `null`
- * (pre-bootstrap) maps to the `__legacy__` slot. Returns the stable frozen
- * default for an absent slice so the selector is referentially idempotent.
- */
+/** Per-space chips; a null space maps to `__legacy__`, an absent slice to the stable default. */
 export function selectPageFiltersForSpace(
   state: PageBrowserFiltersState,
   spaceId: string | null,
@@ -148,10 +113,7 @@ export const usePageBrowserFiltersStore = create<PageBrowserFiltersState>()(
       addFilter: (spaceKey, filter) =>
         set((state) => {
           const current = filtersForKey(state, spaceKey)
-          // Dedupe: strip the React-key-only `_addId` and compare a stable JSON
-          // serialisation. Re-applying a structurally-identical chip is a no-op —
-          // it would ship a duplicate primitive to the IPC (an AND of a condition
-          // with itself) and add a redundant pill.
+          // A structurally identical chip would AND a condition with itself.
           const incoming = JSON.stringify(filter)
           if (current.some(({ _addId, ...rest }) => JSON.stringify(rest) === incoming)) {
             return state
@@ -188,20 +150,13 @@ export const usePageBrowserFiltersStore = create<PageBrowserFiltersState>()(
       name: 'agaric:page-browser-filters',
       version: 1,
       storage: safePersistStorage,
-      // Persist the chip lists and the monotonic id counter so `_addId` keys
-      // stay unique across a restart (a fresh 0 would collide with rehydrated
-      // chips). Function members are not serialisable and are excluded.
+      // The counter persists too: restarting from 0 would collide with rehydrated chips.
       partialize: (state) => ({
         filtersBySpace: state.filtersBySpace,
         nextAddId: state.nextAddId,
       }),
-      // #3323 — harden the read path: an unrecognized/corrupt blob (bad
-      // manual edit, future-shape downgrade) must not throw the PageBrowser
-      // via `.map`/`.length` on a non-array slice, or wedge `nextAddId` into
-      // string concatenation via a non-numeric persisted value. `migrate`
-      // covers version-mismatched blobs; `merge` covers same-version blobs,
-      // which zustand hands straight to the default shallow merge otherwise
-      // (mirrors `search-history.ts`).
+      // A corrupt blob must not crash PageBrowser on a non-array slice or turn
+      // `nextAddId` into string concatenation (#3323).
       migrate: (persisted, _version) => coercePersistedPageBrowserFilters(persisted),
       merge: (persisted, current) => ({
         ...current,
