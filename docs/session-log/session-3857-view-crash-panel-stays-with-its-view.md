@@ -34,7 +34,7 @@ That part is left for a maintainer decision.
 
 ## Checks run
 
-- `npx vitest run src/components/pages/__tests__/`: 34 files, 965 tests passed.
+- `npx vitest run src/components/pages/__tests__/`: 34 files, 963 tests passed.
 - Red: the new vitest test with the keys removed fails on the missing journal mock.
 - `npm run typecheck`, `npx oxlint` on the touched paths: exit 0.
 - Playwright on PW_PORT 5413, `--workers=1`: `view-crash-panel`, `in-page-find`, `inner-links`

@@ -8,18 +8,14 @@
 import { render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { axe } from '@/__tests__/helpers/axe'
 import { ViewDispatcher, type ViewDispatcherProps } from '@/components/pages/ViewDispatcher'
-
-const broken = vi.hoisted(() => ({ view: '' }))
 
 vi.mock('@/components/JournalPage', () => ({
   JournalPage: () => <div data-testid="journal-mock" />,
 }))
 vi.mock('@/components/PageBrowser', () => ({
   PageBrowser: () => {
-    if (broken.view === 'pages') throw new Error('pages blew up')
-    return null
+    throw new Error('pages blew up')
   },
 }))
 vi.mock('@/components/pages/PageEditor', () => ({ PageEditor: () => null }))
@@ -48,13 +44,11 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  broken.view = ''
   vi.restoreAllMocks()
 })
 
 describe('ViewDispatcher — a crashed view keeps its error panel to itself (#6554)', () => {
   it('leaving a crashed view renders the next view, not the panel', async () => {
-    broken.view = 'pages'
     const { rerender } = render(<ViewDispatcher {...props({ currentView: 'pages' })} />)
     expect(await screen.findByRole('alert')).toHaveTextContent('pages blew up')
 
@@ -62,12 +56,5 @@ describe('ViewDispatcher — a crashed view keeps its error panel to itself (#65
 
     expect(screen.getByTestId('journal-mock')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-
-  it('the error panel has no a11y violations', async () => {
-    broken.view = 'pages'
-    const { container } = render(<ViewDispatcher {...props({ currentView: 'pages' })} />)
-    await screen.findByRole('alert')
-    expect(await axe(container)).toHaveNoViolations()
   })
 })

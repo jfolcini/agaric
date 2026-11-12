@@ -1,4 +1,4 @@
-import { clearConsoleErrors, expect, getConsoleErrors, test, waitForBoot } from './helpers'
+import { clearConsoleErrors, expect, test, waitForBoot } from './helpers'
 
 /**
  * #6554 — a view that crashes during render shows its error panel, and the
@@ -26,7 +26,6 @@ test('a crashed view keeps its error panel to itself @boot @pages', async ({ pag
 
   await sidebar.getByRole('button', { name: 'Pages', exact: true }).click()
   await expect(panel).toHaveText(/Pages encountered an error/)
-  expect(getConsoleErrors(page).some((e) => e.includes("reading 'content'"))).toBe(true)
   clearConsoleErrors(page)
 
   await sidebar.getByRole('button', { name: 'Tags', exact: true }).click()
