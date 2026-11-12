@@ -29,5 +29,5 @@ Decisions and traps:
 - `usePageBrowserScrollRestoration` drops a pending save on unmount, so a scroll that ends just
   before a click is lost; the spec waits for the save.
 
-Ran: the PageBrowser vitest suites, typecheck, and the Playwright specs `just e2e-related`
-selected. The WebdriverIO selections were left to CI.
+Ran: the full vitest suite, typecheck, lint, every pre-commit and manual-stage hook, and the
+Playwright specs `just e2e-related` selected. The WebdriverIO selections were left to CI.
