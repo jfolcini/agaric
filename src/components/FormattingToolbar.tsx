@@ -1,5 +1,7 @@
 /**
- * FormattingToolbar — always-visible toolbar rendered above the active editor.
+ * FormattingToolbar — the toolbar of the editor being used: block mode's, one per
+ * view while a block is edited (`./FormattingToolbar/view-toolbar.tsx`), and page
+ * mode's, above its document.
  *
  * Buttons (post Layer A): Format, Internal Link, Tag, Blockquote | Code Block,
  * Heading | Ordered List, Divider, Callout | Cycle Priority, Date, Due Date,
@@ -72,7 +74,7 @@ interface FormattingToolbarProps {
   tips?: Readonly<Record<string, string>> | undefined
   /** Item keys left off the bar: the controls a surface has no use for (page mode's Discard). */
   hiddenItems?: ReadonlySet<string> | undefined
-  /** Added to the bar's classes (page mode's sticky bar). */
+  /** Added to the bar's classes (page mode's sticky bar, block mode's view bar). */
   className?: string | undefined
   /** The block-menu button, last on the bar: where nothing else opens the menu (page mode on touch). */
   blockMenu?: { open: boolean; onOpen: (anchor: HTMLElement) => void } | undefined

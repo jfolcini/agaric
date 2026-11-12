@@ -151,7 +151,7 @@ test.describe('Secondary selector popovers (#1170) @editor', () => {
 
     // #1960 — open the Turn into menu and pick Heading 2.
     await page
-      .locator('[data-testid="block-editor"]')
+      .getByTestId('formatting-toolbar')
       .getByRole('button', { name: 'Turn into', exact: true })
       .click()
     await page.getByRole('menuitemradio', { name: 'Heading 2' }).click()
@@ -185,8 +185,10 @@ test.describe('Secondary selector popovers (#1170) @editor', () => {
     // #3001 — Turn into → Code block is a single-step disclosure: opening it
     // expands the searchable language picker in place, so type + language are
     // chosen in one interaction (no convert-then-reopen round trip).
-    const blockEditor = page.locator('[data-testid="block-editor"]')
-    await blockEditor.getByRole('button', { name: 'Turn into', exact: true }).click()
+    await page
+      .getByTestId('formatting-toolbar')
+      .getByRole('button', { name: 'Turn into', exact: true })
+      .click()
     await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
     const langInput = page.getByRole('textbox', { name: 'Code block language' })
     await langInput.fill('rust')

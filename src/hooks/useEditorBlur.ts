@@ -97,7 +97,11 @@ export function useEditorBlur(params: {
    * same way `useBlockFlush` already folds it on imperative flush). Optional:
    * callers/tests that never produce checkbox-marker content may omit it. */
   pageStore?: StoreApi<PageBlockState> | undefined
-}): { handleBlur: (e: React.FocusEvent) => void } {
+}): {
+  handleBlur: (e: React.FocusEvent) => void
+  /** The same, for focus leaving the view's formatting toolbar, which renders outside `wrapper`. */
+  leave: (wrapper: HTMLElement, related: Element | null) => void
+} {
   const {
     blockId,
     edit,
@@ -122,8 +126,8 @@ export function useEditorBlur(params: {
   const pendingSwapRef = useRef<(() => void) | null>(null)
   useEffect(() => () => pendingSwapRef.current?.(), [])
 
-  const handleBlur = useCallback(
-    (e: React.FocusEvent) => {
+  const leave = useCallback(
+    (wrapper: HTMLElement, related: Element | null) => {
       // Step 1: No active block -> bail
       if (!rovingEditorRef.current.activeBlockId) return
 
@@ -169,7 +173,7 @@ export function useEditorBlur(params: {
       // portal-tagged overlay (suggestion popup, formatting toolbar, date
       // picker, …), in the wrapper (an image's collapse toggle, the toolbar),
       // or while such an overlay shows.
-      if (focusStaysInEditor(e.currentTarget as HTMLElement, e.relatedTarget as Element | null)) {
+      if (focusStaysInEditor(wrapper, related)) {
         logger.debug('EditorBlur', 'blur prevented — focus stays with the editor', { blockId })
         return
       }
@@ -179,8 +183,8 @@ export function useEditorBlur(params: {
       // classifies the edit against it (#5160 D2).
       //
       // A mouse press keeps the block in edit mode until it ends (#5807):
-      // leaving it now drops the formatting toolbar from the flow, everything
-      // below moves up before the release, and the click lands elsewhere.
+      // leaving it now swaps the editor for the static block before the
+      // release, so anything that moves under the pointer takes the click.
       // `unmount()` would empty the doc on screen, so the save reads it live,
       // compared as `unmount()` compares it (`computeLeaveDelta`). It then
       // rebases both baselines, and the deferred unmount finds nothing new.
@@ -260,6 +264,11 @@ export function useEditorBlur(params: {
     },
     [blockId, edit, splitBlock, setFocused, discardDraft, rootParentId, pageStore],
   )
+  const handleBlur = useCallback(
+    (e: React.FocusEvent) =>
+      leave(e.currentTarget as HTMLElement, e.relatedTarget as Element | null),
+    [leave],
+  )
 
-  return { handleBlur }
+  return { handleBlur, leave }
 }

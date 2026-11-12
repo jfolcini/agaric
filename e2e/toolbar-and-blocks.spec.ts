@@ -779,18 +779,12 @@ test.describe('Collapse / Expand @editor', () => {
 // ===========================================================================
 
 /**
- * #4313 replaced `PopoverContent`'s cap (`src/components/ui/popover.tsx`)
- * with a `--radix-popover-content-available-height`-based one, GLOBALLY,
- * across every popover call site (~45 of them): an anchor mid-screen now
- * caps at the collision-aware available height and scrolls internally,
- * where before it could extend to nearly the full viewport height. The only
- * e2e coverage that change got was a single MOBILE spec
- * (`formatting-toolbar-mobile.spec.ts`, keyboard-up case). This is the
- * desktop twin: the same real popover (Turn into → Code block, ~19 rows —
- * 17 `CODE_LANGUAGES` + the filter input + the trailing "Plain text" row),
- * anchored near the vertical MIDDLE of the viewport instead of the bottom
- * edge, so the collision-aware cap has to shrink against BOTH the top and
- * the bottom of the screen, not just one.
+ * #4313 capped `PopoverContent` (`src/components/ui/popover.tsx`) at
+ * `--radix-popover-content-available-height` for every popover. This is the
+ * desktop twin of the mobile spec (`formatting-toolbar-mobile.spec.ts`): the
+ * tallest real popover (Turn into → Code block, the language list), opened
+ * from the view's formatting toolbar under the header (#6562), has less room
+ * below it than it needs, so it must stay on screen and scroll.
  *
  * Deliberately does NOT assert on `getComputedStyle(...).maxHeight`: the CSS
  * cap is `max-h-[max(var(--radix-popover-content-available-height,…),8rem)]`
@@ -805,33 +799,12 @@ test.describe('Turn into popover — desktop collision-aware max-height (#4320) 
 
   const SLACK = 1
 
-  test('a genuinely tall popover anchored mid-viewport stays on screen and its full content is reachable by scrolling', async ({
+  test('a popover taller than the room under the toolbar stays on screen and its full content is reachable by scrolling', async ({
     page,
   }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
-
-    // Build enough vertical content that a block sits well below the fold, so
-    // its "Turn into" popover opens anchored near the MIDDLE of the viewport
-    // — real usage, and the collision case with room to shrink on BOTH
-    // sides. Filler-block content is irrelevant; only their count/height is.
-    const editor = await focusBlock(page, 0)
-    await page.keyboard.press('End')
-    for (let i = 0; i < 18; i++) {
-      await page.keyboard.press('Enter')
-      await page.keyboard.type(`Filler block ${i}`)
-    }
-    await page.keyboard.press('Escape')
-    await expect(editor).not.toBeVisible()
-
-    const blocks = page.locator('[data-testid="block-static"]')
-    const total = await blocks.count()
-    const middleIndex = Math.floor(total / 2)
-
-    // Force the anchor block to the vertical middle of the (now much taller
-    // than the viewport) page.
-    await blocks.nth(middleIndex).evaluate((el) => el.scrollIntoView({ block: 'center' }))
-    await focusBlock(page, middleIndex)
+    await focusBlock(page, 0)
 
     await page.getByRole('button', { name: 'Turn into', exact: true }).first().click()
     // Expand the tallest disclosure — the language list is what overflows.
@@ -858,10 +831,8 @@ test.describe('Turn into popover — desktop collision-aware max-height (#4320) 
           innerHeight: window.innerHeight,
         }
       })
-      // Fully within the viewport — not clipped off the top OR the bottom
-      // edge. A cap that ignored collision (e.g. the old `100dvh`-only cap)
-      // would run the popover off one edge or the other from a mid-screen
-      // anchor with only ~350px of room on each side.
+      // Fully within the viewport. A cap that ignored collision (e.g. the old
+      // `100dvh`-only cap) would run the popover off the bottom edge.
       expect(geometry.top, 'popover top').toBeGreaterThanOrEqual(-SLACK)
       expect(geometry.bottom, 'popover bottom').toBeLessThanOrEqual(geometry.innerHeight + SLACK)
       expect(geometry.left, 'popover left').toBeGreaterThanOrEqual(-SLACK)
