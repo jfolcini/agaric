@@ -219,7 +219,10 @@ export function useInPageReplace({
           match,
           text: replacementFor(match.node.nodeValue ?? '', match, spec),
         }))
-        return { kind: 'done', ...replaceInEditor(editor, items) }
+        const result = replaceInEditor(editor, items)
+        // Page mode has no block rows for find to watch: without this it keeps the old matches.
+        if (result.replaced > 0) onReplaced({ kind: 'dom', index: 0 })
+        return { kind: 'done', ...result }
       }
       await flushActiveDraft()
       const textOf = (content: string) => blockFindText(content, resolveTitle)

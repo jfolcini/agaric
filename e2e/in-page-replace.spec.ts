@@ -148,6 +148,9 @@ test.describe('In-page replace @pages @search @editor', () => {
     await page.getByRole('button', { name: 'Replace all' }).click()
     await expect(bar.status).toHaveText('Replaced 2 matches')
     await expect(page.getByTestId('page-mode-editor')).toContainText('one pin here')
+    // Find ran again: a second Replace all on the old matches would overwrite `pin th`.
+    await expect(bar.counter).toHaveText('0 of 0')
+    await expect(page.getByRole('button', { name: 'Replace all' })).toBeDisabled()
 
     await page.keyboard.press('Escape')
     await reopenPage(page, 'Replace Page Mode')
