@@ -11,9 +11,10 @@ The last step of #6560's `.sqlx` checkbox, rule (a) of the approved design comme
 ## Traps
 
 - `git diff` defaults `diff.renames=true`, so deleting `-M` from the patch command is not a broken variant; the pure-rename case was shown red with `--no-renames`.
-- A zero-count side of a `-U0` hunk (`-a,0` or `+c,0`) names an insertion point, not a line; it is skipped, because the other side carries the content lines.
+- A zero-count side of a `-U0` hunk (`-a,0` or `+c,0`) names an insertion point, not a line; it is skipped, because the other side carries the content lines. Counting it would run Phase E for a line inserted just after a macro's closing line.
+- A user `textconv` driver on `*.rs` shifts the patch's line numbers away from the `git show` text the spans come from, and an in-macro edit then skipped; the patch command passes `--no-textconv`.
 - `git grep -l` exits 1 on no match; that alone is "no wrapper", any other failure throws.
-- Over the last 150 `origin/main` commits touching `.rs`, the helper said `run` on 46 and `skip` on 104; all 38 that changed `src-tauri/.sqlx` said `run`. That agrees with the design's "at most 47 of 149".
+- Over the last 150 `origin/main` commits touching `.rs`, the helper said `run` on 46 and `skip` on 104; all 38 that changed `src-tauri/.sqlx` said `run`, and still did with every path trigger disabled (the span rule alone). That agrees with the design's "at most 47 of 149".
 
 ## Checks run
 

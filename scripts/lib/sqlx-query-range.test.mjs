@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import { initScratchRepo, scrubbedGitEnv, withScrubbedProcessEnv } from './git-scratch-guard.mjs'
-import { decide, gitRunner, querySpans, rangeVerdict } from './sqlx-query-range.mjs'
+import { decide, gitRunner, parsePatch, querySpans, rangeVerdict } from './sqlx-query-range.mjs'
 
 // Every `test()` below is `void`-ed: node:test's returned promise fulfils even
 // when the test fails, so there is nothing for a caller to await or catch.
@@ -105,10 +105,15 @@ void test('an unbalanced ) inside a raw-string query does not end the span', () 
 
 void test('an edit outside every span, on a comment naming the macro, skips', () => {
   const after = replaceLine(QUERY_FILE, 1, 'fn one() {} // like sqlx::query!(x) below')
+  // `-7,0 +8` inserts after the macro's closing line 7; the empty side names no line.
+  const inserted = {
+    ...editAt(QUERY_FILE, 7, replaceLine(QUERY_FILE, 7, '    )\n    // after')),
+    hunks: [{ oldStart: 7, oldCount: 0, newStart: 8, newCount: 1 }],
+  }
   assert.equal(
     decide({
       paths: [RS],
-      files: [editAt(QUERY_FILE, 1, after), editAt(QUERY_FILE, 11)],
+      files: [editAt(QUERY_FILE, 1, after), editAt(QUERY_FILE, 11), inserted],
       wrapper: null,
     }),
     'skip',
@@ -226,7 +231,7 @@ void test('an empty range skips only when both git diffs succeed', () => {
   })
 })
 
-void test('an unreadable revision or file, or a listed .rs with no diff, fails non-zero', () => {
+void test('an unreadable revision or file, a listed .rs with no diff, or an unknown patch line fails', () => {
   withRepo(({ commit, cli, real, verdict }) => {
     const base = commit({ [RS]: QUERY_FILE })
     const head = commit({ [RS]: replaceLine(QUERY_FILE, 11, 'fn two() { todo!() }') })
@@ -241,6 +246,8 @@ void test('an unreadable revision or file, or a listed .rs with no diff, fails n
       () => verdict(base, head, noSection),
       /src-tauri\/src\/a\.rs is listed as changed but has no diff/,
     )
+    const binary = `diff --git a/${RS} b/${RS}\nBinary files a/${RS} and b/${RS} differ\n`
+    assert.throws(() => parsePatch(binary), /unparseable diff line: Binary files/)
   })
 })
 

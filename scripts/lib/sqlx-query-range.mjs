@@ -78,7 +78,7 @@ export function querySpans(text) {
 }
 
 /** The name of the first `macro_rules!` in `text` whose body holds a query macro, or null. */
-export function wrapperMacro(text) {
+function wrapperMacro(text) {
   const code = stripRustComments(text)
   for (const match of code.matchAll(MACRO_RULES_RE)) {
     const open = match.index + match[0].length - 1
@@ -237,6 +237,7 @@ export function rangeVerdict(base, head, git = gitRunner()) {
     '-M',
     '--no-color',
     '--no-ext-diff',
+    '--no-textconv',
     '--src-prefix=a/',
     '--dst-prefix=b/',
     base,
