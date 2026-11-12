@@ -34,8 +34,8 @@ use tokio::runtime::Runtime;
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::add_attachment_with_bytes_inner;
 use agaric_lib::commands::mirror::{
-    get_mirror_status_inner, set_mirror_copy_files_inner, set_mirror_folder_inner,
-    set_mirror_read_back_inner, set_mirror_space_inner,
+    set_mirror_copy_files_inner, set_mirror_folder_inner, set_mirror_read_back_inner,
+    set_mirror_space_inner,
 };
 use agaric_lib::commands::pages::{
     SourceSaveFlags, apply_page_source_inner, get_page_buffer_inner,
@@ -344,12 +344,23 @@ fn bench_idle_tick(c: &mut Criterion) {
             drop(conn);
             let (pool, state) = (&vault.pool, &vault.state);
             match setting {
-                "read_back_off" => set_mirror_read_back_inner(pool, DEV, state, false, &[]).await,
-                "copy_files_on" => set_mirror_copy_files_inner(pool, DEV, state, true).await,
-                "space_off" => set_mirror_space_inner(pool, DEV, state, OTHER_SPACE, false).await,
-                _ => get_mirror_status_inner(pool, DEV, state).await,
+                "read_back_off" => {
+                    set_mirror_read_back_inner(pool, DEV, state, false, &[])
+                        .await
+                        .unwrap();
+                }
+                "copy_files_on" => {
+                    set_mirror_copy_files_inner(pool, DEV, state, true)
+                        .await
+                        .unwrap();
+                }
+                "space_off" => {
+                    set_mirror_space_inner(pool, DEV, state, OTHER_SPACE, false)
+                        .await
+                        .unwrap();
+                }
+                _ => {}
             }
-            .unwrap();
             vault
         });
         let mut mirror = rt.block_on(vault.open());
