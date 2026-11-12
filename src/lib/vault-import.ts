@@ -36,7 +36,7 @@ import {
   logseqTitleProperty,
 } from '@/lib/logseq-import'
 import { isNotionExport, notionToMarkdown, stripNotionIds } from '@/lib/notion-import'
-import { type OrgLinkTargets, orgToMarkdown } from '@/lib/org-import'
+import { type OrgLinkTargets, type OrgPage, orgToMarkdown } from '@/lib/org-import'
 import { listAllPropertyDefs } from '@/lib/property-save-utils'
 
 /**
@@ -443,6 +443,23 @@ function retitle(path: string, title: string | null): string {
 }
 
 /**
+ * The path a note named `path` imports as once its `text` is read: an Org
+ * file's `#+TITLE` (from `org`, its conversion, where the caller has it), a
+ * page of the Logseq `graph` its `title::`. Any other note keeps `path`.
+ */
+function titledPath(
+  path: string,
+  extension: string,
+  text: string,
+  graph: LogseqGraph | null,
+  org?: OrgPage,
+): string {
+  if (extension === '.org') return retitle(path, (org ?? orgToMarkdown(text)).title)
+  const title = graph === null ? null : logseqTitleProperty(text)
+  return title === null ? path : `${title}.md`
+}
+
+/**
  * The paths a pick's notes import as, the notes keyed by the names a link
  * calls them, and the Logseq graph they make, if any.
  */
@@ -556,18 +573,15 @@ export function mdFilesToUnits(
       logseq || extension === '.org'
         ? async () => {
             const { paths, graph } = await naming()
-            const path = paths[index] as string
             const text = await file.text()
-            if (extension === '.org') return retitle(path, orgToMarkdown(text).title)
-            const title = graph === null ? null : logseqTitleProperty(text)
-            return title === null ? path : `${title}.md`
+            return titledPath(paths[index] as string, extension, text, notion ? null : graph)
           }
         : importedAs,
     load: async () => {
       const { paths, notesByName, graph } = await naming()
       const text = await file.text()
       let content = text
-      let path = paths[index] as string
+      let org: OrgPage | undefined
       const notePath = vaultRelativePath(file.webkitRelativePath)
       const noteDir = notePath.slice(0, Math.max(notePath.lastIndexOf('/'), 0))
       if (extension === '.org') {
@@ -581,15 +595,13 @@ export function mdFilesToUnits(
           const target = resolveVaultPath(noteDir, name)
           return target === null ? undefined : orgTitles.get(target)
         }
-        const org = orgToMarkdown(text, { ids, fileTitle })
+        org = orgToMarkdown(text, { ids, fileTitle })
         content = org.markdown
-        path = retitle(path, org.title)
       } else if (notion && extension === '.md') {
-        content = notionToMarkdown(text, basename(path).slice(0, -'.md'.length))
-      } else if (graph !== null) {
-        const title = logseqTitleProperty(text)
-        if (title !== null) path = `${title}.md`
+        const name = basename(paths[index] as string).slice(0, -'.md'.length)
+        content = notionToMarkdown(text, name)
       }
+      const path = titledPath(paths[index] as string, extension, text, notion ? null : graph, org)
       if (graph !== null) content = graph.rewrite(content)
       // #1925 — on a vault/folder import, ship matched sibling bytes; a
       // single-file import (no index) has no siblings. A folder note always

@@ -417,7 +417,7 @@ describe('mdFilesToUnits', () => {
     const plain = [
       new File(['- a'], 'note.md', { type: 'text/markdown' }),
       new File(['- b'], 'plain.txt', { type: 'text/plain' }),
-      new File(['* c'], 'tasks.org'),
+      new File(['#+TITLE: Done Tasks\n* c'], 'tasks.org'),
     ]
     const folder = [folderFile(['- d'], 'note.md', 'Vault/note.md')]
     const graph = [
@@ -438,7 +438,10 @@ describe('mdFilesToUnits', () => {
     }
 
     const plainUnits = mdFilesToUnits(plain, null, false)
-    expect(await resolved(plainUnits)).toEqual(['note.md', 'plain.md', 'tasks.md'])
+    // A Markdown note's is known before the run, without reading it.
+    expect(plainUnits.slice(0, 2).map((u) => u.merges)).toEqual(['note.md', 'plain.md'])
+    expect(await resolved(plainUnits)).toEqual(['note.md', 'plain.md', 'Done Tasks.md'])
+    expect(await resolved(plainUnits)).toEqual(await loaded(plainUnits))
     expect(await resolved(mdFilesToUnits(folder, indexVaultFiles(folder), false))).toEqual([
       'note.md',
     ])
