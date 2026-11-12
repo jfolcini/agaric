@@ -110,8 +110,22 @@ export function resetReportedSyncFailures(): void {
 }
 
 /**
+ * How a session started by `start_sync` ended, read off its channel's terminal
+ * update. `reported` is a failure `sync:error` already answered, or the user's
+ * own cancel: `useSyncEvents` set the store to `error` / `idle` first.
+ */
+type SessionEnd = 'complete' | 'failed' | 'reported'
+
+/**
  * Syncs a single peer with a timeout guard. Shows a toast on the FIRST failure
  * of a streak. Returns `true` on success, `false` on failure.
+ *
+ * #6551: `start_sync` resolves once the daemon is woken, before any session
+ * ran, and resolves just the same with the peer switched off. With
+ * `awaitSession`, success is the terminal `complete` on the channel this call
+ * opened, within the same `SYNC_TIMEOUT_MS`; a terminal `error` is a failure.
+ * Without it (the scheduled tick, which does not answer anyone) success only
+ * means the daemon was asked.
  *
  * Per-peer failures are transient (network, peer-offline, timeout)
  * so the failure toast carries a Retry action that re-runs `startSync`
@@ -128,27 +142,37 @@ export function resetReportedSyncFailures(): void {
 async function syncOnePeerWithToast(
   peerId: string,
   shouldToast: () => boolean = () => true,
+  awaitSession = false,
 ): Promise<boolean> {
   try {
     const store = useSyncStore.getState()
-    await runWithTimeout(
-      startSync(peerId, (update) => {
+    let endSession: (ending: SessionEnd) => void = () => {}
+    const sessionEnd = new Promise<SessionEnd>((resolve) => {
+      endSession = resolve
+    })
+    const run = async (): Promise<SessionEnd> => {
+      await startSync(peerId, (update) => {
         store.recordPeerProgress(peerId, update)
         if (update.kind === 'sync') {
+          const unanswered = useSyncStore.getState().state === 'syncing'
           // The terminal `error` follows the `sync:error` event of the same outcome
           // (`useSyncEvents`), which set `error` for a failure and `idle` for a cancel
           // (#5739): it must not undo that. It only ends a `syncing` no event ended,
           // a failure whose report was suppressed (#4120).
-          if (update.state !== 'error' || useSyncStore.getState().state === 'syncing') {
+          if (update.state !== 'error' || unanswered) {
             store.setState(mapBackendState(update.state))
           }
           store.setOpsReceived(update.ops_received)
           store.setOpsSent(update.ops_sent)
+          if (update.state === 'complete') endSession('complete')
+          if (update.state === 'error') endSession(unanswered ? 'failed' : 'reported')
         }
-      }),
-      SYNC_TIMEOUT_MS,
-      new Error('Sync timeout'),
-    )
+      })
+      return awaitSession ? sessionEnd : 'complete'
+    }
+    const ending = await runWithTimeout(run(), SYNC_TIMEOUT_MS, new Error('Sync timeout'))
+    if (ending === 'reported') return false
+    if (ending === 'failed') throw new Error('Sync session failed')
     // #4305 — a peer that just worked is news again if it later stops.
     peersWithReportedFailure.delete(peerId)
     return true
@@ -187,12 +211,13 @@ async function syncOnePeerWithToast(
 async function syncAllPeersSequentially(
   peers: ReadonlyArray<{ peer_id: string }>,
   isMounted: () => boolean,
-  shouldToast: () => boolean = () => true,
+  shouldToast: () => boolean,
+  awaitSession: boolean,
 ): Promise<boolean> {
   let hadFailure = false
   for (const peer of peers) {
     if (!isMounted()) break
-    const ok = await syncOnePeerWithToast(peer.peer_id, shouldToast)
+    const ok = await syncOnePeerWithToast(peer.peer_id, shouldToast, awaitSession)
     if (!ok) hadFailure = true
   }
   return hadFailure
@@ -251,9 +276,16 @@ export function useSyncTrigger() {
       if (syncInProgressRef.current) return
       syncInProgressRef.current = true
       setSyncing(true)
-      setState('syncing')
-      // #4305 — same reasoning as the completion announcement below.
-      if (userInitiated) announce(i18n.t('announce.syncStarted'))
+      // #6551 — a scheduled tick only wakes the daemon and does not wait for the
+      // session, so the store is the session's own updates' to write. It only
+      // drops an `offline` the network's return has made untrue.
+      if (userInitiated) {
+        setState('syncing')
+        // #4305 — same reasoning as the completion announcement below.
+        announce(i18n.t('announce.syncStarted'))
+      } else if (useSyncStore.getState().state === 'offline') {
+        setState('idle')
+      }
 
       // #748: snapshot this run's generation. If a resume bumps the counter
       // while we're mid-flight (background-suspended), a late timeout from
@@ -275,18 +307,24 @@ export function useSyncTrigger() {
           setState('idle')
           return
         }
-        hadFailure = await syncAllPeersSequentially(peers, () => mountedRef.current, shouldToast)
+        hadFailure = await syncAllPeersSequentially(
+          peers,
+          () => mountedRef.current,
+          shouldToast,
+          userInitiated,
+        )
         if (!mountedRef.current) return
         intervalRef.current = computeNextSyncDelay(intervalRef.current, hadFailure)
-        if (!hadFailure) {
+        // #4305 — the confirmation belongs to the button press, not to the
+        // clock. `announce` is likewise gated: a screen-reader user does not
+        // want "Sync completed" read out once a minute either.
+        if (userInitiated && !hadFailure) {
           setState('idle')
-          // #4305 — the confirmation belongs to the button press, not to the
-          // clock. `announce` is likewise gated: a screen-reader user does not
-          // want "Sync completed" read out once a minute either.
-          if (userInitiated) {
-            notify.success(i18n.t('device.syncComplete'))
-            announce(i18n.t('announce.syncCompleted'))
-          }
+          notify.success(i18n.t('device.syncComplete'))
+          announce(i18n.t('announce.syncCompleted'))
+        } else if (userInitiated && useSyncStore.getState().state === 'syncing') {
+          // A session that never reported (timed out) leaves the press's own `syncing`.
+          setState('idle')
         }
       } catch {
         if (mountedRef.current) {
