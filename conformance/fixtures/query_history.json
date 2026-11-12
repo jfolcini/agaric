@@ -390,7 +390,7 @@
         }
       },
       "command": "list_page_history",
-      "comment": "The `__all__` branch — the one the History view actually calls — is a different query: no `page_blocks` CTE, and `space_id` scopes it instead. Every op in the fixture, newest first, which is also what pins that the two page-scoped listings above are SUBSETS rather than everything.",
+      "comment": "The `__all__` branch — the one the History view calls for every page — is a different query: no `page_blocks` CTE, and `space_id` scopes it instead. Every op in the fixture, newest first, which is also what pins that the two page-scoped listings above are SUBSETS rather than everything.",
       "name": "page_history_global"
     },
     {

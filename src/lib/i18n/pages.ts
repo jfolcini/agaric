@@ -493,6 +493,7 @@ export const pages: Record<string, string> = {
   'metadata.created': 'Created {{date}}',
   'pageHeader.openOutline': 'Open outline',
   'pageHeader.showInGraph': 'Show in graph',
+  'pageHeader.pageHistory': 'Page history',
   'outline.title': 'Outline',
   'outline.empty': 'No headings found',
   'outline.navLabel': 'Page outline',

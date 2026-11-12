@@ -1,5 +1,8 @@
 import type { HistoryEntry } from '@/lib/bindings'
 
+/** The `page_id` that asks `list_page_history` and `restore_page_to_op` for every page. */
+export const ALL_PAGES_HISTORY_ID = '__all__'
+
 /** An op-log payload as a plain object, or `null` for invalid JSON or any non-object value. */
 export function parsePayloadObject(payload: string): Record<string, unknown> | null {
   try {
