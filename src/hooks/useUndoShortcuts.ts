@@ -6,6 +6,12 @@
  * active and the focus is NOT inside a contentEditable, input, or textarea
  * element.
  *
+ * #6556 — inside a focused block of the page editor the two stacks are
+ * chained, not separate: the editor's own history takes the press while it
+ * can undo (redo); once it cannot, `useBlockPageHistory` flushes the block and
+ * runs `performPageUndo` / `performPageRedo` for the tree's page, then puts
+ * the caret back. This listener never acts while a block is focused.
+ *
  * #2941 — Journal view (the default landing view) is a DIFFERENT case, not
  * covered by "not page-editor". Journal days ARE pages — per-page undo
  * already works there via the swipe-to-delete "Undo" toast (`performPageUndo`
@@ -20,7 +26,6 @@
  */
 
 import { useEffect } from 'react'
-import { useTranslation } from 'react-i18next'
 
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { announce } from '@/lib/announcer'
@@ -144,6 +149,26 @@ export async function performPageUndo(pageId: string): Promise<boolean> {
   }
 }
 
+/** The redo twin of `performPageUndo`, shared by Ctrl+Y / Ctrl+Shift+Z here and in a block. */
+export async function performPageRedo(pageId: string): Promise<boolean> {
+  // #4391 — capture the space in the gesture's own tick, before the redo IPC
+  // awaits. See `@/stores/page-rename`.
+  const spaceId = useSpaceStore.getState().currentSpaceId
+  try {
+    const result = await useUndoStore.getState().redo(pageId)
+    if (!result) return false
+    const opKey = `redo.op.${snakeToCamel(result.reversed_op_type)}`
+    notify(translate(opKey, { defaultValue: translate('undo.redoneMessage') }), { duration: 1500 })
+    announce(translate('announce.redone'))
+    await refreshAfterUndoRedo(pageId, spaceId)
+    return true
+  } catch {
+    notify.error(translate('undo.redoFailedMessage'))
+    announce(translate('announce.redoFailed'))
+    return false
+  }
+}
+
 /**
  * Surface feedback for Ctrl+Z/Ctrl+Y in Journal view (#2941) instead of the
  * previous silent no-op. Shared by the keyboard handler and
@@ -181,7 +206,6 @@ export async function performActivePageUndo(): Promise<boolean> {
 }
 
 export function useUndoShortcuts(): void {
-  const { t } = useTranslation()
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (isEditableTarget(e.target)) return
@@ -193,8 +217,8 @@ export function useUndoShortcuts(): void {
       // catch that target. Running page-level undo/redo then diverges the
       // editor doc from the reloaded store: the next blur flushes the stale
       // content back, silently re-applying the undone edit and wiping the redo
-      // stack. While a block is focused, in-editor undo (TipTap history) owns
-      // Ctrl+Z; page-level undo resumes once the editor unmounts.
+      // stack. While a block is focused the block's own key handler owns
+      // Ctrl+Z and chains to page undo after a flush (#6556).
       if (useBlockStore.getState().focusedBlockId != null) {
         return
       }
@@ -239,31 +263,12 @@ export function useUndoShortcuts(): void {
       // (#724) so Settings rebinds are honoured.
       if (matchesShortcutBinding(e, 'redoLastUndoneOp')) {
         e.preventDefault()
-        // #4391 — capture the space in the keystroke's own tick, before the
-        // redo IPC awaits. See `@/stores/page-rename`.
-        const spaceId = useSpaceStore.getState().currentSpaceId
-        useUndoStore
-          .getState()
-          .redo(pageId)
-          .then(async (result) => {
-            if (result) {
-              // Use per-op-type translation; fall back to generic t('undo.redoneMessage') if unknown.
-              const opKey = `redo.op.${snakeToCamel(result.reversed_op_type)}`
-              const message = t(opKey, { defaultValue: t('undo.redoneMessage') })
-              notify(message, { duration: 1500 })
-              announce(t('announce.redone'))
-              await refreshAfterUndoRedo(pageId, spaceId)
-            }
-          })
-          .catch(() => {
-            notify.error(t('undo.redoFailedMessage'))
-            announce(t('announce.redoFailed'))
-          })
+        void performPageRedo(pageId)
         return
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [t])
+  }, [])
 }
