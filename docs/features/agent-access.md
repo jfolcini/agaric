@@ -156,6 +156,8 @@ External tools (and you, from anywhere on the OS) can open Agaric to a specific 
 
 The OS handler is registered on app install. From a terminal: `open agaric://...` (macOS), `xdg-open` (Linux), `start` (Windows).
 
+A page's kebab → *Copy app link* copies its `agaric://page/<id>` link, to paste into a calendar entry or a task manager.
+
 On **Android** the custom scheme isn't available, so the same three routes are served as App Links instead: `https://agaric.app/o/block/<id>`, `/o/page/<id>`, `/o/settings/<tab>`. Use those when linking from a mobile app.
 
 ## Pitfalls to know
