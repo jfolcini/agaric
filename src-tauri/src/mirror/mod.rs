@@ -166,7 +166,7 @@ impl MirrorState {
     }
 
     /// Drop the folder's states on the next tick, the way out of the pause
-    /// [`Mirror::emptied`] holds: the user chose the folder again, so it is
+    /// [`is_emptied`] holds: the user chose the folder again, so it is
     /// the one to fill.
     pub fn start_fresh(&self) {
         self.lock().start_fresh = true;
