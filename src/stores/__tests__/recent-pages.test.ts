@@ -118,8 +118,9 @@ describe('useRecentPagesStore', () => {
     })
 
     /**
-     * Bookmarks used to be a `pinned` flag on these rows and are now the
-     * `starred-pages` preference. The coercion drops the flag, so rehydrate
+     * Bookmarks used to be a `pinned` flag on these rows; the rescue puts them
+     * in the old `starred-pages` list, which the boot migration moves onto
+     * the pages (#6544). The coercion drops the flag, so rehydrate
      * has to rescue it first or upgrading silently loses every bookmark made
      * from the command palette — on any device this has not run on yet.
      */

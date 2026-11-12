@@ -123,7 +123,6 @@ beforeEach(() => {
   // round-trip values through sessionStorage; isolate each test.
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
-  localStorage.removeItem('starred-pages')
   // Compound-filter chips now live in a module-global per-space store that
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.

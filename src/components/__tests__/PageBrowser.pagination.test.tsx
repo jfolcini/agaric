@@ -70,7 +70,6 @@ beforeEach(() => {
   // round-trip values through sessionStorage; isolate each test.
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
-  localStorage.removeItem('starred-pages')
   // Compound-filter chips now live in a module-global per-space store that
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.
@@ -364,7 +363,7 @@ describe('PageBrowser', () => {
 
       // Snapshot the estimateSize ref after the initial render. Multiple
       // captures may exist due to the mount-time settle (effects fire,
-      // useStarredPages reads localStorage, etc.) — pick the latest as
+      // useStarredPages reads the bookmarks, etc.) — pick the latest as
       // the post-stabilisation reference.
       expect(capturedEstimateSizes.length).toBeGreaterThan(0)
       const initialEstimateSize = capturedEstimateSizes.at(-1)

@@ -13,6 +13,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { seedBookmarks } from '@/__tests__/helpers/bookmarks'
 import { AppSidebar, type AppSidebarProps } from '@/components/layout/AppSidebar'
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { t } from '@/lib/i18n'
@@ -425,7 +426,7 @@ describe('AppSidebar', () => {
   // the nav list. Its own behaviour is covered by BookmarksSection.test.tsx;
   // this pins the wiring, which nothing else would catch.
   it('mounts the Bookmarks section listing the bookmarked pages (#4713)', () => {
-    localStorage.setItem('starred-pages', JSON.stringify(['A']))
+    seedBookmarks('SPACE_PERSONAL', new Map([['A', 1]]))
     useResolveStore.getState().batchSet([{ id: 'A', title: 'Alpha', deleted: false }])
 
     renderSidebar()

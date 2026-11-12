@@ -4,8 +4,8 @@
  *
  * The localStorage shape is owned by `src/lib/saved-pages-views.ts` (a JSON
  * envelope under the `agaric:pages:savedViews:v1` key, registered as
- * `PREFERENCES.savedPagesViews`). Mirrors `useStarredPages`: a thin
- * subscriber over the shared `usePreference` primitive (#2666) — every
+ * `PREFERENCES.savedPagesViews`). A thin subscriber over the shared
+ * `usePreference` primitive (#2666) — every
  * registry write (this hook's own `saveView`/`deleteView`, which delegate
  * to the lib writers, or any other `writePreference` caller for this key)
  * broadcasts the change, so every mounted hook instance re-reads.

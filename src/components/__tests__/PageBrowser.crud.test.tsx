@@ -139,6 +139,13 @@ function stubInvoke(overrides: Readonly<TypedInvokeHandlers> = {}) {
       load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
       // #5269 — the header's Trash button polls the trash count for its badge.
       count_trash: () => 0,
+      // #6544 — the rows read the space's bookmarks: none.
+      query_by_property: () => ({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
       ...overrides,
     }),
   )
@@ -152,7 +159,6 @@ beforeEach(() => {
   // round-trip values through sessionStorage; isolate each test.
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
-  localStorage.removeItem('starred-pages')
   // Compound-filter chips now live in a module-global per-space store that
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.

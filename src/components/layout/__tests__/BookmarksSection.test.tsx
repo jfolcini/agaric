@@ -1,22 +1,20 @@
 /**
  * Tests for BookmarksSection (#4713) — the sidebar view over the one bookmark
- * list, the `starred-pages` preference that the page header and the Pages
- * browser also write.
+ * list, the `bookmark` page property (#6544) that the page header and the
+ * Pages browser also write.
  *
  * Two properties of that arrangement are what these tests exist for, and both
  * were false while bookmarks were a `pinned` flag on recent pages:
  *   - a bookmark outlives the recents cap, because it is not a recent entry
  *     ("keeps a bookmark that twelve later visits evict from recents"),
- *   - titles come from the resolve cache, which is keyed by space, so another
- *     space's bookmarks are left out ("shows only the active space").
+ *   - the list is the active space's ("shows only the active space").
  *
- * A third since #5075: a bookmark the cache has never held is RESOLVED on
- * demand rather than dropped, and the empty state waits until every bookmark
- * has been looked up.
+ * A third since #5075: a bookmark the resolve cache has never held is
+ * RESOLVED on demand rather than dropped, and the empty state waits until
+ * every bookmark has been looked up.
  *
- * Everything else is durable, re-queried effect: unmount + re-render after
- * each interaction, so a state change that only lived in a React closure
- * fails.
+ * Everything else is durable, re-queried effect: `held` is what the backend
+ * holds after each interaction, and a remount re-reads the list.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -25,13 +23,14 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
-import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { bookmarkInvokeHandlers, seedBookmarks } from '@/__tests__/helpers/bookmarks'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { BookmarksSection } from '@/components/layout/BookmarksSection'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import type { ResolvedBlock } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
-import { PREFERENCES, writePreference } from '@/lib/preferences'
+import { queryClient } from '@/lib/query-client'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -40,32 +39,57 @@ import { useTabsStore } from '@/stores/tabs'
 const SPACE_A = 'SPACE_A'
 const SPACE_B = 'SPACE_B'
 
+/** The bookmarks the backend holds, page id → sidebar number, and each page's space. */
+const held = new Map<string, number>()
+const spaceOf = new Map<string, string>()
+
+/** Show each space's share of `held` as its bookmark list, as a read would. */
+function seedLists(): void {
+  for (const space of [SPACE_A, SPACE_B]) {
+    seedBookmarks(space, new Map([...held].filter(([id]) => spaceOf.get(id) === space)))
+  }
+}
+
+/** Bookmark `ids` (after the existing ones) in `space`, with no title in the resolve cache. */
+function bookmarkIds(ids: string[], space = SPACE_A): void {
+  for (const id of ids) {
+    held.set(id, held.size + 1)
+    spaceOf.set(id, space)
+  }
+  seedLists()
+}
+
 /**
- * Seed the bookmark list, and the titles the section renders it with.
- *
- * The two halves are deliberately separate: `starred-pages` holds ids only,
- * and the resolve cache — written here under whatever space is active — is
- * where the titles come from. A test that seeds an id without a title is
- * seeding a bookmark from another space.
+ * Bookmark pages of the active space, and put the titles the section renders
+ * them with in the resolve cache.
  */
 function bookmark(entries: Array<{ id: string; title: string }>): void {
-  writePreference(PREFERENCES.starredPages, [
-    ...new Set([...readBookmarkIds(), ...entries.map((e) => e.id)]),
-  ])
+  bookmarkIds(
+    entries.map((e) => e.id),
+    useSpaceStore.getState().currentSpaceId ?? SPACE_A,
+  )
   useResolveStore
     .getState()
     .batchSet(entries.map((e) => ({ id: e.id, title: e.title, deleted: false })))
 }
 
+/** The held bookmark ids, in number order. */
 function readBookmarkIds(): string[] {
-  const raw = localStorage.getItem('starred-pages')
-  if (raw == null) return []
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as string[]) : []
-  } catch {
-    return []
-  }
+  return [...held].toSorted((a, b) => a[1] - b[1]).map(([id]) => id)
+}
+
+/** The backend this suite runs against, with `handlers` over its defaults. */
+function stub(handlers: Readonly<TypedInvokeHandlers> = {}): void {
+  vi.mocked(invoke).mockImplementation(
+    mockInvokeCommands({
+      ...bookmarkInvokeHandlers(held, spaceOf),
+      // It knows none of the ids the section asks about.
+      batch_resolve: () => [],
+      // Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+      record_page_open: () => null,
+      ...handlers,
+    }),
+  )
 }
 
 function renderSection() {
@@ -91,8 +115,8 @@ function bookmarkLabels(): string[] {
 }
 
 /**
- * One row `batch_resolve` hands back. The section asks for every starred id
- * the cache does not hold; what the backend returns is what it may render.
+ * One row `batch_resolve` hands back. The section asks for every bookmarked
+ * id the cache does not hold; what the backend returns is what it may render.
  */
 function resolvedRow(id: string, title: string): ResolvedBlock {
   return { id, title, block_type: 'page', deleted: false }
@@ -109,9 +133,13 @@ function resolveArgs(): Array<Record<string, unknown>> {
 beforeEach(async () => {
   vi.clearAllMocks()
   localStorage.clear()
+  held.clear()
+  spaceOf.clear()
   await new Promise<void>((r) => queueMicrotask(r))
-  // Steady state: the resolve cache's first full scan has landed.
+  // Steady state: the resolve cache's first full scan has landed, and so has
+  // each space's bookmark list.
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: true })
+  seedLists()
   useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {}, rawKeysMerged: true })
   useSpaceStore.setState({
     currentSpaceId: SPACE_A,
@@ -119,12 +147,7 @@ beforeEach(async () => {
     isReady: true,
   })
   useTabsStore.setState({ tabs: [{ id: '0', pageStack: [], label: '' }], activeTabIndex: 0 })
-  // Default backend: it knows none of the ids the section asks about. Tests
-  // that expect a title to come back re-stub it. Opening a page stamps it for
-  // the Pages view's "Last opened" sort (#5371).
-  vi.mocked(invoke).mockImplementation(
-    mockInvokeCommands({ batch_resolve: () => [], record_page_open: () => null }),
-  )
+  stub()
 })
 
 afterEach(() => {
@@ -194,6 +217,21 @@ describe('BookmarksSection', () => {
       expect(hint.closest('.border-dashed')).toBeNull()
     })
 
+    /** Until the list has been read, an empty state would be a guess. */
+    it('renders neither list nor empty state while the bookmark list is being read', async () => {
+      // No list has been read yet, and this read never answers.
+      queryClient.clear()
+      stub({ query_by_property: () => new Promise<never>(() => {}) })
+
+      renderSection()
+
+      await waitFor(() => {
+        expect(vi.mocked(invoke)).toHaveBeenCalledWith('query_by_property', expect.anything())
+      })
+      expect(bookmarkList()).toBeNull()
+      expect(screen.queryByText(t('bookmarks.emptyHint'))).toBeNull()
+    })
+
     /**
      * #5075 — `preload` scans on boot, on a space switch and on
      * `sync:complete` only, so a page bookmarked in the session it was created
@@ -201,13 +239,11 @@ describe('BookmarksSection', () => {
      * they had none.
      */
     it('resolves a bookmark the cache has never held', async () => {
-      writePreference(PREFERENCES.starredPages, ['NEW'])
-      vi.mocked(invoke).mockImplementation(
-        mockInvokeCommands({
-          batch_resolve: (args) =>
-            (args['ids'] as string[]).map((id) => resolvedRow(id, 'Brand New Page')),
-        }),
-      )
+      bookmarkIds(['NEW'])
+      stub({
+        batch_resolve: (args) =>
+          (args['ids'] as string[]).map((id) => resolvedRow(id, 'Brand New Page')),
+      })
 
       const { unmount } = renderSection()
 
@@ -229,17 +265,11 @@ describe('BookmarksSection', () => {
      * the user has no bookmarks — #5075's symptom, restored by its own fix.
      */
     it('re-asks for a bookmark after a space round trip flushed the cache', async () => {
-      writePreference(PREFERENCES.starredPages, ['NEW'])
-      // Scope-aware, as the backend is: the page lives in A, so asking under B
-      // answers with nothing.
-      vi.mocked(invoke).mockImplementation(
-        mockInvokeCommands({
-          batch_resolve: (args) =>
-            (args['scope'] as { space_id: string }).space_id === SPACE_A
-              ? (args['ids'] as string[]).map((id) => resolvedRow(id, 'Brand New Page'))
-              : [],
-        }),
-      )
+      bookmarkIds(['NEW'])
+      stub({
+        batch_resolve: (args) =>
+          (args['ids'] as string[]).map((id) => resolvedRow(id, 'Brand New Page')),
+      })
 
       renderSection()
       expect(await screen.findByRole('button', { name: 'Brand New Page' })).toBeInTheDocument()
@@ -251,7 +281,7 @@ describe('BookmarksSection', () => {
         useSpaceStore.setState({ currentSpaceId: SPACE_B })
         useResolveStore.getState().clearAllForSpace(SPACE_A)
       })
-      // B does not hold it, and says so, so B is legitimately empty.
+      // B holds no bookmarks, so B is legitimately empty.
       expect(await screen.findByText(t('bookmarks.emptyHint'))).toBeInTheDocument()
 
       await act(async () => {
@@ -260,9 +290,8 @@ describe('BookmarksSection', () => {
 
       expect(await screen.findByRole('button', { name: 'Brand New Page' })).toBeInTheDocument()
       expect(screen.queryByText(t('bookmarks.emptyHint'))).not.toBeInTheDocument()
-      // Three asks: A, then B, then A again — the last because the answer A
-      // had was thrown away with the cache.
-      expect(resolveArgs()).toHaveLength(3)
+      // Asked again, because the answer A had was thrown away with the cache.
+      expect(resolveArgs()).toHaveLength(2)
     })
 
     /**
@@ -273,10 +302,8 @@ describe('BookmarksSection', () => {
      */
     it('renders neither list nor empty state while a bookmark is being resolved', async () => {
       useResolveStore.getState().batchSet([{ id: 'OTHER', title: 'Other', deleted: false }])
-      writePreference(PREFERENCES.starredPages, ['A'])
-      vi.mocked(invoke).mockImplementation(
-        mockInvokeCommands({ batch_resolve: () => new Promise<ResolvedBlock[]>(() => {}) }),
-      )
+      bookmarkIds(['A'])
+      stub({ batch_resolve: () => new Promise<ResolvedBlock[]>(() => {}) })
 
       renderSection()
 
@@ -288,11 +315,10 @@ describe('BookmarksSection', () => {
     })
 
     it('shows the empty state once every bookmark has been looked up', async () => {
-      bookmark([{ id: 'A', title: 'Alpha' }])
-      useSpaceStore.setState({ currentSpaceId: SPACE_B })
-      // SPACE_B's scan landed; it just holds none of the bookmarks, and the
-      // backend returns nothing for A under this space either.
+      // The cache's scan landed; it just does not hold A, and the backend
+      // resolves nothing for it either.
       useResolveStore.getState().batchSet([{ id: 'OTHER', title: 'Other', deleted: false }])
+      bookmarkIds(['A'])
 
       renderSection()
 
@@ -303,31 +329,25 @@ describe('BookmarksSection', () => {
       expect(resolveArgs()).toHaveLength(1)
     })
 
-    it('shows only the active space bookmarks', async () => {
+    it('shows only the active space bookmarks', () => {
       bookmark([{ id: 'A', title: 'Alpha' }])
       useSpaceStore.setState({ currentSpaceId: SPACE_B })
       bookmark([{ id: 'B', title: 'Bravo' }])
 
       renderSection()
 
-      await waitFor(() => {
-        expect(resolveArgs()).toHaveLength(1)
-      })
-      // The lookup is space-scoped, so the BACKEND decides that A is foreign —
-      // the section never sees a title for it. That is the same barrier the
-      // cache's `(space, id)` key gives the ids it already holds.
-      expect(resolveArgs()[0]).toEqual({ ids: ['A'], scope: { kind: 'active', space_id: SPACE_B } })
-      // Both ids are in the one list; only Bravo resolves under SPACE_B.
-      expect(readBookmarkIds()).toEqual(['A', 'B'])
       expect(bookmarkLabels()).toEqual(['Bravo'])
+      // A is still bookmarked, in its own space.
+      expect(readBookmarkIds()).toEqual(['A', 'B'])
+      expect(resolveArgs()).toHaveLength(0)
     })
 
     /**
-     * #5293 — a trashed page stays in the `starred-pages` list (a restore must
-     * bring it back) but every click on it only toasts "in the trash", so the
-     * sidebar leaves it out.
+     * #5293 — a trashed page keeps its bookmark (a restore must bring it
+     * back) but every click on it only toasts "in the trash", so the sidebar
+     * leaves it out.
      */
-    it('does not list a bookmarked page that was deleted, and keeps it starred', () => {
+    it('does not list a bookmarked page that was deleted, and keeps it bookmarked', () => {
       bookmark([
         { id: 'A', title: 'Alpha' },
         { id: 'B', title: 'Bravo' },
@@ -348,15 +368,13 @@ describe('BookmarksSection', () => {
      * `deleted: true`.
      */
     it('does not list a bookmark the backend returns as deleted', async () => {
-      writePreference(PREFERENCES.starredPages, ['A'])
-      vi.mocked(invoke).mockImplementation(
-        mockInvokeCommands({
-          batch_resolve: (args) =>
-            (args['ids'] as string[]).map((id) =>
-              Object.assign(resolvedRow(id, 'Alpha'), { deleted: true }),
-            ),
-        }),
-      )
+      bookmarkIds(['A'])
+      stub({
+        batch_resolve: (args) =>
+          (args['ids'] as string[]).map((id) =>
+            Object.assign(resolvedRow(id, 'Alpha'), { deleted: true }),
+          ),
+      })
 
       renderSection()
 
@@ -373,11 +391,9 @@ describe('BookmarksSection', () => {
       expect(bookmarkList()).toBeNull()
 
       // What the trash view does after a restore.
-      vi.mocked(invoke).mockImplementation(
-        mockInvokeCommands({
-          batch_resolve: (args) => (args['ids'] as string[]).map((id) => resolvedRow(id, 'Alpha')),
-        }),
-      )
+      stub({
+        batch_resolve: (args) => (args['ids'] as string[]).map((id) => resolvedRow(id, 'Alpha')),
+      })
       await act(async () => {
         await useResolveStore.getState().refreshDeleted(SPACE_A)
       })
@@ -393,10 +409,8 @@ describe('BookmarksSection', () => {
     it('keeps the section blank and logs when resolving a bookmark fails', async () => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       useResolveStore.getState().batchSet([{ id: 'OTHER', title: 'Other', deleted: false }])
-      writePreference(PREFERENCES.starredPages, ['A'])
-      vi.mocked(invoke).mockImplementation(
-        mockInvokeCommands({ batch_resolve: () => Promise.reject(new Error('IPC failed')) }),
-      )
+      bookmarkIds(['A'])
+      stub({ batch_resolve: () => Promise.reject(new Error('IPC failed')) })
 
       renderSection()
 
@@ -428,12 +442,12 @@ describe('BookmarksSection', () => {
 
       const { unmount } = renderSection()
       await user.click(screen.getByRole('button', { name: 'Remove Alpha from bookmarks' }))
+      await waitFor(() => expect(readBookmarkIds()).toEqual([]))
       unmount()
       renderSection()
 
       expect(bookmarkList()).toBeNull()
       expect(screen.getByText(t('bookmarks.emptyHint'))).toBeInTheDocument()
-      expect(readBookmarkIds()).toEqual([])
       // Unbookmarked, not deleted — it is still a recent page.
       const slice = useRecentPagesStore.getState().recentPagesBySpace[SPACE_A] ?? []
       expect(slice.map((p) => p.pageId)).toEqual(['A'])
@@ -504,29 +518,29 @@ describe('BookmarksSection', () => {
     }
 
     /**
-     * X is a bookmark this space does not list (the backend does not resolve
-     * it here). Alpha moves across it, so a move computed over the visible
-     * list and written back would drop it.
+     * X is a bookmarked page in the trash, which the section does not list.
+     * Alpha moves across it, so a move computed over the visible list alone
+     * would land Alpha on the wrong side of X.
      */
     it('moves a bookmark with Space, ArrowDown, Space, durably, without opening it', async () => {
       const user = userEvent.setup()
-      writePreference(PREFERENCES.starredPages, ['A', 'X', 'B', 'C'])
-      useResolveStore.getState().batchSet([
-        { id: 'A', title: 'Alpha', deleted: false },
-        { id: 'B', title: 'Bravo', deleted: false },
-        { id: 'C', title: 'Charlie', deleted: false },
+      bookmark([
+        { id: 'A', title: 'Alpha' },
+        { id: 'X', title: 'Xray' },
+        { id: 'B', title: 'Bravo' },
+        { id: 'C', title: 'Charlie' },
       ])
+      useResolveStore.getState().markDeleted(SPACE_A, ['X'])
       layOutRows()
 
       const { unmount } = renderSection()
-      await waitFor(() => {
-        expect(resolveArgs()).toHaveLength(1)
-      })
       screen.getByRole('button', { name: 'Alpha' }).focus()
       await user.keyboard('[Space][ArrowDown][Space]')
 
-      expect(readBookmarkIds()).toEqual(['X', 'B', 'A', 'C'])
-      expect(bookmarkLabels()).toEqual(['Bravo', 'Alpha', 'Charlie'])
+      await waitFor(() => expect(bookmarkLabels()).toEqual(['Bravo', 'Alpha', 'Charlie']))
+      await waitFor(() => expect(readBookmarkIds()).toEqual(['X', 'B', 'A', 'C']))
+      // Only Alpha was written.
+      expect(held.get('A')).toBe(3.5)
       // Announced by title: dnd-kit's default reads the id (#2943).
       expect(screen.getByRole('status')).toHaveTextContent('Alpha dropped over Bravo.')
       expect(useTabsStore.getState().tabs[0]?.pageStack).toEqual([])

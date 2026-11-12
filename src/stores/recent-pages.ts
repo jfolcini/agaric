@@ -14,7 +14,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 import { safePersistStorage } from '@/lib/safe-persist-storage'
-import { setStarred } from '@/lib/starred-pages'
+import { addDeviceBookmarks } from '@/lib/starred-pages'
 import { activeSpaceKey } from '@/stores/active-space'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
@@ -317,10 +317,11 @@ function rawRecentPageLists(): unknown[][] {
 }
 
 /**
- * Fold legacy `pinned` recent-page rows into the `starred-pages` bookmarks.
- * Coercion drops the flag, and bookmarks are device-local, so without this an
+ * Fold legacy `pinned` recent-page rows into the device's old `starred-pages`
+ * list, which `migrateDeviceBookmarks` moves onto the pages' `bookmark`
+ * property once the spaces load. Coercion drops the flag, so without this an
  * upgrade loses every palette bookmark. Scans the store blob (`pageId`) and the
- * raw keys (`id`); adds only ids not already starred; a no-op once the flag is gone.
+ * raw keys (`id`); adds only ids not already listed; a no-op once the flag is gone.
  */
 function rescuePinnedAsBookmarks(persisted: unknown): boolean {
   const lists: unknown[] = []
@@ -346,7 +347,7 @@ function rescuePinnedAsBookmarks(persisted: unknown): boolean {
     }
   }
   if (pinned.length === 0) return false
-  setStarred(pinned, true)
+  addDeviceBookmarks(pinned)
   return true
 }
 

@@ -6,7 +6,7 @@
  * bookmark toggle, Phase 4).
  *
  * Bookmarked state is NOT part of a recent entry: it comes from the one
- * bookmark list (`starred-pages`), passed down as `bookmarkedIds`, so the
+ * bookmark list (the `bookmark` page property), passed down as `bookmarkedIds`, so the
  * glyph here and the star in the page header always agree.
  */
 

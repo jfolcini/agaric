@@ -2,7 +2,7 @@
  * Saved Pages views — localStorage-backed named snapshots of the Pages
  * view's `{ sort, filters }` tuple (#2003 piece 1).
  *
- * Mirrors `starred-pages.ts`: a thin pure adapter over the `PREFERENCES`
+ * A thin pure adapter over the `PREFERENCES`
  * registry (`PREFERENCES.savedPagesViews`, see `src/lib/preferences.ts`),
  * with a bulk-safe single-write pattern for list mutation. All the
  * SSR-guard / try-catch / cross-tab broadcast machinery lives in the
@@ -41,8 +41,7 @@ export function getSavedPagesViews(): SavedPagesView[] {
 /**
  * Save a new view under `name`, capturing `tuple` verbatim. Returns the
  * created view (its generated `id` is what callers pass to
- * {@link deleteSavedPagesView}). Single read-modify-write, like
- * `setStarred`'s bulk pattern.
+ * {@link deleteSavedPagesView}). Single read-modify-write.
  */
 export function savePagesView(name: string, tuple: PagesViewTuple): SavedPagesView {
   const views = getSavedPagesViews()

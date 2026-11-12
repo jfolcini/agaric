@@ -31,6 +31,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { bookmarkInvokeHandlers, seedBookmarks } from '@/__tests__/helpers/bookmarks'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 
 // ── Mock BlockTree ──────────────────────────────────────────────────
@@ -184,6 +185,8 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_A', name: 'A', accent_color: null }],
     isReady: true,
   })
+  // The page actions read the space's bookmarks (#6544): none.
+  seedBookmarks('SPACE_A', new Map())
 })
 
 describe('DaySection', () => {
@@ -844,6 +847,8 @@ describe('DaySection', () => {
             affected_page_ids: [],
           }),
           restore_blocks_by_ids: () => ({ affected_count: 1 }),
+          // The restore re-reads the bookmarks, which may hold the page again.
+          ...bookmarkInvokeHandlers(new Map()),
         }),
       )
       const entry = makeDayEntry({

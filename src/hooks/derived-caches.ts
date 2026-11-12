@@ -25,7 +25,8 @@ export function invalidateDerivedCaches(): void {
   recordBlockPropertyChange()
   // Property key and value lists, and the open page's own properties.
   invalidatePropertyCaches()
-  // Page and tag names: the `[[` and `#` pickers, tag views.
+  // Page and tag names: the `[[` and `#` pickers, tag views, and the bookmark
+  // list (`src/lib/starred-pages.ts`).
   invalidateNameCaches()
   // Attachment lists and badges, which re-read only on this signal.
   recordAttachmentInvalidation()

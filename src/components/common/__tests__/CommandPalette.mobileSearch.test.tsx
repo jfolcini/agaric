@@ -12,6 +12,7 @@ import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { seedBookmarks } from '@/__tests__/helpers/bookmarks'
 import { CommandPalette } from '@/components/common/CommandPalette'
 import { useNavigationStore } from '@/stores/navigation'
 import { addRecentSearch, getRecentSearches } from '@/stores/recent-searches'
@@ -62,6 +63,8 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
+  // The page actions read the space's bookmarks (#6544): none.
+  seedBookmarks('SPACE_TEST', new Map())
   useNavigationStore.setState({ currentView: 'pages', selectedBlockId: null })
   mockedSearchBlocksPartitioned.mockResolvedValue({
     pages: emptyPartition(),

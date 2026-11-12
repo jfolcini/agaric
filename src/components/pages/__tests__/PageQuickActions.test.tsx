@@ -3,7 +3,7 @@
  *
  * Validates:
  *  - Each variant renders both the star and the delete IconButton.
- *  - Clicking the star toggles via `useStarredPages` (localStorage round-trip).
+ *  - Clicking the star toggles via `useStarredPages` (the `bookmark` page property).
  *  - Clicking delete invokes the `onDeleteRequest` callback with
  *    (pageId, title) — the host owns the ConfirmDialog.
  *  - `showDelete={false}` hides the destructive button.
@@ -12,18 +12,22 @@
  *  - axe a11y audit passes.
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { bookmarkInvokeHandlers } from '@/__tests__/helpers/bookmarks'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { PageQuickActions } from '@/components/pages/PageQuickActions'
+import { useSpaceStore } from '@/stores/space'
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // useStarredPages reads/writes localStorage['starred-pages']; keep
-  // each test starting from an unstarred baseline.
-  localStorage.removeItem('starred-pages')
+  // No active space: the bookmark list is not read, so only the test that
+  // toggles a bookmark stubs its IPC.
+  useSpaceStore.setState({ currentSpaceId: null })
 })
 
 describe('PageQuickActions', () => {
@@ -60,6 +64,9 @@ describe('PageQuickActions', () => {
 
   it('clicking the star toggles it on then off via useStarredPages', async () => {
     const user = userEvent.setup()
+    const held = new Map<string, number>()
+    vi.mocked(invoke).mockImplementation(mockInvokeCommands(bookmarkInvokeHandlers(held)))
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 
     render(
       <PageQuickActions
@@ -82,10 +89,10 @@ describe('PageQuickActions', () => {
       expect(next).toHaveAttribute('aria-pressed', 'true')
     })
 
-    // localStorage round-trip — the page id landed in the persisted set.
-    expect(JSON.parse(localStorage.getItem('starred-pages') ?? '[]')).toContain('PAGE_1')
+    // The page now carries the bookmark property.
+    await waitFor(() => expect([...held]).toEqual([['PAGE_1', 1]]))
 
-    // Toggle back — should clear from localStorage.
+    // Toggle back — the property is removed.
     await user.click(screen.getByRole('button', { name: /remove this page from bookmarks/i }))
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /bookmark this page/i })).toHaveAttribute(
@@ -93,7 +100,7 @@ describe('PageQuickActions', () => {
         'false',
       )
     })
-    expect(JSON.parse(localStorage.getItem('starred-pages') ?? '[]')).not.toContain('PAGE_1')
+    await waitFor(() => expect(held.size).toBe(0))
   })
 
   it('clicking delete calls onDeleteRequest with (pageId, title) — host owns the dialog', async () => {

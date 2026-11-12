@@ -832,9 +832,6 @@ test.describe('CRUD + grooming @pages', () => {
 
   test('star / unstar groups the page under Starred and back', async ({ page }) => {
     await bootPages(page)
-    await page.evaluate(() => window.localStorage.removeItem('starred-pages'))
-    await page.reload()
-    await openPagesView(page)
 
     const row = grid(page).locator('[data-page-item]:has-text("Quick Notes")')
     await row.locator('.star-toggle').click()

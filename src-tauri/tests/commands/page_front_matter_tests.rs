@@ -135,6 +135,51 @@ async fn apply_page_source_sets_adds_and_deletes_page_properties() {
     assert_eq!(hidden_keys(&pool, &page).await, ["created_at", "template"]);
 }
 
+/// The page's bookmark (#6544) is the sidebar's: the buffer does not show it,
+/// so a save that changes the front matter keeps it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_buffer_hides_the_bookmark_and_a_save_keeps_it() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, body) = front_matter_page(&pool, &mat).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.as_str().into(),
+        "bookmark".into(),
+        None,
+        Some(2.0),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    assert_eq!(
+        base,
+        format!("---\naliases: [Home base]\ntags: [work]\nstage: open\n---\n\nbody ^{body}\n")
+    );
+
+    let source = with(&base, "stage: open\n", "stage: done\n");
+    save_source(&pool, &mat, &page, &source, &base)
+        .await
+        .unwrap();
+
+    let kept = sqlx::query_scalar::<_, Option<f64>>(
+        "SELECT value_num FROM block_properties WHERE block_id = ? AND key = 'bookmark'",
+    )
+    .bind(page.as_str())
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(kept, Some(2.0));
+}
+
 /// `aliases:` and `tags:` are the page's aliases and tags: an item added is
 /// added, a tag no page of the space names is created, and an item left out is
 /// removed.

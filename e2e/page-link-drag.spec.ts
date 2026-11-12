@@ -60,6 +60,7 @@ async function storedContent(page: Page, blockId: string): Promise<string> {
 test.describe('A page dragged into the editor becomes a link (#5691) @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
+    // The old device bookmark list, which the next boot moves onto the page (#6544).
     await page.evaluate(
       (ids) => window.localStorage.setItem('starred-pages', JSON.stringify(ids)),
       [PROJECTS],

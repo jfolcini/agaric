@@ -86,7 +86,6 @@ function selectCheckbox(id: string): HTMLElement {
 beforeEach(() => {
   vi.clearAllMocks()
   sessionStorage.clear()
-  localStorage.removeItem('starred-pages')
   // An empty slice, not an absent one: absent is the default journal chip (#5370).
   usePageBrowserFiltersStore.setState({ filtersBySpace: { SPACE_TEST: [] }, nextAddId: 0 })
   useSpaceStore.setState({

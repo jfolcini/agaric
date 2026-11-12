@@ -21,6 +21,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
+import { bookmarkInvokeHandlers, seedBookmarks } from '@/__tests__/helpers/bookmarks'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { PageHeader } from '@/components/pages/PageHeader'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -158,10 +160,6 @@ const mockedAnnounce = vi.mocked(announce)
 beforeEach(() => {
   vi.clearAllMocks()
   mockedFlushActiveDraft.mockResolvedValue(undefined)
-  // PageHeader subscribes to starred state via `useStarredPages`,
-  // which reads/writes `localStorage['starred-pages']` directly.
-  // Clear the key so each test starts from an unstarred baseline.
-  localStorage.removeItem('starred-pages')
   pageStore = createPageBlockStore('PAGE_1')
   useNavigationStore.setState({
     currentView: 'page-editor',
@@ -192,6 +190,8 @@ beforeEach(() => {
     if (cmd === 'list_property_defs')
       return { items: [], next_cursor: null, has_more: false, total_count: null }
     if (cmd === 'get_page_aliases') return []
+    // #6544 — the star reads the space's bookmarks: none.
+    if (cmd === 'query_by_property') return emptyPage
     // #4523 — `delete_block` used to fall through to `null` here, which was
     // enough while `usePageDeleteAction` discarded the reply. It now READS the
     // reply (`affected_page_ids`, the cascade's page membership), so the stub
@@ -2304,25 +2304,29 @@ describe('PageHeader star button', () => {
 
   it('toggles star on click', async () => {
     const user = userEvent.setup()
+    const held = new Map<string, number>()
+    const headerDefaults = mockedInvoke.getMockImplementation()
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands(bookmarkInvokeHandlers(held), {
+        fallback: async (cmd, args) => headerDefaults?.(cmd, args as InvokeArgs),
+      }),
+    )
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     const starBtn = screen.getByRole('button', { name: /bookmark this page/i })
     await user.click(starBtn)
 
-    // `useStarredPages` writes the canonical JSON-array shape under
-    // the `starred-pages` localStorage key.
-    expect(JSON.parse(localStorage.getItem('starred-pages') ?? '[]')).toContain('PAGE_1')
+    // `useStarredPages` writes the page's `bookmark` property.
+    await waitFor(() => expect([...held]).toEqual([['PAGE_1', 1]]))
   })
 
-  it('shows filled star when page is starred', () => {
-    // Pre-seed the persisted starred list so the hook reads the page
-    // as starred on mount.
-    localStorage.setItem('starred-pages', JSON.stringify(['PAGE_1']))
+  it('shows filled star when page is starred', async () => {
+    seedBookmarks('SPACE_PERSONAL', new Map([['PAGE_1', 1]]))
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    const starBtn = screen.getByRole('button', { name: /remove this page from bookmarks/i })
+    const starBtn = await screen.findByRole('button', { name: /remove this page from bookmarks/i })
     expect(starBtn).toBeInTheDocument()
 
     const starIcon = screen.getByTestId('star-icon')

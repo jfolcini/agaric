@@ -4,7 +4,7 @@
  *
  * Covers:
  *  - saveView / deleteView update `views` for the calling instance
- *  - cross-instance broadcast sync (mirrors useStarredPages.test.ts)
+ *  - cross-instance broadcast sync
  *  - active-view detection against a live `PagesViewTuple`
  *  - the schemaMismatchDetected recovery signal (render-phase peek, timed
  *    ahead of the registry's mount-effect write-back) and its

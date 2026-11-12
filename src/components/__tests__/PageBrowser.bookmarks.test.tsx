@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// Split from the PageBrowser.test.tsx monolith (#2929). Concern: starred
-// pages.
+// Split from the PageBrowser.test.tsx monolith (#2929). Concern: bookmarked
+// pages, the `bookmark` page property (#6544).
 
 import { invoke } from '@tauri-apps/api/core'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makePage } from '@/__tests__/fixtures'
+import { bookmarkInvokeHandlers, seedBookmarks } from '@/__tests__/helpers/bookmarks'
 import { pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
@@ -63,7 +64,19 @@ const mockedInvoke = vi.mocked(invoke)
  * ran against rows the component had already been told, silently, were gone.
  */
 function stubPageList(items: ReturnType<typeof makePage>[]) {
-  stubPageRowInvoke(mockedInvoke, { list_pages_with_metadata: () => pageList(items) })
+  stubPageRowInvoke(mockedInvoke, {
+    list_pages_with_metadata: () => pageList(items),
+    ...bookmarkInvokeHandlers(held),
+  })
+}
+
+/** The bookmarks the backend holds, page id → sidebar number. */
+const held = new Map<string, number>()
+
+/** Bookmark `ids`, in that order, before the first render. */
+function bookmark(...ids: string[]) {
+  for (const [i, id] of ids.entries()) held.set(id, i + 1)
+  seedBookmarks('SPACE_TEST', held)
 }
 
 beforeEach(() => {
@@ -74,7 +87,7 @@ beforeEach(() => {
   // round-trip values through sessionStorage; isolate each test.
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
-  localStorage.removeItem('starred-pages')
+  held.clear()
   // Compound-filter chips now live in a module-global per-space store that
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.
@@ -119,7 +132,7 @@ describe('PageBrowser', () => {
     // Clicking the star toggle moves the page between groups.
     // With a 1-page vault we render flat (no headers) — so this test
     // pairs with the multi-page case below which asserts the row jump.
-    it('clicking the toggle bookmarks the page and persists to localStorage', async () => {
+    it('clicking the toggle bookmarks the page and writes the bookmark property', async () => {
       const user = userEvent.setup()
       stubPageList([makePage({ id: 'P1', content: 'Starrable Page' })])
 
@@ -135,17 +148,15 @@ describe('PageBrowser', () => {
       await user.click(starBtn)
 
       // Should now show "Unstar page" aria-label
-      expect(
-        screen.getByRole('button', { name: /remove page from bookmarks/i }),
-      ).toBeInTheDocument()
-      expect(localStorage.getItem('starred-pages')).toBe(JSON.stringify(['P1']))
+      const unstarBtn = await screen.findByRole('button', { name: /remove page from bookmarks/i })
+      await waitFor(() => expect([...held]).toEqual([['P1', 1]]))
 
       // Click to unstar
-      await user.click(screen.getByRole('button', { name: /remove page from bookmarks/i }))
+      await user.click(unstarBtn)
 
       // Should be back to "Star page"
-      expect(screen.getByRole('button', { name: /bookmark page/i })).toBeInTheDocument()
-      expect(localStorage.getItem('starred-pages')).toBe(JSON.stringify([]))
+      expect(await screen.findByRole('button', { name: /bookmark page/i })).toBeInTheDocument()
+      await waitFor(() => expect(held.size).toBe(0))
     })
 
     // Starring a page in a multi-page vault moves it to the top
@@ -176,7 +187,7 @@ describe('PageBrowser', () => {
       await user.click(starBtn)
 
       // Starred header now visible.
-      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
+      expect(await screen.findByText('Bookmarks')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
       // Cherry is now first in the page-only grid.
@@ -194,7 +205,7 @@ describe('PageBrowser', () => {
     // #5371 — the server orders the pages; each group keeps that order, with
     // no client re-sort.
     it('each group keeps the server order', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P3', 'P1']))
+      bookmark('P3', 'P1')
       stubPageList([
         makePage({ id: 'P1', content: 'Cherry' }),
         makePage({ id: 'P2', content: 'Apple' }),
@@ -229,7 +240,7 @@ describe('PageBrowser', () => {
       const bananaRow = screen.getByText('Banana').closest('.group') as HTMLElement
       await user.click(within(bananaRow).getByRole('button', { name: /bookmark page/i }))
 
-      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
+      expect(await screen.findByText('Bookmarks')).toBeInTheDocument()
       let titles = within(screen.getByRole('grid'))
         .getAllByRole('row')
         .filter((r) => r.hasAttribute('data-page-item'))
@@ -243,7 +254,7 @@ describe('PageBrowser', () => {
         within(bananaRowAgain).getByRole('button', { name: /remove page from bookmarks/i }),
       )
 
-      expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument())
       titles = within(screen.getByRole('grid'))
         .getAllByRole('row')
         .filter((r) => r.hasAttribute('data-page-item'))
@@ -252,7 +263,7 @@ describe('PageBrowser', () => {
     })
 
     it('namespaced pages render under the unified Pages section alongside Bookmarks', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([
         makePage({ id: 'P1', content: 'work/project-a' }),
         makePage({ id: 'P2', content: 'work/project-b' }),
@@ -289,7 +300,7 @@ describe('PageBrowser', () => {
     })
 
     it('all-bookmarked hides the Pages header', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
+      bookmark('P1', 'P2')
       stubPageList([
         makePage({ id: 'P1', content: 'Apple' }),
         makePage({ id: 'P2', content: 'Banana' }),
@@ -303,7 +314,7 @@ describe('PageBrowser', () => {
     })
 
     it('single-page vault renders flat with no headers', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([makePage({ id: 'P1', content: 'Solo' })])
 
       render(<PageBrowser />)
@@ -315,7 +326,7 @@ describe('PageBrowser', () => {
 
     it('search narrows both groups; emptied group hides its header', async () => {
       const user = userEvent.setup()
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([
         makePage({ id: 'P1', content: 'StarredApple' }),
         makePage({ id: 'P2', content: 'OtherBanana' }),
@@ -340,7 +351,7 @@ describe('PageBrowser', () => {
     })
 
     it('Bookmarks header carries count in its accessible name', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
+      bookmark('P1', 'P2')
       stubPageList([
         makePage({ id: 'P1', content: 'Apple' }),
         makePage({ id: 'P2', content: 'Banana' }),
@@ -369,7 +380,7 @@ describe('PageBrowser', () => {
     })
 
     it('viewport aria-label switches to grouped variant when bookmarks exist', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([
         makePage({ id: 'P1', content: 'Apple' }),
         makePage({ id: 'P2', content: 'Banana' }),
@@ -396,7 +407,7 @@ describe('PageBrowser', () => {
     })
 
     it('keyboard ArrowDown skips header rows (focus stays page-indexed)', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P2']))
+      bookmark('P2')
       stubPageList([
         makePage({ id: 'P1', content: 'Apple' }),
         makePage({ id: 'P2', content: 'Banana' }),
@@ -438,7 +449,7 @@ describe('PageBrowser', () => {
     })
 
     it('a11y audit passes on grouped state', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([
         makePage({ id: 'P1', content: 'Starred Page' }),
         makePage({ id: 'P2', content: 'Normal Page' }),
@@ -457,7 +468,7 @@ describe('PageBrowser', () => {
 
     it('a11y audit passes on filtered state with grouping', async () => {
       const user = userEvent.setup()
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([
         makePage({ id: 'P1', content: 'Starred Apple' }),
         makePage({ id: 'P2', content: 'Banana' }),
@@ -483,7 +494,7 @@ describe('PageBrowser', () => {
     // ---------------------------------------------------------------
 
     it('starred (non-namespaced) and namespaced pages coexist', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([
         makePage({ id: 'P1', content: 'Apple' }),
         makePage({ id: 'P2', content: 'work/foo' }),
@@ -531,7 +542,7 @@ describe('PageBrowser', () => {
     })
 
     it('a starred-and-namespaced page renders TWICE — once in Bookmarks, once nested in Pages', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([
         makePage({ id: 'P1', content: 'work/foo' }),
         makePage({ id: 'P2', content: 'Inbox' }),
@@ -555,7 +566,7 @@ describe('PageBrowser', () => {
 
     it('bookmark toggle from either copy of a duplicated row updates BOTH copies', async () => {
       const user = userEvent.setup()
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([makePage({ id: 'P1', content: 'work/foo' })])
 
       render(<PageBrowser />)
@@ -574,7 +585,7 @@ describe('PageBrowser', () => {
 
       // Starred section gone — both copies refreshed via the
       // `useStarredPages` hook subscription.
-      expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument())
       expect(screen.getByText('Pages')).toBeInTheDocument()
       // The tree-leaf copy is still visible.
       expect(screen.getByText('foo')).toBeInTheDocument()
@@ -582,7 +593,7 @@ describe('PageBrowser', () => {
 
     it('filter narrows Pages to empty → Pages header hides, Starred remains', async () => {
       const user = userEvent.setup()
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([
         makePage({ id: 'P1', content: 'StarredApple' }),
         makePage({ id: 'P2', content: 'work/foo' }),
@@ -605,7 +616,7 @@ describe('PageBrowser', () => {
 
     it('filter narrows Starred to empty → Starred header hides, Pages remains', async () => {
       const user = userEvent.setup()
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([
         makePage({ id: 'P1', content: 'StarredApple' }),
         makePage({ id: 'P2', content: 'work/foo' }),
@@ -624,7 +635,7 @@ describe('PageBrowser', () => {
     })
 
     it('keyboard ArrowDown walks every visible row in render order, including duplicates', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       // The server's alphabetical order: Inbox before work/foo.
       stubPageList([
         makePage({ id: 'P2', content: 'Inbox' }),
@@ -699,7 +710,7 @@ describe('PageBrowser', () => {
     })
 
     it('a11y audit passes on the unified Starred + Pages layout with namespaced rows', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
       stubPageList([
         makePage({ id: 'P1', content: 'work/project-a' }),
         makePage({ id: 'P2', content: 'work/project-b' }),
@@ -721,7 +732,7 @@ describe('PageBrowser', () => {
     })
 
     it('star buttons pass a11y audit', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      bookmark('P1')
 
       stubPageList([
         makePage({ id: 'P1', content: 'Starred Page' }),
