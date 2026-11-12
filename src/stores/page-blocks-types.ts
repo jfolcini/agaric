@@ -94,8 +94,14 @@ export interface PageBlockState {
    * save-failed toast is shown). Callers that need a context-specific error
    * (e.g. the query builder) can branch on the returned boolean.
    * `merge: false` makes the edit an undo entry of its own, as a paste is,
-   * instead of joining the block's typing session. */
-  edit: (blockId: string, content: string, options?: { merge?: boolean }) => Promise<boolean>
+   * instead of joining the block's typing session. `undoGroup` joins the edit
+   * to the undo entry of the edits before it with the same key, whatever block
+   * they changed (a replace-all); with `merge: false` it starts that entry. */
+  edit: (
+    blockId: string,
+    content: string,
+    options?: { merge?: boolean; undoGroup?: string },
+  ) => Promise<boolean>
   /**
    * Delete a block (and its descendants from the flat tree).
    *

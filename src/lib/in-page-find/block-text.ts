@@ -36,50 +36,91 @@ export interface BlockFindResult {
 
 type ScanQuery = Extract<CompiledQuery, { kind: 'literal' | 'regex' }>
 
-interface MarkdownNode {
+export interface MarkdownNode {
   type: string
   text?: string
   attrs?: { id?: string; label?: string }
-  content?: readonly MarkdownNode[]
+  content?: MarkdownNode[]
+}
+
+/**
+ * A stretch of a block's find text: the text node it comes from, or `null`
+ * for text the block does not hold as its own (a chip's title, a line break,
+ * the space between two paragraphs, an empty stretch for a node with no text).
+ */
+export interface FindTextPiece {
+  start: number
+  end: number
+  node: MarkdownNode | null
 }
 
 const TEXTBLOCKS = new Set(['paragraph', 'heading', 'codeBlock'])
 
-function nodeText(node: MarkdownNode, resolveTitle: (id: string) => string): string {
+function collectPieces(
+  node: MarkdownNode,
+  resolveTitle: (id: string) => string,
+  out: { text: string; pieces: FindTextPiece[] },
+): void {
+  const push = (text: string, own: MarkdownNode | null): void => {
+    const start = out.text.length
+    out.text += text
+    out.pieces.push({ start, end: out.text.length, node: own })
+  }
   const id = node.attrs?.id ?? ''
   switch (node.type) {
     case 'text': {
-      return node.text ?? ''
+      push(node.text ?? '', node)
+      return
     }
     case 'tag_ref':
     case 'block_ref': {
-      return resolveTitle(id)
+      push(resolveTitle(id), null)
+      return
     }
     case 'block_link': {
       // The chip shows the stored label, else the title's leaf (`blockLink.tsx`).
-      return node.attrs?.label ?? getPageDisplayName(resolveTitle(id), 'leaf').label
+      push(node.attrs?.label ?? getPageDisplayName(resolveTitle(id), 'leaf').label, null)
+      return
     }
     case 'hardBreak': {
-      return '\n'
+      push('\n', null)
+      return
     }
   }
-  const parts = (node.content ?? []).map((child) => nodeText(child, resolveTitle))
+  const children = node.content ?? []
+  if (children.length === 0) push('', null)
   // The renderer puts a space between block-level nodes (`RichContentRenderer`).
-  return parts.join(TEXTBLOCKS.has(node.type) ? '' : ' ')
+  const separator = TEXTBLOCKS.has(node.type) ? '' : ' '
+  children.forEach((child, i) => {
+    if (i > 0 && separator !== '') push(separator, null)
+    collectPieces(child, resolveTitle, out)
+  })
 }
 
-/**
- * The text `StaticBlock` shows for `content`. A query or embed block shows
- * results, not its text, so it has none to find.
- */
+/** {@link blockFindText} of a parsed `doc`, with the piece of the document each stretch comes from. */
+export function findTextPieces(
+  doc: MarkdownNode,
+  resolveTitle: (id: string) => string,
+): { text: string; pieces: FindTextPiece[] } {
+  const out = { text: '', pieces: [] as FindTextPiece[] }
+  collectPieces(doc, resolveTitle, out)
+  return out
+}
+
+/** A query or embed block shows results, not its text, so it has none to find. */
+export function hasFindText(content: string | null): content is string {
+  if (!content) return false
+  if (parseEmbedToken(content) !== null) return false
+  return !(content.startsWith('{{query ') && content.endsWith('}}'))
+}
+
+/** The text `StaticBlock` shows for `content`. */
 export function blockFindText(
   content: string | null,
   resolveTitle: (id: string) => string,
 ): string {
-  if (!content) return ''
-  if (parseEmbedToken(content) !== null) return ''
-  if (content.startsWith('{{query ') && content.endsWith('}}')) return ''
-  return nodeText(parse(content) as MarkdownNode, resolveTitle)
+  if (!hasFindText(content)) return ''
+  return findTextPieces(parse(content) as MarkdownNode, resolveTitle).text
 }
 
 /** Every match of `compiled` over `blocks`, in block order. */

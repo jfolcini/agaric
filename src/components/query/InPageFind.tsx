@@ -30,6 +30,8 @@
  *  - `↑`/`↓` arrows and `Enter`/`Shift+Enter` cycle matches.
  *  - `Esc` closes the toolbar and restores editor focus to the
  *    previously-focused element captured on open.
+ *  - The replace toggle or `Ctrl+H` shows the replace row (#6608,
+ *    `InPageReplaceRow`, `use-in-page-replace.ts`).
  *
  * Accessibility (per the plan's a11y section):
  *  - `role="toolbar"` on the outer container with
@@ -40,17 +42,20 @@
  */
 
 import type { TFunction } from 'i18next'
-import { CaseSensitive, ChevronDown, ChevronUp, Regex, WholeWord, X } from 'lucide-react'
+import { CaseSensitive, ChevronDown, ChevronUp, Regex, Replace, WholeWord, X } from 'lucide-react'
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
+import { InPageReplaceRow } from '@/components/query/InPageReplaceRow'
+import { type ReplaceCursor, useInPageReplace } from '@/components/query/use-in-page-replace'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useBlockFindVersion } from '@/hooks/useBlockFindVersion'
@@ -76,6 +81,7 @@ import {
   runWalker,
   type WalkerHandle,
 } from '@/lib/in-page-find/matcher'
+import { indexAfter } from '@/lib/in-page-find/replace'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
@@ -162,6 +168,8 @@ export function InPageFind({
     regexError,
     skippedLongNodes,
     container,
+    replaceOpen,
+    replacement,
   } = useInPageFindStore(
     useShallow((s) => ({
       open: s.open,
@@ -172,6 +180,8 @@ export function InPageFind({
       regexError: s.regexError,
       skippedLongNodes: s.skippedLongNodes,
       container: s.container,
+      replaceOpen: s.replaceOpen,
+      replacement: s.replacement,
     })),
   )
   const setQuery = useInPageFindStore((s) => s.setQuery)
@@ -181,8 +191,15 @@ export function InPageFind({
   const prevMatch = useInPageFindStore((s) => s.previous)
   const close = useInPageFindStore((s) => s.close)
   const setRevealBlockId = useInPageFindStore((s) => s.setRevealBlockId)
+  const setReplaceOpen = useInPageFindStore((s) => s.setReplaceOpen)
+  const setReplacement = useInPageFindStore((s) => s.setReplacement)
 
   const inputRef = useRef<HTMLInputElement>(null)
+  const replaceInputRef = useRef<HTMLInputElement>(null)
+  // #6608 — where the next run puts the current match after a replace, and a
+  // run of the DOM walk, which no store change starts, after a page-mode replace.
+  const replaceCursorRef = useRef<ReplaceCursor | null>(null)
+  const [replaceRun, setReplaceRun] = useState(0)
   const toolbarRef = useRef<HTMLDivElement>(null)
   // The matches list is shared between the walker driver effect (writes)
   // and the navigation/scroll effect (reads). We keep it in a ref so the
@@ -335,11 +352,21 @@ export function InPageFind({
       blockRunKeyRef.current = runKey
       const count = result.matches.length
       const previous = useInPageFindStore.getState().currentIndex
-      const index = count === 0 ? -1 : fresh ? 0 : Math.min(Math.max(previous, 0), count - 1)
+      const cursor = replaceCursorRef.current
+      replaceCursorRef.current = null
+      const order = new Map(sources.map((source, i) => [source.id, i]))
+      const index =
+        cursor?.kind === 'block'
+          ? indexAfter(result.matches, order, cursor.blockId, cursor.offset)
+          : count === 0
+            ? -1
+            : fresh
+              ? 0
+              : Math.min(Math.max(previous, 0), count - 1)
       matchesRef.current = []
       blockMatchesRef.current = result.matches
       compiledRef.current = compiled
-      if (fresh) pendingScrollRef.current = { index, rowScrolled: false }
+      if (fresh || cursor !== null) pendingScrollRef.current = { index, rowScrolled: false }
       setResult({
         totalMatches: count,
         currentIndex: index,
@@ -350,6 +377,9 @@ export function InPageFind({
       return
     }
     blockRunKeyRef.current = null
+    const cursor = replaceCursorRef.current
+    replaceCursorRef.current = null
+    const startAt = cursor?.kind === 'dom' ? cursor.index : 0
     const textNodes = collectTextNodes(container)
     // Index this walk last published via `setResult`. A fresh walk always
     // starts at the first match — but if the store's index has moved away
@@ -364,7 +394,7 @@ export function InPageFind({
       const desired =
         publishedIndex !== null && storeIndex !== publishedIndex
           ? storeIndex // user navigated since our last publish — keep it
-          : (publishedIndex ?? 0) // fresh walk → first match; else hold position
+          : (publishedIndex ?? startAt) // fresh walk → first match (after a replace, the next); else hold position
       const next = Math.min(Math.max(desired, 0), matchCount - 1)
       publishedIndex = next
       return next
@@ -405,7 +435,36 @@ export function InPageFind({
     return () => {
       handle.cancel()
     }
-  }, [open, query, toggles, container, setResult, blocksVersion, syncBlockHighlights])
+  }, [open, query, toggles, container, setResult, blocksVersion, replaceRun, syncBlockHighlights])
+
+  const blockMatches = useCallback(() => blockMatchesRef.current, [])
+  const domMatches = useCallback(() => matchesRef.current, [])
+  const onReplaced = useCallback((cursor: ReplaceCursor) => {
+    replaceCursorRef.current = cursor
+    // A block replace runs find again through its store; a page-mode one does not.
+    if (cursor.kind === 'dom') setReplaceRun((n) => n + 1)
+  }, [])
+  const replace = useInPageReplace({
+    replaceOpen,
+    container,
+    query,
+    toggles,
+    replacement,
+    currentIndex,
+    totalMatches,
+    blocksVersion,
+    blockMatches,
+    domMatches,
+    next: nextMatch,
+    onReplaced,
+  })
+
+  // ── The replace row takes focus when it opens with a query to replace.
+  useEffect(() => {
+    if (open && replaceOpen && useInPageFindStore.getState().query.length > 0) {
+      replaceInputRef.current?.focus()
+    }
+  }, [open, replaceOpen])
 
   // ── Repaint and scroll when the current index changes (arrow navigation).
   useEffect(() => {
@@ -513,7 +572,7 @@ export function InPageFind({
           // rounded card holding the input + toggles + counter + arrows.
           // `fixed` so it floats above whichever view is rendered
           // without each view having to participate.
-          'fixed top-2 right-2 md:right-4 z-50 flex items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1.5 shadow-(--shadow-floating) transition-transform duration-fast',
+          'fixed top-2 right-2 md:right-4 z-50 flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1.5 shadow-(--shadow-floating) transition-transform duration-fast',
         variant === 'embedded' &&
           // Two intentional rows inside the search sheet — row 1 is
           // the input across the full width; row 2 is the controls.
@@ -544,8 +603,8 @@ export function InPageFind({
           variant === 'overlay' ? 'h-7 w-48 md:w-64' : 'w-full',
         )}
       />
-      {/* Controls split into two logical groups: toggles (case /
-          whole-word / regex) and navigation (counter + prev/next/
+      {/* Controls split into two logical groups: toggles (replace /
+          case / whole-word / regex) and navigation (counter + prev/next/
           close). On the overlay both groups inline into a single
           flat row (outer `flex items-center`); on embedded the outer
           is `flex flex-col` so the groups stack — overlapping the
@@ -553,9 +612,24 @@ export function InPageFind({
           phones without flex-wrap chaos.
 
           Single-row math at 390 px (sheet padding 48 → 342 px usable):
-          row 2 toggles 3 × 44 + 2 × 6 = 144 ✓; row 3 counter (4.5rem)
+          row 2 toggles 4 × 44 + 3 × 6 = 194 ✓; row 3 counter (4.5rem)
           + 2 × 44 + 3 × 6 = 178 ✓. */}
       <div className="flex items-center gap-1.5" data-testid="in-page-find-toggles">
+        <Button
+          type="button"
+          variant={replaceOpen ? 'secondary' : 'ghost'}
+          size="icon-xs"
+          aria-expanded={replaceOpen}
+          aria-label={t('findInPage.toggleReplace')}
+          title={t('findInPage.toggleReplace')}
+          data-testid="in-page-find-toggle-replace"
+          onClick={() => {
+            setReplaceOpen(!replaceOpen)
+            if (replaceOpen) inputRef.current?.focus()
+          }}
+        >
+          <Replace aria-hidden="true" />
+        </Button>
         <Button
           type="button"
           variant={toggles.caseSensitive ? 'secondary' : 'ghost'}
@@ -654,6 +728,26 @@ export function InPageFind({
           </Button>
         )}
       </div>
+
+      {replaceOpen && (
+        <InPageReplaceRow
+          inputRef={replaceInputRef}
+          value={replacement}
+          onChange={setReplacement}
+          onReplace={() => void replace.replaceCurrent()}
+          // The button is disabled once no match is left, which would drop focus to the page.
+          onReplaceAll={() =>
+            void replace.replaceAll().then(() => replaceInputRef.current?.focus())
+          }
+          onEscape={handleClose}
+          canReplace={totalMatches > 0 && regexError === null}
+          available={replace.available}
+          busy={replace.busy}
+          outcome={replace.outcome}
+          unreplaceable={replace.unreplaceable}
+          embedded={variant === 'embedded'}
+        />
+      )}
 
       {regexError && (
         <span

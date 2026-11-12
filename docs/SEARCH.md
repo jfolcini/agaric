@@ -43,6 +43,7 @@ Where the view shows block trees, find searches the blocks' text in the page sto
 | `F3` / `Shift+F3` | Next / previous match — works while the toolbar is open, even with focus outside the input. |
 | `Enter` / `Shift+Enter` | Next / previous match — when the toolbar input is focused. |
 | `Esc` or the toolbar `✕` button | Close the toolbar; focus returns to the element you were on before. |
+| `Ctrl+H` | Open the toolbar with its replace row (see [Replace](#replace)). On macOS it is the Control key: `Cmd+H` hides the app. |
 
 ### Toggles
 
@@ -53,6 +54,16 @@ The toolbar exposes the same toggle row as the across-pages search view so the t
 - **`.*` — Regular expression.** Uses the JavaScript native `RegExp` engine. Compiles with the `gu` flags by default (`giu` when case-insensitive). Inline `(?s)` / `(?m)` flags are supported per pattern.
 
 Matches do NOT span block boundaries — each block is searched on its own, so a query will not match from the end of one block into the next. Within a block, a match may cross formatting (`**bold**tail` matches `boldtail`). On the DOM path each text node is searched independently.
+
+### Replace
+
+The toolbar's replace toggle, or `Ctrl+H`, shows a second row: the replacement text, **Replace** (`Enter` in the field) and **Replace all** (`Ctrl+Alt+Enter`). Replace changes the current match and moves to the next one, past the text it put in, so a replacement that itself matches is not replaced again. Replace all changes every match in the page, rows that are not mounted included. Case, whole word and regex apply as they do to find; in regex mode the replacement takes `$1`, `$<name>`, `$&` and `$$` as `String.prototype.replace` does. In plain mode the replacement is inserted as typed: Markdown in it is text, not formatting.
+
+Where find searches block text, a replace rewrites each changed block's stored Markdown (`src/lib/in-page-find/replace.ts`): the block is parsed, the match replaced in its text, and the block saved through the page store's `edit`, as typing saves it, after the focused block's pending typing is flushed. A match across formatting takes the formatting of its first character (`**ne**edle` becomes `**pin**`). Replace all is one undo step: its edits share one undo entry per page, so one `Ctrl+Z` takes back every block it changed (a run that writes more ops than one undo entry holds, `MAX_COALESCED_UNDO_REFS` in `src/stores/undo.ts`, takes one `Ctrl+Z` per chunk). A save that fails stops the run, leaving the blocks after it as they were, and the row says how many were replaced before it.
+
+A match is replaced only when it lies wholly in the block's own text. One in a chip's label (a tag, a page link, a block reference), or one that runs into a chip, across a line break or from one paragraph of a block into the next, is found but left as it is, and the row says how many such matches there are. Links and tags are ids, so rewriting their label would rename nothing.
+
+In page mode the page is one editor, which find walks as rendered text: a replace is one edit in that editor (`src/lib/in-page-find/replace-in-editor.ts`), saved as typing is and taken back by one undo in it; a match in a chip or in the page title is left as it is. A view with nothing to edit (*Edit as Markdown*, the journal's month grid) says replace is not available there.
 
 ### Regex caps (in-page)
 
