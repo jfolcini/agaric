@@ -14,8 +14,7 @@ use super::store::{self, StateDir};
 /// The files, as paths below `root`, that reading back would act on now, in
 /// `space_folders`, the mirrored spaces' folders: each page's file that is
 /// not the text last written there or is gone, and each `.md` file no page
-/// owns. A file that cannot
-/// be read is listed too.
+/// owns. A file that cannot be read is listed too.
 ///
 /// # Errors
 ///
