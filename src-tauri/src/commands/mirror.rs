@@ -205,7 +205,10 @@ async fn pending(
         .filter(|(space, _)| !unmirrored.contains(space))
         .map(|(_, folder)| folder)
         .collect();
-    let states = mirror::store::StateDir::new(mirror.app_data_dir());
+    let mut states = mirror::store::StateDir::new(mirror.app_data_dir());
+    states
+        .bind(&root.to_string_lossy())
+        .map_err(|e| AppError::validation(format!("cannot tell which files changed: {e}")))?;
     mirror::read_back::pending(root, device_id, &states, &folders)
 }
 

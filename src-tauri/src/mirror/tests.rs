@@ -128,9 +128,17 @@ impl Fx {
             .unwrap()
     }
 
+    /// Where `page`'s state is saved, by the key `StateDir` derives.
+    fn state_file(&self, page: &str) -> PathBuf {
+        let key = blake3::hash(path_string(&self.root).as_bytes()).to_hex();
+        self.data
+            .join("mirror/folders")
+            .join(&key[..32])
+            .join(format!("{page}.json"))
+    }
+
     fn saved_state(&self, page: &str) -> Option<PageState> {
-        let file = self.data.join(format!("mirror/state/{page}.json"));
-        let bytes = std::fs::read(file).ok()?;
+        let bytes = std::fs::read(self.state_file(page)).ok()?;
         Some(serde_json::from_slice(&bytes).unwrap())
     }
 
@@ -624,7 +632,7 @@ async fn a_state_that_cannot_be_saved_is_saved_on_the_next_tick() {
     let mut fx = Fx::new().await;
     let (page, blocks) = fx.page("Alpha", &["hello"]).await;
     fx.tick().await;
-    let state_file = fx.data.join(format!("mirror/state/{page}.json"));
+    let state_file = fx.state_file(&page);
     std::fs::remove_file(&state_file).unwrap();
     std::fs::create_dir_all(state_file.join("x")).unwrap();
 
@@ -802,30 +810,83 @@ async fn a_moved_block_rewrites_the_pages_referring_to_it() {
     );
 }
 
-/// A crash after the old folder's states were set aside, before the record
-/// of the bound folder was rewritten, loses none of them on the next start.
-#[test]
-fn a_folder_change_cut_short_by_a_crash_keeps_the_states_it_set_aside() {
-    let data = TempDir::new().unwrap();
-    let states = StateDir::new(data.path());
-    states.bind("/folder/a").unwrap();
-    let state = PageState {
+fn one_state(text: &str) -> PageState {
+    PageState {
         path: "TestSpace/Alpha.md".into(),
         shadows: vec![Shadow {
-            text: "one\n".into(),
+            text: text.into(),
             line_ids: vec![None],
             buffer: None,
         }],
-    };
-    states.save("PAGE", &state).unwrap();
-    // Where a folder change puts them, by the key `StateDir` derives.
-    let key = blake3::hash(b"/folder/a").to_hex();
-    let aside = data.path().join("mirror/folders").join(&key[..32]);
-    std::fs::create_dir_all(aside.parent().unwrap()).unwrap();
-    std::fs::rename(data.path().join("mirror/state"), &aside).unwrap();
+    }
+}
 
+/// Each folder keeps its own states: binding another moves none of them, so
+/// a crash at any point of a folder change loses none.
+#[test]
+fn each_folder_keeps_its_own_states() {
+    let data = TempDir::new().unwrap();
+    let mut states = StateDir::new(data.path());
+    assert!(states.bind("/folder/a").unwrap());
+    states.save("PAGE", &one_state("a\n")).unwrap();
+    assert!(states.bind("/folder/b").unwrap());
+    assert_eq!(
+        states.load().unwrap().get("PAGE"),
+        None,
+        "b has none of a's"
+    );
+    states.save("PAGE", &one_state("b\n")).unwrap();
+    assert!(!states.bind("/folder/b").unwrap(), "already bound");
+
+    // A new start, as after a crash: a fresh `StateDir` finds each as left.
+    let mut again = StateDir::new(data.path());
+    again.bind("/folder/a").unwrap();
+    assert_eq!(again.load().unwrap().get("PAGE"), Some(&one_state("a\n")));
+    again.bind("/folder/b").unwrap();
+    assert_eq!(again.load().unwrap().get("PAGE"), Some(&one_state("b\n")));
+}
+
+/// States from before each folder kept its own directory are the folder
+/// `mirror/folder` names, or the one bound when it names none, and an
+/// adoption cut short is finished by the next bind.
+#[test]
+fn states_of_the_earlier_layout_are_adopted_by_their_folder() {
+    let data = TempDir::new().unwrap();
+    let legacy = data.path().join("mirror/state");
+    std::fs::create_dir_all(&legacy).unwrap();
+    std::fs::write(
+        legacy.join("PAGE.json"),
+        serde_json::to_vec(&one_state("a\n")).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(data.path().join("mirror/folder"), "/folder/a").unwrap();
+
+    let mut states = StateDir::new(data.path());
     states.bind("/folder/b").unwrap();
+    assert_eq!(states.load().unwrap().get("PAGE"), None, "they are a's");
     states.bind("/folder/a").unwrap();
+    assert_eq!(states.load().unwrap().get("PAGE"), Some(&one_state("a\n")));
+    assert!(!legacy.exists());
+    assert!(!data.path().join("mirror/folder").exists());
 
-    assert_eq!(states.load().unwrap().get("PAGE"), Some(&state));
+    // Naming no folder, they are the one bound.
+    std::fs::create_dir_all(&legacy).unwrap();
+    std::fs::write(
+        legacy.join("OTHER.json"),
+        serde_json::to_vec(&one_state("c\n")).unwrap(),
+    )
+    .unwrap();
+    let mut fresh = StateDir::new(data.path());
+    fresh.bind("/folder/c").unwrap();
+    assert_eq!(fresh.load().unwrap().get("OTHER"), Some(&one_state("c\n")));
+
+    // Renamed, then a crash before `mirror/folder` went: the next bind ends it.
+    std::fs::write(data.path().join("mirror/folder"), "/folder/c").unwrap();
+    let mut resumed = StateDir::new(data.path());
+    resumed.bind("/folder/c").unwrap();
+    assert_eq!(
+        resumed.load().unwrap().get("OTHER"),
+        Some(&one_state("c\n"))
+    );
+    assert!(!data.path().join("mirror/folder").exists());
 }

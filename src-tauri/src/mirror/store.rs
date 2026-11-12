@@ -233,17 +233,33 @@ impl PageState {
     }
 }
 
-/// The per-page state files: `mirror/state/<PAGE_ID>.json` in the app data
-/// dir.
-pub struct StateDir(PathBuf);
+/// The per-page state files of the folder the mirror writes:
+/// `mirror/folders/<key>/<PAGE_ID>.json` in the app data dir, one directory
+/// per folder, so a page whose file another folder held is never read as one
+/// whose file vanished from this one, and coming back to a folder finds its
+/// files as it left them. Binding moves nothing, so a crash cannot lose them.
+pub struct StateDir {
+    base: PathBuf,
+    folder: Option<String>,
+    dir: Option<PathBuf>,
+}
 
 impl StateDir {
+    /// Bound to no folder: it loads nothing and saves nothing.
     pub fn new(app_data_dir: &Path) -> Self {
-        Self(app_data_dir.join("mirror").join("state"))
+        Self {
+            base: app_data_dir.join("mirror"),
+            folder: None,
+            dir: None,
+        }
     }
 
-    fn file(&self, page_id: &str) -> PathBuf {
-        self.0.join(format!("{page_id}.json"))
+    fn file(&self, page_id: &str) -> std::io::Result<PathBuf> {
+        let dir = self
+            .dir
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("the mirror's states are bound to no folder"))?;
+        Ok(dir.join(format!("{page_id}.json")))
     }
 
     /// Every page's state. A file that does not parse is skipped with a
@@ -251,7 +267,10 @@ impl StateDir {
     /// from overwriting a file that differs.
     pub fn load(&self) -> std::io::Result<HashMap<String, PageState>> {
         let mut states = HashMap::new();
-        let entries = match std::fs::read_dir(&self.0) {
+        let Some(dir) = &self.dir else {
+            return Ok(states);
+        };
+        let entries = match std::fs::read_dir(dir) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(states),
             Err(e) => return Err(e),
@@ -281,71 +300,72 @@ impl StateDir {
     }
 
     pub fn save(&self, page_id: &str, state: &PageState) -> Result<(), AppError> {
-        std::fs::create_dir_all(&self.0)?;
-        write_atomic(&self.file(page_id), &serde_json::to_vec(state)?)?;
+        let file = self.file(page_id)?;
+        std::fs::create_dir_all(file.parent().unwrap_or(&file))?;
+        write_atomic(&file, &serde_json::to_vec(state)?)?;
         Ok(())
     }
 
     pub fn delete(&self, page_id: &str) -> std::io::Result<()> {
-        match std::fs::remove_file(self.file(page_id)) {
+        match std::fs::remove_file(self.file(page_id)?) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),
         }
     }
 
-    /// The file beside the states naming the folder their paths are below.
-    fn folder_file(&self) -> PathBuf {
-        self.0.with_file_name("folder")
-    }
-
-    /// Where the states of a folder other than the bound one are kept.
-    fn kept_for(&self, folder: &str) -> PathBuf {
+    fn dir_for(&self, folder: &str) -> PathBuf {
         let key = blake3::hash(folder.as_bytes()).to_hex();
-        self.0.with_file_name("folders").join(&key[..32])
+        self.base.join("folders").join(&key[..32])
     }
 
-    /// Bind the states to `folder`. When they were written below another
-    /// folder, they are set aside for it and `folder`'s own, kept from when
-    /// the mirror last wrote there, take their place, or none: a page whose
-    /// file another folder held is never read as one whose file vanished
-    /// from this one, and coming back finds the files as it left them.
-    /// Returns whether the states changed. States that name no folder, as
-    /// those written before the binding, are taken as `folder`'s.
-    pub fn bind(&self, folder: &str) -> std::io::Result<bool> {
-        let bound = match std::fs::read_to_string(self.folder_file()) {
-            Ok(bound) => Some(bound),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(e),
-        };
-        if bound.as_deref() == Some(folder) {
+    /// Bind the states to `folder`'s. Returns whether they changed.
+    pub fn bind(&mut self, folder: &str) -> std::io::Result<bool> {
+        if self.folder.as_deref() == Some(folder) {
             return Ok(false);
         }
-        if let Some(bound) = &bound {
-            // No states here means a crash already set them aside: replacing
-            // what is there would lose them.
-            if self.0.exists() {
-                let aside = self.kept_for(bound);
-                remove_dir_if_any(&aside)?;
-                std::fs::create_dir_all(aside.parent().unwrap_or(&aside))?;
-                std::fs::rename(&self.0, &aside)?;
+        self.adopt_legacy(folder)?;
+        self.dir = Some(self.dir_for(folder));
+        self.folder = Some(folder.to_owned());
+        Ok(true)
+    }
+
+    /// States written before each folder kept its own directory, in
+    /// `mirror/state`: they are the folder `mirror/folder` names, or, naming
+    /// none, `folder`'s. Each step can be repeated, so a crash between them
+    /// is finished on the next bind.
+    fn adopt_legacy(&self, folder: &str) -> std::io::Result<()> {
+        let legacy = self.base.join("state");
+        let named = self.base.join("folder");
+        if legacy.exists() {
+            let owner = match std::fs::read_to_string(&named) {
+                Ok(owner) => owner,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => folder.to_owned(),
+                Err(e) => return Err(e),
+            };
+            let target = self.dir_for(&owner);
+            if target.exists() {
+                tracing::warn!(
+                    legacy = %legacy.display(),
+                    "mirror states of an earlier layout left in place: the folder has its own"
+                );
+                return Ok(());
             }
-            rename_if_any(&self.kept_for(folder), &self.0)?;
+            std::fs::create_dir_all(self.base.join("folders"))?;
+            match std::fs::rename(&legacy, &target) {
+                // Adopted meanwhile by the status's own bind.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                renamed => renamed?,
+            }
         }
-        std::fs::create_dir_all(&self.0)?;
-        write_atomic(&self.folder_file(), folder.as_bytes())?;
-        Ok(bound.is_some())
+        match std::fs::remove_file(&named) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
     }
 }
 
 fn remove_dir_if_any(dir: &Path) -> std::io::Result<()> {
     match std::fs::remove_dir_all(dir) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
-}
-
-fn rename_if_any(from: &Path, to: &Path) -> std::io::Result<()> {
-    match std::fs::rename(from, to) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
         _ => Ok(()),
     }
