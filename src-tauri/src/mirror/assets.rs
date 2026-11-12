@@ -150,7 +150,7 @@ pub struct Links {
 
 impl Links {
     /// For the page whose file is at `path`, with `copies` from
-    /// [`Copies::in_space`].
+    /// [`Copies::ensure`], as paths below the space's folder.
     pub fn for_page(path: &str, copies: HashMap<String, String>) -> Self {
         let depth = path.matches('/').count().saturating_sub(1);
         Self {
@@ -190,18 +190,11 @@ impl Links {
 ///
 /// Which attachments are live cannot be read.
 pub async fn delocalize(pool: &SqlitePool, text: &str) -> Result<String, AppError> {
-    let ids: HashSet<&str> = COPY_LINK
-        .captures_iter(text)
-        .filter_map(|link| link.get(3).or_else(|| link.get(4)))
-        .map(|id| id.as_str())
-        .collect();
+    let ids = copy_linked(text);
     if ids.is_empty() {
         return Ok(text.to_owned());
     }
-    let live: HashSet<String> = attachments(pool, ids.into_iter().map(str::to_owned).collect())
-        .await?
-        .into_keys()
-        .collect();
+    let live: HashSet<String> = attachments(pool, ids).await?.into_keys().collect();
     Ok(COPY_LINK
         .replace_all(text, |link: &Captures<'_>| {
             let id = link
@@ -215,6 +208,16 @@ pub async fn delocalize(pool: &SqlitePool, text: &str) -> Result<String, AppErro
             }
         })
         .into_owned())
+}
+
+/// The attachments `text` links the copies of, each once.
+pub fn copy_linked(text: &str) -> Vec<String> {
+    let ids: HashSet<&str> = COPY_LINK
+        .captures_iter(text)
+        .filter_map(|link| link.get(3).or_else(|| link.get(4)))
+        .map(|id| id.as_str())
+        .collect();
+    ids.into_iter().map(str::to_owned).collect()
 }
 
 /// The live attachments among `ids`: each one's file name and stored path
@@ -289,19 +292,9 @@ impl Copies {
         Ok(())
     }
 
-    /// The copies in `space`'s folder, by attachment, as paths below it.
-    pub fn in_space(&self, space: &str) -> HashMap<String, String> {
-        let prefix = format!("{space}/");
-        self.written
-            .iter()
-            .filter_map(|(path, copy)| {
-                Some((copy.id.clone(), path.strip_prefix(&prefix)?.to_owned()))
-            })
-            .collect()
-    }
-
     /// Copy each live attachment among `ids` into `space`'s folder below
-    /// `root`, unless its copy is there as written. Returns each copy in
+    /// `root`, unless its copy is there: one the user changed since is left
+    /// as they made it, and listed by [`Copies::remove_except`]. Returns each copy in
     /// place, as its attachment and path, and the copies that could not be
     /// written, and why.
     ///
@@ -322,12 +315,9 @@ impl Copies {
         for (id, (filename, fs_path)) in found {
             let path = format!("{space}/{ASSETS_DIR}/{id}/{}", asset_name(&filename));
             let target = root.join(&path);
-            let current = stat(&target);
-            let as_written = self
-                .written
-                .get(&path)
-                .is_some_and(|copy| copy.id == id && current == Some((copy.len, copy.modified_ms)));
-            if !as_written {
+            let there =
+                target.is_file() && self.written.get(&path).is_some_and(|copy| copy.id == id);
+            if !there {
                 if let Err(e) = copy_file(root, &path, &self.app_data_dir.join(&fs_path)) {
                     failed.push((path, e.to_string()));
                     continue;
@@ -351,8 +341,9 @@ impl Copies {
         Ok((placed, failed))
     }
 
-    /// Remove each copy below `root` that `keep` does not hold, while it is
-    /// as written; one changed since is left. Returns the copies left.
+    /// Remove each copy below `root` that `keep` does not hold. A copy changed
+    /// since it was written is never removed: it is returned, kept or not,
+    /// as no longer its attachment.
     ///
     /// # Errors
     ///
@@ -369,19 +360,17 @@ impl Copies {
             let Some(copy) = self.written.get(&path) else {
                 continue;
             };
+            let target = root.join(&path);
+            let now = stat(&target);
+            if now.is_some_and(|now| now != (copy.len, copy.modified_ms)) {
+                left.push(path);
+                continue;
+            }
             if keep(&path, copy) {
                 continue;
             }
-            let target = root.join(&path);
-            match stat(&target) {
-                None => {}
-                Some(now) if now == (copy.len, copy.modified_ms) => {
-                    super::remove_with_empty_folders(root, &target)?;
-                }
-                Some(_) => {
-                    left.push(path);
-                    continue;
-                }
+            if now.is_some() {
+                super::remove_with_empty_folders(root, &target)?;
             }
             self.written.remove(&path);
             changed = true;
