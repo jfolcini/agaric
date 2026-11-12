@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { useStarredPages } from '@/hooks/useStarredPages'
+import { queryClient } from '@/lib/query-client'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useSpaceStore } from '@/stores/space'
@@ -52,16 +53,20 @@ beforeEach(() => {
 })
 
 describe('useStarredPages', () => {
-  it('lists the space bookmarks by number, then title, reading an imported numeric text', async () => {
+  it('lists the space bookmarks by number, then title, then id, reading an imported numeric text', async () => {
+    // Two devices can each make a "Meetings" page while apart.
+    const MEET_TWIN = '00000000000000000000PAGE00'
+    blocks.set(MEET_TWIN, { ...blocks.get(MEET), id: MEET_TWIN, page_id: MEET_TWIN })
     seedBookmark(QN, { num: 2 })
     seedBookmark(PROJ, { num: 1 })
     seedBookmark(MEET, { num: 1 })
+    seedBookmark(MEET_TWIN, { num: 1 })
     seedBookmark(GS, { text: '1.5' })
 
     const { result } = renderHook(() => useStarredPages())
 
     await waitFor(() => {
-      expect([...result.current.starredIds]).toEqual([MEET, PROJ, GS, QN])
+      expect([...result.current.starredIds]).toEqual([MEET_TWIN, MEET, PROJ, GS, QN])
     })
     expect(result.current.isStarred(QN)).toBe(true)
     expect(result.current.isStarred(SEED_IDS.PAGE_DAILY)).toBe(false)
@@ -121,6 +126,14 @@ describe('useStarredPages', () => {
 
     await waitFor(() => expect([...result.current.starredIds]).toEqual([PROJ, QN, MEET]))
     await waitFor(() => expect(storedOrder(PROJ)).toBe(0))
+
+    // Down: dropped on the last row, it goes after it.
+    act(() => result.current.move(PROJ, MEET))
+
+    await waitFor(() => expect([...result.current.starredIds]).toEqual([QN, MEET, PROJ]))
+    await waitFor(() => expect(storedOrder(PROJ)).toBe(2.5))
+    expect(storedOrder(QN)).toBe(1)
+    expect(storedOrder(MEET)).toBe(1.5)
   })
 
   it('move() renumbers the space when no number fits between the new neighbours', async () => {
@@ -156,6 +169,21 @@ describe('useStarredPages', () => {
     })
 
     await waitFor(() => expect([...result.current.starredIds]).toEqual([WORK_PAGE]))
+  })
+
+  it('keeps starredIds the same object across a re-read that changed nothing', async () => {
+    seedBookmark(QN, { num: 1 })
+    const { result, rerender } = renderHook(() => useStarredPages())
+    await waitFor(() => expect(result.current.isStarred(QN)).toBe(true))
+    const first = result.current.starredIds
+    const reads = () => vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'query_by_property')
+
+    rerender()
+    act(() => invalidateDerivedCaches())
+    await waitFor(() => expect(reads()).toHaveLength(2))
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0))
+
+    expect(result.current.starredIds).toBe(first)
   })
 
   it('every mounted instance sees a toggle', async () => {

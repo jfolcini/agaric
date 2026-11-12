@@ -16,9 +16,7 @@ import { bookmarksQueryKey } from '@/lib/starred-pages'
 
 /** Show `held` as `spaceId`'s bookmarks, in number order. */
 export function seedBookmarks(spaceId: string, held: ReadonlyMap<string, number>): void {
-  const list = [...held]
-    .map(([id, order]) => ({ id, order }))
-    .toSorted((a, b) => a.order - b.order)
+  const list = [...held].map(([id, order]) => ({ id, order })).toSorted((a, b) => a.order - b.order)
   queryClient.setQueryData(bookmarksQueryKey(spaceId), list)
 }
 
@@ -35,7 +33,9 @@ export function bookmarkInvokeHandlers(
       const request = args['request'] as { key?: string } | undefined
       if (request?.key !== 'bookmark') throw new Error(`unexpected query ${JSON.stringify(args)}`)
       const space = (args['scope'] as { space_id?: string } | undefined)?.space_id
-      const ids = [...held.keys()].filter((id) => spaceOf === undefined || spaceOf.get(id) === space)
+      const ids = [...held.keys()].filter(
+        (id) => spaceOf === undefined || spaceOf.get(id) === space,
+      )
       return {
         items: ids.map((id) => makeBlockRow({ id, block_type: 'page', content: id })),
         next_cursor: null,

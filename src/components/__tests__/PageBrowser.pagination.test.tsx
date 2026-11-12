@@ -363,7 +363,7 @@ describe('PageBrowser', () => {
 
       // Snapshot the estimateSize ref after the initial render. Multiple
       // captures may exist due to the mount-time settle (effects fire,
-      // useStarredPages reads localStorage, etc.) — pick the latest as
+      // useStarredPages reads the bookmarks, etc.) — pick the latest as
       // the post-stabilisation reference.
       expect(capturedEstimateSizes.length).toBeGreaterThan(0)
       const initialEstimateSize = capturedEstimateSizes.at(-1)

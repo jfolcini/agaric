@@ -41,8 +41,7 @@ export function getSavedPagesViews(): SavedPagesView[] {
 /**
  * Save a new view under `name`, capturing `tuple` verbatim. Returns the
  * created view (its generated `id` is what callers pass to
- * {@link deleteSavedPagesView}). Single read-modify-write, like
- * `setStarred`'s bulk pattern.
+ * {@link deleteSavedPagesView}). Single read-modify-write.
  */
 export function savePagesView(name: string, tuple: PagesViewTuple): SavedPagesView {
   const views = getSavedPagesViews()

@@ -335,7 +335,7 @@ describe('registry write broadcast (#2666)', () => {
     const { result } = renderHook(() => usePreference(DEVICE_DEF))
     expect(result.current[0]).toBe('a')
 
-    // Non-hook write — the path lib writers like starred-pages.ts use.
+    // Non-hook write — the path lib writers like saved-pages-views.ts use.
     act(() => {
       writePreference(DEVICE_DEF, 'c')
     })
