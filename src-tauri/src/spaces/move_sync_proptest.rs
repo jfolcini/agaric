@@ -268,8 +268,12 @@ async fn vaults(seed: &Seed) -> Vaults {
     let (pool_b, dir_b) = vault(&seed.dir.path().join("b.db")).await;
     let mat_a = Materializer::new(pool_a.clone());
     let mat_b = Materializer::new(pool_b.clone());
-    rehydrate_registry(&pool_a, &mat_a.loro_state().registry, "device-A").await;
-    rehydrate_registry(&pool_b, &mat_b.loro_state().registry, "device-B").await;
+    rehydrate_registry(&pool_a, &mat_a.loro_state().registry, "device-A")
+        .await
+        .expect("rehydrate A");
+    rehydrate_registry(&pool_b, &mat_b.loro_state().registry, "device-B")
+        .await
+        .expect("rehydrate B");
     Vaults {
         mat_a,
         mat_b,

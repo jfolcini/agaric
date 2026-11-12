@@ -959,7 +959,9 @@ mod tests {
             "the engine and SQL agree"
         );
         let rebooted = agaric_engine::loro::registry::LoroEngineRegistry::new();
-        agaric_engine::loro::snapshot::rehydrate_registry(&pool, &rebooted, DEV).await;
+        agaric_engine::loro::snapshot::rehydrate_registry(&pool, &rebooted, DEV)
+            .await
+            .expect("rehydrate");
         let space_id = agaric_store::space::SpaceId::from_trusted(&space);
         assert!(
             rebooted
