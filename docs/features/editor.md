@@ -5,7 +5,7 @@ The editor is a block-based outliner built on TipTap (ProseMirror). Only the foc
 
 ## Surfaces around the focused block
 
-Above the focused block sits the **FormattingToolbar** — always visible. It carries icon buttons grouped by purpose: refs+blocks, structure, metadata, history. Low-priority buttons collapse into a `MoreHorizontal` overflow popover when the container is narrow.
+Above the focused block sits the **FormattingToolbar** — always visible. It carries icon buttons grouped by purpose: refs+blocks, structure, metadata, history. Low-priority buttons collapse into a `MoreHorizontal` overflow popover when the container is narrow. On a phone *Toggle TODO state*, then *Indent* and *Outdent*, keep their places on the bar ahead of *Undo* and *Redo*.
 
 When you select text inside a block, the **SelectionBubbleMenu** appears next to the selection. It hosts the six mark toggles (Bold / Italic / Code / Strike / Highlight / Underline) plus an External Link button. It only appears on non-empty selections so it doesn't get in the way of typing. From the keyboard, with *Tab indents blocks* off in Settings → Editor, Tab moves into it, `←` / `→` move between its buttons, and `Enter` or `Space` presses one.
 
@@ -65,7 +65,7 @@ Settings › Editor › *Show Markdown syntax around the cursor* (on by default,
 | Continue a list | `Enter` on a bullet / numbered block creates the next block with the same list style; `Enter` on an *empty* styled block leaves the list instead |
 | Line break inside a block | `Shift+Enter`, or the toolbar's *New line* button (virtual keyboards have no Shift+Enter). A single line break is a line of the same block, stored as one newline and shown as a break; a blank line separates blocks |
 | Merge into previous | `Backspace` at start of block. On a bullet / numbered block the first `Backspace` clears the list style; the second merges (or, on an empty block, deletes it) |
-| Indent / dedent | `Tab` / `Shift+Tab`, or `Ctrl+Shift+→` / `Ctrl+Shift+←` |
+| Indent / dedent | `Tab` / `Shift+Tab`, or `Ctrl+Shift+→` / `Ctrl+Shift+←`; on touch, the toolbar's *Indent* and *Outdent* buttons (a phone's keyboard has no Tab), in blocks and in page mode |
 | Move block up / down | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` |
 | Collapse / expand children | `Ctrl+.` (or click the chevron) |
 | Open Property Drawer | `Ctrl+Shift+P` |

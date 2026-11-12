@@ -51,8 +51,8 @@ export function buildToolbarItems(
   // no selection) leads the group at near-top priority so it survives overflow
   // collapse at any realistic width: it is the primary text-formatting
   // affordance and the only mark access on touch (where the selection bubble is
-  // suppressed). Kept just below Undo/Redo (100), whose never-overflow
-  // invariant has priority under extreme width pressure.
+  // suppressed). Kept just below Undo/Redo (100 with a fine pointer), whose
+  // never-overflow invariant has priority under extreme width pressure.
   pushButton('toolbar.format', 0, 95, true)
   // #1960 — "Turn into" (Pilcrow) popover hosts every block-type transform,
   // REPLACING the standalone Heading / Code-block / Callout / Blockquote /
@@ -75,7 +75,8 @@ export function buildToolbarItems(
   out.push({ kind: 'separator', key: 'sep-1', group: 1, priority: 0 })
 
   // Group 2 — priority + metadata
-  pushButton('toolbar.cyclePriority', 2, 80)
+  // Below the TODO toggle (80): on a tie the later button drops first, and TODO comes later.
+  pushButton('toolbar.cyclePriority', 2, 75)
   for (const c of metadataButtons) pushButton(c.label, 2, c.priority ?? 0)
   out.push({ kind: 'separator', key: 'sep-2', group: 2, priority: 0 })
 

@@ -48,11 +48,13 @@ import {
 import { type RenderMode, renderConfigButton } from '@/components/FormattingToolbar/shared'
 import {
   createHistoryButtons,
+  createIndentButtons,
   createMetadataButtons,
   createRefsAndBlocks,
   createStructureButtons,
 } from '@/components/FormattingToolbar/toolbar-config'
 import { ToolbarFrame } from '@/components/FormattingToolbar/ToolbarFrame'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import type { ToolbarItem } from '@/hooks/useToolbarOverflow'
 import type { ListStyle } from '@/lib/list-style'
 
@@ -74,6 +76,8 @@ interface FormattingToolbarProps {
   className?: string | undefined
   /** The block-menu button, last on the bar: where nothing else opens the menu (page mode on touch). */
   blockMenu?: { open: boolean; onOpen: (anchor: HTMLElement) => void } | undefined
+  /** Indent and outdent of the block being edited: buttons on the bar on touch, where there is no Tab. */
+  indent?: { onIndent: () => void; onOutdent: () => void } | undefined
 }
 
 function getHeadingLevel(editor: Editor): number {
@@ -93,8 +97,10 @@ export function FormattingToolbar({
   hiddenItems,
   className,
   blockMenu,
+  indent,
 }: FormattingToolbarProps): React.ReactElement {
   const { t } = useTranslation()
+  const isTouch = useIsTouch()
   const [formatPopoverOpen, setFormatPopoverOpen] = useState(false)
   const [turnIntoPopoverOpen, setTurnIntoPopoverOpen] = useState(false)
   const [tableOpsPopoverOpen, setTableOpsPopoverOpen] = useState(false)
@@ -136,11 +142,17 @@ export function FormattingToolbar({
   const groups = useMemo(
     () => ({
       refsAndBlocks: createRefsAndBlocks(editor),
-      structureButtons: createStructureButtons(editor),
+      structureButtons:
+        isTouch && indent !== undefined
+          ? [
+              ...createStructureButtons(editor),
+              ...createIndentButtons(indent.onIndent, indent.onOutdent),
+            ]
+          : createStructureButtons(editor),
       metadataButtons: createMetadataButtons(),
-      historyButtons: createHistoryButtons(editor),
+      historyButtons: createHistoryButtons(editor, isTouch),
     }),
-    [editor],
+    [editor, isTouch, indent],
   )
   const configByKey = useMemo(() => buildConfigByKey(groups), [groups])
   const hasBlockMenu = blockMenu !== undefined
