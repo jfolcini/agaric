@@ -8,8 +8,9 @@
  *
  * Reading changes back is chosen with the folder and changeable later. While
  * it is off, the backend lists the files turning it on would read in under
- * `pending`; turning it on with any asks first, and the backend refuses the
- * plain turn-on if files changed since this card last read the status.
+ * `pending`; turning it on with any asks first, and the confirm sends the
+ * files the dialog listed, so the backend refuses it when another file
+ * changed since: nothing is read in that the user was not shown.
  *
  * Copying attachments into the folder is a stored switch of its own, off by
  * default; a copy changed in the folder is kept, and listed under `diverged`.
@@ -77,10 +78,8 @@ export function MirrorSection(): React.ReactElement | null {
       try {
         const path = action === 'choose' ? unwrap(await commands.pickMirrorFolder()) : null
         if (action === 'choose' && path === null) return
-        // While the mirror is on, the choice made when turning it on does not
-        // apply: reading back changes only through its switch, which asks.
-        const readBack = status?.folder != null ? status.read_back : readBackChoice
-        setStatus(unwrap(await commands.setMirrorFolder(path, readBack)))
+        // The backend takes it only when the mirror turns on.
+        setStatus(unwrap(await commands.setMirrorFolder(path, readBackChoice)))
       } catch (err) {
         logger.error(MODULE, 'failed to change the mirror folder', undefined, err)
         notify.error(t('data.mirrorFailed', { reason: formatErrorForDisplay(err) }))
@@ -88,14 +87,14 @@ export function MirrorSection(): React.ReactElement | null {
         setPending(null)
       }
     },
-    [t, readBackChoice, status],
+    [t, readBackChoice],
   )
 
   const setReadBack = useCallback(
-    async (on: boolean, readPending: boolean) => {
+    async (on: boolean, confirmed: string[]) => {
       setPending('readBack')
       try {
-        setStatus(unwrap(await commands.setMirrorReadBack(on, readPending)))
+        setStatus(unwrap(await commands.setMirrorReadBack(on, confirmed)))
       } catch (err) {
         logger.error(MODULE, 'failed to change reading changes back', undefined, err)
         notify.error(t('data.mirrorReadBackFailed', { reason: formatErrorForDisplay(err) }))
@@ -128,7 +127,7 @@ export function MirrorSection(): React.ReactElement | null {
     } else if (on && status.pending.length > 0) {
       setAskToReadPending(true)
     } else {
-      void setReadBack(on, false)
+      void setReadBack(on, [])
     }
   }
 
@@ -221,7 +220,7 @@ export function MirrorSection(): React.ReactElement | null {
           values={{ count: status.pending.length }}
           confirmKey="data.mirrorReadPendingConfirm"
           cancelKey="data.mirrorReadPendingCancel"
-          onConfirm={() => setReadBack(true, true)}
+          onConfirm={() => setReadBack(true, status.pending)}
         >
           <ScrollArea className="max-h-56 rounded-md border" viewportClassName="p-3">
             <ul className="space-y-1 text-sm">

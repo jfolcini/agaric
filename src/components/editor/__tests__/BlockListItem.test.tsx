@@ -27,7 +27,7 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 const mockNavigateToPage = vi.fn()
@@ -165,6 +165,10 @@ beforeEach(() => {
 })
 
 describe('BlockListItem', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
   it('inherits the shared viewport cap for the coarse-pointer date sheet', async () => {
     const user = userEvent.setup()
     mockUseIsTouch.mockReturnValue(true)
@@ -237,7 +241,6 @@ describe('BlockListItem', () => {
         />
       </ul>,
     )
-    localStorage.clear()
 
     expect(screen.getByText(/11\/11\/2026/)).toBeInTheDocument()
     expect(screen.queryByText(/2026-11-11/)).not.toBeInTheDocument()

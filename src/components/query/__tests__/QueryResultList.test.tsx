@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
@@ -59,6 +59,10 @@ beforeEach(() => {
 })
 
 describe('QueryResultList', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
   it('renders a list of results', () => {
     const results = [
       makeBlock({ id: 'B1', content: 'First task' }),
@@ -146,7 +150,6 @@ describe('QueryResultList', () => {
     const results = [makeBlock({ id: 'B1', content: 'Task', parent_id: 'DAY', page_id: 'DAY' })]
 
     render(<QueryResultList results={results} pageTitles={new Map([['DAY', '2026-11-11']])} />)
-    localStorage.clear()
 
     expect(screen.getByText('11/11/2026')).toBeInTheDocument()
     expect(screen.getByRole('option')).toHaveAccessibleName(/11\/11\/2026$/)

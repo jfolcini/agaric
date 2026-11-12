@@ -13,7 +13,7 @@
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
@@ -66,6 +66,10 @@ beforeEach(() => {
 })
 
 describe('HistoryItemCore', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
   it('labels the op type badge in words, keeping the raw op type in data-op-type', () => {
     renderCore(<HistoryItemCore entry={makeEntry(1, 'edit_block', { to_text: 'hi' })} />)
     const badge = screen.getByTestId('history-type-badge')
@@ -141,7 +145,6 @@ describe('HistoryItemCore', () => {
     localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
     const entry = makeEntry(1, 'create_block', { block_type: 'page', content: '2026-11-11' })
     renderCore(<HistoryItemCore entry={entry} />)
-    localStorage.clear()
     expect(screen.getByText('11/11/2026')).toBeInTheDocument()
     expect(screen.queryByText('2026-11-11')).not.toBeInTheDocument()
   })

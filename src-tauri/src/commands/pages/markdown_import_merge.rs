@@ -71,16 +71,6 @@ impl<'a> MergeRule<'a> {
     fn merges(&self, page_id: &str) -> bool {
         !self.run_pages.iter().any(|id| id == page_id)
     }
-
-    /// Why a file titled `name` did not merge into the page of its title:
-    /// an earlier file of the run wrote it, and the title, `imported_as`, it
-    /// was imported under instead.
-    fn warning(name: &str, imported_as: &str) -> String {
-        format!(
-            "an earlier file of this import wrote the page '{name}'; the file was imported as \
-             '{imported_as}'"
-        )
-    }
 }
 
 /// The page a file's title names in a space ([`title_pages`]).
@@ -161,7 +151,10 @@ pub(super) async fn import_target(
         Some(_) => {
             let names = SpacePageNames::read(conn, space_id).await?;
             let free = crate::repair::name_collisions::first_free_title(&names, title);
-            warnings.push(MergeRule::warning(title, &free));
+            warnings.push(format!(
+                "an earlier file of this import wrote the page '{title}'; the file was imported \
+                 as '{free}'"
+            ));
             ImportTarget::Create(free)
         }
     })

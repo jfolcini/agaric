@@ -19,7 +19,7 @@ import { expect, focusBlock, openPage, reopenPage, saveBlock, test, waitForBoot 
 /** Open the Turn into popover from the focused block's toolbar. */
 async function openTurnInto(page: import('@playwright/test').Page) {
   await page
-    .locator('[data-testid="block-editor"]')
+    .getByTestId('formatting-toolbar')
     .getByRole('button', { name: 'Turn into', exact: true })
     .click()
 }

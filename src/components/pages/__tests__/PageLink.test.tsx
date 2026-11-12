@@ -60,6 +60,10 @@ beforeEach(() => {
 })
 
 describe('PageLink', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
   it('renders the title as button text', () => {
     render(<PageLink pageId="P1" title="My Page" />)
     expect(screen.getByRole('link', { name: 'My Page' })).toBeInTheDocument()
@@ -69,7 +73,6 @@ describe('PageLink', () => {
     localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
     const user = userEvent.setup()
     render(<PageLink pageId="DAY" title="2026-11-11" />)
-    localStorage.clear()
 
     useNavigationStore.setState({ currentView: 'pages' })
     await user.click(screen.getByRole('link', { name: '11/11/2026' }))

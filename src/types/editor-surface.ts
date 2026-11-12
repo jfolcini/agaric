@@ -21,6 +21,8 @@ export interface EditorSurfaceProps {
   currentPriority: string | null
   /** Whether a file drag is currently hovering the block (renders the drop hint). */
   isDragOver: boolean
+  /** Focus left the view's formatting toolbar, which renders outside the block, for `related`. */
+  onToolbarBlur: (related: Element | null) => void
 }
 
 export type EditorSurfaceComponent = ComponentType<EditorSurfaceProps>

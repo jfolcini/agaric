@@ -15,7 +15,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { format, subDays } from 'date-fns'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
@@ -142,6 +142,10 @@ function defaultProps(overrides: Partial<AgendaResultsProps> = {}): AgendaResult
 }
 
 describe('AgendaResults', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     mockInvalidationKey = 0
@@ -716,7 +720,6 @@ describe('AgendaResults', () => {
 
     expect(screen.getByTestId('agenda-group-header')).toHaveTextContent('11/11/2026(1)')
     expect(screen.getByRole('link', { name: '11/11/2026' })).toBeInTheDocument()
-    localStorage.clear()
   })
 
   it('shows "No page" group for blocks without page_id', () => {

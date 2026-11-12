@@ -791,14 +791,17 @@ async fn sync_pairing_commands_clear_the_backoff_that_would_swallow_their_wake_3
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sync_start_sync_returns_complete_info() {
+async fn sync_start_sync_returns_queued_info() {
     let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
     let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
     assert!(result.is_ok(), "start_sync must succeed for a fresh peer");
 
     let info = result.unwrap();
-    assert_eq!(info.state, "complete", "sync state should be complete");
+    assert_eq!(
+        info.state, "queued",
+        "#6551: start_sync only wakes the daemon; no session has run yet"
+    );
     assert_eq!(
         info.local_device_id, "device-local",
         "local device id should match"

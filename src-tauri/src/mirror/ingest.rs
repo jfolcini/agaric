@@ -353,6 +353,31 @@ pub async fn rename(
     })
 }
 
+/// Move `page_id` to the Trash, its file at `path` deleted outside Agaric
+/// (#5363 slice 3): a soft delete, so it can be restored, one undo step.
+pub async fn trash(
+    ingest: &Ingest,
+    device_id: &str,
+    page_id: &str,
+    path: &str,
+) -> Result<MirrorIngested, String> {
+    let page = BlockId::from_trusted(page_id);
+    let deleted = capture_op_refs(Box::pin(delete_block_inner(
+        &ingest.pool,
+        device_id,
+        &ingest.materializer,
+        page,
+    )))
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(MirrorIngested {
+        page_id: page_id.to_owned(),
+        path: path.to_owned(),
+        op_refs: deleted.op_refs,
+        report: PageSourceReport::default(),
+    })
+}
+
 /// The file read, `(text, edited, kept, saved_ids)` as [`write_back`] takes
 /// them, written back over the page's render after its save, linking
 /// attachments as `links` does; `None` when the page cannot be rendered, and

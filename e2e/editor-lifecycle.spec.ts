@@ -371,7 +371,7 @@ test.describe('Editor blur by a press or a key @editor @mobile', () => {
     await upper.getByRole('button', { name: 'Add block', exact: true }).click()
     await expect(upper.getByRole('textbox', { name: 'Block editor' })).toBeFocused()
     await page.keyboard.insertText('upper day')
-    await expect(upper.getByTestId('formatting-toolbar')).toBeVisible()
+    await expect(page.getByTestId('formatting-toolbar')).toBeVisible()
 
     await lowerBlock.click()
 

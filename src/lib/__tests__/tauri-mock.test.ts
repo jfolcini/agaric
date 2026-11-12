@@ -3338,10 +3338,10 @@ describe('cancel_pairing', () => {
 })
 
 describe('start_sync', () => {
-  it('returns SyncStatus shape with syncing state', () => {
+  it('returns SyncStatus shape with queued state', () => {
     const result = invoke('start_sync', { peerId: 'peer-123' }) as Record<string, unknown>
     expect(result).toEqual({
-      state: 'syncing',
+      state: 'queued',
       local_device_id: 'mock-device-id-0000',
       remote_device_id: 'peer-123',
       ops_received: 0,

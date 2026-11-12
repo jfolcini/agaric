@@ -1,12 +1,15 @@
 import type { Page } from '@playwright/test'
 
+import { finishSyncSession } from './domain'
 import {
   emitMockEvent,
   expect,
+  keepSyncChannels,
   navigateToView,
   openSettingsTab,
   pairOnePeer,
   syncButton,
+  syncChannelCount,
   syncTooltipLines,
   test,
   waitForBoot,
@@ -18,11 +21,15 @@ import {
  * "last synced" tooltip, and the internet fallback switch in Settings › Sync &
  * devices.
  *
- * The icon reads the sync store. `useSyncTrigger`'s own run writes syncing
- * (there is no `sync:started` event) and, when it finds no network, offline;
+ * The icon reads the sync store. A pressed Sync writes syncing (there is no
+ * `sync:started` event) and, when it finds no network, offline;
  * `sync:complete` writes idle and the last-synced time; `sync:error` writes
  * failed. The mock answers `start_sync` at once, so the spec holds it open,
  * as a slow peer would, to see the syncing state.
+ *
+ * `start_sync` only queues a session (#6551): a press is answered by the
+ * terminal update on the channel it opened, which the mock never sends, so
+ * the spec keeps that channel and plays the backend's side.
  */
 
 interface MockWindow {
@@ -78,6 +85,7 @@ test('the sidebar Sync icon shows no devices paired, idle, syncing, failed and o
   await expect(dot).toContainClass('bg-sync-idle')
   await expect(await syncTooltipLines(page)).toHaveText(['Sync all devices', 'Never synced'])
 
+  await keepSyncChannels(page)
   await holdNextStartSync(page)
   await button.click()
   await expect(dot).toHaveAttribute('data-sync-state', 'syncing')
@@ -88,13 +96,8 @@ test('the sidebar Sync icon shows no devices paired, idle, syncing, failed and o
 
   // The peer answers, and the backend reports the finished session.
   await releaseStartSync(page)
-  await emitMockEvent(page, 'sync:complete', {
-    type: 'complete',
-    remote_device_id: 'device-b',
-    ops_received: 1,
-    ops_sent: 1,
-    changed_blocks: 0,
-  })
+  await expect.poll(() => syncChannelCount(page)).toBeGreaterThan(0)
+  await finishSyncSession(page)
   await expect(dot).toHaveAttribute('data-sync-state', 'idle')
   await expect(button).toHaveAttribute('aria-disabled', 'false')
   await expect(await syncTooltipLines(page)).toHaveText([
@@ -127,6 +130,46 @@ test('the sidebar Sync icon shows no devices paired, idle, syncing, failed and o
   await page.clock.fastForward('01:00')
   await expect(dot).toHaveAttribute('data-sync-state', 'offline')
   await expect(dot).toContainClass('bg-muted-foreground')
+})
+
+test('a pressed Sync says "Sync complete" only once its session finished @sync', async ({
+  page,
+}) => {
+  await page.clock.install()
+  await waitForBoot(page)
+  await pairOnePeer(page)
+  await navigateToView(page, 'Settings')
+  await openSettingsTab(page, 'Sync & devices')
+  await expect(page.getByTestId('settings-panel-sync').locator('.device-peer-name')).toHaveText(
+    'Paired Device',
+  )
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000)
+  const button = syncButton(page)
+  const toasts = page.locator('[data-sonner-toast]')
+  await keepSyncChannels(page)
+
+  // The peer is switched off: the command returns, and no session ever reports back.
+  // Sonner renders on a timer of its own, so the paused clock is run after each step
+  // that could raise a toast.
+  await button.click()
+  await expect.poll(() => syncChannelCount(page)).toBeGreaterThan(0)
+  await page.clock.runFor(1000)
+  await expect(toasts.getByText('Sync complete', { exact: true })).toHaveCount(0)
+  await expect(button).toHaveAttribute('aria-disabled', 'true')
+  await page.clock.fastForward('01:00')
+  await page.clock.runFor(100)
+  await expect(toasts.getByText(/^Sync failed for device /)).toBeVisible()
+  await expect(button).toHaveAttribute('aria-disabled', 'false')
+  await expect(toasts.getByText('Sync complete', { exact: true })).toHaveCount(0)
+
+  // The peer is back: the next press's session finishes, and only that is a success.
+  const channelsBefore = await syncChannelCount(page)
+  await button.click()
+  await expect.poll(() => syncChannelCount(page)).toBeGreaterThan(channelsBefore)
+  await finishSyncSession(page)
+  await page.clock.runFor(100)
+  await expect(toasts.getByText('Sync complete', { exact: true })).toBeVisible()
+  await expect(button).toHaveAttribute('aria-disabled', 'false')
 })
 
 function relayEnabled(page: Page): Promise<boolean> {

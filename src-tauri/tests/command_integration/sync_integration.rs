@@ -306,14 +306,17 @@ async fn confirm_without_prior_start_arms_proof_and_creates_no_peer_3463() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn start_sync_returns_complete_info() {
+async fn start_sync_returns_queued_info() {
     let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
 
     let info = start_sync_inner(&pool, &scheduler, "dev-local", "dev-remote".into())
         .await
         .unwrap();
-    assert_eq!(info.state, "complete", "sync state should be complete");
+    assert_eq!(
+        info.state, "queued",
+        "#6551: start_sync only wakes the daemon; no session has run yet"
+    );
     assert_eq!(info.local_device_id, "dev-local");
     assert_eq!(info.remote_device_id, "dev-remote");
     assert_eq!(info.ops_received, 0);
@@ -415,7 +418,7 @@ async fn full_pair_then_sync_workflow() {
     let sync_info = start_sync_inner(&pool, &scheduler, "dev-local", "dev-remote".into())
         .await
         .unwrap();
-    assert_eq!(sync_info.state, "complete");
+    assert_eq!(sync_info.state, "queued");
 
     // #855: confirm arms the pending-pairing window (proof stored) rather than
     // persisting a peer_ref; the peer_ref is established by proof-verified TOFU

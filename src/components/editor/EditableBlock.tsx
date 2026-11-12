@@ -481,7 +481,7 @@ function EditableBlockInner({
     [blockId],
   )
 
-  const { handleBlur } = useEditorBlur({
+  const { handleBlur, leave } = useEditorBlur({
     rovingEditor,
     blockId,
     edit,
@@ -491,6 +491,12 @@ function EditableBlockInner({
     rootParentId,
     pageStore: pageStoreApi,
   })
+  const handleToolbarBlur = useCallback(
+    (related: Element | null) => {
+      if (wrapperRef.current) leave(wrapperRef.current, related)
+    },
+    [leave],
+  )
 
   const { t } = useTranslation()
   const [isDragOver, setIsDragOver] = useState(false)
@@ -633,6 +639,7 @@ function EditableBlockInner({
         blockId={blockId}
         currentPriority={currentPriority ?? null}
         isDragOver={isDragOver}
+        onToolbarBlur={handleToolbarBlur}
       />
     </section>
   )

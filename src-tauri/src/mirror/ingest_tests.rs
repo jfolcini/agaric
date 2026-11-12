@@ -928,22 +928,20 @@ async fn a_move_whose_new_title_the_space_holds_leaves_the_page_where_it_was() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_vanished_file_nothing_claims_is_written_again_once_it_counts_as_gone() {
+async fn with_reading_back_off_a_vanished_file_stays_gone_and_is_listed_as_pending() {
     let mut fx = Fx::new().await;
-    fx.page("Alpha", &["one"]).await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
     fx.tick().await;
-    let written = fx.read();
+    read_back(&fx, false, false).await.unwrap();
 
     std::fs::remove_file(fx.root.join(ALPHA)).unwrap();
-    fx.tick().await;
-    fx.tick().await;
-    assert!(
-        !fx.root.join(ALPHA).exists(),
-        "held while it may yet be found renamed"
-    );
-    fx.tick().await;
+    for _ in 0..5 {
+        fx.tick().await;
+    }
 
-    assert_eq!(fx.read(), written);
+    assert!(!fx.root.join(ALPHA).exists(), "not written again");
+    assert!(!is_trashed(&fx, &page).await, "nor read in");
+    assert_eq!(fx.status().await.pending, [ALPHA]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -983,8 +981,15 @@ async fn op_count(fx: &Fx) -> i64 {
         .unwrap()
 }
 
+/// Turn reading back on or off; `read_pending` confirms what the status
+/// lists as pending now, as the dialog does.
 async fn read_back(fx: &Fx, on: bool, read_pending: bool) -> Result<MirrorStatus, AppError> {
-    set_mirror_read_back_inner(&fx.pool, DEV, &fx.state, on, read_pending).await
+    let shown = if read_pending {
+        fx.status().await.pending
+    } else {
+        Vec::new()
+    };
+    set_mirror_read_back_inner(&fx.pool, DEV, &fx.state, on, &shown).await
 }
 
 /// Alpha and Beta mirrored, reading back turned off, then the folder changed
@@ -1018,10 +1023,9 @@ async fn with_reading_back_off_no_outside_change_reaches_agaric() {
     assert!(pages_titled(&fx, "Gamma").await.is_empty());
     assert!(pages_titled(&fx, "Delta").await.is_empty());
     assert_eq!(pages_titled(&fx, "Beta").await.len(), 1);
-    let beta = std::fs::read_to_string(fx.root.join("TestSpace/Beta.md")).unwrap();
     assert!(
-        beta.contains("two"),
-        "a vanished file is written again: {beta}"
+        !fx.root.join("TestSpace/Beta.md").exists(),
+        "a vanished file is not written again"
     );
     let status = fx.status().await;
     assert!(!status.read_back);
@@ -1030,6 +1034,7 @@ async fn with_reading_back_off_no_outside_change_reaches_agaric() {
         status.pending,
         [
             "TestSpace/Alpha.md",
+            "TestSpace/Beta.md",
             "TestSpace/Delta.md",
             "TestSpace/Gamma.md"
         ]
@@ -1043,7 +1048,7 @@ async fn reading_back_turned_on_reads_nothing_until_the_user_chooses_to() {
 
     let refused = read_back(&fx, true, false).await;
     assert!(
-        matches!(&refused, Err(e) if e.to_string().contains("3 files")),
+        matches!(&refused, Err(e) if e.to_string().contains("4 files")),
         "{refused:?}"
     );
     for _ in 0..3 {
@@ -1120,7 +1125,7 @@ proptest! {
     /// wrote is written over.
     #[test]
     fn with_reading_back_off_outside_changes_append_no_op_and_are_never_written_over(
-        changes in prop::collection::vec((0usize..3, 0u8..3, "[a-z]{1,6}"), 1..6),
+        changes in prop::collection::vec((0usize..3, 0u8..5, "[a-z]{1,6}"), 1..6),
         ask_to_turn_on in any::<bool>(),
     ) {
         tokio::runtime::Builder::new_multi_thread()
@@ -1130,6 +1135,7 @@ proptest! {
             .unwrap()
             .block_on(async {
                 let mut fx = Fx::new().await;
+                space_b(&fx).await;
                 for title in ["P0", "P1", "P2"] {
                     fx.page(title, &["line"]).await;
                 }
@@ -1137,6 +1143,7 @@ proptest! {
                 read_back(&fx, false, false).await.unwrap();
                 let ops = op_count(&fx).await;
                 let mut written: HashMap<String, String> = HashMap::new();
+                let mut deleted: Vec<String> = Vec::new();
                 for (page, kind, word) in &changes {
                     let path = format!("TestSpace/P{page}.md");
                     match kind {
@@ -1153,10 +1160,26 @@ proptest! {
                                 written.remove(&path);
                             }
                         }
-                        _ => {
+                        2 => {
                             let text = format!("{word} new\n");
                             write_at(&fx, &format!("TestSpace/new-{word}.md"), &text);
                             written.insert(format!("TestSpace/new-{word}.md"), text);
+                        }
+                        3 => {
+                            // Moved into another space's folder.
+                            let new = format!("TestSpaceB/P{page}.md");
+                            if fx.root.join(&path).exists() && !fx.root.join(&new).exists() {
+                                rename_at(&fx, &path, &new);
+                                written.insert(new.clone(), std::fs::read_to_string(fx.root.join(&new)).unwrap());
+                                written.remove(&path);
+                            }
+                        }
+                        _ => {
+                            if fx.root.join(&path).exists() {
+                                std::fs::remove_file(fx.root.join(&path)).unwrap();
+                                written.remove(&path);
+                                deleted.push(path);
+                            }
                         }
                     }
                     fx.tick().await;
@@ -1171,6 +1194,11 @@ proptest! {
                 for (path, text) in &written {
                     let now = std::fs::read_to_string(fx.root.join(path)).ok();
                     prop_assert_eq!(now.as_deref(), Some(text.as_str()), "{}", path);
+                }
+                for path in &deleted {
+                    if !written.contains_key(path) {
+                        prop_assert!(!fx.root.join(path).exists(), "{} is not written again", path);
+                    }
                 }
                 Ok(())
             })?;
@@ -1278,4 +1306,267 @@ async fn choosing_a_folder_while_mirroring_keeps_reading_back_off() {
 
     assert!(!status.read_back);
     assert_eq!(fx.contents(&page).await, ["one"], "nothing read in");
+}
+
+// ── External deletes (#5363 slice 3, PR 2) ──────────────────────────────
+
+async fn is_trashed(fx: &Fx, page: &str) -> bool {
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(page)
+        .fetch_one(&fx.pool)
+        .await
+        .unwrap()
+        .is_some()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_deleted_outside_agaric_trashes_its_page_and_one_undo_restores_it() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    let (beta, _) = fx.page("Beta", &["two"]).await;
+    fx.tick().await;
+
+    std::fs::remove_file(fx.root.join(ALPHA)).unwrap();
+    fx.tick().await;
+    fx.tick().await;
+    assert!(
+        !is_trashed(&fx, &alpha).await,
+        "held while it may yet turn up renamed"
+    );
+    fx.tick().await;
+    fx.tick().await;
+
+    assert!(is_trashed(&fx, &alpha).await, "to the Trash");
+    assert!(!is_trashed(&fx, &beta).await);
+    assert!(!fx.root.join(ALPHA).exists(), "not written again");
+    let event = fx.events().pop().unwrap();
+    assert_eq!(event.page_id, alpha);
+    undo_ops_inner(&fx.pool, DEV, &fx.mat, event.op_refs)
+        .await
+        .unwrap();
+    settle(&fx.mat).await;
+    assert!(!is_trashed(&fx, &alpha).await, "one undo restores it");
+    fx.tick().await;
+    assert!(
+        fx.root.join(ALPHA).exists(),
+        "and its file is written again"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_emptied_folder_trashes_nothing_and_pauses_the_mirror() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+
+    std::fs::remove_dir_all(fx.root.join("TestSpace")).unwrap();
+    for _ in 0..5 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await);
+    let status = fx.status().await;
+    assert!(
+        status
+            .paused
+            .as_ref()
+            .is_some_and(|why| why.contains("empty")),
+        "{status:?}"
+    );
+    assert!(
+        !fx.root.join("TestSpace").exists(),
+        "nothing written into it either"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_folder_removed_trashes_none_of_its_pages() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    space_b(&fx).await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    create_page_in_space_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        None,
+        "Other".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    fx.tick().await;
+
+    std::fs::remove_dir_all(fx.root.join("TestSpace")).unwrap();
+    for _ in 0..5 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_with_no_states_of_its_own_starts_as_new_trashing_nothing() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+
+    let other = TempDir::new().unwrap();
+    set_mirror_folder_inner(
+        &fx.pool,
+        DEV,
+        &fx.state,
+        Some(other.path().to_str().unwrap().to_owned()),
+        true,
+    )
+    .await
+    .unwrap();
+    for _ in 0..5 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await);
+    assert!(
+        other.path().join(ALPHA).exists(),
+        "the new folder holds the page"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mirror_moved_away_and_back_finds_its_files_as_it_left_them() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    // The file in the user's own form, read in, so its bytes are not the render.
+    fx.write("* one\n");
+    fx.settle_file().await;
+    let home = fx.root.to_str().unwrap().to_owned();
+
+    let other = TempDir::new().unwrap();
+    let away = other.path().to_str().unwrap().to_owned();
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(away), true)
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(home), true)
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await);
+    assert_eq!(pages_titled(&fx, "Alpha").await, [alpha], "no twin");
+    assert_eq!(fx.read(), "* one\n", "the file keeps its form");
+    let status = fx.status().await;
+    assert!(status.diverged.is_empty(), "{:?}", status.diverged);
+    assert!(status.failed.is_empty(), "{:?}", status.failed);
+}
+
+/// Turn reading back on, confirming the files `shown` were listed to the user.
+async fn confirm(fx: &Fx, shown: Vec<String>) -> Result<MirrorStatus, AppError> {
+    set_mirror_read_back_inner(&fx.pool, DEV, &fx.state, true, &shown).await
+}
+
+/// The dialog's list goes stale when a file changes after it was read: the
+/// confirm reads in only what the user saw.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_changed_after_the_list_was_shown_is_not_read_in_by_its_confirm() {
+    let mut fx = Fx::new().await;
+    let (alpha, _, ops) = changed_while_off(&mut fx).await;
+    let shown = fx.status().await.pending;
+    write_at(&fx, "TestSpace/Epsilon.md", "unseen\n");
+
+    let refused = confirm(&fx, shown).await;
+    assert!(
+        matches!(&refused, Err(e) if e.to_string().contains("changed")),
+        "{refused:?}"
+    );
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+    assert_eq!(op_count(&fx).await, ops, "nothing read in");
+    assert_eq!(fx.contents(&alpha).await, ["one"]);
+
+    let shown = fx.status().await.pending;
+    assert!(
+        shown.contains(&"TestSpace/Epsilon.md".to_owned()),
+        "{shown:?}"
+    );
+    confirm(&fx, shown).await.unwrap();
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+    assert_eq!(
+        pages_titled(&fx, "Epsilon").await.len(),
+        1,
+        "read in once shown"
+    );
+}
+
+/// A file renamed while reading back is off is read in as that rename once
+/// the user chooses to, not as a second page beside the first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rename_made_while_reading_back_was_off_is_read_in_as_a_rename() {
+    let mut fx = Fx::new().await;
+    changed_while_off(&mut fx).await;
+    let beta = pages_titled(&fx, "Beta").await;
+    assert_eq!(beta.len(), 1);
+    assert!(
+        !fx.root.join("TestSpace/Beta.md").exists(),
+        "the renamed file's old place stays empty while reading back is off"
+    );
+
+    read_back(&fx, true, true).await.unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert_eq!(
+        pages_titled(&fx, "Gamma").await,
+        beta,
+        "the same page, renamed"
+    );
+    assert!(pages_titled(&fx, "Beta").await.is_empty());
+    assert!(!fx.root.join("TestSpace/Beta.md").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_trashed_for_its_deleted_file_and_restored_from_the_trash_is_written_again() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.page("Beta", &["two"]).await;
+    fx.tick().await;
+    std::fs::remove_file(fx.root.join(ALPHA)).unwrap();
+    // Restored at once, before another tick, as from the Trash list.
+    for _ in 0..6 {
+        fx.tick().await;
+        if is_trashed(&fx, &alpha).await {
+            break;
+        }
+    }
+    assert!(is_trashed(&fx, &alpha).await);
+
+    let deleted_at = sqlx::query_scalar::<_, i64>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(&alpha)
+        .fetch_one(&fx.pool)
+        .await
+        .unwrap();
+    crate::commands::restore_block_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        BlockId::from_trusted(&alpha),
+        deleted_at,
+    )
+    .await
+    .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await, "restored");
+    assert!(fx.root.join(ALPHA).exists(), "and written again");
 }

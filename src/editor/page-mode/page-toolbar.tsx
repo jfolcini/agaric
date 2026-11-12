@@ -172,7 +172,7 @@ export function PageToolbar({
       }}
       tips={TIPS}
       hiddenItems={HIDDEN}
-      className="sticky top-0 z-10 bg-background"
+      className="sticky -top-4 z-10 bg-background md:-top-6"
       blockMenu={
         isTouch
           ? { open: blockMenuOpen, onOpen: (anchor) => openBlockMenu(editor, anchor) }

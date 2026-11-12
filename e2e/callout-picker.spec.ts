@@ -18,10 +18,12 @@ test.describe('Callout type picker (#215) @editor', () => {
     await page.keyboard.press('Control+a')
     await editor.pressSequentially('alert text')
 
-    const blockEditor = page.locator('[data-testid="block-editor"]')
     // #3001 — Turn into → Callout is a single-step disclosure: opening it expands
     // the variant list in place, so type + variant are one pass.
-    await blockEditor.getByRole('button', { name: 'Turn into', exact: true }).click()
+    await page
+      .getByTestId('formatting-toolbar')
+      .getByRole('button', { name: 'Turn into', exact: true })
+      .click()
     await page.getByRole('menuitem', { name: 'Callout', exact: true }).click()
     await page.getByTestId('callout-type-warning').click()
     await saveBlock(page)

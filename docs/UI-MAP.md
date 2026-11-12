@@ -88,7 +88,7 @@ Only one block mounts `<EditorContent>` at a time. Focus moves → editor unmoun
 
 ### Toolbar pair
 
-- **FormattingToolbar** — always visible above the focused block. Buttons grouped by purpose; low-priority items overflow into a `MoreHorizontal` popover when narrow. Internals layout: `FormattingToolbar/items.ts` owns the priority-flatten + `useToolbarOverflow` measurement; group renderers live in sibling files (`RefsAndBlocksGroup.tsx`, `MetadataGroup.tsx`); shared dispatch primitives in `shared.tsx`. To add a button, add it to the matching group + its priority + an i18n key.
+- **FormattingToolbar** — one per view while a block is edited, pinned under the view header (`FormattingToolbar/view-toolbar.tsx`: the edited block's `EditorSurface` hands its bar to `ViewToolbarSlot` in the main scroller); on touch, above the keyboard. Buttons grouped by purpose; low-priority items overflow into a `MoreHorizontal` popover when narrow. Internals layout: `FormattingToolbar/items.ts` owns the priority-flatten + `useToolbarOverflow` measurement; group renderers live in sibling files (`RefsAndBlocksGroup.tsx`, `MetadataGroup.tsx`); shared dispatch primitives in `shared.tsx`. To add a button, add it to the matching group + its priority + an i18n key.
 - **SelectionBubbleMenu** — appears only on non-empty selection; hosts the mark toggles + the External Link button.
 
 Both toolbars use `onPointerDown + preventDefault()` so clicks never steal focus.

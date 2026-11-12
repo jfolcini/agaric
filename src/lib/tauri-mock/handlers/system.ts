@@ -158,7 +158,10 @@ export const systemHandlers = {
   set_mirror_folder: (args) => {
     const { path, readBack } = args as { path?: unknown; readBack?: unknown }
     if (typeof path === 'string') {
-      appSettings.set(MIRROR_READ_BACK_KEY, String(readBack !== false))
+      // As the backend: the choice applies only when the mirror turns on.
+      if (!appSettings.has(MIRROR_FOLDER_KEY)) {
+        appSettings.set(MIRROR_READ_BACK_KEY, String(readBack !== false))
+      }
       appSettings.set(MIRROR_FOLDER_KEY, path)
     } else appSettings.delete(MIRROR_FOLDER_KEY)
     return mirrorStatus()

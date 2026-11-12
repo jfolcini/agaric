@@ -160,7 +160,7 @@ test.describe('Toolbar Turn into: callout variant @editor @mobile', () => {
     await focusBlock(page)
 
     await page
-      .locator('[data-testid="block-editor"]')
+      .getByTestId('formatting-toolbar')
       .getByRole('button', { name: 'Turn into', exact: true })
       .click()
     await page.getByRole('menuitem', { name: 'Callout', exact: true }).click()

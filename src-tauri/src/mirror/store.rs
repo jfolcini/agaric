@@ -258,4 +258,57 @@ impl StateDir {
             _ => Ok(()),
         }
     }
+
+    /// The file beside the states naming the folder their paths are below.
+    fn folder_file(&self) -> PathBuf {
+        self.0.with_file_name("folder")
+    }
+
+    /// Where the states of a folder other than the bound one are kept.
+    fn kept_for(&self, folder: &str) -> PathBuf {
+        let key = blake3::hash(folder.as_bytes()).to_hex();
+        self.0.with_file_name("folders").join(&key[..32])
+    }
+
+    /// Bind the states to `folder`. When they were written below another
+    /// folder, they are set aside for it and `folder`'s own, kept from when
+    /// the mirror last wrote there, take their place, or none: a page whose
+    /// file another folder held is never read as one whose file vanished
+    /// from this one, and coming back finds the files as it left them.
+    /// Returns whether the states changed. States that name no folder, as
+    /// those written before the binding, are taken as `folder`'s.
+    pub fn bind(&self, folder: &str) -> std::io::Result<bool> {
+        let bound = match std::fs::read_to_string(self.folder_file()) {
+            Ok(bound) => Some(bound),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e),
+        };
+        if bound.as_deref() == Some(folder) {
+            return Ok(false);
+        }
+        if let Some(bound) = &bound {
+            let aside = self.kept_for(bound);
+            remove_dir_if_any(&aside)?;
+            std::fs::create_dir_all(aside.parent().unwrap_or(&aside))?;
+            rename_if_any(&self.0, &aside)?;
+            rename_if_any(&self.kept_for(folder), &self.0)?;
+        }
+        std::fs::create_dir_all(&self.0)?;
+        write_atomic(&self.folder_file(), folder.as_bytes())?;
+        Ok(bound.is_some())
+    }
+}
+
+fn remove_dir_if_any(dir: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+fn rename_if_any(from: &Path, to: &Path) -> std::io::Result<()> {
+    match std::fs::rename(from, to) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
 }

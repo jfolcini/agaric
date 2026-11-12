@@ -216,7 +216,7 @@ test.describe('one Ctrl+Z takes back a kind change with the kind it took off @ed
     await focusBlockById(page, alpha)
     await page.keyboard.press('End')
     await page
-      .locator('[data-testid="block-editor"]')
+      .getByTestId('formatting-toolbar')
       .getByRole('button', { name: 'Turn into', exact: true })
       .click()
     await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()

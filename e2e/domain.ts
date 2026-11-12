@@ -2,10 +2,12 @@ import type { Locator, Page } from '@playwright/test'
 
 import {
   activeDialog,
+  emitMockEvent,
   expect,
   focusBlockById,
   openPage,
   reopenPage,
+  streamSyncProgress,
   typeSlashCommand,
 } from './helpers'
 
@@ -54,4 +56,15 @@ export async function expectPersisted(
   await reopenPage(page, pageTitle)
   if (text === undefined) await expect(effect).toBeVisible()
   else await expect(effect).toHaveText(text)
+}
+
+/**
+ * The peer answered and the session the latest `start_sync` queued finished, moving nothing:
+ * the backend's `sync:complete`, then the terminal update on that call's channel (needs
+ * `keepSyncChannels`).
+ */
+export async function finishSyncSession(page: Page): Promise<void> {
+  const counts = { remote_device_id: 'device-b', ops_received: 1, ops_sent: 1 }
+  await emitMockEvent(page, 'sync:complete', { type: 'complete', ...counts, changed_blocks: 0 })
+  await streamSyncProgress(page, { kind: 'sync', state: 'complete', ...counts })
 }

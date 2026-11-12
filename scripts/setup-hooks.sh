@@ -570,7 +570,7 @@ install_nextest() {
     && have cargo-nextest; then
     ok "cargo-nextest (prebuilt $platform)"; return
   fi
-  warn "could not install cargo-nextest — run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C \"$dest\""
+  warn "could not install cargo-nextest — run: curl -LsSf https://get.nexte.st/latest/${platform:-linux} | tar zxf - -C \"$dest\""
 }
 
 # sqlx-cli needs custom features (rustls + sqlite only) — same as CI.

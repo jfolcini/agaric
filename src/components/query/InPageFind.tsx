@@ -232,7 +232,7 @@ export function InPageFind({
     }
     // Mounted: the tree is done; holding the request would re-expand a block
     // the user collapses while the bar is open.
-    if (useInPageFindStore.getState().revealBlockId !== null) setRevealBlockId(null)
+    setRevealBlockId(null)
     if (!pending.rowScrolled) {
       pending.rowScrolled = true
       row.scrollIntoView({ block: 'center' })
