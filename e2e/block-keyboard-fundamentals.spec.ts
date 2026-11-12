@@ -166,8 +166,18 @@ test.describe('Keyboard fundamentals @editor', () => {
     await openPage(page, PAGE)
     const editor = await focusBlock(page, 1) // GS_2
     // Control+Home, not Home: Home stops at the start of the visual line, and this
-    // block wraps when the web font has not loaded yet.
+    // block wraps when the web font has not loaded yet. Then wait for the caret move
+    // to reach the editor: the block key handler runs capture-phase on the editor's
+    // state, which follows the browser's caret only on `selectionchange`, so a key
+    // sent before that event still sees the caret where the click left it.
+    const caretMoved = page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          document.addEventListener('selectionchange', () => resolve(), { once: true })
+        }),
+    )
     await editor.press('Control+Home')
+    await caretMoved
 
     const ids = await blockIds(page)
     await editor.press('Shift+ArrowUp')
