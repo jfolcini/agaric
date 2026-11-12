@@ -91,7 +91,9 @@ test.describe('sync events (#2683) @sync', () => {
       message: 'Connection refused',
     })
 
-    await expect(page.getByText('Sync failed: Connection refused')).toBeVisible()
+    await expect(
+      page.locator('[data-sonner-toast]').getByText('Sync failed: Connection refused'),
+    ).toBeVisible()
   })
 
   // #5728 — a paired device on another engine format (a 0.18 device meeting a
@@ -128,7 +130,9 @@ test.describe('sync events (#2683) @sync', () => {
     const sentence =
       'This device and Paired Device run different versions of Agaric. Update both to the latest version, then sync again.'
     await expect(page.getByRole('alert').getByText(sentence, { exact: true })).toBeVisible()
-    await expect(page.getByText(`Sync failed: ${sentence}`)).toBeVisible()
+    await expect(
+      page.locator('[data-sonner-toast]').getByText(`Sync failed: ${sentence}`),
+    ).toBeVisible()
     await expect(page.getByText('peer engine format v3')).toHaveCount(0)
     await page.screenshot({ path: test.info().outputPath('version-mismatch.png') })
   })

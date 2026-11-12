@@ -128,3 +128,10 @@ describe('HighlightMatch', () => {
     expect(document.querySelector('mark')).not.toBeInTheDocument()
   })
 })
+
+describe('HighlightMatch text colour (#6528)', () => {
+  it('paints the match with the highlight foreground token, not the browser black', () => {
+    const { container } = render(<HighlightMatch text="Hello World" filterText="World" />)
+    expect(container.querySelector('mark')).toHaveClass('text-highlight-foreground')
+  })
+})

@@ -156,7 +156,9 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
     // a highlight looks identical editing vs reading across every theme +
     // high-contrast. This is DISTINCT from the search-match semantic
     // (`.search-result-mark`); the split is intentional.
-    content = <mark className="bg-highlight rounded px-0.5">{content}</mark>
+    content = (
+      <mark className="bg-highlight text-highlight-foreground rounded px-0.5">{content}</mark>
+    )
   }
   if (hasItalic) {
     content = <em>{content}</em>
