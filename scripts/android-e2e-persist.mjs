@@ -25,8 +25,11 @@ const PKG = 'com.agaric.app'
 const ACTIVITY = `${PKG}/${PKG}.MainActivity`
 /** `t('action.addBlock')`: on a fresh day it focuses the day's empty seed block. */
 const ADD_BLOCK = 'Add block'
-/** `t('gestures.coachmark.dismiss')`: a fresh install opens on a modal coach-mark. */
-const ONBOARDING_DISMISS = 'Got it'
+/**
+ * `t('welcome.getStarted')` and `t('gestures.coachmark.dismiss')`: a fresh install
+ * opens on the modal welcome dialog and the next launch on the gesture coach-mark.
+ */
+const FIRST_RUN_DISMISS = new Set(['Get Started', 'Got it'])
 const DUMP_PATH = '/sdcard/agaric-e2e-persist.xml'
 const READY_TIMEOUT_MS = 40_000
 const POLL_MS = 750
@@ -102,7 +105,7 @@ function screenText(nodes) {
 }
 
 /**
- * Poll until `found(nodes)` returns a node, tapping a first-run coach-mark
+ * Poll until `found(nodes)` returns a node, tapping a first-run dialog
  * away on the way. Returns the node, or fails with what was on screen.
  */
 async function waitFor(what, found) {
@@ -112,7 +115,7 @@ async function waitFor(what, found) {
     nodes = dumpNodes()
     const hit = found(nodes)
     if (hit) return hit
-    const dismiss = nodes.find((n) => n.label === ONBOARDING_DISMISS)
+    const dismiss = nodes.find((n) => FIRST_RUN_DISMISS.has(n.label))
     if (dismiss) tap(dismiss)
     await sleep(POLL_MS)
   }

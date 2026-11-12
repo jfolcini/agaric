@@ -85,15 +85,15 @@ const MENU_LABEL = 'Open navigation menu'
  */
 const DRAWER_MARKERS = ['Settings', 'Bookmarks']
 /**
- * `t('gestures.coachmark.dismiss')`. A fresh
- * install opens on a modal onboarding dialog, which makes everything behind it
- * inert — including the hamburger, which then does not appear in the
- * accessibility tree at all. Left unhandled the test reports "the app never
- * rendered a menu control", which is true and useless: the app is fine and the
- * test is standing in front of a dialog. Dismissing it is part of driving the
- * app, not a workaround.
+ * `t('welcome.getStarted')` and `t('gestures.coachmark.dismiss')`. A fresh
+ * install opens on the modal welcome dialog, and the next launch on the gesture
+ * coach-mark; each makes everything behind it inert, including the hamburger,
+ * which then does not appear in the accessibility tree at all. Left unhandled
+ * the test reports "the app never rendered a menu control", which is true and
+ * useless: the app is fine and the test is standing in front of a dialog.
+ * Dismissing them is part of driving the app, not a workaround.
  */
-const ONBOARDING_DISMISS = 'Got it'
+const FIRST_RUN_DISMISS = ['Get Started', 'Got it']
 
 const READY_TIMEOUT_MS = 40_000
 const POLL_MS = 750
@@ -367,8 +367,12 @@ function drawerIsOpen(nodes) {
   return nodes.some((n) => area(n.bounds) > 0 && DRAWER_MARKERS.includes((n.text || n.desc).trim()))
 }
 
-function hasOnboarding(nodes) {
-  return nodes.some((n) => (n.text || n.desc).trim() === ONBOARDING_DISMISS && area(n.bounds) > 0)
+function findDismiss(nodes) {
+  return (
+    nodes.find(
+      (n) => FIRST_RUN_DISMISS.includes((n.text || n.desc).trim()) && area(n.bounds) > 0,
+    ) ?? null
+  )
 }
 
 /**
@@ -376,7 +380,7 @@ function hasOnboarding(nodes) {
  *
  * Onboarding dialogs can legitimately stack (gesture coach-mark, then space
  * onboarding), but that is at most two or three taps, not an open-ended
- * number. Without a cap, a node whose text is exactly "Got it" but that is
+ * number. Without a cap, a node whose text is a dismiss label but that is
  * NOT actually dismissable (e.g. covered by something else, or a real bug
  * that re-shows the same dialog) gets tapped on every non-clean poll for the
  * whole `READY_TIMEOUT_MS` window — roughly 53 injected taps at the default
@@ -388,13 +392,13 @@ const MAX_DISMISS_TAPS = 5
 
 /** Tap a first-run onboarding dialog away, if one is up. Returns true if it tapped. */
 function dismissOnboarding(nodes) {
-  const btn = nodes.find(
-    (n) => (n.text || n.desc).trim() === ONBOARDING_DISMISS && area(n.bounds) > 0,
-  )
+  const btn = findDismiss(nodes)
   if (!btn) return false
   const cx = Math.round((btn.bounds.left + btn.bounds.right) / 2)
   const cy = Math.round((btn.bounds.top + btn.bounds.bottom) / 2)
-  console.log(`dismissing a first-run '${ONBOARDING_DISMISS}' dialog at (${cx}, ${cy}) …`)
+  console.log(
+    `dismissing a first-run dialog: '${(btn.text || btn.desc).trim()}' at (${cx}, ${cy}) …`,
+  )
   adb(['shell', 'input', 'tap', String(cx), String(cy)])
   return true
 }
@@ -417,7 +421,7 @@ async function waitForApp() {
   let dismissTaps = 0
   while (Date.now() < deadline) {
     nodes = dumpNodes()
-    if (findMenuButton(nodes) && !hasOnboarding(nodes)) {
+    if (findMenuButton(nodes) && !findDismiss(nodes)) {
       clean += 1
       if (clean >= 2) return nodes
     } else {
@@ -461,16 +465,24 @@ async function waitForApp() {
   // this script no longer knows, and only one of those is worth debugging.
   const locale = deviceLocale()
   const looksEnglish = locale ? /^en([-_]|$)/i.test(locale) : true
+  const onScreen = nodes
+    .filter((n) => area(n.bounds) > 0)
+    .map((n) => (n.text || n.desc).trim())
+    .filter(Boolean)
   fail(
     `the app never settled on a '${MENU_LABEL}' control within ${READY_TIMEOUT_MS / 1000}s`,
     [
+      `  focused window: ${front ?? 'unreadable'}; last dump: ${nodes.length} node(s)`,
+      onScreen.length > 0
+        ? `  on screen: ${onScreen.slice(0, 15).join(' | ')}`
+        : '  on screen: no labelled node (an empty dump means the WebView exposed no accessibility tree)',
       dismissTaps === 0
-        ? '  the app may have failed to launch — check `adb logcat`.'
+        ? `  no first-run dialog (${FIRST_RUN_DISMISS.join(', ')}) was seen or tapped.`
         : dismissTaps >= MAX_DISMISS_TAPS
-          ? `  a '${ONBOARDING_DISMISS}' node was tapped ${dismissTaps} times (the cap) without ever` +
+          ? `  a first-run dismiss node was tapped ${dismissTaps} times (the cap) without ever` +
             `\n  clearing — this looks like a node that is tapped in a loop, not a dialog` +
             '\n  that was dismissed. Check whether it is actually reachable/dismissable.'
-          : `  a '${ONBOARDING_DISMISS}' dialog was tapped ${dismissTaps} time(s) but the app still never settled.`,
+          : `  a first-run dialog was tapped ${dismissTaps} time(s) but the app still never settled.`,
       '',
       `  BEFORE debugging the app: '${MENU_LABEL}' is a hardcoded ENGLISH literal`,
       '  in this script, copied from `sidebar.openMenu` in src/lib/i18n/common.ts',
