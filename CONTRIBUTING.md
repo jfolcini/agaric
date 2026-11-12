@@ -154,7 +154,7 @@ Every change must:
 - Open a pull request against `main`.
 - Use a conventional-commit-style subject (`fix(ux): …`, `feat(sync): …`, `docs: …`, `test(e2e): …`). Body explains the *why* and any non-obvious design choices.
 - Keep commits focused. Rebase + force-push on your PR branch is fine; on `main` is not.
-- If your change touches SQL queries, run `just gen-sqlx` and commit all four regenerated `.sqlx/` caches (root + `agaric-store`/`agaric-engine`/`agaric-sync`) in the same commit. Do **not** run the bare `cargo sqlx prepare -- --tests` — it only regenerates the workspace-root cache and silently leaves the three member-crate caches stale, which passes locally but fails their dedicated CI lanes (see AGENTS.md §Key Architectural Invariants #6).
+- If your change touches SQL queries, run `just gen-sqlx` and commit the regenerated `src-tauri/.sqlx` cache in the same commit. Do **not** run the bare `cargo sqlx prepare -- --tests` — it compiles only the `agaric` package and its deps and prunes every other crate's queries from the cache, which passes locally but fails CI's offline check (see AGENTS.md §Key Architectural Invariants #6).
 - If your change touches Rust types exposed via Tauri IPC, run `cd src-tauri && cargo test --lib -- specta_tests --ignored` to regenerate `src/lib/bindings.ts`.
 - Coupled dependency stacks (Tauri + Android; React + ecosystem; TipTap; Radix; SQLx + `.sqlx/`; specta + tauri-specta) must move together per the rules in AGENTS.md §Coupled Dependency Updates. Partial bumps will be rejected.
 

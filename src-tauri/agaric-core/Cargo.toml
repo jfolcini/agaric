@@ -34,10 +34,9 @@ serde_json = "1"
 thiserror = "2.0.18"
 # `error.rs` references `sqlx::Error` + `sqlx::migrate::MigrateError`; the
 # `ulid` newtypes use `#[derive(sqlx::Type)]` + `#[sqlx(transparent)]`, which
-# need the `macros` feature (the DERIVE macros). Note: there are still NO
-# `query!`/`query_as!` macros here, so agaric-core has NO `.sqlx/` offline
-# cache and needs NO `sqlx prepare` CI lane — those are for compile-checked
-# queries, which stay up in the `agaric`/store layer (`verify_active_in_tx`).
+# need the `macros` feature (the DERIVE macros). There are still NO
+# `query!`/`query_as!` macros here: compile-checked queries stay up in the
+# `agaric`/store layer (`verify_active_in_tx`).
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 similar = "3"

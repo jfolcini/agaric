@@ -1,14 +1,12 @@
 name: sqlx offline cache check
 description: >
-  Verify one crate's committed `.sqlx/` offline query cache is up to date.
+  Verify the committed `.sqlx/` offline query cache is up to date.
   Creates + migrates a throwaway SQLite DB, then runs
   `cargo sqlx prepare --check` against it so query drift is caught in CI.
 
-  Reusable per crate: each query-bearing cache owner calls this action with
-  a distinct `working-directory` + `database-url` — no copy-pasted YAML.
-  The weekly `scheduled-deep-checks.yml` lane uses it for `agaric`,
-  `agaric-store`, `agaric-engine`, and `agaric-sync`; per-PR `lint` checks
-  the same caches in one compile with `scripts/clippy-sqlx-check.sh`.
+  The weekly `scheduled-deep-checks.yml` lane uses it for `src-tauri/.sqlx`;
+  per-PR `lint` checks the same cache in one compile with
+  `scripts/clippy-sqlx-check.sh`.
 
 inputs:
   working-directory:
@@ -16,8 +14,7 @@ inputs:
     required: true
   database-url:
     description: >
-      Throwaway SQLite DB URL for this crate's check. MUST be unique per
-      crate so concurrent lanes never collide on the same file.
+      Throwaway SQLite DB URL for the check.
     required: true
   prepare-args:
     description: >

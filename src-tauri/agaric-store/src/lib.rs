@@ -12,8 +12,7 @@
 //! re-exports it (`pub use agaric_store::cancellation;`) so every existing
 //! `crate::cancellation::…` path resolves unchanged.
 //!
-//! Later waves add the DB core (`op`, `op_log`, `db`) with a store-local
-//! `.sqlx` offline cache + a 2nd `sqlx prepare` CI lane, then the query
+//! Later waves add the DB core (`op`, `op_log`, `db`), then the query
 //! modules (`pagination`, `fts`, `cache`, …).
 
 pub mod cancellation;
@@ -30,8 +29,7 @@ pub mod task_locals;
 pub mod db;
 pub mod link_metadata;
 // `op_log` — op-log writer / reader (append, bypass, payload, query, record).
-// Carries `sqlx::query!` macros, so the crate now stands up its own `.sqlx`
-// offline cache (prepared against `../dev.db`) + a 2nd `sqlx prepare` CI lane.
+// Carries `sqlx::query!` macros, cached in the workspace-root `.sqlx`.
 // External deps are `agaric_core::{error,hash}`; `op`, `task_locals`, and `db`
 // are store siblings. The app re-exports it (`pub use agaric_store::op_log;`)
 // so every existing `crate::op_log::…` path resolves unchanged.

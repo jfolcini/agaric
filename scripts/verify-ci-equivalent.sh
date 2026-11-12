@@ -26,10 +26,9 @@
 #                 --range REVSPEC` (same scripts the pre-commit hooks use,
 #                 just with a different diff source).
 #
-#   Phase E — `cargo sqlx prepare --check` if any .rs changed in range,
-#             against all four committed `.sqlx/` caches (workspace root +
-#             `agaric-store`/`agaric-engine`/`agaric-sync`) — mirrors the
-#             `lint` job's `scripts/clippy-sqlx-check.sh`.
+#   Phase E — `cargo sqlx prepare --workspace --check` if any .rs changed in
+#             range, against the committed `src-tauri/.sqlx` cache — mirrors
+#             the `lint` job's `scripts/clippy-sqlx-check.sh`.
 #
 #   Phase F — `agaric-mcp` release build + MCP UDS smoke + externalBin
 #             host-triple verify. **Only when MCP paths change**
@@ -69,7 +68,7 @@
 set -uo pipefail
 
 # ── sqlx probe-DB allocation (#3257) ───────────────────────────────
-# Phase E needs a throwaway SQLite database per crate to run
+# Phase E needs a throwaway SQLite database to run
 # `cargo sqlx prepare --check` against. These used to live at a
 # MACHINE-GLOBAL fixed path (`${TMPDIR:-/tmp}/$crate-sqlx-prepare.db`)
 # even though every sibling log file on the adjacent lines already used
@@ -79,7 +78,7 @@ set -uo pipefail
 # each other's probe database: worktree B's `rm -f` lands while worktree
 # A is mid-`prepare --check`, A's queries stop resolving against the now
 # empty file, and A reports `✗ sqlx prepare check failed` with advice
-# steering the developer at the checked-in `.sqlx/` caches to chase a
+# steering the developer at the checked-in `.sqlx/` cache to chase a
 # phantom failure.
 #
 # Allocate a fresh DIRECTORY per invocation instead and remove it
@@ -152,13 +151,12 @@ CI_PATH_RE='^\.github/|^scripts/|^\.claude/|prek\.toml$|\.taplo\.toml$|lychee\.t
 #
 #   setup-dev-db.sh          provisions the dev.db that Phase D/D2's online
 #                            `sqlx::query!` macros compile against
-#   check-sqlx-cache-drift.sh  drives Phase E's cache-drift semantics
 #   test-related-rust.sh     selects WHICH Rust tests Phase D runs
 #
 # Without this, attributing `scripts/*.sh` to CI silently skipped the dev.db
 # migration-gap preflight — which is gated on HAS_RS — for the very script
 # that provisions dev.db.
-RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.sh$'
+RS_SCRIPT_RE='^scripts/(setup-dev-db|test-related-rust)\.sh$'
 
 # Scripts whose ONLY prek hook lives in a category the SKIP list can drop:
 # editing one would otherwise run shellcheck alone, where the old fail-closed
@@ -451,9 +449,7 @@ prek_skip_list() {
             store-layering axe-presence test-file-naming \
             ipc-error-path-coverage no-raw-local-storage)
     fi
-    # Backend absent → skip the Rust/cargo/SQL/migration hooks. No
-    # check-sqlx-cache-drift: CI is the gate and never skipped it (#3901's
-    # guard is `always_run`, and a stale cache is not a Rust-diff-only defect).
+    # Backend absent → skip the Rust/cargo/SQL/migration hooks.
     if [ "$has_rs" = "0" ]; then
         skip_items+=(cargo-fmt cargo-clippy cargo-deny cargo-machete sqruff \
             tauri-command-sanitize tauri-command-instrumented check-raw-tx \
@@ -543,18 +539,18 @@ if [ "${1:-}" = "--self-test" ]; then
 
     # 3. Worktree B's cleanup must NOT touch worktree A's database — the
     #    literal cross-process collision this fix is about.
-    : > "$d1/agaric-store.db"
+    : > "$d1/root.db"
     sqlx_probe_dir_cleanup "$d2"
-    if [ -f "$d1/agaric-store.db" ]; then
+    if [ -f "$d1/root.db" ]; then
         st_ok "one invocation's cleanup leaves the other's probe DB intact"
     else
         st_bad "one invocation's cleanup leaves the other's probe DB intact" \
-            "$d1/agaric-store.db was deleted by cleanup of $d2"
+            "$d1/root.db was deleted by cleanup of $d2"
     fi
 
     # 4. Cleanup takes the SQLite -wal / -shm siblings with it.
-    : > "$d1/agaric-store.db-wal"
-    : > "$d1/agaric-store.db-shm"
+    : > "$d1/root.db-wal"
+    : > "$d1/root.db-shm"
     sqlx_probe_dir_cleanup "$d1"
     if [ ! -e "$d1" ]; then
         st_ok "cleanup removes the probe dir including -wal/-shm siblings"
@@ -629,7 +625,6 @@ if [ "${1:-}" = "--self-test" ]; then
         else st_bad "RS-script gate: $3" "path '$1' matched=$got, expected $2"; fi
     }
     st_rs 'scripts/setup-dev-db.sh'          yes 'provisions the dev.db Phase D/E compile against'
-    st_rs 'scripts/check-sqlx-cache-drift.sh' yes 'drives Phase E cache-drift semantics'
     st_rs 'scripts/test-related-rust.sh'     yes 'selects which Rust tests Phase D runs'
     st_rs 'scripts/push.sh'                  no  'a plain shell script does NOT force the Rust phases'
     st_rs 'scripts/verify-ci-equivalent.sh'  no  'nor does this verifier itself'
@@ -865,30 +860,6 @@ if [ "${1:-}" = "--self-test" ]; then
     else
         st_bad "CI gate: the fail-closed arm reuses CI_PATH_RE rather than copying it" \
             "$(grep -nE '^[[:space:]]*unrec_ci=' "${BASH_SOURCE[0]}" | tr '\n' ' ')"
-    fi
-
-    # 5. Ratchet: the fixed machine-global path must not come back. Guards
-    #    against a future edit quietly reintroducing the collision while
-    #    the assertions above keep passing against dead helpers. Every
-    #    `db=` assignment in this script must be the per-invocation form.
-    if grep -nE '^[[:space:]]*db=' "${BASH_SOURCE[0]}" \
-        | grep -vq 'db="\$probe_dir/\$crate\.db"'; then
-        st_bad "every probe-DB assignment is the per-invocation form" \
-            "$(grep -nE '^[[:space:]]*db=' "${BASH_SOURCE[0]}" \
-                | grep -v 'db="\$probe_dir/\$crate\.db"' | tr '\n' ' ')"
-    else
-        st_ok "every probe-DB assignment is the per-invocation form"
-    fi
-
-    # 6. Ratchet: Phase E must actually USE the per-invocation dir. Anchored
-    #    at line start so this cannot match the grep patterns and messages
-    #    inside this self-test itself (an unanchored match would make the
-    #    assertion tautological — a check that cannot fail).
-    if grep -qE '^[[:space:]]*db="\$probe_dir/\$crate\.db"$' "${BASH_SOURCE[0]}"; then
-        st_ok "Phase E allocates its probe DBs under the per-invocation dir"
-    else
-        st_bad "Phase E allocates its probe DBs under the per-invocation dir" \
-            'no `db="$probe_dir/$crate.db"` assignment found'
     fi
 
     # 7. Ratchet (#3361): the root lane's OLD vulnerable form must not come
@@ -2382,19 +2353,6 @@ if ! bash scripts/check-migrations-immutable.sh --range "$RANGE"; then
 fi
 echo "  ✓ migrations append-only over '$RANGE'"
 
-# sqlx cache drift backstop (#3901): same staged-index-is-empty-at-push-time
-# gap as the migrations backstop above — check-sqlx-cache-drift's default
-# mode scans `git diff --cached`, so re-check the whole push range for a
-# `.sqlx/` entry that disappeared from one cache while a sibling cache still
-# has it, with no `query!`-family removal in range to justify it.
-if ! bash scripts/check-sqlx-cache-drift.sh --range "$RANGE"; then
-    echo ""
-    echo "✗ Pre-push verification FAILED: sqlx cache drift in range '$RANGE' (#3901)."
-    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
-    exit 1
-fi
-echo "  ✓ sqlx cache drift guard over '$RANGE'"
-
 # ── Phase B: externalBin placeholder (only if Rust changed) ────────
 # Tauri's build.rs validates the externalBin path on every cargo
 # invocation; without the placeholder, `cargo nextest` in Phase D
@@ -2460,46 +2418,27 @@ if [ "$HAS_RS" = "1" ]; then
     fi
 fi
 
-# ── Phase E: cargo sqlx prepare --check, ALL FOUR lanes (only if Rust
-# changed) ──────────────────────────────────────────────────────────
+# ── Phase E: cargo sqlx prepare --check (only if Rust changed) ─────
 #
-# Checks the same four caches as CI's `scripts/clippy-sqlx-check.sh`: the workspace
-# root (`src-tauri`) plus each layered-workspace member with its own
-# crate-local `.sqlx/` cache — `agaric-store`, `agaric-engine`, `agaric-sync`
-# (#2621 split). Checking only the root here let member-crate cache drift
-# (e.g. #2849) slip past local verification and land only visible on CI —
-# the exact gap this phase now closes.
+# Checks the same `src-tauri/.sqlx` cache as CI's `scripts/clippy-sqlx-check.sh`.
+# `--workspace` on both sides, as in `just gen-sqlx`: without it only the
+# `agaric` package and its deps compile, so member test queries and the
+# `diagnostics` bins go unchecked.
 #
-# All four lanes get their own ABSOLUTE-path throwaway DB under the shared
-# per-invocation probe dir (#3257 / #3361) — none of them ever touch the
-# developer's real `src-tauri/dev.db`. The root lane used to reuse
-# `src-tauri/.env`'s `DATABASE_URL=sqlite:dev.db` directly. That both
-# collided across concurrent worktree pushes sharing that file (the same
-# class of bug #3257 already fixed for the sub-crates, just on the one path
-# that fix left alone) and meant a failed/interrupted run could leave the
-# developer's dev.db migrated to a branch's schema they aren't on. Each
-# member lane needs its own absolute-path throwaway DB for a second,
-# independent reason: `query!` resolves a *relative* sqlite path at compile
-# time from rustc's CWD — the WORKSPACE ROOT, not the crate dir — so a
-# relative URL there creates the DB under the crate but looks for it under
-# `src-tauri/`, failing every query ("unable to open database file"). (The
-# root crate IS the workspace root, so that particular hazard never applied
-# to it — it gets an absolute-path DB anyway, for the isolation reason
-# above.) Each member's `migrations -> ../migrations` symlink lets
-# `migrate run` resolve the shared workspace migrations against that
-# throwaway DB; the root lane already sits next to `migrations/` directly.
+# The lane gets its own ABSOLUTE-path throwaway DB under the per-invocation
+# probe dir (#3257 / #3361) and never touches the developer's real
+# `src-tauri/dev.db`. It used to reuse `src-tauri/.env`'s
+# `DATABASE_URL=sqlite:dev.db` directly, which collided across concurrent
+# worktree pushes sharing that file and meant a failed/interrupted run could
+# leave the developer's dev.db migrated to a branch's schema they aren't on.
 
 if [ "$HAS_RS" = "1" ]; then
     echo ""
-    echo "→ Phase E: cargo sqlx prepare --check (4 lanes: root, agaric-store, agaric-engine, agaric-sync)"
+    echo "→ Phase E: cargo sqlx prepare --workspace --check"
 
-    sqlx_check_failed=0
-
-    # #3257 / #3361 — per-invocation probe dir, shared by ALL FOUR lanes
-    # below (root + the three sub-crates) so none of them touch the real
-    # dev database. The trap also covers the `exit 1` path at the end of
-    # this phase; no other EXIT trap exists in this script, so it is safe
-    # to install here.
+    # #3257 / #3361 — per-invocation probe dir. The trap also covers the
+    # `exit 1` path at the end of this phase; no other EXIT trap exists in
+    # this script, so it is safe to install here.
     probe_dir="$(sqlx_probe_dir_new)"
     trap 'sqlx_probe_dir_cleanup "$probe_dir"' EXIT
 
@@ -2508,40 +2447,19 @@ if [ "$HAS_RS" = "1" ]; then
     if ! ( cd src-tauri \
             && DATABASE_URL="sqlite:$root_db" cargo sqlx database create \
             && DATABASE_URL="sqlite:$root_db" cargo sqlx migrate run \
-            && DATABASE_URL="sqlite:$root_db" cargo sqlx prepare --check -- --tests \
+            && DATABASE_URL="sqlite:$root_db" cargo sqlx prepare --workspace --check -- --workspace --tests \
          ) > "$sqlx_log" 2>&1; then
-        echo "  ✗ sqlx prepare check failed (root: src-tauri)"
+        echo "  ✗ sqlx prepare check failed"
         tail -100 "$sqlx_log" | sed 's/^/      /'
-        sqlx_check_failed=1
-    else
-        echo "  ✓ sqlx prepare check (root: src-tauri)"
-    fi
-    rm -f "$sqlx_log"
-
-    for crate in agaric-store agaric-engine agaric-sync; do
-        db="$probe_dir/$crate.db"
-        sqlx_log="$(mktemp -t "pre-push-sqlx-$crate.XXXXXX")"
-        if ! ( cd "src-tauri/$crate" \
-                && DATABASE_URL="sqlite:$db" cargo sqlx database create \
-                && DATABASE_URL="sqlite:$db" cargo sqlx migrate run \
-                && DATABASE_URL="sqlite:$db" cargo sqlx prepare --check -- --tests \
-             ) > "$sqlx_log" 2>&1; then
-            echo "  ✗ sqlx prepare check failed ($crate)"
-            tail -100 "$sqlx_log" | sed 's/^/      /'
-            sqlx_check_failed=1
-        else
-            echo "  ✓ sqlx prepare check ($crate)"
-        fi
         rm -f "$sqlx_log"
-    done
-
-    if [ "$sqlx_check_failed" = "1" ]; then
         echo ""
         echo "✗ Pre-push verification FAILED at Phase E (sqlx prepare --check)."
-        echo "  Iterate: just gen-sqlx (regenerates all 4 caches), then re-check the failing crate(s) above."
+        echo "  Iterate: just gen-sqlx, then re-push."
         echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
         exit 1
     fi
+    rm -f "$sqlx_log"
+    echo "  ✓ sqlx prepare check"
 fi
 
 # ── Phase F: MCP build + UDS smoke + externalBin verify (gated) ────

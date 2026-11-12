@@ -15,10 +15,9 @@
 //! `crate::bibliography::…` path resolves unchanged.
 //!
 //! Wave E1 folds in the Loro CRDT runtime (`loro`) — the first query-bearing
-//! engine module, so the crate now carries its own `.sqlx` offline cache
-//! (migrations symlink + committed cache, mirroring `agaric-store`). The
-//! `agaric` crate re-exports it (`pub use agaric_engine::loro;`) so every
-//! existing `crate::loro::…` path resolves unchanged.
+//! engine module. The `agaric` crate re-exports it
+//! (`pub use agaric_engine::loro;`) so every existing `crate::loro::…` path
+//! resolves unchanged.
 
 pub mod bibliography;
 
@@ -35,7 +34,7 @@ pub mod import;
 /// The block draft writer — the autosave buffer for in-progress editor edits
 /// (`block_drafts` table). An independent document-domain leaf: depends only on
 /// `agaric-store` (db/op/op_log) and `agaric-core` (error/ulid), with two
-/// `sqlx::query!` sites captured in this crate's `.sqlx` cache. The `agaric`
+/// `sqlx::query!` sites captured in the workspace-root `.sqlx` cache. The `agaric`
 /// crate re-exports it (`pub use agaric_engine::draft;`) so every existing
 /// `crate::draft::…` path resolves unchanged.
 pub mod draft;
