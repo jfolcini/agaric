@@ -165,7 +165,9 @@ test.describe('Keyboard fundamentals @editor', () => {
   test('Shift+ArrowUp at the start of a block does not switch blocks', async ({ page }) => {
     await openPage(page, PAGE)
     const editor = await focusBlock(page, 1) // GS_2
-    await editor.press('Home') // caret at start, collapsed
+    // Control+Home, not Home: Home stops at the start of the visual line, and this
+    // block wraps when the web font has not loaded yet.
+    await editor.press('Control+Home')
 
     const ids = await blockIds(page)
     await editor.press('Shift+ArrowUp')
