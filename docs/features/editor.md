@@ -3,7 +3,7 @@
 
 The editor is a block-based outliner built on TipTap (ProseMirror). Only the focused block is editable at any moment — every other block renders as a read-only static block. This *roving editor* keeps memory bounded and undo history isolated per edit session.
 
-A click or tap on a static block starts editing it with the caret where it landed, in its text, its marks, a list, a table or code, and a double-click selects the word under it.
+A click or tap on a static block starts editing it with the caret where it landed, in its text, its marks, a list, a table or code, and a double-click selects the word under it. From the keyboard, `Enter` or `F2` on the block under the selection cursor edits it with the caret at its end; with nothing selected, `Ctrl+↓` / `Ctrl+↑` put that cursor on the first / last block.
 
 ## Surfaces around the focused block
 
@@ -69,6 +69,8 @@ Settings › Editor › *Show Markdown syntax around the cursor* (on by default,
 | Merge into previous | `Backspace` at start of block. On a bullet / numbered block the first `Backspace` clears the list style; the second merges (or, on an empty block, deletes it) |
 | Indent / dedent | `Tab` / `Shift+Tab`, or `Ctrl+Shift+→` / `Ctrl+Shift+←`; on touch, the toolbar's *Indent* and *Outdent* buttons (a phone's keyboard has no Tab), in blocks and in page mode |
 | Move block up / down | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` |
+| Go to the block above / below | `↑` on a block's first visual line, `↓` on its last, one press a block, the caret keeping its horizontal position on the neighbour's last / first line; `←` at a block's start / `→` at its end |
+| Select blocks from the text | `Shift+↑` / `Shift+↓` once the text selection reaches the block's start / end: the block and the one above / below are selected, and further presses select blocks |
 | Collapse / expand children | `Ctrl+.` (or click the chevron) |
 | Open Property Drawer | `Ctrl+Shift+P` |
 | Set priority directly | `Ctrl+Shift+1` / `Ctrl+Shift+2` / `Ctrl+Shift+3` (P1 / P2 / P3) |

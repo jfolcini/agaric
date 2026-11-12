@@ -93,6 +93,7 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
   handleSlashCommand: (item: { id: string; label: string }) => void
   rovingEditor: {
     editor: { state: { selection: { $anchor: { pos: number } } } } | null
+    mount: (blockId: string, markdown: string, opts?: { cursorPlacement?: 'end' }) => void
   }
   datePickerCursorPos: RefObject<number | undefined>
   setDatePickerMode: (mode: DatePickerMode) => void
@@ -170,6 +171,26 @@ function selectionByPage(
 function focusIsInRows(pageStore: StoreApi<PageBlockState>): boolean {
   const rowId = document.activeElement?.closest('li[data-block-id]')?.getAttribute('data-block-id')
   return storeOwnsBlock(pageStore, rowId ?? null)
+}
+
+/**
+ * The block row first (`'down'`) or last (`'up'`) in the document, outside any
+ * row (an embed's rows sit inside their host's). With no cursor yet, Ctrl+Arrow
+ * puts it there; the journal week and stream views mount one tree per day, and
+ * the tree that renders this row takes the chord.
+ */
+function edgeRowId(direction: 'up' | 'down'): string | null {
+  const rows = [...document.querySelectorAll('li[data-block-id]')].filter(
+    (row) => row.parentElement?.closest('li[data-block-id]') == null,
+  )
+  return (direction === 'down' ? rows[0] : rows.at(-1))?.getAttribute('data-block-id') ?? null
+}
+
+/** Enter or F2 alone: start editing the cursor block (#6537). */
+function isEditCursorKey(e: KeyboardEvent): boolean {
+  return (
+    (e.key === 'Enter' || e.key === 'F2') && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
+  )
 }
 
 /**
@@ -334,35 +355,59 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // store owns the cursor block may handle (and preventDefault); other trees
   // fall through so the chord isn't double-handled. They act only while focus
   // is in the tree's rows.
+  //
+  // #6537 — with no cursor and no block being edited, Ctrl+ArrowDown / Ctrl+ArrowUp
+  // put the cursor on the first / last block, and Enter or F2 on the cursor row
+  // edits that block with the caret at the end: the keyboard way into a block.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const state = useBlockStore.getState()
-      const cursorId = selectCursorBlockId(state)
-      if (!storeOwnsBlock(pageStore, cursorId)) return
       // Editor active → leave the chords to the editor / browser.
       if (state.focusedBlockId) return
       if (e.defaultPrevented) return
-      if (!focusIsInRows(pageStore)) return
-      if (matchesShortcutBinding(e, 'toggleBlockSelectionKbd')) {
-        // A cursor this tree no longer renders (a collapse hid it) selects nothing,
-        // or a batch action would act on a block the user cannot see.
-        if (!visibleIds.includes(cursorId)) return
-        e.preventDefault()
-        toggleSelected(cursorId)
-        return
-      }
+      const cursorId = selectCursorBlockId(state)
       const direction = matchesShortcutBinding(e, 'blockCursorDown')
         ? 'down'
         : matchesShortcutBinding(e, 'blockCursorUp')
           ? 'up'
           : null
+      if (cursorId === null) {
+        if (direction === null || isEditableTarget(e.target)) return
+        const edgeId = edgeRowId(direction)
+        if (edgeId === null || !visibleIds.includes(edgeId)) return
+        e.preventDefault()
+        // The cursor alone, not the selection: `moveCursor` needs a cursor to move.
+        useBlockStore.setState({ selectionFocusId: edgeId })
+        return
+      }
+      if (!storeOwnsBlock(pageStore, cursorId)) return
+      if (!focusIsInRows(pageStore)) return
+      // A cursor this tree no longer renders (a collapse hid it) selects nothing,
+      // or a batch action would act on a block the user cannot see.
+      if (matchesShortcutBinding(e, 'toggleBlockSelectionKbd')) {
+        if (!visibleIds.includes(cursorId)) return
+        e.preventDefault()
+        toggleSelected(cursorId)
+        return
+      }
+      // On the row itself only: Enter on a control in the row (the chevron) activates it.
+      if (isEditCursorKey(e) && e.target instanceof Element) {
+        if (!visibleIds.includes(cursorId) || e.target.getAttribute('data-block-id') !== cursorId)
+          return
+        e.preventDefault()
+        setFocused(cursorId)
+        rovingEditor.mount(cursorId, pageStore.getState().blocksById.get(cursorId)?.content ?? '', {
+          cursorPlacement: 'end',
+        })
+        return
+      }
       if (direction === null) return
       e.preventDefault()
       moveCursor(direction, visibleIds)
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [pageStore, visibleIds, toggleSelected, moveCursor])
+  }, [pageStore, visibleIds, toggleSelected, moveCursor, setFocused, rovingEditor])
 
   // ── Keyboard shortcuts: block cut / copy / paste (#913) ─────────────
   // Copy/cut put the SELECTION ROOTS (+ subtrees) on the system clipboard as

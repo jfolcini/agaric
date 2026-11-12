@@ -1,7 +1,8 @@
 /**
  * Where a click on a block's static render landed, as a point in the block's
  * text, and where that point is in the editor's document once the block is
- * mounted (#6562).
+ * mounted (#6562). Arrow Up / Down into a block reads its landing the same way
+ * (#6537).
  *
  * The static render and the editor draw the same document differently (a
  * chip's label, the list marker, a highlighted code block's spans), so the
@@ -139,6 +140,35 @@ export function textPointAtClick(
   const at = caretAt(x, y)
   if (at === null || !root.contains(at.node)) return null
   return textPointAt(root, content, pastCollapsedSpace(at))
+}
+
+/**
+ * The point in `content`'s text at viewport `x` on the first or last line of
+ * `root`, its static render, as a click there would read it: where Arrow Down
+ * or Arrow Up lands keeping the caret's x (#6537). `x` is held inside `root`.
+ * `null` when the render shows none of the document's text.
+ */
+export function textPointAtLine(
+  root: Element,
+  content: string,
+  x: number,
+  line: 'first' | 'last',
+): TextPoint | null {
+  const texts: Text[] = []
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    if ((node as Text).data.trim() !== '') texts.push(node as Text)
+  }
+  const text = line === 'first' ? texts[0] : texts.at(-1)
+  if (text === undefined) return null
+  const range = document.createRange()
+  range.selectNodeContents(text)
+  const rects = [...range.getClientRects()]
+  const rect = line === 'first' ? rects[0] : rects.at(-1)
+  if (rect === undefined) return null
+  const box = root.getBoundingClientRect()
+  const left = Math.min(Math.max(x, box.left + 1), box.right - 1)
+  return textPointAtClick(root, content, left, (rect.top + rect.bottom) / 2)
 }
 
 /**

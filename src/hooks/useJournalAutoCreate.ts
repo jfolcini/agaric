@@ -105,10 +105,11 @@ export function useJournalAutoCreate({
       if (createdPages.has(dateStr)) return
       if (isEditableTarget(e.target)) return
       // Enter on a focused control is its activation; claiming it swallows the click (#5301).
+      // On a block row it edits that block (#6537).
       if (
         e.key === 'Enter' &&
         e.target instanceof Element &&
-        e.target.closest('button, a, [role="radio"]')
+        e.target.closest('button, a, [role="radio"], li[data-block-id]')
       ) {
         return
       }

@@ -11,11 +11,11 @@
 import { render } from '@testing-library/react'
 import { Editor, type JSONContent } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { posAtTextPoint, type TextPoint, textPointAt } from '@/editor/click-caret'
+import { posAtTextPoint, type TextPoint, textPointAt, textPointAtLine } from '@/editor/click-caret'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
 import { contentExtensions } from '@/editor/use-roving-editor'
@@ -175,5 +175,59 @@ describe('a click on the static render maps into the editor document (#6562)', (
     expect(posAtTextPoint(editor.state.doc, { textOffset: 99, bias: 'before' })).toBe(end)
     expect(posAtTextPoint(editor.state.doc, { textOffset: 9, bias: 'after' })).toBe(end)
     expect(posAtTextPoint(editor.state.doc, { textOffset: 9, bias: 'before' })).toBe(end - 1)
+  })
+})
+
+describe('Arrow Up / Down read their landing on a line of the static render (#6537)', () => {
+  /** jsdom lays nothing out: two lines of text, a box from x 100 to 300, and the probed points. */
+  function laidOut(root: HTMLElement): { x: number; y: number }[] {
+    const probed: { x: number; y: number }[] = []
+    const text = root.firstChild as Text
+    vi.spyOn(root, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 0, 200, 20))
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [new DOMRect(100, 0, 200, 10), new DOMRect(100, 10, 50, 10)],
+    })
+    Object.defineProperty(document, 'caretPositionFromPoint', {
+      configurable: true,
+      value: (x: number, y: number) => {
+        probed.push({ x, y })
+        return { offsetNode: text, offset: 3 }
+      },
+    })
+    return probed
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    Reflect.deleteProperty(Range.prototype, 'getClientRects')
+    Reflect.deleteProperty(document, 'caretPositionFromPoint')
+  })
+
+  it('probes the middle of the first or last line, with x held inside the render', () => {
+    const root = document.createElement('div')
+    root.textContent = 'plain text'
+    document.body.append(root)
+    const probed = laidOut(root)
+
+    expect(textPointAtLine(root, 'plain text', 40, 'first')).toEqual({
+      textOffset: 3,
+      bias: 'before',
+    })
+    expect(textPointAtLine(root, 'plain text', 180, 'last')).toEqual({
+      textOffset: 3,
+      bias: 'before',
+    })
+    expect(probed).toEqual([
+      { x: 101, y: 5 },
+      { x: 180, y: 15 },
+    ])
+    root.remove()
+  })
+
+  it('reads no point from a render with no text', () => {
+    const root = document.createElement('div')
+    root.append(document.createElement('span'))
+    expect(textPointAtLine(root, '', 40, 'first')).toBeNull()
   })
 })

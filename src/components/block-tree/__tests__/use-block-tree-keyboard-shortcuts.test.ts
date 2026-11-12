@@ -120,7 +120,7 @@ function makeOptions(overrides: OptionOverrides = {}): UseBlockTreeKeyboardShort
     setFocused: vi.fn(),
     handleToggleTodo: vi.fn(),
     handleSlashCommand: vi.fn(),
-    rovingEditor: { editor: null },
+    rovingEditor: { editor: null, mount: vi.fn() },
     datePickerCursorPos: { current: undefined },
     setDatePickerMode: vi.fn(),
     setDatePickerOpen: vi.fn(),
@@ -692,22 +692,43 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       expect(e.defaultPrevented).toBe(false)
     })
 
-    it('Ctrl+Arrow does nothing while editing or with no cursor', () => {
+    it('Ctrl+Arrow does nothing while editing, with or without a cursor', () => {
+      addRow('B2')
       const editing = selectOpts({ focusedBlockId: 'B1' })
       useBlockStore.setState({ focusedBlockId: 'B1' })
       const { unmount } = renderHook(() => useBlockTreeKeyboardShortcuts(editing))
-      const whileEditing = press({ key: 'ArrowDown', ctrlKey: true })
+      const withCursor = press({ key: 'ArrowDown', ctrlKey: true })
       unmount()
 
-      useBlockStore.setState({ focusedBlockId: null })
-      const idle = selectOpts({ selectedBlockIds: [] })
-      renderHook(() => useBlockTreeKeyboardShortcuts(idle))
+      const editingNoCursor = selectOpts({ focusedBlockId: 'B1', selectedBlockIds: [] })
+      useBlockStore.setState({ focusedBlockId: 'B1' })
+      renderHook(() => useBlockTreeKeyboardShortcuts(editingNoCursor))
       const noCursor = press({ key: 'ArrowDown', ctrlKey: true })
 
       expect(editing.moveCursor).not.toHaveBeenCalled()
-      expect(idle.moveCursor).not.toHaveBeenCalled()
-      expect(whileEditing.defaultPrevented).toBe(false)
+      expect(editingNoCursor.moveCursor).not.toHaveBeenCalled()
+      expect(useBlockStore.getState().selectionFocusId).toBeNull()
+      expect(withCursor.defaultPrevented).toBe(false)
       expect(noCursor.defaultPrevented).toBe(false)
+    })
+
+    it('#6537 — with no cursor, Ctrl+ArrowDown / Ctrl+ArrowUp put it on the first / last row', () => {
+      addRow('B2')
+      addRow('B3')
+      const idle = selectOpts({ selectedBlockIds: [] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(idle))
+
+      const down = press({ key: 'ArrowDown', ctrlKey: true })
+      const afterDown = useBlockStore.getState().selectionFocusId
+      useBlockStore.setState({ selectionFocusId: null })
+      const up = press({ key: 'ArrowUp', ctrlKey: true })
+
+      expect(afterDown).toBe('B1')
+      expect(useBlockStore.getState().selectionFocusId).toBe('B3')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+      expect(idle.moveCursor).not.toHaveBeenCalled()
+      expect(down.defaultPrevented).toBe(true)
+      expect(up.defaultPrevented).toBe(true)
     })
 
     it('#713 — Ctrl+Arrow moves only the cursor of the tree that owns it', () => {
