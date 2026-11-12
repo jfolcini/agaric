@@ -92,11 +92,6 @@ export function linkTitle(raw: string): string | undefined {
   return quoted === undefined ? undefined : unescapeUrl(quoted.slice(1, -1))
 }
 
-/** A title as written after a destination: in `"…"`, its `"` and `\` escaped. */
-export function linkTitleText(title: string): string {
-  return ` "${title.replace(/["\\]/g, '\\$&')}"`
-}
-
 /**
  * Uppercase ULID (26 chars) — the payload shape of the `#[ULID]`, `[[ULID]]`
  * and `((ULID))` ref tokens. Shared: the parser recognizes the tokens with it

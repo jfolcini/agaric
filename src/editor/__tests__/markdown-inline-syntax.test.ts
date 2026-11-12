@@ -250,10 +250,15 @@ describe('N9 E20: link titles and `<…>` destinations', () => {
     ],
     ["[t](https://x.com 'title')", '[t](https://x.com "title")'],
     ['[t](https://x.com (a "b"))', '[t](https://x.com "a \\"b\\"")'],
+    // A balanced paren stays as written; an unbalanced one would end the destination.
+    ['[t](https://x.com "a (b)")', '[t](https://x.com "a (b)")'],
+    ['[t](https://x.com (x\\)y))', '[t](https://x.com "x\\)y")'],
+    ['![i](p.png "x\\(y")', '![i](p.png "x\\(y")'],
     // Titled, so not the bare URL; the text's URL is defused as in any bracketed link.
     ['[https://x.com](https://x.com "t")', '[https\\://x.com](https://x.com "t")'],
   ])('%j is written back with its title as %j', (md, written) => {
     expect(stored(parse(md))).toBe(written)
+    expect(parse(written)).toEqual(parse(md))
   })
 
   it('writes the title an editor link mark carries, and none for its `title: null`', () => {

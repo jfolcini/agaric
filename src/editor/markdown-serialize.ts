@@ -25,7 +25,6 @@ import {
   isAutolinkableUrl,
   leadingIndent,
   linkDestination,
-  linkTitleText,
   LIST_NEST_INDENT,
   runFlank,
   scanBareUrl,
@@ -384,6 +383,15 @@ function escapeUrl(url: string): string {
     else result += ch
   }
   return result
+}
+
+/**
+ * A title as written after a destination (`linkTitle` reads it): in `"…"`, its
+ * `"` escaped, and its backslashes and unbalanced parens as in a URL, since
+ * the destination ends at the first unbalanced `)`.
+ */
+function linkTitleText(title: string): string {
+  return ` "${escapeUrl(title).replace(/"/g, '\\"')}"`
 }
 
 /**
