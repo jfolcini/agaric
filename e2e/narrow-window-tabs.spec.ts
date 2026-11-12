@@ -35,16 +35,12 @@ test.describe('A narrow mouse window @pages @journal', () => {
     await expect(page.getByRole('tablist')).toHaveCount(0)
   })
 
-  test('keeps the header’s Today, Agenda and calendar', async ({ page }) => {
+  // Outside the journal the header's date control is Today alone (#6548).
+  test('keeps the header’s Today', async ({ page }) => {
     await waitForBoot(page)
     await navigateToView(page, 'Pages')
     const header = page.locator('header').first()
-    await expect(header.getByRole('button', { name: 'Go to today', exact: true })).toBeVisible()
-    await expect(
-      header.getByRole('button', { name: 'Open calendar picker', exact: true }),
-    ).toBeVisible()
-
-    await header.getByRole('button', { name: 'Go to agenda', exact: true }).click()
+    await header.getByRole('button', { name: 'Go to today', exact: true }).click()
     await expect(page.getByTestId('journal-header')).toBeVisible()
   })
 })

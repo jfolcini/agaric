@@ -104,7 +104,7 @@ const ESSENTIAL_ENTRIES: EssentialEntry[] = [
   { keys: '/', description: 'keyboard.essential.slash' },
   { keys: '[[', description: 'keyboard.essential.link' },
   { keys: '@', description: 'keyboard.essential.tag' },
-  { shortcutId: 'findInPage', description: 'keyboard.essential.search' },
+  { shortcutId: 'focusSearch', description: 'keyboard.essential.search' },
 ]
 
 /** Resolve an Essential entry's display chord — live from the registry when
@@ -225,7 +225,10 @@ export function KeyboardShortcuts({
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetContent side={isMobile ? 'bottom' : 'right'}>
+      <SheetContent
+        side={isMobile ? 'bottom' : 'right'}
+        className={isMobile ? undefined : 'sm:max-w-lg'}
+      >
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <Keyboard className="h-5 w-5" />
@@ -281,11 +284,13 @@ export function KeyboardShortcuts({
                 columns and so carries no per-column width info. A `<col>`
                 element's width is read independent of row order (CSS 2.1
                 17.5.2.1 rule 1, ahead of any cell-derived width), so it's
-                the only way to keep 1/3–2/3 proportions on a table whose
-                header-with-widths row isn't literally row one. */}
+                the only way to keep the column proportions on a table whose
+                header-with-widths row isn't literally row one. Half the
+                width from `sm` up keeps a chord like `Ctrl + Shift + Arrow
+                Right` on one line. */}
             <colgroup>
-              <col className="w-1/3" />
-              <col className="w-2/3" />
+              <col className="w-1/3 sm:w-1/2" />
+              <col className="w-2/3 sm:w-1/2" />
             </colgroup>
             <thead>
               <tr>
@@ -320,22 +325,11 @@ export function KeyboardShortcuts({
             </tbody>
           </table>
           <table className="w-full table-fixed text-sm mt-6" data-testid="shortcuts-list-table">
-            {/* See `essential-table`'s colgroup comment above — same
-                1/3–2/3 proportion, kept as `<col>` for consistency. */}
+            {/* Same columns as `essential-table`, whose header row it shares. */}
             <colgroup>
-              <col className="w-1/3" />
-              <col className="w-2/3" />
+              <col className="w-1/3 sm:w-1/2" />
+              <col className="w-2/3 sm:w-1/2" />
             </colgroup>
-            <thead>
-              <tr className="border-b">
-                <th className="pb-2 text-left font-semibold text-foreground">
-                  {t('keyboard.shortcutHeader')}
-                </th>
-                <th className="pb-2 text-left font-semibold text-foreground">
-                  {t('keyboard.actionHeader')}
-                </th>
-              </tr>
-            </thead>
             <tbody>
               {filteredGroups.length === 0 && (
                 <tr>

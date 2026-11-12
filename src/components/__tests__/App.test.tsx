@@ -1377,7 +1377,8 @@ describe('App', () => {
       })
     })
 
-    it('shows calendar button in pages view', async () => {
+    // #6548 — Today alone outside the journal, on Pages as everywhere else.
+    it('does not show the calendar button in pages view', async () => {
       useNavigationStore.setState({
         currentView: 'pages',
         selectedBlockId: null,
@@ -1388,8 +1389,9 @@ describe('App', () => {
       })
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /calendar/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
       })
+      expect(screen.queryByRole('button', { name: /calendar/i })).not.toBeInTheDocument()
     })
 
     it('clicking Today in non-journal view navigates to journal daily', async () => {
@@ -1416,8 +1418,7 @@ describe('App', () => {
       })
     })
 
-    // Today is on every header; on a tool/admin view like Trash the rest of
-    // the date trio is off-context and stays out (#1740).
+    // Today is on every header and alone outside the journal (#6548).
     it('shows Today but not the calendar in trash view', async () => {
       useNavigationStore.setState({
         currentView: 'trash',
@@ -2645,23 +2646,22 @@ describe('App', () => {
     })
   })
 
-  // #1740 — GlobalDateControls (Today/Agenda/calendar trio) is a pure
-  // jump-to-journal affordance and should only appear in the header of
-  // date-relevant content/navigation views (pages, search, tags, query).
-  // The tool/admin views (settings, history, graph, trash, templates) and
-  // the focused page-editor surface must NOT carry it.
+  // #1740 scoped the Today/Agenda/calendar trio to a few views; #6548 replaced
+  // that allowlist with Today alone on every view outside the journal.
   describe('GlobalDateControls header scoping (#1740)', () => {
-    /** The header date-controls are identified by their calendar button. */
-    function headerHasDateControls(): boolean {
-      const header = document.querySelector('header')
-      if (!header) throw new Error('header not found')
-      return within(header as HTMLElement).queryByRole('button', { name: /calendar/i }) !== null
-    }
+    const NON_JOURNAL_VIEWS = [
+      'pages',
+      'search',
+      'tags',
+      'query',
+      'settings',
+      'history',
+      'graph',
+      'trash',
+      'templates',
+    ] as const
 
-    const RELEVANT_VIEWS = ['pages', 'search', 'tags', 'query'] as const
-    const UNRELATED_VIEWS = ['settings', 'history', 'graph', 'trash', 'templates'] as const
-
-    it.each(RELEVANT_VIEWS)('shows GlobalDateControls on the %s view', async (view) => {
+    it.each(NON_JOURNAL_VIEWS)('shows Today alone in the header on the %s view', async (view) => {
       useNavigationStore.setState({ currentView: view, selectedBlockId: null })
 
       render(<App />)
@@ -2670,19 +2670,10 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      expect(headerHasDateControls()).toBe(true)
-    })
-
-    it.each(UNRELATED_VIEWS)('does NOT show GlobalDateControls on the %s view', async (view) => {
-      useNavigationStore.setState({ currentView: view, selectedBlockId: null })
-
-      render(<App />)
-
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
-
-      expect(headerHasDateControls()).toBe(false)
+      const header = document.querySelector('header') as HTMLElement
+      expect(within(header).getByRole('button', { name: /go to today/i })).toBeInTheDocument()
+      expect(within(header).queryByRole('button', { name: /go to agenda/i })).toBeNull()
+      expect(within(header).queryByRole('button', { name: /calendar/i })).toBeNull()
     })
 
     it('does NOT show GlobalDateControls on the journal view (it uses JournalControls)', async () => {

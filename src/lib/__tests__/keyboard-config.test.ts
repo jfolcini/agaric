@@ -1814,8 +1814,8 @@ describe('keyboard-config', () => {
     })
 
     it.each([
-      // The exact glyph set `formatChordTokens` renders (⌃⇧⌘⌥) — users copy
-      // these back into the Settings input, so every one must parse as a
+      // The mac modifier glyphs macOS menus show (⌃⇧⌘⌥) — users copy
+      // these into the Settings input, so every one must parse as a
       // modifier instead of being silently saved as a dead key token.
       ['⌘ + K', 'Ctrl + K', 'k', { ctrlKey: true }],
       ['⌘K', 'Ctrl + K', 'k', { metaKey: true }],

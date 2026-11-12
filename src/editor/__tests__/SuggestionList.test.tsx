@@ -17,11 +17,12 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { PickerItem, SuggestionListRef } from '@/editor/SuggestionList'
 import { SuggestionList } from '@/editor/SuggestionList'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
 
 const sampleItems: PickerItem[] = [
   { id: '1', label: 'Alpha' },
@@ -958,36 +959,56 @@ describe('SuggestionList', () => {
   // -- #211 P0-5: per-row keyboard shortcut chips -----------------------------
 
   describe('per-row keyboard shortcut (#211 P0-5)', () => {
-    it('renders a static `keys` chord as chips (Bold/Italic have no catalog id)', () => {
-      const command = vi.fn()
-      render(
-        <SuggestionList
-          items={[{ id: 'bold', label: 'BOLD', keys: 'Ctrl + B' }]}
-          command={command}
-        />,
-      )
-      const chip = screen.getByTestId('suggestion-shortcut-bold')
-      expect(chip).toBeInTheDocument()
-      expect(chip).toHaveAttribute('aria-hidden', 'true')
-      // "Ctrl + B" → glyph ⌃ + key B.
-      expect(chip).toHaveTextContent('⌃')
-      expect(chip).toHaveTextContent('B')
+    const originalPlatform = navigator.platform
+    function setPlatform(value: string): void {
+      Object.defineProperty(navigator, 'platform', { value, configurable: true })
+      __resetPlatformCacheForTests()
+    }
+    afterEach(() => {
+      setPlatform(originalPlatform)
     })
+    /** The catalog's `Ctrl` is the platform mod key (#6548). */
+    const MOD_BY_PLATFORM = [
+      ['Linux x86_64', 'Ctrl'],
+      ['Win32', 'Ctrl'],
+      ['MacIntel', '⌘'],
+    ] as const
+    const chipTexts = (testId: string): string[] =>
+      Array.from(screen.getByTestId(testId).querySelectorAll('kbd')).map((k) => k.textContent ?? '')
 
-    it('resolves a live `shortcutId` from the keyboard catalog', () => {
-      const command = vi.fn()
-      // `strikethrough` defaults to Ctrl + Shift + S in the catalog (#211 P2-11).
-      render(
-        <SuggestionList
-          items={[{ id: 'strike', label: 'STRIKE', shortcutId: 'strikethrough' }]}
-          command={command}
-        />,
-      )
-      const chip = screen.getByTestId('suggestion-shortcut-strike')
-      expect(chip).toHaveTextContent('⌃')
-      expect(chip).toHaveTextContent('⇧')
-      expect(chip).toHaveTextContent('S')
-    })
+    it.each(MOD_BY_PLATFORM)(
+      'renders a static `keys` chord as chips (Bold/Italic have no catalog id) on %s',
+      (platform, mod) => {
+        setPlatform(platform)
+        const command = vi.fn()
+        render(
+          <SuggestionList
+            items={[{ id: 'bold', label: 'BOLD', keys: 'Ctrl + B' }]}
+            command={command}
+          />,
+        )
+        const chip = screen.getByTestId('suggestion-shortcut-bold')
+        expect(chip).toBeInTheDocument()
+        expect(chip).toHaveAttribute('aria-hidden', 'true')
+        expect(chipTexts('suggestion-shortcut-bold')).toEqual([mod, 'B'])
+      },
+    )
+
+    it.each(MOD_BY_PLATFORM)(
+      'resolves a live `shortcutId` from the keyboard catalog on %s',
+      (platform, mod) => {
+        setPlatform(platform)
+        const command = vi.fn()
+        // `strikethrough` defaults to Ctrl + Shift + S in the catalog (#211 P2-11).
+        render(
+          <SuggestionList
+            items={[{ id: 'strike', label: 'STRIKE', shortcutId: 'strikethrough' }]}
+            command={command}
+          />,
+        )
+        expect(chipTexts('suggestion-shortcut-strike')).toEqual([mod, 'Shift', 'S'])
+      },
+    )
 
     it('prefers `shortcutId` over `keys` when both are set', () => {
       const command = vi.fn()
