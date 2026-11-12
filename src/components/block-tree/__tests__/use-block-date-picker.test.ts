@@ -322,6 +322,93 @@ describe('useBlockDatePicker opened from a date chip', () => {
   })
 })
 
+// The picker shows the date it edits and can clear it (#6544).
+describe('useBlockDatePicker on a date the block has', () => {
+  beforeEach(() => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'BLOCK_1', due_date: '2027-01-01', scheduled_date: '2027-01-02' }),
+        makeBlock({ id: 'BLOCK_2', due_date: '2027-02-12', scheduled_date: '2027-03-04' }),
+      ],
+    })
+  })
+
+  it.each([
+    ['due', '2027-02-12'],
+    ['schedule', '2027-03-04'],
+  ] as const)("reads the chip's block's %s date while open", (mode, date) => {
+    const params = makeDefaultParams({ focusedBlockId: 'BLOCK_1' })
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    expect(result.current.datePickerValue).toBeNull()
+    act(() => {
+      result.current.openDatePickerFor('BLOCK_2', mode)
+    })
+    expect(result.current.datePickerValue).toBe(date)
+  })
+
+  it('reads no date when it links a date page', () => {
+    const params = makeDefaultParams({ focusedBlockId: 'BLOCK_1' })
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    act(() => {
+      result.current.setDatePickerMode('date')
+      result.current.setDatePickerOpen(true)
+    })
+    expect(result.current.datePickerValue).toBeNull()
+  })
+
+  it.each([
+    ['due', 'set_due_date', 'due_date'],
+    ['schedule', 'set_scheduled_date', 'scheduled_date'],
+  ] as const)(
+    "clears the chip's block's %s date, closes, and records an undo step",
+    async (mode, command, column) => {
+      const onNewAction = vi.fn()
+      useUndoStore.setState({ ...useUndoStore.getState(), onNewAction })
+      const params = makeDefaultParams({ focusedBlockId: 'BLOCK_1' })
+      const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+      act(() => {
+        result.current.openDatePickerFor('BLOCK_2', mode)
+      })
+      await act(async () => {
+        await result.current.clearPickerDate()
+      })
+
+      expect(mockedInvoke).toHaveBeenCalledWith(command, { blockId: 'BLOCK_2', date: null })
+      const dates = pageStore.getState().blocks.map((b) => [b.id, b[column]])
+      expect(dates).toEqual([
+        ['BLOCK_1', column === 'due_date' ? '2027-01-01' : '2027-01-02'],
+        ['BLOCK_2', null],
+      ])
+      expect(result.current.datePickerOpen).toBe(false)
+      expect(onNewAction).toHaveBeenCalledWith('PAGE_1')
+      expect(vi.mocked(announce)).toHaveBeenCalledWith('announce.dateCleared')
+    },
+  )
+
+  it('keeps the date and reports when clearing fails', async () => {
+    stubDatePickerInvoke({
+      set_due_date: () => {
+        throw new Error('fail')
+      },
+    })
+    const params = makeDefaultParams({ focusedBlockId: 'BLOCK_1' })
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    act(() => {
+      result.current.openDatePickerFor('BLOCK_2', 'due')
+    })
+    await act(async () => {
+      await result.current.clearPickerDate()
+    })
+
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_2')?.due_date).toBe('2027-02-12')
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.setDueDateFailed')
+  })
+})
+
 describe('useBlockDatePicker handleDatePick — repeat-until mode', () => {
   it('sets repeat-until property', async () => {
     const params = makeDefaultParams()

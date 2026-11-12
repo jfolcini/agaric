@@ -32,6 +32,8 @@ The palette does not surface tags, parentless blocks, or recent blocks (only rec
 
 `Ctrl+F` (or `Cmd+F` on macOS) opens a thin toolbar anchored at the top of the page. It highlights every match in the currently-rendered page (Journal, PageEditor, …) in real time as you type. The current match gets a stronger accent and the page auto-scrolls to keep it in view.
 
+Where the view shows block trees, find searches the blocks' text in the page store (`src/lib/in-page-find/block-text.ts`), not the DOM (#6557): rows scrolled out of view, rows past the mount cap and children of a collapsed block all count, and the chrome around the blocks (buttons, Linked References) does not. Moving to a match mounts its row, expanding its collapsed ancestors, then scrolls to it. A view with no block tree (page mode, the journal month grid) is still searched as rendered DOM text.
+
 ### Bindings
 
 | Key | Action |
@@ -50,17 +52,17 @@ The toolbar exposes the same toggle row as the across-pages search view so the t
 - **`Ab|` — Whole word.** Restricts matches whose boundary letters are word chars (`[A-Za-z0-9_]`). Wraps around literal queries and post-filters regex matches.
 - **`.*` — Regular expression.** Uses the JavaScript native `RegExp` engine. Compiles with the `gu` flags by default (`giu` when case-insensitive). Inline `(?s)` / `(?m)` flags are supported per pattern.
 
-Matches do NOT span block boundaries — each ProseMirror text node is searched independently. A query like `end of paragraph 1 start of paragraph 2` will not match across the boundary, same as VSCode's editor.
+Matches do NOT span block boundaries — each block is searched on its own, so a query will not match from the end of one block into the next. Within a block, a match may cross formatting (`**bold**tail` matches `boldtail`). On the DOM path each text node is searched independently.
 
 ### Regex caps (in-page)
 
 Because JavaScript's `RegExp` is backtracking-based, an adversarial pattern could otherwise hang the page. The matcher (`src/lib/in-page-find/matcher.ts`) bounds the worst case with several caps; the exact values are `const`s there, so read them from the code rather than from a number here:
 
 1. **Pattern length** — over-long patterns reject with an inline error.
-2. **Text-node length** — over-long text nodes are skipped in regex mode. The toolbar surfaces a "{n} long passages skipped" notice once per walk.
+2. **Text length** — over-long blocks (or text nodes, on the DOM path) are skipped in regex mode. The toolbar surfaces a "{n} long passages skipped" notice once per walk.
 3. **Per-`exec` scan window** — each match attempt only looks at a bounded slice of a node, so no single `exec` can backtrack unboundedly (#2030).
 4. **Aggregate time budget** — a walk that exceeds it stops early and reports `timedOut` rather than freezing the page.
-5. **Cooperative chunking** — the matcher walks the DOM in small batches via `requestIdleCallback`, yielding between chunks. Typing again before the walk completes aborts the in-flight pass.
+5. **Cooperative chunking** — on the DOM path, the matcher walks the DOM in small batches via `requestIdleCallback`, yielding between chunks. Typing again before the walk completes aborts the in-flight pass.
 
 For long pages, anchor your regex (`^foo`, `bar$`, or `\bword\b`) to keep matches fast.
 

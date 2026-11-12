@@ -54,6 +54,11 @@ interface InPageFindState {
   container: HTMLElement | null
   /** Most-recent non-empty query — used to restore on re-open with no selection. */
   lastQuery: string
+  /**
+   * The block holding the current match, for the `BlockTree` that owns it to
+   * mount (#6557: past the mount cap, under a collapsed block). Null when none.
+   */
+  revealBlockId: string | null
 
   /** Open the toolbar. If `selection` is provided, seed the query with it. */
   open$: (selection?: string) => void
@@ -76,6 +81,8 @@ interface InPageFindState {
   previous: () => void
   /** Register the host container (call with `null` to unregister). */
   setContainer: (el: HTMLElement | null) => void
+  /** Ask the owning `BlockTree` to mount `blockId`'s row. */
+  setRevealBlockId: (blockId: string | null) => void
 }
 
 const initialToggles: InPageFindToggles = {
@@ -94,6 +101,7 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
   skippedLongNodes: 0,
   container: null,
   lastQuery: '',
+  revealBlockId: null,
 
   open$: (selection) => {
     const state = get()
@@ -130,6 +138,7 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
       currentIndex: -1,
       regexError: null,
       skippedLongNodes: 0,
+      revealBlockId: null,
     })
   },
 
@@ -182,5 +191,9 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
       return
     }
     set({ container: el })
+  },
+
+  setRevealBlockId: (blockId) => {
+    set({ revealBlockId: blockId })
   },
 }))

@@ -412,8 +412,8 @@ describe('mdFilesToUnits', () => {
     expect((await homeUnit?.load())?.vaultNotes).toBeNull()
   })
 
-  // #6277 decision 7 — only a note sent with no vault may merge into the page of its title.
-  it("names the page a Markdown note may merge into, a folder's too, and none for an Org or a Logseq note", () => {
+  // #6277 decision 7 — every note may merge into the page of its title.
+  it("names the page a note may merge into: a Markdown note's, a folder's, and an Org file's or a Logseq page's from its text", async () => {
     const plain = [
       new File(['- a'], 'note.md', { type: 'text/markdown' }),
       new File(['- b'], 'plain.txt', { type: 'text/plain' }),
@@ -421,19 +421,30 @@ describe('mdFilesToUnits', () => {
     ]
     const folder = [folderFile(['- d'], 'note.md', 'Vault/note.md')]
     const graph = [
-      folderFile(['- e'], 'page.md', 'Graph/pages/page.md'),
+      folderFile(['title:: Renamed\n\n- e'], 'page.md', 'Graph/pages/page.md'),
       folderFile(['- f'], '2026_10_21.md', 'Graph/journals/2026_10_21.md'),
     ]
+    const resolved = async (units: ImportUnit[]) => {
+      const names: (string | undefined)[] = []
+      for (const unit of units) {
+        names.push(typeof unit.merges === 'function' ? await unit.merges() : unit.merges)
+      }
+      return names
+    }
+    const loaded = async (units: ImportUnit[]) => {
+      const paths: string[] = []
+      for (const unit of units) paths.push((await unit.load()).path)
+      return paths
+    }
 
-    expect(mdFilesToUnits(plain, null, false).map((u) => u.merges)).toEqual([
-      'note.md',
-      'plain.md',
-      undefined,
-    ])
-    expect(mdFilesToUnits(folder, indexVaultFiles(folder), false).map((u) => u.merges)).toEqual([
+    const plainUnits = mdFilesToUnits(plain, null, false)
+    expect(await resolved(plainUnits)).toEqual(['note.md', 'plain.md', 'tasks.md'])
+    expect(await resolved(mdFilesToUnits(folder, indexVaultFiles(folder), false))).toEqual([
       'note.md',
     ])
-    expect(mdFilesToUnits(graph, null, false).map((u) => u.merges)).toEqual([undefined, undefined])
+    const graphUnits = mdFilesToUnits(graph, null, false)
+    expect(await resolved(graphUnits)).toEqual(await loaded(graphUnits))
+    expect(await resolved(graphUnits)).toContain('Renamed.md')
   })
 
   it('reads a Markdown note as Markdown, and an Org file or a Logseq page as Logseq', async () => {

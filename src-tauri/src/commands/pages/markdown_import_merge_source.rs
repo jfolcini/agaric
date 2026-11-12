@@ -76,6 +76,8 @@ pub(super) struct MergeSource {
     pub(super) block_files: Vec<(String, String)>,
     /// The `^name` blocks the save creates, which its links refer to.
     pub(super) named: Vec<NewNamedBlock>,
+    /// The blocks an outline file folds ([`link_outline_ids`]).
+    pub(super) collapsed: Vec<Fold>,
 }
 
 /// `text`, a file's lines less its title, as a buffer save reads what an
@@ -97,6 +99,7 @@ pub(super) fn merge_source(
         page_files: Vec::new(),
         block_files: Vec::new(),
         named: Vec::new(),
+        collapsed: Vec::new(),
     };
     let body = match import::front_matter_fence(text) {
         Some((yaml, len)) => {

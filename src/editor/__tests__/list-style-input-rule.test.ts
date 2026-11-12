@@ -1,4 +1,5 @@
 import { Editor } from '@tiptap/core'
+import Blockquote from '@tiptap/extension-blockquote'
 import Bold from '@tiptap/extension-bold'
 import Document from '@tiptap/extension-document'
 import History from '@tiptap/extension-history'
@@ -65,6 +66,7 @@ describe('ListStyleInputRule real-editor integration', () => {
         Paragraph,
         Text,
         Bold,
+        Blockquote,
         History,
         BulletList,
         OrderedList,
@@ -176,6 +178,38 @@ describe('ListStyleInputRule real-editor integration', () => {
 
     expect(onListStyle).not.toHaveBeenCalled()
     expect(editor.state.doc.child(0).textContent).toBe('hello world')
+  })
+
+  // #6530: the list is not the block's top level, so the block's list style is not what was typed.
+  it('leaves a list typed inside a quote a list, and the block unstyled', async () => {
+    const onListStyle = vi.fn()
+    editor = buildEditor(onListStyle, null, [
+      { type: 'blockquote', content: [{ type: 'paragraph' }] },
+    ])
+    editor.commands.focus('end')
+    typeChars(editor, '- x')
+    await flush()
+
+    expect(onListStyle).not.toHaveBeenCalled()
+    expect(editor.getJSON()).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'blockquote',
+          content: [
+            {
+              type: 'bulletList',
+              content: [
+                {
+                  type: 'listItem',
+                  content: [{ type: 'paragraph', content: [{ type: 'text', text: 'x' }] }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
   })
 
   it('does not fire inside a real MULTI-item bullet list', async () => {

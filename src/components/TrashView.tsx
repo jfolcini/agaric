@@ -553,7 +553,10 @@ export function TrashView(): React.ReactElement {
   )
 
   return (
-    <section className="trash-view space-y-4" aria-label={t('trash.regionLabel')}>
+    <section
+      className="trash-view mx-auto w-full max-w-list space-y-4"
+      aria-label={t('trash.regionLabel')}
+    >
       {/* PEND-UX item 5 — `FeaturePageHeader` carries the `<h1>` landmark
           + right-aligned action buttons. Restore-all / Empty-trash are
           surfaced as `actions` only when the trash is non-empty so an

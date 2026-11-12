@@ -38,7 +38,8 @@ export interface UnderlineMark {
 
 export interface LinkMark {
   readonly type: 'link'
-  readonly attrs: { readonly href: string }
+  /** The editor's mark also carries `title: null` when there is none. */
+  readonly attrs: { readonly href: string; readonly title?: string | null }
 }
 
 export type PMMark =
@@ -116,7 +117,7 @@ export interface MathInlineNode {
  */
 export interface ImageNode {
   readonly type: 'image'
-  readonly attrs: { readonly alt: string; readonly src: string }
+  readonly attrs: { readonly alt: string; readonly src: string; readonly title?: string | null }
   readonly marks?: readonly [LinkMark]
 }
 

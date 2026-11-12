@@ -66,6 +66,7 @@ import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tr
 import { useBlockTreeKeyboardShortcuts } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
 import { useBlockZoom } from '@/components/block-tree/use-block-zoom'
 import { useBlockZoomEmptySeed } from '@/components/block-tree/use-block-zoom-empty-seed'
+import { useFindReveal } from '@/components/block-tree/use-find-reveal'
 import { BlockListRenderer } from '@/components/editor/BlockListRenderer'
 import { BlockTreeDialogs } from '@/components/editor/BlockTreeDialogs'
 import { BlockZoomBar } from '@/components/editor/BlockZoomBar'
@@ -372,6 +373,13 @@ export function BlockTree({
     expandMountLimit,
     revealIndex,
   } = useBlockMountLimit(uncappedZoomedVisible, { pageKey: mountScopeKey })
+  useFindReveal({
+    blocksById,
+    collapsedIds,
+    visible: uncappedZoomedVisible,
+    expandBlock,
+    revealIndex,
+  })
 
   // ── #3276: reveal a navigation target hidden by collapse or the mount cap ──
   // PageEditor sets `focusedBlockId` on a link/search-result jump; if the
@@ -660,7 +668,7 @@ export function BlockTree({
   useEffect(() => {
     const editor = rovingEditor.editor
     if (editor == null) return
-    const publish = (): void => setActiveEditor(editor)
+    const publish = (): void => setActiveEditor(editor, rovingEditorRef.current)
     if (editor.isFocused) publish()
     editor.on('focus', publish)
     return () => {
@@ -709,11 +717,14 @@ export function BlockTree({
   // ── Date picker hook ───────────────────────────────────────────────
   const {
     datePickerOpen,
+    datePickerMode,
     datePickerCursorPos,
     setDatePickerOpen,
     setDatePickerMode,
     openDatePickerFor,
     handleDatePick,
+    datePickerValue,
+    clearPickerDate,
   } = useBlockDatePicker({
     focusedBlockId,
     rootParentId,
@@ -1628,8 +1639,11 @@ export function BlockTree({
             {datePickerOpen && (
               <Suspense fallback={null}>
                 <BlockDatePicker
+                  mode={datePickerMode}
+                  value={datePickerValue}
                   onSelect={(day) => day && handleDatePick(day)}
                   onClose={() => setDatePickerOpen(false)}
+                  onClear={() => void clearPickerDate()}
                 />
               </Suspense>
             )}

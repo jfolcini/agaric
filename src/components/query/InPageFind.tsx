@@ -4,7 +4,8 @@
  * Renders nothing when the store's `open` flag is false. When open,
  * mounts a thin toolbar that runs the matcher against the registered
  * host container and drives the highlight registry via the highlighter
- * module.
+ * module. A container holding block trees is searched over its blocks'
+ * text, not its DOM (#6557, `block-text.ts`).
  *
  * Two render variants:
  *  - `variant="overlay"` (default) — free-floating overlay anchored at
@@ -52,12 +53,21 @@ import { useShallow } from 'zustand/react/shallow'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useBlockFindVersion } from '@/hooks/useBlockFindVersion'
+import {
+  type BlockFindMatch,
+  blockFindText,
+  blockSources,
+  findInBlocks,
+  paintableMatches,
+} from '@/lib/in-page-find/block-text'
 import {
   clear as clearHighlights,
   paint,
   scrollIntoViewMatch,
 } from '@/lib/in-page-find/highlighter'
 import {
+  type CompiledQuery,
   collectTextNodes,
   compileQuery,
   type FindMatch,
@@ -67,7 +77,10 @@ import {
   type WalkerHandle,
 } from '@/lib/in-page-find/matcher'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import type { FlatBlock } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
+import { treeStoresIn } from '@/stores/block-command-bus'
+import { useResolveStore } from '@/stores/resolve'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
 /**
@@ -167,6 +180,7 @@ export function InPageFind({
   const nextMatch = useInPageFindStore((s) => s.next)
   const prevMatch = useInPageFindStore((s) => s.previous)
   const close = useInPageFindStore((s) => s.close)
+  const setRevealBlockId = useInPageFindStore((s) => s.setRevealBlockId)
 
   const inputRef = useRef<HTMLInputElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -180,6 +194,60 @@ export function InPageFind({
   const walkerRef = useRef<WalkerHandle | null>(null)
   // Element to refocus on close (saved when the toolbar opens).
   const returnFocusRef = useRef<HTMLElement | null>(null)
+  // #6557 — matches over the page store's block text; `null` while the
+  // container holds no BlockTree and find walks its DOM instead.
+  const blockMatchesRef = useRef<BlockFindMatch[] | null>(null)
+  const compiledRef = useRef<Extract<CompiledQuery, { kind: 'literal' | 'regex' }> | null>(null)
+  // The match still to scroll to, and whether its placeholder row was already
+  // scrolled in to make it hydrate.
+  const pendingScrollRef = useRef<{ index: number; rowScrolled: boolean } | null>(null)
+  // Query + toggles of the last block run: a new one starts at the first match,
+  // a re-run for changed blocks keeps the position.
+  const blockRunKeyRef = useRef<string | null>(null)
+  const textCacheRef = useRef(new Map<string, { content: string | null; text: string }>())
+
+  // Paint the matches whose rows are hydrated and bring the current one in:
+  // ask its tree to mount the row, scroll the placeholder in so it hydrates,
+  // then scroll to the match. Runs again on every DOM change while open.
+  const syncBlockHighlights = useCallback(() => {
+    const matches = blockMatchesRef.current
+    const compiled = compiledRef.current
+    if (!container || matches === null || compiled === null) return
+    const index = useInPageFindStore.getState().currentIndex
+    const { painted, current } = paintableMatches(container, matches, compiled, index)
+    paint(painted, current)
+    const pending = pendingScrollRef.current
+    const target = matches[index]
+    if (pending === null || pending.index !== index || target === undefined) return
+    const currentMatch = painted[current]
+    if (currentMatch !== undefined) {
+      scrollIntoViewMatch(currentMatch)
+      pendingScrollRef.current = null
+      return
+    }
+    const row = container.querySelector(`li[data-block-id="${target.blockId}"]`)
+    if (row === null) {
+      setRevealBlockId(target.blockId)
+      return
+    }
+    // Mounted: the tree is done; holding the request would re-expand a block
+    // the user collapses while the bar is open.
+    if (useInPageFindStore.getState().revealBlockId !== null) setRevealBlockId(null)
+    if (!pending.rowScrolled) {
+      pending.rowScrolled = true
+      row.scrollIntoView({ block: 'center' })
+    }
+  }, [container, setRevealBlockId])
+
+  const hasBlockMatches = useCallback(() => blockMatchesRef.current !== null, [])
+  const forgetTexts = useCallback(() => textCacheRef.current.clear(), [])
+  const blocksVersion = useBlockFindVersion({
+    open,
+    container,
+    hasBlockMatches,
+    repaint: syncBlockHighlights,
+    onTitlesChanged: forgetTexts,
+  })
 
   // ── Auto-focus the input on open + capture the return-focus target.
   // `useLayoutEffect` so the focus shift happens before paint, matching the
@@ -221,9 +289,11 @@ export function InPageFind({
   // change. Aborts the in-flight walker first so a fast-typing user never
   // observes counters from a stale run.
   useEffect(() => {
+    blockMatchesRef.current = null
     if (!open) {
       clearHighlights()
       matchesRef.current = []
+      blockRunKeyRef.current = null
       return
     }
     if (!container) {
@@ -251,6 +321,35 @@ export function InPageFind({
       })
       return
     }
+    const sources = blockSources(treeStoresIn(container), (block: FlatBlock) => {
+      const cached = textCacheRef.current.get(block.id)
+      if (cached?.content === block.content) return cached.text
+      const text = blockFindText(block.content, (id) => useResolveStore.getState().resolveTitle(id))
+      textCacheRef.current.set(block.id, { content: block.content, text })
+      return text
+    })
+    if (sources !== null) {
+      const result = findInBlocks(sources, compiled)
+      const runKey = JSON.stringify([query, toggles])
+      const fresh = blockRunKeyRef.current !== runKey
+      blockRunKeyRef.current = runKey
+      const count = result.matches.length
+      const previous = useInPageFindStore.getState().currentIndex
+      const index = count === 0 ? -1 : fresh ? 0 : Math.min(Math.max(previous, 0), count - 1)
+      matchesRef.current = []
+      blockMatchesRef.current = result.matches
+      compiledRef.current = compiled
+      if (fresh) pendingScrollRef.current = { index, rowScrolled: false }
+      setResult({
+        totalMatches: count,
+        currentIndex: index,
+        regexError: result.timedOut ? { kind: 'tooSlow' } : null,
+        skippedLongNodes: result.skippedLongNodes,
+      })
+      syncBlockHighlights()
+      return
+    }
+    blockRunKeyRef.current = null
     const textNodes = collectTextNodes(container)
     // Index this walk last published via `setResult`. A fresh walk always
     // starts at the first match — but if the store's index has moved away
@@ -306,18 +405,23 @@ export function InPageFind({
     return () => {
       handle.cancel()
     }
-  }, [open, query, toggles, container, setResult])
+  }, [open, query, toggles, container, setResult, blocksVersion, syncBlockHighlights])
 
   // ── Repaint and scroll when the current index changes (arrow navigation).
   useEffect(() => {
     if (!open) return
+    if (blockMatchesRef.current !== null) {
+      pendingScrollRef.current = { index: currentIndex, rowScrolled: false }
+      syncBlockHighlights()
+      return
+    }
     const matches = matchesRef.current
     paint(matches, currentIndex)
     if (currentIndex >= 0) {
       const m = matches[currentIndex]
       if (m) scrollIntoViewMatch(m)
     }
-  }, [open, currentIndex])
+  }, [open, currentIndex, syncBlockHighlights])
 
   // ── Clear highlights on unmount.
   useEffect(

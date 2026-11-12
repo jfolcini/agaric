@@ -2,6 +2,7 @@ import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { StoreApi } from 'zustand'
+import { useStore } from 'zustand'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { announce } from '@/lib/announcer'
@@ -48,6 +49,10 @@ export interface UseBlockDatePickerReturn {
   /** Open the picker for `blockId` instead of the focused block (a date chip, page mode's `/due`). */
   openDatePickerFor: (blockId: string, mode: DatePickerMode) => void
   handleDatePick: (d: Date) => Promise<void>
+  /** The due or scheduled date the open picker edits, if the block has one. */
+  datePickerValue: string | null
+  /** Remove the date the open picker edits, and close it. */
+  clearPickerDate: () => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -102,15 +107,20 @@ function formatLegacyDate(d: Date): string {
 // Mode handlers — each owns its own optimistic store update + error notify.
 // ---------------------------------------------------------------------------
 
-async function handleDueMode(ctx: DatePickContext): Promise<void> {
+/** What writing a due or scheduled date needs: the date itself is the writer's argument. */
+type DateWriteContext = Pick<DatePickContext, 'blockId' | 'rootParentId' | 'pageStore' | 't'>
+
+/** Set the block's due date, or clear it with `null`. */
+async function writeDueDate(ctx: DateWriteContext, date: string | null): Promise<void> {
   if (!ctx.blockId) return
   const blockId = ctx.blockId
   try {
-    unwrap(await commands.setDueDate(blockId, ctx.dateStr))
+    unwrap(await commands.setDueDate(blockId, date))
     notifyUndo(ctx.rootParentId)
     ctx.pageStore.setState((s) => ({
-      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, due_date: ctx.dateStr } : b)),
+      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, due_date: date } : b)),
     }))
+    if (date === null) announce(ctx.t('announce.dateCleared'))
   } catch {
     notify.error(ctx.t('blockTree.setDueDateFailed'))
   }
@@ -135,16 +145,19 @@ async function handleRepeatUntilMode(ctx: DatePickContext): Promise<void> {
   }
 }
 
-async function handleScheduleMode(ctx: DatePickContext): Promise<void> {
+/** Set the block's scheduled date, or clear it with `null`. */
+async function writeScheduledDate(ctx: DateWriteContext, date: string | null): Promise<void> {
   if (!ctx.blockId) return
   const blockId = ctx.blockId
   try {
-    unwrap(await commands.setScheduledDate(blockId, ctx.dateStr))
+    unwrap(await commands.setScheduledDate(blockId, date))
     notifyUndo(ctx.rootParentId)
     ctx.pageStore.setState((s) => ({
-      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, scheduled_date: ctx.dateStr } : b)),
+      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, scheduled_date: date } : b)),
     }))
-    announce(ctx.t('announce.scheduledDateSet', { date: ctx.dateStr }))
+    announce(
+      date === null ? ctx.t('announce.dateCleared') : ctx.t('announce.scheduledDateSet', { date }),
+    )
   } catch {
     notify.error(ctx.t('blockTree.setScheduledDateFailed'))
   }
@@ -212,9 +225,23 @@ async function handleDateMode(ctx: DatePickContext): Promise<void> {
 
 const MODE_HANDLERS: Record<DatePickerMode, DatePickHandler> = {
   date: handleDateMode,
-  due: handleDueMode,
-  schedule: handleScheduleMode,
+  due: (ctx) => writeDueDate(ctx, ctx.dateStr),
+  schedule: (ctx) => writeScheduledDate(ctx, ctx.dateStr),
   'repeat-until': handleRepeatUntilMode,
+}
+
+/** The modes that edit a date the block shows, with its column and its writer. */
+const BLOCK_DATES: Partial<
+  Record<
+    DatePickerMode,
+    {
+      column: 'due_date' | 'scheduled_date'
+      write: (ctx: DateWriteContext, date: string | null) => Promise<void>
+    }
+  >
+> = {
+  due: { column: 'due_date', write: writeDueDate },
+  schedule: { column: 'scheduled_date', write: writeScheduledDate },
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +317,23 @@ export function useBlockDatePicker({
     ],
   )
 
+  const blockDate = BLOCK_DATES[datePickerMode]
+  const pickerBlockId = chipBlockId ?? focusedBlockId
+  const datePickerValue = useStore(pageStore, (s) =>
+    datePickerOpen && blockDate !== undefined && pickerBlockId !== null
+      ? (s.blocksById.get(pickerBlockId)?.[blockDate.column] ?? null)
+      : null,
+  )
+
+  const clearPickerDate = useCallback(async () => {
+    if (blockDate === undefined) return
+    setDatePickerOpen(false)
+    await blockDate.write(
+      { blockId: pickerBlockId, rootParentId, pageStore, t: tRef.current },
+      null,
+    )
+  }, [blockDate, pickerBlockId, rootParentId, pageStore, setDatePickerOpen])
+
   return {
     datePickerOpen,
     datePickerMode,
@@ -298,5 +342,7 @@ export function useBlockDatePicker({
     setDatePickerMode,
     openDatePickerFor,
     handleDatePick,
+    datePickerValue,
+    clearPickerDate,
   }
 }

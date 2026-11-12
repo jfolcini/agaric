@@ -606,6 +606,8 @@ function PageModeDocument({
     setDatePickerMode,
     openDatePickerFor,
     handleDatePick,
+    datePickerValue,
+    clearPickerDate,
   } = datePicker
   const slash = usePageSlashCommands({
     pageId,
@@ -1154,6 +1156,8 @@ function PageModeDocument({
       {datePickerOpen && (
         <Suspense fallback={null}>
           <BlockDatePicker
+            mode={datePickerMode}
+            value={datePickerValue}
             onSelect={(day) => {
               if (day === undefined) return
               // Closes now: the pick waits its turn behind the saves, and
@@ -1162,6 +1166,10 @@ function PageModeDocument({
               actions.current.pick(() => handleDatePick(day), datePickerMode === 'repeat-until')
             }}
             onClose={() => setDatePickerOpen(false)}
+            onClear={() => {
+              setDatePickerOpen(false)
+              actions.current.pick(clearPickerDate, false)
+            }}
           />
         </Suspense>
       )}

@@ -4,6 +4,8 @@
  * Renders a Radix Dialog with:
  *   - A text input that accepts natural language dates (today, +3d, Apr 15)
  *   - A Calendar widget for visual date selection
+ *   - Opened on a date the block has: that date selected and in view, and a
+ *     "Clear date" button that removes it
  *
  * Radix Dialog provides: focus trap, Escape-to-close, focus-restore-to-trigger,
  * scroll-lock, outside-click dismissal, and proper ARIA semantics.
@@ -17,6 +19,8 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { DatePickerMode } from '@/components/block-tree/use-block-date-picker'
+import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { DialogBody } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -24,15 +28,32 @@ import { SheetBody } from '@/components/ui/sheet'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { parseDate } from '@/lib/parse-date'
+import { parseISODate } from '@/stores/journal'
+
+const TITLE_KEYS: Partial<Record<DatePickerMode, string>> = {
+  due: 'datePicker.dueTitle',
+  schedule: 'datePicker.scheduledTitle',
+}
 
 export function BlockDatePicker({
+  mode,
+  value = null,
   onSelect,
   onClose,
+  onClear,
 }: {
+  /** Which date the picker edits; a due or scheduled date names the title. */
+  mode?: DatePickerMode
+  /** The edited date the block already has (YYYY-MM-DD): selected, in view, and clearable. */
+  value?: string | null
   onSelect: (day: Date | undefined) => void
   onClose: () => void
+  /** Removes `value`; offered only while there is one. */
+  onClear?: () => void
 }): React.ReactElement {
   const { t } = useTranslation()
+  const title = t(TITLE_KEYS[mode ?? 'date'] ?? 'journal.datePickerLabel')
+  const selected = (value === null ? null : parseISODate(value)) ?? undefined
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description } = parts
   const { weekStartsOn } = useWeekStart()
@@ -91,6 +112,10 @@ export function BlockDatePicker({
       <div className="flex justify-center border-t border-border/60 pt-1">
         <Calendar
           mode="single"
+          // Picking the selected day again keeps it rather than deselecting it.
+          required
+          selected={selected}
+          {...(selected !== undefined && { defaultMonth: selected })}
           weekStartsOn={weekStartsOn}
           showOutsideDays
           onSelect={onSelect}
@@ -101,6 +126,13 @@ export function BlockDatePicker({
           }}
         />
       </div>
+      {selected !== undefined && onClear !== undefined && (
+        <div className="flex justify-end border-t border-border/60 pt-2">
+          <Button variant="ghost" size="sm" onClick={onClear}>
+            {t('datePicker.clearDate')}
+          </Button>
+        </div>
+      )}
     </>
   )
 
@@ -112,7 +144,7 @@ export function BlockDatePicker({
       }}
     >
       <Content
-        aria-label={t('journal.datePickerLabel')}
+        aria-label={title}
         // As wide as the calendar plus the dialog's padding; touch cells are
         // larger, so a coarse pointer gets the next width up.
         className={
@@ -124,7 +156,7 @@ export function BlockDatePicker({
         data-editor-portal=""
       >
         <Header>
-          <Title>{t('journal.datePickerLabel')}</Title>
+          <Title>{title}</Title>
           <Description className="sr-only">{t('dateChip.placeholder')}</Description>
         </Header>
         {/* The calendar can outgrow a sheet lifted above the soft keyboard,

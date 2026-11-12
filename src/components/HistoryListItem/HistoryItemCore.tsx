@@ -38,7 +38,7 @@ import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichCont
 import type { HistoryEntry } from '@/lib/bindings'
 import { formatTimestamp, truncateId } from '@/lib/format'
 import { formatRelativeTime } from '@/lib/format-relative-time'
-import { getPayloadRawContent, getPropertyPayload, opTypeLabel } from '@/lib/history-utils'
+import { getPayloadDisplayContent, getPropertyPayload, opTypeLabel } from '@/lib/history-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
@@ -170,7 +170,7 @@ export function HistoryItemCore({
   onToggleDiff,
 }: HistoryItemCoreProps): React.ReactElement {
   const { t } = useTranslation()
-  const rawContent = getPayloadRawContent(entry)
+  const rawContent = getPayloadDisplayContent(entry)
   const propPayload = getPropertyPayload(entry)
   const isPlainTextOp = isPlainTextOpType(entry.op_type)
   const richCallbacks = useRichContentCallbacks()

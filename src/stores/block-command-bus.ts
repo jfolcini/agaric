@@ -120,6 +120,26 @@ export function blockIsRenderedByAMountedTree(blockId: string): boolean {
   return false
 }
 
+/** The page store of every mounted `BlockTree`: what in-page find searches (#6557). */
+export function mountedTreeStores(): StoreApi<PageBlockState>[] {
+  return [...registry.keys()]
+}
+
+/** The mounted `BlockTree` stores with a row inside `container`, in DOM order. */
+export function treeStoresIn(container: Element): StoreApi<PageBlockState>[] {
+  const owner = new Map<string, StoreApi<PageBlockState>>()
+  for (const store of registry.keys()) {
+    for (const block of store.getState().blocks) owner.set(block.id, store)
+  }
+  const ordered: StoreApi<PageBlockState>[] = []
+  if (owner.size === 0) return ordered
+  for (const row of container.querySelectorAll('li[data-block-id]')) {
+    const store = owner.get(row.getAttribute('data-block-id') ?? '')
+    if (store !== undefined && !ordered.includes(store)) ordered.push(store)
+  }
+  return ordered
+}
+
 /**
  * Register (or replace) a BlockTree's command handlers under its page store.
  * Returns a cleanup that removes the registration. Called once per BlockTree;

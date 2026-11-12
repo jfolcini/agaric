@@ -67,13 +67,15 @@ export const ListStyleInputRule = Extension.create<ListStyleInputRuleOptions>({
           const { $from } = state.selection
           const listItem = $from.node(-1)
           const list = $from.node(-2)
+          const listDepth = $from.depth - 2
+          // A list inside a quote is not the block's list style (#6530).
+          if (listDepth !== 1) return null
           if (listItem?.type.name !== 'listItem') return null
           if (list?.type.name !== listTypeName || list.childCount !== 1) return null
 
           const paragraphType = state.schema.nodes['paragraph']
           if (!paragraphType) return null
 
-          const listDepth = $from.depth - 2
           const from = $from.before(listDepth)
           const to = $from.after(listDepth)
           state.tr.replaceRangeWith(from, to, paragraphType.create(null, $from.parent.content))

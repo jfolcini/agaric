@@ -31,6 +31,7 @@ import {
   confirmDialog,
   expectAbsent,
   importFolder,
+  importLogseqPage,
   importMarkdownPage,
   invoke,
   navigateTo,
@@ -214,5 +215,36 @@ describe('Agaric real-backend re-import of a file with an Obsidian ^name anchor 
     const fresh = blocks.find((block) => block.content === `${marker}-fresh`)
     expect(fresh?.content).toBe(`${marker}-fresh`)
     expect(blocks.map((block) => block.content)).toContain(`${marker}-see ((${fresh?.id}))`)
+  })
+})
+
+describe('Agaric real-backend re-import of a Logseq page into the page of its title (#6277 G5) @markdown @pages', () => {
+  it('lists the page before it runs and updates it in place', async () => {
+    await waitForAppReady()
+    await switchToSpace('Personal')
+    const marker = runScopedMarker('wdio-logseq-merge')
+    const title = `${marker}-notes`
+    await importLogseqPage(title, `- ${marker}-alpha\n- ${marker}-beta\n- ${marker}-gamma\n`)
+
+    await importFolder(
+      'import-folder-input',
+      `${title}-graph`,
+      {
+        'logseq/config.edn': Buffer.from('{:file/name-format :triple-lowbar}\n'),
+        [`pages/${title}.md`]: Buffer.from(
+          `- ${marker}-alpha\n- ${marker}-beta-edited\n- ${marker}-gamma\n`,
+        ),
+      },
+      '1 existing page updated',
+      'Update and import',
+    )
+
+    // Round-trip: one page of the title, updated in place.
+    await navigateTo('Journal')
+    expect(await pagesTitled(title)).toBe(1)
+    await reopenPageByTitle(title)
+    await blockStaticByMarker(`${marker}-beta-edited`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await blockStaticByMarker(`${marker}-gamma`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await expectAbsent(`span[title="${title} (2)"]`, 'a twin of the page')
   })
 })

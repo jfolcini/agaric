@@ -221,11 +221,10 @@ async fn an_oversize_merge_is_refused_by_the_op_cap() {
     mat.shutdown();
 }
 
-/// Red: a Logseq or Org file does not merge, and makes no twin either: it is
-/// the page `Title (2)`, with a warning, and the page of its title is left as
-/// it was. A folder's note and a note with files merge into it (#6277 G5).
+/// A Logseq file, a folder's note and a note with files each merge into the
+/// page of its title (#6277 G5).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_logseq_file_is_title_2_and_a_folder_note_or_a_note_with_files_merges() {
+async fn a_logseq_file_a_folder_note_and_a_note_with_files_merge() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Plan").await;
@@ -249,15 +248,9 @@ async fn a_logseq_file_is_title_2_and_a_folder_note_or_a_note_with_files_merges(
     .unwrap();
     settle(&mat).await;
 
-    assert_eq!(contents(&pool, page.as_str()).await, ["kept"]);
-    assert_eq!(outline.page_title, "Plan (2)");
-    assert_eq!(contents(&pool, &outline.page_id).await, ["outline"]);
-    let why = "a page titled 'Plan' is in this space, and a Logseq or Org file does not \
-               merge into it";
-    assert_eq!(
-        outline.warnings,
-        [format!("{why}; the file was imported as 'Plan (2)'")]
-    );
+    assert_eq!(outline.page_id, page.as_str());
+    assert_eq!(outline.warnings, Vec::<String>::new());
+    assert_eq!(contents(&pool, page.as_str()).await, ["outline"]);
 
     let note = import_markdown_with_progress(
         &pool,
@@ -1031,5 +1024,230 @@ async fn a_merged_files_obsidian_anchor_on_a_repeated_new_block_links_its_page()
         contents(&pool, page.as_str()).await,
         ["old", "twin", "twin", &format!("see [[{page}]]")]
     );
+    mat.shutdown();
+}
+
+/// `md` imported as `name` with the outline reader, as a Logseq graph's or an
+/// Org file is.
+async fn import_outline(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    dir: &std::path::Path,
+    name: &str,
+    md: &str,
+) -> Result<ImportResult, AppError> {
+    let result = import_markdown_with_progress(
+        pool,
+        DEV,
+        mat,
+        dir,
+        md.into(),
+        Some(name.into()),
+        TEST_SPACE_ID.into(),
+        ImportDialect::LogseqOrg,
+        None,
+        None,
+        None,
+    )
+    .await;
+    settle(mat).await;
+    result
+}
+
+/// Each block of `page` with its task state, in id order.
+async fn task_states(pool: &SqlitePool, page: &str) -> Vec<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT id, todo_state FROM blocks WHERE page_id = ?1 AND id != ?1 \
+         AND deleted_at IS NULL ORDER BY id",
+    )
+    .bind(page)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// A space with the pages and typed definitions the outline fixtures name.
+async fn outline_space(pool: &SqlitePool, mat: &Materializer) {
+    dup_page(pool, mat, "Other").await;
+    for (key, kind) in [("effort", "number"), ("review", "date"), ("owner", "ref")] {
+        create_property_def_inner(pool, DEV, mat, TEST_SPACE_ID, key.into(), kind.into(), None)
+            .await
+            .unwrap();
+    }
+    settle(mat).await;
+}
+
+async fn op_count(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A Logseq page holding each shape a re-render has to write back as the
+/// stored page renders: an alias, a tag and a page link, a task with a
+/// priority and planning dates, an `id::` a `((uuid))` refers to, a fold,
+/// typed number, date and ref values, nested children and a done task with
+/// its done date.
+const LOGSEQ_NOTES: &str = concat!(
+    "alias:: nb\n",
+    "\n",
+    "- TODO [#A] first #work see [[Other]]\n",
+    "  SCHEDULED: <2026-06-01 Mon>\n",
+    "  DEADLINE: <2026-06-05 Fri>\n",
+    "  id:: 6512bd43-d9ca-4d9d-9c7a-3e1f5c3b2a10\n",
+    "  collapsed:: true\n",
+    "  effort:: 3\n",
+    "  review:: 2026-06-02\n",
+    "  owner:: [[Other]]\n",
+    "  - child\n",
+    "    - grandchild\n",
+    "- [x] closed ✅ 2026-06-03\n",
+    "- see ((6512bd43-d9ca-4d9d-9c7a-3e1f5c3b2a10))\n",
+    "- last\n",
+);
+
+/// Red (#6277 G5): a Logseq file imported twice leaves one page as the first
+/// import wrote it, appending no op, and reports the block its `collapsed::`
+/// folds again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_logseq_file_imported_twice_leaves_its_page_as_it_was() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    outline_space(&pool, &mat).await;
+    let first = import_outline(&pool, &mat, dir.path(), "Notes.md", LOGSEQ_NOTES)
+        .await
+        .unwrap();
+    assert_eq!(first.warnings, Vec::<String>::new());
+    let page = first.page_id.clone();
+    let before = (
+        page_state(&pool, &page).await,
+        task_states(&pool, &page).await,
+    );
+    let ops = op_count(&pool).await;
+    assert_eq!(first.collapsed.len(), 1);
+    // The fixture reads as the shapes it is for: planning dates and a priority
+    // on the task, a grandchild, typed number, date and ref values, a done
+    // task's date, the alias and the `((uuid))` made a ref.
+    let shapes: (i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT \
+         (SELECT COUNT(*) FROM blocks WHERE page_id = ?1 AND priority IS NOT NULL \
+          AND scheduled_date IS NOT NULL AND due_date IS NOT NULL), \
+         (SELECT COUNT(*) FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+          WHERE b.page_id = ?1 AND p.parent_id != ?1), \
+         (SELECT COUNT(*) FROM block_properties WHERE key = 'effort' AND value_num = 3), \
+         (SELECT COUNT(*) FROM block_properties WHERE key = 'review' \
+          AND value_date = '2026-06-02'), \
+         (SELECT COUNT(*) FROM block_properties WHERE key = 'owner' AND value_ref IS NOT NULL), \
+         (SELECT COUNT(*) FROM block_properties WHERE key = 'completed_at'), \
+         (SELECT COUNT(*) FROM page_aliases WHERE page_id = ?1 AND alias = 'nb'), \
+         (SELECT COUNT(*) FROM blocks WHERE page_id = ?1 AND content LIKE 'see ((%))' \
+          AND content NOT LIKE '%6512bd43%')",
+    )
+    .bind(&page)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(shapes, (1, 1, 1, 1, 1, 1, 1, 1));
+
+    let second = import_outline(&pool, &mat, dir.path(), "Notes.md", LOGSEQ_NOTES)
+        .await
+        .unwrap();
+
+    assert_eq!(second.page_id, page);
+    assert_eq!(second.warnings, Vec::<String>::new());
+    assert_eq!(pages_titled(&pool, "Notes").await, [page.as_str()]);
+    assert_eq!(
+        (
+            page_state(&pool, &page).await,
+            task_states(&pool, &page).await
+        ),
+        before
+    );
+    assert_eq!(op_count(&pool).await, ops, "the second import appended ops");
+    assert_eq!(second.collapsed, first.collapsed);
+    mat.shutdown();
+}
+
+/// Red (#6277 G5): an edited Logseq file updates its page in place, the
+/// blocks it did not change keeping their ids.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_edited_logseq_file_updates_its_page_in_place() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    outline_space(&pool, &mat).await;
+    let first = import_outline(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- one\n- two\n- three\n",
+    )
+    .await
+    .unwrap();
+    let before = children(&pool, &first.page_id).await;
+
+    let edited = "- one\n- two edited\n- three\n";
+    let second = import_outline(&pool, &mat, dir.path(), "Notes.md", edited)
+        .await
+        .unwrap();
+
+    assert_eq!(second.page_id, first.page_id);
+    assert_eq!(second.warnings, Vec::<String>::new());
+    assert_eq!(pages_titled(&pool, "Notes").await, [first.page_id.as_str()]);
+    let after = children(&pool, &first.page_id).await;
+    let texts: Vec<&str> = after.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(texts, ["one", "two edited", "three"]);
+    assert_eq!((&after[0].0, &after[2].0), (&before[0].0, &before[2].0));
+    mat.shutdown();
+}
+
+/// Red (#6277 G5): an Org file imported twice leaves one page as the first
+/// import wrote it, appending no op: TODO keywords with a priority, planning
+/// dates, a `:PROPERTIES:` drawer with an `:ID:` an `id:` link names and a
+/// typed value, a headline tag, nested headlines and a done headline.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_org_file_imported_twice_leaves_its_page_as_it_was() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    outline_space(&pool, &mat).await;
+    // What the frontend's `orgToMarkdown` sends for this Org file: `* TODO [#B]
+    // first :work:` with its planning line, a `:PROPERTIES:` drawer holding
+    // `:ID: 7a1c…` and `:effort: 3`, a `** child`, a `* DONE second` and a
+    // `* see [[id:7a1c…][first]]` (`src/lib/vault-import.ts`, `load`).
+    let org = concat!(
+        "- TODO [#B] first #[[work]]\n",
+        "  SCHEDULED: <2026-06-01 Mon> DEADLINE: <2026-06-05 Fri>\n",
+        "  ID:: 7a1c2e9f-3b4d-4e5f-8a6b-1c2d3e4f5a6b\n",
+        "  effort:: 3\n",
+        "  - child\n",
+        "- DONE second\n",
+        "- see ((7a1c2e9f-3b4d-4e5f-8a6b-1c2d3e4f5a6b))\n",
+    );
+    let first = import_outline(&pool, &mat, dir.path(), "Notes.org", org)
+        .await
+        .unwrap();
+    assert_eq!(first.warnings, Vec::<String>::new());
+    let page = first.page_id.clone();
+    let before = (
+        page_state(&pool, &page).await,
+        task_states(&pool, &page).await,
+    );
+    let ops = op_count(&pool).await;
+
+    let second = import_outline(&pool, &mat, dir.path(), "Notes.org", org)
+        .await
+        .unwrap();
+
+    assert_eq!(second.page_id, page);
+    assert_eq!(second.warnings, Vec::<String>::new());
+    assert_eq!(
+        (
+            page_state(&pool, &page).await,
+            task_states(&pool, &page).await
+        ),
+        before
+    );
+    assert_eq!(op_count(&pool).await, ops, "the second import appended ops");
     mat.shutdown();
 }

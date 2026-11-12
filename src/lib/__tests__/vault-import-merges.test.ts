@@ -48,15 +48,18 @@ function jexNote(title: string, withAttachment: boolean): JexNote {
 }
 
 describe('ImportUnit.merges', () => {
-  it('is the path a picked Markdown file imports as, and none for an Org file', async () => {
+  it('is the path a picked Markdown file imports as, and an Org file’s, read from its `#+TITLE`', async () => {
     const md = new File(['x'], 'Plan.md')
-    const org = new File(['* x'], 'Notes.org')
+    const org = new File(['#+TITLE: Org Plan\n* x'], 'Notes.org')
 
     const [mdUnit, orgUnit] = mdFilesToUnits([md, org], null, false)
 
     expect(mdUnit?.merges).toBe('Plan.md')
     expect(mdUnit?.merges).toBe((await mdUnit?.load())?.path)
-    expect(orgUnit?.merges).toBeUndefined()
+    const merges = orgUnit?.merges
+    if (typeof merges !== 'function') throw new Error('an Org file reads its title from its text')
+    expect(await merges()).toBe('Org Plan.md')
+    expect(await merges()).toBe((await orgUnit?.load())?.path)
   })
 
   it('is the path a folder pick’s note imports as too (#6277 G5)', () => {
