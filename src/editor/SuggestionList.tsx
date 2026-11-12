@@ -10,10 +10,9 @@ import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Kbd } from '@/components/ui/kbd'
+import { KbdChord } from '@/components/ui/kbd'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
-import { formatChordTokens } from '@/lib/keyboard-config/format-chord'
 import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { cn } from '@/lib/utils'
 
@@ -304,21 +303,17 @@ export const SuggestionList = ({
   // catalog binding (`shortcutId`, picks up rebinds); falls back to a static
   // `keys` string for marks with no catalog entry (Bold/Italic). Returns null
   // when neither is set so non-mark rows keep their existing layout. #211 P0-5.
+  // `KbdChord` shows the catalog's `Ctrl` as this platform's mod key.
   const renderShortcut = (item: PickerItem) => {
     const keys = item.shortcutId ? getShortcutKeys(item.shortcutId) : (item.keys ?? '')
-    const tokens = formatChordTokens(keys)
-    if (tokens.length === 0) return null
+    if (keys.length === 0) return null
     return (
       <span
-        className="ml-auto inline-flex items-center gap-1 pl-2"
+        className="ml-auto inline-flex items-center pl-2"
         aria-hidden="true"
         data-testid={`suggestion-shortcut-${item.id}`}
       >
-        {tokens.map((tok) => (
-          // #1004 — the canonical <Kbd> carries its own bg/fg so the chip
-          // stays legible on a selected (`bg-accent`) row.
-          <Kbd key={tok}>{tok}</Kbd>
-        ))}
+        <KbdChord keys={keys} size="sm" />
       </span>
     )
   }

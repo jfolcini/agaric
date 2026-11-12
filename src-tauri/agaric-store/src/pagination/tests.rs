@@ -5851,9 +5851,10 @@ mod tests_p8 {
     }
 
     /// #4277 — the History VIEW is the `__all__` + `space_id` consumer
-    /// (`HistoryView.tsx` always passes `pageId: '__all__'` plus the
-    /// effective space), so the space-scoped global branch needs the same
-    /// paired-`add_attachment` probe as the per-page branch. Without it the
+    /// (`HistoryView.tsx` passes `pageId: '__all__'` plus the effective
+    /// space unless a page's menu opened it), so the space-scoped global
+    /// branch needs the same paired-`add_attachment` probe as the per-page
+    /// branch. Without it the
     /// space-scoped "History" screen omits every attachment delete/rename
     /// exactly as the per-page query did.
     ///

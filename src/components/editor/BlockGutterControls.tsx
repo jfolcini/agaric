@@ -153,8 +153,9 @@ export const BlockGutterControls = React.memo(
 
     // Multi-select checkbox visibility (user feedback 2026-06-20): the checkbox
     // must NEVER reserve gutter space — multi-select is seldom used and the space
-    // is precious, so a one-time layout shift when a selection starts is fine. It
-    // is therefore NOT in the DOM at all unless:
+    // is precious. On a fine pointer it hangs left of the lane, out of flow, so
+    // a selection moves no text (#6547: a lane holding it, the grip and the
+    // chevron outgrew its width). It is NOT in the DOM at all unless:
     //   - this block is selected → forced visible, doubling as selection feedback;
     //   - a multi-selection is already active → hover-revealed on other rows so
     //     you can extend the selection by clicking their checkboxes.
@@ -178,6 +179,7 @@ export const BlockGutterControls = React.memo(
               className={cn(
                 'block-select-checkbox flex-shrink-0 size-[0.875em] rounded border-border cursor-pointer',
                 'transition-opacity focus-ring-visible',
+                !isTouch && 'absolute right-full top-1/2 -translate-y-1/2 mr-0.5',
                 isSelected
                   ? // Selected → always visible (selection feedback).
                     'opacity-100'

@@ -295,6 +295,13 @@ export function PageHeader({
     showPageInGraph()
   }, [])
 
+  const handleKebabOpenHistory = useCallback(() => {
+    setKebabOpen(false)
+    const navigation = useNavigationStore.getState()
+    navigation.setPendingHistoryPage({ id: pageId, title: editableTitle || title })
+    navigation.setView('history')
+  }, [pageId, editableTitle, title])
+
   const handleKebabInsertEmoji = useCallback(() => {
     setEmojiPickerOpen(true)
     setKebabOpen(false)
@@ -594,6 +601,7 @@ export function PageHeader({
               isJournalTemplate={isJournalTemplate}
               onUndo={handlePageUndo}
               onRedo={handlePageRedo}
+              onOpenHistory={handleKebabOpenHistory}
               onOpenOutline={handleKebabOpenOutline}
               onShowInGraph={handleKebabShowInGraph}
               onInsertEmoji={handleKebabInsertEmoji}

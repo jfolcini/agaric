@@ -4,9 +4,7 @@
 # Sync-B establishes the crate with the three dependency-free leaf modules
 # (`device`, `sync_constants`, `foreground`) peeled off the app crate. Later
 # waves (Sync-D) fold in the mutually-recursive net/protocol/daemon/files
-# cluster + `snapshot`, at which point the crate gains its own `.sqlx` offline
-# cache (migrations symlink + committed cache + a 4th `sqlx prepare` CI lane,
-# mirroring `agaric-store` / `agaric-engine`). The `agaric` crate depends on
+# cluster + `snapshot`. The `agaric` crate depends on
 # this via a version-pinned path dep and re-exports each module
 # (`pub use agaric_sync::{device, foreground, sync_constants};`) so existing
 # `crate::device::…` / `crate::foreground::…` / `crate::sync_constants::…`

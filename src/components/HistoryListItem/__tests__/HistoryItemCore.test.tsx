@@ -4,7 +4,7 @@
  * history sheet).
  *
  * Coverage:
- *  - Renders badge, timestamp, device id, content preview.
+ *  - Renders the op label badge, timestamp, device name, content preview.
  *  - Diff toggle button is hidden when `onToggleDiff` is not supplied.
  *  - Diff toggle button appears for `edit_block` when `onToggleDiff` is supplied.
  *  - Property-payload preview formats key with optional value arrow.
@@ -17,6 +17,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
+import { truncateId } from '@/lib/format'
+import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
+import { useSyncStore } from '@/stores/sync'
+
+vi.mock('@/lib/logger', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
 
 vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({
@@ -54,12 +62,24 @@ function renderCore(children: React.ReactNode) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useSyncStore.setState({ peers: [] })
 })
 
 describe('HistoryItemCore', () => {
-  it('renders op type badge with the supplied op_type label', () => {
+  it('labels the op type badge in words, keeping the raw op type in data-op-type', () => {
     renderCore(<HistoryItemCore entry={makeEntry(1, 'edit_block', { to_text: 'hi' })} />)
-    expect(screen.getByTestId('history-type-badge')).toHaveTextContent('edit_block')
+    const badge = screen.getByTestId('history-type-badge')
+    expect(badge).toHaveTextContent(t('history.opTypeEdit'))
+    expect(badge).not.toHaveTextContent('edit_block')
+    expect(badge).toHaveAttribute('data-op-type', 'edit_block')
+  })
+
+  it('shows an op type with no label as itself and warns', () => {
+    renderCore(<HistoryItemCore entry={makeEntry(1, 'future_op', {})} />)
+    expect(screen.getByTestId('history-type-badge')).toHaveTextContent('future_op')
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('history-utils', 'no label for op type', {
+      opType: 'future_op',
+    })
   })
 
   it('lets the badge/time/device meta row wrap instead of overflowing into the Diff button', () => {
@@ -68,10 +88,48 @@ describe('HistoryItemCore', () => {
     expect(metaRow).toHaveClass('flex', 'flex-wrap', 'items-center', 'gap-x-2', 'gap-y-0.5')
   })
 
-  it('renders the truncated device id (8 chars)', () => {
+  it('names a local op\'s device "This device", not its id', () => {
     renderCore(<HistoryItemCore entry={makeEntry(1, 'edit_block', { to_text: 'hi' })} />)
-    // device_id is 'DEVICE01XXXXXXXX' → first 8 chars
-    expect(screen.getByText(/dev:DEVICE01/)).toBeInTheDocument()
+    expect(document.querySelector('.history-item-device')).toHaveTextContent(t('device.thisDevice'))
+    expect(screen.queryByText(/DEVICE01/)).not.toBeInTheDocument()
+  })
+
+  it("names a synced op's device by its paired-device name", () => {
+    useSyncStore.setState({
+      peers: [{ peerId: 'PEER0001XXXXXXXX', lastSyncedAt: null, resetCount: 0, name: 'Pixel 8' }],
+    })
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(
+          1,
+          'edit_block',
+          { to_text: 'hi' },
+          1736942400000,
+          'PEER0001XXXXXXXX',
+          true,
+        )}
+      />,
+    )
+    expect(document.querySelector('.history-item-device')).toHaveTextContent('Pixel 8')
+  })
+
+  it('falls back to the truncated id for a synced op from an unnamed device', () => {
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(
+          1,
+          'edit_block',
+          { to_text: 'hi' },
+          1736942400000,
+          'PEER0001XXXXXXXX',
+          true,
+        )}
+      />,
+    )
+    expect(document.querySelector('.history-item-device')).toHaveTextContent(
+      truncateId('PEER0001XXXXXXXX'),
+    )
+    expect(screen.queryByText(/dev:/)).not.toBeInTheDocument()
   })
 
   it('renders raw-content preview for non-property ops', () => {

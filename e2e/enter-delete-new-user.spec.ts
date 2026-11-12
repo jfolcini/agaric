@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 
 import {
+  activeAlertDialog,
   deleteBlockViaContextMenu,
   expect,
   navigateToView,
@@ -33,6 +34,80 @@ async function reopenDay(page: Page): Promise<void> {
   await navigateToView(page, 'Pages')
   await navigateToView(page, 'Journal')
 }
+
+/** Select the first two rows from the keyboard: Escape out of the first, Shift+ArrowDown. */
+async function selectFirstTwo(page: Page): Promise<void> {
+  await rows(page).nth(0).locator('[data-testid="block-static"]').click()
+  await expect(editor(page)).toBeFocused()
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Shift+ArrowDown')
+  await expect(page.getByTestId('batch-toolbar')).toContainText('2 selected')
+}
+
+async function deleteSelection(page: Page): Promise<void> {
+  await page.getByTestId('batch-toolbar').getByRole('button', { name: 'Delete' }).click()
+  await activeAlertDialog(page).getByRole('button', { name: 'Yes, delete', exact: true }).click()
+}
+
+/** Each row's text box, as `top,left`: what a layout shift moves. */
+function textBoxes(page: Page): Promise<string[]> {
+  return page
+    .locator('[data-testid="sortable-block"] [data-testid="block-static"]')
+    .evaluateAll((els) =>
+      els.map((el) => {
+        const box = el.getBoundingClientRect()
+        return `${Math.round(box.top)},${Math.round(box.left)}`
+      }),
+    )
+}
+
+test.describe('Escape from a block @editor @journal', () => {
+  test.beforeEach(async ({ page }) => {
+    await startEmptyDay(page)
+    // A task, then a parent with a child: the rows a selection used to move.
+    await editor(page).pressSequentially('task', { delay: 10 })
+    await page.keyboard.press('Control+Enter')
+    await page.keyboard.press('Enter')
+    await page.keyboard.insertText('parent')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Tab')
+    await page.keyboard.insertText('child')
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
+    await expect(rows(page)).toHaveText(['task', 'parent', 'child'])
+    await expect(page.locator('.block-selected')).toHaveCount(0)
+  })
+
+  test('Escape selects the block without a bar, a shift or a hidden checkbox', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const atRest = await textBoxes(page)
+
+    for (const text of ['task', 'parent']) {
+      const row = rows(page).filter({ hasText: text }).first()
+      await row.locator('[data-testid="block-static"]').click()
+      await expect(editor(page)).toBeFocused()
+      await page.keyboard.press('Escape')
+      await expect(row.locator('.block-selected')).toHaveCount(1)
+
+      await expect(page.getByTestId('batch-toolbar')).toHaveCount(0)
+      await expect(page.getByText('Delete').locator('visible=true')).toHaveCount(0)
+      await expect(page.getByTestId('task-checkbox-todo')).toBeVisible()
+      expect(await textBoxes(page)).toEqual(atRest)
+      await page.keyboard.press('Escape')
+    }
+  })
+
+  test('a second selected block brings the batch bar', async ({ page }) => {
+    await rows(page).nth(1).locator('[data-testid="block-static"]').click()
+    await expect(editor(page)).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('batch-toolbar')).toHaveCount(0)
+
+    await page.keyboard.press('Shift+ArrowDown')
+    await expect(page.getByTestId('batch-toolbar')).toContainText('2 selected')
+    await expect(page.getByTestId('task-checkbox-todo')).toBeVisible()
+  })
+})
 
 test.describe('Enter at a heading @editor @journal', () => {
   test.beforeEach(async ({ page }) => {
@@ -92,6 +167,53 @@ test.describe('Deleting a block @editor @journal', () => {
     await expect(rows(page)).toHaveText(['parent', 'child'])
     await reopenDay(page)
     await expect(rows(page)).toHaveText(['parent', 'child'])
+  })
+
+  test('the batch bar Delete offers one Undo that brings every selected block back', async ({
+    page,
+  }) => {
+    await editor(page).pressSequentially('one', { delay: 10 })
+    await page.keyboard.press('Enter')
+    await page.keyboard.insertText('two')
+    await page.keyboard.press('Enter')
+    await page.keyboard.insertText('three')
+    await page.keyboard.press('Escape')
+    await expect(rows(page)).toHaveText(['one', 'two', 'three'])
+
+    await selectFirstTwo(page)
+    await deleteSelection(page)
+    await expect(rows(page)).toHaveText(['three'])
+    const toast = toasts(page).filter({ hasText: 'Deleted 2 blocks' })
+    await expect(toast).toHaveCount(1)
+    await toast.getByRole('button', { name: 'Undo' }).click()
+
+    await expect(rows(page)).toHaveText(['one', 'two', 'three'])
+    await reopenDay(page)
+    await expect(rows(page)).toHaveText(['one', 'two', 'three'])
+  })
+
+  test('the batch Undo brings back a parent selected with its child', async ({ page }) => {
+    await editor(page).pressSequentially('parent', { delay: 10 })
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Tab')
+    await page.keyboard.insertText('child')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Shift+Tab')
+    await page.keyboard.insertText('after')
+    await page.keyboard.press('Escape')
+    await expect(rows(page)).toHaveText(['parent', 'child', 'after'])
+
+    await selectFirstTwo(page)
+    await deleteSelection(page)
+    await expect(rows(page)).toHaveText(['after'])
+    await toasts(page)
+      .filter({ hasText: 'Deleted 2 blocks' })
+      .getByRole('button', { name: 'Undo' })
+      .click()
+
+    await expect(rows(page)).toHaveText(['parent', 'child', 'after'])
+    await reopenDay(page)
+    await expect(rows(page)).toHaveText(['parent', 'child', 'after'])
   })
 
   test('Backspace on an empty block removes it without a toast', async ({ page }) => {

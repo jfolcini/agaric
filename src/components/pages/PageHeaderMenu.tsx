@@ -1,5 +1,6 @@
 import {
   BookTemplate,
+  Clock,
   Download,
   ExternalLink,
   FileCode,
@@ -50,6 +51,8 @@ export interface PageHeaderMenuProps {
   isJournalTemplate: boolean
   onUndo: () => void
   onRedo: () => void
+  /** Opens the History view scoped to this page; the row is hidden without it. */
+  onOpenHistory?: (() => void) | undefined
   onOpenOutline: () => void
   onShowInGraph: () => void
   onInsertEmoji: () => void
@@ -94,6 +97,7 @@ export function PageHeaderMenu({
   isJournalTemplate,
   onUndo,
   onRedo,
+  onOpenHistory,
   onOpenOutline,
   onShowInGraph,
   onInsertEmoji,
@@ -145,6 +149,7 @@ export function PageHeaderMenu({
     ...(offersNewTab ? ['openInNewTab'] : []),
     'undo',
     ...(canRedo ? ['redo'] : []),
+    ...(onOpenHistory != null ? ['pageHistory'] : []),
     'openOutline',
     'showInGraph',
     'insertEmoji',
@@ -291,6 +296,17 @@ export function PageHeaderMenu({
         {t('pageHeader.redoAction')}
         <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('redoLastUndoneOp')}</span>
       </button>
+      {onOpenHistory != null && (
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onOpenHistory}
+          {...menuItemProps('pageHistory')}
+        >
+          <Clock className="h-3.5 w-3.5" />
+          {t('pageHeader.pageHistory')}
+        </button>
+      )}
       <hr className="my-1 h-px bg-border border-none" />
       <button
         type="button"

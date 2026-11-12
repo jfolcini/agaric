@@ -15,7 +15,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { BugReportDialog } from '@/components/dialogs/BugReportDialog'
@@ -23,6 +23,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import type { BugReport, ReconciliationReport } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
 
 // UseDialogOrSheet branches on useIsMobile. Default to the
 // desktop (Dialog) path so the pre-existing test bodies keep their
@@ -534,6 +535,62 @@ describe('BugReportDialog', () => {
     expect(
       screen.queryByRole('button', { name: t('bugReport.downloadZip') }),
     ).not.toBeInTheDocument()
+  })
+
+  // #6538 — logs reach a report only as a saved ZIP, which Android cannot
+  // write; the switch stays, disabled, under a notice saying why.
+  describe('on Android (#6538)', () => {
+    beforeEach(() => {
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+        'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+      )
+      __resetPlatformCacheForTests()
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+      __resetPlatformCacheForTests()
+    })
+
+    it('offers copy and no ZIP: the logs switch is disabled and described by the notice', async () => {
+      const user = userEvent.setup()
+      render(<BugReportDialog open onOpenChange={() => {}} />)
+      await screen.findByText(/## Description/)
+
+      const logsSwitch = screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') })
+      const notice = screen.getByText(t('data.fileSaveUnavailableAndroid'))
+      expect(logsSwitch).toBeDisabled()
+      expect(logsSwitch).toHaveAttribute('aria-describedby', notice.id)
+      await user.click(logsSwitch)
+
+      expect(logsSwitch).not.toBeChecked()
+      expect(
+        screen.queryByRole('button', { name: t('bugReport.downloadZip') }),
+      ).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('bugReport.copy') })).toBeEnabled()
+      expect(mockedInvoke).not.toHaveBeenCalledWith('read_logs_for_report', expect.anything())
+    })
+
+    it('has no a11y violations with the notice shown', async () => {
+      const { container } = render(<BugReportDialog open onOpenChange={() => {}} />)
+      await screen.findByText(/## Description/)
+
+      await waitFor(
+        async () => {
+          const results = await axe(container)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    })
+  })
+
+  it('shows no Android notice and an enabled logs switch on desktop (#6538)', async () => {
+    render(<BugReportDialog open onOpenChange={() => {}} />)
+    await screen.findByText(/## Description/)
+
+    expect(screen.queryByText(t('data.fileSaveUnavailableAndroid'))).not.toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') })).toBeEnabled()
   })
 
   it('has no a11y violations', async () => {

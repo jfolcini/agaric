@@ -2,8 +2,7 @@
 #
 # Wave S1 establishes the crate with the pure-leaf `cancellation` module
 # (cooperative cancellation tokens; std + tokio only — no DB, no other app
-# module). Later waves add the DB core (`op`, `op_log`, `db`) with a
-# store-local `.sqlx` offline cache + a 2nd `sqlx prepare` CI lane, then the
+# module). Later waves add the DB core (`op`, `op_log`, `db`), then the
 # query modules. The `agaric` crate depends on this via a path dep and
 # re-exports each module (`pub use agaric_store::cancellation;` …) so existing
 # `crate::cancellation::…` paths keep resolving unchanged during the transition.

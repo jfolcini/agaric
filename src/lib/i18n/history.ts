@@ -78,6 +78,9 @@ export const history: Record<string, string> = {
   'history.diffButton': 'Diff',
   'history.nonReversibleTooltip': 'Purges cannot be undone',
   'history.emptyCurrentSpace': 'No changes in this space yet.',
+  'history.emptyPage': 'No changes to this page yet.',
+  'history.pageScope': 'Changes to {{title}}',
+  'history.showAllPages': 'Show all pages',
   'trash.emptyMessage': 'Nothing in trash. Deleted items will appear here.',
   'trash.emptyContent': '(empty)',
   'trash.restoreTooltip': 'Restore this block from trash',
@@ -279,7 +282,7 @@ export const history: Record<string, string> = {
   'trash.loadFailed': 'Failed to load trash',
   'history.loadedMoreEntries_one': 'Loaded {{count}} more entry',
   'history.loadedMoreEntries_other': 'Loaded {{count}} more entries',
-  'compaction.title': 'Op Log Compaction',
+  'compaction.title': 'Remove old history',
   // #3882 — `compaction.totalOps`/`compaction.eligibleOps` interpolate
   // {{count}} but CompactionCard.tsx only ever consumes the label text
   // before the ":" (`.split(':')[0]`) — the actual number is rendered

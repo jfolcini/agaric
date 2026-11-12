@@ -45,24 +45,25 @@ test.describe('Block-select cursor (#5734) @editor', () => {
 
     await focusBlockById(page, GS1)
     await page.keyboard.press('Control+Space')
-    await expect(toolbar).toContainText('1 selected')
+    // One selected block brings no batch bar (#6547).
+    await expect(toolbar).toHaveCount(0)
     // A screen reader hears the selection through the app announcer, and only there.
     await expect(announcer(page)).toHaveText('1 block selected')
-    await expect(toolbar.getByRole('status')).toHaveCount(0)
     await expect(selectBox(page, GS1)).toBeChecked()
     await expectCursorOn(page, GS1, GS2)
 
     await page.keyboard.press('Control+ArrowDown')
     await expectCursorOn(page, GS2, GS1)
-    await expect(toolbar).toContainText('1 selected')
+    await expect(toolbar).toHaveCount(0)
     await expect(selectBox(page, GS2)).not.toBeChecked()
 
     await page.keyboard.press('Control+Space')
     await expect(toolbar).toContainText('2 selected')
+    await expect(toolbar.getByRole('status')).toHaveCount(0)
     await expect(selectBox(page, GS2)).toBeChecked()
 
     await page.keyboard.press('Control+Space')
-    await expect(toolbar).toContainText('1 selected')
+    await expect(toolbar).toHaveCount(0)
     await expect(selectBox(page, GS2)).not.toBeChecked()
     await expect(row(page, GS2)).toBeFocused()
 
@@ -95,13 +96,13 @@ test.describe('Block-select cursor (#5734) @editor', () => {
     const toolbar = page.getByTestId('batch-toolbar')
     await focusBlockById(page, GS1)
     await page.keyboard.press('Control+Space')
-    await expect(toolbar).toContainText('1 selected')
+    await expect(selectBox(page, GS1)).toBeChecked()
 
     // With focus on a control outside the list the chords do nothing.
     await page.getByRole('textbox', { name: 'Page title' }).click()
     await page.keyboard.press('Control+Space')
     await page.keyboard.press('Control+ArrowDown')
-    await expect(toolbar).toContainText('1 selected')
+    await expect(toolbar).toHaveCount(0)
     await expect(selectBox(page, GS1)).toBeChecked()
 
     // A click back on the row re-enables them. Ctrl+Space removes GS1, so the cursor
@@ -109,7 +110,7 @@ test.describe('Block-select cursor (#5734) @editor', () => {
     await row(page, GS1).click({ position: { x: 2, y: 2 } })
     await expect(row(page, GS1)).toBeFocused()
     await page.keyboard.press('Control+Space')
-    await expect(toolbar).toHaveCount(0)
+    await expect(selectBox(page, GS1)).toHaveCount(0)
     await expect(announcer(page)).toHaveText('Selection cleared')
   })
 })

@@ -180,7 +180,11 @@ test.describe('Copy/paste block outline (keyboard + system clipboard, #913) @edi
     // proving the copy rendered the subtree structure, not just the parent.
     await blurEditors(page)
     await ctrlSelectById(page, gs1)
-    await expect(page.getByTestId('batch-toolbar')).toContainText('1')
+    // One selected block brings no batch bar (#6547); the row shows the selection.
+    await expect(page.locator('.block-selected')).toHaveCount(1)
+    await expect(page.locator(`[data-block-id="${gs1}"] [data-testid="block-static"]`)).toHaveClass(
+      /block-selected/,
+    )
     await page.keyboard.press('Control+c')
     await expect.poll(() => readClipboard(page)).toContain(GS1_TEXT)
     // Two plain blocks in the Document dialect (#6190), a blank line between them.

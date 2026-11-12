@@ -3188,7 +3188,8 @@ describe('JournalPage', () => {
         mockEmptyResponses()
       })
 
-      it('shows Agenda when not on journal view', () => {
+      // #6548 — outside the journal the header carries Today alone.
+      it('shows Today alone when not on journal view', () => {
         useNavigationStore.setState({
           currentView: 'pages',
           selectedBlockId: null,
@@ -3206,37 +3207,11 @@ describe('JournalPage', () => {
 
         render(<GlobalDateControls />)
 
-        expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
-      })
-
-      it('renders Today, Agenda, Calendar in that DOM order when all three are visible', () => {
-        useNavigationStore.setState({
-          currentView: 'pages',
-          selectedBlockId: null,
-        })
-        useTabsStore.setState({
-          tabs: [{ id: '0', pageStack: [], label: '' }],
-          activeTabIndex: 0,
-        })
-        useJournalStore.setState({
-          mode: 'daily',
-          currentDate: new Date('2026-04-19T12:00:00'),
-          scrollToDate: null,
-          scrollToPanel: null,
-        })
-
-        render(<GlobalDateControls />)
-
-        const todayBtn = screen.getByRole('button', { name: /go to today/i })
-        const agendaBtn = screen.getByRole('button', { name: /go to agenda/i })
-        const calBtn = screen.getByRole('button', { name: /open calendar picker/i })
-
+        expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: /go to agenda/i })).not.toBeInTheDocument()
         expect(
-          todayBtn.compareDocumentPosition(agendaBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
-        ).toBeTruthy()
-        expect(
-          agendaBtn.compareDocumentPosition(calBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
-        ).toBeTruthy()
+          screen.queryByRole('button', { name: /open calendar picker/i }),
+        ).not.toBeInTheDocument()
       })
     })
 

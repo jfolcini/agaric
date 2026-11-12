@@ -107,13 +107,11 @@ for (const viewport of [
       await expect(header.getByRole('button', { name: 'Back', exact: true })).toBeHidden()
       await expect(header.getByRole('button', { name: 'Forward', exact: true })).toBeHidden()
 
-      // Outside the journal the date controls are the journal's, not the view's.
+      // Outside the journal a phone leaves Today to the drawer's Journal entry.
       for (const view of ['Pages', 'Settings', 'History'] as const) {
         await navigateToView(page, view)
         await expect(header.getByTestId('header-label')).toBeVisible()
         await expect(header.getByRole('button', { name: 'Go to today' })).toBeHidden()
-        await expect(header.getByRole('button', { name: 'Go to agenda' })).toBeHidden()
-        await expect(header.getByRole('button', { name: 'Open calendar picker' })).toBeHidden()
         await expect(header.getByTestId('search-sheet-trigger')).toBeVisible()
       }
 

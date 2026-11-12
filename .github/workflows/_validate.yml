@@ -846,9 +846,9 @@ jobs:
         # `prek run --all-files` above never executes it. This script runs that
         # hook's command (`cargo clippy --workspace --all-targets -- -D warnings`)
         # with the query macros online, and in the same compile does
-        # `cargo sqlx prepare --check` for all four `.sqlx/` caches (root,
-        # agaric-store, agaric-engine, agaric-sync), which used to be four
-        # steps that each recompiled the workspace. Gated on backend == 'true'
+        # `cargo sqlx prepare --check` for the `src-tauri/.sqlx` cache, which
+        # used to be separate steps that each recompiled the workspace. Gated
+        # on backend == 'true'
         # (fail-closed: unrecognized paths pin backend=true, and .sqlx/
         # changes pin it too).
         if: needs.detect-changes.outputs.backend == 'true'

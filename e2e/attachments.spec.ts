@@ -249,7 +249,7 @@ test.describe('Rename attachment @attachments', () => {
 
     await navigateToView(page, 'History')
     const renameEntry = page.locator('[data-history-item]').filter({
-      has: page.getByTestId('history-type-badge').filter({ hasText: 'rename_attachment' }),
+      has: page.locator('[data-testid="history-type-badge"][data-op-type="rename_attachment"]'),
     })
     await expect(renameEntry).toHaveCount(1)
     await expect(renameEntry).toContainText('notes.pdf → renamed.pdf')

@@ -4,6 +4,7 @@ import { t } from '@/lib/i18n'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { isAndroid } from '@/lib/platform'
 
 /** Format bytes into a human-readable size string. */
 export function formatSize(bytes: number): string {
@@ -24,8 +25,16 @@ export function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
   return new Blob([new Uint8Array(bytes)], { type: mimeType })
 }
 
-/** Trigger a browser download of `bytes` as `filename` via a transient anchor. */
+/**
+ * Trigger a browser download of `bytes` as `filename` via a transient anchor.
+ * On Android it says saving is unavailable instead (#6538): the WebView
+ * handles no `blob:` download.
+ */
 export function triggerDownload(bytes: Uint8Array, mimeType: string, filename: string): void {
+  if (isAndroid()) {
+    notify.info(t('data.fileSaveUnavailableAndroid'))
+    return
+  }
   const url = URL.createObjectURL(bytesToBlob(bytes, mimeType))
   const anchor = document.createElement('a')
   anchor.href = url

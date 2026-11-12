@@ -16,13 +16,14 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { type TypedInvokeHandlers, stubInvoke } from '@/__tests__/helpers/invoke'
 import { DataTab } from '@/components/settings/DataTab'
 import type { SpaceRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
@@ -471,6 +472,61 @@ describe('DataTab', () => {
         expect.stringMatching(/^agaric-export-my-project-\d{4}-\d{2}-\d{2}\.zip$/),
       )
     })
+  })
+
+  // #6538 — the Android WebView handles no `blob:` download, so an export
+  // there writes nothing. The rows stay, disabled, under a notice saying why.
+  describe('on Android (#6538)', () => {
+    const ANDROID_UA =
+      'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36'
+
+    beforeEach(() => {
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(ANDROID_UA)
+      __resetPlatformCacheForTests()
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+      __resetPlatformCacheForTests()
+    })
+
+    it('keeps both export buttons, disabled and described by the notice, and never toasts success', async () => {
+      const user = userEvent.setup()
+      render(<DataTab />)
+
+      const notice = screen.getByText(t('data.fileSaveUnavailableAndroid'))
+      for (const name of [t('data.exportButton'), t('data.exportAllSpacesButton')]) {
+        const button = screen.getByRole('button', { name })
+        expect(button).toBeDisabled()
+        expect(button).toHaveAttribute('aria-describedby', notice.id)
+        await user.click(button)
+      }
+
+      expect(mockExportGraphAsZip).not.toHaveBeenCalled()
+      expect(mockExportAllSpacesAsZip).not.toHaveBeenCalled()
+      expect(mockDownloadBlob).not.toHaveBeenCalled()
+      expect(toast.success).not.toHaveBeenCalled()
+    })
+
+    it('has no a11y violations with the notice shown', async () => {
+      const { container } = render(<DataTab />)
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
+  })
+
+  it('shows no Android notice and enabled export buttons on desktop (#6538)', () => {
+    render(<DataTab />)
+
+    expect(screen.queryByText(t('data.fileSaveUnavailableAndroid'))).not.toBeInTheDocument()
+    for (const name of [t('data.exportButton'), t('data.exportAllSpacesButton')]) {
+      const button = screen.getByRole('button', { name })
+      expect(button).toBeEnabled()
+      expect(button).not.toHaveAttribute('aria-describedby')
+    }
   })
 
   it('shows error toast on export failure', async () => {

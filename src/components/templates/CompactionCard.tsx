@@ -3,12 +3,13 @@
  *
  * Self-contained component that fetches compaction status on mount
  * and provides a `t('compaction.compactNow')` button to trigger manual compaction.
- * Shown at the top of the HistoryView.
+ * Shown at the top of the HistoryView, collapsed until the user opens it, so
+ * the view leads with the operations rather than a destructive button.
  */
 
 import { Archive } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
@@ -29,10 +30,6 @@ export function CompactionCard(): React.ReactElement {
   const [loading, setLoading] = useState(true)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [compacting, setCompacting] = useState(false)
-  // Auto-expand on first transition to eligible_ops > 0, exactly once
-  // per mount. Don't re-expand if the user manually collapses afterwards, even
-  // if eligible_ops grows further.
-  const autoExpandedRef = useRef(false)
 
   const fetchStatus = useCallback(async () => {
     setLoading(true)
@@ -51,15 +48,6 @@ export function CompactionCard(): React.ReactElement {
     // oxlint-disable-next-line react/set-state-in-effect -- kicks off the `get_compaction_status` IPC load; `fetchStatus` sets loading and status around that await, which no render-time derivation replaces; see #4407
     void fetchStatus()
   }, [fetchStatus])
-
-  useEffect(() => {
-    if (autoExpandedRef.current) return
-    if (status != null && status.eligible_ops > 0) {
-      autoExpandedRef.current = true
-      // oxlint-disable-next-line react/set-state-in-effect -- auto-expands once, the first time the fetched status reports eligible ops; a plain derive would discard a later user collapse; see #4407
-      setCollapsed(false)
-    }
-  }, [status])
 
   const handleCompact = useCallback(async () => {
     if (status == null) return

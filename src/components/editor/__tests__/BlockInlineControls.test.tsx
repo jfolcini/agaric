@@ -1143,16 +1143,16 @@ describe('BlockInlineControls on a plain line', () => {
   })
 })
 
-describe('BlockInlineControls multiselect suppression (Fix 6)', () => {
+describe('BlockInlineControls in selection mode', () => {
   afterEach(() => {
     useBlockStore.setState({ selectedBlockIds: [] })
   })
 
-  it('hides the task checkbox entirely when a multi-selection is active', () => {
+  // #6547 — hiding it moved the text left while a block was selected.
+  it('keeps the task checkbox while a selection is active', () => {
     useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
-    // Even a block WITH a todo state hides its task checkbox in selection mode.
     renderControls(makeProps({ todoState: 'TODO' }))
-    expect(screen.queryByTestId('task-marker')).not.toBeInTheDocument()
+    expect(screen.getByTestId('task-marker')).toBeInTheDocument()
   })
 
   it('shows the task checkbox again once the selection clears', () => {
@@ -1163,9 +1163,8 @@ describe('BlockInlineControls multiselect suppression (Fix 6)', () => {
 
   // #994 / #1968: the collapse chevron is a per-block structural control — it
   // INTENTIONALLY survives selection mode. It now lives in the gutter lane
-  // (BlockCollapseControl), OUTSIDE the selection-gated inline controls, so it
-  // is structurally independent of `hasSelection`; assert it still renders with
-  // its per-block aria-label while a selection is active.
+  // (BlockCollapseControl); assert it still renders with its per-block
+  // aria-label while a selection is active.
   it('keeps the collapse chevron (with its per-block aria-label) during selection mode', () => {
     useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
     renderCollapse(makeCollapseProps({ hasChildren: true, isCollapsed: true }))

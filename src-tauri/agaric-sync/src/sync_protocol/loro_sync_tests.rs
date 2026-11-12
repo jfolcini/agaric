@@ -5451,7 +5451,9 @@ async fn kept_slot_self_heals_at_the_next_boot_once_the_dependency_lands_3213() 
     //    `pending_changes` do not cross this line.
     agaric_engine::loro::snapshot::save_all_engines(&pool, &registry).await;
     let booted = LoroEngineRegistry::new();
-    agaric_engine::loro::snapshot::rehydrate_registry(&pool, &booted, "device-R").await;
+    agaric_engine::loro::snapshot::rehydrate_registry(&pool, &booted, "device-R")
+        .await
+        .expect("rehydrate");
 
     // 4. The boot walk retries the kept slot. Its declared frontier is now
     //    covered, so it projects and the slot is finally cleared.
@@ -5592,7 +5594,9 @@ async fn transient_kept_slot_self_heals_without_ever_being_charged_3226() {
 
     agaric_engine::loro::snapshot::save_all_engines(&pool, &registry).await;
     let booted = LoroEngineRegistry::new();
-    agaric_engine::loro::snapshot::rehydrate_registry(&pool, &booted, "device-R").await;
+    agaric_engine::loro::snapshot::rehydrate_registry(&pool, &booted, "device-R")
+        .await
+        .expect("rehydrate");
 
     let mat = agaric_engine::materializer::Materializer::new(pool.clone());
     let replayed = crate::recovery::replay_sync_inbox(&pool, &booted, "device-R", &mat)

@@ -806,7 +806,9 @@ mod tests {
 
         let boot = Materializer::new(pool.clone());
         let registry = &boot.loro_state().registry;
-        rehydrate_registry(&pool, registry, DEV).await;
+        rehydrate_registry(&pool, registry, DEV)
+            .await
+            .expect("rehydrate");
         crate::recovery::reset_recovery_guard();
         crate::recovery::recover_at_boot(&pool, DEV, &boot, registry)
             .await

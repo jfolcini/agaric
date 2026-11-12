@@ -2488,7 +2488,7 @@
 
 /* A History row's cell below `sm`: the meta line shares the first line with
  * the labelled Diff / Reset actions; the content takes the second line,
- * indented past the checkbox, and the device id trails it under the actions.
+ * indented past the checkbox, and the device name trails it under the actions.
  * Wrapping the actions onto a line of their own made every row three lines
  * tall on a phone. From `sm` up it is a
  * single flex line. The utility owns `display` at both widths: a separate

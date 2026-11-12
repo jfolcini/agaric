@@ -127,9 +127,7 @@ test.describe('HistoryView — diff toggle @pages', () => {
     await navigateToView(page, 'History')
     const firstItem = page.locator('[data-history-item]').first()
     await expect(firstItem).toBeVisible({ timeout: 5000 })
-    await expect(
-      firstItem.locator('[data-testid="history-type-badge"]', { hasText: 'edit_block' }),
-    ).toBeVisible()
+    await expect(firstItem.getByTestId('history-type-badge')).toHaveText('Edit')
 
     await firstItem.getByRole('button', { name: 'Diff' }).click()
 
@@ -158,14 +156,14 @@ test.describe('HistoryView — filter bar @pages', () => {
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
     await navigateToView(page, 'History')
-    const badges = page.locator('[data-history-item] [data-testid="history-type-badge"]')
-    const createBadges = badges.filter({ hasText: 'create_block' })
+    const badges = '[data-history-item] [data-testid="history-type-badge"]'
+    const createBadges = page.locator(`${badges}[data-op-type="create_block"]`)
     await expect(createBadges.first()).toBeVisible()
 
     await page.getByRole('combobox', { name: 'Filter by operation type' }).click()
     await page.getByRole('option', { name: 'Edit', exact: true }).click()
     await expect(createBadges).toHaveCount(0)
-    await expect(badges.filter({ hasNotText: 'edit_block' })).toHaveCount(0)
+    await expect(page.locator(`${badges}:not([data-op-type="edit_block"])`)).toHaveCount(0)
     await expect(
       page.locator('[data-history-item]', { hasText: 'Filtered edit marker' }),
     ).toBeVisible()
@@ -192,18 +190,14 @@ test.describe('HistoryView — op log compaction @pages', () => {
 
     await navigateToView(page, 'History')
 
-    // `CompactionCard` auto-expands itself, once per mount, as soon as the
-    // status reports `eligible_ops > 0` — and the seed stamps six page edits
-    // ~90 days back, right on the retention boundary the mock now counts
-    // against. So whether the card is already open is not something this test
-    // can assume: clicking blindly would CLOSE it. Settle on expanded.
-    const toggle = page.getByRole('button', { name: 'Op Log Compaction' })
-    await expect(toggle).toBeVisible()
+    // The card opens collapsed, whatever its status reports (#6535): History
+    // leads with the operations, not with a destructive button.
+    const toggle = page.getByRole('button', { name: 'Remove old history' })
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByRole('button', { name: 'Compact Now' })).toBeHidden()
+    await toggle.click()
     const totalOps = page.getByTestId('compaction-total-ops')
-    await expect(async () => {
-      if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
-      await expect(totalOps).toBeVisible({ timeout: 1000 })
-    }).toPass()
+    await expect(totalOps).toBeVisible()
     await expect(totalOps).not.toHaveText('0')
 
     const totalBefore = await totalOps.textContent()

@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Views
 
-Agaric has a fixed set of views, plus a **Page Editor** view that's reached by navigation. The sidebar lists the daily ones — Journal, Pages, Search, Tags — with Settings in its footer. A row of buttons in the Pages header opens Tags, Graph, Query, Templates and Trash; History opens from the *Open edit history* row in Settings › Data, and Status lives in the Settings › App health tab. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
+Agaric has a fixed set of views, plus a **Page Editor** view that's reached by navigation. The sidebar lists the daily ones — Journal, Pages, Search, Tags — with Settings in its footer. A row of buttons in the Pages header opens Tags, Graph, Query, Templates and Trash; History opens from the *Open edit history* row in Settings › Data, or for one page from that page's kebab, and Status lives in the Settings › App health tab. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
 
 The **Journal** view (default landing) and the **Agenda** mode inside it have their own file: [journal-and-agenda.md](journal-and-agenda.md).
 
@@ -69,14 +69,16 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 
 Global operation log — every edit Agaric has applied, in reverse chronological order. Opened from Settings › Data › *Open edit history*.
 
-- **Op type icons** distinguish creates, edits, deletes, restores, properties, tags.
+- **Page history**: the page kebab's *Page history* opens the view scoped to that page. It names the page, lists and restores that page's operations only, leaves out the compaction card, and *Show all pages* goes back to the whole log.
+- **Rows** name the operation in words (*Edit*, *Add tag*, …) with an icon per kind, and the device that made it: *This device*, or a synced op's paired-device name (its truncated id until it has one).
+- **Remove old history** (the compaction card) sits collapsed at the top of the whole-log view and opens only when clicked.
 - **Filter bar**: filter by op type. There is no user-vs-agent or date-range filter; ops that arrived from another device are marked, but agent-authored ops are not distinguished from your own.
 - **Multi-select** + **batch revert** — selecting a set of ops and pressing Enter reverts them all, newest first.
 - **Diff toggle**: word-level diff for edits.
 - **Restore to here**: every entry has a *"Restore to here"* button that reverts every op after that point. Use with care — it's a snapshot rollback.
 - **Vim keys**: `j` / `k` for next / previous; `Home` / `End` for first / last; `PageDown` / `PageUp` to page.
 - **Per-block history sheet**: from a block's toolbar → History — opens a sheet with only that block's edits.
-- **Compaction**: ops older than 90 days are pruned automatically, in a daily background pass when the app is idle (`op_log_compact` in `src-tauri/src/maintenance.rs`, which calls `compact_op_log_cmd_inner(pool, 90)`). A card at the top shows op-log stats and how many ops are eligible for compaction; *Compact* runs the same cleanup on demand.
+- **Compaction**: ops older than 90 days are pruned automatically, in a daily background pass when the app is idle (`op_log_compact` in `src-tauri/src/maintenance.rs`, which calls `compact_op_log_cmd_inner(pool, 90)`). A card at the top of the whole log shows op-log stats and how many ops are eligible for compaction; *Compact* runs the same cleanup on demand.
 
 ## Templates
 
@@ -149,7 +151,7 @@ The view that opens when you navigate to a single page. Not a sidebar entry — 
 - **Block tree**: the editor proper. See [editor.md](editor.md).
 - **Outline** (TOC): sheet slide-out, opened from the page kebab menu, showing the page's heading hierarchy, each heading with its links, tags and block refs by title and its formatting rendered.
 - **Linked / Unlinked references** below the block tree: see [tags-and-links.md](tags-and-links.md).
-- **Page kebab menu (PageHeaderMenu)**: Undo, Redo, Open outline, Show in graph, Insert emoji, Move to space, Add alias, Add tag, Export as Markdown, Edit as Markdown (the page as one markdown buffer, in place of its blocks; see [editor.md](editor.md#edit-as-markdown)), Send to Trash, Toggle template.
+- **Page kebab menu (PageHeaderMenu)**: Undo, Redo, Page history, Open outline, Show in graph, Insert emoji, Move to space, Add alias, Add tag, Export as Markdown, Edit as Markdown (the page as one markdown buffer, in place of its blocks; see [editor.md](editor.md#edit-as-markdown)), Send to Trash, Toggle template.
 - **Zoom into a block** to focus on a sub-tree: breadcrumb at the top, click parts to zoom out.
 - **Image lightbox / PDF viewer**: opens for inline attachments.
 

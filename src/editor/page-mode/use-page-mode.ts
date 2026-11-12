@@ -193,8 +193,8 @@ export function usePageMode(pageId: string): PageModeState {
   )
 
   const wanted = mode === 'page' && blocker === null
-  // Block mode's tree reads the page as it mounts, a skeleton showing meanwhile: the place goes
-  // back once it shows the blocks it read.
+  // Block mode's tree reads the page again as it mounts: the place goes back once it shows the
+  // blocks it read.
   useLayoutEffect(() => {
     const pending = placeInBlocks.current
     if (wanted || pending === null) return
