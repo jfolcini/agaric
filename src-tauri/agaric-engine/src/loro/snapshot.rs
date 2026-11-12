@@ -1321,17 +1321,17 @@ mod tests {
 
     /// #3309 — "not attempted this pass" is NOT the same as "clean". A row
     /// whose space has NO engine in the registry was never verified against
-    /// anything: `rehydrate_registry` SKIPS a space whose blob fails to
-    /// import, leaving exactly this shape. Advancing such a row would claim
-    /// an unreadable blob reflects the whole op-log and would suppress the
-    /// boot rebuild that is the only thing that can repair it.
+    /// anything. Advancing such a row would claim a blob nobody read reflects
+    /// the whole op-log and would suppress the boot rebuild that is the only
+    /// thing that can repair it. (Boot no longer leaves this shape behind: a
+    /// blob that fails to import stops it, #6525.)
     #[tokio::test]
     async fn save_all_engines_does_not_advance_watermark_of_unrehydrated_space_3309() {
         let (pool, _dir) = fresh_pool().await;
         let registry = LoroEngineRegistry::new();
         let space_a = SpaceId::from_trusted(SPACE_A);
 
-        // B has a row but NO engine — the failed-rehydrate shape.
+        // B has a row but NO engine — the row-without-an-engine shape.
         seed_row(&pool, SPACE_B, 1).await;
         seed_op_log_head(&pool, 500).await;
         {
