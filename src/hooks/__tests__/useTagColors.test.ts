@@ -158,5 +158,18 @@ describe('useTagColors', () => {
       expect(useResolveStore.getState().tagColors).toEqual({})
       expect(result.current.tagColors).toEqual({})
     })
+
+    it('clearColor leaves the synced colour when the property delete fails', async () => {
+      vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      useResolveStore.setState({ tagColors: { T1: 'accent-violet' } })
+      stubInvoke({ delete_property: () => Promise.reject(new Error('offline')) })
+      const { result } = renderHook(() => useTagColors())
+
+      await act(() => result.current.clearColor('T1'))
+
+      expect(useResolveStore.getState().tagColors).toEqual({ T1: 'accent-violet' })
+      expect(result.current.tagColors).toEqual({ T1: 'accent-violet' })
+      vi.mocked(logger.warn).mockRestore()
+    })
   })
 })
