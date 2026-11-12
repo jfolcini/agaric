@@ -8,7 +8,7 @@
 
 export const properties: Record<string, string> = {
   'query.noResults': 'No results',
-  // #4555 — table-mode column headers (`detectColumns` in QueryResult.tsx).
+  // #4555 — table-mode column headers (`detectColumns` in use-query-table-columns.ts).
   'query.column.content': 'Content',
   'query.column.status': 'Status',
   'query.column.priority': 'Priority',
@@ -536,8 +536,8 @@ export const properties: Record<string, string> = {
   // unloaded: the sort is over the loaded rows, not the column.
   'queryResult.sortByPartial': 'Sort by {{column}} (loaded rows only)',
   'queryResult.columns.trigger': 'Choose columns',
-  'queryResult.columns.moveUp': 'Move {{column}} left',
-  'queryResult.columns.moveDown': 'Move {{column}} right',
+  'queryResult.columns.moveUp': 'Move {{column}} up',
+  'queryResult.columns.moveDown': 'Move {{column}} down',
   'queryResult.columns.automatic': 'Columns from the results',
   'filter.dimension.status.description': 'Task workflow state — TODO, DOING, DONE, CANCELLED',
   'filter.dimension.priority.description': 'Priority level — A (highest) through C',

@@ -26,8 +26,6 @@ import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { usePageBlockStoreOptional } from '@/stores/page-blocks'
 
-export { detectColumns } from '@/components/query/use-query-table-columns'
-
 // #5441 — lazy: the builder loads when "edit query" is first used, not with every query block.
 const QueryBuilderModal = lazy(() =>
   import('@/components/dialogs/QueryBuilderModal').then((m) => ({ default: m.QueryBuilderModal })),

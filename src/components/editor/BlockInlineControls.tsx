@@ -3,7 +3,7 @@ import { Calendar, CalendarDays, ChevronRight, Paperclip, Repeat } from 'lucide-
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { TaskCheckbox, TaskMarkerButton } from '@/components/editor/TaskMarkerButton'
+import { TaskMarkerButton } from '@/components/editor/TaskMarkerButton'
 import { InlinePropertyChip } from '@/components/properties/InlinePropertyChip'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -29,7 +29,6 @@ export function priorityLabel(priority: string): string {
 // Names from BlockInlineControls keep working after
 // deduplication.
 export { dueDateColor, formatCompactDate }
-export { TaskCheckbox, TaskMarkerButton }
 
 interface DateChipProps {
   date: string

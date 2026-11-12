@@ -462,10 +462,9 @@ export function useBlockActionOrchestration({
   const focusNeighbour = useCallback(
     (block: FlatBlock, caretX: number | undefined, line: 'first' | 'last') => {
       const content = block.content ?? ''
-      const render =
-        caretX === undefined
-          ? null
-          : document.querySelector(`[data-testid="block-static"][data-block-id="${block.id}"]`)
+      const render = document.querySelector(
+        `[data-testid="block-static"][data-block-id="${block.id}"]`,
+      )
       const caret =
         caretX === undefined || render === null
           ? null
@@ -975,8 +974,10 @@ export function useBlockActionOrchestration({
       const reparent = planChildReparent(blocks, focusedBlockId, prevBlock.id)
 
       // The merge failed: the user gets the block they merged away back with
-      // its text. What they typed at the join has nowhere to go.
+      // its text, unless they have moved on. What they typed at the join has
+      // nowhere to go.
       const backToSource = () => {
+        if (useBlockStore.getState().focusedBlockId !== prevBlock.id) return
         rovingEditorRef.current.unmount()
         rovingEditorRef.current.mount(focusedBlockId, currentContent)
         setFocused(focusedBlockId)

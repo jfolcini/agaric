@@ -232,7 +232,11 @@ export function StatusPanel(): React.ReactElement {
         {error && <p className="status-panel-error text-sm text-destructive">{error}</p>}
 
         {status && (
-          <output className="status-panel-metrics block">
+          <div
+            className="status-panel-metrics"
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> takes phrasing content only, and this wraps a <dl>
+            role="status"
+          >
             <dl className="grid grid-cols-2 gap-4">
               <MetricCard
                 className={cn('status-metric', queueHealthClasses(status.foreground_queue_depth))}
@@ -336,7 +340,7 @@ export function StatusPanel(): React.ReactElement {
             )}
 
             <BoundedStalenessNotice status={status} />
-          </output>
+          </div>
         )}
       </CardContent>
     </Card>

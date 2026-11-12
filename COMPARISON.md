@@ -174,7 +174,7 @@ commit hash, or a repo-rooted `path:symbol`.
 | Block nesting depth | Unlimited in practice | **Capped at 20** (`MAX_BLOCK_DEPTH` in `src-tauri/agaric-store/src/block_descendants.rs`), enforced backend-side; import caps at 19 | Partial |
 | Block IDs | UUID v4 (random, unsortable) | ULID (Crockford base32, sortable, time-encoded) | Better |
 | Block references | `((uuid))` renders the source block's **content** inline, live; hover shows breadcrumb + children; **reference-count badge** on the source block. 2.0.2: refs to deleted nodes show as broken (#13551) | `((ULID))` renders a chip with the target's **first line, 60 chars**. A **peek** (350 ms dwell or `Alt+↓`) shows full content, a space › page breadcrumb, the ref count, Open and Copy reference (`src/components/BlockRefPeek.tsx`, #4947); unresolved refs are labelled (e385ff0f0). No inline content, no children, no badge on the source, no peek on touch | Partial |
-| Block embeds | `{{embed ((uuid))}}`: full subtree, **editable in place**. 2.0: unified `/Node embed`; 2.0.2 applies embed actions to the embed (#13099) | `{{embed ((ULID))}}` via `/embed` or the picker, rendered live (#4572), editable in place behind a per-embed unlock (#4809). Rows show **content only**: no checkbox, priority, date chips, properties or attachments. Depth ≤ 3, 32 rows (`MAX_EMBED_DEPTH`, `EMBED_MOUNT_LIMIT` in `src/lib/embed-token.ts`); arrows do not descend; no structural edits; not unlockable in page mode | Partial |
+| Block embeds | `{{embed ((uuid))}}`: full subtree, **editable in place**. 2.0: unified `/Node embed`; 2.0.2 applies embed actions to the embed (#13099) | `{{embed ((ULID))}}` via `/embed` or the picker, the block and its subtree rendered live (#4572), editable in place behind a per-embed unlock (#4809). Rows show **content only**: no checkbox, priority, date chips, properties or attachments. Depth ≤ 3, 32 rows (`MAX_EMBED_DEPTH`, `EMBED_MOUNT_LIMIT` in `src/lib/embed-token.ts`); arrows do not descend; no structural edits; not unlockable in page mode | Partial |
 | Block properties | `key:: value` parsed from content; 2.0: typed property rows | `block_properties` with **7** typed values; `::` name autocomplete; inline chips incl. ref and boolean (#5862); BlockPropertyDrawer | Done |
 | Collapse/expand | State persisted **in the block** (`collapsed::`), so it travels between devices | Chevron + `Ctrl+.`, persisted in `localStorage` per page, shared by page mode: **device-local, not synced**. Imported `collapsed::` applies on the importing device only (#5214) | Partial |
 | Zoom into block | `Alt+Right`, a real route with a URL | Zoom with breadcrumb, but ephemeral `useState`: **not deep-linkable, not in the back-stack**; page mode has no zoom | Partial |
@@ -288,7 +288,7 @@ Logseq 2.0 turned this into its strongest domain. Agaric is behind, not ahead.
 | Query result table | `query-table:: true` + column picker; 2.0: Table/List/Gallery views with pinned, resizable columns and inline editing | Columns derived from the loaded rows' properties until picked; a column picker chooses and orders them, kept in the block; no widths or inline editing | Partial |
 | Live-updating results | Yes (DataScript reactivity) | Inline queries refetch on property and graph-structure events, including ones arriving by sync (`src/hooks/useQueryExecution.ts`, #5316) | Done |
 | Saved queries | Query nodes live in the graph | Saved views were invisible after a space migration until #5828; they are now per-space `localStorage`, **not synced**, and old views stay invisible | Partial |
-| User-facing query language | Text you can read, diff, paste, version | **None.** `v2:<base64url(JSON)>` only; a text language was explicitly dropped in #4804 | Gap |
+| User-facing query language | Text you can read, diff, paste, version | **No full one.** The builder writes `v2:<base64url(JSON)>`; a hand-typed block takes only the flat legacy form (`tag:`, `property:k=v`, `type:backlinks`), which has no OR, NOT, groups or date ranges (`src/lib/inline-query-spec.ts`). The search box's readable filter syntax (`src/lib/search-query/`) is not accepted in a query block (#6628) | Gap |
 | Cross-space queries | Multi-graph search is manual | **Impossible.** `space_id` is mandatory, including MCP `query` | Gap |
 
 ### 8. Task Management
@@ -475,7 +475,7 @@ These four, ranked, open [Part 9](#part-9-what-would-actually-make-agaric-superi
 | --- | --- | --- |
 | **Transclusion** | Refs render live content inline, with children and a count badge; embeds show whole blocks with their task and property UI | Embeds show content-only rows and cannot be unlocked in page mode. Refs are chips with a pointer-only peek. No per-block badge, no peek on touch |
 | **Data modelling (2.0)** | Typed properties with defaults, choices, multi-value, display position; tags as classes; `Extends`; bidirectional properties; per-tag name uniqueness | 7 types, no multi-value, no defaults or display control, inheritance outside the query vocabulary, no reverse properties, built-ins locked, priorities fixed. Since #5841 a definition can at least be renamed, merged and retyped |
-| **Query power** | Simple DSL + Datalog + SCI transforms + Views with column control + aggregation macros | A deep engine with a fuller builder, but **no user-facing query language** (dropped in #4804), no transforms, one-hop traversal, single-space |
+| **Query power** | Simple DSL + Datalog + SCI transforms + Views with column control + aggregation macros | A deep engine with a fuller builder, but **no full user-facing query language** (§7), no transforms, one-hop traversal, single-space |
 | **Human-readable storage** | OG: plain `.md`/`.org` files are the store, on desktop and mobile | The store is one SQLite file plus Loro state. The Markdown mirror (#5363) narrows this on desktop only, is off by default, and is a copy Agaric reconciles, not the source of truth. Released, it is one-way, like 2.0's; the two-way half is on `main` |
 | **Exit story** | EDN, JSON, OPML, Roam JSON, HTML, Markdown; 2.0's **Build EDN** exports the whole schema | Markdown, assets and property definitions (`.agaric/space.json`); no history, no structured dump |
 | **Ecosystem** | 642 packages, a plugin API, a CLI, custom.css/custom.js, a local HTTP API, and a REST API on master | MCP, and on desktop the mirror's files |
@@ -512,8 +512,6 @@ Rows the last revision marked fixed (`listStyle`, the sync quarantine) are gone.
 - **Still true:** `docs/features/pickers-and-slash.md` says `[[` points at "the page or block you
   pick". `docs/features/tags-and-links.md` says "Pick a page or paste a title", and the picker is
   pages-only.
-- **Still true:** `docs/features/pickers-and-slash.md` calls `/embed` read-only, while
-  `docs/features/tags-and-links.md` says embeds are editable behind the unlock.
 - **New:** `docs/features/agent-access.md` lists 19 read-write tools. The registry has 20
   (`TOOL_ADD_MEETING` in `src-tauri/src/mcp/registry.rs`); `add_meeting` is described further down
   the same page.
@@ -680,7 +678,7 @@ dropped.
 
 | # | Item | Verdict | What remains |
 | --- | --- | --- | --- |
-| 1 | Fix the false documentation | Partial | `[[` "page or block", the `/embed` drift, the tool count and the closed #4554 (Part 5) |
+| 1 | Fix the false documentation | Partial | `[[` "page or block", the tool count and the closed #4554 (Part 5) |
 | 2 | Wire or delete `block_tag_inherited` | Partial | Not in `FilterPrimitive` or inline queries |
 | 3 | Finish the notification scheduler | Partial, and untracked | Android, closed-app delivery, catch-up, `scheduled_date`; #4554 is closed |
 | 5 | Pairing fallback without multicast | Done for QR (#4702) | Passphrase-only pairing still needs multicast |
@@ -688,7 +686,7 @@ dropped.
 | 7 | Ship backup/restore | Partial | Sync item 3 |
 | 8 | Fix template block-property loss and the PDF dangling ref | Partial | `/template` drops properties (`insertTemplateBlocks` in `src/lib/template-utils.ts`); PDF not re-checked |
 | 10 | Give references substance | Mostly done | A per-block count badge; a peek on touch; inline content |
-| 11 | A user-facing query language | Open | Dropped in #4804; not re-read |
+| 11 | A user-facing query language | Open | Query blocks take the search syntax (#6628) |
 | 13 | Multi-value properties | Open | `PRIMARY KEY (block_id, key)` |
 | 14 | A structured export | Partial | The Markdown export now restores, with definitions in `.agaric/space.json` (#6277); no dump with history and saved queries |
 | 15 | An answer to bus factor 1 | Open | The repository is public with 20 stars and one maintainer; MCP (39 tools) and the mirror are seams, not a plugin API |
@@ -997,7 +995,7 @@ below are the 2026-10-21 summary, left as written.
 | Journals | 5 view modes, calendar, templates (§9) | Better |
 | Properties | 7 types; no multi-value, defaults or reverse properties (§5) | Partial |
 | Tags as classes (2.0) | Tags and pages are separate; no supertags (§6) | Design choice |
-| Queries (simple DSL, Datalog) | Builder and `v2:` payloads, live; no text language (§7) | Partial |
+| Queries (simple DSL, Datalog) | Builder and `v2:` payloads, live; no full text language (§7) | Partial |
 | Tasks and the scheduled section | Agenda, projection, rollover (§8) | Better |
 | Templates | Templates view and variables; `/template` drops properties (§14) | Done |
 | Namespaces | Tree view and breadcrumbs (§2) | Done |

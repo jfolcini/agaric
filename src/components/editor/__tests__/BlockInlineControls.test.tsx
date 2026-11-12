@@ -148,8 +148,8 @@ import {
   formatCompactDate,
   getInlinePropertyLimit,
   INLINE_PROPERTY_LIMITS,
-  TaskCheckbox,
 } from '@/components/editor/BlockInlineControls'
+import { TaskCheckbox } from '@/components/editor/TaskMarkerButton'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useBlockStore } from '@/stores/blocks'
 

@@ -30,21 +30,15 @@ import { useTabsStore } from '@/stores/tabs'
 // abstract feature blurbs. Each teaches one core gesture a new user can
 // try immediately: the slash menu, links/tags, and inline formatting.
 // A touch phone gets its own wording where the desktop one names a key (#6520).
-const FEATURES = [
-  {
-    icon: SquareSlash,
-    titleKey: 'welcome.workflowSlash',
-    touchTitleKey: 'welcome.workflowSlashTouch',
-    descKey: 'welcome.workflowSlashDesc',
-    touchDescKey: 'welcome.workflowSlashDesc',
-  },
-  {
-    icon: AtSign,
-    titleKey: 'welcome.workflowLinkTag',
-    touchTitleKey: 'welcome.workflowLinkTag',
-    descKey: 'welcome.workflowLinkTagDesc',
-    touchDescKey: 'welcome.workflowLinkTagDesc',
-  },
+const FEATURES: readonly {
+  icon: typeof SquareSlash
+  titleKey: string
+  descKey: string
+  touchTitleKey?: string
+  touchDescKey?: string
+}[] = [
+  { icon: SquareSlash, titleKey: 'welcome.workflowSlash', descKey: 'welcome.workflowSlashDesc' },
+  { icon: AtSign, titleKey: 'welcome.workflowLinkTag', descKey: 'welcome.workflowLinkTagDesc' },
   {
     icon: Bold,
     titleKey: 'welcome.workflowFormat',
@@ -52,7 +46,7 @@ const FEATURES = [
     descKey: 'welcome.workflowFormatDesc',
     touchDescKey: 'welcome.workflowFormatDescTouch',
   },
-] as const
+]
 
 /** Body i18n keys for the "Getting Started" sample page, in render order. */
 const GETTING_STARTED_BODY_KEYS = [
@@ -287,10 +281,10 @@ export function WelcomeModal() {
           />
           <div>
             <p className="text-sm font-medium">
-              {t(touch ? feature.touchTitleKey : feature.titleKey)}
+              {t((touch && feature.touchTitleKey) || feature.titleKey)}
             </p>
             <p className="text-sm text-muted-foreground">
-              {t(touch ? feature.touchDescKey : feature.descKey)}
+              {t((touch && feature.touchDescKey) || feature.descKey)}
             </p>
           </div>
         </li>

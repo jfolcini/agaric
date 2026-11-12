@@ -229,7 +229,7 @@ site page named in the row or in the Appendix.
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Core query surface | Embedded search queries; Bases filters and formulas with a function library (help, *Functions*) | `{{query}}` blocks with a structured payload over 23 filter primitives (`FilterPrimitive` in `src-tauri/agaric-store/src/filters/primitive.rs`), live results, a visual builder | Done |
-| A query language you can read | Bases YAML; Dataview's DQL (5.30M downloads; **memory**, 2025, for its syntax) | **None.** The payload is `v2:<base64url(JSON)>` (COMPARISON.md §7) | Gap |
+| A query language you can read | Bases YAML; Dataview's DQL (5.30M downloads; **memory**, 2025, for its syntax) | **No full one.** The builder writes `v2:<base64url(JSON)>`; a hand-typed block takes only a flat AND-only form; the search syntax is readable but a query block does not accept it (COMPARISON.md §7, #6628) | Gap |
 | Computed columns | Bases formulas | Five fixed aggregates; no formulas | Gap |
 | Scripting | DataviewJS, Templater (**memory**, 2025) | None | Gap |
 | Granularity | Bases: files. Dataview: files, list items, tasks | Blocks, with page and tag context | Better vs core |
@@ -468,7 +468,7 @@ core only; a plugin closes each.
 | **Ecosystem** | 10,253 plugins, 1,011 themes, CSS snippets, a CLI | None of it |
 | **Bases** | Table, cards, list and kanban views with formulas and inline editing | A result table with derived columns; saved views do not sync |
 | **Canvas and drawing** | Canvas in core; Excalidraw as a plugin | None |
-| **Window management** | Splits, stacked tabs, pop-out windows, saved workspaces | One page at a time |
+| **Window management** | Splits, stacked tabs, pop-out windows, saved workspaces | Tabs, one page shown at a time: no split panes, pop-out windows or saved workspaces |
 | **Long-form writing** | The default mode, with no block cap | Page mode is opt-in and capped at 1000 blocks |
 | **List properties** | First-class | Absent; dropped on import |
 | **Capture** | Web Clipper on four browser families, iOS Quick Capture and Share Sheet | A desktop hotkey |
@@ -580,7 +580,7 @@ low / medium / high; cost low is hours to days, medium is weeks, high is a month
 | 8 | **A table view worth the name** | Column picker, inline cell editing, saved views that sync, then a board grouped by a select property. This is the smallest answer to Bases | high | medium | low to medium |
 | 9 | **Side-by-side pages** | Reference on the left, writing on the right is a daily Obsidian habit. A second pane, not a window manager | medium | medium | medium: focus is global and the editor roves (`AGENTS.md` invariant 4) |
 | 10 | **Android share target and a web clipper** | Capture is where notes start. A share intent into Quick Capture is small; a browser extension is a second project | medium | low (share), medium (extension) | low |
-| 11 | **A readable query language** | Dataview users expect to paste a query. The engine exists; the text form was dropped | medium | medium | low |
+| 11 | **A readable query language** | Dataview users expect to paste a query. The engine and a readable search syntax exist; a query block does not take that syntax (#6628) | medium | medium | low |
 | 12 | **One user stylesheet** | A single custom CSS file covers most of what snippets are used for, on the token layer that already exists | medium | low | low to medium: support burden when the DOM changes |
 | 13 | **Translations** | Finish Spanish; open a contribution path. Every string already passes through `t()` | medium | medium | low |
 | 14 | **Editor parity items** | `%%comments%%`, outgoing-links list, `/template` in one transaction, searches shorter than three characters | medium | low each | low |

@@ -1135,6 +1135,33 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
   })
 
+  it('a merge that fails after the user moved on leaves the focus where it is', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    let answer: (ok: boolean) => void = () => undefined
+    params.edit = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          answer = resolve
+        }),
+    )
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    let merge: Promise<void> = Promise.resolve()
+    act(() => {
+      merge = result.current.handleMergeWithPrev()
+    })
+    useBlockStore.setState({ focusedBlockId: 'C' })
+    await act(async () => {
+      answer(false)
+      await merge
+    })
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
+    expect(params.rovingEditor.mount).not.toHaveBeenCalledWith('B', 'Beta')
+    expect(useBlockStore.getState().focusedBlockId).toBe('C')
+  })
+
   it('does not revert when edit itself fails', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')

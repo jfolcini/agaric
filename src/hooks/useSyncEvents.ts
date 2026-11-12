@@ -341,7 +341,7 @@ export function useSyncEvents(): void {
           event.payload.code === 'engine_format_mismatch' && isMobilePlatform()
             ? {
                 action: {
-                  label: i18n.t('sync.openReleasesAction'),
+                  label: i18n.t('help.updateOpenReleasesButton'),
                   onClick: () => void openUrl(RELEASES_URL),
                 },
               }

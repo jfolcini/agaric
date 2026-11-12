@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
-import { detectColumns, QueryResult } from '@/components/query/QueryResult'
+import { QueryResult } from '@/components/query/QueryResult'
+import { detectColumns } from '@/components/query/use-query-table-columns'
 import {
   _resetBlockPropertyEventsForTest,
   recordBlockPropertyChange,

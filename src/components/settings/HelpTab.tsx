@@ -117,12 +117,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
               description={mobile ? t('help.updateMobileHint') : t('help.updateDescription')}
             >
               {mobile ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void openUrl(RELEASES_URL)}
-                  aria-label={t('help.updateOpenReleasesButton')}
-                >
+                <Button variant="outline" size="sm" onClick={() => void openUrl(RELEASES_URL)}>
                   {t('help.updateOpenReleasesButton')}
                 </Button>
               ) : (
