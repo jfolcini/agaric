@@ -5,7 +5,7 @@
 import { addMonths, eachDayOfInterval, endOfWeek, format, startOfWeek } from 'date-fns'
 
 import { getAppLocaleTag, getDateLocale } from '@/lib/date-locale'
-import { getWeekStartDay } from '@/lib/preferences'
+import { getWeekStartDay, PREFERENCES, readPreference } from '@/lib/preferences'
 
 /** Dynamic week options — reads weekStartsOn from user preference. */
 export function getWeekOptions(): { weekStartsOn: 0 | 1 } {
@@ -280,6 +280,17 @@ export function dueDateColor(dateStr: string): string {
 /** Check if a string is a YYYY-MM-DD date page title. */
 export function isDateFormattedPage(title: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(title)
+}
+
+/**
+ * A page title as a list or picker shows it: a journal page in the user's
+ * journal date format, any other title unchanged. Display only: lookups,
+ * matching and navigation keep the stored title.
+ */
+export function displayPageTitle(title: string): string {
+  return isDateFormattedPage(title)
+    ? formatJournalTitle(title, readPreference(PREFERENCES.journalDateFormat))
+    : title
 }
 
 /**

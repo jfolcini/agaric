@@ -709,11 +709,14 @@ export function BlockTree({
   // ── Date picker hook ───────────────────────────────────────────────
   const {
     datePickerOpen,
+    datePickerMode,
     datePickerCursorPos,
     setDatePickerOpen,
     setDatePickerMode,
     openDatePickerFor,
     handleDatePick,
+    datePickerValue,
+    clearPickerDate,
   } = useBlockDatePicker({
     focusedBlockId,
     rootParentId,
@@ -1628,8 +1631,11 @@ export function BlockTree({
             {datePickerOpen && (
               <Suspense fallback={null}>
                 <BlockDatePicker
+                  mode={datePickerMode}
+                  value={datePickerValue}
                   onSelect={(day) => day && handleDatePick(day)}
                   onClose={() => setDatePickerOpen(false)}
+                  onClear={() => void clearPickerDate()}
                 />
               </Suspense>
             )}

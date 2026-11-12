@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import type { HistoryEntry } from '@/lib/bindings'
 import {
+  getPayloadDisplayContent,
   getPayloadRawContent,
   getPropertyPayload,
   OP_TYPE_LABEL_KEYS,
@@ -453,7 +454,7 @@ describe('getPropertyPayload', () => {
 /**
  * #3756 EQUIVALENCE LEDGER — `history-utils.ts` mutants no input can distinguish.
  *
- * 7:42 [ConditionalExpression] `parsed !== null` -> true — `typeof null` is
+ * 45:42 [ConditionalExpression] `parsed !== null` -> true — `typeof null` is
  *   `'object'` and `Array.isArray(null)` is false, so a `null` payload takes the
  *   true arm and returns `parsed`, which is that same `null`. The operand stays:
  *   it narrows `object | null` to `object`, so the cast does not hide a `null`.
@@ -490,5 +491,30 @@ describe('OP_TYPE_LABEL_KEYS', () => {
 
   it('points every op type at a key the catalog has', () => {
     for (const key of Object.values(OP_TYPE_LABEL_KEYS)) expect(t(key)).not.toBe(key)
+  })
+})
+
+describe('getPayloadDisplayContent (#6544)', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('shows a created journal page in the journal date format', () => {
+    localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+    const entry = makeEntry(
+      JSON.stringify({ block_type: 'page', content: '2026-11-11' }),
+      'create_block',
+    )
+    expect(getPayloadDisplayContent(entry)).toBe('11/11/2026')
+  })
+
+  it.each([
+    ['a created content block', 'create_block', { block_type: 'content', content: '2026-11-11' }],
+    ['an edit', 'edit_block', { to_text: '2026-11-11' }],
+    ['a created page with another title', 'create_block', { block_type: 'page', content: 'Plan' }],
+  ])('leaves %s as stored', (_label, opType, payload) => {
+    localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+    const entry = makeEntry(JSON.stringify(payload), opType)
+    expect(getPayloadDisplayContent(entry)).toBe(getPayloadRawContent(entry))
   })
 })

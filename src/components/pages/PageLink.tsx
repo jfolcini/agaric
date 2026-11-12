@@ -13,6 +13,7 @@ import type React from 'react'
 
 import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
+import { displayPageTitle } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -23,7 +24,7 @@ export interface PageLinkProps {
   title: string
   /** Optional CSS class name. */
   className?: string
-  /** Optional children — defaults to rendering the title text. */
+  /** Optional children — defaults to the title as `displayPageTitle` shows it. */
   children?: React.ReactNode
 }
 
@@ -69,7 +70,7 @@ export function PageLink({
           className,
         )}
       >
-        {children ?? title}
+        {children ?? displayPageTitle(title)}
       </span>
     </NewTabTarget>
   )

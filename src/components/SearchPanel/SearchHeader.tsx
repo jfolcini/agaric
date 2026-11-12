@@ -74,82 +74,84 @@ export function SearchHeader({
   const { t } = useTranslation()
   return (
     <ViewHeader>
-      <form
-        onSubmit={onSubmit}
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="search" must stay on the <form> that owns onSubmit; the <search> element is not a form-submitting element, so swapping would lose submit handling
-        role="search"
-        className="search-panel-header flex flex-wrap items-center gap-2"
-        // Stays pinned on a phone while the results scroll (App.tsx's outlet).
-        data-sticky-search=""
-      >
-        <SearchInput
-          ref={inputRef}
-          value={query}
-          onChange={onInputChange}
-          onKeyDown={onInputKeyDown}
-          onFocus={onInputFocus}
-          onBlur={onInputBlur}
-          placeholder={
-            regexMode ? t('search.searchPlaceholderRegex') : t('search.searchPlaceholder')
-          }
-          aria-label={t('search.searchLabel')}
-          aria-invalid={invalid ? true : undefined}
-          aria-errormessage={invalid && inlineError ? 'search-inline-error' : undefined}
-          aria-describedby={regexMode ? 'search-regex-hint' : undefined}
-          className={regexMode ? 'flex-1 font-mono' : 'flex-1'}
-          // On a phone the input takes the first row and the toggles,
-          // submit and help share the second, instead of a row each.
-          wrapperClassName="max-sm:w-full"
-          // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: search input gets focus when the search panel opens so the user can type the query immediately
-          autoFocus
-          {...comboboxAttrs}
-        />
-        {regexMode ? (
-          <span id="search-regex-hint" className="sr-only">
-            {t('search.regexModeHint')}
-          </span>
-        ) : null}
-        {toggleRow}
-        <Button type="submit" variant="outline" disabled={!query.trim()}>
-          {t('search.searchButton')}
-        </Button>
-        {onHelpClick ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={onHelpClick}
-            aria-label={t('search.helpButtonLabel')}
-            title={t('search.helpButtonLabel')}
-            data-testid="search-help-button"
-          >
-            <HelpCircle className="h-4 w-4" aria-hidden="true" />
-          </Button>
-        ) : null}
-        {searchLoading ? (
-          <span
-            className="flex items-center gap-1.5 text-xs text-muted-foreground"
-            data-testid="search-fetching-indicator"
-          >
-            <Spinner /> {t('search.searching')}
-          </span>
-        ) : typing ? (
-          <span className="text-xs text-muted-foreground" data-testid="search-typing-indicator">
-            {t('search.typing')}
-          </span>
-        ) : null}
-      </form>
-      {inlineError ? (
-        <p
-          id="search-inline-error"
-          role="alert"
-          data-testid="search-inline-error"
-          className="mt-1 text-xs text-destructive"
+      <div className="mx-auto max-w-list">
+        <form
+          onSubmit={onSubmit}
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="search" must stay on the <form> that owns onSubmit; the <search> element is not a form-submitting element, so swapping would lose submit handling
+          role="search"
+          className="search-panel-header flex flex-wrap items-center gap-2"
+          // Stays pinned on a phone while the results scroll (App.tsx's outlet).
+          data-sticky-search=""
         >
-          {inlineError}
-        </p>
-      ) : null}
-      {historyDropdown}
+          <SearchInput
+            ref={inputRef}
+            value={query}
+            onChange={onInputChange}
+            onKeyDown={onInputKeyDown}
+            onFocus={onInputFocus}
+            onBlur={onInputBlur}
+            placeholder={
+              regexMode ? t('search.searchPlaceholderRegex') : t('search.searchPlaceholder')
+            }
+            aria-label={t('search.searchLabel')}
+            aria-invalid={invalid ? true : undefined}
+            aria-errormessage={invalid && inlineError ? 'search-inline-error' : undefined}
+            aria-describedby={regexMode ? 'search-regex-hint' : undefined}
+            className={regexMode ? 'flex-1 font-mono' : 'flex-1'}
+            // On a phone the input takes the first row and the toggles,
+            // submit and help share the second, instead of a row each.
+            wrapperClassName="max-sm:w-full"
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: search input gets focus when the search panel opens so the user can type the query immediately
+            autoFocus
+            {...comboboxAttrs}
+          />
+          {regexMode ? (
+            <span id="search-regex-hint" className="sr-only">
+              {t('search.regexModeHint')}
+            </span>
+          ) : null}
+          {toggleRow}
+          <Button type="submit" variant="outline" disabled={!query.trim()}>
+            {t('search.searchButton')}
+          </Button>
+          {onHelpClick ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onHelpClick}
+              aria-label={t('search.helpButtonLabel')}
+              title={t('search.helpButtonLabel')}
+              data-testid="search-help-button"
+            >
+              <HelpCircle className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          ) : null}
+          {searchLoading ? (
+            <span
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              data-testid="search-fetching-indicator"
+            >
+              <Spinner /> {t('search.searching')}
+            </span>
+          ) : typing ? (
+            <span className="text-xs text-muted-foreground" data-testid="search-typing-indicator">
+              {t('search.typing')}
+            </span>
+          ) : null}
+        </form>
+        {inlineError ? (
+          <p
+            id="search-inline-error"
+            role="alert"
+            data-testid="search-inline-error"
+            className="mt-1 text-xs text-destructive"
+          >
+            {inlineError}
+          </p>
+        ) : null}
+        {historyDropdown}
+      </div>
     </ViewHeader>
   )
 }

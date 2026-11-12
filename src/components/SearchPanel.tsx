@@ -581,14 +581,14 @@ export function SearchPanel(): React.ReactElement {
   // never fire a `searchBlocks` call with an unresolved `spaceId`.
   if (!spaceIsReady) {
     return (
-      <div className="search-panel space-y-4" aria-busy="true">
+      <div className="search-panel mx-auto w-full max-w-list space-y-4" aria-busy="true">
         <LoadingSkeleton count={3} height="h-10" className="search-panel-loading" />
       </div>
     )
   }
 
   return (
-    <div className="search-panel space-y-4">
+    <div className="search-panel mx-auto w-full max-w-list space-y-4">
       {/*  Phase 3b — input form lifted into `SearchHeader`. */}
       {/* append toggle row + history dropdown + regex error slot. */}
       <SearchHeader

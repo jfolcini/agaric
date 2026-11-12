@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { AggregateSummary } from '@/components/AdvancedQuery/AggregateSummary'
 import { QueryResultList } from '@/components/query/QueryResultList'
 import type { BlockRow, GroupSpec, QueryGroup } from '@/lib/bindings'
+import { displayPageTitle } from '@/lib/date-utils'
 
 export interface GroupedResultsProps {
   /** The group buckets to render. */
@@ -52,7 +53,7 @@ export function GroupedResults({
     if (key === 'none') return t('advancedQuery.group.noneKey')
     // Tag/Page: render the resolved title, falling back to the raw id when it
     // could not be resolved (e.g. a foreign-space or deleted target).
-    if (isIdKeyed) return pageTitles.get(key) ?? key
+    if (isIdKeyed) return displayPageTitle(pageTitles.get(key) ?? key)
     // BlockType keys are the raw `block_type` enum codes (`content`/`page`/`tag`)
     // — map to their human label, matching the rest of the app (#1447). Unknown
     // codes (e.g. future enum values) fall back to the raw key.

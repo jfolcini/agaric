@@ -2,6 +2,7 @@ import { es } from 'date-fns/locale/es'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  displayPageTitle,
   dueDateColor,
   formatCompactDate,
   formatDate,
@@ -686,6 +687,38 @@ describe('formatJournalTitle (#1448 — display-only journal date format)', () =
     // Reverting i18n.language back to 'en' must revert the rendering too.
     expect(formatJournalTitle(ISO, 'MMMM d, yyyy')).toBe('June 17, 2026')
   })
+})
+
+describe('displayPageTitle (#6544)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('shows a journal page in the localized default when no format is set', () => {
+    expect(displayPageTitle('2026-06-17')).toBe(formatDateDisplay(new Date(2026, 5, 17)))
+  })
+
+  it.each([
+    ['locale', formatDateDisplay(new Date(2026, 5, 17))],
+    ['yyyy-MM-dd', '2026-06-17'],
+    ['MMMM d, yyyy', 'June 17, 2026'],
+    ['dd/MM/yyyy', '17/06/2026'],
+    ['EEE, MMM d', 'Wed, Jun 17'],
+  ])('shows a journal page in the %s setting as %s', (fmt, shown) => {
+    localStorage.setItem('journal-date-format', fmt)
+    expect(displayPageTitle('2026-06-17')).toBe(shown)
+  })
+
+  it.each(['Project plan', '2026-06-17 retro', 'notes/2026-06-17', ''])(
+    'leaves the non-journal title %j unchanged',
+    (title) => {
+      localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+      expect(displayPageTitle(title)).toBe(title)
+    },
+  )
 })
 
 // #3752 — `getWeekRange`, `getWeekDays`, `formatWeekRange` and

@@ -548,30 +548,32 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     hasTextQuery && typeof displayTotalCount === 'number' ? pages.length : displayTotalCount
 
   return (
-    <div className="page-browser space-y-4">
+    <div className="page-browser mx-auto w-full max-w-list space-y-4">
       <ViewHeader>
-        <PageBrowserHeader
-          showSortAndViews={pages.length > 0}
-          filterText={filterText}
-          onFilterTextChange={setFilterText}
-          sortOption={sortOption}
-          onSortChange={setSortOption}
-          // E13 — basis-consistent denominator: server total normally,
-          // loaded distinct count when a text query is active (the text
-          // box only narrows loaded pages, so a server total there skews).
-          totalCount={headerTotalCount}
-          // E7 — the count-chip numerator is the DISTINCT matched-page
-          // count, not the grouped-row count (`filteredPages` under-counts
-          // namespaced subtrees and double-counts starred+namespaced pages).
-          filteredCount={matchedPageCount}
-          hasTextQuery={hasTextQuery}
-          hasChipFilters={hasChipFilters}
-          savedViews={savedViews}
-          activeSavedView={activeSavedView}
-          onApplySavedView={handleApplySavedView}
-          onDeleteSavedView={handleDeleteSavedView}
-          onSaveCurrentView={handleSaveCurrentView}
-        />
+        <div className="mx-auto max-w-list">
+          <PageBrowserHeader
+            showSortAndViews={pages.length > 0}
+            filterText={filterText}
+            onFilterTextChange={setFilterText}
+            sortOption={sortOption}
+            onSortChange={setSortOption}
+            // E13 — basis-consistent denominator: server total normally,
+            // loaded distinct count when a text query is active (the text
+            // box only narrows loaded pages, so a server total there skews).
+            totalCount={headerTotalCount}
+            // E7 — the count-chip numerator is the DISTINCT matched-page
+            // count, not the grouped-row count (`filteredPages` under-counts
+            // namespaced subtrees and double-counts starred+namespaced pages).
+            filteredCount={matchedPageCount}
+            hasTextQuery={hasTextQuery}
+            hasChipFilters={hasChipFilters}
+            savedViews={savedViews}
+            activeSavedView={activeSavedView}
+            onApplySavedView={handleApplySavedView}
+            onDeleteSavedView={handleDeleteSavedView}
+            onSaveCurrentView={handleSaveCurrentView}
+          />
+        </div>
       </ViewHeader>
 
       {/*  Phase 3 — compound-filter chip-row. Rendered when there
