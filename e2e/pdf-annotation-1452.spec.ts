@@ -1,4 +1,4 @@
-import { expect, openPage, test, waitForBoot } from './helpers'
+import { activeDialog, expect, ipc, openPage, reopenPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E for PDF annotation via pdf.js's prebuilt viewer (#1452).
@@ -12,10 +12,9 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  *      owning block is known; toggling Highlight switches the editor mode.
  *   5. Save is disabled until an annotation exists.
  *
- * The save round-trip (saveDocument → new attachment → delete old) is unit-
- * tested in PdfViewerDialog.test.tsx with mocked IPC; here we assert the
- * prebuilt viewer + editor UI render and wire up against a real PDF in the
- * real browser, with no page errors.
+ * The second describe saves a real comment (#6629): the annotated copy
+ * replaces the original, and the owning block's `attachment:` link follows it
+ * in block mode and in page mode.
  *
  * Seed data (tauri-mock): BLOCK_GS_1 — first child of "Getting Started".
  */
@@ -104,5 +103,92 @@ test.describe('PDF annotation viewer (#1452) @attachments', () => {
     // canvas renderer never did). Its presence is the marker that text
     // selection / highlight is wired up.
     await expect(page.locator('.pdfViewer .textLayer').first()).toBeAttached({ timeout: 15000 })
+  })
+})
+
+interface AttachmentRow {
+  id: string
+  filename: string
+}
+
+/** Seed `report.pdf` on GS_1 with the block's text linking it, as a folder, ENEX or JEX import writes it. */
+async function seedLinkedPdf(page: import('@playwright/test').Page): Promise<void> {
+  await seedPdf(page, BLOCK_GS_1, 'report.pdf')
+  const [row] = await ipc<AttachmentRow[]>(page, 'list_attachments', { blockId: BLOCK_GS_1 })
+  if (!row) throw new Error('seedLinkedPdf: the PDF was not attached')
+  await ipc(page, 'edit_block', {
+    blockId: BLOCK_GS_1,
+    toText: `[report.pdf](attachment:${row.id})`,
+  })
+}
+
+/**
+ * Open the reader from the block's chip, place a comment, and Save; resolves
+ * the annotated copy's id, once it is the block's only attachment.
+ */
+async function annotateAndSave(page: import('@playwright/test').Page): Promise<string> {
+  await page.getByRole('button', { name: 'Open file report.pdf' }).click()
+  const reader = activeDialog(page)
+  await expect(reader.getByTestId('pdf-page-indicator')).toContainText('1 / 1', { timeout: 15000 })
+  await reader.getByTestId('pdf-tool-comment').click()
+  await reader
+    .locator('.pdfViewer .page')
+    .first()
+    .click({ position: { x: 30, y: 30 } })
+  await expect(reader.getByRole('textbox')).toBeFocused()
+  await page.keyboard.type('Note')
+  // Leaving the comment commits it, which enables Save.
+  await reader.getByTestId('pdf-tool-comment').click()
+  await expect(reader.getByTestId('pdf-save')).toBeEnabled()
+  await reader.getByTestId('pdf-save').click()
+  await expect(reader).toBeHidden()
+  const rows = await ipc<AttachmentRow[]>(page, 'list_attachments', { blockId: BLOCK_GS_1 })
+  expect(rows.map((r) => r.filename)).toEqual(['report (annotated).pdf'])
+  return rows[0]?.id ?? ''
+}
+
+/** The filename of the attachment the block's text links, as the backend resolves it now. */
+async function linkedFilename(page: import('@playwright/test').Page): Promise<string> {
+  const block = await ipc<{ content: string }>(page, 'get_block', { blockId: BLOCK_GS_1 })
+  const id = /attachment:([0-9A-Za-z_-]+)/.exec(block.content)?.[1]
+  if (id === undefined) throw new Error(`no attachment link in: ${block.content}`)
+  return (await ipc<AttachmentRow>(page, 'read_attachment_meta', { attachmentId: id })).filename
+}
+
+test.describe('Saving PDF annotations keeps the block linking the file (#6629) @attachments', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('block mode: the link names the annotated copy', async ({ page }) => {
+    await seedLinkedPdf(page)
+    await openPage(page, 'Getting Started')
+    const annotated = await annotateAndSave(page)
+    const link = page.locator(`[data-block-id="${BLOCK_GS_1}"] [data-testid="attachment-link"]`)
+    await expect(link).toHaveAttribute('data-attachment-id', annotated)
+
+    await reopenPage(page, 'Getting Started')
+    await expect(link).toHaveAttribute('data-attachment-id', annotated)
+    expect(await linkedFilename(page)).toBe('report (annotated).pdf')
+  })
+
+  test('page mode: the link names the annotated copy', async ({ page }) => {
+    await seedLinkedPdf(page)
+    await openPage(page, 'Getting Started')
+    await page
+      .getByRole('radiogroup', { name: 'Editing mode' })
+      .getByRole('radio', { name: 'Page' })
+      .click()
+    const block = page.locator(`[data-page-block-id="${BLOCK_GS_1}"]`)
+    await expect(block).toBeVisible()
+    const annotated = await annotateAndSave(page)
+
+    // Page mode's document holds the block's text: the edit reaches it, not only the backend.
+    await expect(block.locator('a.external-link')).toHaveAttribute(
+      'href',
+      `attachment:${annotated}`,
+    )
+    await reopenPage(page, 'Getting Started')
+    expect(await linkedFilename(page)).toBe('report (annotated).pdf')
   })
 })
