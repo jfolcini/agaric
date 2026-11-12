@@ -8,42 +8,51 @@ import { performActivePageUndo, useUndoShortcuts } from '@/hooks/useUndoShortcut
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 
-const { toastMock, mockUndo, mockRedo, mockLoad, mockRenamePage, mockGetBlock, mockGetPageStore } =
-  vi.hoisted(() => {
-    const mock: ReturnType<typeof vi.fn> & { error: ReturnType<typeof vi.fn> } = Object.assign(
-      vi.fn(),
-      { error: vi.fn() },
-    )
+const {
+  toastMock,
+  mockUndo,
+  mockRedo,
+  mockLoad,
+  mockRenamePage,
+  mockGetBlock,
+  mockGetPageStore,
+  mockPageBlockRegistry,
+} = vi.hoisted(() => {
+  const mock: ReturnType<typeof vi.fn> & { error: ReturnType<typeof vi.fn> } = Object.assign(
+    vi.fn(),
+    { error: vi.fn() },
+  )
 
-    const undoFn = vi.fn().mockResolvedValue(null)
-    const redoFn = vi.fn().mockResolvedValue(null)
-    const loadFn = vi.fn().mockResolvedValue(undefined)
-    const renamePageFn = vi.fn()
-    const getBlockFn = vi.fn().mockResolvedValue(null)
+  const undoFn = vi.fn().mockResolvedValue(null)
+  const redoFn = vi.fn().mockResolvedValue(null)
+  const loadFn = vi.fn().mockResolvedValue(undefined)
+  const renamePageFn = vi.fn()
+  const getBlockFn = vi.fn().mockResolvedValue(null)
 
-    const mockPageBlockStoreState = {
-      load: loadFn,
-      rootParentId: 'PAGE_1',
-    }
-    // #1075 — production code now resolves stores via `getPageStore(pageId)`
-    // (single source of truth) instead of reading the registry Map directly.
-    const mockPageBlockRegistry = new Map()
-    mockPageBlockRegistry.set('PAGE_1', { getState: () => mockPageBlockStoreState })
-    mockPageBlockRegistry.set('PAGE_3', {
-      getState: () => ({ ...mockPageBlockStoreState, rootParentId: 'PAGE_3' }),
-    })
-    const getPageStoreFn = vi.fn((pageId: string) => mockPageBlockRegistry.get(pageId))
-
-    return {
-      toastMock: mock,
-      mockUndo: undoFn,
-      mockRedo: redoFn,
-      mockLoad: loadFn,
-      mockRenamePage: renamePageFn,
-      mockGetBlock: getBlockFn,
-      mockGetPageStore: getPageStoreFn,
-    }
+  const mockPageBlockStoreState = {
+    load: loadFn,
+    rootParentId: 'PAGE_1',
+  }
+  // #1075 — production code now resolves stores via `getPageStore(pageId)`
+  // (single source of truth) instead of reading the registry Map directly.
+  const registry = new Map<string, { getState: () => unknown }>()
+  registry.set('PAGE_1', { getState: () => mockPageBlockStoreState })
+  registry.set('PAGE_3', {
+    getState: () => ({ ...mockPageBlockStoreState, rootParentId: 'PAGE_3' }),
   })
+  const getPageStoreFn = vi.fn((pageId: string) => registry.get(pageId))
+
+  return {
+    toastMock: mock,
+    mockUndo: undoFn,
+    mockRedo: redoFn,
+    mockLoad: loadFn,
+    mockRenamePage: renamePageFn,
+    mockGetBlock: getBlockFn,
+    mockGetPageStore: getPageStoreFn,
+    mockPageBlockRegistry: registry,
+  }
+})
 
 // -- vi.mock calls (hoisted to top — only reference vi.hoisted vars) ----------
 
@@ -86,6 +95,9 @@ vi.mock('@/stores/undo', () => ({
 
 vi.mock('@/stores/page-blocks', () => ({
   getPageStore: mockGetPageStore,
+  forEachLivePageStoreGroup: (fn: (pageId: string, stores: unknown[]) => void) => {
+    for (const [pageId, store] of mockPageBlockRegistry) fn(pageId, [store])
+  },
 }))
 
 // #2927 phase 5 — `refreshAfterUndoRedo` now calls the generated
@@ -118,6 +130,7 @@ import { toast } from 'sonner'
 
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { announce } from '@/lib/announcer'
+import { __resetLastInteractedTreeForTests, markTreeInteracted } from '@/lib/last-interacted-tree'
 import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
@@ -165,6 +178,7 @@ function renderHook(hookFn: () => void): { unmount: () => void } {
 beforeEach(() => {
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.clearAllMocks()
+  __resetLastInteractedTreeForTests()
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   // Real singleton — the roving-editor guard reads `focusedBlockId` from it.
   useBlockStore.setState({
@@ -482,13 +496,12 @@ describe('useUndoShortcuts', () => {
   })
 })
 
-// #2941 — journal view (the default landing view) used to silently no-op on
-// Ctrl+Z/Ctrl+Y. There is no reliable already-tracked signal for which
-// day-page to target (weekly/monthly render many day-pages at once, and
-// nothing globally records a "last focused page"), so instead of a real
-// undo/redo the handler now surfaces a toast + announcement and leaves the
-// op log untouched — the safe fallback documented on the issue.
-describe('journal view undo/redo (#2941)', () => {
+// #6541 — the journal mounts one page per day, so Ctrl+Z / Ctrl+Y outside a
+// block act on the day the user last worked in (the last-interacted tree), and
+// only with no such day say where undo acts.
+describe('journal view undo/redo', () => {
+  const NO_DAY_YET = "Click a day's block first — undo works on the day you last edited"
+
   beforeEach(() => {
     mockedNavGetState.mockReturnValue({
       currentView: 'journal',
@@ -500,40 +513,60 @@ describe('journal view undo/redo (#2941)', () => {
     } as unknown as ReturnType<typeof useTabsStore.getState>)
   })
 
-  it('shows an "unavailable" toast on Ctrl+Z instead of dispatching undo', () => {
+  /** The user last worked in the tree of `pageId`'s mounted store. */
+  function interactWith(pageId: string): void {
+    markTreeInteracted(mockPageBlockRegistry.get(pageId) as object)
+  }
+
+  it('Ctrl+Z undoes the page of the day last worked in', () => {
+    interactWith('PAGE_3')
     const { unmount } = renderHook(() => useUndoShortcuts())
 
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
-    expect(mockUndo).not.toHaveBeenCalled()
-    expect(mockedToast).toHaveBeenCalledWith(
-      "Undo isn't available in Journal view yet — use a block's History to revert it",
-      { duration: 2500 },
-    )
+    expect(mockUndo.mock.calls).toEqual([['PAGE_3']])
+    expect(mockedToast).not.toHaveBeenCalledWith(NO_DAY_YET, expect.anything())
 
     unmount()
   })
 
-  it('shows an "unavailable" toast on Ctrl+Y instead of dispatching redo', () => {
+  it('Ctrl+Y redoes the page of the day last worked in', () => {
+    interactWith('PAGE_3')
     const { unmount } = renderHook(() => useUndoShortcuts())
 
     fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
 
-    expect(mockRedo).not.toHaveBeenCalled()
-    expect(mockedToast).toHaveBeenCalledWith(
-      "Undo isn't available in Journal view yet — use a block's History to revert it",
-      { duration: 2500 },
-    )
+    expect(mockRedo.mock.calls).toEqual([['PAGE_3']])
+    expect(mockUndo).not.toHaveBeenCalled()
 
     unmount()
   })
 
-  it('announces the unavailable-undo message for screen readers', () => {
+  it('follows the day worked in most recently', () => {
+    interactWith('PAGE_3')
+    interactWith('PAGE_1')
     const { unmount } = renderHook(() => useUndoShortcuts())
 
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
-    expect(mockedAnnounce).toHaveBeenCalledWith('Undo is not available in Journal view')
+    expect(mockUndo.mock.calls).toEqual([['PAGE_1']])
+
+    unmount()
+  })
+
+  it('with no day worked in yet, says where undo acts instead of undoing', () => {
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+    fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
+
+    expect(mockUndo).not.toHaveBeenCalled()
+    expect(mockRedo).not.toHaveBeenCalled()
+    expect(mockedToast.mock.calls).toEqual([
+      [NO_DAY_YET, { duration: 2500 }],
+      [NO_DAY_YET, { duration: 2500 }],
+    ])
+    expect(mockedAnnounce).toHaveBeenCalledWith('No day to undo in yet')
 
     unmount()
   })
@@ -567,6 +600,7 @@ describe('journal view undo/redo (#2941)', () => {
   })
 
   it('the focused-block guard still short-circuits in journal view (in-editor undo owns Ctrl+Z)', () => {
+    interactWith('PAGE_3')
     useBlockStore.setState({ focusedBlockId: 'BLOCK_A' })
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -585,16 +619,22 @@ describe('journal view undo/redo (#2941)', () => {
   })
 
   describe('performActivePageUndo (swipe-to-delete fallback path)', () => {
-    it('surfaces the same unavailable feedback and does not undo', async () => {
+    it('undoes the page of the day last worked in', async () => {
+      interactWith('PAGE_3')
+
+      const handled = await performActivePageUndo()
+
+      expect(handled).toBe(true)
+      expect(mockUndo.mock.calls).toEqual([['PAGE_3']])
+    })
+
+    it('with no day worked in yet, gives the same feedback as the keyboard and undoes nothing', async () => {
       const handled = await performActivePageUndo()
 
       expect(handled).toBe(false)
       expect(mockUndo).not.toHaveBeenCalled()
-      expect(mockedToast).toHaveBeenCalledWith(
-        "Undo isn't available in Journal view yet — use a block's History to revert it",
-        { duration: 2500 },
-      )
-      expect(mockedAnnounce).toHaveBeenCalledWith('Undo is not available in Journal view')
+      expect(mockedToast).toHaveBeenCalledWith(NO_DAY_YET, { duration: 2500 })
+      expect(mockedAnnounce).toHaveBeenCalledWith('No day to undo in yet')
     })
   })
 })

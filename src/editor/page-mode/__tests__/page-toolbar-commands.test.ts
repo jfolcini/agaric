@@ -42,9 +42,7 @@ const SENT = [
 ] as string[]
 
 /** Sent by the toolbar, not answered in page mode. */
-const LEFT_OUT: Record<string, string> = {
-  DISCARD_BLOCK_EDIT: 'page mode saves as it goes, so its toolbar hides Discard (`HIDDEN`)',
-}
+const LEFT_OUT: Record<string, string> = {}
 
 const handled = new Set(
   Object.keys(

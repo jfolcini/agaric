@@ -380,7 +380,6 @@ describe('the toolbar’s Turn into and callout', () => {
       useBlockTreeEventListeners({
         focusedBlockId: 'BLOCK_1',
         rootParentId: 'PAGE_1',
-        handleDiscard: vi.fn(),
         handleToggleTodo: vi.fn(),
         handleTogglePriority: vi.fn(),
         handleShowProperties: vi.fn(),
@@ -422,7 +421,6 @@ describe('the block editor’s undo of a change that cleared the style (RESTORE_
       useBlockTreeEventListeners({
         focusedBlockId: 'BLOCK_1',
         rootParentId: 'PAGE_1',
-        handleDiscard: vi.fn(),
         handleToggleTodo: vi.fn(),
         handleTogglePriority: vi.fn(),
         handleShowProperties: vi.fn(),

@@ -336,7 +336,6 @@ export interface UseBlockActionOrchestrationReturn {
   handleMergeById: (blockId: string) => Promise<void>
   handleEnterSave: () => Promise<void>
   handleEscapeSave: () => void
-  handleDiscard: () => void
 }
 
 export function useBlockActionOrchestration({
@@ -1299,23 +1298,6 @@ export function useBlockActionOrchestration({
     else setSelected([focusedBlockId])
   }, [focusedBlockId, captureEditor, handleFlush, setFocused, setSelected])
 
-  const handleDiscard = useCallback(() => {
-    if (!focusedBlockId) return
-    // Discard any persisted draft BEFORE unmounting so the autosave
-    // cleanup cannot flush stale content to the database.
-    discardDraft(focusedBlockId)
-    const stored = rovingEditorRef.current.storedMarkdown
-    const changed = rovingEditorRef.current.unmount()
-    // A block read as typed reports its text untouched; that is no change to discard.
-    if (changed !== null && changed !== stored) {
-      notify(t('blockTree.changesDiscarded'), { duration: 2000 })
-    }
-    // An untouched stub left behind by Enter is not deleted here: unfocusing
-    // runs BlockTree's leaked-empty-block cleanup, whose guards (children,
-    // properties, tags, attachments, references) this path never had (#5412).
-    setFocused(null)
-  }, [focusedBlockId, setFocused, discardDraft, t])
-
   return {
     handleFocusPrev,
     handleFocusNext,
@@ -1332,6 +1314,5 @@ export function useBlockActionOrchestration({
     handleMergeById,
     handleEnterSave,
     handleEscapeSave,
-    handleDiscard,
   }
 }

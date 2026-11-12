@@ -3,7 +3,6 @@
  *
  * Extracted from BlockTree.tsx to reduce orchestrator size. Registers this
  * tree's handlers for the toolbar/inline-control commands:
- * - DISCARD_BLOCK_EDIT
  * - CYCLE_PRIORITY
  * - SET_PRIORITY_1/2/3
  * - OPEN_DATE_PICKER
@@ -64,7 +63,6 @@ const CALLOUT_TYPES = new Set(['info', 'warning', 'tip', 'error', 'note'])
 export interface UseBlockTreeEventListenersOptions {
   focusedBlockId: string | null
   rootParentId: string | null
-  handleDiscard: () => void
   handleToggleTodo: (id: string) => void
   handleTogglePriority: (id: string) => void
   handleShowProperties: (id: string) => void
@@ -84,7 +82,6 @@ export interface UseBlockTreeEventListenersOptions {
 export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOptions): void {
   const {
     rootParentId,
-    handleDiscard,
     handleToggleTodo,
     handleTogglePriority,
     handleShowProperties,
@@ -114,11 +111,6 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
   // duplicate IPCs, N dialogs, todo-cycle values computed from a foreign store)
   // is now performed once by the bus, by construction.
   useEffect(() => {
-    // ── Discard button command (from FormattingToolbar) ───────────────
-    const onDiscard: BlockCommandHandler = () => {
-      handleDiscard()
-    }
-
     // ── Priority cycling command (from FormattingToolbar) ─────────────
     const onCyclePriority: BlockCommandHandler = (blockId) => {
       handleTogglePriority(blockId)
@@ -309,7 +301,6 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
 
     return registerBlockCommandTarget(pageStore, {
       PASTE_BLOCKS: onPasteBlocks,
-      DISCARD_BLOCK_EDIT: onDiscard,
       CYCLE_PRIORITY: onCyclePriority,
       SET_PRIORITY_1: setPriorityHandler('1'),
       SET_PRIORITY_2: setPriorityHandler('2'),
@@ -328,7 +319,6 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     })
   }, [
     rootParentId,
-    handleDiscard,
     handleToggleTodo,
     handleTogglePriority,
     handleShowProperties,

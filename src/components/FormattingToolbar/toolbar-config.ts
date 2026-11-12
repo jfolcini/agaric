@@ -31,7 +31,6 @@ import {
   Strikethrough,
   Underline,
   Undo2,
-  X,
 } from 'lucide-react'
 
 import { getShortcutKeys } from '@/lib/keyboard-config'
@@ -394,13 +393,6 @@ export function createHistoryButtons(editor: Editor, touch = false): ToolbarButt
       disabledWhenFalse: 'canRedo',
       priority,
       action: () => editor.chain().focus().redo().run(),
-    },
-    {
-      icon: X,
-      label: 'toolbar.discard',
-      tip: 'toolbar.discardTip',
-      priority: 30,
-      action: () => dispatchBlockCommand('DISCARD_BLOCK_EDIT'),
     },
   ]
 }

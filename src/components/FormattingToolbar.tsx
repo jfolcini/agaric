@@ -72,8 +72,6 @@ interface FormattingToolbarProps {
   onTurnIntoCode?: (() => void) | undefined
   /** Tooltip keys in place of the bar's own, by item key: where a button acts differently (page mode). */
   tips?: Readonly<Record<string, string>> | undefined
-  /** Item keys left off the bar: the controls a surface has no use for (page mode's Discard). */
-  hiddenItems?: ReadonlySet<string> | undefined
   /** Added to the bar's classes (page mode's sticky bar, block mode's view bar). */
   className?: string | undefined
   /** The block-menu button, last on the bar: where nothing else opens the menu (page mode on touch). */
@@ -96,7 +94,6 @@ export function FormattingToolbar({
   listStyle,
   onTurnIntoCode,
   tips,
-  hiddenItems,
   className,
   blockMenu,
   indent,
@@ -158,11 +155,9 @@ export function FormattingToolbar({
   const configByKey = useMemo(() => buildConfigByKey(groups), [groups])
   const hasBlockMenu = blockMenu !== undefined
   const items: ToolbarItem[] = useMemo(() => {
-    const shown = buildToolbarItems(groups, { includeTableOps: state.isInsideTable }).filter(
-      (item) => hiddenItems?.has(item.key) !== true,
-    )
+    const shown = buildToolbarItems(groups, { includeTableOps: state.isInsideTable })
     return hasBlockMenu ? [...shown, ...BLOCK_MENU_ITEMS] : shown
-  }, [groups, state.isInsideTable, hiddenItems, hasBlockMenu])
+  }, [groups, state.isInsideTable, hasBlockMenu])
 
   // ── Item renderer dispatch ────────────────────────────────────────────
 

@@ -451,9 +451,9 @@ describe('createMetadataButtons', () => {
 // ── createHistoryButtons ────────────────────────────────────────────────
 
 describe('createHistoryButtons', () => {
-  it('returns 3 buttons', () => {
+  it('returns 2 buttons', () => {
     const buttons = createHistoryButtons(makeEditor())
-    expect(buttons).toHaveLength(3)
+    expect(buttons).toHaveLength(2)
   })
 
   it('each button has valid config shape', () => {
@@ -463,24 +463,15 @@ describe('createHistoryButtons', () => {
     }
   })
 
-  it('includes undo, redo, discard', () => {
+  it('includes undo and redo, and no discard (#6541)', () => {
     const buttons = createHistoryButtons(makeEditor())
     const labels = buttons.map((b) => b.label)
-    expect(labels).toEqual(['toolbar.undo', 'toolbar.redo', 'toolbar.discard'])
+    expect(labels).toEqual(['toolbar.undo', 'toolbar.redo'])
   })
 
   it('undo and redo have disabledWhenFalse keys', () => {
     const buttons = createHistoryButtons(makeEditor())
     expect(buttons[0]?.disabledWhenFalse).toBe('canUndo')
     expect(buttons[1]?.disabledWhenFalse).toBe('canRedo')
-  })
-
-  it('discard dispatches block event', () => {
-    const spy = vi.fn()
-    document.addEventListener('discard-block-edit', spy)
-    const buttons = createHistoryButtons(makeEditor())
-    buttons[2]?.action()
-    expect(spy).toHaveBeenCalledOnce()
-    document.removeEventListener('discard-block-edit', spy)
   })
 })
