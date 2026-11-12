@@ -725,7 +725,7 @@ pub(crate) async fn reject_duplicate_name(
 /// each alias such a page brings (#6278), run after the writes of a restore,
 /// an undo or a move into a space, so two names one batch brings into a space
 /// see each other (#5281, #6051, #6099). Each space's names are read once for
-/// the batch.
+/// the batch. A saved view (#6544) holds no name, so it clashes with none.
 pub(crate) async fn reject_taken_names(
     conn: &mut sqlx::SqliteConnection,
     blocks: &[impl serde::Serialize],
@@ -736,7 +736,8 @@ pub(crate) async fn reject_taken_names(
         r#"SELECT b.id AS "id!", b.block_type, b.content AS "content!", b.space_id
            FROM json_each(?1) je
            JOIN blocks b ON b.id = je.value
-           WHERE b.block_type IN ('page', 'tag') AND b.content IS NOT NULL"#,
+           WHERE b.block_type IN ('page', 'tag') AND b.content IS NOT NULL
+             AND b.id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')"#,
         blocks_json
     )
     .fetch_all(&mut *conn)

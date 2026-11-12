@@ -12,9 +12,9 @@ import { blocks, pageAliases, properties } from '@/lib/tauri-mock/seed'
 
 /**
  * #6544 — a saved view is a page carrying `saved_view`. The backend's
- * `NOT EXISTS (SELECT 1 FROM block_properties sv WHERE sv.block_id = b.id AND
- * sv.key = 'saved_view')` leaves it out of the page listings, search, the
- * query surfaces and the names a space's pages hold; this is that predicate.
+ * `NOT_SAVED_VIEW` (`src-tauri/agaric-store/src/filters/mod.rs`) leaves it out
+ * of the page listings, search, the query surfaces and the names a space's
+ * pages hold; this is that predicate.
  */
 export function isSavedViewPage(b: Record<string, unknown>): boolean {
   return properties.get(b['id'] as string)?.has('saved_view') ?? false

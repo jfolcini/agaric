@@ -208,7 +208,7 @@ pub async fn list_blocks_inner(
 ///
 /// Mirrors the predicate set used by [`pagination::list_by_type`]
 /// (`block_type = ?` + `deleted_at IS NULL` + the canonical
-/// space filter). Used by `list_blocks_inner` to drive the
+/// space filter, less saved views). Used by `list_blocks_inner` to drive the
 /// PageBrowser "X of Y" progress indicator without paginating
 /// through the entire result set.
 ///
@@ -231,11 +231,7 @@ async fn count_blocks_by_type(
         r#"SELECT COUNT(*) FROM blocks b
            WHERE block_type = ?1 AND deleted_at IS NULL
              AND (?2 IS NULL OR b.space_id = ?2)
-             AND NOT EXISTS (
-                  SELECT 1 FROM block_properties bp
-                  WHERE bp.block_id = b.id
-                    AND bp.key = 'view_type'
-                    AND bp.value_text = 'query-view')"#,
+             AND b.id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')"#,
         block_type,
         space_id,
     )

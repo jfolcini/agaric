@@ -47,6 +47,11 @@ function savedViewRow(name: string): string {
   return `//*[@data-testid="saved-view-row"][./span[normalize-space(.)="${name}"]]`
 }
 
+/** The Pages list's title span reading `title` (PageBrowser/PageRow.tsx). */
+function pagesListTitle(title: string): string {
+  return `.//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`
+}
+
 /** Open Advanced Query from the Pages header and wait for its builder. */
 async function openAdvancedQuery(): Promise<void> {
   await navigateTo('Pages')
@@ -134,6 +139,11 @@ describe('Agaric real-backend Advanced Query saved views (#5738) @search', () =>
     await waitForResults([TASK, NOTE], [], 'Clear all did not widen the results again')
 
     await navigateTo('Journal')
+    // The view is a page the Pages list leaves out (#6544); the page listed
+    // beside it shows the list has loaded.
+    await navigateTo('Pages')
+    await $(pagesListTitle(PAGE)).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await expectAbsent(pagesListTitle(VIEW), 'the saved view in the Pages list')
     await openAdvancedQuery()
     const row = $(savedViewRow(VIEW))
     await row.waitForDisplayed({

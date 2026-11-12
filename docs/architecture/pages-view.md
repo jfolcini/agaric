@@ -12,7 +12,7 @@ Four strands of work compose here, and all of them hang off one seam — the `li
 - **Page rows + sort modes + the metadata IPC** — the base surface (below).
 - **Materialised counts** — `inbound_link_count` / `child_block_count` moved into `pages_cache`, which removed the 20k-page scaling cliff on `most-linked` / `most-content`.
 - **Compound filters** — `FilterPrimitive` shared with Search and the other filter surfaces. See [`filters.md`](filters.md).
-- **Multi-select + bulk ops + saved views** (#81) — a saved view is a `{filters, sort}` pair stored as a page of its space carrying the internal `saved_view` property (`src/lib/saved-views.ts`, `src/hooks/useSavedPagesViews.ts`, #6544), so views sync and a deleted one goes to the Trash; the compound-filter work owns `filters`, the sort work owns `sort`. The device-wide `agaric:pages:savedViews:v1` list views lived in before is copied into every space once (`migrateDeviceSavedViews`).
+- **Multi-select + bulk ops + saved views** (#81) — a saved view is a `{filters, sort}` pair stored as a page of its space carrying the internal `saved_view` property (`src/lib/saved-views.ts`, `src/hooks/useSavedPagesViews.ts`, #6544), which the page lists, search and queries leave out (`NOT_SAVED_VIEW`) and which holds no page name, so views sync and a deleted one goes to the Trash; the compound-filter work owns `filters`, the sort work owns `sort`. The device-wide `agaric:pages:savedViews:v1` list views lived in before is copied into every space once (`migrateDeviceSavedViews`).
 
 ## Data flow
 

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id as \"id: agaric_core::ulid::ActiveBlockId\", block_type, content, parent_id as \"parent_id: agaric_core::ulid::BlockId\", position,\n                deleted_at,\n                 todo_state, priority, due_date, scheduled_date,\n                page_id as \"page_id: agaric_core::ulid::BlockId\"\n         FROM blocks b\n         WHERE block_type = ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR id > ?3)\n           AND (?5 IS NULL OR b.space_id = ?5)\n           AND NOT EXISTS (\n                SELECT 1 FROM block_properties bp\n                WHERE bp.block_id = b.id\n                  AND bp.key = 'view_type'\n                  AND bp.value_text = 'query-view')\n         ORDER BY id ASC\n         LIMIT ?4",
+  "query": "SELECT id as \"id: agaric_core::ulid::ActiveBlockId\", block_type, content, parent_id as \"parent_id: agaric_core::ulid::BlockId\", position,\n                deleted_at,\n                 todo_state, priority, due_date, scheduled_date,\n                page_id as \"page_id: agaric_core::ulid::BlockId\"\n         FROM blocks b\n         WHERE block_type = ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR id > ?3)\n           AND (?5 IS NULL OR b.space_id = ?5)\n           AND b.id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')\n         ORDER BY id ASC\n         LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "c6374b88ea10cbec5322a82be785849c54fa97887cf9560a6365ea7e585e0f2f"
+  "hash": "8e19541c2de308d6405e1d5b230eb6f42392750705fbd6a2df009da447599389"
 }
