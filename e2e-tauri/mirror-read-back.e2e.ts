@@ -33,6 +33,7 @@ interface MirrorStatus {
   last_pass_ms: number | null
   read_back: boolean
   pending: string[]
+  diverged: { path: string }[]
 }
 
 const TITLE = runScopedMarker('wdio-readback-page')
@@ -141,16 +142,20 @@ describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @mar
     // Every file at once, as a checkout of another branch writes them.
     const checkout = (file: string) => `${CHECKOUT} ${path.basename(file, '.md')}\n`
     for (const file of files) writeFileSync(file, checkout(file))
-    const since = (await status()).last_pass_ms ?? 0
+    // Listed as diverged only by a pass that read the rewritten file.
     await browser.waitUntil(
       async () => {
         const now = await status()
-        return (
-          (now.last_pass_ms ?? 0) > since &&
-          files.every((file) => now.pending.some((p) => file.endsWith(p)))
+        return files.every(
+          (file) =>
+            now.diverged.some((d) => file.endsWith(d.path)) &&
+            now.pending.some((p) => file.endsWith(p)),
         )
       },
-      { timeout: NAV_TIMEOUT, timeoutMsg: 'the rewritten files were never all listed as pending' },
+      {
+        timeout: NAV_TIMEOUT,
+        timeoutMsg: 'the rewritten files were never all read and listed as pending',
+      },
     )
 
     expect(await pages()).toEqual(before)

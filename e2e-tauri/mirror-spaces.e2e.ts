@@ -10,7 +10,7 @@
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -38,6 +38,7 @@ const KEPT_BLOCK = runScopedMarker('wdio-spaces-kept-block')
 const OTHER_SPACE = runScopedMarker('wdio-spaces-other')
 const OTHER_PAGE = runScopedMarker('wdio-spaces-other-page')
 const NEW_PAGE = runScopedMarker('wdio-spaces-new-page')
+const AFTER = runScopedMarker('wdio-spaces-after')
 
 const folder = mkdtempSync(path.join(os.tmpdir(), 'wdio-mirror-spaces-'))
 
@@ -73,7 +74,10 @@ describe('Agaric real-backend Markdown mirror, which spaces are mirrored (#5363)
     await openNewPage(KEPT)
     await typeMarkerVerified(KEPT_BLOCK)
     await browser.keys(['Escape'])
-    await blockStaticByMarker(KEPT_BLOCK).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    const keptStatic = blockStaticByMarker(KEPT_BLOCK)
+    await keptStatic.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    const keptBlock = (await keptStatic.getAttribute('data-block-id')) ?? ''
+    expect(keptBlock).not.toBe('')
     const kept = await writtenFile(`${KEPT}.md`)
     // Through Settings › Spaces, so the app's list of spaces knows it.
     await openSpacesSettings()
@@ -99,21 +103,14 @@ describe('Agaric real-backend Markdown mirror, which spaces are mirrored (#5363)
     expect((await invoke<MirrorStatus>('get_mirror_status')).unmirrored_spaces).toEqual([other])
     expect(existsSync(kept)).toBe(true)
 
-    // A page added to the space while it is off gets no file.
+    // A page added to the space while it is off gets no file. An edit made
+    // after it, in a space still mirrored, shows a pass read past it.
     await invoke('create_page_in_space', { parentId: null, content: NEW_PAGE, spaceId: other })
-    // Two passes ending after it, so one began after it.
-    let since = Date.now()
-    for (const pass of ['first', 'second']) {
-      await browser.waitUntil(
-        async () => {
-          const ended = (await invoke<MirrorStatus>('get_mirror_status')).last_pass_ms ?? 0
-          if (ended <= since) return false
-          since = ended
-          return true
-        },
-        { timeout: NAV_TIMEOUT, timeoutMsg: `no ${pass} pass after the page was added` },
-      )
-    }
+    await invoke('edit_block', { blockId: keptBlock, toText: `${KEPT_BLOCK} ${AFTER}` })
+    await browser.waitUntil(() => Promise.resolve(readFileSync(kept, 'utf8').includes(AFTER)), {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: `${KEPT}.md never showed the edit made after the page was added`,
+    })
     expect(
       readdirSync(folder, { recursive: true, withFileTypes: true }).filter(
         (entry) => entry.name === `${NEW_PAGE}.md`,
