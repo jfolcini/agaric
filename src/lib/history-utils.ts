@@ -1,7 +1,41 @@
+import type { TFunction } from 'i18next'
+
 import type { HistoryEntry } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
 
 /** The `page_id` that asks `list_page_history` and `restore_page_to_op` for every page. */
 export const ALL_PAGES_HISTORY_ID = '__all__'
+
+/** The label key of each op type the backend writes (`OpType::as_str`), in filter-menu order. */
+export const OP_TYPE_LABEL_KEYS: Readonly<Record<string, string>> = {
+  edit_block: 'history.opTypeEdit',
+  create_block: 'history.opTypeCreate',
+  delete_block: 'history.opTypeDelete',
+  move_block: 'history.opTypeMove',
+  add_tag: 'history.opTypeAddTag',
+  remove_tag: 'history.opTypeRemoveTag',
+  add_page_alias: 'history.opTypeAddPageAlias',
+  remove_page_alias: 'history.opTypeRemovePageAlias',
+  set_property: 'history.opTypeSetProperty',
+  delete_property: 'history.opTypeDeleteProperty',
+  set_property_def: 'history.opTypeSetPropertyDef',
+  rename_property_key: 'history.opTypeRenamePropertyKey',
+  rename_property_option: 'history.opTypeRenamePropertyOption',
+  rewrite_properties: 'history.opTypeRewriteProperties',
+  add_attachment: 'history.opTypeAddAttachment',
+  delete_attachment: 'history.opTypeRemoveAttachment',
+  rename_attachment: 'history.opTypeRenameAttachment',
+  restore_block: 'history.opTypeRestore',
+  purge_block: 'history.opTypePurge',
+}
+
+/** An op type in words; one with no label shows as itself, and is logged. */
+export function opTypeLabel(opType: string, t: TFunction): string {
+  const key = OP_TYPE_LABEL_KEYS[opType]
+  if (key !== undefined) return t(key)
+  logger.warn('history-utils', 'no label for op type', { opType })
+  return opType
+}
 
 /** An op-log payload as a plain object, or `null` for invalid JSON or any non-object value. */
 export function parsePayloadObject(payload: string): Record<string, unknown> | null {

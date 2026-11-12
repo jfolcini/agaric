@@ -14,6 +14,7 @@ import { axe } from 'vitest-axe'
 import type { BlockHistoryItemProps } from '@/components/HistoryListItem/BlockHistoryItem'
 import { BlockHistoryItem } from '@/components/HistoryListItem/BlockHistoryItem'
 import { commands } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 
 vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({
@@ -99,7 +100,7 @@ describe('BlockHistoryItem (extracted sibling)', () => {
 
   it('renders the op-type badge for the entry', () => {
     renderInList(defaultProps())
-    expect(screen.getByTestId('history-type-badge')).toHaveTextContent('edit_block')
+    expect(screen.getByTestId('history-type-badge')).toHaveTextContent(t('history.opTypeEdit'))
   })
 
   it('exposes the restorable row as a button (collapsed)', () => {

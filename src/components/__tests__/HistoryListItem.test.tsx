@@ -44,6 +44,7 @@ import { axe } from 'vitest-axe'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { BlockHistoryItemProps, HistoryListItemProps } from '@/components/HistoryListItem'
 import { BlockHistoryItem, HistoryListItem, opIcon } from '@/components/HistoryListItem'
+import { t } from '@/lib/i18n'
 
 vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({
@@ -117,9 +118,9 @@ describe('HistoryListItem', () => {
   it('renders edit_block op type badge', () => {
     renderInListbox(defaultProps())
 
-    expect(screen.getByText('edit_block')).toBeInTheDocument()
+    expect(screen.getByText(t('history.opTypeEdit'))).toBeInTheDocument()
     const badge = screen.getByTestId('history-type-badge')
-    expect(badge).toHaveTextContent('edit_block')
+    expect(badge).toHaveTextContent(t('history.opTypeEdit'))
   })
 
   it('renders create_block op type badge', () => {
@@ -129,7 +130,7 @@ describe('HistoryListItem', () => {
       }),
     )
 
-    expect(screen.getByText('create_block')).toBeInTheDocument()
+    expect(screen.getByText(t('history.opTypeCreate'))).toBeInTheDocument()
   })
 
   it('renders delete_block op type badge', () => {
@@ -139,7 +140,7 @@ describe('HistoryListItem', () => {
       }),
     )
 
-    expect(screen.getByText('delete_block')).toBeInTheDocument()
+    expect(screen.getByText(t('history.opTypeDelete'))).toBeInTheDocument()
   })
 
   it('renders purge_block op type badge', () => {
@@ -150,7 +151,7 @@ describe('HistoryListItem', () => {
       }),
     )
 
-    expect(screen.getByText('purge_block')).toBeInTheDocument()
+    expect(screen.getByText(t('history.opTypePurge'))).toBeInTheDocument()
   })
 
   // -- Payload preview -------------------------------------------------------
@@ -183,14 +184,14 @@ describe('HistoryListItem', () => {
     )
 
     // Should still render op type badge
-    expect(screen.getByText('move_block')).toBeInTheDocument()
+    expect(screen.getByText(t('history.opTypeMove'))).toBeInTheDocument()
     // No preview text
     expect(screen.queryByText('T1')).not.toBeInTheDocument()
   })
 
-  // -- Device ID -------------------------------------------------------------
+  // -- Device ------------------------------------------------------------------
 
-  it('shows device_id truncated to first 8 chars', () => {
+  it('names a local op\'s device "This device", not its id', () => {
     renderInListbox(
       defaultProps({
         entry: makeEntry(
@@ -203,7 +204,8 @@ describe('HistoryListItem', () => {
       }),
     )
 
-    expect(screen.getByText('dev:ABCDEF12')).toBeInTheDocument()
+    expect(screen.getByText(t('device.thisDevice'))).toBeInTheDocument()
+    expect(screen.queryByText(/ABCDEF12/)).not.toBeInTheDocument()
   })
 
   // -- Selection state -------------------------------------------------------
@@ -562,7 +564,9 @@ describe('HistoryListItem', () => {
     )
 
     expect(
-      screen.getByRole('checkbox', { name: /Select operation edit_block #42/ }),
+      screen.getByRole('checkbox', {
+        name: t('history.selectOperationLabel', { opType: t('history.opTypeEdit'), seq: 42 }),
+      }),
     ).toBeInTheDocument()
   })
 
@@ -889,7 +893,9 @@ describe('HistoryListItem', () => {
 
       // Still identifiable via the badge; no "undefined" / "[object Object]"
       // leaking into the row.
-      expect(screen.getByTestId('history-type-badge')).toHaveTextContent('delete_attachment')
+      expect(screen.getByTestId('history-type-badge')).toHaveTextContent(
+        t('history.opTypeRemoveAttachment'),
+      )
       expect(screen.queryByText('undefined')).not.toBeInTheDocument()
       expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
       expect(document.body.textContent).not.toMatch(/undefined|\[object Object\]/)
@@ -902,7 +908,9 @@ describe('HistoryListItem', () => {
         }),
       )
 
-      expect(screen.getByTestId('history-type-badge')).toHaveTextContent('rename_attachment')
+      expect(screen.getByTestId('history-type-badge')).toHaveTextContent(
+        t('history.opTypeRenameAttachment'),
+      )
       expect(document.body.textContent).not.toMatch(/undefined|\[object Object\]/)
     })
   })
@@ -979,7 +987,7 @@ describe('BlockHistoryItem', () => {
   it('renders edit_block entry with semantic badge', () => {
     renderInList(blockDefaultProps())
     const badge = screen.getByTestId('history-type-badge')
-    expect(badge).toHaveTextContent('edit_block')
+    expect(badge).toHaveTextContent(t('history.opTypeEdit'))
   })
 
   it('renders as a <li> element', () => {
@@ -1168,10 +1176,10 @@ describe('BlockHistoryItem', () => {
     })
   })
 
-  it('shows device_id with full opacity (not /60)', () => {
+  it('shows the device with full opacity (not /60)', () => {
     renderInList(blockDefaultProps())
     // The label inherits its colour from the group it sits in.
-    const deviceEl = screen.getByText('dev:DEVICE01').closest('.history-item-device-group')
+    const deviceEl = screen.getByText(t('device.thisDevice')).closest('.history-item-device-group')
     expect(deviceEl).toHaveClass('text-muted-foreground')
     expect(deviceEl?.className).not.toContain('/60')
   })

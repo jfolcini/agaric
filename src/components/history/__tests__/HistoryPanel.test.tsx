@@ -33,6 +33,7 @@ import {
   DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
   getGraphStructureKey,
 } from '@/lib/graph-structure-events'
+import { t } from '@/lib/i18n'
 import { queryClient } from '@/lib/query-client'
 import { getPageStore, PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
@@ -50,6 +51,9 @@ vi.mock('@/hooks/useRichContentCallbacks', () => ({
 const mockedInvoke = vi.mocked(invoke)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+
+/** Matches a row's op-type badge, not the filter menu's option of the same label. */
+const BADGE = { selector: '[data-testid="history-type-badge"]' }
 
 /**
  * Route IPC calls by command name. Test files used to chain
@@ -139,8 +143,8 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    expect(await screen.findByText('edit_block')).toBeInTheDocument()
-    expect(screen.getByText('create_block')).toBeInTheDocument()
+    expect(await screen.findByText(t('history.opTypeEdit'), BADGE)).toBeInTheDocument()
+    expect(screen.getByText(t('history.opTypeCreate'), BADGE)).toBeInTheDocument()
     expect(screen.getByText('Updated content')).toBeInTheDocument()
   })
 
@@ -244,7 +248,7 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    await screen.findByText('create_block')
+    await screen.findByText(t('history.opTypeCreate'), BADGE)
     expect(screen.queryByTestId('block-history-restore-0')).not.toBeInTheDocument()
     // Non-restorable rows render but are not interactive (no aria-expanded).
     expect(screen.getByTestId('block-history-row-0')).not.toHaveAttribute('aria-expanded')
@@ -443,7 +447,7 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    expect(await screen.findByText('edit_block')).toBeInTheDocument()
+    expect(await screen.findByText(t('history.opTypeEdit'), BADGE)).toBeInTheDocument()
     // Malformed payload ⇒ rawContent === null ⇒ row not expandable.
     // Non-restorable rows render but are not interactive (no aria-expanded).
     expect(screen.getByTestId('block-history-row-0')).not.toHaveAttribute('aria-expanded')
@@ -460,7 +464,7 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    expect(await screen.findByText('edit_block')).toBeInTheDocument()
+    expect(await screen.findByText(t('history.opTypeEdit'), BADGE)).toBeInTheDocument()
     // Non-restorable rows render but are not interactive (no aria-expanded).
     expect(screen.getByTestId('block-history-row-0')).not.toHaveAttribute('aria-expanded')
   })
@@ -495,7 +499,7 @@ describe('HistoryPanel', () => {
     })
   })
 
-  it('shows device_id for each entry', async () => {
+  it('shows the device for each entry', async () => {
     const page = {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'content' }, 1736942400000)],
       next_cursor: null,
@@ -506,8 +510,8 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    await screen.findByText('edit_block')
-    expect(screen.getByText('dev:DEVICE01')).toBeInTheDocument()
+    await screen.findByText(t('history.opTypeEdit'), BADGE)
+    expect(screen.getByText(t('device.thisDevice'))).toBeInTheDocument()
   })
 
   // -- Op-type filter bar -------------------------------------------
@@ -544,14 +548,14 @@ describe('HistoryPanel', () => {
     render(<HistoryPanel blockId="BLOCK001" />)
 
     expect(await screen.findByText('edited')).toBeInTheDocument()
-    expect(screen.getByText('create_block')).toBeInTheDocument()
+    expect(screen.getByText(t('history.opTypeCreate'), BADGE)).toBeInTheDocument()
     expect(screen.getByText('another edit')).toBeInTheDocument()
 
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
     await user.selectOptions(select, 'edit_block')
 
     await waitFor(() => {
-      expect(screen.queryByText('create_block')).not.toBeInTheDocument()
+      expect(screen.queryByText(t('history.opTypeCreate'), BADGE)).not.toBeInTheDocument()
     })
     expect(screen.getByText('edited')).toBeInTheDocument()
     expect(screen.getByText('another edit')).toBeInTheDocument()
@@ -642,7 +646,7 @@ describe('HistoryPanel', () => {
 
     // All 50 rows render — none are silently dropped.
     await waitFor(() => {
-      expect(screen.getAllByText('edit_block')).toHaveLength(50)
+      expect(screen.getAllByText(t('history.opTypeEdit'), BADGE)).toHaveLength(50)
     })
     // Load More is shown because backend reports has_more=true.
     expect(screen.getByRole('button', { name: /Load more/i })).toBeInTheDocument()
@@ -686,7 +690,7 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    expect(await screen.findByText('set_property')).toBeInTheDocument()
+    expect(await screen.findByText(t('history.opTypeSetProperty'), BADGE)).toBeInTheDocument()
     expect(screen.getByText(/Due Date/)).toBeInTheDocument()
     expect(screen.getByText(/2026-04-15/)).toBeInTheDocument()
   })
@@ -702,7 +706,7 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    expect(await screen.findByText('delete_property')).toBeInTheDocument()
+    expect(await screen.findByText(t('history.opTypeDeleteProperty'), BADGE)).toBeInTheDocument()
     expect(screen.getByText('Due Date')).toBeInTheDocument()
   })
 

@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { OP_TYPE_LABEL_KEYS } from '@/lib/history-utils'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -33,30 +34,10 @@ function snakeToCamel(s: string): string {
   return s.replace(/_([a-z])/g, (_match, ch: string) => ch.toUpperCase())
 }
 
-const OP_TYPES = [
-  { value: 'edit_block', labelKey: 'history.opTypeEdit' },
-  { value: 'create_block', labelKey: 'history.opTypeCreate' },
-  { value: 'delete_block', labelKey: 'history.opTypeDelete' },
-  { value: 'move_block', labelKey: 'history.opTypeMove' },
-  { value: 'add_tag', labelKey: 'history.opTypeAddTag' },
-  { value: 'remove_tag', labelKey: 'history.opTypeRemoveTag' },
-  { value: 'add_page_alias', labelKey: 'history.opTypeAddPageAlias' },
-  { value: 'remove_page_alias', labelKey: 'history.opTypeRemovePageAlias' },
-  { value: 'set_property', labelKey: 'history.opTypeSetProperty' },
-  { value: 'delete_property', labelKey: 'history.opTypeDeleteProperty' },
-  { value: 'set_property_def', labelKey: 'history.opTypeSetPropertyDef' },
-  { value: 'rename_property_key', labelKey: 'history.opTypeRenamePropertyKey' },
-  { value: 'rename_property_option', labelKey: 'history.opTypeRenamePropertyOption' },
-  { value: 'rewrite_properties', labelKey: 'history.opTypeRewriteProperties' },
-  { value: 'add_attachment', labelKey: 'history.opTypeAddAttachment' },
-  { value: 'delete_attachment', labelKey: 'history.opTypeRemoveAttachment' },
-  // #4277 — `rename_attachment` was missing here because the op could never
-  // appear in the list this filter narrows: `list_page_history` had no
-  // attachment disjunct, so selecting it would have returned nothing.
-  { value: 'rename_attachment', labelKey: 'history.opTypeRenameAttachment' },
-  { value: 'restore_block', labelKey: 'history.opTypeRestore' },
-  { value: 'purge_block', labelKey: 'history.opTypePurge' },
-] as const
+const OP_TYPES = Object.entries(OP_TYPE_LABEL_KEYS).map(([value, labelKey]) => ({
+  value,
+  labelKey,
+}))
 
 // ---------------------------------------------------------------------------
 // Props

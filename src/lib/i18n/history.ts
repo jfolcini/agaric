@@ -282,7 +282,7 @@ export const history: Record<string, string> = {
   'trash.loadFailed': 'Failed to load trash',
   'history.loadedMoreEntries_one': 'Loaded {{count}} more entry',
   'history.loadedMoreEntries_other': 'Loaded {{count}} more entries',
-  'compaction.title': 'Op Log Compaction',
+  'compaction.title': 'Remove old history',
   // #3882 — `compaction.totalOps`/`compaction.eligibleOps` interpolate
   // {{count}} but CompactionCard.tsx only ever consumes the label text
   // before the ":" (`.split(':')[0]`) — the actual number is rendered

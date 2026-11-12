@@ -70,7 +70,8 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 Global operation log — every edit Agaric has applied, in reverse chronological order. Opened from Settings › Data › *Open edit history*.
 
 - **Page history**: the page kebab's *Page history* opens the view scoped to that page. It names the page, lists and restores that page's operations only, leaves out the compaction card, and *Show all pages* goes back to the whole log.
-- **Op type icons** distinguish creates, edits, deletes, restores, properties, tags.
+- **Rows** name the operation in words (*Edit*, *Add tag*, …) with an icon per kind, and the device that made it: *This device*, or a synced op's paired-device name (its truncated id until it has one).
+- **Remove old history** (the compaction card) sits collapsed at the top of the whole-log view and opens only when clicked.
 - **Filter bar**: filter by op type. There is no user-vs-agent or date-range filter; ops that arrived from another device are marked, but agent-authored ops are not distinguished from your own.
 - **Multi-select** + **batch revert** — selecting a set of ops and pressing Enter reverts them all, newest first.
 - **Diff toggle**: word-level diff for edits.

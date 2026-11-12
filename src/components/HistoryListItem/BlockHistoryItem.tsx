@@ -239,7 +239,7 @@ export function BlockHistoryItem({
       ) : (
         // Non-restorable rows stack `flex-col` so the lock chip drops onto
         // its own line below the metadata stripe instead of competing for
-        // horizontal width with the timestamp / device id. Every
+        // horizontal width with the timestamp / device name. Every
         // `create_block` row is non-restorable, so this was the single
         // largest contributor to "crowded row" in the narrow Sheet.
         // Restorable rows (the branch above) stay `flex items-center` —
