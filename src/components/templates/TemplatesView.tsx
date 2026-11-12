@@ -365,7 +365,7 @@ export function TemplatesView(): React.ReactElement {
           <Tooltip key={token}>
             <TooltipTrigger asChild>
               <code
-                className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem] cursor-help"
+                className="rounded bg-muted px-1 py-0.5 font-mono text-xs cursor-help"
                 data-testid={`template-variable-${token
                   .toLowerCase()
                   .replace(/[^a-z0-9]+/g, '-')
