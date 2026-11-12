@@ -27,6 +27,7 @@ import { StaticBlockAttachments } from '@/components/editor/StaticBlockAttachmen
 import { StaticQueryBlock } from '@/components/editor/StaticQueryBlock'
 import { useRichContent } from '@/components/editor/useRichContent'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { type TextPoint, textPointAtClick } from '@/editor/click-caret'
 import { useBatchAttachments, useBatchAttachmentsLoading } from '@/hooks/useBatchAttachments'
 import { parseEmbedToken } from '@/lib/embed-token'
 import { cn } from '@/lib/utils'
@@ -34,7 +35,8 @@ import { cn } from '@/lib/utils'
 export interface StaticBlockProps {
   blockId: string
   content: string
-  onFocus: (blockId: string) => void
+  /** Called on a click that starts editing, with where in the text it landed. */
+  onFocus: (blockId: string, caret?: TextPoint) => void
   /** Called when the user clicks a block-link chip. */
   onNavigate?: ((id: string) => void) | undefined
   /** Resolve a block/page ULID → display title. */
@@ -122,10 +124,12 @@ function StaticBlockInner({
         e.preventDefault()
         onSelect(blockId, 'range')
       } else {
-        onFocus(blockId)
+        const caret = textPointAtClick(e.currentTarget, content, e.clientX, e.clientY)
+        if (caret === null) onFocus(blockId)
+        else onFocus(blockId, caret)
       }
     },
-    [blockId, onFocus, onSelect],
+    [blockId, content, onFocus, onSelect],
   )
 
   // #4550 — detect `{{embed ((ULID))}}` / `{{embed [[ULID]]}}` and render the

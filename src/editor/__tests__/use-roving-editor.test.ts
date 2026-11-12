@@ -1357,6 +1357,30 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
+  // #6562 — a click on the static block hands mount() where in the text it landed.
+  it('mount() with a clicked text point places the caret there, and past the text at its end', async () => {
+    const { result, unmount: unmountHook } = await setup()
+    const editor = (): Editor => result.current.editor as Editor
+
+    act(() => {
+      result.current.mount('block-cp-3', 'hello **world**', {
+        cursorPlacement: { textOffset: 8, bias: 'before' },
+      })
+    })
+    expect(editor().state.selection.empty).toBe(true)
+    expect(editor().state.selection.from).toBe(9)
+
+    act(() => {
+      result.current.mount('block-cp-4', 'hello world', {
+        cursorPlacement: { textOffset: 99, bias: 'before' },
+      })
+    })
+    expect(editor().state.selection.from).toBe(editor().state.doc.content.size - 1)
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
   it('mount() → getMarkdown() returns the mounted content', async () => {
     const { result, unmount: unmountHook } = await setup()
 
