@@ -287,7 +287,7 @@ export function HistoryView(): React.ReactElement {
   // ── Render ───────────────────────────────────────────────────────
 
   return (
-    <div className="history-view space-y-4">
+    <div className="history-view mx-auto w-full max-w-list space-y-4">
       {/* Op log compaction card, left out of a page's history because it
           removes old history from every page.
           Wrapped in FeatureErrorBoundary so a status-fetch / compaction crash
@@ -299,7 +299,7 @@ export function HistoryView(): React.ReactElement {
       )}
 
       <ViewHeader>
-        <div className="history-view-header space-y-2">
+        <div className="history-view-header mx-auto max-w-list space-y-2">
           {scopedPage != null && (
             <div className="flex items-center justify-between gap-2">
               <p className="min-w-0 truncate text-sm font-medium">

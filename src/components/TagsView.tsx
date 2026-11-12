@@ -23,7 +23,7 @@ export interface TagsViewProps {
 export function TagsView({ onTagClick }: TagsViewProps): ReactElement {
   const { t } = useTranslation()
   return (
-    <div className="space-y-8">
+    <div className="mx-auto w-full max-w-list space-y-8">
       <TagList onTagClick={onTagClick} />
       <div className="flex items-center gap-4">
         <Separator className="flex-1" />

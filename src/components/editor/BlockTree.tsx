@@ -660,7 +660,7 @@ export function BlockTree({
   useEffect(() => {
     const editor = rovingEditor.editor
     if (editor == null) return
-    const publish = (): void => setActiveEditor(editor)
+    const publish = (): void => setActiveEditor(editor, rovingEditorRef.current)
     if (editor.isFocused) publish()
     editor.on('focus', publish)
     return () => {
@@ -709,11 +709,14 @@ export function BlockTree({
   // ── Date picker hook ───────────────────────────────────────────────
   const {
     datePickerOpen,
+    datePickerMode,
     datePickerCursorPos,
     setDatePickerOpen,
     setDatePickerMode,
     openDatePickerFor,
     handleDatePick,
+    datePickerValue,
+    clearPickerDate,
   } = useBlockDatePicker({
     focusedBlockId,
     rootParentId,
@@ -1628,8 +1631,11 @@ export function BlockTree({
             {datePickerOpen && (
               <Suspense fallback={null}>
                 <BlockDatePicker
+                  mode={datePickerMode}
+                  value={datePickerValue}
                   onSelect={(day) => day && handleDatePick(day)}
                   onClose={() => setDatePickerOpen(false)}
+                  onClear={() => void clearPickerDate()}
                 />
               </Suspense>
             )}

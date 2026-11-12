@@ -38,7 +38,13 @@ import { useIsTouch } from '@/hooks/useIsTouch'
 import { useRovingRowFocus } from '@/hooks/useListKeyboardNavigation'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { announce } from '@/lib/announcer'
-import { dueDateColor, formatCompactDate, formatDate, getTodayString } from '@/lib/date-utils'
+import {
+  displayPageTitle,
+  dueDateColor,
+  formatCompactDate,
+  formatDate,
+  getTodayString,
+} from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
 import { priorityColor } from '@/lib/priority-color'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -529,7 +535,11 @@ function BlockListItemInner({
           className={cn('text-xs text-muted-foreground truncate max-w-[40%]', breadcrumbClassName)}
         >
           {breadcrumbArrow}{' '}
-          {breadcrumbAsLink ? <PageLink pageId={pageId} title={pageTitle} /> : pageTitle}
+          {breadcrumbAsLink ? (
+            <PageLink pageId={pageId} title={pageTitle} />
+          ) : (
+            displayPageTitle(pageTitle)
+          )}
         </span>
       )}
 

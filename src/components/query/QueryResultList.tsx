@@ -8,6 +8,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import type { BlockRow } from '@/lib/bindings'
+import { displayPageTitle } from '@/lib/date-utils'
 import { handleBlockNavigation, resolveBlockDisplay } from '@/lib/query-result-utils'
 import { cn } from '@/lib/utils'
 
@@ -62,12 +63,12 @@ export function QueryResultList({
       }}
     >
       {results.map((block, index) => {
-        const { title, displayMarkdown, pageTitle } = resolveBlockDisplay(
-          block,
-          pageTitles,
-          resolveBlockTitle,
-          resolveRefTitle,
-        )
+        const {
+          title,
+          displayMarkdown,
+          pageTitle: storedPageTitle,
+        } = resolveBlockDisplay(block, pageTitles, resolveBlockTitle, resolveRefTitle)
+        const pageTitle = storedPageTitle && displayPageTitle(storedPageTitle)
         // An `aria-label` REPLACES the row's contents as its accessible name,
         // so it has to carry everything the row shows, not just the body: the
         // todo badge and the parent-page name are rendered inside this same

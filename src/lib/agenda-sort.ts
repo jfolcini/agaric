@@ -1,5 +1,6 @@
 import type { BlockRow } from '@/lib/bindings'
 import { getAppLocaleTag } from '@/lib/date-locale'
+import { displayPageTitle } from '@/lib/date-utils'
 import { PRIORITY_LEVELS, priorityRank } from '@/lib/priority-levels'
 import {
   isTodoState,
@@ -447,7 +448,8 @@ export function sortByState(blocks: BlockRow[]): BlockRow[] {
 }
 
 /**
- * Group blocks by page_id. Returns groups in alphabetical order by page title,
+ * Group blocks by page_id. Returns groups in alphabetical order by stored page title,
+ * each labelled as `displayPageTitle` shows the title,
  * with the `No page` key at the end (renderer translates via t('agenda.noPage')).
  * Within each group, blocks are sorted by state (DOING > TODO > DONE > CANCELLED > null),
  * then priority, then date.
@@ -490,7 +492,7 @@ export function groupByPage(blocks: BlockRow[], pageTitles: Map<string, string>)
   const result: AgendaGroup[] = []
   for (const entry of entries) {
     result.push({
-      label: entry.title,
+      label: displayPageTitle(entry.title),
       blocks: [...entry.blocks].toSorted(sortWithin),
     })
   }

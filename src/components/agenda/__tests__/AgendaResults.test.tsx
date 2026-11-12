@@ -110,6 +110,7 @@ import {
   groupI18nKey,
 } from '@/components/agenda/AgendaResults'
 import type { AgendaGroup } from '@/lib/agenda-sort'
+import { formatJournalTitle } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -685,6 +686,37 @@ describe('AgendaResults', () => {
     // Project A has 2 blocks, Project B has 1
     expect(screen.getByText('(2)')).toBeInTheDocument()
     expect(screen.getByText('(1)')).toBeInTheDocument()
+  })
+
+  it('a journal page reads as the journal header does, in its group header and source link (#6544)', async () => {
+    localStorage.clear()
+    const user = userEvent.setup()
+    const today = format(new Date(), 'yyyy-MM-dd')
+    const journalHeader = formatJournalTitle(today, 'locale')
+    expect(journalHeader).not.toBe(today)
+    const blocks = [makeBlock({ id: 'B1', page_id: 'DAY', content: 'Task today' })]
+    const pageTitles = new Map([['DAY', today]])
+
+    render(<AgendaResults {...defaultProps({ blocks, pageTitles })} groupBy="page" />)
+
+    expect(screen.getByTestId('agenda-group-header')).toHaveTextContent(`${journalHeader}(1)`)
+    useNavigationStore.setState({ currentView: 'pages' })
+    await user.click(screen.getByRole('link', { name: journalHeader }))
+    // Only the display changes: the stored ISO title still routes to that journal day.
+    expect(useNavigationStore.getState().currentView).toBe('journal')
+    expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)
+  })
+
+  it('a journal page follows the configured journal date format (#6544)', () => {
+    localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+    const blocks = [makeBlock({ id: 'B1', page_id: 'DAY', content: 'Task' })]
+    const pageTitles = new Map([['DAY', '2026-11-11']])
+
+    render(<AgendaResults {...defaultProps({ blocks, pageTitles })} groupBy="page" />)
+
+    expect(screen.getByTestId('agenda-group-header')).toHaveTextContent('11/11/2026(1)')
+    expect(screen.getByRole('link', { name: '11/11/2026' })).toBeInTheDocument()
+    localStorage.clear()
   })
 
   it('shows "No page" group for blocks without page_id', () => {

@@ -18,7 +18,7 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { GroupItem } from '@/components/common/CollapsibleGroupList'
@@ -31,7 +31,7 @@ vi.mock('@/components/ui/chevron-toggle', () => ({
 }))
 
 vi.mock('@/components/pages/PageLink', () => ({
-  // The real PageLink renders `children ?? title`. Mirror that contract
+  // The real PageLink renders its `children` when given. Mirror that contract
   // So the namespaced-display tests (Bug 1) can verify the
   // leaf/breadcrumb children the header passes in.
   PageLink: ({
@@ -651,6 +651,42 @@ describe('CollapsibleGroupList', () => {
       // The link wrapper carries the full-path tooltip.
       expect(pageLink.querySelector('[title="Notes/2026/Quarterly"]')).not.toBeNull()
     })
+  })
+
+  describe('journal page titles (#6544)', () => {
+    afterEach(() => {
+      localStorage.clear()
+    })
+
+    it.each([
+      ['button branch', undefined],
+      ['PageLink branch', vi.fn()],
+    ])(
+      'shows a journal page in the journal date format, unsplit, in the %s',
+      (_branch, onPageTitleClick) => {
+        localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+        const groups = [
+          makeGroup('DAY', '2026-11-11', [{ id: 'B1', content: 'block' }]),
+          makeGroup('NS', 'Notes/2026-11-11', [{ id: 'B2', content: 'block' }]),
+        ]
+
+        render(
+          <CollapsibleGroupList
+            groups={groups}
+            expandedGroups={{}}
+            onToggleGroup={vi.fn()}
+            untitledLabel="Untitled"
+            {...(onPageTitleClick ? { onPageTitleClick } : {})}
+            renderBlock={defaultRenderBlock}
+          />,
+        )
+
+        expect(screen.getByText(/^11\/11\/2026(\s+\(1\))?$/)).toBeInTheDocument()
+        // Only the namespaced page has a breadcrumb; its date leaf is no journal page.
+        expect(screen.getByTestId('group-header-breadcrumb')).toHaveTextContent('Notes')
+        expect(screen.getByText(/^2026-11-11(\s+\(1\))?$/)).toBeInTheDocument()
+      },
+    )
   })
 
   // 24. When onPageTitleClick provided, aria-expanded stays on the chevron button

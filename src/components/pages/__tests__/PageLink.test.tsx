@@ -65,6 +65,20 @@ describe('PageLink', () => {
     expect(screen.getByRole('link', { name: 'My Page' })).toBeInTheDocument()
   })
 
+  it('shows a journal page in the journal date format and opens it by its stored title (#6544)', async () => {
+    localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+    const user = userEvent.setup()
+    render(<PageLink pageId="DAY" title="2026-11-11" />)
+    localStorage.clear()
+
+    useNavigationStore.setState({ currentView: 'pages' })
+    await user.click(screen.getByRole('link', { name: '11/11/2026' }))
+
+    // The stored ISO title routes to that journal day, not to a page editor tab.
+    expect(useNavigationStore.getState().currentView).toBe('journal')
+    expect(selectPageStack(useTabsStore.getState())).toEqual([])
+  })
+
   it('renders custom children instead of title', () => {
     render(
       <PageLink pageId="P1" title="My Page">

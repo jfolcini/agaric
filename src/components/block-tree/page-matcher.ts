@@ -16,6 +16,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { untitledOr } from '@/lib/block-title'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { displayPageTitle } from '@/lib/date-utils'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { getPageDisplayName } from '@/lib/page-display'
@@ -115,7 +116,9 @@ function formatNamespacedLabel(title: string): {
  */
 function makePagePickerItem(id: string, title: string): PickerItem {
   const { label, breadcrumb } = formatNamespacedLabel(untitledOr(title))
-  return { id, label, title, icon: FileText, breadcrumb }
+  // A journal title holds no `/`, so only an unsplit title can be one.
+  const shown = breadcrumb === undefined ? displayPageTitle(label) : label
+  return { id, label: shown, title, icon: FileText, breadcrumb }
 }
 
 /**

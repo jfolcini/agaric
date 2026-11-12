@@ -7,6 +7,8 @@ The **Journal** view (default landing) and the **Agenda** mode inside it have th
 
 This file covers the other views and the page editor.
 
+The list views (Pages, Search, Tags, Templates, Advanced Query, Trash and History) read in one capped, centred column (`max-w-list` in `src/index.css`), their header with them, as a page reads in its narrower column.
+
 ## Search
 
 Reachable via the sidebar Search icon or `Ctrl+Shift+F` (this is the find-across-pages view; `Ctrl+F` is the separate in-page find). **[../SEARCH.md](../SEARCH.md) is the source of truth** for the full filter DSL, toggles, regex, and mobile behaviour — this is the view-level overview.
@@ -121,7 +123,7 @@ Once a device is paired, the aggregated sync state (overall state, last successf
 Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed into four groups; on a phone a grouped picker at the top replaces the rail. Each tab is named once, by the rail: panels carry no title of their own. Settings are rows, with the label and description on the left and the control on the right (stacked on a phone).
 
 - **Workspace**
-  - **General** — language, week start, journal date format, launch-at-login (desktop).
+  - **General** — language, week start, journal date format, launch-at-login (desktop). The journal date format names a journal page wherever a list or picker shows its title (the `[[` picker, the Agenda, Search, references, History and Advanced Query), not in the journal alone; a page stays stored, searched and matched as `YYYY-MM-DD`, and a link chip in a block's text keeps that title, as the text holds it.
   - **Appearance** — theme (the palette's *Toggle theme* cycles auto / dark / light), font size, animations, tooltip delay. Font size scales note text and its row controls (checkboxes, gutter icons, chip and inline icons), not the app chrome: the sidebar, headers, toolbars and settings stay fixed.
   - **Editor** — *Edit pages as* blocks or one page (see [editor.md](editor.md#page-mode)), the `:` emoji picker, *Tab indents blocks*, external images (the setting governs blocks as they render; while a block is being edited, the editor loads its external images whatever the setting), link previews on hover.
   - **Keyboard** — the system-wide Quick Capture hotkey (desktop), then full shortcut customisation (see [keyboard.md](keyboard.md)).

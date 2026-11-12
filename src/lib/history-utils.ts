@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 
 import type { HistoryEntry } from '@/lib/bindings'
+import { displayPageTitle } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
 
 /** The `page_id` that asks `list_page_history` and `restore_page_to_op` for every page. */
@@ -185,4 +186,12 @@ export function getPropertyPayload(entry: HistoryEntry): { key: string; value?: 
     }
   }
   return null
+}
+
+/** `getPayloadRawContent`, with a created page's title as `displayPageTitle` shows it. */
+export function getPayloadDisplayContent(entry: HistoryEntry): string | null {
+  const content = getPayloadRawContent(entry)
+  // Only `create_block` carries a `block_type`.
+  const createsPage = parsePayloadObject(entry.payload)?.['block_type'] === 'page'
+  return content !== null && createsPage ? displayPageTitle(content) : content
 }
