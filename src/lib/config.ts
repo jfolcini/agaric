@@ -10,6 +10,9 @@
  *   "https://github.com/jfolcini/agaric/releases/..."
  */
 
+/** Where an Android install gets the newest APK; the phone has no updater (#6538). */
+export const RELEASES_URL = 'https://github.com/jfolcini/agaric/releases/latest'
+
 export const BUG_TRACKER = {
   kind: 'github',
   owner: 'jfolcini',

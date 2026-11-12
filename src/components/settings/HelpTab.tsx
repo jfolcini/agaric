@@ -17,9 +17,9 @@
  * "Up to date", "Update available", "Last check failed", or "Checking…" —
  * plus a relative "last checked" time, and calls `checkForUpdatesNow()` when
  * the user clicks the manual button (which also re-surfaces the install toast
- * when an update exists). Mobile builds replace the button with a hint
- * to install the newest APK from the releases page, since the Tauri updater
- * plugin is desktop-only.
+ * when an update exists). Mobile builds replace the button and the status with
+ * a button that opens the releases page, since the Tauri updater plugin is
+ * desktop-only.
  */
 
 import type { TFunction } from 'i18next'
@@ -33,7 +33,9 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { SettingRow } from '@/components/ui/setting-row'
 import { checkForUpdatesNow, useUpdateStatus } from '@/hooks/useUpdateCheck'
+import { RELEASES_URL } from '@/lib/config'
 import { formatRelativeTime } from '@/lib/format-relative-time'
+import { openUrl } from '@/lib/open-url'
 import { isMobilePlatform } from '@/lib/platform'
 import type { UpdateStatusValue } from '@/lib/preferences'
 
@@ -110,8 +112,20 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
           <DebugModeRow />
           <ShowWelcomeTourRow />
           <div className="space-y-1">
-            <SettingRow label={t('help.updateTitle')} description={t('help.updateDescription')}>
-              {mobile ? null : (
+            <SettingRow
+              label={t('help.updateTitle')}
+              description={mobile ? t('help.updateMobileHint') : t('help.updateDescription')}
+            >
+              {mobile ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void openUrl(RELEASES_URL)}
+                  aria-label={t('help.updateOpenReleasesButton')}
+                >
+                  {t('help.updateOpenReleasesButton')}
+                </Button>
+              ) : (
                 <Button
                   variant="outline"
                   size="sm"
@@ -123,9 +137,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
                 </Button>
               )}
             </SettingRow>
-            {mobile ? (
-              <p className="text-sm text-muted-foreground">{t('help.updateMobileHint')}</p>
-            ) : (
+            {mobile ? null : (
               <>
                 {/* Persistent status — `<output>` is an implicit polite live
                     region (role="status"), so a boot check completing (or

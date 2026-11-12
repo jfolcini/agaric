@@ -5,7 +5,7 @@
  *  - Report-a-bug button renders + fires onReportBugClick
  *  - Debug mode and the welcome tour follow it and persist (#5629)
  *  - Updates card renders on desktop with the "Check for updates now" button
- *  - Updates card shows the mobile hint instead of the button on mobile
+ *  - Updates card on mobile says updates are manual and opens the releases page (#6538)
  *  - axe(container) audit clean on both UAs
  */
 
@@ -34,6 +34,10 @@ vi.mock('@/hooks/useUpdateCheck', () => ({
   useUpdateStatus: () => mockUseUpdateStatus(),
 }))
 
+const { mockOpenUrl } = vi.hoisted(() => ({ mockOpenUrl: vi.fn(async () => true) }))
+
+vi.mock('@/lib/open-url', () => ({ openUrl: mockOpenUrl }))
+
 const DESKTOP_UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'
 const ANDROID_UA =
@@ -53,6 +57,7 @@ beforeEach(() => {
   setUserAgent(DESKTOP_UA)
   localStorage.clear()
   mockCheckForUpdatesNow.mockClear()
+  mockOpenUrl.mockClear()
   mockUseUpdateStatus.mockReset()
   mockUseUpdateStatus.mockReturnValue({ status: 'idle' })
 })
@@ -136,14 +141,24 @@ describe('HelpTab', () => {
     expect(updateRow).toHaveTextContent(t('help.updateDescription'))
   })
 
-  it('replaces the button with the mobile hint on mobile UA', () => {
+  // #6538 — Android has no store and no updater: the row says so and offers the releases page.
+  it('on Android says the truth about updates and opens the releases page', async () => {
     setUserAgent(ANDROID_UA)
-    render(<HelpTab onReportBugClick={vi.fn()} />)
+    const user = userEvent.setup()
+    const { container } = render(<HelpTab onReportBugClick={vi.fn()} />)
 
-    expect(screen.getByText(t('help.updateMobileHint'))).toBeInTheDocument()
+    expect(container).not.toHaveTextContent('Play Store')
+    expect(container).not.toHaveTextContent('checks for updates automatically')
+    expect(container).toHaveTextContent(t('help.updateMobileHint'))
     expect(
       screen.queryByRole('button', { name: t('help.updateCheckNowButton') }),
     ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: t('help.updateOpenReleasesButton') }))
+
+    expect(mockOpenUrl).toHaveBeenCalledExactlyOnceWith(
+      'https://github.com/jfolcini/agaric/releases/latest',
+    )
   })
 
   it('clicking Check now invokes checkForUpdatesNow', async () => {
