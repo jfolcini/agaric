@@ -8,8 +8,9 @@
 //
 // The folder is set through `set_mirror_folder` (the Settings button opens a
 // native folder dialog WebDriver cannot drive). The steps share one vault and
-// one folder, in order: an edit reaches the file, a restart rewrites a file
-// deleted while the app was down, and a file changed outside Agaric is read
+// one folder, in order: an edit reaches the file, a restart writes an edit
+// the old process could not (its folder had lost its marker), and a file
+// changed outside Agaric is read
 // back into its page, and the app's own edit made meanwhile is kept.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
@@ -23,6 +24,7 @@ import {
   readdirSync,
   rmSync,
   unlinkSync,
+  writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -52,6 +54,7 @@ interface MirrorStatus {
 const TITLE = runScopedMarker('wdio-mirror-page')
 const MARKER = runScopedMarker('wdio-mirror-block')
 const SECOND = runScopedMarker('wdio-mirror-app-edit')
+const RESTARTED = `${MARKER} ${runScopedMarker('wdio-mirror-restarted')}`
 const EXTERNAL = runScopedMarker('wdio-mirror-external-line')
 
 const folder = mkdtempSync(path.join(os.tmpdir(), 'wdio-mirror-'))
@@ -116,11 +119,21 @@ describe('Agaric real-backend outbound Markdown mirror (#5363) @markdown @boot',
     const relative = await waitForPageFile()
     await waitForFileHolding(relative, MARKER, 'after the edit')
 
-    // 2. Delete the file and kill the app at once, so no tick of the old
-    //    process can rewrite it: only the new process's startup pass can.
-    unlinkSync(path.join(folder, relative))
-    await restartApp('kill')
-    await waitForFileHolding(relative, MARKER, 'after the restart')
+    // 2. An edit the old process cannot write: without its marker the mirror
+    //    is paused. The marker comes back only once that process is gone, so
+    //    only the new process's startup pass can write the edit.
+    const marker = path.join(folder, '.agaric-mirror')
+    const device = readFileSync(marker, 'utf8')
+    unlinkSync(marker)
+    await browser.waitUntil(
+      async () => (await invoke<MirrorStatus>('get_mirror_status')).paused !== null,
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the mirror never paused without its marker' },
+    )
+    await invoke('edit_block', { blockId, toText: RESTARTED })
+    await restartApp('kill', () => {
+      writeFileSync(marker, device)
+    })
+    await waitForFileHolding(relative, RESTARTED, 'after the restart')
 
     const settled = await invoke<MirrorStatus>('get_mirror_status')
     expect(settled.folder).toBe(folder)

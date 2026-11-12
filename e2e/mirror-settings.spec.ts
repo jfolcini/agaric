@@ -55,6 +55,13 @@ test.describe('Settings › Data: Markdown mirror @settings @markdown', () => {
     await openMirrorCard(page)
     await expect(readBack).not.toBeChecked()
 
+    // Choosing a folder while mirroring keeps reading back as it is.
+    await page.getByRole('button', { name: 'Choose folder…' }).click()
+    await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
+    await navigateToView(page, 'Journal')
+    await openMirrorCard(page)
+    await expect(readBack).not.toBeChecked()
+
     await readBack.click()
     await expect(readBack).toBeChecked()
     await navigateToView(page, 'Journal')

@@ -11,7 +11,15 @@
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -22,15 +30,19 @@ import {
   invoke,
   navigateTo,
   openNewPage,
+  openTrash,
   pagesTitled,
   reopenPageHolding,
+  restoreFromTrash,
   runScopedMarker,
+  trashRow,
   typeMarkerVerified,
   waitForAppReady,
 } from './helpers'
 
 interface MirrorStatus {
   last_pass_ms: number | null
+  paused: string | null
   failed: { page_id: string; path: string; message: string }[]
 }
 
@@ -45,6 +57,10 @@ const RENAMED_BLOCK = runScopedMarker('wdio-structure-renamed-block')
 const MOVED = runScopedMarker('wdio-structure-moved')
 const MOVED_BLOCK = runScopedMarker('wdio-structure-moved-block')
 const OTHER_SPACE = runScopedMarker('wdio-structure-space')
+const DELETED = runScopedMarker('wdio-structure-deleted')
+const DELETED_BLOCK = runScopedMarker('wdio-structure-deleted-block')
+const KEPT = runScopedMarker('wdio-structure-kept')
+const KEPT_BLOCK = runScopedMarker('wdio-structure-kept-block')
 
 const folder = mkdtempSync(path.join(os.tmpdir(), 'wdio-mirror-structure-'))
 
@@ -144,5 +160,53 @@ describe('Agaric real-backend Markdown mirror, renamed and moved files (#5363) @
     expect(existsSync(before)).toBe(false)
     expect(existsSync(after)).toBe(true)
     expect((await invoke<MirrorStatus>('get_mirror_status')).failed).toEqual([])
+  })
+
+  it('trashes the page of a file deleted outside Agaric, and Restore brings both back', async () => {
+    const file = await mirroredPage(DELETED, DELETED_BLOCK)
+    unlinkSync(file)
+
+    // Each look opens Trash afresh, so it re-queries.
+    await browser.waitUntil(
+      async () => {
+        await openTrash()
+        return (await $$(trashRow(DELETED)).length) === 1
+      },
+      { timeout: NAV_TIMEOUT, interval: 2000, timeoutMsg: `${DELETED} never reached the Trash` },
+    )
+    await restoreFromTrash(DELETED)
+
+    await reopenPageHolding(DELETED, DELETED_BLOCK)
+    await browser.waitUntil(() => Promise.resolve(existsSync(file)), {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: 'the restored page was never written again',
+    })
+  })
+
+  it('pauses, trashing nothing, while the folder is unmounted', async () => {
+    const file = await mirroredPage(KEPT, KEPT_BLOCK)
+    const away = `${folder}-away`
+    renameSync(folder, away)
+    try {
+      await browser.waitUntil(
+        async () => (await invoke<MirrorStatus>('get_mirror_status')).paused !== null,
+        { timeout: NAV_TIMEOUT, timeoutMsg: 'the mirror never paused on its missing folder' },
+      )
+      expect(await pagesTitled(KEPT)).toBe(1)
+      expect(existsSync(folder)).toBe(false)
+    } finally {
+      renameSync(away, folder)
+    }
+
+    const back = (await invoke<MirrorStatus>('get_mirror_status')).last_pass_ms ?? 0
+    await browser.waitUntil(
+      async () => {
+        const status = await invoke<MirrorStatus>('get_mirror_status')
+        return status.paused === null && (status.last_pass_ms ?? 0) > back
+      },
+      { timeout: NAV_TIMEOUT, timeoutMsg: 'the mirror never resumed in its folder' },
+    )
+    expect(await pagesTitled(KEPT)).toBe(1)
+    expect(existsSync(file)).toBe(true)
   })
 })
