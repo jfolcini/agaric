@@ -1,6 +1,6 @@
 # Session 3850 — One pass over the guard estate: slow hooks to CI, dead guards out
 
-Issue #6566, all four checkboxes, in the issue's order. The hook count goes from 117 to 107 and `HOOK_CAP` equals it, so a new hook now has to replace one or raise the cap in a reviewed diff.
+Issue #6566, all four checkboxes, in the issue's order. The hook count goes from 115 to 105 and `HOOK_CAP` equals it, so a new hook now has to replace one or raise the cap in a reviewed diff.
 
 ## What changed
 
@@ -17,5 +17,5 @@ Issue #6566, all four checkboxes, in the issue's order. The hook count goes from
 - `prek run --all-files` with the four cargo hooks skipped: every hook passed; oxfmt reformatted a file once.
 - `prek run --hook-stage manual --all-files`: 27 of 27 passed before the second move, and the three moved later each pass in that stage. `prek list --hook-stage manual` matches the `stages = ["manual"]` count CI compares (31 after review moved `strict-invoke-optout`).
 - `node --test scripts/check-baseline-paths.test.mjs` 13/13; `npx vitest run src/__tests__/classify-changes.test.ts` 84/84; `check-remove-after-markers.mjs --self-test` OK.
-- Shown red: `check-tool-pins.mjs` on a drifted and an unpinned `tool:` entry and on an unreadable table; `check-hook-budget.mjs` on a 108th hook; `check-axe-presence.sh` on a nested test with its audit removed and on a stale baseline line; the oxlint rule on an `invoke` import; `tsc` (TS2345) on an interpolated `traceInteraction` name; the four rewired baseline-paths tests when `check-raw-local-storage.mjs` leaves the population.
+- Shown red: `check-tool-pins.mjs` on a drifted and an unpinned `tool:` entry and on an unreadable table; `check-hook-budget.mjs` on a 106th hook; `check-axe-presence.sh` on a nested test with its audit removed and on a stale baseline line; the oxlint rule on an `invoke` import; `tsc` (TS2345) on an interpolated `traceInteraction` name; the four rewired baseline-paths tests when `check-raw-local-storage.mjs` leaves the population.
 - No cargo run: no Rust changed.
