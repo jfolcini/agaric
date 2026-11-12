@@ -213,8 +213,8 @@ impl MirrorState {
                     inner
                         .failed_files
                         .iter()
-                        .filter(|_| on)
                         .chain(&inner.failed_copies)
+                        .filter(|_| on)
                         .map(|(path, message)| MirrorFailure {
                             page_id: String::new(),
                             path: path.clone(),
@@ -775,6 +775,8 @@ impl Mirror {
                 .await;
             return Ok(true);
         }
+        let ids = assets::copy_linked(&String::from_utf8_lossy(&bytes));
+        let links = self.placed(root, path, ids).await?;
         let created = ingest::create(
             &self.pool,
             ingest,
@@ -783,7 +785,7 @@ impl Mirror {
             title,
             path,
             &bytes,
-            &self.links(path),
+            &links,
         )
         .await;
         self.settling_new.remove(path);
@@ -1181,7 +1183,7 @@ impl Mirror {
             Err(AppError::NotFound(_)) => return Ok(Wrote::Done),
             Err(e) => return Err(e),
         };
-        let file = self.localized(root, path, file).await?;
+        let (file, links) = self.localized(root, path, file).await?;
         let target = root.join(path);
         let newest = self
             .pages
@@ -1208,7 +1210,9 @@ impl Mirror {
                 shadow.line_ids.clone_from(&file.line_ids);
             }
             Some(bytes) if newest.is_none_or(|shadow| shadow.text.as_bytes() != bytes) => {
-                return self.read_edit(root, page_id, path, bytes, &file).await;
+                return self
+                    .read_edit(root, page_id, path, bytes, &file, &links)
+                    .await;
             }
             _ => {
                 if vanished && self.still_missing(page_id) {
@@ -1225,21 +1229,34 @@ impl Mirror {
     }
 
     /// `file`, the render of the page whose file is at `path`, linking each
-    /// attachment to its copy while copying is on, the copies it links
-    /// written first. A copy that cannot be written leaves its link as
-    /// rendered, and is listed as failed.
+    /// attachment to its copy while copying is on ([`Mirror::placed`]), and
+    /// how it links them.
     async fn localized(
         &mut self,
         root: &Path,
         path: &str,
         file: PageFile,
-    ) -> Result<PageFile, AppError> {
-        let ids = assets::linked(&file.text);
+    ) -> Result<(PageFile, assets::Links), AppError> {
+        let links = self.placed(root, path, assets::linked(&file.text)).await?;
+        Ok((links.localize(file), links))
+    }
+
+    /// How the file at `path` links `ids`' copies while copying is on, the
+    /// copies written first; not at all while it is off. A copy that cannot
+    /// be written leaves its link as rendered, and is listed as failed. Only
+    /// the copies placed now are linked: a renamed attachment's old copy may
+    /// still be recorded.
+    async fn placed(
+        &mut self,
+        root: &Path,
+        path: &str,
+        ids: Vec<String>,
+    ) -> Result<assets::Links, AppError> {
         let Some((space, _)) = path.split_once('/').filter(|_| self.copy_files) else {
-            return Ok(file);
+            return Ok(assets::Links::default());
         };
         if ids.is_empty() || pause_reason(root, &self.device_id).is_some() {
-            return Ok(file);
+            return Ok(assets::Links::default());
         }
         let (placed, failed) = self.copies.ensure(&self.pool, root, space, ids).await?;
         let prefix = format!("{space}/");
@@ -1260,20 +1277,7 @@ impl Mirror {
                 );
             }
         }
-        // The copies just placed: a renamed attachment's old copy may still
-        // be recorded, and must not be linked.
-        Ok(assets::Links::for_page(path, copies).localize(file))
-    }
-
-    /// How the file at `path` links its attachments' copies: not at all
-    /// while copying is off.
-    fn links(&self, path: &str) -> assets::Links {
-        match path.split_once('/') {
-            Some((space, _)) if self.copy_files => {
-                assets::Links::for_page(path, self.copies.in_space(space))
-            }
-            _ => assets::Links::default(),
-        }
+        Ok(assets::Links::for_page(path, copies))
     }
 
     /// Count one more tick the page's file is missing; `false` once it has
@@ -1334,6 +1338,7 @@ impl Mirror {
         path: &str,
         bytes: Vec<u8>,
         render: &PageFile,
+        links: &assets::Links,
     ) -> Result<Wrote, AppError> {
         // A page with no blocks has nothing a blank file could delete, so an
         // editor's final newline or BOM on its empty file changes nothing
@@ -1363,7 +1368,6 @@ impl Mirror {
             self.settling.insert(page_id.to_owned(), bytes);
             return Ok(Wrote::Diverged);
         }
-        let links = self.links(path);
         let Some(state) = self.pages.get(page_id).filter(|state| state.path == path) else {
             return Ok(Wrote::Diverged);
         };
@@ -1376,7 +1380,7 @@ impl Mirror {
             state,
             &bytes,
             render,
-            &links,
+            links,
         )
         .await;
         let ingested = match ingested {

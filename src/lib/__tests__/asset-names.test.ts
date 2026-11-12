@@ -22,7 +22,7 @@ const { cases } = JSON.parse(
 // asset names and the Markdown mirror's copies' names cannot drift (#5363).
 describe('assetName names an attachment in assets/<id>/ as the mirror does', () => {
   it('reads every row', () => {
-    expect(cases.length).toBeGreaterThan(20)
+    expect(cases).toHaveLength(25)
   })
 
   it.each(cases.map((row) => [row.name, row] as const))('%s', (_name, row) => {
