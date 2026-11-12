@@ -112,19 +112,7 @@ pub async fn get_compaction_status(
 
 /// Inner implementation for [`compact_op_log_cmd`], testable without Tauri state.
 ///
-/// This function takes a `BEGIN IMMEDIATE` lock purely to perform
-/// a TOCTOU recount of eligible ops under the writer lock — it does
-/// **not** provide atomicity for the compaction itself.
-/// [`agaric_sync::snapshot::compact_op_log`] wraps its own write phase in
-/// `BEGIN IMMEDIATE`, so the actual delete is already atomic. The wrapper tx
-/// exists so we can serve the fast-path early-return when no ops match the
-/// cutoff and emit a `warn` log via `begin_immediate_logged` if writers are
-/// contending.
-///
-/// The returned `CompactionResult.ops_deleted` is the real number
-/// of rows the inner DELETE removed, **not** the recounted "eligible at
-/// start" figure. The pre-flight `eligible_in_tx` count is logged at `debug`
-/// level for drift observability and otherwise unused on the return path.
+/// `ops_deleted` is the number of rows the purge actually removed.
 #[instrument(skip(pool), fields(retention_days), err)]
 pub async fn compact_op_log_cmd_inner(
     pool: &SqlitePool,
@@ -137,92 +125,9 @@ pub async fn compact_op_log_cmd_inner(
         return Err(AppError::validation("retention_days.too_small".into()));
     }
 
-    // SAFETY: (j). `retention_days` was just bounded above by
-    // `MIN_RETENTION_DAYS = 7u64`. The IPC boundary's `u64` payload can
-    // in principle overflow `i64` at `2^63`, but at one day per increment
-    // that value is meaningless (~25 quintillion years); SQLite's own
-    // `chrono::Duration::days` would saturate long before. The signed
-    // cast is therefore safe for any retention window the UI will ever
-    // produce.
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days.cast_signed());
-    let cutoff_ms = cutoff.timestamp_millis();
-
-    // Count eligible ops before compaction
-    let eligible: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
-        cutoff_ms
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if eligible == 0 {
-        return Ok(CompactionResult { ops_deleted: 0 });
-    }
-
-    // This BEGIN IMMEDIATE is *not* providing atomicity for the
-    // compaction itself. `snapshot::compact_op_log`
-    // (`snapshot/create.rs:243-295`) already wraps its own write phase
-    // in BEGIN IMMEDIATE, so the inner call owns its tx end-to-end.
-    //
-    // What this wrapper tx is actually doing is a TOCTOU recount: it
-    // takes the writer lock, re-counts eligible ops under that lock,
-    // commits, and drives the early-return path when the recount is
-    // zero. The recounted figure is **not** suitable for reporting
-    // `ops_deleted` — it's stale by the time `compact_op_log` runs
-    // (more ops can be appended between commit and the inner write
-    // phase, and the snapshot-frontier guard inside `compact_op_log`
-    // May also skip some). See the block below for how the real
-    // delete count is now sourced. Do not assume this wrapper tx adds
-    // atomicity over the actual delete — it does not.
-    //
-    // Slow-acquire timed via `begin_immediate_logged` so a
-    // recount that blocks on the write lock surfaces as a `warn` log
-    // instead of disappearing into the 5s busy_timeout.
-    // allow-raw-tx: compaction admin op, no user-edit shape (#110)
-    let mut tx = crate::db::begin_immediate_logged(pool, "cmd_compact_op_log").await?;
-
-    // Recount inside the transaction (TOCTOU recount, not atomicity —
-    // See comment above and).
-    let eligible_in_tx: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
-        cutoff_ms
-    )
-    .fetch_one(&mut *tx)
-    .await?;
-
-    if eligible_in_tx == 0 {
-        tx.rollback().await?;
-        return Ok(CompactionResult { ops_deleted: 0 });
-    }
-
-    // Release the recount tx before calling `compact_op_log`. The inner
-    // function opens its own BEGIN IMMEDIATE for the actual delete, so
-    // holding ours longer would only serialise the writer lock for no
-    // gain. `compact_op_log` re-verifies eligibility under its own tx.
-    tx.commit().await?;
-
-    // Previously this wrapper returned `ops_deleted: eligible_in_tx`,
-    // i.e. the count of ops eligible at the start of the wrapper tx — a
-    // figure that goes stale the moment we commit and call into
-    // `compact_op_log`. Between the commit above and the inner write
-    // phase, more ops can be appended (their `created_at` may still be
-    // `< cutoff` if the wall clock advanced), and the frontier guard inside
-    // `compact_op_log` (`seq <= up_to_seqs[device]`) can also drop ops the
-    // pre-flight count assumed would be deleted.
-    //
-    // `compact_op_log` returns the sum of `rows_affected()` across the
-    // per-device DELETEs. Surface that figure verbatim. The `eligible_in_tx`
-    // value is logged as a pre-flight metric only — never returned over the
-    // wire.
     let real_deleted_count = agaric_sync::snapshot::compact_op_log(pool, retention_days)
         .await?
         .unwrap_or(0);
-
-    tracing::debug!(
-        eligible_in_tx,
-        real_deleted_count,
-        "compact_op_log_cmd: pre-flight vs actual delete count"
-    );
 
     // `CompactionResult.ops_deleted` is `i64`; the real count is at
     // most the number of rows in `op_log` and cannot exceed `i64::MAX`

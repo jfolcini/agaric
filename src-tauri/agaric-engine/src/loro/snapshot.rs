@@ -440,8 +440,8 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 ///
 /// `registry` + `generation` are the caller's pre-collect clear-generation
 /// capture (#607). Every premise above is a statement about the generation
-/// the enclosing pass observed, so either a [`LoroEngineRegistry::clear`]
-/// (snapshot RESET) or a [`LoroEngineRegistry::evict_space`] (a purged
+/// the enclosing pass observed, so either a `LoroEngineRegistry::clear`
+/// (test-only) or a [`LoroEngineRegistry::evict_space`] (a purged
 /// space's engine dropped mid-pass, #2910) landing in between invalidates
 /// all of them at once: `attempted` describes engines that may no longer
 /// exist, and the rows it would vouch for may belong to a wiped or shrunk

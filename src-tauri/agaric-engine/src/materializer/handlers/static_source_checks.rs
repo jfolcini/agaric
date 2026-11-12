@@ -31,7 +31,6 @@ fn apply_tx_uses_begin_immediate_not_deferred() {
         "apply.rs",
         "attachments.rs",
         "loro_apply.rs",
-        "pages_cache.rs",
         "sql_only.rs",
         "task_handlers.rs",
     ];

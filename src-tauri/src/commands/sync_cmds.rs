@@ -348,27 +348,15 @@ pub async fn cancel_pairing_inner(
 /// Start a sync session with a remote peer.
 ///
 /// Checks the backoff schedule, probes the daemon's per-peer lock, and wakes
-/// the SyncDaemon (#382) to sync now.  Actual network sync happens in
-/// the daemon; this returns immediately with a "queued" status, because no
-/// session has run yet (#6551). The session's outcome arrives later as the
-/// terminal update on the progress channel `start_sync` registered.
+/// the SyncDaemon to sync now. Actual network sync happens in the daemon; this
+/// returns immediately with a "queued" status, because no session has run yet.
+/// The session's outcome arrives later as the terminal update on the progress
+/// channel `start_sync` registered.
 ///
-/// # Why this takes a pool (#3550)
-///
-/// It used to be synchronous and poolless, and the busy probe below paid for it.
-/// The probe called `try_lock_peer(&peer_id)` — a *device* id — while #3511 had
-/// moved S-5's lock to be keyed on the peer's `EndpointId` on both roles, because
-/// the responder cannot key on a device id it has not been told yet. A device id
-/// looked up in a table keyed by endpoint id can never collide, so the
-/// `"Sync already in progress for this peer"` arm became unreachable: a guard that
-/// read as protective and could not fire, with no test to notice.
-///
-/// Resolving the peer's bound `endpoint_id` means a `peer_refs` read, which means a
-/// pool, which is why this signature changed rather than the probe being deleted.
-/// The key itself is derived by [`agaric_sync::sync_daemon::peer_lock_key_from_stored`],
-/// which delegates to the same `peer_lock_key` the daemon's two roles call — so the
-/// probe and the lock it probes agree *by construction*, not because two call sites
-/// spell the same thing.
+/// It takes a pool because the daemon keys its per-peer lock on the peer's
+/// bound `endpoint_id`, which only `peer_refs` knows; the key comes from
+/// [`agaric_sync::sync_daemon::peer_lock_key_from_stored`], the same derivation
+/// the daemon's two roles use, so the probe and the lock agree by construction.
 #[instrument(skip(pool, scheduler), err)]
 pub async fn start_sync_inner(
     pool: &SqlitePool,
@@ -376,66 +364,25 @@ pub async fn start_sync_inner(
     device_id: &str,
     peer_id: String,
 ) -> Result<SyncSessionInfo, AppError> {
-    // Check backoff. Still keyed on `peer_id`: only the *lock* moved to the
-    // endpoint id (#3529), backoff/events/`peer_refs` remain device-keyed.
+    // Backoff, events and `peer_refs` are device-keyed; only the lock is keyed
+    // on the endpoint id.
     if !scheduler.may_retry(&peer_id) {
         return Err(AppError::InvalidOperation(
             "Peer is in backoff, try again later".into(),
         ));
     }
 
-    // HEALTH CHECK ONLY — this is a *probe*, not an exclusion lock, and the
-    // distinction is load-bearing in both directions.
+    // A probe, not an exclusion lock: it turns "the daemon is mid-session with
+    // this peer" into a message instead of a silent "queued". The guard drops at
+    // the end of this block, so it does not serialise concurrent calls; real
+    // per-peer exclusion lives in the daemon. For those microseconds a concurrent
+    // inbound session for the same endpoint is refused as busy, which the remote
+    // counts as a failure.
     //
-    // What it does do (again, since #3550): if the daemon is mid-session with
-    // this peer it holds the S-5 lock under `peer_lock_key(endpoint_id)` for the
-    // duration of the real network sync, so `try_lock_peer` on that same key
-    // returns `None` and the user gets a message instead of a "queued" that
-    // silently did nothing.
-    //
-    // What it does NOT do: serialise concurrent wrapper calls. The guard falls
-    // out of scope at the end of this block, microseconds later, so two
-    // back-to-back `start_sync` invocations can both observe `Some(...)`, both
-    // drop, and both call `notify_change()` below. Real per-peer exclusion lives
-    // in the daemon, where `try_sync_with_peer` and `handle_incoming_sync` hold
-    // the same key across the whole session. Do not lean on this for
-    // correctness.
-    //
-    // A peer with no bound `endpoint_id` is skipped rather than probed under some
-    // substitute key. That is a *best-effort gap, not a proof of idleness*, and the
-    // distinction is worth stating precisely because the tempting version of this
-    // comment is wrong:
-    //
-    // It is NOT true that an unbound peer can never be mid-sync. The daemon does
-    // not read the lock key from `peer_refs`; it reads it off the `DiscoveredPeer`,
-    // and `discovery::resolve_peer_address` prefers the mDNS-discovered peer
-    // unconditionally — `discovered.get(peer_id)` wins before the `peer_refs`
-    // fallback is even consulted. So a row with `endpoint_id IS NULL` whose device
-    // is announcing on the LAN yields a `DiscoveredPeer` with
-    // `endpoint_id: Some(announced)`, which sails past `try_sync_with_peer`'s step 2,
-    // takes S-5 at step 3 under `peer_lock_key(announced)`, and passes step 4
-    // because an unbound row has nothing to mismatch against (that is the TOFU
-    // path by which a pre-iroh `peer_ref` re-acquires its binding at all — `0107`
-    // could not backfill a key from a cert hash). During that session the daemon
-    // genuinely holds a lock this probe cannot see.
-    //
-    // We skip anyway because there is no honest alternative: the key is not
-    // knowable from `peer_refs`, and probing under the device id is precisely the
-    // never-colliding non-probe #3550 exists to remove. The window closes itself —
-    // the first successful sync binds the key, and every later press is probed for
-    // real. For a *bound* row the probe is exact, because step 4 refuses any
-    // announced key that differs from the bound one, so the key the daemon locks
-    // under is the key read here.
-    //
-    // Cost of probing under the daemon's real key, stated: for the microseconds
-    // this guard is held, a concurrent `handle_incoming_sync` for the same endpoint
-    // rejects with `Rejection::Busy` and a concurrent `try_sync_with_peer` skips the
-    // peer for that round. The local skip is free (step 3 returns without
-    // `record_failure`); the rejection is not, since the remote initiator counts a
-    // refused session as a failure and doubles its own backoff. The window is a few
-    // microseconds around a user button press, which is why this is documented
-    // rather than serialised, but it is a real interference that did not exist when
-    // the probe used a key the daemon never touched.
+    // A peer with no bound `endpoint_id` is not probed: the daemon may still be
+    // mid-session with it under the key it announces on mDNS, but that key is
+    // not knowable from `peer_refs`, and probing under the device id could never
+    // collide. The first successful sync binds the key.
     if let Some(endpoint_id) = peer_refs::get_peer_ref(pool, &peer_id)
         .await?
         .and_then(|peer| peer.endpoint_id)
@@ -446,14 +393,8 @@ pub async fn start_sync_inner(
         })?;
     }
 
-    // Wake the SyncDaemon to sync now (#382). The wrapper does NOT
-    // pre-credit `record_success` — the daemon's own success path calls
-    // `scheduler.record_success(peer_id)` after a real network sync
-    // Succeeds. Pre-crediting here wiped per-peer backoff state
-    // before the daemon had even attempted the sync, defeating the
-    // backoff invariant documented in docs/architecture/sync-and-network.md § Dual-backoff ("`record_failure(id)`
-    // Doubles backoff: 1s → 2s → 4s → … → 60s max"). The wrapper's job
-    // is to *trigger* a sync, not to mark it successful.
+    // No `record_success` here: crediting before the daemon has run the sync
+    // would wipe the peer's backoff. The daemon's success path credits it.
     scheduler.notify_change();
 
     Ok(SyncSessionInfo {

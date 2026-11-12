@@ -2455,11 +2455,8 @@ jobs:
           # RUN-ALL-THEN-FAIL, not fail-fast (#3169). `set -e` stays on for the
           # script as a whole, but each target's `cargo fuzz run` is invoked in
           # a SUBSHELL whose non-zero exit is captured (`|| rc=$?`) instead of
-          # propagating. Before this, the first failing target aborted the loop
-          # outright: `snapshot_decode` failed to COMPILE and, being first,
-          # silently cost `deeplink_parse` and `import_parse` their runs too —
-          # three targets' worth of coverage lost to one error, with nothing in
-          # the output saying so. Every target is now attempted independently;
+          # propagating, so one target that fails to compile or crashes cannot
+          # silently cost every later target its run. Every target is attempted;
           # the step still exits non-zero at the end if ANY target failed
           # (`overall`), so the lane stays red exactly as before.
           set -euo pipefail

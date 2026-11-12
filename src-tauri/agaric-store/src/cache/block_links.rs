@@ -533,7 +533,7 @@ fn diff_link_targets<'a>(
 /// This is the diff engine shared between the background
 /// `ReindexBlockLinks` task (via [`reindex_block_links`], which wraps this in
 /// its own tx) and the foreground per-op `pages_cache` count maintenance
-/// hook (`materializer::handlers::pages_cache`), which calls it INSIDE the
+/// hook (`agaric_engine::apply::pages_cache`), which calls it INSIDE the
 /// apply-op transaction so the in-tx `inbound_link_count` recompute observes
 /// the just-written edges immediately rather than after the async reindex
 /// catches up (#1548).

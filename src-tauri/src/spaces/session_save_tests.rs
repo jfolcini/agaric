@@ -88,16 +88,21 @@ impl Device {
         changed_blocks.len()
     }
 
-    /// The daemon reports the session's end through the sink the app wires.
-    async fn end_session(&self, event: SyncEvent) {
-        let sink = SpacePlacementSink::new(
+    /// The sink the app wires in front of the daemon's events.
+    fn sink(&self) -> SpacePlacementSink {
+        SpacePlacementSink::new(
             Arc::new(RecordingEventSink(std::sync::Mutex::new(Vec::new()))),
             self.pool.clone(),
             self.pool.clone(),
             self.id.to_owned(),
             self.mat.clone(),
             Arc::new(RecordingViewChangeEmitter::new()),
-        );
+        )
+    }
+
+    /// The daemon reports the session's end through the sink the app wires.
+    async fn end_session(&self, event: SyncEvent) {
+        let sink = self.sink();
         sink.on_sync_event(event);
         let task = sink
             .last_task
@@ -393,6 +398,23 @@ async fn a_session_that_fails_after_an_import_still_saves_it_6525() {
     b.kill_and_boot().await;
 
     assert_eq!(b.engine_content(&space, &x).as_deref(), Some("abcX"));
+    a.shutdown();
+    b.shutdown();
+}
+
+/// A session that fails before importing anything, such as a peer that is
+/// unreachable on every retry, leaves no engine dirty and spawns no save pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_that_fails_without_an_import_spawns_no_save() {
+    let (a, b, _space, _page, _x) = paired().await;
+    assert_eq!(b.mat.loro_state().registry.dirty_count(), 0);
+    let sink = b.sink();
+    sink.on_sync_event(SyncEvent::Error {
+        message: "peer unreachable".into(),
+        remote_device_id: DEV_A.into(),
+        code: None,
+    });
+    assert!(sink.last_task.lock().unwrap().is_none());
     a.shutdown();
     b.shutdown();
 }

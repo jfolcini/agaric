@@ -482,14 +482,13 @@ async fn fetch_purge_candidates(
     // created after the delete (written on a device that had not yet
     // synced it) and was never visible. Keep its whole cohort (same
     // `deleted_at`) and every ancestor whose purge would cascade onto it.
-    // The ULID prefix is the deleted_at ms in Crockford base32; ids that
-    // are not 26-char ULIDs carry no creation time and are never "late".
+    // The ULID prefix is the deleted_at ms in Crockford base32.
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     Ok(sqlx::query_scalar!(
         "WITH RECURSIVE late(parent_id, deleted_at) AS ( \
              SELECT b.parent_id, b.deleted_at \
              FROM blocks b, (SELECT '0123456789ABCDEFGHJKMNPQRSTVWXYZ' AS a) c \
-             WHERE b.deleted_at IS NOT NULL AND length(b.id) = 26 \
+             WHERE b.deleted_at IS NOT NULL \
                AND substr(b.id, 1, 10) > \
                    substr(c.a, ((b.deleted_at >> 45) & 31) + 1, 1) \
                 || substr(c.a, ((b.deleted_at >> 40) & 31) + 1, 1) \
@@ -1204,7 +1203,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
-             VALUES ('AGED', 'content', 'aged tombstone', NULL, 1, ?)",
+             VALUES ('0000000000000000000000AGED', 'content', 'aged tombstone', NULL, 1, ?)",
         )
         .bind(aged_deleted_at)
         .execute(&pool)
@@ -1212,7 +1211,7 @@ mod tests {
         .unwrap();
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
-             VALUES ('REC0', 'content', 'recent tombstone', NULL, 2, ?)",
+             VALUES ('0000000000000000000000REC0', 'content', 'recent tombstone', NULL, 2, ?)",
         )
         .bind(recent_deleted_at)
         .execute(&pool)
@@ -1223,17 +1222,20 @@ mod tests {
             .await
             .expect("tombstone_purge must succeed");
 
-        let aged_present: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'AGED'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let aged_present: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE id = '0000000000000000000000AGED'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(aged_present, 0, "aged tombstone must be hard-purged");
 
-        let recent_present: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'REC0'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let recent_present: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE id = '0000000000000000000000REC0'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(
             recent_present, 1,
             "recent tombstone must stay (still inside retention window)"
@@ -1267,7 +1269,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
-             VALUES ('POISON00', 'content', 'unpurgeable', NULL, 0, ?)",
+             VALUES ('000000000000000000POISON00', 'content', 'unpurgeable', NULL, 0, ?)",
         )
         .bind(aged_deleted_at - 1000)
         .execute(&pool)
@@ -1281,7 +1283,7 @@ mod tests {
                 "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
                  VALUES (?, 'content', 'aged tombstone', NULL, ?, ?)",
             )
-            .bind(format!("AGED{i:04}"))
+            .bind(format!("000000000000000000AGED{i:04}"))
             .bind(i64::try_from(i).unwrap() + 1)
             .bind(aged_deleted_at)
             .execute(&pool)
@@ -1291,7 +1293,7 @@ mod tests {
 
         sqlx::query(
             "CREATE TRIGGER poison_block_delete \
-             BEFORE DELETE ON blocks WHEN OLD.id = 'POISON00' \
+             BEFORE DELETE ON blocks WHEN OLD.id = '000000000000000000POISON00' \
              BEGIN SELECT RAISE(ABORT, 'simulated unpurgeable root'); END",
         )
         .execute(&pool)
@@ -1303,7 +1305,7 @@ mod tests {
             .expect("one poison root must not abort the whole run (#3311)");
 
         let healthy_remaining: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM blocks WHERE id LIKE 'AGED%' AND deleted_at IS NOT NULL",
+            "SELECT COUNT(*) FROM blocks WHERE id LIKE '%AGED%' AND deleted_at IS NOT NULL",
         )
         .fetch_one(&pool)
         .await
@@ -1313,11 +1315,12 @@ mod tests {
             "every healthy aged tombstone must still drain despite the poison root (#3311)"
         );
 
-        let poison_present: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'POISON00'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let poison_present: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE id = '000000000000000000POISON00'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(
             poison_present, 1,
             "the poison root survives — it is skipped, not silently reported purged"
@@ -1353,7 +1356,7 @@ mod tests {
                 "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
                  VALUES (?, 'content', 'aged tombstone', NULL, ?, ?)",
             )
-            .bind(format!("A{i:08}"))
+            .bind(format!("00000000000000000A{i:08}"))
             .bind(position)
             .bind(aged_deleted_at)
             .execute(&pool)
@@ -1362,7 +1365,7 @@ mod tests {
         }
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
-             VALUES ('RECENT00', 'content', 'recent tombstone', NULL, ?, ?)",
+             VALUES ('000000000000000000RECENT00', 'content', 'recent tombstone', NULL, ?, ?)",
         )
         .bind(i64::try_from(backlog).unwrap())
         .bind(recent_deleted_at)
@@ -1375,7 +1378,7 @@ mod tests {
             .expect("tombstone_purge must drain a backlog larger than one batch");
 
         let aged_remaining: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM blocks WHERE id LIKE 'A%' AND deleted_at IS NOT NULL",
+            "SELECT COUNT(*) FROM blocks WHERE id LIKE '%A%' AND deleted_at IS NOT NULL",
         )
         .fetch_one(&pool)
         .await
@@ -1385,11 +1388,12 @@ mod tests {
             "all aged tombstones must drain in one invocation via the bounded loop"
         );
 
-        let recent_present: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'RECENT00'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let recent_present: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE id = '000000000000000000RECENT00'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(
             recent_present, 1,
             "recent tombstone must stay (eligibility predicate unchanged)"
@@ -1433,7 +1437,7 @@ mod tests {
                 "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
                  VALUES (?, 'content', 'aged tombstone', NULL, ?, ?)",
             )
-            .bind(format!("C{i:08}"))
+            .bind(format!("00000000000000000C{i:08}"))
             .bind(position)
             .bind(aged_deleted_at)
             .execute(&pool)
@@ -1443,7 +1447,7 @@ mod tests {
 
         let aged_remaining = || async {
             sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM blocks WHERE id LIKE 'C%' AND deleted_at IS NOT NULL",
+                "SELECT COUNT(*) FROM blocks WHERE id LIKE '%C%' AND deleted_at IS NOT NULL",
             )
             .fetch_one(&pool)
             .await
@@ -1720,7 +1724,7 @@ mod tests {
                 "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
                  VALUES (?, 'content', 'aged tombstone', NULL, ?, ?)",
             )
-            .bind(format!("AGED{i:04}"))
+            .bind(format!("000000000000000000AGED{i:04}"))
             .bind(i)
             .bind(aged_deleted_at)
             .execute(&setup)
@@ -1786,7 +1790,7 @@ mod tests {
         // Nothing was purged and nothing was marked poison: the tombstones are
         // still eligible for the retry this Err buys.
         let remaining: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM blocks WHERE id LIKE 'AGED%' AND deleted_at IS NOT NULL",
+            "SELECT COUNT(*) FROM blocks WHERE id LIKE '%AGED%' AND deleted_at IS NOT NULL",
         )
         .fetch_one(&setup)
         .await
@@ -2346,10 +2350,10 @@ mod tests {
             }
         };
 
-        // No late block (incl. a short non-ULID id and a ULID created in the
-        // delete's own millisecond): identical to the old query.
+        // No late block (incl. a ULID created in the delete's own
+        // millisecond): identical to the old query.
         let t: i64 = 1_700_000_000_123;
-        insert("AGED0001".into(), None, t).await;
+        insert(ulid_at(0, 6), None, t).await;
         insert(ulid_at(t, 1), None, t).await;
         insert(ulid_at(t - 1, 2), None, t).await;
         let mut got = new(pool.clone()).await;

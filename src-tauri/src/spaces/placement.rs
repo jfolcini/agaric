@@ -40,10 +40,10 @@
 //! #6525: before any of that the task saves the engines. A session's imports
 //! are committed to SQL at once but reach `loro_doc_state` only through a
 //! snapshot pass, and boot replay restores local ops only, so a process killed
-//! before the next pass would boot with SQL ahead of its engines. An `Error`
-//! saves too: each space's import commits on its own, so a failed session may
-//! have committed some. So does a converged `Some(0)` while an engine is
-//! dirty: an imported property definition changes no block.
+//! before the next pass would boot with SQL ahead of its engines. An `Error`,
+//! or a converged `Some(0)`, saves while an engine is dirty: each space's
+//! import commits on its own, so a failed session may have committed some,
+//! and an imported property definition changes no block.
 
 use std::sync::Arc;
 
@@ -110,14 +110,14 @@ impl SyncEventSink for SpacePlacementSink {
             } if *changed_blocks != Some(0) => {
                 Some(self.spawn_after_import(remote_device_id.clone(), changed_page_ids.clone()))
             }
-            // A property-definition-only import changes no block but dirties
-            // its engine.
-            SyncEvent::Complete { .. }
+            // A property-definition-only import changes no block, and a failed
+            // session may have committed an import before it failed; either
+            // way the import dirtied its engine.
+            SyncEvent::Complete { .. } | SyncEvent::Error { .. }
                 if self.materializer.loro_state().registry.dirty_count() > 0 =>
             {
                 Some(self.spawn_save())
             }
-            SyncEvent::Error { .. } => Some(self.spawn_save()),
             _ => None,
         };
         if let Some(task) = task {
