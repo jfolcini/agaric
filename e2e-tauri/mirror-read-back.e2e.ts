@@ -142,7 +142,8 @@ describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @mar
     // Every file at once, as a checkout of another branch writes them.
     const checkout = (file: string) => `${CHECKOUT} ${path.basename(file, '.md')}\n`
     for (const file of files) writeFileSync(file, checkout(file))
-    // Listed as diverged only by a pass that read the rewritten file.
+    // Listed once a pass has seen each rewritten file; a file is first left
+    // to settle, which lists it too, so a read-in would come a tick later.
     await browser.waitUntil(
       async () => {
         const now = await status()
@@ -154,11 +155,28 @@ describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @mar
       },
       {
         timeout: NAV_TIMEOUT,
-        timeoutMsg: 'the rewritten files were never all read and listed as pending',
+        timeoutMsg: 'the rewritten files were never all seen and listed as pending',
       },
     )
+    // Two later passes, each shown by a new page's file: the second began
+    // after the first ended, so any read-in has run.
+    const [space] = await invoke<{ id: string }[]>('list_spaces')
+    for (const n of [1, 2]) {
+      const title = `${CHECKOUT}-after-${n}`
+      await invoke('create_page_in_space', { parentId: null, content: title, spaceId: space?.id })
+      await browser.waitUntil(
+        () =>
+          Promise.resolve(
+            readdirSync(folder, { recursive: true }).some((entry) =>
+              String(entry).endsWith(`${title}.md`),
+            ),
+          ),
+        { timeout: NAV_TIMEOUT, timeoutMsg: `${title}.md was never written` },
+      )
+    }
 
-    expect(await pages()).toEqual(before)
+    const after = await pages()
+    expect(new Map([...after].filter(([id]) => before.has(id)))).toEqual(before)
     for (const file of files) expect(readFileSync(file, 'utf8')).toBe(checkout(file))
   })
 })
