@@ -3270,3 +3270,159 @@ async fn malformed_last_edited_range_is_rejected_before_compile_4638() {
         other => panic!("expected Err(Validation), got {other:?}"),
     }
 }
+
+const TPL_PAGE: &str = "01TPLPAGE0000000000000000";
+const TPL_CHILD: &str = "01TPLCHILD000000000000000";
+const PLAIN_PAGE: &str = "01PLAINPAGE00000000000000";
+const PLAIN_CHILD: &str = "01PLAINCHILD0000000000000";
+
+/// [`seed`] plus a template page holding a placeholder block and a plain page
+/// holding an ordinary block, each child carrying its page in `page_id`.
+async fn seed_with_template_page(pool: &SqlitePool) {
+    seed(pool).await;
+    for (id, block_type, parent, page) in [
+        (TPL_PAGE, "page", None, TPL_PAGE),
+        (TPL_CHILD, "content", Some(TPL_PAGE), TPL_PAGE),
+        (PLAIN_PAGE, "page", None, PLAIN_PAGE),
+        (PLAIN_CHILD, "content", Some(PLAIN_PAGE), PLAIN_PAGE),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id, position) \
+             VALUES (?, ?, ?, ?, ?, ?, 1)",
+        )
+        .bind(id)
+        .bind(block_type)
+        .bind(format!("Action items for <% page title %> {id}"))
+        .bind(parent)
+        .bind(page)
+        .bind(SPACE)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'template', 'true')",
+    )
+    .bind(TPL_PAGE)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// #6548: a template page and the placeholder blocks under it are not notes,
+/// so an unfiltered query leaves them out of the rows, the count, the groups
+/// and the aggregates alike, as the agenda does.
+#[tokio::test]
+async fn empty_query_excludes_blocks_under_template_pages_6548() {
+    let (pool, _d) = test_pool().await;
+    seed_with_template_page(&pool).await;
+    let expected = set(&[
+        "01B1000000000000000000000",
+        "01B2000000000000000000000",
+        "01B3000000000000000000000",
+        "01B4000000000000000000000",
+        TAG_RED,
+        TAG_BLUE,
+        PLAIN_PAGE,
+        PLAIN_CHILD,
+    ]);
+
+    let mut request = req(default_filter());
+    request.aggregates = vec![AggregateSpec {
+        op: AggOp::Count,
+        target: None,
+    }];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+    assert_eq!(
+        ids(&resp),
+        expected,
+        "flat rows must skip the template page and its blocks"
+    );
+    assert_eq!(resp.total_count, Some(8), "the count must skip them too");
+    assert_eq!(
+        resp.aggregates.first().and_then(|a| a.count),
+        Some(8),
+        "the aggregate must skip them too"
+    );
+
+    let resp = compile_and_run(&pool, group_req(default_filter(), GroupKey::State))
+        .await
+        .unwrap();
+    let members: i64 = resp.groups.iter().map(|g| g.count).sum();
+    assert_eq!(members, 8, "the grouped buckets must skip them too");
+}
+
+/// #6548: a query that names the `template` property asks for templates, so it
+/// still sees them: the template page itself, and its blocks through
+/// `has-parent-matching`.
+#[tokio::test]
+async fn query_naming_the_template_property_still_lists_templates_6548() {
+    use crate::filters::primitive::PropertyPredicate;
+    let (pool, _d) = test_pool().await;
+    seed_with_template_page(&pool).await;
+    let is_template = || {
+        leaf(FilterPrimitive::HasProperty {
+            key: "template".to_string(),
+            predicate: PropertyPredicate::Exists,
+        })
+    };
+
+    let resp = compile_and_run(&pool, req(is_template())).await.unwrap();
+    assert_eq!(ids(&resp), set(&[TPL_PAGE]), "the template page is listed");
+
+    let under_template = leaf(FilterPrimitive::HasParentMatching {
+        matcher: Box::new(is_template()),
+    });
+    let resp = compile_and_run(&pool, req(under_template)).await.unwrap();
+    assert_eq!(
+        ids(&resp),
+        set(&[TPL_CHILD]),
+        "the placeholder block is listed"
+    );
+}
+
+/// #6548: "not a template", negated, as `NotExists` or as `Ne`, asks to leave
+/// templates out, so it keeps the guard and the placeholder block stays out.
+#[tokio::test]
+async fn query_negating_the_template_property_still_excludes_templates_6548() {
+    use crate::filters::primitive::{PropertyPredicate, PropertyValue};
+    let (pool, _d) = test_pool().await;
+    seed_with_template_page(&pool).await;
+    let template = |predicate| {
+        leaf(FilterPrimitive::HasProperty {
+            key: "template".to_string(),
+            predicate,
+        })
+    };
+    let expected = set(&[
+        "01B1000000000000000000000",
+        "01B2000000000000000000000",
+        "01B3000000000000000000000",
+        "01B4000000000000000000000",
+        TAG_RED,
+        TAG_BLUE,
+        PLAIN_PAGE,
+        PLAIN_CHILD,
+    ]);
+
+    for (label, filter) in [
+        (
+            "NOT has-property template",
+            FilterExpr::Not {
+                child: Box::new(template(PropertyPredicate::Exists)),
+            },
+        ),
+        ("template NotExists", template(PropertyPredicate::NotExists)),
+        (
+            "template Ne true",
+            template(PropertyPredicate::Ne {
+                value: PropertyValue::Text {
+                    value: "true".to_string(),
+                },
+            }),
+        ),
+    ] {
+        let resp = compile_and_run(&pool, req(filter)).await.unwrap();
+        assert_eq!(ids(&resp), expected, "{label} leaves the placeholder out");
+    }
+}

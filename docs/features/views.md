@@ -53,7 +53,7 @@ Browse every tag and the blocks that carry them.
 
 A dedicated builder for queries too complex for the search box.
 
-- **Nested boolean tree**: arbitrary AND / OR / NOT groups over filter leaves, composed visually.
+- **Nested boolean tree**: arbitrary AND / OR / NOT groups over filter leaves, composed visually. Template pages and their blocks are left out unless a filter asks for the `template` property.
 - **Controls bar**: full-text term, sort, group-by (tag, page, state, block type, priority, a property key, or a date bucket — due / scheduled / created / last edited, by day, week, or month), summaries (count, sum, average, minimum, maximum).
 - **Results pane**: flat with a global summary bar, or grouped with per-group headers, counts, and summary chips.
 - **Saved views** keep a query to load, rename or delete later. They are kept per space on this device and do not sync.
@@ -89,7 +89,7 @@ Global operation log — every edit Agaric has applied, in reverse chronological
 Pages tagged as templates.
 
 - **Browse**: each template is a page; the row shows a preview of its first child block. The placeholders a template can use (`<% today %>` and the rest) are listed below the templates, each with what it fills in.
-- **Insert a template**: in any block, type `/template` → **TemplatePicker** → pick. The template's blocks land after the current block's last sibling, each with its task state, priority, dates and properties, and one `Ctrl+Z` takes the whole insert back (#6530).
+- **Insert a template**: in any block, type `/template` → **TemplatePicker** → pick. The template's blocks land after the current block's last sibling, each with its task state, priority, dates and properties, all in one transaction: a failed insert lands nothing and says so, and one `Ctrl+Z` takes a whole insert back (#6530).
 - **Toggle template status**: open the page → **PageHeaderMenu** kebab → *Toggle template*.
 - **Journal template**: the template page new daily pages in the space copy, nesting included; it carries a *Journal template* badge. Set it from the page kebab (*Set as journal template*) or the journal's *Configure journal template* button — see [spaces.md](spaces.md).
 

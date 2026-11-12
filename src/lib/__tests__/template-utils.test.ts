@@ -10,20 +10,10 @@
  * - `insertTemplateBlocks`:
  *   - `pid == null` → `false`: every descendant has a parent, and a `null`
  *     key would never be read.
- *   - the `destParentIndex == null ? parentId : null` spec field: the level
- *     loop overwrites every spec's `parentId`.
- *   - `depthByIndex` and `ids` built empty or filled with `undefined`: every
- *     read goes through `?? 0` or the hole filter.
- *   - the past-the-end guards (`<=` in the three index loops,
- *     `deferred[i]?.`, `entry == null`, `idx == null` → `false`): the extra
- *     iteration reads `undefined` and does nothing, and no in-range entry is
- *     null.
- *   - `d > maxDepth` → `>=`: an equal depth assigns the same value.
- *   - `entry.resolveParentFromIndex == null` → `false`: `ids[null]` is
- *     `undefined`, so `?? parentId` picks the same parent.
- *   - `row != null` → `true`: `create_blocks_batch` returns one row per spec.
- *   - `cursorDeferredIndex !== null` → `true`: `ids[null]` is `undefined`, so
- *     the callback still does not fire.
+ *   - `cursorIndex !== null` → `true`: `ids[null]` is `undefined`, so the
+ *     callback still does not fire.
+ *   - `cursorId !== undefined` → `true`: `create_blocks_batch` returns one row
+ *     per spec, so the cursor's index always holds an id.
  * - `deleteSpaceTextJournalTemplates`: `?? []` → `['Stryker was here']` (a
  *   string has no `key`), and `writePreference(…, true)` → `false` (the
  *   preference's `serialize` ignores its value).
@@ -91,7 +81,7 @@ function propertyPage(items: BlockRow[]): CommandReturns['query_by_property'] {
  * Install a template subtree (`[id, parentId, content, position?]` rows, a
  * missing position being the row's index) and a `create_blocks_batch` that
  * names each created block `NEW_<content>`. Returns every batch's
- * `(content, parentId)` pairs.
+ * `(content, parent)` pairs, a parent named by its batch index reading `#<index>`.
  */
 function stubTemplateTree(
   rows: Array<[string, string, string | null, (number | null)?]>,
@@ -112,8 +102,12 @@ function stubTemplateTree(
       total: rows.length,
     }),
     create_blocks_batch: (args) => {
-      const specs = args['specs'] as Array<{ content: string; parentId: string }>
-      batches.push(specs.map((s) => [s.content, s.parentId]))
+      const specs = args['specs'] as Array<{
+        content: string
+        parentId: string | null
+        parentIndex?: number | null
+      }>
+      batches.push(specs.map((s) => [s.content, s.parentId ?? `#${s.parentIndex}`]))
       if (batches.length === failBatch) throw new Error('batch insert failed')
       return withOps({
         blocks: specs.map((s) => makeBlockRow({ id: `NEW_${s.content}`, content: s.content })),
@@ -181,9 +175,9 @@ describe('insertTemplateBlocks', () => {
     // fetches the whole template subtree in ONE `load_page_subtree`
     // IPC, groups descendants by `parent_id`, accumulates one
     // `CreateBlockSpec` per descendant in DFS order, and fires ONE
-    // `create_blocks_batch` per depth level. For a flat template with
+    // `create_blocks_batch` for the whole tree. For a flat template with
     // two siblings we expect ONE load_page_subtree and ONE
-    // create_blocks_batch (depth 0).
+    // create_blocks_batch.
     // #1258 — `load_page_subtree` returns `{ blocks, truncated, total }`.
     stubTemplates({
       load_page_subtree: () => ({
@@ -240,53 +234,25 @@ describe('insertTemplateBlocks', () => {
   })
 
   it('insertTemplateBlocks copies nested children recursively', async () => {
-    // + limit-clamp-followup — for a template with
-    // depth 2 (TMPL → A → B) the batch fires once per depth level:
-    // depth 0 creates A, depth 1 creates B with `parentId = NEW_A`
-    // resolved from the previous batch's response. Both descendants
-    // arrive in a single `load_page_subtree` response.
-    // One batch per depth level, and the ORDER is the subject: depth 0
-    // answers NEW_A, depth 1 answers NEW_B.
-    let batchLevel = 0
-    stubTemplates({
-      load_page_subtree: () => ({
-        blocks: [
-          makeBlockRow({ id: 'A', content: 'Heading A', parent_id: 'TMPL', position: 0 }),
-          makeBlockRow({ id: 'B', content: 'Sub-bullet B', parent_id: 'A', position: 0 }),
-        ],
-        truncated: false,
-        total: 2,
-      }),
-      create_blocks_batch: () => {
-        batchLevel += 1
-        return withOps({
-          blocks:
-            batchLevel === 1
-              ? [makeBlockRow({ id: 'NEW_A', content: 'Heading A' })]
-              : [makeBlockRow({ id: 'NEW_B', content: 'Sub-bullet B' })],
-        })
-      },
-    })
+    // One batch for the whole tree: the nested block names its parent by the
+    // parent's index in the batch, since neither id exists before the batch.
+    const batches = stubTemplateTree([
+      ['A', 'TMPL', 'Heading A'],
+      ['B', 'A', 'Sub-bullet B'],
+    ])
 
     const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
 
-    // Both blocks were created
-    expect(ids).toEqual(['NEW_A', 'NEW_B'])
-
-    // ONE batch call PER DEPTH LEVEL (two depths → two batches).
-    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
-    expect(batchCalls).toHaveLength(2)
-
+    expect(ids).toEqual(['NEW_Heading A', 'NEW_Sub-bullet B'])
+    expect(batches).toEqual([
+      [
+        ['Heading A', 'PARENT'],
+        ['Sub-bullet B', '#0'],
+      ],
+    ])
     // Anti-backslide guard: zero per-block `create_block` calls.
     const perBlockCreateCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
     expect(perBlockCreateCalls).toHaveLength(0)
-
-    // Depth 1 batch must reference NEW_A as the parent (forward
-    // reference from depth-0 batch response).
-    const depthOneSpecs = (batchCalls[1]?.[1] as { specs: Array<{ parentId: string }> } | undefined)
-      ?.specs
-    expect(depthOneSpecs?.[0]?.parentId).toBe('NEW_A')
-
     // Anti-backslide guard: NO per-parent `list_blocks` IPC fires —
     // the subtree arrives in a single `load_page_subtree` call.
     const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
@@ -295,47 +261,18 @@ describe('insertTemplateBlocks', () => {
     expect(subtreeCalls).toHaveLength(1)
   })
 
-  it('returns ids accumulated up to the failing batch level', async () => {
-    // Atomicity changed: a per-batch failure logs a
-    // warning and returns the already-landed prefix from earlier
-    // levels. (Each level is its own all-or-nothing tx; failures
-    // aren't backed out across levels because the previous-level
-    // commit already happened.)
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-
-    // The batch ORDER is the subject: depth 0 succeeds, depth 1 fails.
-    const failure = new Error('batch insert failed')
-    let batchLevel = 0
-    stubTemplates({
-      // load_page_subtree(TMPL) → A (root child) + B (A's child)
-      load_page_subtree: () => ({
-        blocks: [
-          makeBlockRow({ id: 'A', content: 'A', parent_id: 'TMPL', position: 0 }),
-          makeBlockRow({ id: 'B', content: 'B', parent_id: 'A', position: 0 }),
-        ],
-        truncated: false,
-        total: 2,
-      }),
-      create_blocks_batch: () => {
-        batchLevel += 1
-        if (batchLevel === 1)
-          return withOps({ blocks: [makeBlockRow({ id: 'NEW_A', content: 'A' })] })
-        throw failure
-      },
-    })
-
-    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
-
-    // A landed from depth 0; depth-1 failure is logged but doesn't
-    // throw — the partial result is returned.
-    expect(ids).toEqual(['NEW_A'])
-    expect(warnSpy).toHaveBeenCalledWith(
-      'template-utils',
-      'template batch insert failed at depth level',
-      { level: 1, count: 1 },
-      expect.objectContaining({ message: failure.message }),
+  it('rejects with the batch error when the insert fails', async () => {
+    stubTemplateTree(
+      [
+        ['A', 'TMPL', 'a'],
+        ['B', 'A', 'b'],
+      ],
+      1,
     )
-    warnSpy.mockRestore()
+
+    await expect(insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')).rejects.toThrow(
+      'batch insert failed',
+    )
   })
 
   it('copies a three-level template whose last block is top-level, each block under its copy', async () => {
@@ -352,10 +289,10 @@ describe('insertTemplateBlocks', () => {
     expect(batches).toEqual([
       [
         ['a', 'PARENT'],
+        ['b', '#0'],
+        ['c', '#1'],
         ['d', 'PARENT'],
       ],
-      [['b', 'NEW_a']],
-      [['c', 'NEW_b']],
     ])
   })
 
@@ -494,22 +431,20 @@ describe('insertTemplateBlocks — {{ }} variable substitution (#1442)', () => {
     expect(batches).toEqual([[['a', 'PARENT']]])
   })
 
-  it('reports no cursor block when the level holding it fails to land', async () => {
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+  it('reports no cursor block when the insert fails', async () => {
     stubTemplateTree(
       [
         ['A', 'TMPL', 'a'],
         ['B', 'A', 'b{{cursor}}'],
       ],
-      2,
+      1,
     )
     const onCursorBlock = vi.fn()
 
-    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST', { onCursorBlock })
-
-    expect(ids).toEqual(['NEW_a'])
+    await expect(
+      insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST', { onCursorBlock }),
+    ).rejects.toThrow('batch insert failed')
     expect(onCursorBlock).not.toHaveBeenCalled()
-    warnSpy.mockRestore()
   })
 
   it('short-circuits to [] with no active space, dispatching no load_page_subtree (b1)', async () => {
@@ -1224,6 +1159,72 @@ describe('insertTemplateBlocks — task state, priority, dates and properties (#
     expect(await propertiesOf(todo as string)).toEqual({ owner: 'alice', effort: 3 })
     const childRow = unwrap(await commands.getBlock(child as string))
     expect([childRow.parent_id, childRow.scheduled_date]).toEqual([todo, '2026-11-30'])
+  })
+
+  /** The commands `invoke` was called with, reads left out. */
+  function writeCommands(): string[] {
+    const reads = new Set(['load_page_subtree', 'get_batch_properties'])
+    return mockedInvoke.mock.calls.map(([cmd]) => cmd).filter((cmd) => !reads.has(cmd))
+  }
+
+  it('inserts a nested template with every property type in one write', async () => {
+    const tpl = await meetingTemplate()
+    const [todo] = unwrap(
+      await commands.loadPageSubtree(tpl, { kind: 'active', space_id: SPACE }),
+    ).blocks
+    unwrap(await commands.setProperty(todo?.id as string, 'reviewed', { value_bool: true }))
+    unwrap(await commands.setProperty(todo?.id as string, 'kickoff', { value_date: '2026-11-01' }))
+    unwrap(await commands.setProperty(todo?.id as string, 'related', { value_ref: tpl }))
+    const dest = unwrap(await commands.createPageInSpace(null, 'Monday', SPACE))
+    mockedInvoke.mockClear()
+
+    const [copy, child] = await insertTemplateBlocks(tpl, dest, SPACE)
+
+    expect(writeCommands()).toEqual(['create_blocks_batch'])
+    expect(unwrap(await commands.getBlock(child as string)).parent_id).toBe(copy)
+    const rows = unwrap(await commands.getProperties(copy as string))
+    expect(
+      Object.fromEntries(
+        rows.map((r) => [
+          r.key,
+          [r.value_text, r.value_num, r.value_date, r.value_ref, r.value_bool],
+        ]),
+      ),
+    ).toEqual({
+      owner: ['alice', null, null, null, null],
+      effort: [null, 3, null, null, null],
+      reviewed: [null, null, null, null, 1],
+      kickoff: [null, null, '2026-11-01', null, null],
+      related: [null, null, null, tpl, null],
+    })
+  })
+
+  it('rejects a failed insert and leaves nothing of it behind', async () => {
+    const tpl = await meetingTemplate()
+    const dest = unwrap(await commands.createPageInSpace(null, 'Monday', SPACE))
+    const failure = new Error('insert refused')
+    // The backend refuses the batch that holds the nested block, as it would
+    // a value that block cannot hold.
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      const specs = (args as { specs?: Array<{ content: string }> } | undefined)?.specs ?? []
+      if (cmd === 'create_blocks_batch' && specs.some((s) => s.content === 'Book the room')) {
+        throw failure
+      }
+      return dispatch(cmd, args)
+    })
+    const onOpRefs = vi.fn()
+    const onCursorBlock = vi.fn()
+
+    await expect(insertTemplateBlocks(tpl, dest, SPACE, { onOpRefs, onCursorBlock })).rejects.toBe(
+      failure,
+    )
+
+    const children = unwrap(
+      await commands.loadPageSubtree(dest, { kind: 'active', space_id: SPACE }),
+    )
+    expect(children.blocks).toEqual([])
+    expect(onOpRefs).not.toHaveBeenCalled()
+    expect(onCursorBlock).not.toHaveBeenCalled()
   })
 
   it('reports the refs of every write, so one undo takes the whole insert back', async () => {
