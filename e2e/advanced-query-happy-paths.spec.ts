@@ -112,3 +112,15 @@ test('a full-text term narrows the results and a sort key orders them @search', 
 
   await expect(resultRows(page)).toHaveText([/Quokka two/, /Quokka one/, /Quokka six/])
 })
+
+test('an empty query leaves out template pages and their placeholder blocks @search', async ({
+  page,
+}) => {
+  // #6548: the seeded "Meeting Notes Template" page is a template whose blocks
+  // are placeholders, not notes; the agenda already leaves them out.
+  await navigateToView(page, 'Advanced Query')
+
+  await expect(resultRows(page).filter({ hasText: 'Review pull requests' })).toHaveCount(1)
+  await expect(resultRows(page).filter({ hasText: 'Action items for' })).toHaveCount(0)
+  await expect(resultRows(page).filter({ hasText: 'Meeting Notes Template' })).toHaveCount(0)
+})

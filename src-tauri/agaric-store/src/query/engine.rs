@@ -12,7 +12,9 @@
 //!    [`WhereClause`](crate::filters::WhereClause); an `unsupported()` result is rejected (defence in
 //!    depth — the gate already caught it).
 //! 4. **Assemble** — `FROM blocks b WHERE b.space_id = ? AND
-//!    b.deleted_at IS NULL AND (<compiled>)`, with the anonymous `?`
+//!    b.deleted_at IS NULL AND <not under a template page> AND (<compiled>)`
+//!    (the template guard is dropped when the filter names the `template`
+//!    property, see `names_template_property`), with the anonymous `?`
 //!    placeholders renumbered to explicit `?N` so the space bind + filter
 //!    binds + keyset binds never collide (mirrors
 //!    `commands::pages::compile_pages_filters`). When the request carries a
@@ -696,16 +698,44 @@ fn compile_query_ctx(request: &AdvancedQueryRequest) -> Result<QueryCtx, AppErro
         ""
     };
 
+    // Template pages hold placeholders, not notes: leave them out as the
+    // agenda does, unless the filter asks for templates by name.
+    let template_guard = if names_template_property(&request.filter) {
+        ""
+    } else {
+        " AND NOT EXISTS (SELECT 1 FROM block_properties tp \
+           WHERE tp.block_id = b.page_id AND tp.key = 'template')"
+    };
+
     Ok(QueryCtx {
         from_clause,
         predicate: format!(
-            "{match_prefix}b.space_id = ?{space_pos} AND b.deleted_at IS NULL AND ({filter_sql})"
+            "{match_prefix}b.space_id = ?{space_pos} AND b.deleted_at IS NULL{template_guard} \
+             AND ({filter_sql})"
         ),
         space_id: request.space_id.clone(),
         next_pos,
         match_sanitized,
         filter_binds,
     })
+}
+
+/// Whether `expr` names the `template` property anywhere, the one way a query
+/// asks for template pages and the blocks under them.
+fn names_template_property(expr: &FilterExpr) -> bool {
+    match expr {
+        FilterExpr::Leaf {
+            primitive: FilterPrimitive::HasProperty { key, .. },
+        } => key == "template",
+        FilterExpr::Leaf {
+            primitive: FilterPrimitive::HasParentMatching { matcher },
+        } => names_template_property(matcher),
+        FilterExpr::Leaf { .. } => false,
+        FilterExpr::And { children } | FilterExpr::Or { children } => {
+            children.iter().any(names_template_property)
+        }
+        FilterExpr::Not { child } => names_template_property(child),
+    }
 }
 
 /// FIRST page only (no cursor): the `total_count` and the GLOBAL aggregates

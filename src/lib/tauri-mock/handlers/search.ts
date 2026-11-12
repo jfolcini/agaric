@@ -34,7 +34,7 @@ import {
   refInclusiveTags,
 } from '@/lib/tauri-mock/handlers/shared'
 import { inheritedTagIds } from '@/lib/tauri-mock/handlers/tags'
-import { blockTags, blocks } from '@/lib/tauri-mock/seed'
+import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // #3938 — the `fts_blocks.stripped` stand-in
@@ -2203,6 +2203,35 @@ function searchRegexMatches(re: RegExp | null, b: Record<string, unknown>): bool
   return false
 }
 
+/**
+ * Mirror of `names_template_property` (`agaric-store/src/query/engine.rs`):
+ * whether the filter names the `template` property anywhere, the one way an
+ * advanced query asks for template pages and the blocks under them.
+ */
+function namesTemplateProperty(expr: Record<string, unknown>): boolean {
+  switch (expr['type'] as string) {
+    case 'Leaf': {
+      const p = (expr['primitive'] as Record<string, unknown> | undefined) ?? {}
+      if (p['type'] === 'HasProperty') return p['key'] === 'template'
+      if (p['type'] === 'HasParentMatching') {
+        return namesTemplateProperty((p['matcher'] as Record<string, unknown> | undefined) ?? {})
+      }
+      return false
+    }
+    case 'And':
+    case 'Or': {
+      const children = (expr['children'] as Array<Record<string, unknown>> | undefined) ?? []
+      return children.some(namesTemplateProperty)
+    }
+    case 'Not': {
+      return namesTemplateProperty((expr['child'] as Record<string, unknown> | undefined) ?? {})
+    }
+    default: {
+      return false
+    }
+  }
+}
+
 export const searchHandlers = {
   // #1280 — advanced-query engine. The mock cannot compile a `FilterExpr` tree
   // to SQL, so it INTERPRETS it in TypeScript instead. The GROUPED + AGGREGATE
@@ -2297,9 +2326,13 @@ export const searchHandlers = {
     const foldedQuery = hasFulltext ? foldForFtsIndex(fulltext) : ''
     const edges = linkEdges()
     const matched: MatchedEntry[] = []
+    // The engine leaves template pages and their placeholder blocks out unless
+    // the filter asks for templates by name.
+    const includeTemplates = namesTemplateProperty(filterExpr)
     for (const b of blocks.values()) {
       if (b['deleted_at']) continue
       if (!fbqInSpace(b, spaceId)) continue
+      if (!includeTemplates && properties.get(b['page_id'] as string)?.has('template')) continue
       // Page-aggregate primitives (child/inbound counts) need the block's own
       // page subtree; non-page blocks have no `page_id === id` descendants, so
       // those counts are 0 — matching the backend's per-row `b.*` evaluation.

@@ -1,0 +1,209 @@
+{
+  "description": "#6548 — an advanced query leaves template pages and the placeholder blocks under them out of its result, as the agenda does, unless the filter names the `template` property. S3 is a template page (its `template` property is set by the one op) holding the placeholder S4; S1/S2 are an ordinary page and block. The empty filter must return S2 and S1 only, so a stack that lists placeholders reds. Naming `template` in a `has-property` leaf returns the template page itself, and naming it inside `has-parent-matching` returns its placeholder, so a stack that drops the exclusion unconditionally (hiding templates from a query that asks for them) reds too.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "ordinary note",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Meeting",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Action items for <% page title %>",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "key": "template",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B3",
+        "key": "template",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_empty_filter_skips_templates",
+      "rows": ["B2", "B1"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_has_property_template_lists_the_template_page",
+      "rows": ["B3"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_under_a_template_lists_its_placeholders",
+      "rows": ["B4"],
+      "total_count": 1
+    }
+  ],
+  "name": "query_advanced_excludes_templates",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "template",
+        "value": {
+          "value_text": "true"
+        }
+      },
+      "command": "set_property"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "name": "advanced_empty_filter_skips_templates"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "template",
+              "predicate": {
+                "type": "Exists"
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "name": "advanced_has_property_template_lists_the_template_page"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "matcher": {
+                "primitive": {
+                  "key": "template",
+                  "predicate": {
+                    "type": "Exists"
+                  },
+                  "type": "HasProperty"
+                },
+                "type": "Leaf"
+              },
+              "type": "HasParentMatching"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "name": "advanced_under_a_template_lists_its_placeholders"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "ordinary note",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Meeting",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Action items for <% page title %>",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
