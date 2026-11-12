@@ -155,6 +155,34 @@ async function linkedFilename(page: import('@playwright/test').Page): Promise<st
   return (await ipc<AttachmentRow>(page, 'read_attachment_meta', { attachmentId: id })).filename
 }
 
+/** Put page mode's caret at the end of block `blockId`'s text. */
+async function caretAtEndOf(page: import('@playwright/test').Page, blockId: string): Promise<void> {
+  const editor = page.getByTestId('page-mode-editor')
+  await editor.evaluate((dom, id) => {
+    interface PMNode {
+      attrs: { blockId?: string }
+      firstChild: { content: { size: number } }
+    }
+    const { editor: tiptap } = dom as HTMLElement & {
+      editor: {
+        state: { doc: { forEach: (fn: (node: PMNode, offset: number) => void) => void } }
+        commands: { setTextSelection: (pos: number) => boolean }
+        view: { focus: () => void }
+      }
+    }
+    let end = -1
+    tiptap.state.doc.forEach((node, offset) => {
+      if (node.attrs.blockId === id) end = offset + 2 + node.firstChild.content.size
+    })
+    if (end < 0) throw new Error(`caretAtEndOf: no block ${id}`)
+    tiptap.commands.setTextSelection(end)
+    tiptap.view.focus()
+    // ProseMirror puts its own selection back 20 ms after a focus; type after that.
+    return new Promise((resolve) => setTimeout(resolve, 20))
+  }, blockId)
+  await expect(editor).toBeFocused()
+}
+
 test.describe('Saving PDF annotations keeps the block linking the file (#6629) @attachments', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
@@ -181,14 +209,27 @@ test.describe('Saving PDF annotations keeps the block linking the file (#6629) @
       .click()
     const block = page.locator(`[data-page-block-id="${BLOCK_GS_1}"]`)
     await expect(block).toBeVisible()
+    // Page mode saves what is typed through the block commands, not the page store.
+    await caretAtEndOf(page, BLOCK_GS_1)
+    await page.keyboard.type(' read twice')
+    await expect
+      .poll(
+        async () =>
+          (await ipc<{ content: string }>(page, 'get_block', { blockId: BLOCK_GS_1 })).content,
+      )
+      .toMatch(/ read twice$/)
     const annotated = await annotateAndSave(page)
 
     // Page mode's document holds the block's text: the edit reaches it, not only the backend.
-    await expect(block.locator('a.external-link')).toHaveAttribute(
+    await expect(block.getByRole('link', { name: 'report.pdf', exact: true })).toHaveAttribute(
       'href',
       `attachment:${annotated}`,
     )
+    await expect(block).toContainText('read twice')
     await reopenPage(page, 'Getting Started')
+    expect(
+      (await ipc<{ content: string }>(page, 'get_block', { blockId: BLOCK_GS_1 })).content,
+    ).toBe(`[report.pdf](attachment:${annotated}) read twice`)
     expect(await linkedFilename(page)).toBe('report (annotated).pdf')
   })
 })

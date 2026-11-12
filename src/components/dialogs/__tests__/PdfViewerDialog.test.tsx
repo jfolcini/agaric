@@ -11,12 +11,13 @@
  * - Save bakes annotations via pdfDocument.saveDocument(), writes a NEW
  *   attachment (addAttachmentWithBytes), deletes the original, and notifies
  * - Save moves the owning block's `attachment:` links to the copy before the
- *   original goes, and keeps the original when that edit is refused (#6629)
+ *   original goes, and keeps the original when the block's text cannot be read
+ *   or that edit is refused (#6629)
  * - Closes the dialog on close button click
  * - axe() accessibility audit
  */
 
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -38,11 +39,13 @@ const mockedUseIsMobile = vi.mocked(useIsMobile)
 const mockAddAttachmentWithBytes = vi.fn()
 const mockDeleteAttachment = vi.fn()
 const mockEditBlock = vi.fn()
+const mockGetBlock = vi.fn()
 vi.mock('@/lib/bindings', () => ({
   commands: {
     addAttachmentWithBytes: (...args: unknown[]) => mockAddAttachmentWithBytes(...args),
     deleteAttachment: (...args: unknown[]) => mockDeleteAttachment(...args),
     editBlock: (...args: unknown[]) => mockEditBlock(...args),
+    getBlock: (...args: unknown[]) => mockGetBlock(...args),
   },
 }))
 
@@ -118,6 +121,15 @@ vi.mock('pdfjs-dist/web/pdf_viewer.css', () => ({}))
 const { PdfViewerDialog } = await import('@/components/dialogs/PdfViewerDialog')
 const { createPageBlockStore, PageBlockContext } = await import('@/stores/page-blocks')
 
+/** Render inside a page store, as every host renders the dialog. */
+function render(ui: React.ReactElement, store = createPageBlockStore('PAGE_1')) {
+  return rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <PageBlockContext.Provider value={store}>{children}</PageBlockContext.Provider>
+    ),
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   lastViewer = null
@@ -129,6 +141,7 @@ beforeEach(() => {
   mockSaveDocument.mockResolvedValue(new Uint8Array([1, 2, 3]).buffer)
   mockAddAttachmentWithBytes.mockResolvedValue(ok({ id: 'new-att-id' }))
   mockDeleteAttachment.mockResolvedValue(ok(null))
+  mockGetBlock.mockResolvedValue(ok({ id: 'block-1', content: 'Reading list' }))
   mockNotify.loading.mockReturnValue('toast-id')
   mockedUseIsMobile.mockReturnValue(false)
 })
@@ -392,18 +405,18 @@ describe('PdfViewerDialog', () => {
       const store = createPageBlockStore('PAGE_1')
       const block = makeBlock({ id: 'block-1', parent_id: 'PAGE_1', content })
       store.setState({ blocks: [block], blocksById: new Map([[block.id, block]]) })
+      mockGetBlock.mockResolvedValue(ok(block))
       render(
-        <PageBlockContext.Provider value={store}>
-          <PdfViewerDialog
-            open
-            onOpenChange={vi.fn()}
-            fileUrl="blob:t"
-            filename="report.pdf"
-            blockId="block-1"
-            attachmentId="att-1"
-            onSaved={onSaved}
-          />
-        </PageBlockContext.Provider>,
+        <PdfViewerDialog
+          open
+          onOpenChange={vi.fn()}
+          fileUrl="blob:t"
+          filename="report.pdf"
+          blockId="block-1"
+          attachmentId="att-1"
+          onSaved={onSaved}
+        />,
+        store,
       )
       const text = (): string | null | undefined =>
         store.getState().getBlockById('block-1')?.content
@@ -440,6 +453,22 @@ describe('PdfViewerDialog', () => {
       expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
     })
 
+    it('repoints the text the backend holds, which page mode saves past the store', async () => {
+      const saved = `${LINKED} read twice`
+      mockEditBlock.mockImplementation((id: string, content: string) =>
+        Promise.resolve(ok({ id, content, op_refs: [] })),
+      )
+      const { text, onSaved } = renderInPage(LINKED)
+      mockGetBlock.mockResolvedValue(ok(makeBlock({ id: 'block-1', content: saved })))
+      await annotateAndSave()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(text()).toBe(`${REPOINTED} read twice`)
+      expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
+    })
+
     it('keeps the original when the edit is rejected, so the link still opens it', async () => {
       mockEditBlock.mockResolvedValue({
         status: 'error',
@@ -452,6 +481,19 @@ describe('PdfViewerDialog', () => {
         expect(onSaved).toHaveBeenCalledWith('new-att-id')
       })
       expect(text()).toBe(LINKED)
+      expect(mockDeleteAttachment).not.toHaveBeenCalled()
+    })
+
+    it('keeps the original when the block cannot be read', async () => {
+      const { text, onSaved } = renderInPage(LINKED)
+      mockGetBlock.mockResolvedValue({ status: 'error', error: { kind: 'database', message: 'x' } })
+      await annotateAndSave()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(text()).toBe(LINKED)
+      expect(mockEditBlock).not.toHaveBeenCalled()
       expect(mockDeleteAttachment).not.toHaveBeenCalled()
     })
 

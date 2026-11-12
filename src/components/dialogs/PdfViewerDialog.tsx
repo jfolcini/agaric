@@ -31,7 +31,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import type { PDFViewer as PDFViewerType } from 'pdfjs-dist/web/pdf_viewer.mjs'
 
 import 'pdfjs-dist/web/pdf_viewer.css'
-import { useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { StoreApi } from 'zustand'
 
@@ -43,7 +43,7 @@ import { commands } from '@/lib/bindings'
 import { isEditableTarget } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { type PageBlockState, usePageBlockStoreApi } from '@/stores/page-blocks'
 
 // Set worker path — served from public/
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
@@ -90,19 +90,19 @@ function annotatedFilename(filename: string): string {
 }
 
 /**
- * Point the owning block's `attachment:<from>` links at `to`. The edit goes
- * through the page store, so the editor showing the block takes the new text,
- * page mode's document among them; `false` when it was refused. Outside a page
- * there is no text to repoint.
+ * Point the owning block's `attachment:<from>` links at `to`; `false` when the
+ * edit was refused. The text is the backend's, because page mode saves past
+ * the page store; the edit goes through the store, so the editor showing the
+ * block takes the new text, page mode's document among them.
  */
 async function repointBlockLinks(
-  pageStore: StoreApi<PageBlockState> | null,
+  pageStore: StoreApi<PageBlockState>,
   blockId: string,
   from: string,
   to: string,
 ): Promise<boolean> {
-  const content = pageStore?.getState().getBlockById(blockId)?.content
-  if (!pageStore || !content?.includes(attachmentRef(from))) return true
+  const { content } = unwrap(await commands.getBlock(blockId))
+  if (!content?.includes(attachmentRef(from))) return true
   const repointed = content.replaceAll(attachmentRef(from), attachmentRef(to))
   return pageStore.getState().edit(blockId, repointed, { merge: false })
 }
@@ -139,7 +139,7 @@ export function PdfViewerDialog({
   onSaved,
 }: PdfViewerDialogProps): React.ReactElement {
   const { t } = useTranslation()
-  const pageStore = useContext(PageBlockContext)
+  const pageStore = usePageBlockStoreApi()
   const [numPages, setNumPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
   const [loading, setLoading] = useState(false)
@@ -379,19 +379,19 @@ export function PdfViewerDialog({
         ),
       )
       // The original goes only once no link in the block names it (#6629). A
-      // refused edit or delete leaves two copies on the block and every link
-      // still opens one — never data loss — so we still report success.
-      if (await repointBlockLinks(pageStore, blockId, attachmentId, row.id)) {
-        try {
+      // failed read, edit or delete leaves two copies on the block and every
+      // link still opens one — never data loss — so we still report success.
+      try {
+        if (await repointBlockLinks(pageStore, blockId, attachmentId, row.id)) {
           unwrap(await commands.deleteAttachment(attachmentId))
-        } catch (delErr) {
-          logger.warn(
-            'PdfViewerDialog',
-            'delete original after save failed',
-            { attachmentId },
-            delErr,
-          )
         }
+      } catch (err) {
+        logger.warn(
+          'PdfViewerDialog',
+          'replacing the original after save failed',
+          { attachmentId },
+          err,
+        )
       }
       notify.dismiss(toastId)
       notify.success(t('pdfViewer.saved'))
