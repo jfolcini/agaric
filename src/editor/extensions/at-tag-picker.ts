@@ -1,7 +1,11 @@
 /**
  * TipTap extension: the `@` and `#` tag pickers and the typed tag (#5160 D8).
  *
- * - `@` opens the tag picker after a space or at the start of a block.
+ * - `@` opens the tag picker after a space or at the start of a block. Its
+ *   query ends at the first space unless an existing tag still starts with
+ *   it, and offers no Create row once it holds a space (#6530), so
+ *   `meet @ 5pm tomorrow` stays text and Enter splits the block. A new tag
+ *   name holds no whitespace; `#[[multi word]]` spells one dashed.
  * - `#` opens the same picker exactly where typing a space would make `#query`
  *   a tag: at the start of the text or after whitespace, never on `#42`, in
  *   code, or on a bare `#` run, so Space and Enter still make `# ` … `###### `
@@ -93,15 +97,15 @@ function tagPicker(
   trigger: Pick<
     PickerPluginConfig,
     'pluginKey' | 'char' | 'allowSpaces' | 'allowedPrefixes' | 'allow'
-  >,
+  > & { items?: PickerPluginConfig['items'] },
 ) {
   const { options } = extension
   return createPickerPlugin({
     loggerComponent: 'AtTagPicker',
     displayName: t('editor.suggestion.tags'),
+    items: (query) => options.items(query),
     ...trigger,
     editor: extension.editor,
-    items: (query) => options.items(query),
     command: ({ editor, range, props }) => {
       const item = props as PickerItem
       const { onCreate } = options
@@ -138,6 +142,42 @@ function tagPicker(
       } else {
         editor.chain().focus().deleteRange(range).insertTagRef(item.id).run()
       }
+    },
+  })
+}
+
+/** Spaces as one plain space, case folded: `query` is a prefix of a name it starts. */
+const prefixKey = (text: string): string =>
+  text
+    .replace(/\p{White_Space}/gu, ' ')
+    .toLowerCase()
+    .normalize('NFC')
+
+/** The `@` picker, whose query may hold a space only while it starts an existing tag's name. */
+function atPicker(extension: { editor: Editor; options: AtTagPickerOptions }) {
+  // Every tag that starts a longer query also starts the one before it, so
+  // the last listing is enough to tell; the lookup itself is async.
+  let listed: PickerItem[] = []
+  const startsATag = (query: string) =>
+    listed.some((item) => !item.isCreate && prefixKey(item.label).startsWith(prefixKey(query)))
+  return tagPicker(extension, {
+    pluginKey: atTagPickerPluginKey,
+    char: '@',
+    allowSpaces: true,
+    // Only after a space or at the start of the block. Without this guard,
+    // query expressions like `property:context=@office` would trip the
+    // picker and intercept Enter (creating a "Create 'office}}'" tag instead
+    // of saving the block). ProseMirror renders a trailing space as NBSP, so
+    // `tagged: ` plus the toolbar's Insert-tag button reads
+    // `tagged:\u00A0@`; `\n` covers a hard break.
+    allowedPrefixes: [' ', '\u00A0', '\n'],
+    allow: ({ state, range }) => {
+      const query = state.doc.textBetween(range.from + 1, range.to)
+      return !/\s/.test(query) || startsATag(query)
+    },
+    items: async (query) => {
+      listed = await extension.options.items(query)
+      return /\s/.test(query) ? listed.filter((item) => !item.isCreate) : listed
     },
   })
 }
@@ -190,18 +230,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
 
   addProseMirrorPlugins() {
     return [
-      tagPicker(this, {
-        pluginKey: atTagPickerPluginKey,
-        char: '@',
-        allowSpaces: true,
-        // Only after a space or at the start of the block. Without this guard,
-        // query expressions like `property:context=@office` would trip the
-        // picker and intercept Enter (creating a "Create 'office}}'" tag instead
-        // of saving the block). ProseMirror renders a trailing space as NBSP, so
-        // `tagged: ` plus the toolbar's Insert-tag button reads
-        // `tagged:\u00A0@`; `\n` covers a hard break.
-        allowedPrefixes: [' ', '\u00A0', '\n'],
-      }),
+      atPicker(this),
       tagPicker(this, {
         pluginKey: hashTagPickerPluginKey,
         char: '#',

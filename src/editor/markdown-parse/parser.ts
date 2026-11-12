@@ -23,6 +23,7 @@ import {
   flankClass,
   leadingIndent,
   linkDestination,
+  linkTitle,
   LIST_NEST_INDENT,
   runFlank,
   scanBareUrl,
@@ -147,7 +148,8 @@ function consumeExternalLink(
     })
   }
 
-  const linkMark: LinkMark = { type: 'link' as const, attrs: { href } }
+  const title = linkTitle(match.url)
+  const linkMark: LinkMark = { type: 'link' as const, attrs: title ? { href, title } : { href } }
 
   if (match.displayText.length === 0) {
     // Empty display text — use URL as text
@@ -1420,9 +1422,10 @@ export function scanImage(st: InlineState): boolean {
 
   const alt = unescapeImageAlt(s.src.slice(altStart, altEnd))
   const src = linkDestination(s.src.slice(urlStart, urlEnd))
+  const title = linkTitle(s.src.slice(urlStart, urlEnd))
 
   flushBuf(st, currentMarks(st))
-  st.nodes.push({ type: 'image', attrs: { alt, src } })
+  st.nodes.push({ type: 'image', attrs: title ? { alt, src, title } : { alt, src } })
   s.pos = urlEnd + 1
   return true
 }

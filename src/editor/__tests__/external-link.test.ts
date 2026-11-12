@@ -537,10 +537,10 @@ describe('ExternalLink typed markdown links (#5160 N11)', () => {
     expect(serialize(editor.getJSON() as DocNode)).toBe('see [docs](https://example.com)')
   })
 
-  it('a typed title is dropped from the stored link', () => {
+  it('a typed title is kept in the stored link (#6530)', () => {
     editor = createEditor()
     typeText(editor, '[docs](https://example.com "Docs")')
-    expect(serialize(editor.getJSON() as DocNode)).toBe('[docs](https://example.com)')
+    expect(serialize(editor.getJSON() as DocNode)).toBe('[docs](https://example.com "Docs")')
   })
 
   it('a disallowed scheme stays literal text', () => {

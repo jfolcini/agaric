@@ -571,6 +571,15 @@ export const PriorityShortcuts = Extension.create({
   },
 })
 
+/**
+ * Table cells hold paragraphs only (#6530, decided 2026-11-11): a Markdown
+ * table row stores each cell as one line of inline text (`serializeTable`), so
+ * a quote, list, heading or code block typed, pasted or toggled into a cell
+ * stays its text instead of failing to save.
+ */
+const ParagraphTableHeader = TableHeader.extend({ content: 'paragraph+' })
+const ParagraphTableCell = TableCell.extend({ content: 'paragraph+' })
+
 /** What the extensions both editors share call out to. */
 export interface ContentExtensionOptions {
   resolveTagName: (id: string) => string
@@ -633,8 +642,8 @@ export function contentExtensions(o: ContentExtensionOptions) {
     HorizontalRule,
     Table.configure({ resizable: false }),
     TableRow,
-    TableHeader,
-    TableCell,
+    ParagraphTableHeader,
+    ParagraphTableCell,
     CodeBlockWithShortcut.configure({ lowlight }),
     HeadingWithoutDefaultShortcuts.configure({ levels: [1, 2, 3, 4, 5, 6] }),
     HardBreak,

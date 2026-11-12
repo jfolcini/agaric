@@ -9,7 +9,7 @@
  * predicate plus the rule firing through a real editor.
  */
 
-import { Editor } from '@tiptap/core'
+import { Editor, type JSONContent } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import History from '@tiptap/extension-history'
 import Paragraph from '@tiptap/extension-paragraph'
@@ -17,6 +17,8 @@ import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { Image, isValidImageSrc } from '@/editor/extensions/image'
+import { parse, serialize } from '@/editor/markdown-serializer'
+import type { DocNode } from '@/editor/types'
 
 // The real Image node view renders `GatedImage` (i18n + policy hooks), which is
 // irrelevant to the input-rule logic under test. Drop the React node view so the
@@ -173,5 +175,13 @@ describe('image input rule src gating (#1587)', () => {
     const editor = freshEditor()
     typeImageRun(editor, 'x', 'ftp://example.com/c.png')
     expect(hasImageNode(editor)).toBe(false)
+  })
+})
+
+describe('the image node keeps a title (#6530)', () => {
+  it('an editor loaded with `![i](p.png "pic")` writes the title back', () => {
+    const editor = freshEditor()
+    editor.commands.setContent(parse('see ![i](p.png "pic")') as unknown as JSONContent)
+    expect(serialize(editor.getJSON() as DocNode)).toBe('see ![i](p.png "pic")')
   })
 })

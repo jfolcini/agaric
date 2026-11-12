@@ -128,10 +128,10 @@ describe('AtTagPicker suggestion plugin configuration', () => {
     // `#` opens exactly where a space would make a tag, which its `allow`
     // decides (hash-tag.test.ts pins where that is).
     expect(captured[1]?.['allowedPrefixes']).toBeNull()
-    // `@multi word` searches with spaces; `#` ends at one, where the typed
-    // tag takes over.
+    // `@multi word` searches with spaces while a tag name continues them
+    // (#6530, hash-tag.test.ts); `#` ends at one, where the typed tag takes over.
     expect(captured[0]?.['allowSpaces']).toBe(true)
-    expect(captured[0]?.['allow']).toBeUndefined()
+    expect(captured[0]?.['allow']).toBeTypeOf('function')
     expect(captured[1]?.['allowSpaces']).toBe(false)
     expect(captured[1]?.['allow']).toBeTypeOf('function')
 

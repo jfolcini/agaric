@@ -25,6 +25,7 @@ import {
   isAutolinkableUrl,
   leadingIndent,
   linkDestination,
+  linkTitleText,
   LIST_NEST_INDENT,
   runFlank,
   scanBareUrl,
@@ -43,6 +44,7 @@ import type {
   HeadingNode,
   HorizontalRuleNode,
   InlineNode,
+  LinkMark,
   ListItemNode,
   MathBlockNode,
   OrderedListNode,
@@ -269,11 +271,11 @@ function emitCloseAll(active: ReadonlySet<string>): string {
 
 // -- Link mark helpers --------------------------------------------------------
 
-/** Extract link href from a text or image node's marks (null if no link mark). */
-function getLinkHref(node: InlineNode): string | null {
+/** A text or image node's link mark (null if none). */
+function getLink(node: InlineNode): LinkMark | null {
   if ((node.type !== 'text' && node.type !== 'image') || !node.marks) return null
   for (const m of node.marks) {
-    if (m.type === 'link') return m.attrs.href
+    if (m.type === 'link') return m
   }
   return null
 }
@@ -313,7 +315,9 @@ function linkSpanPlainText(nodes: readonly InlineNode[]): string | null {
  */
 function isBareUrlGroup(group: NodeGroup): boolean {
   const rawText = linkSpanPlainText(group.nodes.map(stripLinkMark))
-  return rawText !== null && group.href !== null && writesBareUrl(rawText, group.href)
+  return (
+    rawText !== null && group.href !== null && !group.title && writesBareUrl(rawText, group.href)
+  )
 }
 
 /** A link to `href` whose only content is the unmarked `text` is written as the bare URL. */
@@ -321,21 +325,24 @@ export function writesBareUrl(text: string, href: string): boolean {
   return text === href && isAutolinkableUrl(href)
 }
 
-/** Group consecutive inline nodes by their link mark href. */
+/** Group consecutive inline nodes by their link mark: its href and title. */
 interface NodeGroup {
   href: string | null
+  title: string | null
   nodes: InlineNode[]
 }
 
 function groupByLink(content: readonly InlineNode[]): NodeGroup[] {
   const groups: NodeGroup[] = []
   for (const node of content) {
-    const href = getLinkHref(node)
+    const link = getLink(node)
+    const href = link?.attrs.href ?? null
+    const title = link?.attrs.title || null
     const last = groups.length > 0 ? groups.at(-1) : null
-    if (last && last.href === href) {
+    if (last && last.href === href && last.title === title) {
       last.nodes.push(node)
     } else {
-      groups.push({ href, nodes: [node] })
+      groups.push({ href, title, nodes: [node] })
     }
   }
   return groups
@@ -756,7 +763,11 @@ function serializeInlineChild(
   // written by `serializeParagraph`'s link grouping (#6342).
   if (child.type === 'image') {
     const alt = escapeImageAlt(child.attrs.alt)
-    return serializeInlineAtom(`![${alt}](${linkDestinationText(child.attrs.src)})`, activeMarks)
+    const title = child.attrs.title ? linkTitleText(child.attrs.title) : ''
+    return serializeInlineAtom(
+      `![${alt}](${linkDestinationText(child.attrs.src)}${title})`,
+      activeMarks,
+    )
   }
   // A line break inside the paragraph (#5160 D2). Emitted as a bare newline
   // here; `finishParagraphLine` decides per line whether it stays bare or
@@ -1030,7 +1041,8 @@ function serializeParagraph(
           // A link group leads with `[`, so a literal `!` ending the previous
           // group would reparse as an image (#1434), and a trailing literal `$`
           // could close a bogus math span across the seam — defuse both.
-          const link = `[${inner}](${linkDestinationText(group.href)})`
+          const title = group.title === null ? '' : linkTitleText(group.title)
+          const link = `[${inner}](${linkDestinationText(group.href)}${title})`
           result = joinInlinePieces(result, link, prevTail)
           prevTail = 'text'
         }

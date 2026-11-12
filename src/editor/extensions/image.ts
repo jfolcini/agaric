@@ -79,6 +79,12 @@ export const Image = Node.create({
         parseHTML: (el) => el.getAttribute('alt') ?? '',
         renderHTML: (attrs) => ({ alt: attrs['alt'] as string }),
       },
+      // `![alt](url "title")`: kept so an edit writes it back (#6530).
+      title: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('title'),
+        renderHTML: (attrs) => (attrs['title'] ? { title: attrs['title'] as string } : {}),
+      },
     }
   },
 

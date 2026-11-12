@@ -622,6 +622,13 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   doc(paragraph(footnoteRef('1'), text('(x)'))),
   // #6277: a header-only aligned table, whose delimiter is all it has after the header.
   doc(table(tableRow(aligned('right', tableHeader(paragraph(text('a'))))))),
+  // #6530: a link's and an image's title, with the `"` and `\` its `"…"` form escapes.
+  doc(
+    paragraph(
+      text('t', [{ type: 'link', attrs: { href: 'https://x.com', title: 'say "hi" a\\' } }]),
+      { type: 'image', attrs: { alt: 'i', src: 'p.png', title: 'b\\' } },
+    ),
+  ),
 ]
 
 /** Shapes that normalize (string changes once) before becoming stable. */

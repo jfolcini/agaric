@@ -67,19 +67,34 @@ function unescapeUrl(url: string): string {
 }
 
 /** An optional link title after the destination: `"…"`, `'…'` or `(…)`. */
-const LINK_TITLE_RE = /^(.*?)[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\))$/
+const LINK_TITLE_RE = /^(.*?)[ \t]+("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\))$/
 
 /**
  * The URL a link or image destination, as written between its parens, names
- * (#5160 N9): edge whitespace and a title are dropped (the link mark has no
- * title), `<…>` brackets are removed and the escapes decoded. The serializer
- * writes an href this would misread in `<…>` form (`linkDestinationText`).
+ * (#5160 N9): edge whitespace and a title are dropped (`linkTitle` reads it),
+ * `<…>` brackets are removed and the escapes decoded. The serializer writes an
+ * href this would misread in `<…>` form (`linkDestinationText`).
  */
 export function linkDestination(raw: string): string {
   let dest = raw.trim()
   dest = LINK_TITLE_RE.exec(dest)?.[1] ?? dest
   if (dest.length >= 2 && dest.startsWith('<') && dest.endsWith('>')) dest = dest.slice(1, -1)
   return unescapeUrl(dest)
+}
+
+/**
+ * The title a link or image destination carries after its URL, its escapes
+ * decoded (#6530), or `undefined` when it has none. `linkTitleText` writes it
+ * back.
+ */
+export function linkTitle(raw: string): string | undefined {
+  const quoted = LINK_TITLE_RE.exec(raw.trim())?.[2]
+  return quoted === undefined ? undefined : unescapeUrl(quoted.slice(1, -1))
+}
+
+/** A title as written after a destination: in `"…"`, its `"` and `\` escaped. */
+export function linkTitleText(title: string): string {
+  return ` "${title.replace(/["\\]/g, '\\$&')}"`
 }
 
 /**
