@@ -70,26 +70,26 @@ name: Validate (prek-equivalent)
 # a whole continue to work — GitHub propagates per-job failures up to the
 # caller.
 
-# NO `schedule:` HERE — ON PURPOSE. A weekly whole-tree re-validation of `main`
+# NO `schedule:` HERE — ON PURPOSE. A scheduled whole-tree re-validation of `main`
 # is genuinely wanted, but this is not the workflow that should carry it:
-#   * `scheduled-deep-checks.yml` already runs it weekly, and runs MORE. Its
+#   * `scheduled-deep-checks.yml` already runs it nightly, and runs MORE. Its
 #     `full-suite` legs are a strict superset of a scheduled run of this file —
 #     the FULL prek suite in BOTH stages with NO category SKIPs, plus full
 #     vitest + full playwright (sharded like here) + full nextest + doc-tests, and it
 #     hard-fails on whole-tree pre-commit-stage drift. It exists precisely as
 #     the counterweight to the per-PR category gating `detect-changes` below
-#     performs. A weekly copy of THIS workflow would re-run the same work,
+#     performs. A scheduled copy of THIS workflow would re-run the same work,
 #     more weakly.
 #   * `detect-changes` has no diff to classify on a `schedule` event
 #     (`github.event.before` is empty), so it would take the fail-closed
-#     `full_suite` branch every week — i.e. degrade to exactly what
+#     `full_suite` branch every run — i.e. degrade to exactly what
 #     `full-suite` already does, minus the unskipped pre-push stage.
 #   * `validate / validate-all` is a REQUIRED status-check context (asserted by
 #     `branch-protection-assert.yml`). Emitting that context from a scheduled,
-#     non-PR event puts weekly pass/fail runs of a required check name onto
-#     `main`'s commits, where a red weekly canary is indistinguishable at a
+#     non-PR event puts scheduled pass/fail runs of a required check name onto
+#     `main`'s commits, where a red scheduled canary is indistinguishable at a
 #     glance from a red merge gate.
-# If the weekly backstop ever needs to grow, grow `scheduled-deep-checks.yml`.
+# If the scheduled backstop ever needs to grow, grow `scheduled-deep-checks.yml`.
 on:
   workflow_call:
     # `ci.yml`'s bundle jobs gate on these two, so the classifier below is the
@@ -585,6 +585,7 @@ jobs:
           scripts/android-launch-smoke.test.mjs
           scripts/render-mutation-summary.test.mjs
           scripts/nextest-flaky-report.test.mjs
+          scripts/file-scheduled-failures.test.mjs
           || { cat "$RUNNER_TEMP/node-test.log"; exit 1; }
 
       - name: Verify npm package provenance signatures
@@ -1680,7 +1681,7 @@ jobs:
             --output-path coverage-${{ matrix.shard }}.lcov
 
       - name: Name every test that passed only on a retry
-        # The `ci` profile's `retries` turn a flake green; this keeps its name (#6553).
+        # A `ci` profile retry override turns a flake green; this keeps its name (#6553).
         if: ${{ !cancelled() }}
         run: node scripts/nextest-flaky-report.mjs src-tauri/target/nextest/ci/junit.xml >> "$GITHUB_STEP_SUMMARY"
 

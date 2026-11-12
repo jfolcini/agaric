@@ -207,19 +207,26 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 
 [profile.ci]
 fail-fast = false
-retries = 2
+# No retries (#6553): a test that fails once is red, so a race shows up instead of
+# passing on its next try. A test gets retries back only through a
+# `[[profile.ci.overrides]]` entry naming its benign cause (load, never a race) and
+# the run that showed it. There is none: the one test CI retried to green in the
+# logs read for #6553, `conformance_fixtures_match_backend`, was an ordering bug,
+# fixed in #6487.
+retries = 0
 slow-timeout = { period = "60s", terminate-after = 2 }
 leak-timeout = "30s"
 # Output: a failure, a retry, a SLOW and a LEAK test print as they happen, with
 # the failing test's full output; a pass prints nothing (thousands of PASS lines
-# per shard otherwise). A test that only passed on a retry stays in the closing
-# summary as FLAKY.
+# per shard otherwise). A test that only passed on an override's retry stays in
+# the closing summary as FLAKY.
 status-level = "leak"
 final-status-level = "flaky"
 
 # `target/nextest/ci/junit.xml`, written even when tests fail. CI lists every
 # test it records as passing only on a retry in the job summary
-# (`scripts/nextest-flaky-report.mjs`) and uploads it, so a flake keeps a name.
+# (`scripts/nextest-flaky-report.mjs`) and uploads it, so a test an override
+# lets retry still names each flake.
 [profile.ci.junit]
 path = "junit.xml"
 
@@ -274,8 +281,8 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 # What is NOT explained, and is deliberately not guessed at here: the symptom
 # was measured, not theorised. The group was introduced in b51d1ddb0
 # (#2857 / #2621, "serialize spy-counter tests"), reporting "~1-2 spurious
-# 'flaky' per full-suite run, passing on retry and in isolation" — with
-# `retries = 1` (default) / `retries = 2` (ci) above, "flaky" means a TRY 1
+# 'flaky' per full-suite run, passing on retry and in isolation" — with the
+# retries this file then set (1 default, 2 ci), "flaky" means a TRY 1
 # failure that passed on retry. Something real was producing those retries;
 # under the corrected mechanism, cross-test counter pollution is not it, and
 # no replacement cause has been established. One adjacent data point, offered
@@ -289,8 +296,8 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 # configuration, and removing it would discard a measured mitigation on the
 # strength of a corrected explanation alone. Resolving this needs a run that
 # reproduces the flakiness with the group removed and identifies the actual
-# cause; the flaky-test list in each CI nextest job's summary (see `junit`
-# above) is the data for it. Until then, treat this comment's original
+# cause; with `retries = 0` in `profile.ci`, a CI run that fails on its first
+# try is the data for it. Until then, treat this comment's original
 # rationale as superseded and the underlying flakiness as unexplained.
 # ------------------------------------------------------------------------
 [test-groups.spy-counter-serial]

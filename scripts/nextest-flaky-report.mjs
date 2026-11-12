@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Names every test a nextest run passed only on a retry (#6553).
 //
-// `retries` in `src-tauri/.config/nextest.toml`'s `ci` profile turns a test
-// that fails once and then passes into a green run, and the only trace was a
-// FLAKY line in the job log. This reads the JUnit report that profile writes
+// A per-test `retries` override in `src-tauri/.config/nextest.toml`'s `ci`
+// profile turns a test that fails once and then passes into a green run, and
+// the only trace would be a FLAKY line in the job log. This reads the JUnit report that profile writes
 // and prints a Markdown list of those tests for the job summary, so each one
 // has a name a tracker can collect.
 //

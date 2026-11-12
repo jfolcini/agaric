@@ -35,17 +35,14 @@
 // about itself. A test that asked the app where it thought it was would pass
 // on exactly the builds that are broken.
 //
-// WHAT RUNS THIS — DOCUMENTED, NOT PINNED
-// ---------------------------------------
-// Nothing automatic runs this. `npm run test:e2e-android` is a manual,
-// hardware-gated entry point: it needs a real device or emulator attached over
-// adb, so no CI workflow invokes it — unlike `test:e2e-tauri`, which has
-// `.github/workflows/e2e-tauri-weekly.yml` behind it. Say the consequence out
-// loud rather than let the PR title imply otherwise: as things stand #4301 is
-// DOCUMENTED, not PINNED. Nothing will go red if it regresses; the regression
-// is caught only when a human runs this against a device. Do that after
-// touching MainActivity.kt, the mobile header, or anything else that moves the
-// app's top edge.
+// WHAT RUNS THIS
+// -------------
+// `.github/workflows/android-launch-smoke.yml` runs it on an emulator after
+// the launch smoke, nightly and before every release (#6553), so a
+// regression of #4301 goes red there, a day or a release late. Run it by hand
+// (`npm run test:e2e-android`) against a device after touching
+// MainActivity.kt, the mobile header, or anything else that moves the app's
+// top edge, and on a phone whose insets the emulator does not have.
 //
 // Usage:
 //   node scripts/android-e2e-safe-area.mjs [--apk <path>] [--serial <id>] [--pkg <id>]
