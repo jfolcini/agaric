@@ -137,7 +137,7 @@ Desktop bundles are **not code-signed** (see [docs/BUILD.md § Signing posture](
 
 The Android `.apk` **is** signed, but it is distributed outside the Play Store, so first install requires sideloading:
 
-- **Android** — enable *Install unknown apps* for the browser or file manager you use to open the `.apk`, then tap the downloaded file. Updates must be signed with the same key; if an update is rejected with a signature error, uninstall the previous build first. [Obtainium](https://obtainium.imranr.dev/) can track the signed `.apk` on GitHub Releases and notify you of updates, with nothing to build.
+- **Android** — enable *Install unknown apps* for the browser or file manager you use to open the `.apk`, then tap the downloaded file. Updates must be signed with the same key; if an update is rejected with a signature error, **sync the phone with a computer first: uninstalling deletes every note on the phone**, and Agaric keeps them out of Android backups. Then uninstall the previous build, install the new one, and pair it again; the first sync brings the notes back. A new phone is set up the same way, by pairing: Android's backup and phone-to-phone transfer do not carry Agaric's notes or its device identity. [Obtainium](https://obtainium.imranr.dev/) can track the signed `.apk` on GitHub Releases and notify you of updates, with nothing to build.
 
 ## Development
 

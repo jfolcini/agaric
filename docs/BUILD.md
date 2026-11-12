@@ -442,7 +442,7 @@ Run after touching any `#[tauri::command]` signature or any `specta::Type` deriv
 ## Troubleshooting
 
 - **Android: stale database crashes on launch.** Wipe and re-install: `adb shell pm clear com.agaric.app`.
-- **Android: release APK won't install.** Likely a signing mismatch — uninstall the previous build first (signatures from different keystores conflict).
+- **Android: release APK won't install.** Likely a signing mismatch (signatures from different keystores conflict). Sync the phone with a computer first: uninstalling deletes the app-private `notes.db`, and the manifest keeps it out of Auto Backup and device transfer (#6538). Then uninstall the previous build, install, and pair again.
 - **Rust compilation errors after SQL changes.** Run `just gen-sqlx` and commit the cache.
 - **TypeScript errors after Rust type changes.** Run `just gen-bindings` and commit `src/lib/bindings.ts`.
 - **WebView not found (Linux).** `libwebkit2gtk-4.1-dev` must be installed; older `4.0` won't work. Missing WebKit/GTK development headers block compiling and testing the Rust workspace, not only launching the Tauri app. On a disposable Debian/Ubuntu VM, run `bash scripts/setup.sh --install-system-deps`; local setup intentionally leaves privileged package installation to you.

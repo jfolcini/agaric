@@ -290,10 +290,11 @@ jobs:
 
       - name: Initialize Tauri Android project
         # `src-tauri/gen/android/` is gitignored EXCEPT for a handful of
-        # tracked override files (AndroidManifest.xml + the two res/xml
-        # configs + proguard-rules.pro) that carry CAMERA / Wi-Fi-multicast
+        # tracked override files (AndroidManifest.xml + the res/xml configs
+        # + proguard-rules.pro) that carry CAMERA / Wi-Fi-multicast
         # permissions, the FileProvider and AndroidTV LEANBACK_LAUNCHER
-        # tweaks, and the network_security_config / file_paths overrides.
+        # tweaks, the backup opt-out, and the network_security_config /
+        # file_paths / data_extraction_rules overrides.
         # On a fresh CI checkout the directory therefore looks like a
         # *partially* initialised Android scaffold, which trips Tauri 2's
         # `android init` (it sees the existing files, then fails because
