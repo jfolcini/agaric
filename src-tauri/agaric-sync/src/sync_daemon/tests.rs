@@ -5292,10 +5292,9 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     );
 
     // #602: NO op is hand-seeded into the responder's op_log for the
-    // initiator's device any more. Post-#490-M1 the op_log is strictly
-    // device-local (only `append_local_op*` writes it; inbound sync
-    // lands remote state via the Loro engine + SQL projection, never
-    // the op_log), so a responder NEVER holds rows for the initiator's
+    // initiator's device any more. Post-#490-M1 inbound sync lands remote
+    // state via the Loro engine + SQL projection, never as applied op_log
+    // rows, so a responder holds no applied row for the initiator's
     // device — the old hand-seed here ("delivered via a prior sync
     // session", a flow that no longer exists) masked exactly the #602
     // bug.
@@ -5823,10 +5822,9 @@ async fn apply_local_op_602(
 /// #602 regression (keystone of #87) — two devices that have BOTH made
 /// local edits must still be able to sync.
 ///
-/// Post-#490-M1 the op_log is strictly device-local: only
-/// `append_local_op*` writes it; inbound sync lands remote state via
-/// the Loro engine + SQL projection + write-ahead inbox — never the
-/// op_log. `check_reset_required` however resolved EVERY head the
+/// Post-#490-M1 inbound sync lands remote state via the Loro engine + SQL
+/// projection + write-ahead inbox, never as applied op_log rows (since #2481 a
+/// foreign record is stored only as an `is_replicated = 1` audit row). `check_reset_required` however resolved EVERY head the
 /// remote advertised against the LOCAL op_log, so the moment the
 /// initiator advertised any own-device op the responder's lookup was
 /// `NotFound` → `ResetRequired` — every session, both directions. The

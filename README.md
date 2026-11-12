@@ -19,7 +19,7 @@ A local-first, block-based note-taking app for **Linux** (primary), **Windows**,
 
 ## What is it?
 
-Agaric treats everything as a **block** — paragraphs, headings, code snippets, tasks. Blocks live in a tree: pages contain blocks, blocks can nest infinitely. Tags and links are first-class citizens that connect your knowledge graph.
+Agaric treats everything as a **block** — paragraphs, headings, code snippets, tasks. Blocks live in a tree: pages contain blocks, and blocks nest up to a fixed depth (`MAX_BLOCK_DEPTH`). Tags and links are first-class citizens that connect your knowledge graph.
 
 Think Logseq or Notion, but:
 
@@ -36,11 +36,12 @@ Everything is a block. A **page** is just a special block type that acts as a co
 
 ### Journal
 
-The default view is a **daily journal** — one page per day, created automatically. Four viewing modes:
+The default view is a **daily journal** — one page per day, created automatically. Viewing modes:
 
 - **Day** — single day with full editing
 - **Week** — Mon-Sun overview, click any day heading to jump to its daily view
 - **Month** — calendar grid with content indicator dots, click a day to switch to daily view, configurable week start
+- **Stream** — one continuous column, today pinned at the top and older days loading in as you scroll
 - **Agenda** — tasks grouped by date (Overdue / Today / Tomorrow / future) with stackable filters across eight dimensions (status, priority, due date, scheduled date, completed date, created date, tag, property), sort and group controls, projected recurring task occurrences
 
 > See [docs/UX.md](docs/UX.md) for UI patterns and conventions, and [docs/UI-MAP.md](docs/UI-MAP.md) for the surface tree and shared glossary.
@@ -58,13 +59,13 @@ Partition your notes into independent contexts — **Personal**, **Work**, custo
 ### Tags and Links
 
 - **Tags** (`#[ULID]`) — categorize blocks. Rendered as named chips, backed by ULIDs so renaming propagates everywhere. Tag inheritance: child blocks inherit parent tags for queries.
-- **Block links** (`[[ULID]]`) — link to any page or block. Shows the resolved title as a clickable chip.
-- **Block references** (`((ULID))`) — inline embed of another block's content. Hover preview, click-to-navigate.
+- **Page links** (`[[ULID]]`) — link to a page. Shows the resolved title as a clickable chip.
+- **Block references** (`((ULID))`) — a one-line chip titled by another block, not an embed of its content. Hover to peek at it, click to navigate; the `/embed` command transcludes content.
 - **Backlinks** — see everything that links to the current block, grouped by source page with filtering.
 
 ### Properties
 
-Blocks can have typed properties (text, number, date, select, reference). A built-in **priority** property shows color-coded badges. Properties panel for inline editing. Properties are queryable — the agenda view uses them to find and filter tasks across eight dimensions.
+Blocks can have typed properties (text, number, date, select, reference, boolean, URL). A built-in **priority** property shows color-coded badges. Properties panel for inline editing. Properties are queryable — the agenda view uses them to find and filter tasks across eight dimensions.
 
 ### Editor
 
@@ -72,7 +73,7 @@ WYSIWYG editing powered by TipTap. A single roving editor instance mounts into w
 
 - Markdown bold (`**`), italic (`*`), inline code (`` ` ``), strikethrough (`~~`), highlight (`==`), headings, code blocks, tables
 - Tag picker (`#` in editor), block link picker (`[[`), block reference picker (`((`)
-- Task cycling (`Ctrl+Enter`: TODO -> DOING -> DONE -> none), custom task keywords
+- Task cycling (`Ctrl+Enter`: none -> TODO -> DOING -> DONE -> CANCELLED -> none); the task states are fixed
 - Indent/dedent (`Tab` / `Shift+Tab`)
 - Templates with dynamic variables (via `/template` slash command)
 - Inline queries (`{{query ...}}` syntax) with visual query builder
@@ -84,8 +85,8 @@ WYSIWYG editing powered by TipTap. A single roving editor instance mounts into w
 Peer-to-peer sync over local WiFi — no cloud server needed. Every operation is applied through a per-space Loro CRDT document, so concurrent edits converge automatically — no conflict dialogs.
 
 - **Discovery** — mDNS automatic peer discovery on the local network
-- **Pairing** — QR code or 4-word passphrase, per-session ephemeral keys
-- **Transport** — TLS WebSocket with self-signed ECDSA certificates, certificate pinning
+- **Pairing** — QR code or 4-word passphrase; a paired device is then recognised by its key
+- **Transport** — QUIC over UDP ([iroh](https://www.iroh.computer/)), each device authenticated by its own key, no certificates
 - **Merge** — CRDT merge engine (Loro): concurrent edits converge automatically — per-key property LWW, move-as-CRDT, delete-vs-edit resurrection guards. No manual conflict-resolution UI
 - **Auto-sync** — background daemon with change-triggered and periodic sync, exponential backoff on failure
 
@@ -99,7 +100,7 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Every operation is
 - **Keyboard customization** — customize all keyboard shortcuts via settings, conflict detection
 - **Status panel** — materializer queue stats, FTS health, sync state, op log compaction
 - **Attachments** — attach files to any block (drag-and-drop, paste), MIME validation, size limits
-- **Import / Export** — Logseq/Markdown import (YAML frontmatter stripping, tab normalization), Markdown export with ULID-to-name resolution
+- **Import / Export** — import from Markdown, Logseq, Org, Obsidian, Notion, Evernote, Joplin and BibTeX / CSL-JSON bibliographies; Markdown export with ULID-to-name resolution; an optional desktop Markdown mirror that keeps every page as a `.md` file in a folder you choose (see [docs/features/import-export.md](docs/features/import-export.md))
 - **Trash** — soft delete with 90-day auto-purge, restore at any time
 - **Recurring tasks** — three repeat modes (+, .+, ++), end conditions (count, date), agenda projection
 
@@ -130,13 +131,13 @@ Download the latest installer for your OS from the [**GitHub Releases**](https:/
 
 Desktop bundles are **not code-signed** (see [docs/BUILD.md § Signing posture](docs/BUILD.md#signing-posture)), so the OS will warn on first launch:
 
-- **macOS (Gatekeeper)** — right-click the app → *Open* → *Open* in the dialog. Alternatively, clear the quarantine flag from a terminal: `xattr -dr com.apple.quarantine /Applications/Agaric.app`.
+- **macOS (Gatekeeper)** — try to open the app once, then open *System Settings* → *Privacy & Security*, scroll to *Security*, click *Open Anyway*, and click *Open* when the warning returns (Apple's documented steps, [support.apple.com/102445](https://support.apple.com/en-us/102445)). Alternatively, clear the quarantine flag from a terminal: `xattr -dr com.apple.quarantine /Applications/Agaric.app`.
 - **Windows (SmartScreen)** — click *More info* → *Run anyway*. WebView2 is installed automatically by the bundled installer.
 - **Linux** — the AppImage bundles GTK; the `.deb` declares the `libwebkit2gtk-4.1` runtime dependency.
 
 The Android `.apk` **is** signed, but it is distributed outside the Play Store, so first install requires sideloading:
 
-- **Android** — enable *Install unknown apps* for the browser or file manager you use to open the `.apk`, then tap the downloaded file. Updates must be signed with the same key; if an update is rejected with a signature error, uninstall the previous build first.
+- **Android** — enable *Install unknown apps* for the browser or file manager you use to open the `.apk`, then tap the downloaded file. Updates must be signed with the same key; if an update is rejected with a signature error, uninstall the previous build first. [Obtainium](https://obtainium.imranr.dev/) can track the signed `.apk` on GitHub Releases and notify you of updates, with nothing to build.
 
 ## Development
 

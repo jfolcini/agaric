@@ -451,8 +451,8 @@ pub async fn get_local_heads(pool: &SqlitePool) -> Result<Vec<DeviceHead>, AppEr
 /// # Why this replaced the op-log-seq lookup (#2502, #87 §10.5)
 ///
 /// This check previously resolved the peer's advertised op-log `(device_id,
-/// seq)` head for our own device against the local `op_log`. Post-#490-M1 the
-/// op_log is strictly device-local and, since #2481, also carries *foreign*
+/// seq)` head for our own device against the local `op_log`. Post-#490-M1 no
+/// foreign op is applied from the op_log and, since #2481, it carries *foreign*
 /// device frontiers as append-only audit metadata — so op-log seqs are an
 /// audit/replication cursor, **not** a state-causality signal. Making a state
 /// reset decision from them conflated the two jobs and produced the #602

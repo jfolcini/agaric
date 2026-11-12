@@ -344,8 +344,8 @@ durable identity everything else is keyed on (#3529).
 
 **Frontier semantics — Loro VVs are the sole state-causality signal
 (#2502).** The op-log `heads` and the Loro `loro_vvs` answer different
-questions. Since #490-M1 the op log is strictly device-local, and per
-issue #2481 it also carries *foreign* device frontiers as append-only
+questions. Since #490-M1 no foreign op is applied from the op log, and per
+issue #2481 it carries *foreign* device records and frontiers as append-only
 audit metadata — so `heads` is an **audit/replication cursor** ("which of your op
 records do I already hold"), never a state-causality signal. All
 state-reset decisions are made from Loro VVs:

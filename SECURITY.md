@@ -147,7 +147,7 @@ A malicious dependency that reaches a build runs inside the WebView with the app
 
 Each accepted finding lives in exactly one canonical file. Do not duplicate the lists here — update the source and the rationale travels with it.
 
-- **npm advisories** — [`.nsprc`](.nsprc). There are currently no npm waivers: the file is an empty object so every advisory fails closed. If a future exception is unavoidable, it must carry an `expiresOn` no more than 90 days out to force periodic re-triage.
+- **npm advisories** — [`.nsprc`](.nsprc). A waiver is an entry keyed by advisory id, with `notes` and an `expiry` date (the field `better-npm-audit` reads) no more than 90 days out, to force periodic re-triage; an advisory with no entry fails closed.
 - **Cargo advisories** — [`src-tauri/deny.toml`](src-tauri/deny.toml) `[advisories].ignore`. Every entry is confirmed against the full target-agnostic lockfile view used by `cargo audit`; most are Tauri-transitive GTK3 / unic / paste / proc-macro-error notices that cannot be removed without dropping Linux support, with a smaller Loro-transitive set blocked on its pinned upstream stack. Add an entry only with a `reason =` that names the upstream blocker. A target-pruned `cargo deny` `advisory-not-detected` warning alone does not make an entry stale; remove it only when the full-lockfile audit no longer finds it.
 - **Zizmor workflow findings** — [`.github/zizmor.yml`](.github/zizmor.yml). Every release publishing lane is cache-free. In particular, the three dependency-building/generating jobs — `build-and-release`, `android-build-and-release`, and `generate-vex` — neither restore nor save Rust/npm caches. The `cache-poisoning` baseline now contains only four cache sites in `ci.yml`; the single-user, no-adversarial-peers threat model explains that interim posture. `unpinned-uses` is enforced (no baseline entries); every action is pinned to a 40-char SHA and bumped weekly by Dependabot.
 
@@ -165,7 +165,7 @@ Each item below names the file or tool that enforces it. If you change one, upda
 - **Dependency cooldowns** — Dependabot waits 7 days after publish before proposing an update for every ecosystem (`cooldown` in [`.github/dependabot.yml`](.github/dependabot.yml)), and `.npmrc` sets `min-release-age=7` so a local `npm install` / `npm update` cannot resolve a version younger than 7 days either. `npm ci` installs the lockfile's exact versions and is unaffected.
 - **npm 12 floor** — `engines.npm` requires npm 12 (a deliberate floor, for its supply-chain controls) and `packageManager` pins the exact version every installer reads (`scripts/require-npm.sh`).
 - **Gradle wrapper checksum** — `scripts/patch-android-build.sh` sets `distributionSha256Sum` on the generated wrapper from Gradle's published checksum and fails if the Gradle version changes without a matching one.
-- **`better-npm-audit` against `.nsprc`** — `npm-audit` prek hook (`prek.toml`) fails on any advisory not listed in `.nsprc`. The 90-day `expiresOn` ensures waivers do not become permanent.
+- **`better-npm-audit` against `.nsprc`** — `npm-audit` prek hook (`prek.toml`) fails on any advisory not listed in `.nsprc`. The 90-day `expiry` ensures waivers do not become permanent.
 - **`gitleaks` + `detect-private-key`** — `prek.toml` blocks committed secrets and stray PEM blocks.
 - **`unsafe_code = "deny"`** — crate-wide lint in `src-tauri/Cargo.toml`. New `unsafe { … }` blocks fail CI.
 - **`zizmor`** — workflow-security linter; baseline in `.github/zizmor.yml`, see Accepted risks above.
