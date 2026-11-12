@@ -9,7 +9,7 @@
 import type { Command } from '@tiptap/pm/state'
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
-import { Minus } from 'lucide-react'
+import { Minus, X } from 'lucide-react'
 import type React from 'react'
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -79,6 +79,18 @@ import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
 import { cn } from '@/lib/utils'
 
 const SAVE = 'action.save'
+/** The buffer's Cancel, its own: the block editor's toolbar has no discard (#6541). */
+const CANCEL = 'toolbar.discard'
+const CANCEL_BUTTON: ToolbarButtonConfig = {
+  icon: X,
+  label: CANCEL,
+  tip: 'toolbar.discardTip',
+  priority: 30,
+  action: () => undefined,
+}
+const OWN_ACTIONS: Readonly<Record<string, (context: SourceToolbarContext) => void>> = {
+  [CANCEL]: ({ cancel }) => cancel(),
+}
 
 export interface PageSourceToolbarProps {
   editor: Editor
@@ -105,15 +117,16 @@ function sourceItems(groups: ToolbarItemGroups, isTouch: boolean): ToolbarItem[]
     (item) =>
       item.kind === 'separator' ||
       item.key in SOURCE_TOOLBAR_ACTIONS ||
-      SOURCE_TOOLBAR_MENUS.has(item.key),
+      SOURCE_TOOLBAR_MENUS.has(item.key) ||
+      item.key === CANCEL,
   )
   // On a phone, Cancel is the buffer's discard and stays on the bar beside Save,
   // and so does New line, the one line break a phone's keyboard cannot type.
   // `buildToolbarItems` builds the items afresh, so they are this call's to change.
   if (isTouch) {
     for (const item of shown) {
-      if (item.key === 'toolbar.discard') item.group = 4
-      if (item.key === 'toolbar.discard' || item.key === 'toolbar.newLine') item.priority = 100
+      if (item.key === CANCEL) item.group = 4
+      if (item.key === CANCEL || item.key === 'toolbar.newLine') item.priority = 100
     }
   }
   const ordered = [
@@ -179,13 +192,14 @@ export function PageSourceToolbar({
     const swap = (configs: ToolbarButtonConfig[]) =>
       configs.map((config) => ({
         ...config,
-        action: () => SOURCE_TOOLBAR_ACTIONS[config.label]?.(latest.current()),
+        action: () =>
+          (SOURCE_TOOLBAR_ACTIONS[config.label] ?? OWN_ACTIONS[config.label])?.(latest.current()),
       }))
     return {
       refsAndBlocks: swap(createRefsAndBlocks(editor)),
       structureButtons: swap(createStructureButtons(editor)),
       metadataButtons: swap(createMetadataButtons()),
-      historyButtons: swap(createHistoryButtons(editor)),
+      historyButtons: swap([...createHistoryButtons(editor), CANCEL_BUTTON]),
     }
   }, [editor])
   const configByKey = useMemo(() => buildConfigByKey(groups), [groups])
@@ -286,7 +300,7 @@ export function PageSourceToolbar({
         )
       }
       default: {
-        if (isTouch && item.key === 'toolbar.discard') {
+        if (isTouch && item.key === CANCEL) {
           return (
             <Button
               variant="outline"

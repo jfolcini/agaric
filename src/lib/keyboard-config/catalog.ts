@@ -425,21 +425,13 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.withSelection',
   },
 
-  // Undo/Redo
-  //
-  // #2941 — condition is `outsideEditorInPage`, not the generic
-  // `outsideEditor`: this pair only performs a real undo/redo while
-  // viewing a page (page-editor). In Journal view (the default landing
-  // view) it can't resolve which day's page to target — weekly/monthly
-  // render many day-pages at once with no tracked "last touched" day — so
-  // it surfaces a toast pointing at per-block History instead of silently
-  // doing nothing.
+  // Undo/Redo — on the open page, or in the journal the day last worked in (#6541)
   {
     id: 'undoLastPageOp',
     keys: 'Ctrl + Z',
     category: 'keyboard.category.undoRedo',
     description: 'keyboard.undoLastPageOp',
-    condition: 'keyboard.condition.outsideEditorInPage',
+    condition: 'keyboard.condition.outsideEditor',
   },
   {
     // `Ctrl + Shift + Z` is the Linux/Windows redo convention; both
@@ -450,7 +442,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     keys: 'Ctrl + Y / Ctrl + Shift + Z',
     category: 'keyboard.category.undoRedo',
     description: 'keyboard.redoLastUndoneOp',
-    condition: 'keyboard.condition.outsideEditorInPage',
+    condition: 'keyboard.condition.outsideEditor',
   },
 
   // List Selection (shared by Trash View & History View)

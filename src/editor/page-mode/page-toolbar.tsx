@@ -65,7 +65,6 @@ export interface PageToolbarActions {
   command: (item: PickerItem) => void
 }
 
-const HIDDEN = new Set(['toolbar.discard'])
 const TIPS = { 'toolbar.todoToggle': 'pageMode.todoToggleTip' }
 
 const ITEMS = new Map(
@@ -171,7 +170,6 @@ export function PageToolbar({
         for (const id of selectedBlocks(editor)) actions.current.setListStyle(id, 'none')
       }}
       tips={TIPS}
-      hiddenItems={HIDDEN}
       className="sticky -top-4 z-10 bg-background md:-top-6"
       blockMenu={
         isTouch

@@ -446,7 +446,7 @@ export function createReducers({
         // #5246 — chips pointing into the removed subtree render deleted.
         useResolveStore.getState().markDeleted(spaceId, [...removedIds, ...resp.affected_page_ids])
         // Focus/selection cleanup is the caller's responsibility — all current
-        // callers (handleDeleteBlock, handleMerge*, handleDiscard, BlockTree
+        // callers (handleDeleteBlock, handleMerge*, BlockTree
         // empty-block cleanup) explicitly manage focus after remove() resolves.
         notifyUndoNewAction(rootParentId, resp.op_refs, undefined, { undoable })
       } catch (err) {

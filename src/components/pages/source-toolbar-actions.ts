@@ -71,7 +71,6 @@ export const SOURCE_TOOLBAR_ACTIONS: Readonly<Record<string, SourceToolbarAction
   },
   'toolbar.undo': ({ editor }) => editor.chain().focus().undo().run(),
   'toolbar.redo': ({ editor }) => editor.chain().focus().redo().run(),
-  'toolbar.discard': ({ cancel }) => cancel(),
 }
 
 /** The toolbar's popovers the buffer shows, with its own content: Format's marks, Turn into's block types. */

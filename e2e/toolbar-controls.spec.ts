@@ -17,7 +17,7 @@
  *
  * Toolbar accessible names (from `toolbar.ts`):
  *   Block reference | Cycle priority | Set due date | Set scheduled date |
- *   Toggle TODO state | Properties | Discard changes | Heading level |
+ *   Toggle TODO state | Properties | Heading level |
  *   Code block language | Insert table | Table.
  *
  * Char-0 footgun: any selection-based action marks a MIDDLE word so the
@@ -36,6 +36,8 @@ import {
   activeSheet,
   expect,
   focusBlock,
+  focusBlockById,
+  ipc,
   openPage,
   reopenPage,
   saveBlock,
@@ -110,27 +112,27 @@ test.describe('Always-visible toolbar buttons (#1170) @editor', () => {
     await expect(sheet.getByText('Block Properties')).toBeVisible()
   })
 
-  test('Discard changes button discards the in-progress block edit', async ({ page }) => {
-    const editor = await focusBlock(page)
-    const originalText = (await editor.textContent()) ?? ''
-    expect(originalText.length).toBeGreaterThan(0)
+  test('the toolbar has no Discard: Ctrl+Z takes back typing, saved or not (#6541)', async ({
+    page,
+  }) => {
+    const editor = await focusBlockById(page, BLOCK_GS_1)
+    const original = (await editor.textContent()) ?? ''
+    expect(original.length).toBeGreaterThan(0)
+    const stored = async () =>
+      (await ipc<{ content: string }>(page, 'get_block', { blockId: BLOCK_GS_1 })).content
 
-    // Type extra text WITHOUT saving, then discard.
     await page.keyboard.press('End')
-    await editor.pressSequentially(' DISCARD_ME')
-    await expect(editor).toContainText('DISCARD_ME')
+    await page.keyboard.type(' MANGLED-A')
+    // The debounced commit has saved the first run before the second is typed.
+    await expect.poll(stored).toBe(`${original} MANGLED-A`)
+    await page.keyboard.type(' MANGLED-B')
+    await expect(page.getByRole('button', { name: 'Discard changes' })).toHaveCount(0)
 
-    await page.getByRole('button', { name: 'Discard changes' }).click()
-
-    // The editor unmounts (edit cancelled) and the block reverts to its
-    // original static content — the typed text never lands.
-    const firstStatic = page
-      .locator('[data-testid="sortable-block"]')
-      .first()
-      .locator('[data-testid="block-static"]')
-    await expect(firstStatic).toBeVisible()
-    await expect(firstStatic).not.toContainText('DISCARD_ME')
-    await expect(firstStatic).toHaveText(originalText)
+    await page.keyboard.press('Control+z')
+    await page.keyboard.press('Control+z')
+    await expect(editor).toHaveText(original)
+    await saveBlock(page, 'Escape')
+    await expect.poll(stored).toBe(original)
   })
 })
 

@@ -1051,7 +1051,6 @@ export function BlockTree({
     handleMergeById,
     handleEnterSave,
     handleEscapeSave,
-    handleDiscard,
   } = useBlockActionOrchestration({
     focusedBlockId,
     // #3251 — the hook's document-order neighbour lookups (focus-prev/next,
@@ -1232,7 +1231,6 @@ export function BlockTree({
   useBlockTreeEventListeners({
     focusedBlockId,
     rootParentId,
-    handleDiscard,
     handleToggleTodo,
     handleTogglePriority,
     handleShowProperties,

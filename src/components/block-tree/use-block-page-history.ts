@@ -7,9 +7,7 @@
  * the undo because a reload keeps the focused block's old text, then the
  * editor goes back on the same block with its reloaded text, or, when the
  * undo removed that block, on the row above it (the one Enter came from).
- *
- * Page editor only: the journal's undo is a later stage, so there the press
- * goes on to ProseMirror as before.
+ * The page is the tree's own, so in the journal it is the block's day (#6541).
  */
 
 import type { RefObject } from 'react'
@@ -18,7 +16,6 @@ import { useCallback } from 'react'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { performPageRedo, performPageUndo, runBlockPageHistory } from '@/hooks/useUndoShortcuts'
 import { useBlockStore } from '@/stores/blocks'
-import { useNavigationStore } from '@/stores/navigation'
 import type { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { runUnmountFlush } from '@/stores/unmount-flush'
 
@@ -86,7 +83,6 @@ export function useBlockPageHistory({
       const handle = rovingEditorRef.current
       const blockId = handle?.activeBlockId
       if (!handle || !blockId || !rootParentId) return false
-      if (useNavigationStore.getState().currentView !== 'page-editor') return false
       runBlockPageHistory(() => run(handle, blockId, rootParentId, direction === 'redo'))
       return true
     },
