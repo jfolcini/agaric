@@ -48,6 +48,22 @@ function caretAt(x: number, y: number): { node: Node; offset: number } | null {
 }
 
 /**
+ * Whitespace that ends a text node and takes no room (a block's trailing space,
+ * collapsed by the render) cannot be clicked past, so a click beyond it reads
+ * before it; the point moves past it.
+ */
+function pastCollapsedSpace(at: { node: Node; offset: number }): { node: Node; offset: number } {
+  const { node, offset } = at
+  if (node.nodeType !== Node.TEXT_NODE) return at
+  const length = (node as Text).length
+  if (offset >= length || (node as Text).data.slice(offset).trim() !== '') return at
+  const rest = document.createRange()
+  rest.setStart(node, offset)
+  rest.setEnd(node, length)
+  return rest.getBoundingClientRect().width === 0 ? { node, offset: length } : at
+}
+
+/**
  * The point in `content`'s text at DOM point `at` inside `root`, its static
  * render; `null` when no text of the render matches the document's.
  */
@@ -122,7 +138,7 @@ export function textPointAtClick(
 ): TextPoint | null {
   const at = caretAt(x, y)
   if (at === null || !root.contains(at.node)) return null
-  return textPointAt(root, content, at)
+  return textPointAt(root, content, pastCollapsedSpace(at))
 }
 
 /**

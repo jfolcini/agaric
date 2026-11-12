@@ -131,6 +131,21 @@ test.describe('a click into a block puts the caret where it landed (#6562) @edit
     await expect.poll(() => contentOf(page, id)).toBe(`${ending}Q`)
   })
 
+  test('a click past a trailing space the render collapses types after the space', async ({
+    page,
+  }) => {
+    const trailing = 'step one '
+    const [id] = (await seedPage(page, 'Trailing space', [trailing])) as [string]
+    await openPage(page, 'Trailing space')
+    const box = await staticBlock(page, id).boundingBox()
+    if (!box) throw new Error('the block has no layout box')
+    await page.mouse.click(box.x + box.width - 6, box.y + box.height - 2)
+    await settleEditor(page)
+    await page.keyboard.insertText('Q')
+    await page.keyboard.press('Escape')
+    await expect.poll(() => contentOf(page, id)).toBe(`${trailing}Q`)
+  })
+
   test('the clicked caret survives navigating away and back', async ({ page }) => {
     const [plain] = (await seedPage(page, 'Durable caret', [PLAIN])) as [string]
     await openPage(page, 'Durable caret')
