@@ -2,7 +2,7 @@
 # Provision the local sqlx offline-check database.
 #
 # The pre-push verifier (`scripts/verify-ci-equivalent.sh`, Phase E) runs
-# `cargo sqlx prepare --check` whenever a push touches Rust — and that CONNECTS
+# `cargo sqlx prepare --check` when a push can change a query — and that CONNECTS
 # to the DB named by `DATABASE_URL` (src-tauri/.env → `sqlite:dev.db`). On a
 # fresh clone `setup.sh` writes that .env but the DB file does not exist yet, so
 # the check errors and the push gets bounced toward `git push --no-verify`.

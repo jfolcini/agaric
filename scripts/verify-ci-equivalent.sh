@@ -26,9 +26,14 @@
 #                 --range REVSPEC` (same scripts the pre-commit hooks use,
 #                 just with a different diff source).
 #
-#   Phase E — `cargo sqlx prepare --workspace --check` if any .rs changed in
-#             range, against the committed `src-tauri/.sqlx` cache — mirrors
-#             the `lint` job's `scripts/clippy-sqlx-check.sh`.
+#   Phase E — `cargo sqlx prepare --workspace --check` against the committed
+#             `src-tauri/.sqlx` cache — mirrors the `lint` job's
+#             `scripts/clippy-sqlx-check.sh`. Only when the range can have
+#             changed a query: `scripts/lib/sqlx-query-range.mjs` runs it for
+#             a `.rs` hunk overlapping a query macro, a `.sql` / `.sqlx/` /
+#             Cargo manifest / `sqlx.toml` path, or a `macro_rules!` that
+#             wraps a query macro, and on any doubt; `PRE_PUSH_SQLX_CHECK=1`
+#             forces it.
 #
 #   Phase F — `agaric-mcp` release build + MCP UDS smoke + externalBin
 #             host-triple verify. **Only when MCP paths change**
@@ -92,6 +97,34 @@ sqlx_probe_dir_new() {
 sqlx_probe_dir_cleanup() {
     [ -n "${1:-}" ] && rm -rf "$1"
     return 0
+}
+
+# ── Phase E gate (#6560) ───────────────────────────────────────────
+# Prints `skip` or `run: <reason>`. Args: <forced> <changed_ok> <helper
+# command…>. Only the helper exiting 0 with exactly `skip` skips; a
+# failure, or any other output, runs Phase E.
+# Defined up here so `--self-test` below can drive it directly.
+sqlx_gate_verdict() {
+    local forced="$1" changed_ok="$2" out rc
+    shift 2
+    if [ "$forced" = "1" ]; then
+        echo "run: PRE_PUSH_SQLX_CHECK=1"
+        return
+    fi
+    if [ "$changed_ok" != "1" ]; then
+        echo "run: the changed-file set could not be computed"
+        return
+    fi
+    out="$("$@")" && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "run: $* exited $rc"
+    elif [ "$out" = "skip" ]; then
+        echo "skip"
+    elif [[ "$out" == "run: "* && "$out" != *$'\n'* ]]; then
+        echo "$out"
+    else
+        echo "run: unrecognised output from $*"
+    fi
 }
 
 # ── MCP change classifier (#4419) ──────────────────────────────────
@@ -2007,6 +2040,23 @@ db.close()
         st_bad "the pre-push hooks run before the first test phase" "$st_out"
     fi
 
+    # 62. Phase E gate (#6560): only the helper's exact `skip` skips.
+    st_sqlx() {  # <expected: skip|run> <label> <forced> <changed_ok> <helper…>
+        local want="$1" label="$2" got
+        shift 2
+        got="$(sqlx_gate_verdict "$@" 2>/dev/null)"
+        if [ "${got%%:*}" = "$want" ]; then
+            st_ok "Phase E gate: $label"
+        else
+            st_bad "Phase E gate: $label" "verdict '$got', expected $want"
+        fi
+    }
+    st_sqlx skip 'the helper printing exactly skip skips' 0 1 printf 'skip\n'
+    st_sqlx run 'PRE_PUSH_SQLX_CHECK=1 runs despite a skip' 1 1 printf 'skip\n'
+    st_sqlx run 'an uncomputable changed-file set runs' 0 0 printf 'skip\n'
+    st_sqlx run 'a helper exiting non-zero runs' 0 1 sh -c 'echo skip; exit 1'
+    st_sqlx run 'garbage helper output runs' 0 1 printf 'skipped\n'
+
     if [ "$st_fail" != 0 ]; then
         echo "verify-ci-equivalent self-test FAILED" >&2
         exit 2
@@ -2418,7 +2468,7 @@ if [ "$HAS_RS" = "1" ]; then
     fi
 fi
 
-# ── Phase E: cargo sqlx prepare --check (only if Rust changed) ─────
+# ── Phase E: cargo sqlx prepare --check (only if a query can change) ─
 #
 # Checks the same `src-tauri/.sqlx` cache as CI's `scripts/clippy-sqlx-check.sh`.
 # `--workspace` on both sides, as in `just gen-sqlx`: without it only the
@@ -2431,10 +2481,25 @@ fi
 # `DATABASE_URL=sqlite:dev.db` directly, which collided across concurrent
 # worktree pushes sharing that file and meant a failed/interrupted run could
 # leave the developer's dev.db migrated to a branch's schema they aren't on.
+#
+# Skipped when `scripts/lib/sqlx-query-range.mjs` finds no query macro, `.sql`,
+# `.sqlx` or Cargo manifest touched in the range (#6560): the check costs a
+# whole-workspace recompile, and CI's `lint` job still runs it.
 
+SQLX_SKIPPED=0
 if [ "$HAS_RS" = "1" ]; then
+    SQLX_GATE="$(sqlx_gate_verdict "${PRE_PUSH_SQLX_CHECK:-0}" "$CHANGED_OK" \
+        node scripts/lib/sqlx-query-range.mjs "$RANGE_BASE" HEAD)"
+    if [ "$SQLX_GATE" = "skip" ]; then
+        SQLX_SKIPPED=1
+        echo ""
+        echo "→ Phase E skipped: no query macro, .sql, .sqlx or Cargo manifest change in '$RANGE_BASE..HEAD' (force: PRE_PUSH_SQLX_CHECK=1)"
+    fi
+fi
+
+if [ "$HAS_RS" = "1" ] && [ "$SQLX_SKIPPED" = "0" ]; then
     echo ""
-    echo "→ Phase E: cargo sqlx prepare --workspace --check"
+    echo "→ Phase E: cargo sqlx prepare --workspace --check (${SQLX_GATE#run: })"
 
     # #3257 / #3361 — per-invocation probe dir. The trap also covers the
     # `exit 1` path at the end of this phase; no other EXIT trap exists in
@@ -2538,5 +2603,6 @@ if [ "$NOT_CI_EQUIVALENT" = "1" ]; then
     echo "  ⚠ NOT CI-equivalent: caller SKIP omitted these Phase A hooks: $CALLER_SKIP_EXTRA"
 fi
 [ "$HAS_MCP" = "0" ] && echo "  (MCP build skipped — no MCP paths in range; CI will run the full check)"
+[ "$SQLX_SKIPPED" = "1" ] && echo "  (sqlx cache check skipped — no query change in range; CI's lint job runs it; force with PRE_PUSH_SQLX_CHECK=1)"
 echo "  (Playwright skipped — CI runs it when the diff can affect it; run \`npx playwright test\` locally if needed)"
 echo "  (release bundle build: run scripts/verify-release-build.sh manually before tagging)"
