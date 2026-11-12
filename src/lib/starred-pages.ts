@@ -21,6 +21,7 @@
 import { isNotFound, isValidation, unwrap } from '@/lib/app-error'
 import { type BlockRow, commands, type PageResponse } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import { queryClient } from '@/lib/query-client'
 import { PAGINATION_MAX, paginationLimit } from '@/lib/safe-limit'
@@ -41,9 +42,18 @@ export function bookmarksQueryKey(spaceId: string): readonly [string, string] {
 }
 
 /** Re-read every space's bookmarks, after a write that did not go through `useStarredPages`. */
-export function invalidateBookmarks(): void {
+function invalidateBookmarks(): void {
   void queryClient.invalidateQueries({ queryKey: [BOOKMARKS_QUERY_ROOT] })
 }
+
+// The signal for writes no event names: a sync, an MCP write, an import, an
+// undo (all through `invalidateDerivedCaches`) and a restore from the trash,
+// which brings back a bookmarked page the list left out while it was trashed
+// (#5293). Subscribed here, not per hook, so a list no surface shows (the
+// phone's closed sidebar) is still re-read when it next mounts.
+subscribeToNameChanges((change) => {
+  if (change.kind === 'invalidated') invalidateBookmarks()
+})
 
 /** A bookmark's number: `value_num`, or the text an import writes it as. */
 function bookmarkOrder(row: { value_num: number | null; value_text: string | null }): number {

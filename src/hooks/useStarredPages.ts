@@ -9,8 +9,9 @@
  * header, the Pages browser, the command palette and the sidebar stay in step
  * without a store. A write updates that query at once and then reaches the
  * backend; a failed write re-reads what the backend holds. A change that
- * arrives some other way (sync, MCP, import, undo) is re-read through
- * `invalidateDerivedCaches`.
+ * arrives some other way (sync, MCP, import, undo, a restore from the trash)
+ * is re-read through `invalidateNameCaches`, which `invalidateDerivedCaches`
+ * calls.
  */
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'

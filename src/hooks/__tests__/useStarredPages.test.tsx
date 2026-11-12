@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { useStarredPages } from '@/hooks/useStarredPages'
+import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { queryClient } from '@/lib/query-client'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
@@ -206,6 +207,22 @@ describe('useStarredPages', () => {
     act(() => invalidateDerivedCaches())
 
     await waitFor(() => expect(result.current.isStarred(MEET)).toBe(true))
+  })
+
+  /** #5293 — a trashed page keeps its bookmark, so a restore must list it again. */
+  it('lists a bookmarked page again once a restore from the trash says pages came back', async () => {
+    seedBookmark(QN, { num: 1 })
+    const page = blocks.get(QN)
+    if (page) page['deleted_at'] = '2026-11-01T00:00:00Z'
+    const { result } = renderHook(() => useStarredPages())
+    await waitFor(() => expect(result.current.loaded).toBe(true))
+    expect(result.current.isStarred(QN)).toBe(false)
+
+    // What every restore path does once the restore commits.
+    if (page) page['deleted_at'] = null
+    act(() => invalidateNameCaches())
+
+    await waitFor(() => expect(result.current.isStarred(QN)).toBe(true))
   })
 
   it('a failed write puts back what the backend holds', async () => {

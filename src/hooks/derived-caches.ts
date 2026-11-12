@@ -17,7 +17,6 @@ import { invalidateCalendarPageDates } from '@/lib/calendar-page-dates-cache'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
-import { invalidateBookmarks } from '@/lib/starred-pages'
 
 export function invalidateDerivedCaches(): void {
   // Links: the Graph, the references panels and query blocks.
@@ -26,13 +25,12 @@ export function invalidateDerivedCaches(): void {
   recordBlockPropertyChange()
   // Property key and value lists, and the open page's own properties.
   invalidatePropertyCaches()
-  // Page and tag names: the `[[` and `#` pickers, tag views.
+  // Page and tag names: the `[[` and `#` pickers, tag views, and the bookmark
+  // list (`src/lib/starred-pages.ts`).
   invalidateNameCaches()
   // Attachment lists and badges, which re-read only on this signal.
   recordAttachmentInvalidation()
   // The Pages list, and the journal's day-to-page map.
   invalidatePageBrowserData()
   invalidateCalendarPageDates()
-  // The bookmark list, a `bookmark` property a peer or an agent can write.
-  invalidateBookmarks()
 }
