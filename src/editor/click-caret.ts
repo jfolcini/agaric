@@ -12,8 +12,8 @@
  * nothing. Chips and block boundaries take no characters, so `bias` says which
  * side of one the click was on: a click at the start of uncounted text (the
  * left edge of a chip) is before it, any other after it. A chip label that
- * begins the text run after it is taken for that run, which misplaces a click
- * on the run.
+ * begins the text run after it, or is a whole later run, is taken for that
+ * run; a click on the text it skips then lands after it or at the end.
  */
 
 import type { Node as PMNode } from '@tiptap/pm/model'
@@ -68,10 +68,12 @@ export function textPointAt(
   /**
    * Where `data` sits in the text runs: it continues the current run, which a
    * highlighted code block splits over nodes, or is a whole later one, when
-   * the render leaves runs out (a diagram's source).
+   * the render leaves runs out (a diagram's source). Whitespace alone never
+   * opens a run: it is the space between paragraphs or after a link, and
+   * taking it for a run's leading space loses the rest of that run.
    */
   const match = (data: string): number | null => {
-    if (data === '' || run >= runs.length) return null
+    if (data === '' || run >= runs.length || (inRun === 0 && data.trim() === '')) return null
     let found = -1
     if ((runs[run] as string).startsWith(data, inRun)) found = run
     else if (inRun === 0) found = runs.indexOf(data, run + 1)

@@ -119,6 +119,12 @@ describe('a click on the static render maps into the editor document (#6562)', (
     expect(clickIn(content, ' ', 1)).toBe('first para\n\nQsecond para')
   })
 
+  it('after a link, and in a later paragraph that opens with a chip', () => {
+    expect(clickIn('see [docs](https://x.y) now', ' now', 2)).toBe('see [docs](https://x.y) nQow')
+    const content = `intro\n\n#[${TAG}] some text`
+    expect(clickIn(content, ' some text', 3)).toBe(`intro\n\n#[${TAG}] soQme text`)
+  })
+
   it('at the start of a table cell and the end of the one before it', () => {
     expect(clickIn(TABLE, 'two', 0)).toBe('| A | B |\n| --- | --- |\n| one | Qtwo |')
     expect(clickIn(TABLE, 'one', 3)).toBe('| A | B |\n| --- | --- |\n| oneQ | two |')
