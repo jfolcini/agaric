@@ -24,6 +24,8 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 | `Ctrl+Shift+←` | Dedent block |
 | `Ctrl+Shift+↑` | Move block up |
 | `Ctrl+Shift+↓` | Move block down |
+| `Alt+Shift+↑` / `Alt+Shift+↓` (in a table) | Move the cursor's table row up / down; the header row stays first |
+| `Alt+Shift+←` / `Alt+Shift+→` (in a table) | Move the cursor's table column left / right. On macOS these four stay the system's selection keys (Option+Shift+arrows), so move from the Table menu or by dragging, or rebind them |
 | `Tab` / `Shift+Tab` | Indent / dedent the focused block. On by default; turn it off with *Tab indents blocks* in Settings → Editor to get plain focus navigation back. Suppressed while a picker popup is open |
 | `Ctrl+.` | Collapse / expand block children |
 | `Alt+.` | Zoom in to the focused block |

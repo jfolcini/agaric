@@ -132,6 +132,35 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.editing',
     description: 'keyboard.moveBlockDown',
   },
+  // #6607 — in a table cell, the caret's row or column (`TableMoveKeys`).
+  {
+    id: 'moveTableRowUp',
+    keys: 'Alt + Shift + Arrow Up',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.moveTableRowUp',
+    condition: 'keyboard.condition.inTable',
+  },
+  {
+    id: 'moveTableRowDown',
+    keys: 'Alt + Shift + Arrow Down',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.moveTableRowDown',
+    condition: 'keyboard.condition.inTable',
+  },
+  {
+    id: 'moveTableColumnLeft',
+    keys: 'Alt + Shift + Arrow Left',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.moveTableColumnLeft',
+    condition: 'keyboard.condition.inTable',
+  },
+  {
+    id: 'moveTableColumnRight',
+    keys: 'Alt + Shift + Arrow Right',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.moveTableColumnRight',
+    condition: 'keyboard.condition.inTable',
+  },
   {
     // Documentation-only: TipTap's built-in hard-break keymap.
     id: 'insertLineBreak',

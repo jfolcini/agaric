@@ -315,6 +315,25 @@ describe('the slash menu', () => {
   })
 })
 
+/** The chords that act on a table's row or column (`TableMoveKeys`): asked with the caret in a cell. */
+const TABLE_CHORDS = new Set([
+  'moveTableRowUp',
+  'moveTableRowDown',
+  'moveTableColumnLeft',
+  'moveTableColumnRight',
+])
+
+/** Put the caret in the paragraph whose text is `text`. */
+function caretInText(editor: Editor, text: string): void {
+  let at = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (at === -1 && node.type.name === 'paragraph' && node.textContent === text) at = pos + 1
+    return at === -1
+  })
+  expect(at, `no paragraph holds ${text}`).toBeGreaterThan(0)
+  editor.commands.setTextSelection(at)
+}
+
 describe('the block editor’s chords', () => {
   const chords = DEFAULT_SHORTCUTS.filter(
     (shortcut) => shortcut.rebindable !== false && EDITOR_CHORD_CATEGORIES.has(shortcut.category),
@@ -332,9 +351,14 @@ describe('the block editor’s chords', () => {
     '%s (%s) is answered in page mode, or names why not',
     (id, keys) => {
       // The caret beside a page link, in a saved block with a block under it: where every chord acts.
+      const inTable = TABLE_CHORDS.has(id)
       const rows: Row[] = [
         [blockId(1), 0, 'first'],
-        [blockId(2), 0, `[[${blockId(9)}]] second`],
+        [
+          blockId(2),
+          0,
+          inTable ? '| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |' : `[[${blockId(9)}]] second`,
+        ],
         [blockId(3), 1, 'third'],
       ]
       const lists = new PageLists(
@@ -344,7 +368,8 @@ describe('the block editor’s chords', () => {
       )
       const editor = openPage(rows, idMinter(), undefined, listSource(lists), new FakeTasks())
       editors.push(editor)
-      caret(editor, 1, 1)
+      if (inTable) caretInText(editor, '3')
+      else caret(editor, 1, 1)
       expect(press(editor, ...chordEvent(keys)) || CHORD_NOT_IN_PAGE_MODE[id] !== undefined).toBe(
         true,
       )

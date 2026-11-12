@@ -7,7 +7,8 @@
  * Each action is block mode's, with its words and icon:
  * - Link: the URL; External link (`LinkEditPopover`, as Ctrl+K opens it), Open link (the
  *   block menu's) and Remove (the popover's).
- * - Table: the toolbar's Table button and its unchanged `TableOpsSelector`.
+ * - Table: the toolbar's Table button and its `TableOpsSelector`, beside the table's own
+ *   handles (`TableHandles`, shared with block mode).
  * - Code block: the toolbar's language picker (`CodeLanguageSelector`), and Copy, which
  *   is new.
  * - Image: `ImageBubbleMenu`, shared with block mode.
@@ -29,6 +30,7 @@ import { useTranslation } from 'react-i18next'
 
 import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSelector'
 import { ImageBubbleMenu } from '@/components/editor-toolbar/ImageBubbleMenu'
+import { TableHandles } from '@/components/editor-toolbar/TableHandles'
 import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { bubbleMenuClass, withShortcutHint } from '@/components/FormattingToolbar/toolbar-config'
 import { TableOpsSelector } from '@/components/TableOpsSelector'
@@ -378,6 +380,7 @@ export function PageBubbleMenus({ editor }: { editor: Editor }): React.ReactElem
       <PageTableBubble editor={editor} />
       <PageCodeBubble editor={editor} />
       <ImageBubbleMenu editor={editor} />
+      <TableHandles editor={editor} />
     </>
   )
 }
