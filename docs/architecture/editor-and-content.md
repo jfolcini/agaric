@@ -165,7 +165,7 @@ Edge cases the contract acknowledges:
 Two hooks with similar names; the split matters:
 
 - `src/editor/use-block-keyboard.ts` — attaches a capture-phase DOM listener on `editor.view.dom.parentElement`. It pre-empts ProseMirror for keys that must fire before the editor (Enter to split, Backspace at start to merge, indent/dedent).
-- `src/components/block-tree/use-block-action-orchestration.ts` — the high-level action handlers (`handleEnterSave`, `handleDeleteBlock`, …). Re-entrancy refs (`enterSaveInProgress`, `deleteInProgress`) guard against double-fire from rapid keystrokes.
+- `src/components/block-tree/use-block-action-orchestration.ts` — the high-level action handlers (`handleEnterSave`, `handleDeleteBlock`, …). Re-entrancy refs (`deleteInProgress`, `mergeInProgress`) guard against double-fire from rapid keystrokes. Enter is not one: it focuses the block it creates before `create_block` answers, so a second Enter runs on that block at once, and the page store holds a write to a block until its create answers (#6559).
 
 Suggestion-popup passthrough: when a picker is visible, `Enter / Tab / Escape / Backspace` go to the picker, not the block handler. The block handler checks `isSuggestionPopupVisible()` before processing.
 

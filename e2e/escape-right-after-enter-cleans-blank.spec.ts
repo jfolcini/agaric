@@ -4,11 +4,10 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
  * Escape pressed right after Enter leaves no blank block behind.
  *
  * On the real backend Escape can land while Enter's `create_block` is still in
- * flight: it acts on the source block and clears focus. Once the create
- * answered, Enter used to focus the new blank block anyway, so the editor came
- * back after Escape and no later focus change ever left the block for the
- * empty-block cleanup. The mock answers synchronously, so the create is held
- * test-side until Escape has landed.
+ * flight. Enter has focused the new blank block by then, so Escape leaves it
+ * and the empty-block cleanup drops it once the create answers. The mock
+ * answers synchronously, so the create is held test-side until Escape has
+ * landed.
  */
 
 type HoldWindow = Window & {

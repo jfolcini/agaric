@@ -163,6 +163,15 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
   const splitInProgress = new Set<string>()
 
   /**
+   * #6559 — the blocks whose `create_block` has not answered, each with a
+   * promise that settles when it does. Enter focuses the block it creates at
+   * once, and IPC calls are not answered in the order they were made, so a
+   * write naming such a block, and a load whose snapshot would leave it out,
+   * wait for it.
+   */
+  const createsInFlight = new Map<string, Promise<void>>()
+
+  /**
    * #774 — per-block mover serialization queue. The sibling-slot movers
    * (`moveUp`/`moveDown`/`indent`/`dedent`/`reorder`) capture their target
    * indices from `get()` state at the START of the action body, BEFORE the
@@ -256,6 +265,10 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       }
       const rootParentId = get().rootParentId
       if (rootParentId == null) return
+      // A block created but not yet in the backend would be missing from the
+      // snapshot, and read as deleted: its row dropped, the focus on it cleared.
+      // A second Enter can start another create while this waits.
+      while (createsInFlight.size > 0) await Promise.all(createsInFlight.values())
       // #753 — claim a generation (see `loadGeneration` doc above).
       const generation = ++loadGeneration
       // #6533 — what the focused editor was based on as this load started.
@@ -504,9 +517,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
 
     // #2254 — the ~13 mutation reducers moved verbatim to
     // `page-blocks-reducers.ts` (behavior-preserving). They close over this
-    // store's `set`/`get` plus the per-store `splitInProgress` guard and
-    // `enqueueMove` serializer created above.
-    ...createReducers({ set, get, splitInProgress, enqueueMove }),
+    // store's `set`/`get` plus the per-store `splitInProgress` guard,
+    // `createsInFlight` and `enqueueMove` serializer created above.
+    ...createReducers({ set, get, splitInProgress, createsInFlight, enqueueMove }),
   }))
 
   // G — escape hatch for external callers (tests, ad-hoc setState).

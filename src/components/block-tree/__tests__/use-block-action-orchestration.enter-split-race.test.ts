@@ -31,6 +31,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { deferred } from '@/__tests__/helpers/invoke'
 import { useBlockActionOrchestration } from '@/components/block-tree/use-block-action-orchestration'
 import { useBlockFlush } from '@/components/block-tree/use-block-flush'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -181,6 +182,71 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
     expect(setFocused).toHaveBeenCalledTimes(1)
     expect(setFocused).toHaveBeenCalledWith(lastSplit?.id)
   })
+
+  // The split focuses its last block only once its creates land, so the editor
+  // holds nothing meanwhile: an Enter then would split an emptied doc and add a
+  // stray empty sibling.
+  it('drops an Enter pressed while the split is still creating its blocks', async () => {
+    const bravoCreated = deferred<void>()
+    const answer = mockedInvoke.getMockImplementation()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'create_block' && (args as Record<string, unknown>)['content'] === 'bravo') {
+        await bravoCreated.promise
+      }
+      return answer?.(cmd, args)
+    })
+    const handle = makeHandle('A', 'alpha\n\nbravo\n\ncharlie')
+    const rovingRef = { current: handle as RovingEditorHandle | null }
+    const { result } = renderHook(() => {
+      const handleFlush = useBlockFlush({
+        rovingEditorRef: rovingRef,
+        edit: store.getState().edit,
+        splitBlock: store.getState().splitBlock,
+        rootParentId: 'PAGE_1',
+        pageStore: store,
+      })
+      return useBlockActionOrchestration({
+        focusedBlockId: 'A',
+        collapsedVisible: store.getState().blocks as unknown as MountedBlocks,
+        blocks: store.getState().blocks,
+        rovingEditor: handle,
+        setFocused: vi.fn(),
+        setSelected: vi.fn(),
+        handleFlush,
+        pageStore: store,
+        remove: store.getState().remove,
+        moveBlocks: store.getState().moveBlocks,
+        edit: store.getState().edit,
+        indent: store.getState().indent,
+        dedent: store.getState().dedent,
+        moveUp: store.getState().moveUp,
+        moveDown: store.getState().moveDown,
+        createBelow: store.getState().createBelow,
+        discardDraft: vi.fn(),
+        t,
+      })
+    })
+
+    let first: Promise<void> = Promise.resolve()
+    act(() => {
+      first = result.current.handleEnterSave()
+    })
+    // What the flush's unmount did to the handle.
+    ;(handle as { activeBlockId: string | null }).activeBlockId = null
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ content: '' }),
+    )
+
+    bravoCreated.resolve()
+    await act(async () => {
+      await first
+    })
+    expect(store.getState().blocks.map((b) => b.content)).toEqual(['alpha', 'bravo', 'charlie'])
+  })
 })
 
 // #5272 — the backend accepts a `[[link]]` to a block in another space only
@@ -218,7 +284,7 @@ describe('#5272 — a caret split creates the after-text before shortening the s
     const idsBefore = pageStore.getState().blocks.map((b) => b.id)
     const handle = makeHandle(BLOCK_GS_1, PRE_SPLIT)
     handle.splitAtCaret = vi.fn(() => ({ before: 'intro', after: AFTER }))
-    const setFocused = vi.fn()
+    const setFocused = vi.fn((id: string | null) => useBlockStore.getState().setFocused(id))
     const s = pageStore.getState()
     const { result } = renderHook(() =>
       useBlockActionOrchestration({
@@ -275,7 +341,7 @@ describe('#5272 — a caret split creates the after-text before shortening the s
   })
 
   it("deletes the created sibling when the source's save fails and re-mounts the full text", async () => {
-    const { pageStore, idsBefore, handle, setFocused, result } = await mountGettingStarted()
+    const { pageStore, idsBefore, handle, result } = await mountGettingStarted()
     let createdId = ''
     routeToMock(['edit_block'], (args) => {
       createdId = args['blockId'] as string
@@ -293,13 +359,13 @@ describe('#5272 — a caret split creates the after-text before shortening the s
     expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(idsBefore)
     await pageStore.getState().load()
     expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(idsBefore)
-    // The user keeps the complete text editable where they were.
-    expect(handle.mount).toHaveBeenCalledWith(BLOCK_GS_1, PRE_SPLIT)
-    expect(setFocused).not.toHaveBeenCalled()
+    // The user gets the complete text back, editable where they were.
+    expect(handle.mount).toHaveBeenLastCalledWith(BLOCK_GS_1, PRE_SPLIT)
+    expect(useBlockStore.getState().focusedBlockId).toBe(BLOCK_GS_1)
   })
 
   it('writes nothing when the create fails and re-mounts the full text', async () => {
-    const { pageStore, idsBefore, handle, setFocused, result } = await mountGettingStarted()
+    const { pageStore, idsBefore, handle, result } = await mountGettingStarted()
     const blockCount = mockBlocks.size
     routeToMock(['create_block'])
 
@@ -311,15 +377,15 @@ describe('#5272 — a caret split creates the after-text before shortening the s
     expect(mockBlocks.get(BLOCK_GS_1)?.['content']).toBe(PRE_SPLIT)
     expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(idsBefore)
     expect(pageStore.getState().blocksById.get(BLOCK_GS_1)?.content).toBe(PRE_SPLIT)
-    expect(handle.mount).toHaveBeenCalledWith(BLOCK_GS_1, PRE_SPLIT)
-    expect(setFocused).not.toHaveBeenCalled()
+    expect(handle.mount).toHaveBeenLastCalledWith(BLOCK_GS_1, PRE_SPLIT)
+    expect(useBlockStore.getState().focusedBlockId).toBe(BLOCK_GS_1)
   })
 })
 
-// Enter then a fast Tab: until Enter's create lands, focus still names the
-// block Enter left, so the chord restructured that block instead of the one
-// Enter was creating. The chord now waits for the Enter. Real store over the
-// real mock; only the create is held open, as the IPC round trip holds it.
+// Enter then a fast Tab: focus is on the block Enter creates at once, but the
+// backend does not have it until the create lands, so the chord waits for the
+// Enter and then acts on that block, not the one Enter left. Real store over
+// the real mock; only the create is held open, as the IPC round trip holds it.
 describe('a block chord pressed while Enter is creating acts on the block Enter creates', () => {
   const { BLOCK_GS_1, BLOCK_GS_2, BLOCK_GS_3, BLOCK_GS_4, BLOCK_GS_5, PAGE_GETTING_STARTED } =
     SEED_IDS
@@ -367,9 +433,9 @@ describe('a block chord pressed while Enter is creating acts on the block Enter 
         dedent: s.dedent,
         moveUp: s.moveUp,
         moveDown: s.moveDown,
-        createBelow: async (afterBlockId, content) => {
+        createBelow: async (afterBlockId, content, blockId) => {
           await createHeld
-          created = (await s.createBelow(afterBlockId, content)) ?? ''
+          created = (await s.createBelow(afterBlockId, content, blockId)) ?? ''
           return created
         },
         discardDraft: vi.fn(),
