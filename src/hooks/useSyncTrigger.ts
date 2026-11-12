@@ -205,22 +205,22 @@ async function syncOnePeerWithToast(
 }
 
 /**
- * Iterates over `peers` and attempts to sync each one, bailing out when `isMounted()`
- * returns false. Returns `true` if any peer failed.
+ * Syncs every peer at once. Returns `true` if any peer failed.
+ *
+ * #6551: at once, not one by one, because one `start_sync` wakes a daemon round
+ * with every paired peer. Every peer's channel is registered before that round
+ * starts; one by one, a later peer's session from the first round could still
+ * be running and refuse its `start_sync` as already in progress.
  */
-async function syncAllPeersSequentially(
+async function syncAllPeers(
   peers: ReadonlyArray<{ peer_id: string }>,
-  isMounted: () => boolean,
   shouldToast: () => boolean,
   awaitSession: boolean,
 ): Promise<boolean> {
-  let hadFailure = false
-  for (const peer of peers) {
-    if (!isMounted()) break
-    const ok = await syncOnePeerWithToast(peer.peer_id, shouldToast, awaitSession)
-    if (!ok) hadFailure = true
-  }
-  return hadFailure
+  const results = await Promise.all(
+    peers.map((peer) => syncOnePeerWithToast(peer.peer_id, shouldToast, awaitSession)),
+  )
+  return results.includes(false)
 }
 
 /**
@@ -307,12 +307,7 @@ export function useSyncTrigger() {
           setState('idle')
           return
         }
-        hadFailure = await syncAllPeersSequentially(
-          peers,
-          () => mountedRef.current,
-          shouldToast,
-          userInitiated,
-        )
+        hadFailure = await syncAllPeers(peers, shouldToast, userInitiated)
         if (!mountedRef.current) return
         intervalRef.current = computeNextSyncDelay(intervalRef.current, hadFailure)
         // #4305 — the confirmation belongs to the button press, not to the

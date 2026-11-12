@@ -443,6 +443,43 @@ describe('useSyncTrigger', () => {
       )
     })
 
+    // One `start_sync` wakes a round with every paired peer: a second peer asked
+    // only after the first session ended would find its own session running.
+    it('asks for every peer before waiting for any session', async () => {
+      mockListPeerRefs.mockResolvedValue([
+        makePeerRow({ peer_id: 'PEER_A' }),
+        makePeerRow({ peer_id: 'PEER_B' }),
+      ])
+      const sends = new Map<string, NonNullable<Parameters<typeof startSync>[1]>>()
+      mockStartSync.mockImplementation(async (peerId, callback) => {
+        if (callback) sends.set(peerId, callback)
+        return {
+          state: 'queued',
+          local_device_id: 'L',
+          remote_device_id: peerId,
+          ops_received: 0,
+          ops_sent: 0,
+        }
+      })
+      const { result } = renderHook(() => useSyncTrigger())
+      let run: Promise<void> | undefined
+      act(() => {
+        run = result.current.syncAll({ userInitiated: true })
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+
+      expect([...sends.keys()]).toEqual(['PEER_A', 'PEER_B'])
+      await act(async () => {
+        for (const [peerId, send] of sends)
+          send({ ...terminal('complete'), remote_device_id: peerId })
+        await run
+      })
+      expect(toast.success).toHaveBeenCalledTimes(1)
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+
     it('leaves a failure `sync:error` already reported, and a cancel, to that event', async () => {
       const { run, send } = await pressSync()
       // What `useSyncEvents` does with the failure's `sync:error`, which arrives first.
