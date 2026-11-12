@@ -1,0 +1,130 @@
+{
+  "description": "The name an attachment's copy takes in an export ZIP's `assets/<id>/` folder (#6277 G3) and in the Markdown mirror's (#5363 setting 3): `assetName` in `src/lib/export-graph.ts` and `asset_name` in `src-tauri/src/mirror/assets.rs`, each reading `filename` to `asset`. Both sides assert every row, so the two names cannot drift.",
+  "cases": [
+    {
+      "name": "a plain name",
+      "filename": "photo.png",
+      "asset": "photo.png"
+    },
+    {
+      "name": "a slash is one segment, never a folder",
+      "filename": "a/b.png",
+      "asset": "a_b.png"
+    },
+    {
+      "name": "a traversal is flattened, not followed",
+      "filename": "../../evil",
+      "asset": ".._.._evil"
+    },
+    {
+      "name": "a backslash",
+      "filename": "a\\b.png",
+      "asset": "a_b.png"
+    },
+    {
+      "name": "a colon, a star and a question mark",
+      "filename": "c:d*e?.png",
+      "asset": "c_d_e_.png"
+    },
+    {
+      "name": "angle brackets, a pipe and quotes",
+      "filename": "<x>|\"y\".txt",
+      "asset": "_x___y_.txt"
+    },
+    {
+      "name": "a reserved device name",
+      "filename": "CON",
+      "asset": "CON_"
+    },
+    {
+      "name": "a reserved name in any case, with an extension",
+      "filename": "con.txt",
+      "asset": "con_.txt"
+    },
+    {
+      "name": "a reserved basename before several extensions",
+      "filename": "Nul.tar.gz",
+      "asset": "Nul_.tar.gz"
+    },
+    {
+      "name": "a numbered device name",
+      "filename": "COM1.pdf",
+      "asset": "COM1_.pdf"
+    },
+    {
+      "name": "a device number that is not reserved",
+      "filename": "LPT0.pdf",
+      "asset": "LPT0.pdf"
+    },
+    {
+      "name": "a reserved basename with a trailing space",
+      "filename": "AUX .txt",
+      "asset": "AUX _.txt"
+    },
+    {
+      "name": "a trailing dot",
+      "filename": "notes.",
+      "asset": "notes"
+    },
+    {
+      "name": "trailing dots and spaces",
+      "filename": "notes. . ",
+      "asset": "notes"
+    },
+    {
+      "name": "only dots",
+      "filename": "...",
+      "asset": "Untitled"
+    },
+    {
+      "name": "only spaces",
+      "filename": "   ",
+      "asset": "Untitled"
+    },
+    {
+      "name": "nothing",
+      "filename": "",
+      "asset": "Untitled"
+    },
+    {
+      "name": "a leading dot is kept",
+      "filename": ". hidden",
+      "asset": ". hidden"
+    },
+    {
+      "name": "dots inside are kept",
+      "filename": "file.name.with.dots",
+      "asset": "file.name.with.dots"
+    },
+    {
+      "name": "surrounding spaces",
+      "filename": " spaced name .png",
+      "asset": "spaced name .png"
+    },
+    {
+      "name": "a leading BOM, which JavaScript's trim strips",
+      "filename": "﻿bom.png",
+      "asset": "bom.png"
+    },
+    {
+      "name": "an ideographic space, which JavaScript's trim strips",
+      "filename": "a　",
+      "asset": "a"
+    },
+    {
+      "name": "a NEL, which JavaScript's trim keeps",
+      "filename": "nel.png",
+      "asset": "nel.png"
+    },
+    {
+      "name": "accented letters",
+      "filename": "Café ünïcode.jpg",
+      "asset": "Café ünïcode.jpg"
+    },
+    {
+      "name": "CJK",
+      "filename": "日本語.png",
+      "asset": "日本語.png"
+    }
+  ]
+}

@@ -544,6 +544,22 @@ function collectAttachmentIds(md: string): Set<string> {
   return ids
 }
 
+/**
+ * The name an attachment's file takes in `assets/<id>/`: one FLAT segment,
+ * each path separator in the stored filename made `_` BEFORE sanitizing
+ * (#2961). Without that, a filename like `../../evil` (settable via
+ * `rename_attachment`, which has no traversal check, and syncable from a peer
+ * device) would produce a ZIP entry `assets/<id>/../../evil` that escapes the
+ * assets root on naive extraction (Zip-Slip); `sanitizeSegment` strips `\` and
+ * neutralizes dots-only segments but does NOT strip `/`. The Markdown mirror
+ * names its copies the same way (`asset_name` in
+ * `src-tauri/src/mirror/assets.rs`); `conformance/asset-names.vectors.json`
+ * pins both.
+ */
+export function assetName(filename: string): string {
+  return sanitizeSegment(filename.replaceAll('/', '_')) || 'attachment'
+}
+
 /** Return shape of {@link rewriteAttachmentRefs} — see #2965. */
 interface RewriteAttachmentRefsResult {
   md: string
@@ -591,21 +607,9 @@ async function rewriteAttachmentRefs(
       // A folder per attachment id, so two attachments sharing a filename
       // (e.g. `image.png`) never collide in `assets/`, and the file keeps its
       // name, which an import attaches it under (#6277 G3).
-      // #2961 — the asset name is a single FLAT segment, so collapse any path
-      // separator in the stored filename to `_` BEFORE sanitizing. Without
-      // this, a filename like `../../evil` (settable via `rename_attachment`,
-      // which has no traversal check, and syncable from a peer device) would
-      // produce a ZIP entry `assets/<id>/../../evil` that escapes the assets
-      // root on naive extraction (Zip-Slip). `sanitizeSegment` strips `\` and
-      // neutralizes dots-only segments but does NOT strip `/`; this widened as
-      // a concern once #2961 began routing arbitrary uploaded files (not just
-      // auto-named pasted images) through this writer. See follow-up issue for
-      // the backend rename-validation root cause.
-      const flatName = meta.filename.replaceAll('/', '_')
-      const safeName = sanitizeSegment(flatName) || 'attachment'
-      const assetName = `${id}/${safeName}`
-      zip.file(`${assetsPathPrefix}${ASSETS_DIR}/${assetName}`, bytes)
-      emittedAssets.set(id, `${ASSETS_DIR}/${assetName}`)
+      const assetPath = `${id}/${assetName(meta.filename)}`
+      zip.file(`${assetsPathPrefix}${ASSETS_DIR}/${assetPath}`, bytes)
+      emittedAssets.set(id, `${ASSETS_DIR}/${assetPath}`)
     } catch (err) {
       logger.warn('export-graph', 'attachment export failed', { attachmentId: id }, err)
       emittedAssets.set(id, null)

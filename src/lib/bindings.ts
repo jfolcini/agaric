@@ -732,6 +732,7 @@ export const commands = {
 	pickMirrorFolder: () => typedError<string | null, AppError>(__TAURI_INVOKE("pick_mirror_folder")),
 	setMirrorFolder: (path: string | null, readBack: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path, readBack })),
 	setMirrorReadBack: (on: boolean, confirmed: string[]) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_read_back", { on, confirmed })),
+	setMirrorCopyFiles: (on: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_copy_files", { on })),
 	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
 	getSpeechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("get_speech_status")),
 	/**  Whether the backend engine can speak now (see [`SpeechEngine::available`]). */
@@ -2964,6 +2965,11 @@ export type MirrorStatus = {
 	 *  ([`read_back::pending`]); empty while it is on.
 	 */
 	pending: string[],
+	/**
+	 *  Whether the attachments pages link are copied into the folder
+	 *  ([`assets`]).
+	 */
+	copy_files: boolean,
 };
 
 export type MoveResponse = {

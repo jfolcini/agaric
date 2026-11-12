@@ -48,6 +48,7 @@ function status(): MirrorStatus {
     last_pass_ms: null,
     read_back: readBack,
     pending: readBack ? [] : pendingFiles,
+    copy_files: false,
     ...extra,
   }
 }

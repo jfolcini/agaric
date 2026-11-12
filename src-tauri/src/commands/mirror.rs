@@ -1,6 +1,6 @@
 //! The Markdown mirror's commands (#5363): pick a folder, set or clear it,
-//! choose whether outside changes are read back, and read the mirror's
-//! status. They exist on every target, because the
+//! choose whether outside changes are read back and whether attachments are
+//! copied in, and read the mirror's status. They exist on every target, because the
 //! bindings are generated once; on mobile, where the mirror does not run, the
 //! status says `supported: false` and setting a folder is refused.
 
@@ -135,6 +135,23 @@ pub async fn set_mirror_read_back_inner(
     get_mirror_status_inner(pool, device_id, mirror).await
 }
 
+/// Copy the attachments pages link into the mirror's folder, or with
+/// `on: false` stop ([`mirror::assets`]). The next tick runs a full pass that
+/// writes or removes the copies and rewrites the links.
+///
+/// # Errors
+///
+/// The setting cannot be stored.
+pub async fn set_mirror_copy_files_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    mirror: &MirrorState,
+    on: bool,
+) -> Result<MirrorStatus, AppError> {
+    mirror::store::set_copy_files(pool, on).await?;
+    get_mirror_status_inner(pool, device_id, mirror).await
+}
+
 /// [`mirror::read_back::pending`] for the folder at `root`, with this vault's
 /// space folders.
 async fn pending(
@@ -215,6 +232,20 @@ pub async fn set_mirror_read_back(
     confirmed: Vec<String>,
 ) -> Result<MirrorStatus, AppError> {
     set_mirror_read_back_inner(&pool.0, device_id.as_str(), &mirror, on, &confirmed)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[tracing::instrument(skip_all, err)]
+pub async fn set_mirror_copy_files(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    mirror: State<'_, MirrorState>,
+    on: bool,
+) -> Result<MirrorStatus, AppError> {
+    set_mirror_copy_files_inner(&pool.0, device_id.as_str(), &mirror, on)
         .await
         .map_err(sanitize_internal_error)
 }

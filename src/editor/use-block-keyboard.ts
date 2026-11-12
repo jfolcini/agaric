@@ -137,6 +137,12 @@ export interface BlockKeyboardCallbacks {
   /** Follow the page link or block ref at the caret, as a click on it does (default Alt+Enter). */
   onFollowLink?: ((linkId: string) => void) | undefined
   /**
+   * Page-level undo or redo, for a press the editor's own history cannot take
+   * (#6556). Returns whether it took the press; when it did not, the key goes
+   * on to ProseMirror.
+   */
+  onPageHistory?: ((direction: 'undo' | 'redo') => boolean) | undefined
+  /**
    * Whether the current block is the sole remaining block on the page.
    * When true, Backspace on an empty block is a no-op (prevents empty page).
    */
@@ -212,6 +218,8 @@ export interface EditorLike {
    * in a plain text block (#725 guards disabled).
    */
   isActive?: (name: string) => boolean
+  /** TipTap's `Editor.can()`; absent on test doubles, which then always have history. */
+  can?: () => { undo: () => boolean; redo: () => boolean }
 }
 
 /**
@@ -244,6 +252,7 @@ export function handleBlockKeyDown(
     markerBeforeCaret: hasMarkerBeside(editor.state, 'before'),
     markerAfterCaret: hasMarkerBeside(editor.state, 'after'),
     link: isProseMirrorState(editor.state) ? linkAtCaret(editor.state) : null,
+    canHistory: (direction) => editor.can?.()[direction]() ?? true,
   }
   for (const rule of KEY_RULES) {
     if (rule.match(event, ctx)) {
@@ -277,6 +286,8 @@ interface KeyContext {
   markerAfterCaret: boolean
   /** The page link or block ref at the caret (`linkAtCaret`). */
   link: string | null
+  /** Whether the editor's own history can undo / redo; a call, as only Ctrl+Z / Ctrl+Y ask. */
+  canHistory: (direction: 'undo' | 'redo') => boolean
 }
 
 interface KeyRule {
@@ -301,6 +312,20 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // remounts with what it read, and `unmount()` wipes the doc, so an earlier
   // flush empties the capture. The boundary-arrow rules below do flush; the
   // focus handlers they call do not.
+  // Undo / redo the editor's history cannot take go to the page's (#6556).
+  // `undoLastPageOp` carries no Shift, so it never takes Ctrl+Shift+Z.
+  {
+    match: (e, ctx) => matchesShortcutBinding(e, 'undoLastPageOp') && !ctx.canHistory('undo'),
+    handle: (e, cb) => {
+      if (cb.onPageHistory?.('undo')) e.preventDefault()
+    },
+  },
+  {
+    match: (e, ctx) => matchesShortcutBinding(e, 'redoLastUndoneOp') && !ctx.canHistory('redo'),
+    handle: (e, cb) => {
+      if (cb.onPageHistory?.('redo')) e.preventDefault()
+    },
+  },
   // `moveBlockUp` (default Ctrl/Cmd+Shift+ArrowUp): move block up among siblings
   {
     match: (e) => matchesShortcutBinding(e, 'moveBlockUp'),
@@ -549,6 +574,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     onDuplicate,
     onTurnInto,
     onFollowLink,
+    onPageHistory,
     isLastBlock,
   } = callbacks
 
@@ -617,6 +643,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onDuplicate,
         onTurnInto,
         onFollowLink,
+        onPageHistory,
         isLastBlock,
       })
       // When our handler called preventDefault(), also stop propagation so
@@ -646,6 +673,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       onDuplicate,
       onTurnInto,
       onFollowLink,
+      onPageHistory,
       isLastBlock,
     ],
   )

@@ -873,6 +873,49 @@ describe('handleBlockKeyDown', () => {
     })
   })
 
+  describe('Ctrl+Z / Ctrl+Y the editor history cannot take (#6556)', () => {
+    const withHistory = (undo: boolean, redo: boolean): EditorLike => ({
+      ...makeEditor({}),
+      can: () => ({ undo: () => undo, redo: () => redo }),
+    })
+
+    it.each([
+      ['Ctrl+Z', makeEvent('z', { ctrlKey: true }), 'undo'],
+      ['Ctrl+Y', makeEvent('y', { ctrlKey: true }), 'redo'],
+      ['Ctrl+Shift+Z', makeEvent('Z', { ctrlKey: true, shiftKey: true }), 'redo'],
+    ] as const)('%s with no editor history goes to the page', (_, event, direction) => {
+      const onPageHistory = vi.fn(() => true)
+
+      handleBlockKeyDown(event, withHistory(false, false), { ...makeCallbacks(), onPageHistory })
+
+      expect(onPageHistory.mock.calls).toEqual([[direction]])
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+    })
+
+    it.each([
+      ['Ctrl+Z', makeEvent('z', { ctrlKey: true })],
+      ['Ctrl+Y', makeEvent('y', { ctrlKey: true })],
+    ])('%s the editor history can take stays in the editor', (_, event) => {
+      const onPageHistory = vi.fn(() => true)
+
+      handleBlockKeyDown(event, withHistory(true, true), { ...makeCallbacks(), onPageHistory })
+
+      expect(onPageHistory).not.toHaveBeenCalled()
+      expect(event.preventDefault).not.toHaveBeenCalled()
+    })
+
+    it('a press the page declines goes on to ProseMirror', () => {
+      const event = makeEvent('z', { ctrlKey: true })
+
+      handleBlockKeyDown(event, withHistory(false, false), {
+        ...makeCallbacks(),
+        onPageHistory: () => false,
+      })
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+    })
+  })
+
   describe('Ctrl+. (toggle collapse)', () => {
     it('Ctrl+. calls onToggleCollapse', () => {
       const editor = makeEditor({})

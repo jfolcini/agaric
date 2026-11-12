@@ -53,6 +53,7 @@ import { useBlockLinkResolve } from '@/components/block-tree/use-block-link-reso
 import { MOUNT_LIMIT_STEP, useBlockMountLimit } from '@/components/block-tree/use-block-mount-limit'
 import { useBlockMultiSelect } from '@/components/block-tree/use-block-multi-select'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
+import { useBlockPageHistory } from '@/components/block-tree/use-block-page-history'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { BlockResolversProvider } from '@/components/block-tree/use-block-resolvers'
@@ -1185,6 +1186,15 @@ export function BlockTree({
   // they never route through here — which is the phase-2 contract: text edits
   // inside an embed, restructuring only on the source page.
   const embedRowEditor = useEmbedRowEditorValue(rovingEditor)
+  const handlePageHistory = useBlockPageHistory({
+    rovingEditorRef,
+    rootParentId,
+    pageStore,
+    visibleIdsRef,
+    preserveEmptyBlockIdsRef: preserveEmptyBlockIds,
+    edit,
+    splitBlock,
+  })
   // The keymap stays ATTACHED on a foreign block and every action goes inert.
   // Detaching it — which this did at first — removes the interception, not the
   // behaviour: ProseMirror then handles Enter itself and inserts a paragraph,
@@ -1213,6 +1223,7 @@ export function BlockTree({
           onDuplicate: handleDuplicateFocused,
           onTurnInto: handleTurnIntoFocused,
           onFollowLink: handleNavigate,
+          onPageHistory: handlePageHistory,
         }
       : INERT_BLOCK_KEYBOARD_CALLBACKS,
   )
@@ -1270,8 +1281,9 @@ export function BlockTree({
     // about to write back into it — the source of an Enter-at-line-start split
     // (the user's blank line, not a leak: deleting it would make the keystroke
     // a visible no-op), or a block whose only text was the `/query` ·
-    // `/assignee` · `/voice` trigger a dialog just consumed. `handleEnterSave` and
-    // `useBlockDialogs` register the ids; this is the single consumption point.
+    // `/assignee` · `/voice` trigger a dialog just consumed, or a block the editor
+    // left to run the page's undo. `handleEnterSave`, `useBlockDialogs` and
+    // `useBlockPageHistory` register the ids; this is the single consumption point.
     if (preserveEmptyBlockIds.current.delete(prevId)) return
 
     void deleteBlockIfLeakedEmpty({
