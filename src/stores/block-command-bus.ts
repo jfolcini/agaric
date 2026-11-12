@@ -120,6 +120,11 @@ export function blockIsRenderedByAMountedTree(blockId: string): boolean {
   return false
 }
 
+/** The page store of every mounted `BlockTree`: what in-page find searches (#6557). */
+export function mountedTreeStores(): StoreApi<PageBlockState>[] {
+  return [...registry.keys()]
+}
+
 /**
  * Register (or replace) a BlockTree's command handlers under its page store.
  * Returns a cleanup that removes the registration. Called once per BlockTree;

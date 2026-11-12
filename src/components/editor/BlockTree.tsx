@@ -66,6 +66,7 @@ import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tr
 import { useBlockTreeKeyboardShortcuts } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
 import { useBlockZoom } from '@/components/block-tree/use-block-zoom'
 import { useBlockZoomEmptySeed } from '@/components/block-tree/use-block-zoom-empty-seed'
+import { useFindReveal } from '@/components/block-tree/use-find-reveal'
 import { BlockListRenderer } from '@/components/editor/BlockListRenderer'
 import { BlockTreeDialogs } from '@/components/editor/BlockTreeDialogs'
 import { BlockZoomBar } from '@/components/editor/BlockZoomBar'
@@ -372,6 +373,13 @@ export function BlockTree({
     expandMountLimit,
     revealIndex,
   } = useBlockMountLimit(uncappedZoomedVisible, { pageKey: mountScopeKey })
+  useFindReveal({
+    blocksById,
+    collapsedIds,
+    visible: uncappedZoomedVisible,
+    expandBlock,
+    revealIndex,
+  })
 
   // ── #3276: reveal a navigation target hidden by collapse or the mount cap ──
   // PageEditor sets `focusedBlockId` on a link/search-result jump; if the
