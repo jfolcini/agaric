@@ -158,6 +158,10 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* Not inlined, so a custom CSS snippet can override them (#6558). */
+@theme {
   /* Inter Variable is bundled (`@fontsource-variable/inter`, imported in
    * main.tsx) so every webview sets the same face. */
   --font-sans:
@@ -1187,10 +1191,63 @@
   font-size: var(--agaric-font-size, 1rem);
 }
 
+/* Heading sizes, in multiples of the font-size setting so h1 to h3 outrank
+   body text at every setting (#6558). From `sm` up, at Medium, they are 24 /
+   20 / 18 / 16 / 14 / 12 px; below it they step down, with h3 kept just above
+   body text. The editor (`.ProseMirror h1`…), the static render
+   (`HEADING_CLASSES`) and the first-line boxes below all read these. */
+:root {
+  --heading-1-size: calc(var(--agaric-font-size, 1rem) * 1.25);
+  --heading-1-leading: var(--text-xl--line-height);
+  --heading-2-size: calc(var(--agaric-font-size, 1rem) * 1.125);
+  --heading-2-leading: var(--text-lg--line-height);
+  --heading-3-size: calc(var(--agaric-font-size, 1rem) * 1.0625);
+  --heading-3-leading: var(--text-base--line-height);
+  --heading-4-size: calc(var(--agaric-font-size, 1rem) * 0.875);
+  --heading-4-leading: var(--text-sm--line-height);
+  --heading-5-size: calc(var(--agaric-font-size, 1rem) * 0.875);
+  --heading-5-leading: var(--text-sm--line-height);
+  --heading-6-size: calc(var(--agaric-font-size, 1rem) * 0.75);
+  --heading-6-leading: var(--text-xs--line-height);
+  @variant sm {
+    --heading-1-size: calc(var(--agaric-font-size, 1rem) * 1.5);
+    --heading-1-leading: var(--text-2xl--line-height);
+    --heading-2-size: calc(var(--agaric-font-size, 1rem) * 1.25);
+    --heading-2-leading: var(--text-xl--line-height);
+    --heading-3-size: calc(var(--agaric-font-size, 1rem) * 1.125);
+    --heading-3-leading: var(--text-lg--line-height);
+    --heading-4-size: var(--agaric-font-size, 1rem);
+    --heading-4-leading: var(--text-base--line-height);
+  }
+}
+@utility text-heading-1 {
+  font-size: var(--heading-1-size);
+  line-height: var(--heading-1-leading);
+}
+@utility text-heading-2 {
+  font-size: var(--heading-2-size);
+  line-height: var(--heading-2-leading);
+}
+@utility text-heading-3 {
+  font-size: var(--heading-3-size);
+  line-height: var(--heading-3-leading);
+}
+@utility text-heading-4 {
+  font-size: var(--heading-4-size);
+  line-height: var(--heading-4-leading);
+}
+@utility text-heading-5 {
+  font-size: var(--heading-5-size);
+  line-height: var(--heading-5-leading);
+}
+@utility text-heading-6 {
+  font-size: var(--heading-6-size);
+  line-height: var(--heading-6-leading);
+}
+
 /* The first line box of a block's text, on which its grip, chevron and
    checkbox centre in both editing modes (`min-h-block-line`): the text's line
-   (`.ProseMirror`'s and `.block-static`'s 1.5), or a leading heading's, whose
-   sizes are `.ProseMirror h1`… and `HEADING_CLASSES`. */
+   (`.ProseMirror`'s and `.block-static`'s 1.5), or a leading heading's. */
 :root {
   --block-first-line: calc(var(--agaric-font-size, 1rem) * 1.5);
 }
@@ -1198,49 +1255,37 @@
   .sortable-block:has(:is(.block-static, .ProseMirror) > h1:first-child),
   [data-page-block]:has(> .page-block-content > h1:first-child)
 ) {
-  --block-first-line: calc(var(--text-xl) * var(--text-xl--line-height));
-  @variant sm {
-    --block-first-line: calc(var(--text-2xl) * var(--text-2xl--line-height));
-  }
+  --block-first-line: calc(var(--heading-1-size) * var(--heading-1-leading));
 }
 :is(
   .sortable-block:has(:is(.block-static, .ProseMirror) > h2:first-child),
   [data-page-block]:has(> .page-block-content > h2:first-child)
 ) {
-  --block-first-line: calc(var(--text-lg) * var(--text-lg--line-height));
-  @variant sm {
-    --block-first-line: calc(var(--text-xl) * var(--text-xl--line-height));
-  }
+  --block-first-line: calc(var(--heading-2-size) * var(--heading-2-leading));
 }
 :is(
   .sortable-block:has(:is(.block-static, .ProseMirror) > h3:first-child),
   [data-page-block]:has(> .page-block-content > h3:first-child)
 ) {
-  --block-first-line: calc(var(--text-base) * var(--text-base--line-height));
-  @variant sm {
-    --block-first-line: calc(var(--text-lg) * var(--text-lg--line-height));
-  }
+  --block-first-line: calc(var(--heading-3-size) * var(--heading-3-leading));
 }
 :is(
   .sortable-block:has(:is(.block-static, .ProseMirror) > h4:first-child),
   [data-page-block]:has(> .page-block-content > h4:first-child)
 ) {
-  --block-first-line: calc(var(--text-sm) * var(--text-sm--line-height));
-  @variant sm {
-    --block-first-line: calc(var(--text-base) * var(--text-base--line-height));
-  }
+  --block-first-line: calc(var(--heading-4-size) * var(--heading-4-leading));
 }
 :is(
   .sortable-block:has(:is(.block-static, .ProseMirror) > h5:first-child),
   [data-page-block]:has(> .page-block-content > h5:first-child)
 ) {
-  --block-first-line: calc(var(--text-sm) * var(--text-sm--line-height));
+  --block-first-line: calc(var(--heading-5-size) * var(--heading-5-leading));
 }
 :is(
   .sortable-block:has(:is(.block-static, .ProseMirror) > h6:first-child),
   [data-page-block]:has(> .page-block-content > h6:first-child)
 ) {
-  --block-first-line: calc(var(--text-xs) * var(--text-xs--line-height));
+  --block-first-line: calc(var(--heading-6-size) * var(--heading-6-leading));
 }
 
 /* Match static block padding and min-height so text doesn't jump on focus/blur.
@@ -1484,6 +1529,15 @@
   word-break: break-word;
 }
 
+/* Each paragraph of block text runs, and with `text-align: start` aligns, in
+   the direction of its first strong character, so Arabic or Hebrew sits on the
+   right while the chrome stays left-to-right (#6558). Not inherited, hence
+   every element that holds a paragraph. */
+:is(.block-static, .ProseMirror),
+:is(.block-static, .ProseMirror) :is(p, h1, h2, h3, h4, h5, h6, li, th, td) {
+  unicode-bidi: plaintext;
+}
+
 /* Remove default paragraph margins inside the editor */
 .ProseMirror p {
   margin: 0;
@@ -1576,33 +1630,31 @@
   color: var(--alert-note-foreground);
 }
 
-/* Heading styles inside the editor */
-/* Heading sizes mirror the read-only view's HEADING_CLASSES
-   (RichContentRenderer/context.ts) exactly — including the responsive
-   `sm:` step — so a heading looks identical in the editor and the rendered
-   view at every breakpoint (#1960 editor↔view parity). h5/h6 already match. */
+/* Heading styles inside the editor: the same classes as the static render's
+   `HEADING_CLASSES` (RichContentRenderer/context.ts), so a heading does not
+   change size on focus. */
 .ProseMirror h1 {
-  @apply text-xl font-bold sm:text-2xl;
+  @apply text-heading-1 font-bold;
   margin: 0;
 }
 .ProseMirror h2 {
-  @apply text-lg font-bold sm:text-xl;
+  @apply text-heading-2 font-bold;
   margin: 0;
 }
 .ProseMirror h3 {
-  @apply text-base font-semibold sm:text-lg;
+  @apply text-heading-3 font-semibold;
   margin: 0;
 }
 .ProseMirror h4 {
-  @apply text-sm font-semibold sm:text-base;
+  @apply text-heading-4 font-semibold;
   margin: 0;
 }
 .ProseMirror h5 {
-  @apply text-sm font-semibold;
+  @apply text-heading-5 font-semibold;
   margin: 0;
 }
 .ProseMirror h6 {
-  @apply text-xs font-semibold uppercase tracking-wide;
+  @apply text-heading-6 font-semibold uppercase tracking-wide;
   margin: 0;
 }
 
@@ -2967,3 +3019,45 @@
  * injected at runtime — see `ensureHighlightStyles` in
  * `src/lib/in-page-find/highlighter.ts`.
  */
+
+/* ── Print (#6558) ──────────────────────────────────────────────────
+ * The page alone: no sidebar, header, page toolbar, gutter controls or
+ * scrollbars, and the shell's fixed-height scroll boxes let the page run
+ * onto as many sheets as it needs. `useTheme` swaps to the light palette on
+ * `beforeprint`. Block mode renders rows off screen as empty placeholders
+ * (`useViewportObserver`), so only page mode prints a long page whole.
+ */
+@media print {
+  /* The palette swap lands at once, not mid-fade. */
+  *,
+  ::before,
+  ::after {
+    transition: none !important;
+  }
+  :is(
+    [data-slot='sidebar'],
+    [data-slot='sidebar-inset'] > header,
+    [data-slot='scroll-area-scrollbar'],
+    [data-sonner-toaster],
+    [role='toolbar']:not([data-slot='breadcrumb'] > *),
+    .page-header [role='radiogroup'],
+    .page-header button,
+    .page-block-gutter,
+    .page-grip,
+    [data-testid='drag-handle'],
+    [data-testid='collapse-toggle']
+  ) {
+    display: none !important;
+  }
+  :is(
+    [data-slot='sidebar-wrapper'],
+    [data-slot='sidebar-inset'],
+    [data-testid='main-content'],
+    [data-slot='scroll-area'],
+    [data-slot='scroll-area-viewport']
+  ) {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+}
