@@ -80,6 +80,7 @@ Two rows: **Export this space** and **Export all spaces** (the whole vault, one 
 - What a file cannot carry goes in the space's `.agaric/space.json` (each space folder has its own in *Export all spaces*): the space's property definitions (key, type, options), and the title of each page whose file name could not spell it (`a:b` is filed as `a_b.md`; a duplicate title gets a suffix). A folder import of the unzipped space folder reads it first (a pick of the whole *Export all spaces* ZIP holds none at its root, so it restores no definitions or titles): it creates each definition the space lacks before any page imports, so number, date, select and ref values come back typed, and titles those files as recorded. A definition it cannot create is a warning in the import summary.
 - A folder import makes no page of a file under `.agaric/`.
 - If any page or attachment couldn't be exported, the ZIP gains an `.agaric/export-report.txt` listing exactly what was skipped, and the toast says so rather than reporting a clean success.
+- On Android both rows are disabled under a line saying Agaric cannot save files there yet and that syncing to a computer is the way to export (#6538): the WebView writes no download. Saving an attachment or a diagram's SVG says the same, and the bug-report dialog cannot attach logs there.
 
 ### Markdown mirror (Settings → Data)
 
