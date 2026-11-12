@@ -79,6 +79,7 @@ import {
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
+import { treeStoresIn } from '@/stores/block-command-bus'
 import { useResolveStore } from '@/stores/resolve'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
@@ -320,7 +321,7 @@ export function InPageFind({
       })
       return
     }
-    const sources = blockSources(container, (block: FlatBlock) => {
+    const sources = blockSources(treeStoresIn(container), (block: FlatBlock) => {
       const cached = textCacheRef.current.get(block.id)
       if (cached?.content === block.content) return cached.text
       const text = blockFindText(block.content, (id) => useResolveStore.getState().resolveTitle(id))

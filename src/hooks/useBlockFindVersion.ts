@@ -12,8 +12,11 @@
 
 import { useEffect, useState } from 'react'
 
-import { holdsBlockTree } from '@/lib/in-page-find/block-text'
-import { mountedTreeStores, subscribeBlockCommandTargets } from '@/stores/block-command-bus'
+import {
+  mountedTreeStores,
+  subscribeBlockCommandTargets,
+  treeStoresIn,
+} from '@/stores/block-command-bus'
 import { useResolveStore } from '@/stores/resolve'
 
 export function useBlockFindVersion({
@@ -76,7 +79,7 @@ export function useBlockFindVersion({
       frame = requestAnimationFrame(() => {
         frame = 0
         if (hasBlockMatches()) repaint()
-        else if (holdsBlockTree(container)) setVersion((v) => v + 1)
+        else if (treeStoresIn(container).length > 0) setVersion((v) => v + 1)
       })
     })
     observer.observe(container, { childList: true, subtree: true, characterData: true })

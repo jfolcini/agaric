@@ -13,16 +13,12 @@
  * highlight within its block rather than breaking it.
  */
 
-import type { StoreApi } from 'zustand'
-
 import { parse } from '@/editor/markdown-serializer'
 import { parseEmbedToken } from '@/lib/embed-token'
 import type { CompiledQuery, FindMatch } from '@/lib/in-page-find/matcher'
 import { REGEX_NODE_MAX, REGEX_TIME_BUDGET_MS } from '@/lib/in-page-find/matcher'
 import { getPageDisplayName } from '@/lib/page-display'
 import type { FlatBlock } from '@/lib/tree-utils'
-import { mountedTreeStores } from '@/stores/block-command-bus'
-import type { PageBlockState } from '@/stores/page-blocks'
 
 export interface BlockFindMatch {
   blockId: string
@@ -165,36 +161,15 @@ export function domMatchesIn(root: Element, compiled: ScanQuery): FindMatch[] {
   return out
 }
 
-/** The mounted `BlockTree` stores with a row inside `container`, in DOM order. */
-function treeStoresIn(container: Element): StoreApi<PageBlockState>[] {
-  const owner = new Map<string, StoreApi<PageBlockState>>()
-  for (const store of mountedTreeStores()) {
-    for (const block of store.getState().blocks) owner.set(block.id, store)
-  }
-  const ordered: StoreApi<PageBlockState>[] = []
-  if (owner.size === 0) return ordered
-  for (const row of container.querySelectorAll('li[data-block-id]')) {
-    const store = owner.get(row.getAttribute('data-block-id') ?? '')
-    if (store !== undefined && !ordered.includes(store)) ordered.push(store)
-  }
-  return ordered
-}
-
-/** Whether `container` shows a block tree, so find searches block text there. */
-export function holdsBlockTree(container: Element): boolean {
-  return treeStoresIn(container).length > 0
-}
-
 /**
- * The blocks of every mounted `BlockTree` with a row inside `container`, in
- * tree order, each as {@link blockFindText}; `null` when the container holds
- * no tree (page mode, a journal month grid), which find then walks as DOM.
+ * The blocks of `stores` (the mounted `BlockTree`s inside the find container,
+ * `treeStoresIn`) in tree order, each as {@link blockFindText}; `null` when
+ * there is none (page mode, a journal month grid), which find then walks as DOM.
  */
 export function blockSources(
-  container: Element,
+  stores: ReadonlyArray<{ getState: () => { blocks: FlatBlock[] } }>,
   textOf: (block: FlatBlock) => string,
 ): Array<{ id: string; text: string }> | null {
-  const stores = treeStoresIn(container)
   if (stores.length === 0) return null
   return stores.flatMap((store) =>
     store.getState().blocks.map((block) => ({ id: block.id, text: textOf(block) })),
