@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc b1464e18282ce5c3659b5a6a0925ca8c95e20f5a2c14a9752ef246ff86d1e86a # shrinks to steps = [EditBlock(16094957617744931308), AddBlock, AddBlock, Tick { undo: false }, DeleteFromFile(871752782241211427), DeleteFromFile(39931202784980681), DeleteFromFile(385241135033025694)]
+cc be91698f4294fa843651e2a8c71fa10b09bd44430a0ddafa6e4737cbed26547c # shrinks to steps = [EditFile(0), DeleteBlock(48000850530026), DeleteBlock(15325563314319362582), EditFile(16060869525925645849), AddToFile, AddToFile, EditBlock(2484137991165746910), Tick { undo: false }, Tick { undo: false }, DeleteFromFile(12540874141486087149), DeleteFromFile(473357302389556197), DeleteFromFile(12136327969139442655), DeleteBlock(6575736445248176147), EditFile(2339738454700812349)]

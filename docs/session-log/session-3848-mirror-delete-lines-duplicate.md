@@ -19,7 +19,8 @@ The stale-editor case still picks the older text, because a stale save holds edi
 ## Tests
 
 - `deleting_paragraphs_after_two_added_blocks_duplicates_none` (`tests/command_integration/mirror_convergence.rs`) is the shrunk case as a named test. It was red on `main` with the same duplicate.
-- `tests/proptest-regressions/mirror_convergence.txt` holds the seed, so the proptest replays the case first. With the old metric planted, the proptest fails on it.
+- `deletes_and_adds_on_both_sides_duplicate_none` is a second shape the proptest found in #6570's run: blocks deleted in Agaric, and lines added and deleted in the file, across two ticks. Under the old metric it fails with `s0` duplicated; it passes with the fix.
+- `tests/proptest-regressions/mirror_convergence.txt` holds both seeds, so the proptest replays them first. With the old metric planted, the proptest fails on them.
 - `a_stale_save_that_only_deletes_lines_keeps_a_block_agaric_added_since` (`src/mirror/ingest_tests.rs`) is the review's case: the editor opens `a b c`, Agaric adds `d`, the editor saves `a c`, and the page keeps `d`. It was red under the first key alone, which lost `d`.
 - Falsifications, each in one command that restored on exit:
   - without the first key, the duplicate regression fails;

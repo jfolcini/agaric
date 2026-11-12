@@ -316,3 +316,28 @@ fn deleting_paragraphs_after_two_added_blocks_duplicates_none() {
         ]))
         .unwrap();
 }
+
+/// A second shape the proptest found: blocks deleted in Agaric and lines
+/// added and deleted in the file, across two ticks.
+#[test]
+fn deletes_and_adds_on_both_sides_duplicate_none() {
+    Runtime::new()
+        .unwrap()
+        .block_on(converges(vec![
+            Step::EditFile(0),
+            Step::DeleteBlock(48_000_850_530_026),
+            Step::DeleteBlock(15_325_563_314_319_362_582),
+            Step::EditFile(16_060_869_525_925_645_849),
+            Step::AddToFile,
+            Step::AddToFile,
+            Step::EditBlock(2_484_137_991_165_746_910),
+            Step::Tick { undo: false },
+            Step::Tick { undo: false },
+            Step::DeleteFromFile(12_540_874_141_486_087_149),
+            Step::DeleteFromFile(473_357_302_389_556_197),
+            Step::DeleteFromFile(12_136_327_969_139_442_655),
+            Step::DeleteBlock(6_575_736_445_248_176_147),
+            Step::EditFile(2_339_738_454_700_812_349),
+        ]))
+        .unwrap();
+}
