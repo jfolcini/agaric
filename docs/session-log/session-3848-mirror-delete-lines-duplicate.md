@@ -10,7 +10,9 @@ The shrunk case: Agaric edited `w1` to `s0` and added `s1` and `s2`, then wrote 
 
 ## The fix
 
-`closest` now counts only the file's lines that a text does not hold, the lines the user must have typed, with ties going to the newest text. Lines the file lacks no longer count, so deleting lines from the newest text keeps it as the base.
+`closest` ranks each text by the file's lines it does not hold, the lines the user must have typed, then by the old two-sided difference, with ties going to the newest. Deleting lines from the newest text can no longer make an older, shorter text the base.
+
+The tie-break came from review. With the first key alone, a stale save that only deletes lines ties the older and the newest texts, and the newest won. A block Agaric added after the editor opened then read as deleted and was lost unseen. Ranked this way, an ambiguous file can at worst bring back a block the user deleted, never silently delete one.
 
 The stale-editor case still picks the older text, because a stale save holds edited lines only the older text explains (`a_save_from_a_stale_editor_does_not_undo_what_agaric_wrote_since`).
 
@@ -18,8 +20,10 @@ The stale-editor case still picks the older text, because a stale save holds edi
 
 - `deleting_paragraphs_after_two_added_blocks_duplicates_none` (`tests/command_integration/mirror_convergence.rs`) is the shrunk case as a named test. It was red on `main` with the same duplicate.
 - `tests/proptest-regressions/mirror_convergence.txt` holds the seed, so the proptest replays the case first. With the old metric planted, the proptest fails on it.
-- Two falsifications, each in one command that restored on exit:
-  - the old metric back fails the new test, and the stale-editor test passes;
+- `a_stale_save_that_only_deletes_lines_keeps_a_block_agaric_added_since` (`src/mirror/ingest_tests.rs`) is the review's case: the editor opens `a b c`, Agaric adds `d`, the editor saves `a c`, and the page keeps `d`. It was red under the first key alone, which lost `d`.
+- Falsifications, each in one command that restored on exit:
+  - without the first key, the duplicate regression fails;
+  - without the tie-break, the delete-only stale save fails;
   - always taking the newest text fails the stale-editor test.
 - 256 random cases of the proptest with the old metric planted did not find the bug, so the named test is what pins it.
-- All 99 mirror tests pass. `cargo clippy -p agaric --all-targets -- -D warnings` is clean.
+- All 96 mirror tests of the `agaric` package pass. `cargo clippy -p agaric --all-targets -- -D warnings` is clean.
