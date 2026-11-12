@@ -461,11 +461,18 @@ fn free_of(text: &str, line_ids: &[Option<String>]) -> (String, Vec<Option<Strin
 /// lines from the newest text cannot make an older text the base by being
 /// shorter, which would undo the deletes and add the kept lines again; and a
 /// stale save that only deletes keeps the older base, so a block Agaric added
-/// since is kept, not read as deleted.
+/// since is kept, not read as deleted. Blank lines are left out: every text
+/// shares them, so they would make a file's line that only the newest text
+/// holds tie with an older text's.
 fn closest<'a>(shadows: &'a [Shadow], text: &str) -> Option<&'a Shadow> {
-    let lines: Vec<&str> = text.split('\n').collect();
+    fn content(text: &str) -> Vec<&str> {
+        text.split('\n')
+            .filter(|line| !line.trim().is_empty())
+            .collect()
+    }
+    let lines = content(text);
     shadows.iter().rev().min_by_key(|shadow| {
-        let written: Vec<&str> = shadow.text.split('\n').collect();
+        let written = content(&shadow.text);
         let equal = equal_pairs(&written, &lines).len();
         (lines.len() - equal, written.len() + lines.len() - 2 * equal)
     })
