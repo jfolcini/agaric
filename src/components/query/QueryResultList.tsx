@@ -71,7 +71,7 @@ export function QueryResultList({
         const pageTitle = storedPageTitle && displayPageTitle(storedPageTitle)
         // An `aria-label` REPLACES the row's contents as its accessible name,
         // so it has to carry everything the row shows, not just the body: the
-        // todo badge and the parent-page name are rendered inside this same
+        // task checkbox and the parent-page name are rendered inside this same
         // `role="option"` and were part of the computed name before the label
         // existed ("TODO call the plumber My Page"). Naming the row after the
         // body alone would quietly drop the state and the page from what a

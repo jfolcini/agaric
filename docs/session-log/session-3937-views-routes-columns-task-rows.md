@@ -5,7 +5,7 @@
 ## Labelled routes
 
 - **Premise held:** the Pages header's second row was five `IconButton`s (Tags, Graph, Advanced Query, Templates, Trash). The phone's ⋮ menu already names them; the sidebar was not touched.
-- **Change:** they are `Button`s with the icon and the name. The name shows once the row's container is `@xl` wide (a container query, as the sidebar takes part of a tablet's width), and below that it is visually hidden, so it stays the button's name and the tooltip carries it. Trash keeps its count in the name.
+- **Change:** they are `Button`s with the icon and the name. The name shows once the row's container is `@xl` wide (a container query, as the sidebar takes part of a tablet's width), and below that it is visually hidden, and the tooltip carries it. Each button keeps its name as `aria-label` (the real-backend specs select `button[aria-label="Advanced Query"]`), and Trash's carries its count.
 - **Spec:** `e2e/pages-header-routes.spec.ts`. At 1280 px each label is wider than 20 px and its click opens the view.
 
 ## Query table columns
@@ -19,7 +19,7 @@
 - **Picker:** a columns button beside the edit button, in table mode on a block. It has checkboxes, move-left/right and *Columns from the results*.
 - **Click capture:** `StaticQueryBlock`'s capture handler now yields to `[data-slot="popover-content"]`, because React bubbles the picker's portal clicks into it.
 - **Extraction:** the column logic moved to `use-query-table-columns.ts`, which kept `QueryResult` under its complexity cap. `detectColumns` is re-exported.
-- **Rust (read only):** `InlineQuerySpec` in `src-tauri/src/commands/pages/inline_query_md.rs` ignores the unknown field, so stored blocks and sync are safe. Markdown export re-encodes the spec through that struct, though, so an exported file drops the list. The fix is one `#[serde(default, skip_serializing_if = "Option::is_none")] columns: Option<Vec<String>>` field. It is not made here.
+- **Rust (read only):** `InlineQuerySpec` in `src-tauri/src/commands/pages/inline_query_md.rs` ignores the unknown field, so stored blocks and sync are safe. Markdown export re-encodes a `v2:` spec through that struct, though, so an exported file drops its list (a text query's `columns:a,b` is exported as written). The fix is one `#[serde(default, skip_serializing_if = "Option::is_none")] columns: Option<Vec<String>>` field. It is not made here.
 
 ## One task checkbox
 
@@ -45,7 +45,7 @@
 ## Checks
 
 - **vitest:** query, dialogs, PageBrowser and the lib tests, `useTaskStateCycle`, agenda and BlockListItem.
-- **Expected red:** the old pill and icon tests, listed in the PR.
+- **Old assertions updated in review:** the TODO/DOING pill and status-icon tests (`AlertSection`, `OverdueSection`, `UpcomingSection`, `QueryResultList`, `AgendaResults`, `e2e/query-blocks.spec.ts`) now assert the checkbox and the state in its name; the `AgendaResults` and `DuePanel` lucide mocks gained `Check` and `X`; `e2e/enter-delete-new-user.spec.ts` scopes its checkbox to the page's blocks, as the Due panel now draws one too; `e2e/trash-badge.spec.ts` reads the count from the badge, as the button now shows its name.
 - **Falsified:**
   - the new vitest and e2e tests (`readQueryColumns`, `detectColumns`' named branch, the encoder's `columns`, the decoder's string check);
   - `useTaskStateCycle`'s next state;

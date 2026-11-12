@@ -294,7 +294,7 @@ export function PageBrowserHeader({
                       size="sm"
                       className="relative px-2 @xl:px-3 [@media(pointer:coarse)]:min-w-11"
                       // The count the badge shows has to be in the name as well.
-                      aria-label={view === 'trash' ? viewButtonLabel(view, label) : undefined}
+                      aria-label={viewButtonLabel(view, label)}
                       onClick={() => setView(view)}
                     >
                       <Icon aria-hidden="true" />

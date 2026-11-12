@@ -5,7 +5,7 @@
  *  - Renders with destructive variant (overdue mode)
  *  - Renders with pending variant (upcoming mode)
  *  - Returns null for empty blocks
- *  - Shows todo_state badge when present
+ *  - Shows the task checkbox, named with its state, when present
  *  - Shows PriorityBadge when showPriorityBadge is true
  *  - Hides PriorityBadge when showPriorityBadge is false/default
  *  - Sorts blocks by due_date ascending
@@ -21,7 +21,7 @@
  *  - a11y audit passes (axe) for both variants and empty state
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -29,6 +29,7 @@ import { axe } from 'vitest-axe'
 import { makeBlock as _makeBlock } from '@/__tests__/fixtures'
 import { AlertSection } from '@/components/agenda/AlertSection'
 import { renderRichContent } from '@/components/RichContentRenderer'
+import { t } from '@/lib/i18n'
 
 const LINKED_PAGE_ID = '01KP36KDG2ABCDEFGHJKMNPQRS'
 
@@ -107,7 +108,7 @@ describe('AlertSection', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  it('shows todo_state badge when present', () => {
+  it('shows the task checkbox, named with its state, when present (#6544)', () => {
     render(
       <AlertSection
         variant="destructive"
@@ -117,7 +118,8 @@ describe('AlertSection', () => {
       />,
     )
 
-    expect(screen.getByText('TODO')).toBeInTheDocument()
+    const marker = screen.getByRole('button', { name: t('block.taskCycle', { state: 'TODO' }) })
+    expect(within(marker).getByTestId('task-checkbox-todo')).toBeInTheDocument()
   })
 
   it('shows priority badge when showPriorityBadge is true', () => {

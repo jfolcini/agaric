@@ -449,7 +449,7 @@ test.describe('Query result interactions @editor @search', () => {
     await expect(queryResult.locator('[data-testid="query-result-item"]')).not.toBeVisible()
   })
 
-  test('query result shows todo state badges for task blocks', async ({ page }) => {
+  test('query result shows the task checkbox for task blocks', async ({ page }) => {
     await focusBlock(page)
 
     // Query for blocks tagged "work" — BLOCK_PROJ_1 is TODO, BLOCK_PROJ_2 is DOING
@@ -463,10 +463,12 @@ test.describe('Query result interactions @editor @search', () => {
 
     // Wait for loading to complete
 
-    // Seed data: BLOCK_PROJ_1 (TODO), BLOCK_PROJ_2 (DOING) have todo_state set
-    // The QueryResult renders todo_state badges for blocks that have them
-    await expect(queryResult.locator('text=TODO')).toBeVisible()
-    await expect(queryResult.locator('text=DOING')).toBeVisible()
+    // Seed data: BLOCK_PROJ_1 (TODO), BLOCK_PROJ_2 (DOING) have todo_state set.
+    // A row draws the block's checkbox for its state, and its name says it (#6544).
+    await expect(queryResult.getByTestId('task-checkbox-todo')).toBeVisible()
+    await expect(queryResult.getByTestId('task-checkbox-doing')).toBeVisible()
+    await expect(queryResult.getByRole('option', { name: /^TODO / })).toHaveCount(1)
+    await expect(queryResult.getByRole('option', { name: /^DOING / })).toHaveCount(1)
   })
 })
 

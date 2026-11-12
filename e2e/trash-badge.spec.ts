@@ -34,7 +34,7 @@ test('Trash badge counts deleted blocks, rows name their page, restoring one low
   await navigateToView(page, 'Pages')
   const trashButton = page.locator('.page-browser-header').getByRole('button', { name: /^Trash/ })
   await expect(trashButton).toHaveAccessibleName('Trash, 2 items')
-  await expect(trashButton).toHaveText('2')
+  await expect(trashButton.locator('[data-slot="badge"]')).toHaveText('2')
 
   await trashButton.click()
   const rows = page.getByTestId('trash-item')
@@ -49,5 +49,5 @@ test('Trash badge counts deleted blocks, rows name their page, restoring one low
 
   await navigateToView(page, 'Pages')
   await expect(trashButton).toHaveAccessibleName('Trash, 1 item')
-  await expect(trashButton).toHaveText('1')
+  await expect(trashButton.locator('[data-slot="badge"]')).toHaveText('1')
 })
