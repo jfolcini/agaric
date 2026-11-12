@@ -102,6 +102,7 @@
   --color-task-custom: var(--task-custom);
   /* Highlight/search */
   --color-highlight: var(--highlight);
+  --color-highlight-foreground: var(--highlight-foreground);
   /* Block reference chip */
   --color-block-ref: var(--block-ref);
   --color-block-ref-foreground: var(--block-ref-foreground);
@@ -244,20 +245,18 @@
   --priority-normal: oklch(0.94 0.04 265);
   --priority-normal-foreground: oklch(0.45 0.18 265);
   /* #929 — paired foreground for the DONE checkbox glyph (was a hardcoded
-     text-white). The task-done bg is a saturated green across all themes, so a
-     near-white glyph reads on every one.
-     Defined once in the base :root; it cascades to every theme (none override it
-     today) and a theme can override it if it ever needs a different contrast. */
+     text-white). White reads on the light themes' darker green; the dark
+     themes lift --task-done, so `.dark` gives them a dark glyph (#6528). */
   --task-done-foreground: oklch(1 0 0);
   /* Operation type colors */
   --op-create: oklch(0.97 0.02 163);
-  --op-create-foreground: oklch(0.53 0.15 163);
+  --op-create-foreground: oklch(0.52 0.15 163);
   --op-edit: oklch(0.97 0.02 260);
   --op-edit-foreground: oklch(0.49 0.17 264);
   --op-move: oklch(0.97 0.03 304);
   --op-move-foreground: oklch(0.5 0.17 303);
   --op-tag: oklch(0.97 0.02 85);
-  --op-tag-foreground: oklch(0.62 0.16 55);
+  --op-tag-foreground: oklch(0.55 0.16 55);
   /* Date source colors */
   --date-due: oklch(0.95 0.04 75);
   --date-due-foreground: oklch(0.48 0.14 46);
@@ -285,9 +284,12 @@
   --task-done: oklch(0.55 0.18 149);
   --task-doing: oklch(0.62 0.21 260);
   --task-cancelled: oklch(0.6 0.012 70);
-  --task-custom: oklch(0.7 0.18 53);
+  --task-custom: oklch(0.67 0.18 53);
   /* Highlight/search */
   --highlight: oklch(0.95 0.13 102);
+  /* Black, the colour `<mark>` took from the browser before it had a token; the
+   * dark themes keep --highlight light enough to carry it (#6528). */
+  --highlight-foreground: oklch(0 0 0);
   /* Block reference chip */
   --block-ref: oklch(0.91 0.05 293);
   --block-ref-foreground: oklch(0.45 0.2 293);
@@ -297,10 +299,10 @@
   --indicator-repeat: oklch(0.94 0.03 272);
   --indicator-repeat-foreground: oklch(0.46 0.24 277);
   /* Star/favourite */
-  --star: oklch(0.795 0.184 86.047);
+  --star: oklch(0.655 0.184 86.047);
   /* Sync status */
-  --sync-idle: oklch(0.7 0.17 162);
-  --sync-active: oklch(0.77 0.19 70);
+  --sync-idle: oklch(0.62 0.17 162);
+  --sync-active: oklch(0.65 0.19 70);
   /* Per-space accent palette tokens.
    * Each space stores a free-form palette token (e.g. `accent-emerald`)
    * in `block_properties(key='accent_color', …)`. The active space's
@@ -461,11 +463,13 @@
   --alert-note-border: oklch(0.45 0 0);
   /* Task checkbox state colors */
   --task-done: oklch(0.74 0.17 149);
+  /* White on the lifted greens of every dark theme was under 3:1 (#6528). */
+  --task-done-foreground: oklch(0.2 0.006 70);
   --task-doing: oklch(0.7 0.18 260);
   --task-cancelled: oklch(0.55 0.012 70);
   --task-custom: oklch(0.7 0.18 53);
   /* Highlight/search */
-  --highlight: oklch(0.55 0.14 66);
+  --highlight: oklch(0.57 0.14 66);
   /* Block reference chip */
   --block-ref: oklch(0.3 0.06 293);
   --block-ref-foreground: oklch(0.78 0.14 293);
@@ -516,7 +520,9 @@
   --card-foreground: oklch(0.45 0.02 210);
   --popover: oklch(0.97 0.02 85);
   --popover-foreground: oklch(0.45 0.02 210);
-  --primary: oklch(0.61 0.13 235); /* solarized blue */
+  /* Solarized blue, dark enough that its light label and the blue as text on
+   * the page clear 4.5:1 (#6528). */
+  --primary: oklch(0.53 0.13 235);
   --primary-foreground: oklch(0.97 0.02 85);
   --secondary: oklch(0.93 0.03 85); /* base2 */
   --secondary-foreground: oklch(0.51 0.02 210); /* base00 */
@@ -611,7 +617,7 @@
   /* Star/favourite */
   --star: oklch(0.6 0.14 80);
   /* Sync status */
-  --sync-idle: oklch(0.63 0.16 125);
+  --sync-idle: oklch(0.6 0.16 125);
   --sync-active: oklch(0.6 0.14 80);
 }
 
@@ -638,7 +644,8 @@
   --muted-foreground: oklch(0.69 0.01 200);
   --accent: oklch(0.32 0.05 235);
   --accent-foreground: oklch(0.75 0.12 235);
-  --destructive: oklch(0.65 0.19 30);
+  /* Light enough to clear 4.5:1 as text on the lifted --card (#6528). */
+  --destructive: oklch(0.67 0.19 30);
   /* Dark label: Button/Badge paint the fill opaque, and a light label on
      this red was 3.3:1. */
   --destructive-foreground: oklch(0.18 0.04 210);
@@ -711,7 +718,7 @@
   --task-cancelled: oklch(0.55 0.02 200);
   --task-custom: oklch(0.65 0.19 40);
   /* Highlight/search */
-  --highlight: oklch(0.55 0.14 85);
+  --highlight: oklch(0.57 0.14 85);
   /* Block reference chip */
   --block-ref: oklch(0.32 0.06 295);
   --block-ref-foreground: oklch(0.76 0.14 285);
@@ -762,7 +769,8 @@
   --muted-foreground: oklch(0.75 0.06 275);
   --accent: oklch(0.37 0.07 335);
   --accent-foreground: oklch(0.85 0.18 335); /* pink */
-  --destructive: oklch(0.68 0.22 25); /* red */
+  /* Red, light enough to clear 4.5:1 as text on the lifted --card (#6528). */
+  --destructive: oklch(0.76 0.22 25);
   --destructive-foreground: oklch(0.22 0.03 275);
   --border: oklch(0.37 0.03 275);
   --input: oklch(0.37 0.03 275);
@@ -872,7 +880,8 @@
   --muted-foreground: oklch(0.73 0.02 260);
   --accent: oklch(0.35 0.05 235);
   --accent-foreground: oklch(0.78 0.12 235);
-  --destructive: oklch(0.7 0.16 25); /* red */
+  /* Red, light enough to clear 4.5:1 as text on the lifted --card (#6528). */
+  --destructive: oklch(0.72 0.16 25);
   --destructive-foreground: oklch(0.29 0.02 260);
   --border: oklch(0.35 0.02 260);
   --input: oklch(0.35 0.02 260);
@@ -898,7 +907,7 @@
   --conflict-text: oklch(0.33 0.06 60);
   --conflict-text-foreground: oklch(0.72 0.11 60);
   --conflict-move: oklch(0.33 0.07 300);
-  --conflict-move-foreground: oklch(0.7 0.17 300);
+  --conflict-move-foreground: oklch(0.71 0.17 300);
   --priority-urgent: oklch(0.35 0.07 25);
   --priority-urgent-foreground: oklch(0.82 0.11 25);
   --priority-high: oklch(0.35 0.06 80);
@@ -946,10 +955,10 @@
   --highlight: oklch(0.58 0.13 80);
   /* Block reference chip */
   --block-ref: oklch(0.35 0.07 300);
-  --block-ref-foreground: oklch(0.7 0.17 300);
+  --block-ref-foreground: oklch(0.73 0.17 300);
   /* Scheduled/repeat indicator */
   --indicator-scheduled: oklch(0.33 0.07 300);
-  --indicator-scheduled-foreground: oklch(0.7 0.17 300);
+  --indicator-scheduled-foreground: oklch(0.71 0.17 300);
   --indicator-repeat: oklch(0.33 0.06 260);
   --indicator-repeat-foreground: oklch(0.72 0.12 265);
   /* Star/favourite */
@@ -1732,7 +1741,7 @@
    intentionally DISTINCT from the search-match semantic
    (`.search-result-mark`). */
 .ProseMirror mark {
-  @apply bg-highlight rounded px-0.5;
+  @apply bg-highlight text-highlight-foreground rounded px-0.5;
 }
 
 /* #5745 — the block *Read aloud* is speaking: the highlight token, tinted under the text.
@@ -2169,6 +2178,9 @@
 @media (prefers-contrast: more) {
   * {
     --border: oklch(0.7 0 0);
+    /* Darker than --border: 3:1 or more on every theme's page and popover,
+     * so a field's outline shows where it begins. */
+    --input: oklch(0.62 0 0);
   }
 
   :focus-visible {

@@ -536,3 +536,47 @@ describe('AppSidebar — mobile Sheet dismissal', () => {
     expect(document.querySelector('[data-slot="sidebar"]')).toBeInTheDocument()
   })
 })
+
+// A sync error is toasted when it happens; afterwards the button itself must
+// say so, in its glyph, its tooltip and its description, not only in the
+// dot's hue (#6528).
+describe('a standing sync error is not colour-only (#6528)', () => {
+  const peer: PeerInfo = { peerId: 'PEER1', lastSyncedAt: null, resetCount: 0, name: null }
+  const failed = t('sync.failed', { message: 'Connection refused' })
+
+  beforeEach(() => {
+    useSyncStore.setState({ state: 'error', error: 'Connection refused', peers: [peer] })
+  })
+
+  it('names the stored error in the Sync button description and tooltip', async () => {
+    const user = userEvent.setup()
+    renderSidebar()
+
+    const syncButton = screen.getByRole('button', { name: t('sidebar.sync') })
+    expect(syncButton).toHaveAccessibleDescription(`${failed} ${t('sidebar.lastSyncedNever')}`)
+
+    await user.hover(syncButton)
+    await waitFor(() => {
+      expect(screen.getByRole('tooltip').textContent).toContain(failed)
+    })
+  })
+
+  it('swaps the sync glyph for an alert, as offline swaps it for WifiOff', () => {
+    renderSidebar()
+
+    const syncButton = screen.getByRole('button', { name: t('sidebar.sync') })
+    expect(syncButton.querySelector('.lucide-refresh-cw')).toBeNull()
+    expect(syncButton.querySelector('.lucide-circle-alert')).toBeInTheDocument()
+  })
+
+  it('drops the error once a sync succeeds', () => {
+    renderSidebar()
+    act(() => {
+      useSyncStore.getState().setState('idle')
+    })
+
+    const syncButton = screen.getByRole('button', { name: t('sidebar.sync') })
+    expect(syncButton).toHaveAccessibleDescription(t('sidebar.lastSyncedNever'))
+    expect(syncButton.querySelector('.lucide-refresh-cw')).toBeInTheDocument()
+  })
+})

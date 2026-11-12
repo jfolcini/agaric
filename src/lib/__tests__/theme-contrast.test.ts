@@ -201,7 +201,7 @@ function readOklch(block: string, token: string): Oklch {
  * names `selector`, concatenated in source order so `findOklch` sees the
  * cascade winner last.
  */
-function highContrastBody(selector: ':root' | '.dark'): string {
+function highContrastBody(selector: ':root' | '.dark' | '*'): string {
   const css = CSS_SOURCE.replace(/\/\*[\s\S]*?\*\//g, '')
   let out = ''
   for (const media of css.matchAll(/@media \(prefers-contrast: more\) \{/g)) {
@@ -313,9 +313,10 @@ describe('documented CSS contrast guarantees hold in src/index.css (#1684)', () 
 // Focus ring, chips, hover surfaces and graph nodes in every theme (#5332, #5429).
 //
 // Each token resolves through the cascade the page sees: a `prefers-contrast:
-// more` override first (it comes later in index.css than every theme block),
-// then the theme's own block, then `.dark` for the dark themes (`useTheme`
-// sets both classes), then `:root`.
+// more` override first (a `*` rule sets the token on every element below the
+// root, so it beats the inherited theme value; the `:root` / `.dark` rules come
+// later in index.css than every theme block), then the theme's own block, then
+// `.dark` for the dark themes (`useTheme` sets both classes), then `:root`.
 // ─────────────────────────────────────────────────────────────────────────
 
 const THEMES = [
@@ -331,11 +332,12 @@ type Theme = (typeof THEMES)[number]
 
 const HIGH_CONTRAST_ROOT = highContrastBody(':root')
 const HIGH_CONTRAST_DARK = highContrastBody('.dark')
+const HIGH_CONTRAST_EVERY_ELEMENT = highContrastBody('*')
 
 function cascade(theme: Theme, highContrast: boolean): string[] {
   const highContrastLayers = theme.dark
-    ? [HIGH_CONTRAST_DARK, HIGH_CONTRAST_ROOT]
-    : [HIGH_CONTRAST_ROOT]
+    ? [HIGH_CONTRAST_EVERY_ELEMENT, HIGH_CONTRAST_DARK, HIGH_CONTRAST_ROOT]
+    : [HIGH_CONTRAST_EVERY_ELEMENT, HIGH_CONTRAST_ROOT]
   return [
     ...(highContrast ? highContrastLayers : []),
     themeBlock(theme.selector),
@@ -432,6 +434,11 @@ const THEME_PAIRS = [
   { pair: 'code built-in', fg: 'alert-warning-foreground', bg: 'muted', min: AA_NORMAL },
   { pair: 'code name / quote', fg: 'alert-tip-foreground', bg: 'muted', min: AA_NORMAL },
   { pair: 'code section', fg: 'alert-info-foreground', bg: 'muted', min: AA_NORMAL },
+  // The check glyph on a completed task's filled box (#6528).
+  { pair: 'DONE check mark', fg: 'task-done-foreground', bg: 'task-done', min: NON_TEXT },
+  // The sidebar Sync button's status dot (#6528).
+  { pair: 'sync dot, idle', fg: 'sync-idle', bg: 'sidebar', min: NON_TEXT },
+  { pair: 'sync dot, syncing', fg: 'sync-active', bg: 'sidebar', min: NON_TEXT },
 ] as const
 
 const CASES = [false, true].flatMap((highContrast) =>
@@ -545,5 +552,90 @@ describe('icons clear 3:1 on their fills in every theme (#5368)', () => {
 
   it.each(INK_ICON_CASES)('$label — icons keep their parent ink', ({ theme, highContrast }) => {
     expect(resolveDeclaration(theme, highContrast, 'icon')).toBe('currentColor')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Form-field outlines under "more contrast" (#6528).
+//
+// The default outline is a deliberate hairline; a user who asks the OS for
+// more contrast must be able to see where an input or select begins.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('form-field outlines clear 3:1 under more contrast in every theme (#6528)', () => {
+  it.each(THEMES.map((theme) => ({ theme, label: `${theme.theme} (high contrast)` })))(
+    '$label — --input on --background',
+    ({ theme }) => {
+      const ratio = contrastRatio(
+        resolveToken(theme, true, 'input'),
+        resolveToken(theme, true, 'background'),
+      )
+      expect(ratio).toBeGreaterThanOrEqual(NON_TEXT)
+    },
+  )
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Every `--x-foreground` on its `--x`, and the cross pairs no naming rule
+// reaches (#6528).
+//
+// The generator reads the token names out of the theme blocks, so a new
+// `-foreground` token is measured in every theme without a new row. A pair
+// already pinned above, with its own threshold, is not measured twice.
+// ─────────────────────────────────────────────────────────────────────────
+
+const CROSS_PAIRS = [
+  // `text-primary` links and labels sit on the page.
+  { pair: 'primary text on the page', fg: 'primary', bg: 'background', min: AA_NORMAL },
+  // `text-destructive` errors inside cards and dialogs.
+  { pair: 'destructive text on a card', fg: 'destructive', bg: 'card', min: AA_NORMAL },
+  { pair: 'star on the page', fg: 'star', bg: 'background', min: NON_TEXT },
+  { pair: 'custom task state dot', fg: 'task-custom', bg: 'background', min: NON_TEXT },
+  { pair: '==highlight== text', fg: 'highlight-foreground', bg: 'highlight', min: AA_NORMAL },
+] as const
+
+const PINNED = new Set([...THEME_PAIRS, ...CROSS_PAIRS].map(({ fg, bg }) => `${fg} on ${bg}`))
+
+const FOREGROUND_BASES = [
+  ...new Set(
+    THEMES.flatMap(({ selector }) =>
+      [...themeBlock(selector).matchAll(/--([\w-]+)-foreground\s*:/g)].map((m) => m[1] ?? ''),
+    ),
+  ),
+]
+
+const GENERATED_PAIRS = FOREGROUND_BASES.map((base) => ({ fg: `${base}-foreground`, bg: base }))
+  .filter(({ fg, bg }) => !PINNED.has(`${fg} on ${bg}`))
+  .map(({ fg, bg }) => ({ pair: `--${fg} on --${bg}`, fg, bg, min: AA_NORMAL }))
+
+const ALL_PAIR_CASES = [false, true].flatMap((highContrast) =>
+  THEMES.flatMap((theme) =>
+    [...GENERATED_PAIRS, ...CROSS_PAIRS].map(({ pair, fg, bg, min }) => ({
+      pair,
+      fg,
+      bg,
+      min,
+      theme,
+      label: `${theme.theme}${highContrast ? ' (high contrast)' : ''}`,
+      highContrast,
+    })),
+  ),
+)
+
+describe('every foreground token clears WCAG on its background in every theme (#6528)', () => {
+  it('the generator finds the chip tokens the hand-picked list missed', () => {
+    const generated = GENERATED_PAIRS.map(({ fg }) => fg)
+    expect(generated).toContain('op-tag-foreground')
+    expect(generated).toContain('primary-foreground')
+    // Pinned above with the 3:1 glyph threshold, so not re-measured at 4.5.
+    expect(generated).not.toContain('task-done-foreground')
+  })
+
+  it.each(ALL_PAIR_CASES)('$label — $pair', ({ theme, highContrast, fg, bg, min }) => {
+    const ratio = contrastRatio(
+      resolveToken(theme, highContrast, fg),
+      resolveToken(theme, highContrast, bg),
+    )
+    expect(ratio).toBeGreaterThanOrEqual(min)
   })
 })

@@ -18,7 +18,7 @@
  * remaining props.
  */
 
-import { ChevronsLeft, Plus, RefreshCw, WifiOff } from 'lucide-react'
+import { AlertCircle, ChevronsLeft, Plus, RefreshCw, WifiOff } from 'lucide-react'
 import { memo, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -75,6 +75,7 @@ function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
 }
 
 const LAST_SYNCED_ID = 'sidebar-last-synced'
+const SYNC_ERROR_ID = 'sidebar-sync-error'
 
 function CollapseButton() {
   const { t } = useTranslation()
@@ -121,6 +122,7 @@ function AppSidebarInner({
   const syncState = useSyncStore((s) => s.state)
   const syncPeers = useSyncStore((s) => s.peers)
   const lastSyncedAt = useSyncStore((s) => s.lastSyncedAt)
+  const syncError = useSyncStore((s) => s.error)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const { isMobile, setOpenMobile } = useSidebar()
@@ -129,6 +131,11 @@ function AppSidebarInner({
     ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t, now) })
     : t('sidebar.lastSyncedNever')
   const syncUnavailable = syncing || !isOnline
+  // Offline wins, as it does for the dot; a running sync replaces the old error.
+  const syncErrorLabel =
+    isOnline && !syncing && syncState === 'error'
+      ? t('sync.failed', { message: syncError ?? '' })
+      : null
 
   /**
    * On mobile the sidebar is a Sheet that overlays the content, so acting on
@@ -246,7 +253,7 @@ function AppSidebarInner({
       </SidebarContent>
       <SidebarFooter>
         {/* One row of icons; it stacks in the 48px rail. The sync state is
-            the icon (spinner, offline) plus the dot, and the "last synced"
+            the icon (spinner, offline, error) plus the dot, and the "last synced"
             line lives in the tooltip and the button's description. Hover
             paints the nav rows' lighter fill, so it never matches the active
             Settings pill. */}
@@ -256,7 +263,9 @@ function AppSidebarInner({
             size="icon-sm"
             className="hover:bg-sidebar-accent/50 aria-disabled:opacity-50"
             ariaLabel={isOnline ? t('sidebar.sync') : t('sidebar.offline')}
-            aria-describedby={LAST_SYNCED_ID}
+            aria-describedby={
+              syncErrorLabel === null ? LAST_SYNCED_ID : `${SYNC_ERROR_ID} ${LAST_SYNCED_ID}`
+            }
             tooltip={
               <div className="flex flex-col gap-0.5">
                 <span>
@@ -264,7 +273,7 @@ function AppSidebarInner({
                     ? t('sidebar.offline')
                     : syncing
                       ? t('sidebar.syncing')
-                      : t('sidebar.syncTooltip')}
+                      : (syncErrorLabel ?? t('sidebar.syncTooltip'))}
                 </span>
                 <span className="opacity-90">{lastSyncedLabel}</span>
               </div>
@@ -277,6 +286,8 @@ function AppSidebarInner({
             <span className="relative inline-flex">
               {!isOnline ? (
                 <WifiOff className="text-muted-foreground" />
+              ) : syncErrorLabel !== null ? (
+                <AlertCircle className="text-destructive" />
               ) : (
                 <RefreshCw className={syncing ? 'animate-spin' : ''} />
               )}
@@ -291,6 +302,11 @@ function AppSidebarInner({
               />
             </span>
           </IconButton>
+          {syncErrorLabel !== null && (
+            <span id={SYNC_ERROR_ID} className="sr-only">
+              {syncErrorLabel}
+            </span>
+          )}
           <span id={LAST_SYNCED_ID} className="sr-only" data-testid="last-synced">
             {lastSyncedLabel}
           </span>
