@@ -20,6 +20,7 @@ use agaric_core::error::AppError;
 use agaric_core::word_diff::equal_pairs;
 use agaric_store::op::OpRef;
 
+use super::assets::{self, Links};
 use super::splice::splice;
 use super::store::{PageState, Shadow};
 use crate::commands::pages::{
@@ -115,7 +116,8 @@ pub fn file_text(bytes: &[u8]) -> Result<String, NotIngested> {
 
 /// Write `bytes`, the page's file at `path` as edited outside Agaric, into
 /// the page, whose file was last written as `state`'s texts and renders now
-/// as `render`.
+/// as `render`, which links attachments as `links` does. A link to a copy is
+/// saved as its attachment's ([`assets::delocalize`]).
 #[allow(clippy::too_many_arguments)]
 pub async fn ingest(
     read_pool: &SqlitePool,
@@ -126,6 +128,7 @@ pub async fn ingest(
     state: &PageState,
     bytes: &[u8],
     render: &PageFile,
+    links: &Links,
 ) -> Result<Ingested, NotIngested> {
     let refused = |e: AppError| NotIngested::Refused(e.to_string());
     let text = file_text(bytes)?;
@@ -148,12 +151,15 @@ pub async fn ingest(
     let anchors = only(anchors, &known);
     let (written, written_ids) = free_of(&shadow.text, &shadow.line_ids);
     let line_ids = pair_unanchored_lines(&written, &written_ids, &edited, &anchors);
+    let source = assets::delocalize(read_pool, &edited)
+        .await
+        .map_err(refused)?;
     let saved = capture_op_refs(Box::pin(apply_page_source_inner(
         &ingest.pool,
         device_id,
         &ingest.materializer,
         page_id,
-        edited.clone(),
+        source,
         base,
         SourceSaveFlags {
             merge: true,
@@ -173,13 +179,13 @@ pub async fn ingest(
         report,
     };
     // The ops are in: from here a failure still reports them.
-    let shadow = match get_page_file_inner(read_pool, page_id).await {
-        Ok(now) => Some(write_back(&text, &edited, &kept, &line_ids, &now)),
-        Err(e) => {
-            tracing::warn!(page_id, error = %e, "cannot render a page after its ingest");
-            None
-        }
-    };
+    let shadow = rendered_back(
+        read_pool,
+        page_id,
+        (&text, &edited, &kept, &line_ids),
+        links,
+    )
+    .await;
     Ok(Ingested { shadow, event })
 }
 
@@ -191,7 +197,10 @@ pub async fn ingest(
 /// the page as any other. Returns the page and the file to write back, the
 /// event carrying both commands' ops, so one undo removes the page. A title
 /// the space already holds is refused, and so is a save the op cap or the
-/// grammar refuses, which deletes the page it created, to the Trash.
+/// grammar refuses, which deletes the page it created, to the Trash. A link
+/// to a copy is saved as its attachment's, and the file written back links
+/// attachments as `links` does.
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     read_pool: &SqlitePool,
     ingest: &Ingest,
@@ -200,11 +209,15 @@ pub async fn create(
     title: &str,
     path: &str,
     bytes: &[u8],
+    links: &Links,
 ) -> Result<(String, Ingested), NotIngested> {
     let refused = |e: AppError| NotIngested::Refused(e.to_string());
     let text = file_text(bytes)?;
     let (edited, _, kept) = anchor_free_kept(&text);
     let line_ids = vec![None; edited.split('\n').count()];
+    let source = assets::delocalize(read_pool, &edited)
+        .await
+        .map_err(refused)?;
     let created = capture_op_refs(Box::pin(create_page_in_space_inner(
         &ingest.pool,
         device_id,
@@ -229,7 +242,7 @@ pub async fn create(
         device_id,
         &ingest.materializer,
         &page_id,
-        edited.clone(),
+        source,
         empty.source,
         SourceSaveFlags {
             merge: false,
@@ -257,13 +270,13 @@ pub async fn create(
         op_refs,
         report: saved.inner,
     };
-    let shadow = match get_page_file_inner(read_pool, &page_id).await {
-        Ok(now) => Some(write_back(&text, &edited, &kept, &line_ids, &now)),
-        Err(e) => {
-            tracing::warn!(page_id, error = %e, "cannot render a page after its file was read");
-            None
-        }
-    };
+    let shadow = rendered_back(
+        read_pool,
+        &page_id,
+        (&text, &edited, &kept, &line_ids),
+        links,
+    )
+    .await;
     Ok((page_id, Ingested { shadow, event }))
 }
 
@@ -338,6 +351,31 @@ pub async fn rename(
         op_refs,
         report: PageSourceReport::default(),
     })
+}
+
+/// The file read, `(text, edited, kept, saved_ids)` as [`write_back`] takes
+/// them, written back over the page's render after its save, linking
+/// attachments as `links` does; `None` when the page cannot be rendered, and
+/// the file is left for the next pass.
+async fn rendered_back(
+    read_pool: &SqlitePool,
+    page_id: &str,
+    (text, edited, kept, saved_ids): (&str, &str, &[usize], &[Option<String>]),
+    links: &Links,
+) -> Option<Shadow> {
+    match get_page_file_inner(read_pool, page_id).await {
+        Ok(now) => Some(write_back(
+            text,
+            edited,
+            kept,
+            saved_ids,
+            &links.localize(now),
+        )),
+        Err(e) => {
+            tracing::warn!(page_id, error = %e, "cannot render a page after its file was read");
+            None
+        }
+    }
 }
 
 /// The file `text` (`edited` its anchor-free form, `kept` the line of `text`

@@ -60,7 +60,8 @@ pub fn pending(
 }
 
 /// Every `.md` file below `folder`, as `/`-separated paths below `root`,
-/// hidden entries left out as the mirror's scan leaves them out. A missing
+/// hidden entries and copy folders left out as the mirror's scan leaves
+/// them out. A missing
 /// folder holds none.
 fn markdown_below(root: &Path, folder: &Path, found: &mut Vec<String>) -> std::io::Result<()> {
     let entries = match std::fs::read_dir(folder) {
@@ -77,7 +78,13 @@ fn markdown_below(root: &Path, folder: &Path, found: &mut Vec<String>) -> std::i
         }
         let path = entry.path();
         if entry.file_type()?.is_dir() {
-            markdown_below(root, &path, found)?;
+            // A copy folder is never read ([`super::assets`]).
+            if !path
+                .strip_prefix(root)
+                .is_ok_and(super::assets::is_copy_dir)
+            {
+                markdown_below(root, &path, found)?;
+            }
         } else if name.ends_with(".md")
             && let Ok(below) = path.strip_prefix(root)
         {

@@ -17,6 +17,8 @@ import { appSettings, blocks } from '@/lib/tauri-mock/seed'
 const MIRROR_FOLDER_KEY = 'mirror.folder'
 /** The `app_settings` key holding `'false'` while outside changes are not read back. */
 const MIRROR_READ_BACK_KEY = 'mirror.read_back'
+/** The `app_settings` key holding `'true'` while attachments are copied into the folder. */
+const MIRROR_COPY_FILES_KEY = 'mirror.copy_files'
 /** What the mock's folder dialog answers: there is no OS dialog to drive. */
 const MOCK_MIRROR_FOLDER = '/home/mock/Agaric mirror'
 
@@ -30,6 +32,7 @@ function mirrorStatus(): MirrorStatus {
     last_pass_ms: null,
     read_back: appSettings.get(MIRROR_READ_BACK_KEY) !== 'false',
     pending: [],
+    copy_files: appSettings.get(MIRROR_COPY_FILES_KEY) === 'true',
   }
 }
 
@@ -164,6 +167,10 @@ export const systemHandlers = {
     appSettings.set(MIRROR_READ_BACK_KEY, String((args as { on?: unknown }).on === true))
     return mirrorStatus()
   },
+  set_mirror_copy_files: (args) => {
+    appSettings.set(MIRROR_COPY_FILES_KEY, String((args as { on?: unknown }).on === true))
+    return mirrorStatus()
+  },
   get_mirror_status: mirrorStatus,
 
   // ---------------------------------------------------------------------------
@@ -188,5 +195,6 @@ export const systemHandlers = {
   | 'pick_mirror_folder'
   | 'set_mirror_folder'
   | 'set_mirror_read_back'
+  | 'set_mirror_copy_files'
   | 'get_mirror_status'
 >

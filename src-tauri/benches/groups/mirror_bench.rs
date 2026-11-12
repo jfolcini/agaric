@@ -13,6 +13,10 @@
 //!     one stat per file and per folder, paid every `TICK`
 //!   - `mirror_catchup_pass` — the full pass a snapshot catch-up asks for
 //!     (a sync naming no page) at 100K blocks
+//!   - `mirror_copy_first` — the first full pass with copying on, every
+//!     page written and every attachment it links copied into the folder
+//!   - `mirror_copy_unchanged` — a full pass with every copy in place, which
+//!     copies nothing
 //!   - `mirror_ingest_merge` — `apply_page_source_inner` with `merge`, as an
 //!     ingest saves, on one large page
 
@@ -25,7 +29,9 @@ use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
-use agaric_lib::commands::mirror::set_mirror_folder_inner;
+use agaric_core::ulid::BlockId;
+use agaric_lib::commands::add_attachment_with_bytes_inner;
+use agaric_lib::commands::mirror::{set_mirror_copy_files_inner, set_mirror_folder_inner};
 use agaric_lib::commands::pages::{
     SourceSaveFlags, apply_page_source_inner, get_page_buffer_inner,
 };
@@ -45,7 +51,7 @@ struct Vault {
     mat: Materializer,
     state: MirrorState,
     folder: TempDir,
-    _data: TempDir,
+    data: TempDir,
     _db: TempDir,
 }
 
@@ -133,7 +139,7 @@ async fn vault(pages: usize, blocks_per_page: usize) -> Vault {
         mat,
         state,
         folder,
-        _data: data,
+        data,
         _db: db,
     }
 }
@@ -184,6 +190,7 @@ async fn mirrored(pages: usize, blocks_per_page: usize) -> (Vault, Mirror) {
     let settings = agaric_lib::mirror::store::Settings {
         folder: Some(String::new()),
         read_back: true,
+        copy_files: false,
     };
     let status = vault.state.status(settings, Vec::new());
     assert!(
@@ -403,6 +410,107 @@ fn bench_ingest_merge(c: &mut Criterion) {
     rt.block_on(async { vault.mat.shutdown() });
 }
 
+/// The copies below `root`'s `assets/<id>/` folders.
+fn copy_count(root: &Path) -> usize {
+    let assets = root.join(SPACE_NAME).join("assets");
+    std::fs::read_dir(assets).map_or(0, |dirs| {
+        dirs.flatten()
+            .map(|dir| std::fs::read_dir(dir.path()).map_or(0, Iterator::count))
+            .sum()
+    })
+}
+
+/// A vault of `pages` pages whose one block links an attachment of its own
+/// of `size` bytes, with copying on.
+async fn with_attachments(pages: usize, size: usize) -> Vault {
+    let vault = vault(pages, 1).await;
+    for p in 0..pages {
+        let attachment = add_attachment_with_bytes_inner(
+            &vault.pool,
+            DEV,
+            &vault.mat,
+            vault.data.path(),
+            BlockId::from_trusted(&block_id(p, 0)),
+            format!("picture {p}.png"),
+            "image/png".into(),
+            vec![u8::try_from(p % 251).unwrap(); size],
+        )
+        .await
+        .unwrap()
+        .id;
+        sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+            .bind(format!("![picture](attachment:{attachment})"))
+            .bind(block_id(p, 0))
+            .execute(&vault.pool)
+            .await
+            .unwrap();
+    }
+    set_mirror_copy_files_inner(&vault.pool, DEV, &vault.state, true)
+        .await
+        .unwrap();
+    vault
+}
+
+fn bench_copy_passes(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    const PAGES: usize = 500;
+    const SIZE: usize = 64 * 1024;
+    let vault = rt.block_on(with_attachments(PAGES, SIZE));
+    let mut group = c.benchmark_group("mirror_copy_first");
+    group.sample_size(10);
+    // A name filter skips the timed loop but not the checks after it.
+    let timed = std::cell::Cell::new(0u64);
+    group.bench_function(BenchmarkId::from_parameter(PAGES), |b| {
+        b.iter_custom(|iters| {
+            timed.set(timed.get() + iters);
+            rt.block_on(async {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    // A first pass: no state and an empty folder.
+                    let mirror_state = vault.data.path().join("mirror");
+                    let _ = std::fs::remove_dir_all(&mirror_state);
+                    for entry in std::fs::read_dir(vault.folder.path()).unwrap() {
+                        let path = entry.unwrap().path();
+                        if path.is_dir() {
+                            std::fs::remove_dir_all(path).unwrap();
+                        }
+                    }
+                    let mut mirror = vault.open().await;
+                    let start = Instant::now();
+                    mirror.tick().await.unwrap();
+                    total += start.elapsed();
+                }
+                total
+            })
+        });
+    });
+    group.finish();
+    assert!(
+        timed.get() == 0 || copy_count(vault.folder.path()) == PAGES,
+        "every attachment is copied: {}",
+        copy_count(vault.folder.path())
+    );
+
+    // The pass after it, with every copy in place.
+    let mut mirror = rt.block_on(vault.open());
+    rt.block_on(mirror.tick()).unwrap();
+    assert_eq!(
+        copy_count(vault.folder.path()),
+        PAGES,
+        "the copies are in place"
+    );
+    let mut group = c.benchmark_group("mirror_copy_unchanged");
+    group.sample_size(10);
+    group.bench_function(BenchmarkId::from_parameter(PAGES), |b| {
+        b.iter(|| {
+            vault.state.restart();
+            rt.block_on(mirror.tick()).unwrap();
+        });
+    });
+    group.finish();
+    rt.block_on(async { vault.mat.shutdown() });
+}
+
 criterion_group!(
     mirror_benches,
     bench_dirty_tick,
@@ -411,4 +519,5 @@ criterion_group!(
     bench_idle_tick,
     bench_catchup_pass,
     bench_ingest_merge,
+    bench_copy_passes,
 );
