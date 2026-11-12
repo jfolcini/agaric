@@ -36,6 +36,7 @@ In CI, `scripts/classify-changes.sh` picks the lanes: a diff of only `e2e/*.spec
 Root rule: [AGENTS.md § Testing invariants](../AGENTS.md#testing-invariants-anti-drift). A Playwright green proves nothing about backend parity; the conformance harness does.
 
 - [`conformance-coverage.test.ts`](../src/lib/tauri-mock/__tests__/conformance-coverage.test.ts) fails a new mutating command unless it gains a fixture in `conformance/fixtures/` or a `NO_FIXTURE_ALLOWLIST` waiver with a written reason (stale or read-only waivers also fail).
+- A new mock handler test is a conformance fixture unless its header says why it cannot be.
 - Write the fixture (seed + ops + optional `scenarios` tags) without `expected`, then:
 
   ```sh

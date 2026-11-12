@@ -42,7 +42,7 @@ Prefer the global `invoke` mock, which catches every call. `vi.mock('@/lib/ipc-h
 - Deferred promises to observe intermediate states (loading, recovering).
 - `useBootStore.subscribe()` to capture state-transition sequences.
 - On backend error, assert state did **not** change.
-- For a backend mutation, re-`load()` or read the projection and assert the resulting row; several page-blocks suites drive the tauri mock's `dispatch` directly for this.
+- For a backend mutation, re-`load()` or read the projection and assert the resulting row. `await answerInvokeFromMock(mockedInvoke)` ([`helpers/invoke.ts`](../../__tests__/helpers/invoke.ts)) answers `invoke` from the tauri mock's `dispatch` over a fresh seed; new store and hook tests use it instead of hand-stubbing each command. Reference: "persists the edited content, read back by a fresh load" in `page-blocks.crud.test.ts`.
 - Optimistic writers: test the race, not only the failure. Fire two calls on one block, reject the first, and assert the second's state survives the rollback (rules: [`src/stores/AGENTS.md`](../AGENTS.md)).
 
 ## Undo / redo store

@@ -26,7 +26,7 @@ import {
  *  4. Deleting a property from a block via the drawer
  *  5. Property definitions view (browse/create/delete definitions)
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   PAGE_MEETINGS ("Meetings") — 2 child blocks:
  *     BLOCK_MTG_1: "Weekly standup notes"  — context: @office, project: alpha
  *     BLOCK_MTG_2: "Design review feedback" — context: @remote, project: beta

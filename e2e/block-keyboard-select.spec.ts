@@ -12,7 +12,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  * and the Ctrl/Shift+Click chords drive, so the toolbar lights up with the
  * count automatically.
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   PAGE_GETTING_STARTED ("Getting Started") -- 5 child blocks GS_1..GS_5.
  *
  * Selection mechanics (mirrors batch-operations.spec.ts):

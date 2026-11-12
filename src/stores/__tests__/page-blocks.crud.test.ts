@@ -9,6 +9,7 @@ import type { StoreApi } from 'zustand'
 
 import { makeBlock, makeBlockRow, withOps } from '@/__tests__/fixtures'
 import {
+  answerInvokeFromMock,
   type CommandReturns,
   deferred,
   deleteResp,
@@ -1276,20 +1277,19 @@ describe('PageBlockStore', () => {
     })
   })
   describe('edit', () => {
-    it('updates block content locally after successful backend call', async () => {
-      store.setState({
-        blocks: [makeBlock({ id: 'A', content: 'old' })],
-      })
-      stubInvoke(mockedInvoke, {
-        edit_block: () =>
-          withOps(makeBlockRow({ id: 'A', block_type: 'text', content: 'new', position: 0 })),
-      })
+    it('persists the edited content, read back by a fresh load', async () => {
+      await answerInvokeFromMock(mockedInvoke)
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      const page = createPageBlockStore(SEED_IDS.PAGE_GETTING_STARTED)
+      await page.getState().load()
 
-      const ok = await store.getState().edit('A', 'new')
+      const ok = await page.getState().edit(SEED_IDS.BLOCK_GS_1, 'new')
 
       expect(ok).toBe(true)
-      expect(store.getState().blocks[0]?.content).toBe('new')
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'A', toText: 'new' })
+      expect(page.getState().blocksById.get(SEED_IDS.BLOCK_GS_1)?.content).toBe('new')
+      const reloaded = createPageBlockStore(SEED_IDS.PAGE_GETTING_STARTED)
+      await reloaded.getState().load()
+      expect(reloaded.getState().blocksById.get(SEED_IDS.BLOCK_GS_1)?.content).toBe('new')
     })
 
     it('#753 — adopts the backend-normalized content echo on success', async () => {

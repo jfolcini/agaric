@@ -23,7 +23,7 @@ import {
  *   marks:  **bold**  *italic*  `code`  [text](url)
  *   tokens: #[ULID]  [[ULID]]
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   PAGE_GETTING_STARTED ("Getting Started") -- 5 child blocks:
  *     GS_1: "Welcome to Agaric! This is your personal knowledge base."
  *     GS_2: contains [[PAGE_QUICK_NOTES]] link

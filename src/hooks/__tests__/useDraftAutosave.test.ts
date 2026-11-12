@@ -302,6 +302,84 @@ describe('useDraftAutosave', () => {
     expect(mockedSaveDraft).not.toHaveBeenCalled()
   })
 
+  describe('a committed burst needs no draft row', () => {
+    /** Type `text`, then let the content commit store `committed` before the draft timer fires. */
+    function typeAndCommit(text: string, committed: string) {
+      const { ref, state, handle } = makeEditor({ markdown: '' })
+      const { result } = renderAutosave(ref)
+      state.markdown = text
+      act(() => {
+        result.current.onContentChange()
+      })
+      ;(handle as { storedMarkdown: string }).storedMarkdown = committed
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+    }
+
+    it('issues no saveDraft after a commit stored the live text', () => {
+      typeAndCommit('hello', 'hello')
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(0)
+    })
+
+    it('still drafts a `key:: value` line the content commit leaves to blur', () => {
+      typeAndCommit('status:: done', '')
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'status:: done')
+    })
+
+    it('overwrites its own row once the text is back to the committed text', () => {
+      // `a` is committed; a `key:: value` line typed after it is drafted, then deleted again.
+      const { ref, state } = makeEditor({ markdown: 'a\nk:: v', storedMarkdown: 'a' })
+      const { result } = renderAutosave(ref)
+      act(() => {
+        result.current.onContentChange()
+      })
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(mockedSaveDraft).toHaveBeenLastCalledWith('BLOCK_1', 'a\nk:: v')
+      state.markdown = 'a'
+      act(() => {
+        result.current.onContentChange()
+      })
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      // Left holding the line, the row would be replayed at boot over the text the user sees.
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(2)
+      expect(mockedSaveDraft).toHaveBeenLastCalledWith('BLOCK_1', 'a')
+    })
+
+    it('a committed edit after a discard still lets an unmount flush the tail typed after it', async () => {
+      const { ref, state, handle } = makeEditor({ markdown: 'a', storedMarkdown: 'a' })
+      const { result, unmount } = renderAutosave(ref)
+      // The blur before the refocus discards the block's draft.
+      act(() => {
+        result.current.discardDraft()
+      })
+      state.markdown = 'ab'
+      act(() => {
+        result.current.onContentChange()
+      })
+      ;(handle as { storedMarkdown: string }).storedMarkdown = 'ab'
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(mockedSaveDraft).not.toHaveBeenCalled()
+
+      state.markdown = 'abc'
+      act(() => {
+        result.current.onContentChange()
+      })
+      unmount()
+      await flushMicrotasks()
+
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'abc')
+      expect(mockedFlushDraft).toHaveBeenCalledWith('BLOCK_1')
+    })
+  })
+
   // Issue #715 — the flush effect is keyed on `blockId` alone. Content changes
   // while the same block stays focused must never trigger a flush.
   describe('issue #715 — flush only on block change / unmount', () => {

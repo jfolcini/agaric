@@ -15,7 +15,7 @@ import {
  * RescheduleDropZone (native HTML5 drag target in weekly view), and projected
  * repeat occurrences.
  *
- * Seed data (tauri-mock.ts / seed.ts) relevant here:
+ * Seed data (`src/lib/tauri-mock/seed.ts`) relevant here:
  *   PAGE_PROJECTS ("Projects") — BLOCK_PROJ_3 "Update dependencies", DONE,
  *     `completed_at` = today. NOT excluded from today's Done panel (its
  *     parent is PAGE_PROJECTS, not today's own daily page), so it is the

@@ -10,7 +10,7 @@ import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './he
  *  4. Tag filter panel: prefix search, add to filter, verify results
  *  5. Tag insertion via @ picker in the block editor
  *
- * Seed data (tauri-mock.ts):
+ * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   Tags: work, personal, idea
  *   PAGE_GETTING_STARTED ("Getting Started") — 5 child blocks
  *   BLOCK_GS_4 contains #[TAG_WORK] and #[TAG_PERSONAL] tag refs

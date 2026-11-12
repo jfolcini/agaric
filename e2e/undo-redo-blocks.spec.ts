@@ -23,7 +23,7 @@ test.describe.configure({ mode: 'serial' })
  * after undo, we navigate away and back to trigger a re-fetch from
  * the mock's updated state.
  *
- * Seed data: see tauri-mock.ts SEED_IDS.
+ * Seed data: see `SEED_IDS` in `src/lib/tauri-mock/seed.ts`.
  */
 
 test.describe('Block-level undo/redo @editor', () => {

@@ -330,8 +330,10 @@ test.describe('a reload of the open page keeps its editor and rows (#6533) @edit
     await openPage(page, 'Getting Started')
     const editor = await focusBlockById(page, GS3)
     await installIpcRecorder(page)
-    // Inside both debounces: the commit's and the draft autosave's.
-    await page.keyboard.type('!')
+    // Inside the draft autosave's debounce. The idle commit leaves a `key:: value` line to
+    // blur, so the autosave's row is the only save of it.
+    await page.keyboard.press('Control+a')
+    await page.keyboard.type('status:: kept')
 
     await emitMockEvent(page, 'blocks:changed', { changed_page_ids: [PAGE_GS] })
     await expect.poll(() => pageLoads(page, PAGE_GS)).toBe(1)
@@ -342,7 +344,7 @@ test.describe('a reload of the open page keeps its editor and rows (#6533) @edit
     // The recorder does see draft traffic: the autosave's own debounce saves this one.
     await expect
       .poll(() => getInvokeCalls(page, 'save_draft'))
-      .toEqual([{ blockId: GS3, content: `${GS3_TEXT}!` }])
+      .toEqual([{ blockId: GS3, content: 'status:: kept' }])
     expect(await getInvokeCalls(page, 'flush_draft')).toEqual([])
   })
 
