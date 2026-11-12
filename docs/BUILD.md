@@ -262,7 +262,7 @@ Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — 
 | C | `vitest related` (`test-related-ts.sh --range`) | Push range |
 | D | `cargo nextest related` (`test-related-rust.sh --range`) | Push range; only if Rust changed |
 | D2 | `cargo test --doc --workspace` | Only if Rust changed |
-| E | `cargo sqlx prepare --workspace --check` against `src-tauri/.sqlx` | Only if Rust changed |
+| E | `cargo sqlx prepare --workspace --check` against `src-tauri/.sqlx` | Only if the range can have changed a query (`scripts/lib/sqlx-query-range.mjs`): a `.rs` hunk overlapping a query macro, a `.sql`, `.sqlx/`, Cargo manifest or `sqlx.toml` change, or a `macro_rules!` wrapping a query macro; force with `PRE_PUSH_SQLX_CHECK=1` |
 | F | `agaric-mcp` release build + MCP UDS smoke + externalBin verify | Only if MCP paths changed |
 | G | `cargo audit` + `npm audit signatures` (warn-only here; both block in CI) | Always |
 
