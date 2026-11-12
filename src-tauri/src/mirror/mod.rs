@@ -123,8 +123,7 @@ struct Inner {
     failed: BTreeMap<String, (String, String)>,
     /// New files no page owns that could not be read onto a page, by path.
     failed_files: BTreeMap<String, String>,
-    /// Copies changed outside Agaric that are no longer wanted, left in
-    /// place, by path.
+    /// Copies changed outside Agaric, wanted or not, left in place, by path.
     kept_copies: Vec<String>,
     /// Copies that could not be written, and why, by path.
     failed_copies: BTreeMap<String, String>,
@@ -1103,10 +1102,11 @@ impl Mirror {
         Ok(())
     }
 
-    /// Remove the copies no longer wanted, each only while unchanged
-    /// ([`assets::Copies::remove_except`]): every one while copying is off,
-    /// one whose attachment is gone, and, after a full pass that rendered
-    /// every page (`complete`), one no page of its space links.
+    /// Remove the copies no longer wanted ([`assets::Copies::remove_except`]):
+    /// every one while copying is off, one whose attachment is gone, and,
+    /// after a full pass that rendered every page (`complete`), one no page of
+    /// its space links. A changed copy is never removed, and every one, wanted
+    /// or not, is listed as kept.
     async fn sweep_copies(&mut self, root: &Path, complete: bool) -> Result<(), AppError> {
         let ids = self.copies.ids();
         let live = if ids.is_empty() || !self.copy_files {
@@ -1301,7 +1301,12 @@ impl Mirror {
             Err(AppError::NotFound(_)) => return Ok(Wrote::Done),
             Err(e) => return Err(e),
         };
-        let (file, links) = self.localized(root, path, file).await?;
+        // Each attachment linked to its copy while copying is on.
+        let rendered = assets::linked(&file.text);
+        let file = self
+            .placed(root, path, rendered.clone())
+            .await?
+            .localize(file);
         let target = root.join(path);
         let newest = self
             .pages
@@ -1328,6 +1333,11 @@ impl Mirror {
                 shadow.line_ids.clone_from(&file.line_ids);
             }
             Some(bytes) if newest.is_none_or(|shadow| shadow.text.as_bytes() != bytes) => {
+                // A copy only the save links is placed too, or the write-back
+                // would turn the save's link to it into the attachment's.
+                let mut ids = rendered;
+                ids.extend(assets::copy_linked(&String::from_utf8_lossy(&bytes)));
+                let links = self.placed(root, path, ids).await?;
                 return self
                     .read_edit(root, page_id, path, bytes, &file, &links)
                     .await;
@@ -1357,19 +1367,6 @@ impl Mirror {
             }
         }
         self.record(page_id, path, shadow)
-    }
-
-    /// `file`, the render of the page whose file is at `path`, linking each
-    /// attachment to its copy while copying is on ([`Mirror::placed`]), and
-    /// how it links them.
-    async fn localized(
-        &mut self,
-        root: &Path,
-        path: &str,
-        file: PageFile,
-    ) -> Result<(PageFile, assets::Links), AppError> {
-        let links = self.placed(root, path, assets::linked(&file.text)).await?;
-        Ok((links.localize(file), links))
     }
 
     /// How the file at `path` links `ids`' copies while copying is on, the
