@@ -1727,6 +1727,31 @@ async fn a_file_moved_into_an_unmirrored_space_folder_leaves_its_page_where_it_w
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_moved_into_a_space_turned_back_on_moves_its_page_there() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let mut fx = Fx::new().await;
+    space_b(&fx).await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    mirror_space(&fx, TEST_SPACE_B_ID, false).await;
+    fx.tick().await;
+    rename_at(&fx, ALPHA, "TestSpaceB/Alpha.md");
+    for _ in 0..6 {
+        fx.tick().await;
+    }
+
+    mirror_space(&fx, TEST_SPACE_B_ID, true).await;
+    for _ in 0..6 {
+        fx.tick().await;
+    }
+
+    assert_eq!(space_of(&fx, &alpha).await, TEST_SPACE_B_ID, "moved");
+    assert!(!is_trashed(&fx, &alpha).await, "not trashed");
+    assert!(!fx.root.join(ALPHA).exists(), "and not written twice");
+    assert_eq!(fx.status().await.failed, vec![], "no longer refused");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_space_made_after_others_were_turned_off_is_mirrored() {
     use crate::commands::tests::common::TEST_SPACE_B_ID;
     let mut fx = Fx::new().await;

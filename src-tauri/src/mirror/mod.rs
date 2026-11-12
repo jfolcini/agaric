@@ -691,7 +691,13 @@ impl Mirror {
             self.copy_files = settings.copy_files;
             self.full_due = true;
         }
-        self.unmirrored = settings.unmirrored.into_iter().collect();
+        let unmirrored: HashSet<String> = settings.unmirrored.into_iter().collect();
+        if unmirrored != self.unmirrored {
+            // A file refused because its space was off is read again.
+            self.seen.refused_new.clear();
+            self.seen.refused_renames.clear();
+            self.unmirrored = unmirrored;
+        }
         let Some(folder) = settings.folder else {
             self.state.set_paused(None);
             self.full_due = true;
