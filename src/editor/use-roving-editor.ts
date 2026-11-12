@@ -86,6 +86,7 @@ import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import { cleanupOrphanedPopups } from '@/editor/suggestion-renderer'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { TableMoveKeys } from '@/editor/table-edit'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import type { DocNode } from '@/editor/types'
 import { unresolvedBlockLabel, unresolvedBlockRefLabel } from '@/lib/block-title'
@@ -645,6 +646,7 @@ export function contentExtensions(o: ContentExtensionOptions) {
     TableRow,
     ParagraphTableHeader,
     ParagraphTableCell,
+    TableMoveKeys,
     CodeBlockWithShortcut.configure({ lowlight }),
     HeadingWithoutDefaultShortcuts.configure({ levels: [1, 2, 3, 4, 5, 6] }),
     HardBreak,

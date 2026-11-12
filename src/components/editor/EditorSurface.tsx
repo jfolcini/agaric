@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 import { useBlockActions } from '@/components/block-tree/use-block-actions'
 import { ImageBubbleMenu } from '@/components/editor-toolbar/ImageBubbleMenu'
 import { SelectionBubbleMenu } from '@/components/editor-toolbar/SelectionBubbleMenu'
+import { TableHandles } from '@/components/editor-toolbar/TableHandles'
 import type { EditorSurfaceProps } from '@/components/editor/editor-surface-context'
 import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { FormattingToolbar } from '@/components/FormattingToolbar'
@@ -58,6 +59,7 @@ export function EditorSurface({
     <>
       <SelectionBubbleMenu editor={ed} blockId={blockId} />
       <ImageBubbleMenu editor={ed} />
+      <TableHandles editor={ed} />
       <EditorContent editor={ed} />
       {isDragOver && (
         <p className="px-3 pb-1 text-xs text-muted-foreground select-none" aria-live="polite">
