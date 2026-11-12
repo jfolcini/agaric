@@ -64,18 +64,31 @@ async function editTable(page: Page, title: string, id: string, mode: Mode): Pro
 const cell = (table: Locator, text: string): Locator =>
   table.locator('td, th').filter({ hasText: new RegExp(`^${text}$`) })
 
-/** Clicks the cell holding `text` and waits for the caret to be in it, where the handles act. */
-async function caretTo(page: Page, table: Locator, text: string): Promise<void> {
-  await cell(table, text).click()
+/**
+ * Clicks the cell holding `text` and waits for the handles to sit on its row and column,
+ * within a few pixels: far less than a row's height or a column's width.
+ * The DOM selection moves on the click, the editor's only a `selectionchange` later, and
+ * the handles and the move keys act on the editor's.
+ */
+async function caretTo(table: Locator, text: string): Promise<void> {
+  const target = cell(table, text)
+  await target.click()
   await expect
     .poll(() =>
-      page.evaluate(() => {
-        const node = window.getSelection()?.anchorNode
-        const el = node instanceof Element ? node : (node?.parentElement ?? null)
-        return el?.closest('td, th')?.textContent ?? null
+      target.evaluate((el) => {
+        const box = el.getBoundingClientRect()
+        const row = document.querySelector('[data-testid="table-row-handle"]')
+        const column = document.querySelector('[data-testid="table-column-handle"]')
+        if (row === null || column === null) return false
+        const r = row.getBoundingClientRect()
+        const c = column.getBoundingClientRect()
+        return (
+          Math.abs(r.top + r.height / 2 - (box.top + box.height / 2)) < 4 &&
+          Math.abs(c.left + c.width / 2 - (box.left + box.width / 2)) < 4
+        )
       }),
     )
-    .toBe(text)
+    .toBe(true)
 }
 
 const stored = async (page: Page, id: string): Promise<string> =>
@@ -149,17 +162,17 @@ for (const mode of ['Blocks', 'Page'] as const) {
       const id = await seedPage(page, title, '| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
       const table = await editTable(page, title, id, mode)
 
-      await caretTo(page, table, '1')
+      await caretTo(table, '1')
       await page.getByRole('button', { name: 'Add row' }).click()
       await expect(table.locator('tr')).toHaveCount(4)
       await page.getByRole('button', { name: 'Add column' }).click()
       await expect(table.locator('tr').first().locator('th')).toHaveCount(3)
 
-      await caretTo(page, table, '3')
+      await caretTo(table, '3')
       await rowHandle(page).click()
       await page.getByRole('menuitem', { name: 'Delete row' }).click()
       await expect(table.locator('tr')).toHaveCount(3)
-      await caretTo(page, table, 'b')
+      await caretTo(table, 'b')
       await columnHandle(page).click()
       await page.getByRole('menuitem', { name: 'Delete column' }).click()
       await expect(table.locator('tr').first().locator('th')).toHaveCount(2)
@@ -172,10 +185,10 @@ for (const mode of ['Blocks', 'Page'] as const) {
       const id = await seedPage(page, title, MOVES)
       const table = await editTable(page, title, id, mode)
 
-      await caretTo(page, table, 'a')
+      await caretTo(table, 'a')
       await dragTo(page, rowHandle(page), cell(table, 'c'))
       await expect(table.locator('tr').last()).toContainText('a')
-      await caretTo(page, table, 'h3')
+      await caretTo(table, 'h3')
       await dragTo(page, columnHandle(page), cell(table, 'h1'))
       await expect(table.locator('th').first()).toHaveText('h3')
 
@@ -200,7 +213,7 @@ for (const mode of ['Blocks', 'Page'] as const) {
       const id = await seedPage(page, title, MOVES)
       const table = await editTable(page, title, id, mode)
 
-      await caretTo(page, table, 'a')
+      await caretTo(table, 'a')
       await page.keyboard.press('Alt+Shift+ArrowDown')
       await page.keyboard.press('Alt+Shift+ArrowDown')
       await expect(table.locator('tr').last()).toContainText('a')
@@ -233,7 +246,7 @@ for (const mode of ['Blocks', 'Page'] as const) {
       )
       const table = await editTable(page, title, id, mode)
 
-      await caretTo(page, table, 'qty')
+      await caretTo(table, 'qty')
       await columnHandle(page).click()
       await page.getByRole('menuitem', { name: 'Sort ascending' }).click()
       await expect(table.locator('tr').nth(1)).toContainText('apple')
