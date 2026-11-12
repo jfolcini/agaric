@@ -228,6 +228,8 @@ test.describe('block mode formatting toolbar, one per view (#6562) @editor @page
       await page.keyboard.press('Escape')
       await page.keyboard.press('Escape')
       await page.setViewportSize({ width: 1280, height: 800 })
+      // The shell swaps the drawer trigger for the sidebar a frame after the resize.
+      await expect(page.getByTestId('mobile-sidebar-trigger')).toHaveCount(0)
       await navigateToView(page, 'Journal')
       await page.getByRole('tab', { name: 'Weekly view' }).click()
       await page.setViewportSize({ width, height: 800 })
