@@ -152,6 +152,7 @@ External tools (and you, from anywhere on the OS) can open Agaric to a specific 
 | `agaric://block/<id>` | Open the page containing the block; scroll the block into view; focus it. |
 | `agaric://page/<id>` | Open the page in the active tab. |
 | `agaric://settings/<tab>` | Open Settings to a specific tab (e.g. `agent`, `keyboard`, `data`). |
+| `agaric://settings/safe-mode` | Turn custom CSS off and open Settings › Appearance ([appearance.md](appearance.md#custom-css)). |
 
 The OS handler is registered on app install. From a terminal: `open agaric://...` (macOS), `xdg-open` (Linux), `start` (Windows).
 

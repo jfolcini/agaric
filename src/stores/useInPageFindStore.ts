@@ -19,6 +19,8 @@
  *  - `lastQuery` — preserved across `close()` so re-opening the toolbar
  *    (with no selection) restores the previous query. Locked-in
  * Behaviour from the plan, Q3.
+ *  - `replaceOpen` / `replacement` — the replace row (#6608), shown by its
+ *    toggle or `Ctrl+H`; closing the bar hides it and keeps the text.
  *
  * Match collection itself lives in `InPageFind.tsx` — the store stays
  * pure (no DOM access, no side effects). This keeps unit tests simple
@@ -59,6 +61,12 @@ interface InPageFindState {
    * mount (#6557: past the mount cap, under a collapsed block). Null when none.
    */
   revealBlockId: string | null
+  /** Whether the replace row is shown. */
+  replaceOpen: boolean
+  /** The replace row's text. */
+  replacement: string
+  /** How many of the matches a replace would leave (in a chip); set by `useInPageReplace`. */
+  unreplaceable: number
 
   /** Open the toolbar. If `selection` is provided, seed the query with it. */
   open$: (selection?: string) => void
@@ -83,6 +91,8 @@ interface InPageFindState {
   setContainer: (el: HTMLElement | null) => void
   /** Ask the owning `BlockTree` to mount `blockId`'s row. */
   setRevealBlockId: (blockId: string | null) => void
+  setReplaceOpen: (open: boolean) => void
+  setReplacement: (text: string) => void
 }
 
 const initialToggles: InPageFindToggles = {
@@ -102,6 +112,9 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
   container: null,
   lastQuery: '',
   revealBlockId: null,
+  replaceOpen: false,
+  replacement: '',
+  unreplaceable: 0,
 
   open$: (selection) => {
     const state = get()
@@ -139,6 +152,7 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
       regexError: null,
       skippedLongNodes: 0,
       revealBlockId: null,
+      replaceOpen: false,
     })
   },
 
@@ -183,6 +197,7 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
       set({
         container: el,
         open: false,
+        replaceOpen: false,
         totalMatches: 0,
         currentIndex: -1,
         regexError: null,
@@ -195,5 +210,13 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
 
   setRevealBlockId: (blockId) => {
     set({ revealBlockId: blockId })
+  },
+
+  setReplaceOpen: (replaceOpen) => {
+    set({ replaceOpen })
+  },
+
+  setReplacement: (replacement) => {
+    set({ replacement })
   },
 }))

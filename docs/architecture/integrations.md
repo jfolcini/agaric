@@ -107,6 +107,7 @@ External tools can open Agaric to a specific target:
 | `agaric://block/<id>` | Open the page; scroll the block into view; focus it. |
 | `agaric://page/<id>` | Open the page in the active tab. |
 | `agaric://settings/<tab>` | Open Settings to a specific tab. |
+| `agaric://settings/safe-mode` | Turn custom CSS off, then open Settings › Appearance. |
 
 The OS-side handler is registered on install. The Rust backend parses the incoming URL and emits a Tauri event (`deeplink:navigate-to-block`, `deeplink:navigate-to-page`, `deeplink:open-settings`); `useDeepLinkRouter` on the frontend listens and dispatches into the nav / tabs stores.
 

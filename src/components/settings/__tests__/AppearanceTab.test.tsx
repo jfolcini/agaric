@@ -1,6 +1,6 @@
 /**
  * Tests for AppearanceTab's tooltip-delay (#2851), note-text-size and
- * interface-zoom (#5646) Selects.
+ * interface-zoom (#5646) Selects, and the custom CSS stylesheet (#6558).
  *
  * The theme / font-size / motion controls on this tab are already covered
  * end-to-end via `SettingsView.test.tsx`; this file focuses on the rest plus
@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { AppearanceTab } from '@/components/settings/AppearanceTab'
+import { CUSTOM_CSS_ELEMENT_ID } from '@/hooks/useCustomCss'
 import { i18n, t } from '@/lib/i18n'
 import { PREFERENCES, readPreference } from '@/lib/preferences'
 
@@ -30,6 +31,7 @@ afterEach(async () => {
   document.documentElement.style.removeProperty('--agaric-font-size')
   document.documentElement.style.removeProperty('--motion-scale')
   document.documentElement.removeAttribute('data-motion')
+  document.getElementById(CUSTOM_CSS_ELEMENT_ID)?.remove()
 })
 
 describe('AppearanceTab — tooltip delay', () => {
@@ -140,5 +142,46 @@ describe('AppearanceTab — note text size and interface zoom (#5646)', () => {
     } finally {
       Object.defineProperty(navigator, 'userAgent', { configurable: true, get: () => originalUA })
     }
+  })
+})
+
+describe('AppearanceTab — custom CSS (#6558)', () => {
+  const sheet = () => document.getElementById(CUSTOM_CSS_ELEMENT_ID)
+
+  it('describes the switch with the help text, which says selectors are no promise', () => {
+    render(<AppearanceTab />)
+    const toggle = screen.getByRole('switch', { name: t('settings.customCssLabel') })
+    expect(toggle).toHaveAccessibleDescription(t('settings.customCssHelp'))
+    expect(t('settings.customCssHelp')).toContain('selectors')
+    expect(screen.getByRole('button', { name: t('settings.customCssDocs') })).toBeInTheDocument()
+  })
+
+  it('applies what is typed, saves it, and the switch removes it', async () => {
+    const user = userEvent.setup()
+    render(<AppearanceTab />)
+    const box = screen.getByRole('textbox', { name: t('settings.customCssTextLabel') })
+
+    await user.click(box)
+    await user.paste(':root { --radius: 0 }')
+    expect(sheet()?.textContent).toBe(':root { --radius: 0 }')
+    expect(readPreference(PREFERENCES.customCss)).toBe(':root { --radius: 0 }')
+
+    await user.click(screen.getByRole('switch', { name: t('settings.customCssLabel') }))
+    expect(readPreference(PREFERENCES.customCssEnabled)).toBe(false)
+    expect(sheet()).toBeNull()
+  })
+
+  it('applies nothing on mount while the switch is off', () => {
+    localStorage.setItem('agaric-custom-css', '* { display: none }')
+    localStorage.setItem('agaric-custom-css-enabled', 'false')
+    render(<AppearanceTab />)
+    expect(screen.getByRole('switch', { name: t('settings.customCssLabel') })).not.toBeChecked()
+    expect(sheet()).toBeNull()
+  })
+
+  it('has no a11y violations with a stylesheet typed in', async () => {
+    localStorage.setItem('agaric-custom-css', ':root { --radius: 0 }')
+    const { container } = render(<AppearanceTab />)
+    expect(await axe(container)).toHaveNoViolations()
   })
 })

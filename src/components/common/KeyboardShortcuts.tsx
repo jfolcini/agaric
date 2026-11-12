@@ -126,6 +126,7 @@ const DEEP_LINK_ENTRIES: DeepLinkEntry[] = [
   { path: 'agaric://block/<ULID>', description: 'keyboard.deepLinks.block' },
   { path: 'agaric://page/<ULID>', description: 'keyboard.deepLinks.page' },
   { path: 'agaric://settings/<tab>', description: 'keyboard.deepLinks.settings' },
+  { path: 'agaric://settings/safe-mode', description: 'keyboard.deepLinks.safeMode' },
 ]
 
 interface SyntaxEntry {

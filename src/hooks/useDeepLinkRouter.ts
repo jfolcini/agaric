@@ -9,7 +9,9 @@
  *   - `agaric://page/<ULID>` → emits `deeplink:navigate-to-page`
  *     with `{ id: <canonical uppercase ULID> }`.
  *   - `agaric://settings/<tab>` → emits `deeplink:open-settings`
- *     with `{ tab: <tab name> }`.
+ *     with `{ tab: <tab name> }`. The tab `safe-mode` turns the custom CSS
+ *     off and opens Appearance (#6558), the way back from a stylesheet that
+ *     hides the app.
  *
  * On Android the same routes arrive as App Links
  * (`https://agaric.app/o/<host>/<id>`); both shapes are handled identically
@@ -217,6 +219,9 @@ export async function handleNavigatePayload(payload: unknown, eventName: string)
   }
 }
 
+/** `agaric://settings/safe-mode`: the custom CSS off, then Appearance (#6558). */
+const SAFE_MODE_SETTINGS_TAB = 'safe-mode'
+
 /** Apply a `deeplink:open-settings` event. */
 export function handleOpenSettingsPayload(payload: unknown): void {
   if (!isOpenSettingsPayload(payload)) {
@@ -225,13 +230,16 @@ export function handleOpenSettingsPayload(payload: unknown): void {
     })
     return
   }
+  const safeMode = payload.tab === SAFE_MODE_SETTINGS_TAB
+  if (safeMode) writePreference(PREFERENCES.customCssEnabled, false)
+  const tab = safeMode ? 'appearance' : payload.tab
   // Persist the tab selection BEFORE switching views so SettingsView's
   // initial-state reader (`readActiveTab` -> localStorage) picks up the
   // requested tab on first render.  Tab-name validation lives in
   // `readActiveTab` — an unknown tab safely falls back to `'general'`.
   // A write failure (Not fatal — the view still mounts on `'general'`) is
   // logged and swallowed by writePreference.
-  writePreference(PREFERENCES.settingsActiveTab, payload.tab)
+  writePreference(PREFERENCES.settingsActiveTab, tab)
   try {
     // #734 — ALSO write the store handoff slot SettingsView subscribes to
     // while mounted. The localStorage write above only matters on a fresh
@@ -240,7 +248,7 @@ export function handleOpenSettingsPayload(payload: unknown): void {
     // localStorage in `readActiveTab`), the slot is what actually flips
     // the tab. Validation lives in SettingsView — unknown names are
     // dropped there.
-    useNavigationStore.getState().setPendingSettingsTab(payload.tab)
+    useNavigationStore.getState().setPendingSettingsTab(tab)
     useNavigationStore.getState().setView('settings')
   } catch (err) {
     logger.warn('deeplink', 'setView("settings") threw', undefined, err)

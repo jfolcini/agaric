@@ -145,6 +145,7 @@ beforeEach(() => {
   // that don't care about title resolution (#734).
   mockGetBlock.mockImplementation(async (id: string) => makeBlock({ id }))
   localStorage.removeItem(SETTINGS_ACTIVE_TAB_KEY)
+  localStorage.removeItem('agaric-custom-css-enabled')
 })
 
 afterEach(() => {
@@ -479,6 +480,18 @@ describe('handleOpenSettingsPayload', () => {
     handleOpenSettingsPayload({ tab: 'sync' })
     expect(mockSetPendingSettingsTab).toHaveBeenCalledWith('sync')
     expect(mockSetView).toHaveBeenCalledWith('settings')
+  })
+
+  it('safe-mode turns the custom CSS off and opens Appearance (#6558)', () => {
+    handleOpenSettingsPayload({ tab: 'safe-mode' })
+    expect(localStorage.getItem('agaric-custom-css-enabled')).toBe('false')
+    expect(localStorage.getItem(SETTINGS_ACTIVE_TAB_KEY)).toBe('appearance')
+    expect(mockSetPendingSettingsTab).toHaveBeenCalledWith('appearance')
+  })
+
+  it('leaves the custom CSS switch alone for any other tab', () => {
+    handleOpenSettingsPayload({ tab: 'appearance' })
+    expect(localStorage.getItem('agaric-custom-css-enabled')).toBeNull()
   })
 
   it('rejects payloads missing the tab field', () => {

@@ -153,7 +153,7 @@ site page named in the row or in the Appendix.
 | Long-form writing | The default experience | Page mode, with its cap and opt-in. Blocks remain the storage unit, so a paragraph is a block | Partial |
 | Outlining | List indent, fold, move line; the Outliner plugin (1.50M) adds outliner behaviour | Native: indent, drag with depth projection, zoom, collapse, multi-select, a keyboard selection cursor | Better |
 | Markdown dialect | CommonMark, GFM and LaTeX (help, *Obsidian Flavored Markdown*) | A CommonMark subset shared by import, source and paste; no setext headings, reference links or inline HTML beyond `<u>` (COMPARISON.md §3, not re-audited today) | Partial |
-| Tables | Pipe tables; in Live Preview a right-click adds, deletes, sorts and moves rows and columns | Pipe tables, a size grid, row and column operations in the toolbar and a page-mode bubble (`src/components/TableOpsSelector.tsx`). No sort was found there | Partial |
+| Tables | Pipe tables; in Live Preview a right-click adds, deletes, sorts and moves rows and columns | Pipe tables, a size grid, and handles on the table that add, delete, move (drag or `Alt+Shift+arrows`) and sort rows and columns, as the toolbar's table menu does (`src/components/editor-toolbar/TableHandles.tsx`, #6607) | Done |
 | Math | MathJax, inline and block | KaTeX, inline and block (`src/editor/extensions/math.ts`) | Done |
 | Code blocks | Prism highlighting | lowlight highlighting, language popover (`src/editor/extensions/code-highlight.ts`) | Done |
 | Mermaid | Built in; re-engineered in 1.15 (changelog) | Built in, with a full-screen viewer and SVG download (`src/editor/extensions/MermaidCodeBlockView.tsx`) | Done |
@@ -162,7 +162,7 @@ site page named in the row or in the Appendix.
 | Comments | `%%hidden%%` | **None.** No handling of `%%` was found under `src/editor/`; an imported comment presumably stays visible text (**unverified**) | Gap |
 | Highlight colours | Six colours (help, *Basic formatting syntax*; roadmap: October 2026) | One highlight (`==`) | Gap |
 | Folding | Headings and lists fold | Blocks collapse; the state is per device, not synced | Partial |
-| Find in note | Find and replace | `Ctrl+F` with case, whole-word and regex (`docs/SEARCH.md`). **No replace** was found | Partial |
+| Find in note | Find and replace | `Ctrl+F` with case, whole-word and regex; `Ctrl+H` replaces one or all matches in the open page, `$1` groups in regex mode (`docs/SEARCH.md`). No replace across pages | Done |
 | Multiple cursors | Yes (help, *Multiple cursors*) | Not found | Gap |
 | Slides | Core plugin | None | Gap |
 | Spellcheck | Built in (roadmap: June 2020) | The webview's (`spellcheck: 'true'` in `src/editor/use-roving-editor.ts`) | Done |
@@ -475,7 +475,7 @@ core only; a plugin closes each.
 | **Publishing** | Publish, PDF export | None |
 | **Importers** | 15 sources, including Apple Notes, OneNote, Google Keep, Bear, Roam | 8 sources |
 | **Languages** | 51 complete app translations, RTL | English and a little Spanish |
-| **Vim mode, multiple cursors, comments, slides, find-and-replace** | In core | Absent |
+| **Vim mode, multiple cursors, comments, slides** | In core | Absent |
 | **Team and track record** | Seven people, six years, audits, paying users | One maintainer, pre-1.0 |
 | **Signed installers** | Yes (memory) | Unsigned on desktop |
 
@@ -493,7 +493,7 @@ are not ranked (§24).
 | Section | Ahead | Level | Behind | Not ranked |
 | --- | :---: | :---: | :---: | :---: |
 | 1. Notes, Files and Data Ownership | 2 | 0 | 4 | 3 |
-| 2. Editor | 1 | 7 | 11 | 2 |
+| 2. Editor | 1 | 8 | 10 | 2 |
 | 3. Linking and Transclusion | 0 | 5 | 6 | 0 |
 | 4. Properties and Bases | 3 | 3 | 5 | 0 |
 | 5. Tags | 1 | 2 | 2 | 0 |
@@ -518,11 +518,11 @@ are not ranked (§24).
 | 24. Performance, Accessibility and Localisation | 0 | 0 | 2 | 2 |
 | 25. Platforms, Packaging and Updates | 0 | 2 | 2 | 1 |
 | 26. Licence, Governance and Longevity | 1 | 2 | 1 | 0 |
-| **Total (175 rows)** | **18** | **43** | **92** | **22** |
+| **Total (175 rows)** | **18** | **44** | **91** | **22** |
 
 How to read it:
 
-- **On breadth Obsidian core wins clearly.** Agaric is behind in 92 of the 153 ranked rows and ahead
+- **On breadth Obsidian core wins clearly.** Agaric is behind in 91 of the 153 ranked rows and ahead
   in 18. Plugins widen that: four of the 18 (tag rename, query granularity, task dates and
   recurrence, the agenda) lead core only, and a popular plugin answers each.
 - **In no section is Agaric ahead more often than behind.** It breaks even in three: tasks and
@@ -583,7 +583,7 @@ low / medium / high; cost low is hours to days, medium is weeks, high is a month
 | 11 | **A readable query language** | Dataview users expect to paste a query. The engine exists; the text form was dropped | medium | medium | low |
 | 12 | **One user stylesheet** | A single custom CSS file covers most of what snippets are used for, on the token layer that already exists | medium | low | low to medium: support burden when the DOM changes |
 | 13 | **Translations** | Finish Spanish; open a contribution path. Every string already passes through `t()` | medium | medium | low |
-| 14 | **Editor parity items** | `%%comments%%`, find-and-replace, table sort, outgoing-links list, `/template` keeping properties, searches shorter than three characters | medium | low each | low |
+| 14 | **Editor parity items** | `%%comments%%`, outgoing-links list, `/template` keeping properties, searches shorter than three characters | medium | low each | low |
 | 15 | **PDF and static HTML export** | Sharing a page with someone who does not use the app | low to medium | medium | low |
 | 16 | **Fix the README** | It still describes a WebSocket transport, four journal modes, five property types and inline block-ref content | low | low | low |
 

@@ -90,6 +90,11 @@ export const settings: Record<string, string> = {
   'settings.fontSizeSmall': 'Small',
   'settings.fontSizeMedium': 'Medium',
   'settings.fontSizeLarge': 'Large',
+  'settings.customCssLabel': 'Custom CSS',
+  'settings.customCssHelp':
+    'Your own stylesheet, applied after the app’s. Only the documented tokens are kept from release to release; selectors, class names and the page structure can change. If it hides the app, open agaric://settings/safe-mode to turn it off.',
+  'settings.customCssTextLabel': 'Custom CSS stylesheet',
+  'settings.customCssDocs': 'Token reference',
   'settings.zoomLabel': 'Zoom',
   'settings.zoomHelp': 'Scales the whole interface: sidebar, menus, dialogs and notes.',
   'settings.motionLabel': 'Animations',

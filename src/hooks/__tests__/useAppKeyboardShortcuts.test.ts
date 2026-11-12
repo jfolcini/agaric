@@ -96,6 +96,18 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     expect(useNavigationStore.getState().currentView).toBe('journal')
   })
 
+  it('Ctrl+H (replaceInPage) opens the find toolbar with its replace row; Ctrl+F without it', () => {
+    useInPageFindStore.setState({ open: false, query: '', lastQuery: '', replaceOpen: false })
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
+
+    fireEvent.keyDown(window, { key: 'h', ctrlKey: true })
+    expect(useInPageFindStore.getState()).toMatchObject({ open: true, replaceOpen: true })
+
+    useInPageFindStore.getState().close()
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    expect(useInPageFindStore.getState()).toMatchObject({ open: true, replaceOpen: false })
+  })
+
   it('Ctrl+Shift+F (focusSearch) sets navigation view to "search"', () => {
     renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 

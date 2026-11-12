@@ -229,10 +229,12 @@ function trySelectTab(e: KeyboardEvent, state: ReturnType<typeof useTabsStore.ge
  * Extracted from the global-shortcuts handler so the main `useEffect`
  * dispatcher stays within oxlint's eslint/complexity budget.
  */
-function openInPageFindFromShortcut(t: (key: string) => string): void {
+function openInPageFindFromShortcut(t: (key: string) => string, replace = false): void {
   const sel = typeof window !== 'undefined' ? window.getSelection?.() : null
   const selectedText = sel && !sel.isCollapsed ? sel.toString().trim() : ''
-  useInPageFindStore.getState().open$(selectedText.length > 0 ? selectedText : undefined)
+  const find = useInPageFindStore.getState()
+  find.open$(selectedText.length > 0 ? selectedText : undefined)
+  if (replace) find.setReplaceOpen(true)
   announce(t('announce.findInPageOpened'))
 }
 
@@ -247,12 +249,14 @@ function openInPageFindFromShortcut(t: (key: string) => string): void {
 // ---------------------------------------------------------------------------
 
 /**
- * `findInPage` (Ctrl+F by default) opens the in-page find toolbar.
+ * `findInPage` (Ctrl+F by default) opens the in-page find toolbar;
+ * `replaceInPage` (Ctrl+H) opens it with its replace row.
  */
 function tryFindInPage(e: KeyboardEvent, t: (key: string) => string): boolean {
-  if (!matchesShortcutBinding(e, 'findInPage')) return false
+  const replace = matchesShortcutBinding(e, 'replaceInPage')
+  if (!replace && !matchesShortcutBinding(e, 'findInPage')) return false
   e.preventDefault()
-  openInPageFindFromShortcut(t)
+  openInPageFindFromShortcut(t, replace)
   return true
 }
 

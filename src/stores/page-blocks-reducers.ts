@@ -316,7 +316,7 @@ export function createReducers({
       }
     },
 
-    edit: async (blockId: string, content: string, { merge = true } = {}) => {
+    edit: async (blockId: string, content: string, { merge = true, undoGroup } = {}) => {
       const { rootParentId, blocksById } = get()
       const previousContent = blocksById.get(blockId)?.content
       // Single-block-edit hot path (perf-review Tier 1 #2, #2200): re-allocating
@@ -386,9 +386,9 @@ export function createReducers({
         // blur commit into ONE undo entry (key is per-block) so Ctrl+Z reverts
         // a block edit as a single action despite the finer commit cadence.
         // Without the key, a `merge: false` entry is not joined by the typing
-        // that follows it either.
-        if (merge) notifyUndoNewAction(rootParentId, opRefs, `edit:${blockId}`)
-        else notifyUndoNewAction(rootParentId, opRefs, undefined, { merge: false })
+        // that follows it either. An `undoGroup` key joins edits of several blocks.
+        const coalesceKey = undoGroup ?? (merge ? `edit:${blockId}` : undefined)
+        notifyUndoNewAction(rootParentId, opRefs, coalesceKey, { merge })
         return true
       } catch (err) {
         // Rollback optimistic update — also a single-block touch.
