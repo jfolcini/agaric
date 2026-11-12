@@ -1,18 +1,10 @@
 /**
- * Leaked-empty-block cleanup — the drop-on-blur half of #4729 (Part 1).
+ * Leaked-empty-block cleanup: BlockTree's focus-change effect drops an empty
+ * block when the user leaves it (#4729). Nothing else ever deletes these, and
+ * many sit between blocks with content.
  *
- * 47% of the live content blocks in a real vault are empty, and 203 of the 352
- * that sit under a page are INTERLEAVED rather than trailing (106 have real
- * content after them). Those are not cursor positions; nothing anywhere ever
- * deleted them. This module is the predicate + runner that BlockTree's
- * focus-change cleanup effect uses to drop such a block when the user leaves
- * it.
- *
- * ## "Empty" is not "blank content"
- *
- * A block with no text can still carry meaning, and deleting it would be data
- * loss. The predicate mirrors the backend boot sweep's (issue #4729, the
- * "Decision" comment) — a block is a candidate only if ALL of:
+ * A block with no text can still carry meaning, so a block is a candidate only
+ * if all hold, mirroring the backend boot sweep:
  *
  *   1. it is a live `content` block                       (local)
  *   2. `content.trim() === ''`                             (local)
@@ -25,28 +17,13 @@
  *   7. deleting it would not leave the surface the user is
  *      looking at with nothing to click into               (local)
  *
- * Guards 3-6 are NOT exercised by the reported vault (all 508 empties pass
- * them), which is exactly why each one has a test that constructs the case
- * explicitly — the data will never produce it.
+ * Guard 7 has two arms: the page, and the zoom root, whose seeded empty child
+ * (`useBlockZoomEmptySeed`) would be re-minted after every delete, churning ops.
  *
- * Guard 7 is the one that matters at scale: without it the sweep would leave
- * 216 pages with zero live children. It has two arms here, because the
- * frontend has a second surface the backend does not:
- *
- *   - the PAGE — a page with no block has nothing to click into;
- *   - the ZOOM ROOT — `useBlockZoomEmptySeed` seeds an empty child under a
- *     zoomed leaf so the pane is typable. Deleting that seed on blur would
- *     make the seed effect re-arm and mint a replacement, so every click-away
- *     would churn a delete op + a create op for no user-visible change.
- *
- * ## Ordering
- *
- * Local guards run first and reject the overwhelming majority for free; only a
- * genuinely blank, childless, metadata-free block pays the four IPCs, and only
- * once any save of it that defers its text write past an IPC (a typed
- * `key:: value` line or task marker, #5448) has landed. Every IPC failure
- * resolves to "keep the block" — the safe direction, since the backend boot
- * sweep is the backstop for anything blur misses.
+ * Local guards run first; only a blank, childless, metadata-free block pays
+ * the IPCs, and only once a save of it that defers its text past an IPC has
+ * landed (#5448). Every IPC failure keeps the block: the boot sweep is the
+ * backstop.
  */
 
 import { unwrap } from '@/lib/app-error'
@@ -92,12 +69,9 @@ export interface EmptyBlockGuardInput {
 }
 
 /**
- * The guards decidable from the page store alone (1-4 and 7).
- *
- * Exported for the per-guard tests and reused as the post-IPC re-check in
- * {@link deleteBlockIfLeakedEmpty}: the four metadata queries are awaited, and
- * the tree can change under them (a sync load, an undo, the user coming back
- * and typing), so the decision is only acted on if it still holds afterwards.
+ * The guards decidable from the page store alone (1-4 and 7). Also the
+ * re-check after the IPCs in {@link deleteBlockIfLeakedEmpty}, since the tree
+ * can change while they are awaited.
  */
 export function isLeakedEmptyCandidate({
   blocks,
@@ -107,21 +81,20 @@ export function isLeakedEmptyCandidate({
   const block = blocks.find((b) => b.id === blockId)
   if (!block) return false
 
-  // Guard 1 — a live content block. Never a page/tag row, never one already
-  // soft-deleted (deleting twice would append a second delete op).
+  // Guard 1 — a live content block; deleting a soft-deleted one twice would
+  // append a second delete op.
   if (block.block_type !== 'content') return false
   if (block.deleted_at !== null) return false
 
   // Guard 2 — blank after trimming.
   if ((block.content ?? '').trim() !== '') return false
 
-  // Guard 3 — no children. A blank parent is an outline node, not a leak, and
-  // `delete_block` cascades onto the whole subtree.
+  // Guard 3 — no children: a blank parent is an outline node, and
+  // `delete_block` cascades onto the subtree.
   const descendants = getDragDescendants(blocks, blockId)
   if (descendants.size > 0) return false
 
-  // Guard 4 — no task/date metadata. A block with a due date and no text is a
-  // real (if badly named) task; the same goes for a bare TODO or a priority.
+  // Guard 4 — a blank block with a date, a TODO or a priority is a real task.
   if (
     block.todo_state !== null ||
     block.priority !== null ||
@@ -131,12 +104,10 @@ export function isLeakedEmptyCandidate({
     return false
   }
 
-  // Guard 7a — not the last remaining block of its page. A page with nothing
-  // to click into is worse than a stray empty block.
+  // Guard 7a — not the page's last block.
   if (blocks.length <= 1) return false
 
-  // Guard 7b — not the last remaining block of the zoomed pane (see the module
-  // docstring: otherwise the #922 empty-zoom seed re-arms and churns ops).
+  // Guard 7b — not the zoomed pane's last block.
   if (zoomedBlockId !== null && zoomedBlockId !== blockId) {
     const paneIds = getDragDescendants(blocks, zoomedBlockId)
     if (paneIds.has(blockId) && paneIds.size <= 1) return false
@@ -146,19 +117,11 @@ export function isLeakedEmptyCandidate({
 }
 
 /**
- * Guards 5 and 6 — the four metadata queries, run in parallel.
- *
- * Resolves `true` only when the block provably carries nothing: no
- * `block_properties` row, no tag, no attachment, and no live block linking to
- * it (the `block_links` table backing `get_backlinks` holds both `((id))`
- * block-refs and `[[id]]` links). A rejected query resolves `false` — an
- * unknown answer must never authorise a delete.
- *
- * The backlink query is scoped to the active space (#5415). A write that would
- * introduce a cross-space link is refused, so the active space holds every
- * referrer except one "Move to space" left behind — and that one already
- * renders as a broken chip. No active space is an unknown answer — the block
- * stays.
+ * Guards 5 and 6, in parallel: `true` only when the block provably carries
+ * nothing (`block_links` behind `get_backlinks` holds both `((id))` and
+ * `[[id]]`). A failed query, or no active space, keeps the block. The backlink
+ * probe is space-scoped (#5415): cross-space links are refused at write time,
+ * and one a "Move to space" left behind already renders broken.
  */
 async function carriesNothing(blockId: string, spaceId: string | null): Promise<boolean> {
   if (spaceId == null) return false
@@ -167,7 +130,6 @@ async function carriesNothing(blockId: string, spaceId: string | null): Promise<
       commands.getProperties(blockId).then(unwrap),
       commands.listTagsForBlock(blockId).then(unwrap),
       commands.listAttachments(blockId).then(unwrap),
-      // limit 1 — presence is the whole question.
       commands
         .getBacklinks(blockId, null, paginationLimit(1), requireActiveScope(spaceId))
         .then(unwrap),
@@ -192,46 +154,29 @@ export interface DeleteIfLeakedEmptyParams {
   /** The active space the backlink probe is scoped to; `null` keeps the block. */
   spaceId: string | null
   /**
-   * The page store's `remove` action (or BlockTree's verifying wrapper around
-   * it). Deleting MUST go through it: it appends the `delete_block` op that
-   * the Loro doc and the op log are projections of. A direct store mutation
-   * would diverge and be reverted on the next sync.
-   *
-   * Called with `{ undoable: false }` — see the call in
-   * {@link deleteBlockIfLeakedEmpty}.
+   * The page store's `remove` (or BlockTree's verifying wrapper), so the
+   * delete appends its `delete_block` op; a direct store write would be
+   * reverted on the next sync.
    */
   remove: (blockId: string, options?: { undoable?: boolean }) => Promise<void>
-  /**
-   * Read the live flat tree. Called once up front and again after the metadata
-   * probe resolves, so the decision is made on the tree as it is at each point
-   * rather than on a snapshot captured before the round trip.
-   */
+  /** The live flat tree, read before the probe and again after it. */
   readBlocks: () => readonly FlatBlock[]
   /**
-   * Whether the page loader hit its `PAGE_SUBTREE_MAX_BLOCKS` cap (the store's
-   * `truncatedTotal !== null`). Guard 3 asks "does this block have children?"
-   * of the LOADED tree; on a truncated page a nested child whose parent row was
-   * cut is dropped by `buildFlatTree`, so a blank block could read as childless
-   * and `delete_block` would cascade onto a subtree nobody could see. The whole
-   * cleanup stands down on such a page — the backend sweep, which queries the
-   * real table, is the backstop.
+   * Whether the load hit `PAGE_SUBTREE_MAX_BLOCKS`. A truncated tree can show
+   * a parent as childless, and `delete_block` would cascade onto a subtree
+   * nobody could see, so the cleanup stands down.
    */
   isPageTruncated: () => boolean
   /**
-   * Re-checked after the probe: `false` aborts the delete. BlockTree passes
-   * "the user has not focused this block again", so a quick click-away-and-back
-   * during the IPC round trip cannot delete the block out from under a caret
-   * that is already back inside it.
+   * Re-checked after the probe; `false` aborts. BlockTree passes "not focused
+   * again", so a quick click away and back cannot delete under the caret.
    */
   isStillBlurred: () => boolean
 }
 
 /**
- * Delete `blockId` if — and only if — it is a leaked empty block.
- *
- * Resolves `true` when the delete was dispatched, `false` when any guard held.
- * Never throws: the caller is a `useEffect`, and a rejected cleanup would be an
- * unhandled rejection.
+ * Delete `blockId` only if it is a leaked empty block; whether the delete was
+ * dispatched. Never throws: the caller is a `useEffect`.
  */
 export async function deleteBlockIfLeakedEmpty({
   blockId,
@@ -242,25 +187,17 @@ export async function deleteBlockIfLeakedEmpty({
   isPageTruncated,
   isStillBlurred,
 }: DeleteIfLeakedEmptyParams): Promise<boolean> {
-  // Window blur / tab switch / app background is NOT the user leaving a block.
-  // The contenteditable's `blur` fires all the same, and deleting then is
-  // user-hostile: they alt-tab away and come back to a vanished block with no
-  // gesture of their own to blame. `document.hasFocus()` is false throughout
-  // the blur that a window/tab/app switch causes and true for every in-app
-  // focus move (block→block, block→whitespace, block→toolbar), which is
-  // exactly the distinction. The block is left for the backend boot sweep.
+  // A window, tab or app switch blurs the editor too, but is not the user
+  // leaving the block; `document.hasFocus()` is false only then.
   if (document.hasFocus() === false) return false
 
-  // A capped page's flat tree is not a faithful answer to "has children".
+  // A truncated tree cannot answer "has children".
   if (isPageTruncated()) return false
 
   if (!isLeakedEmptyCandidate({ blocks: readBlocks(), blockId, zoomedBlockId })) return false
 
-  // #5448 — a `key:: value` line or a task marker typed into the block is
-  // saved only after its property IPC answers (`runUnmountFlush`); until then
-  // the store shows the block blank and the probe finds no property. Decide
-  // on the settled block: the kept text fails the re-check below, the stored
-  // property fails the probe.
+  // A typed `key:: value` or task marker is saved only after its IPC answers,
+  // until when the block looks blank (#5448). Decide on the settled block.
   try {
     await settlePendingSaves(blockId)
   } catch (err: unknown) {
@@ -270,18 +207,13 @@ export async function deleteBlockIfLeakedEmpty({
 
   if (!(await carriesNothing(blockId, spaceId))) return false
 
-  // Re-decide on the post-await world (see `isLeakedEmptyCandidate`).
+  // Re-decide on the tree after the awaits.
   if (!isStillBlurred()) return false
   if (!isLeakedEmptyCandidate({ blocks: readBlocks(), blockId, zoomedBlockId })) return false
 
   try {
-    // `undoable: false` — this delete is HOUSEKEEPING. The user clicked away
-    // from a blank block; they did not ask for a delete, and they must not
-    // have to spend their next Ctrl+Z on undoing one they never saw (nor lose
-    // a pending Ctrl+Y to it — `onNewAction` also clears the redo stack).
-    // Everything else about the delete is unchanged: the `DeleteBlock` op is
-    // appended, the row is soft-deleted, it syncs, and it is recoverable from
-    // Trash — which is the right affordance for a cleanup.
+    // Housekeeping the user did not ask for: no undo entry, no lost redo
+    // (#4729). The delete still syncs and lands in Trash.
     await remove(blockId, { undoable: false })
   } catch (err: unknown) {
     logger.warn('emptyBlockCleanup', 'failed to delete leaked empty block', { blockId }, err)

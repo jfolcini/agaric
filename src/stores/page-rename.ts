@@ -1,25 +1,9 @@
 /**
- * Page-rename fan-out (#3322).
- *
- * `src/stores/resolve.ts` calls itself the "single source of truth for
- * resolving block/tag ULIDs to display titles", but two other stores keep
- * their own PERSISTED copy of a page title: `PageRef.title` in
- * `recent-pages.ts` and `PageEntry.title` / `Tab.label` in `tabs.ts`. Every
- * rename therefore has to write three stores, and every call site that
- * existed wrote only two — `PageHeader.persistTitle`, the PageHeader
- * undo/redo title refresh and `useUndoShortcuts.refreshAfterUndoRedo` all
- * updated tabs + resolve and left the recents entry stale. Because that entry
- * is persisted AND is the argument the recents strip passes back into
- * `tabs.navigateToPage(pageId, title)` — which re-stamps it via `recordVisit`
- * and pushes it onto the tab stack — one click on a renamed page in the
- * recents strip resurrected the OLD title in the tab, across restarts, while
- * `PageHeader` rendered the new one.
- *
- * The denormalised copies are kept (they are the pre-hydration placeholder
- * the strip and the tab bar render before the resolve preload lands), but
- * fanning out is no longer something a call site can half-do: this is the ONE
- * entry point, and each store's own action is a no-op when its copy is
- * already current.
+ * Page-rename fan-out (#3322). Besides the resolve cache, the recents MRU and
+ * the tab stacks persist their own copy of a page title (shown before the
+ * resolve preload lands). A rename that missed the recents copy came back:
+ * clicking the entry re-stamped the old title onto the tab, across restarts.
+ * This is the one entry point; each store's action is a no-op when current.
  */
 
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
@@ -29,74 +13,34 @@ import { useResolveStore } from '@/stores/resolve'
 import { useTabsStore } from '@/stores/tabs'
 
 /**
- * Record a page's new title in every store that holds a copy: the resolve
- * cache (chips / rich-content links), the tab stacks + labels, and the
- * active space's recents MRU — then broadcast the rename to the picker's
- * name caches (#4007), which are React refs rather than stores and so can
- * only be reached through `@/lib/name-change-bus`.
+ * Record a page's new title in every copy (resolve cache, tab stacks and
+ * labels, the active space's recents) and broadcast it to the pickers' name
+ * caches, which only `@/lib/name-change-bus` reaches (#4007). Call it after the
+ * backend write commits; it does no IPC.
  *
- * Call this AFTER the backend write commits — it does no IPC of its own.
- *
- * #4391 — `spaceId` is the space the CALLER had in hand when it decided to
- * rename, threaded in rather than read here. It is required (not defaulted,
- * not optional) so a new call site fails to compile instead of silently
- * emitting a mislabelled event, and it is `string | null` because "no active
- * space" is a real state the callers can be in.
- *
- * This function cannot capture the value itself. It is synchronous, so
- * "capture at entry" and "read at emit" are the same tick and the same
- * value — capturing here would be a no-op. The `await` that matters is in
- * the callers, BETWEEN the user's decision and this call:
- * `PageHeader.persistTitle` (after `editBlock`), `HistoryPanel`'s restore and
- * undo-restore (after `getBlock` / `editBlock`), and
- * `useUndoShortcuts.refreshAfterUndoRedo` (after the undo/redo IPC and
- * `load()`; the page header's Undo/Redo buttons route through it too). A read
- * taken here would therefore be a FRESH read at emit time.
- *
- * The name-change-bus docblock's "worse than no scoping" scenario — a rename
- * started in space A while the user switches to B gets labelled `B` and let
- * into B's warm cache, aborting an in-flight B fill — is the reason `added`
- * must be threaded, not read fresh. It does NOT hold for the `renamed` event
- * this function emits: the generation bump in `useBlockResolve`'s
- * name-change-bus subscriber (`nameChangeGenerationRef`) is unconditional and
- * runs BEFORE the space check, so an in-flight fill aborts on a genuine
- * rename either way, mislabelled or not; and `applyPageNameChange`'s renamed
- * arm (`if (!present) return list`) only mutates a row already in the target
- * cache, so a mislabelled event could not inject an A-space id into B's list.
- * Threading the caller's captured value here is still correct — it keeps this
- * function's contract identical to `notifyPageAdded`'s, so a future reader
- * does not have to remember a per-kind exception to the "captured, not
- * read-at-emit" rule — but the concrete cache-corruption scenario above is
- * not why.
- *
- * `null` skips the bus notification — there is no space to scope a
- * picker-cache patch to — but the tabs/recents/resolve fan-out above still
- * runs unconditionally; none of those three are space-scoped. That second
- * half is the load-bearing part: a rename must reach the tab labels, the
- * recents MRU and the resolve store whether or not there is an active space.
- *
- * Sibling publishers answer the null case the other way, falling back to
- * `invalidateNameCaches()`. Both are correct and the reason they are
- * interchangeable is written down ONCE, for all of them, in the "When the
- * caller has NO active space" section of `src/lib/name-change-bus.ts`. Read
- * that rather than copying whichever precedent you happen to open first.
+ * `spaceId` is the space the caller had before its awaits, required so a new
+ * call site cannot silently emit a mislabelled event (#4391). Reading it here
+ * would be a fresh read at emit time. `null` skips the bus notification but
+ * still updates the three copies, none of which is space-scoped; why that and
+ * `invalidateNameCaches()` are interchangeable is in "When the caller has NO
+ * active space" in `src/lib/name-change-bus.ts`.
  */
 export function renamePage(pageId: string, title: string, spaceId: string | null): void {
   useTabsStore.getState().renamePage(pageId, title)
   useRecentPagesStore.getState().renamePage(pageId, title)
   useResolveStore.getState().set(pageId, title, false)
   if (spaceId != null) notifyPageRenamed(pageId, title, spaceId)
-  // #5250 — the graph's node labels and the unlinked-references search term
-  // are the title, and both refresh on the structure counter.
+  // Graph node labels and the unlinked-references term are the title, and
+  // refresh on the structure counter (#5250).
   recordGraphStructureChange()
 }
 
 /**
- * #5242 — carry an out-of-band page rename into the title copies the active space's tabs and
- * recents persist (the header, tab label, window title and recents strip read them). Only local
- * renames reach `renamePage` otherwise. Reads the resolve cache a preload just refreshed:
- * `targeted` null means it rescanned them all. #5277 — also runs after each space switch's
- * preload: a sync or MCP rename that landed while another space was active reached none of these.
+ * Carry out-of-band renames into the title copies the active space's tabs and
+ * recents persist, which only local renames reach otherwise (#5242). Reads the
+ * resolve cache a preload just refreshed; `targeted` null means it rescanned
+ * all. Also runs after each space switch's preload, for renames that landed
+ * while another space was active (#5277).
  */
 export function retitleHeldPages(
   targeted: ReadonlySet<string> | null,
@@ -110,7 +54,7 @@ export function retitleHeldPages(
   const freshTitles = new Map<string, string>()
   for (const { pageId, title } of held) {
     if (targeted && !targeted.has(pageId)) continue
-    // `renamePage` re-seeds the resolve entry as not deleted, so leave a trashed page alone.
+    // `renamePage` re-seeds the entry as not deleted: leave a trashed page alone.
     if (!resolve.isResolved(pageId) || resolve.resolveStatus(pageId) === 'deleted') continue
     const fresh = resolve.resolveTitle(pageId)
     if (fresh !== title) freshTitles.set(pageId, fresh)

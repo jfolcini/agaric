@@ -1,30 +1,10 @@
 /**
- * UseInPageFindStore — Zustand singleton for the in-page find toolbar.
- *
- * Owns:
- *
- *  - `open` — whether the toolbar is mounted.
- *  - `query` — current find string. Empty string ⇒ no matches.
- *  - `toggles` — `caseSensitive` / `wholeWord` / `isRegex`.
- *  - `totalMatches` / `currentIndex` — counter state, updated by the
- *    matcher driver (`InPageFind.tsx`'s effect) after each walk.
- *  - `regexError` — non-null when regex compilation fails; surfaced as
- *    an inline error on the input.
- *  - `skippedLongNodes` — count of >10 KB text nodes skipped during the
- *    last regex walk. Drives the "some long passages skipped" notice.
- *  - `containerRef` — registered by the active page wrapper
- *    (`PageEditor` / `JournalPage`) so the matcher knows which subtree
- *    to walk. Setting this to `null` (on view unmount) auto-closes
- *    the toolbar — there's nothing to search.
- *  - `lastQuery` — preserved across `close()` so re-opening the toolbar
- *    (with no selection) restores the previous query. Locked-in
- * Behaviour from the plan, Q3.
- *  - `replaceOpen` / `replacement` — the replace row (#6608), shown by its
- *    toggle or `Ctrl+H`; closing the bar hides it and keeps the text.
- *
- * Match collection itself lives in `InPageFind.tsx` — the store stays
- * pure (no DOM access, no side effects). This keeps unit tests simple
- * and matches the pattern of every other zustand store in `src/stores/`.
+ * In-page find toolbar state. Matching lives in `InPageFind.tsx`, which walks
+ * the registered `container` and reports counts through `setResult`; the
+ * store stays free of DOM access. Unregistering the container (its view
+ * unmounting) closes the toolbar. `lastQuery` survives `close()` so reopening
+ * without a selection restores it; the replace row (#6608) hides on close and
+ * keeps its text.
  */
 
 import { create } from 'zustand'
@@ -50,7 +30,7 @@ interface InPageFindState {
   currentIndex: number
   /** Discriminated regex failure (tooLong / tooSlow / invalid), or null. */
   regexError: FindRegexError | null
-  /** Count of >10 KB text nodes skipped during the last regex walk. */
+  /** Over-long text nodes the last regex walk skipped, for the "passages skipped" notice. */
   skippedLongNodes: number
   /** Page subtree to search. Registered by JournalPage / PageEditor. */
   container: HTMLElement | null
@@ -118,8 +98,7 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
 
   open$: (selection) => {
     const state = get()
-    // Locked-in (Q3): selection becomes the initial query; otherwise
-    // restore the previous query (browser/VSCode behaviour).
+    // The selection seeds the query; else the previous query returns, as in browsers.
     let nextQuery: string
     if (selection != null && selection.length > 0) {
       nextQuery = selection
@@ -131,7 +110,6 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
     set({
       open: true,
       query: nextQuery,
-      // Reset counters; the InPageFind effect re-runs and re-fills them.
       totalMatches: 0,
       currentIndex: nextQuery.length > 0 ? 0 : -1,
       regexError: null,
@@ -144,9 +122,7 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
     set({
       open: false,
       lastQuery: state.query.length > 0 ? state.query : state.lastQuery,
-      // Clear visible state — the highlighter is cleared by the InPageFind
-      // effect's cleanup. Keep `query` intact so a quick close/open round
-      // trip without typing also restores cleanly via lastQuery.
+      // Keep `query`, so a close and reopen without typing restores it.
       totalMatches: 0,
       currentIndex: -1,
       regexError: null,
@@ -157,8 +133,7 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
   },
 
   setQuery: (q) => {
-    // Clearing the query resets the counter immediately so the toolbar
-    // doesn't briefly show stale "3 of 12" before the walker re-runs.
+    // An empty query resets the counter now, not after a stale "3 of 12".
     if (q.length === 0) {
       set({ query: q, totalMatches: 0, currentIndex: -1, regexError: null, skippedLongNodes: 0 })
       return
@@ -189,10 +164,8 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
 
   setContainer: (el) => {
     const wasOpen = get().open
-    // Container unmounted (view switch) while the toolbar was open. Close it
-    // — there's no surface to search against, and the overlay would otherwise
-    // float disconnected from any content. Both changes are applied in a
-    // single set() so the unmount-while-open path emits one notification.
+    // The view unmounted with the toolbar open: nothing to search, so close,
+    // in one `set()`.
     if (el === null && wasOpen) {
       set({
         container: el,

@@ -1,24 +1,12 @@
 /**
- * Tabs store — Zustand state for the editor tab engine (split).
+ * Tabs store: per-tab page stacks and the active-tab pointer, one tab active
+ * at a time. Tabs are partitioned by space (`tabsBySpace`,
+ * `activeTabIndexBySpace`); the flat `tabs` / `activeTabIndex` mirror the
+ * active space and serve when no space is active. Read through
+ * `selectTabsForSpace` so a tab opened in one space never shows in another.
  *
- * Tracks per-tab page stacks plus the active-tab pointer. Multiple editor
- * tabs are supported; each tab has its own page stack. Only one tab is
- * active at a time, preserving the single TipTap editor invariant. Use
- * `selectPageStack` to derive the active tab's page stack from the store
- * state.
- *
- * Phase 3 — tabs are partitioned by space. `tabsBySpace` and
- * `activeTabIndexBySpace` hold one slice per space id; the flat `tabs` /
- * `activeTabIndex` fields mirror the active-space slice and serve as the
- * legacy view when no space is active (`currentSpaceId == null`). Consumers
- * read via `selectTabsForSpace` / `selectActiveTabIndexForSpace` so a tab
- * opened in space-A never leaks into space-B.
- *
- * Extracted from `navigation.ts`. The asymmetric coupling is
- * preserved here: every tab action that implies a view change calls
- * `useNavigationStore.getState().setView(...)` directly. The navigation
- * store's actions never reach back into this store. Cross-store coordination
- * lives only on the tabs side.
+ * Coupling is one-way: tab actions call the navigation store's `setView`, and
+ * the navigation store never calls back into this one.
  */
 
 import { create } from 'zustand'
@@ -47,26 +35,12 @@ export interface Tab {
   pageStack: PageEntry[]
   label: string
   /**
-   * The view that was on screen when the user last entered this tab's page
-   * stack from outside the editor — i.e. the route the user will be returned
-   * to once the stack is popped empty (in-page Back button, Android back
-   * gesture, delete-page, stale-page heal). Recorded by `navigateToPage` /
-   * `openInNewTab` whenever a page is opened from a non-`page-editor` view
-   * (#4707 — including onto a stack left standing by an earlier view, and
-   * including a re-open of the page already on top, which is what makes
-   * Journal → page → Back land back on the journal), by `switchTab` when a
-   * TabBar click enters a stack from a non-editor view (#4732), and consumed
-   * (and cleared) by `goBack`.
-   *
-   * Undefined means "unknown origin" — a tab persisted before this field
-   * existed, or one opened while `page-editor` was already the current view
-   * (there is no meaningful route to return to in that case). Those fall back
-   * to `DEFAULT_PAGE_EXIT_VIEW`.
-   *
-   * This is deliberately ONE slot: the browser-style history behind the
-   * header's Back / Forward lives in `navigation-history`. This slot serves
-   * `goBack` — leaving a deleted or stale page, and Android's back gesture
-   * on a fresh launch with no history yet.
+   * The view the stack was entered from, where `goBack` returns once it pops
+   * the stack empty. Recorded by `navigateToPage`, `openInNewTab` and
+   * `switchTab` whenever they enter from a non-editor view, a re-open of the
+   * top page included (#4707, #4732); consumed by `goBack`. Undefined means
+   * unknown, which falls back to `DEFAULT_PAGE_EXIT_VIEW`. One slot only: the
+   * header's Back / Forward history lives in `navigation-history`.
    */
   enteredFrom?: View | undefined
   /**
@@ -77,22 +51,14 @@ export interface Tab {
   blockId?: string | undefined
 }
 
-// FE-L-4: module-scoped counter is safe because the renderer is
-// single-threaded — JS event-loop semantics guarantee no two
-// `nextTabId++` reads can interleave. Moving this into Zustand state
-// would require persistence wiring + bump-on-rehydrate handling for
-// no behavioural gain.
+// Module-scoped: the renderer is single-threaded, and keeping it in state
+// would need persistence and rehydrate handling for nothing.
 let nextTabId = 1
 
 /**
- * #754 — per-tab page-stack depth cap. `navigateToPage` appends one entry per
- * HOP, not per distinct page: A → B → A leaves three entries, so Back retraces
- * every step the way a browser's history does, and `e2e/inner-links.spec.ts`
- * pins that ("back to first Getting Started"). A long session therefore grows
- * the stack (and the persisted `agaric:tabs` blob) without bound, so when a
- * push would exceed the cap the OLDEST entry is dropped — the back gesture
- * keeps its most recent 50 steps, far beyond any realistic back-tracking while
- * keeping the localStorage payload small.
+ * Per-tab page-stack cap (#754). Each hop pushes an entry (A → B → A is three),
+ * so Back retraces every step like browser history; past the cap the oldest
+ * entry drops, bounding the persisted `agaric:tabs` blob.
  */
 export const MAX_PAGE_STACK_DEPTH = 50
 
@@ -107,24 +73,15 @@ export interface ClosedTab {
 export const MAX_CLOSED_TABS = 20
 
 /**
- * Where leaving the page editor lands when the tab has no recorded
- * `enteredFrom` (see `Tab.enteredFrom`). `pages` is the page list — the
- * structural parent of a page — and it keeps the pre-#4287 destination for
- * unknown-origin tabs.
- *
- * THE single fallback: `goBack` (stack popped empty on the last tab) and
- * `navigationBackHandler` (Android back on a page-editor whose stack is
- * already empty) both route through `exitViewForTab` below. They used to
- * disagree — `goBack` hard-coded `'pages'` while `navigationBackHandler`
- * hard-coded `'journal'`, so the same "leave the editor" intent landed in two
- * different places depending on which affordance you used.
+ * Where leaving the page editor lands when the tab has no `enteredFrom`. The
+ * one fallback for both `goBack` and Android back (through `exitViewForTab`),
+ * so the two affordances cannot disagree.
  */
 export const DEFAULT_PAGE_EXIT_VIEW: View = 'pages'
 
 /**
- * The view to show when `tab`'s page stack is left behind: the route the stack
- * was opened from, else `DEFAULT_PAGE_EXIT_VIEW`. `page-editor` is never
- * returned — that would leave the user staring at the editor they just left.
+ * The view to show when `tab`'s stack is left: the route it was opened from,
+ * else `DEFAULT_PAGE_EXIT_VIEW`. Never `page-editor`, the view being left.
  */
 export function exitViewForTab(tab: Tab | undefined): View {
   const entered = tab?.enteredFrom
@@ -133,11 +90,8 @@ export function exitViewForTab(tab: Tab | undefined): View {
 
 interface TabsStore {
   /**
-   * Active-space tab list — mirrors `tabsBySpace[currentSpaceId]` after
-   * every action. Kept as a top-level field so legacy reads (and the
-   * `currentSpaceId == null` boot path) keep working without forcing every
-   * consumer to thread the space id through. Use `selectTabsForSpace` for
-   * per-space reads.
+   * The active space's tabs, mirroring `tabsBySpace[currentSpaceId]`; also the
+   * list when no space is active. Use `selectTabsForSpace` for per-space reads.
    */
   tabs: Tab[]
   /** Active-space active tab index — mirrors `activeTabIndexBySpace[currentSpaceId]`. */
@@ -154,14 +108,12 @@ interface TabsStore {
 
   /** Push a page onto the active tab's stack and switch to page-editor. */
   navigateToPage: (pageId: string, title: string, blockId?: string) => void
-  /** Pop the last page from the active tab. If stack becomes empty, close tab or switch to 'pages'. */
+  /** Pop the active tab's top page; an emptied stack closes the tab, or on the last tab leaves the editor. */
   goBack: () => void
   /**
-   * #3322 — retitle every stack entry naming `pageId`, across ALL tabs of the
-   * active space (a page can sit in several tabs, and deeper than the top of
-   * a back-stack). No-op when no entry names the page or the title is already
-   * current. Prefer the cross-store `renamePage` in `@/stores/page-rename`,
-   * which also updates the recents strip and the resolve cache.
+   * Retitle every stack entry naming `pageId` in every tab of the active space
+   * (#3322). Prefer `renamePage` in `@/stores/page-rename`, which also updates
+   * recents and the resolve cache.
    */
   renamePage: (pageId: string, title: string) => void
   /**
@@ -182,9 +134,8 @@ interface TabsStore {
   /** Reopen the active space's last closed tab at its old place, and switch to it. */
   reopenClosedTab: () => void
   /**
-   * Switch to a different tab by index. When invoked from a non-`page-editor`
-   * view, also flips `currentView` back to `page-editor` so the user actually
-   * Sees the tab's page content (shell-level TabBar hoist).
+   * Switch to a tab by index; from a non-editor view this also shows the
+   * page editor, since the TabBar is visible from every view.
    */
   switchTab: (tabIndex: number) => void
   /** Move the tab at `from` to `to`, shifting the tabs between; the active tab stays active. */
@@ -193,22 +144,15 @@ interface TabsStore {
 
 type TabsState = TabsStore
 
-/** Selector: active tab's page stack. Always in sync — no dual state. */
+/** Selector: the active tab's page stack. */
 export function selectPageStack(state: TabsStore): PageEntry[] {
   return state.tabs[state.activeTabIndex]?.pageStack ?? []
 }
 
 /**
- * Per-space tab list selector. Pass `currentSpaceId` from `useSpaceStore`.
- *
- * Reads the per-space slice keyed by `spaceId`, falling back to the flat
- * `state.tabs` field when the slice is missing. The flat field is the
- * active-space mirror — every action writes it alongside the per-space
- * slice, and the space-switch subscriber (`useSpaceStore.subscribe`)
- * keeps it pointing at whichever space is currently active. The fall-
- * back is what lets a partial `setState({ tabs })` (common in tests)
- * still render through this selector, while the per-space slice
- * partitions data between non-active spaces.
+ * The tab list for `spaceId`, falling back to the flat `state.tabs` mirror
+ * when the slice is missing, so a partial `setState({ tabs })` (tests) still
+ * renders.
  */
 export function selectTabsForSpace(state: TabsState, spaceId: string | null): Tab[] {
   if (spaceId == null) return state.tabs
@@ -221,23 +165,19 @@ export function selectActiveTabIndexForSpace(state: TabsState, spaceId: string |
   return state.activeTabIndexBySpace[spaceId] ?? state.activeTabIndex
 }
 
-/** Default tab list — a single empty tab. Mirrors the initial state. */
+/** Default tab list: a single empty tab. */
 function emptyTabList(): Tab[] {
   return [{ id: '0', pageStack: [], label: '' }]
 }
 
-/** Derive a tab label from its page stack. */
 function tabLabel(stack: PageEntry[]): string {
   const top = stack.at(-1)
   return top?.title ?? ''
 }
 
 /**
- * Parse a `YYYY-MM-DD` page title into a local-time `Date` when the
- * title is both shape-correct (`isDateFormattedPage`) AND resolves to a valid
- * calendar date (`parseDate` returns null for impossible dates like
- * `2026-13-45`). Returns `null` for any other input so callers can fall
- * through to the generic page-editor path.
+ * A `YYYY-MM-DD` title as a local-time `Date`, or `null` when it is not one or
+ * names an impossible date (`2026-13-45`).
  */
 function parseDateTitleToLocalDate(title: string): Date | null {
   if (!isDateFormattedPage(title)) return null
@@ -253,19 +193,14 @@ function parseDateTitleToLocalDate(title: string): Date | null {
 }
 
 /**
- * Read the active-space tabs/index for an action. The flat `state.tabs`
- * field is the source of truth for the active space — every action writes
- * it alongside the per-space slice (`spliceTabs`) and the space-switch
- * subscriber (below) keeps it in sync when `currentSpaceId` changes. We
- * prefer the flat fields here so a partial `setState({ tabs })` (common in
- * tests) drives the next action instead of resurrecting whatever stale
- * data may linger in the per-space slice from an earlier action.
+ * The active space's tabs and index for an action. Reads the flat mirror,
+ * which every action and the space-switch subscriber keep current, so a
+ * partial `setState({ tabs })` (tests) drives the next action instead of a
+ * stale per-space slice.
  */
 function readActiveSlice(state: TabsState): { tabs: Tab[]; activeTabIndex: number } {
   const tabs = state.tabs ?? emptyTabList()
-  // #1608 — clamp on read so a persisted index past the end of `tabs` (e.g.
-  // from a corrupt blob, or after tabs shrank) self-heals instead of leaving
-  // `navigateToPage`'s `tabs[activeTabIndex]` resolving to undefined forever.
+  // Clamp on read, so a persisted index past the end self-heals (#1608).
   const activeTabIndex = clampIndex(state.activeTabIndex ?? 0, tabs.length)
   return { tabs, activeTabIndex }
 }
@@ -277,12 +212,9 @@ interface TabSlice {
 }
 
 /**
- * Per-space primitive owning the `tabsBySpace` / `activeTabIndexBySpace` maps,
- * the derived flat `tabs` / `activeTabIndex` mirror, and the space-change
- * flush/pull reconcile. The mirror spans TWO coupled fields, so the slice unit
- * is the `{ tabs, activeTabIndex }` composite. `onSwitch` clears the navigation
- * store's transient `selectedBlockId` so a highlight from the previous space's
- * tab doesn't bleed in. Fresh spaces default to a single empty tab.
+ * Per-space slice of the coupled `{ tabs, activeTabIndex }` pair. `onSwitch`
+ * clears the navigation store's `selectedBlockId`, so a highlight from the
+ * previous space's tab does not carry over.
  */
 const tabsSlice = createPerSpaceSlice<TabsState, TabSlice>({
   readMirror: (state) => ({ tabs: state.tabs, activeTabIndex: state.activeTabIndex }),
@@ -302,53 +234,30 @@ const tabsSlice = createPerSpaceSlice<TabsState, TabSlice>({
   },
 })
 
-/**
- * Compose the next state object that updates BOTH the per-space slice and
- * the flat active-space mirror in one atomic update, via the shared
- * `createPerSpaceSlice` primitive. Used by every action so the two views
- * never drift.
- */
+/** Next state updating the per-space slice and the flat mirror together. */
 function spliceTabs(state: TabsState, tabs: Tab[], activeTabIndex: number): Partial<TabsState> {
   return tabsSlice.applyActive(state, { tabs, activeTabIndex })
 }
 
-/**
- * Cross-store coordination: forward to navigation store's setView. Tab
- * actions that imply a view change (navigateToPage, openInNewTab, closeTab
- * to last tab, goBack to empty stack on last tab, switchTab from non-editor
- * view) call this directly. The call is synchronous — `setState` flushes
- * before this function returns.
- */
+/** The navigation store's `setView`; synchronous. */
 function setNavigationView(view: View): void {
   useNavigationStore.getState().setView(view)
 }
 
 /**
- * The `enteredFrom` a tab should carry after a page is pushed onto it (#4287).
- *
- * A push made while `page-editor` is already the current view is a deeper step
- * INSIDE the open stack: it has no meaningful origin of its own (the editor is
- * not a route to return to), so the stack keeps the origin it was opened with.
- * Every other push comes from a real route — journal, pages, search, tags, … —
- * and that route becomes the new origin.
- *
- * #4707 — there is deliberately no "only onto an EMPTY stack" guard here.
- * Leaving the editor for a top-level view does not clear the tab's page stack,
- * so gating on emptiness meant the origin was almost never recorded and Back
- * fell through to `DEFAULT_PAGE_EXIT_VIEW`.
+ * The `enteredFrom` a tab carries after a page push (#4287). A push from inside
+ * the editor is a step within the stack and keeps its origin; any other push
+ * records the current view. No "empty stack only" guard: leaving the editor
+ * does not clear the stack, so such a guard almost never recorded (#4707).
  */
 function nextEnteredFrom(tab: Tab): View | undefined {
   return currentEntryView() ?? tab.enteredFrom
 }
 
 /**
- * `tabs` with `tabs[index]`'s recorded origin set to `entered`, or the SAME
- * array reference when that is already its origin (#4732).
- *
- * Returning the input array unchanged is what lets a caller skip its `set()`
- * entirely on the no-change path: `selectPageStack` subscribers would
- * otherwise be handed a fresh array reference and re-render for nothing. Same
- * gate `navigateToPage`'s already-on-top branch uses.
+ * `tabs` with `tabs[index]`'s origin set to `entered`, or the same array when
+ * unchanged, so the caller can skip `set()` and not re-render
+ * `selectPageStack` subscribers for nothing (#4732).
  */
 function withRecordedOrigin(
   tabs: Tab[],
@@ -362,16 +271,12 @@ function withRecordedOrigin(
   return next
 }
 
-/**
- * The current view as a recordable origin, or `undefined` when it is
- * `page-editor` (the editor is not a route to return to).
- */
+/** The current view as a recordable origin; `undefined` for `page-editor`. */
 function currentEntryView(): View | undefined {
   const view = useNavigationStore.getState().currentView
   return view === 'page-editor' ? undefined : view
 }
 
-/** Cross-store coordination: forward to navigation store's setSelectedBlockId. */
 function setNavigationSelectedBlockId(id: string | null): void {
   useNavigationStore.setState({ selectedBlockId: id })
 }
@@ -387,11 +292,8 @@ function enterTab(tabs: Tab[], index: number): Tab[] {
 }
 
 /**
- * CR-PERSIST — coerce an arbitrary persisted JSON value into a valid `Tab`,
- * or `null` if the shape is unrecoverable. `localStorage` can hold anything
- * (manual edits, a corrupt write, a future-shape downgrade); hydrating it
- * with a bare cast lets a malformed blob crash the tab reducers / selectors.
- * Drops every `pageStack` entry that isn't a `{ pageId, title }` string pair.
+ * Coerce a persisted value into a valid `Tab`, or `null`: `localStorage` can
+ * hold anything, and a bare cast lets a malformed blob crash the reducers.
  */
 function coerceTab(raw: unknown): Tab | null {
   if (typeof raw !== 'object' || raw === null) return null
@@ -406,8 +308,7 @@ function coerceTab(raw: unknown): Tab | null {
       pageStack.push({ pageId: e['pageId'], title: e['title'] })
     }
   }
-  // CR-PERSIST — `enteredFrom` is fed straight to `setView`, so a corrupt
-  // blob must not smuggle a non-`View` string into the navigation store.
+  // `enteredFrom` reaches `setView`, so only a real `View` may pass.
   const enteredFrom = coerceView(obj['enteredFrom'])
   return {
     id: obj['id'],
@@ -417,7 +318,7 @@ function coerceTab(raw: unknown): Tab | null {
   }
 }
 
-/** CR-PERSIST — coerce a persisted value into a `Tab[]`, dropping invalid tabs. */
+/** Coerce a persisted value into a `Tab[]`, dropping invalid tabs. */
 function coerceTabList(raw: unknown): Tab[] {
   if (!Array.isArray(raw)) return emptyTabList()
   const tabs: Tab[] = []
@@ -428,7 +329,7 @@ function coerceTabList(raw: unknown): Tab[] {
   return tabs.length > 0 ? tabs : emptyTabList()
 }
 
-/** CR-PERSIST — coerce a persisted value into a `Record<string, Tab[]>`. */
+/** Coerce a persisted value into a `Record<string, Tab[]>`. */
 function coerceTabsBySpace(raw: unknown): Record<string, Tab[]> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
   const out: Record<string, Tab[]> = {}
@@ -444,18 +345,15 @@ function coerceTabsBySpace(raw: unknown): Record<string, Tab[]> {
   return out
 }
 
-/** CR-PERSIST — coerce a persisted value into a non-negative integer tab index. */
+/** Coerce a persisted value into a non-negative integer tab index. */
 function coerceIndex(raw: unknown): number {
   return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? raw : 0
 }
 
 /**
- * CR-PERSIST (#1608) — clamp a tab index into the valid `[0, length - 1]` range.
- * A corrupt blob can persist an `activeTabIndex` that is `>= 0` (so `coerceIndex`
- * accepts it) yet points past the end of `tabs`. `navigateToPage` reads
- * `tabs[activeTabIndex]` and bails on `undefined`, turning every page click into a
- * silent no-op. Clamping at the persist boundary (and on read) lets a stale index
- * self-heal. Empty slices clamp to 0 (never the `-1` that `length - 1` would give).
+ * Clamp a tab index into `[0, length - 1]` (0 when empty). A corrupt blob can
+ * hold an in-range-looking index past the end of `tabs`, which turned every
+ * page click into a silent no-op (#1608).
  */
 function clampIndex(idx: number, length: number): number {
   if (length <= 0) return 0
@@ -463,7 +361,7 @@ function clampIndex(idx: number, length: number): number {
   return Math.min(idx, length - 1)
 }
 
-/** CR-PERSIST — coerce a persisted value into a `Record<string, number>`. */
+/** Coerce a persisted value into a `Record<string, number>`. */
 function coerceIndexBySpace(raw: unknown): Record<string, number> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
   const out: Record<string, number> = {}
@@ -474,14 +372,9 @@ function coerceIndexBySpace(raw: unknown): Record<string, number> {
 }
 
 /**
- * CR-PERSIST (#823) — coerce an entire persisted tabs blob field-by-field.
- * Shared by `migrate` (version-mismatched blobs) and `merge` (same-version
- * blobs): zustand's persist middleware only calls `migrate` when the stored
- * version DIFFERS from `options.version`, so a corrupt blob that still
- * carries `version: 1` (or a non-numeric version) bypasses `migrate`
- * entirely and reaches the default shallow `merge` raw — coercing in `merge`
- * as well closes that path. The coercion is idempotent, so the
- * migrate→merge double pass on version-mismatched blobs is harmless.
+ * Coerce a whole persisted blob field by field. Both `migrate` and `merge` call
+ * it: zustand runs `migrate` only on a version mismatch, so a corrupt blob with
+ * the current version reaches `merge` raw (#823). Idempotent.
  */
 function coercePersistedTabs(
   persisted: unknown,
@@ -492,8 +385,7 @@ function coercePersistedTabs(
   >
   const tabs = coerceTabList(blob['tabs'])
   const tabsBySpace = coerceTabsBySpace(blob['tabsBySpace'])
-  // #1608 — clamp each per-space index against its own slice; spaces with no
-  // dedicated slice fall back to the flat `tabs` list (mirrors selectTabsForSpace).
+  // Clamp each space's index against its own slice, or the flat list without one.
   const rawIndexBySpace = coerceIndexBySpace(blob['activeTabIndexBySpace'])
   const activeTabIndexBySpace: Record<string, number> = {}
   for (const [space, idx] of Object.entries(rawIndexBySpace)) {
@@ -502,8 +394,6 @@ function coercePersistedTabs(
   }
   return {
     tabs,
-    // #1608 — clamp the flat index past-end into range so navigateToPage's
-    // `tabs[activeTabIndex]` read can't silently resolve to undefined.
     activeTabIndex: clampIndex(coerceIndex(blob['activeTabIndex']), tabs.length),
     tabsBySpace,
     activeTabIndexBySpace,
@@ -535,64 +425,21 @@ export const useTabsStore = create<TabsStore>()(
       closedTabs: [],
 
       navigateToPage: (pageId: string, title: string, blockId?: string) => {
-        // PERF-REVIEW #11 (2026-05-09): this action chains up to four
-        // cross-store `set()` calls in one sync tick — recent-pages
-        // (`recordVisit`), tabs (`set(spliceTabs(...))`), navigation
-        // (`setView` + `setSelectedBlockId`), and on the date-routed
-        // branch, journal (`navigateToDate`). The audit flagged this as
-        // "5 separate subscriber waves through the React tree per page-
-        // click" and recommended a transactional helper.
-        //
-        // Verification (Session 711): the audit is accurate at the JS
-        // notify layer — each store's listener list DOES fire immediately
-        // on `set()`, so a single `navigateToPage` produces 4-5 listener
-        // wakeups across the affected stores. However, those wakeups do
-        // NOT translate to 4-5 React renders. zustand 5 subscribes each
-        // React hook via `useSyncExternalStore` (see
-        // `node_modules/zustand/esm/react.mjs`), and React 19's scheduler
-        // coalesces all `useSyncExternalStore` notifications that land
-        // in the same synchronous tick into a single render per
-        // subscribed component — regardless of how many distinct stores
-        // fire.
-        //
-        // The render-batching invariant is pinned by
-        // `src/stores/__tests__/navigation.test.ts` →
-        // 'perf-review #11 — navigateToPage batches cross-store renders'.
-        // The test mounts probes subscribed to recent-pages, tabs, and
-        // navigation, drives a single navigateToPage call inside
-        // `act()`, and asserts each probe re-renders exactly once. If
-        // a future change introduces an awaited tick between any two
-        // `set()` calls in this action, that test will fail.
-        //
-        // Conclusion: no transactional helper is needed — React 19 already
-        // batches synchronous `set()` calls, so subscribers re-render once.
+        // Several cross-store `set()`s in one tick are fine: React 19 batches
+        // them into one render per subscriber, pinned by a test in
+        // `src/stores/__tests__/navigation.test.ts`. An await between them
+        // would break that.
 
-        // Record every COMPLETED navigateToPage call as a
-        // recent-visit (the store dedups by pageId, so repeated visits
-        // stay MRU-correct). #753 — the visit is recorded on each branch
-        // AFTER its bail-outs: previously it fired unconditionally at the
-        // top, so a navigation aborted by the `!activeTab` guard below
-        // still polluted the recents list with a page that was never
-        // opened. Date-titled pages (YYYY-MM-DD) are page visits too —
-        // the journal branch records before routing into Journal.
-
-        // Date-titled pages (YYYY-MM-DD) belong to the Journal → Daily
-        // view, not the generic page-editor. Route them through the journal
-        // store so every call site (PageBrowser, breadcrumbs, search, tag
-        // filter, templates, graph, …) gets the correct behaviour with a
-        // single change. Date-shaped titles that resolve to invalid calendar
-        // dates (e.g. "2026-13-45") fall through to the page-editor path
-        // below so the user can still reach the page.
+        // Each branch records the visit only after its bail-outs, so an aborted
+        // navigation leaves recents alone (#753). Date titles route to the
+        // journal's daily view for every caller; an impossible date falls
+        // through to the editor so the page stays reachable.
         const parsedDate = parseDateTitleToLocalDate(title)
         if (parsedDate !== null) {
           recordPageOpen(pageId, title)
           useJournalStore.getState().navigateToDate(parsedDate, 'daily')
-          // Journal view does not use pageStack at all, so we never push
-          // Onto it here. Tabs / activeTabIndex are preserved.
-          // The day's editor reads selectedBlockId on mount: block mode scrolls
-          // the matching block into view + restores focus, page mode puts its
-          // cursor there; either clears the selection (one-shot). See
-          // src/components/journal/DayPageEditor.tsx.
+          // The journal does not use the page stack. The day's editor reads
+          // `selectedBlockId` on mount and clears it.
           setNavigationView('journal')
           setNavigationSelectedBlockId(blockId ?? null)
           return
@@ -601,26 +448,15 @@ export const useTabsStore = create<TabsStore>()(
         const state = get()
         const { tabs, activeTabIndex } = readActiveSlice(state)
         const activeTab = tabs[activeTabIndex]
-        // #753 — aborted navigation: no tab to push onto, so the page is
-        // never opened. Bail BEFORE recording the visit.
         if (!activeTab) return
         recordPageOpen(pageId, title)
 
         const pageStack = activeTab.pageStack
         const top = pageStack.at(-1)
         if (top?.pageId === pageId) {
-          // The page is already on top, but the user may have switched away
-          // to another view (Pages, Tags, Journal, …) since, so `currentView`
-          // has to flip back rather than leaving them on the previous view.
-          //
-          // The general path below would produce an identical stack — filter
-          // + push is a no-op when the page is already the top entry. What
-          // this branch buys is skipping the `set()`: re-clicking the page
-          // you are already on would otherwise hand `selectPageStack`
-          // subscribers a fresh array reference and re-render them for
-          // nothing. The origin write below is gated for the same reason.
-          //
-          // Origin recording: see `nextEnteredFrom`.
+          // Already on top: still show the editor, since the user may have left
+          // for another view, but skip the `set()` when nothing changed so
+          // `selectPageStack` subscribers do not re-render.
           const entered = nextEnteredFrom(activeTab)
           if (entered !== activeTab.enteredFrom) {
             const tabsWithOrigin = [...tabs]
@@ -632,8 +468,6 @@ export const useTabsStore = create<TabsStore>()(
           return
         }
 
-        // #754 — drop-oldest cap so the back stack (and its persisted
-        // blob) can't grow without bound. See `MAX_PAGE_STACK_DEPTH`.
         const pushed = [...pageStack, { pageId, title }]
         const newStack =
           pushed.length > MAX_PAGE_STACK_DEPTH
@@ -644,10 +478,7 @@ export const useTabsStore = create<TabsStore>()(
           ...activeTab,
           pageStack: newStack,
           label: tabLabel(newStack),
-          // #4287 — remember the route this stack was opened from BEFORE the
-          // `setNavigationView('page-editor')` below overwrites `currentView`,
-          // so popping the stack empty can return there instead of always
-          // dumping the user on `pages`.
+          // Read before `setNavigationView` below overwrites `currentView`.
           enteredFrom: nextEnteredFrom(activeTab),
         }
         set(spliceTabs(state, newTabs, activeTabIndex))
@@ -664,16 +495,13 @@ export const useTabsStore = create<TabsStore>()(
 
         const newStack = pageStack.slice(0, -1)
         if (newStack.length === 0) {
-          // If there are other tabs, close this one and switch
           if (tabs.length > 1) {
             const newTabs = tabs.filter((_, i) => i !== activeTabIndex)
             const newIndex = Math.min(activeTabIndex, newTabs.length - 1)
             set(spliceTabs(state, enterTab(newTabs, newIndex), newIndex))
           } else {
-            // Last tab — leave the editor for the route this stack was opened
-            // from (#4287), falling back to `DEFAULT_PAGE_EXIT_VIEW`. The
-            // origin is consumed here: the emptied tab keeps no `enteredFrom`,
-            // so the next stack opened in it records its own.
+            // Last tab: leave for the stack's origin (#4287), consuming it, so
+            // the next stack opened in this tab records its own.
             const exitView = exitViewForTab(activeTab)
             const newTabs = [{ id: activeTab?.id ?? '0', pageStack: [], label: '' }]
             set(spliceTabs(state, newTabs, 0))
@@ -698,15 +526,8 @@ export const useTabsStore = create<TabsStore>()(
         const state = get()
         const { tabs, activeTabIndex } = readActiveSlice(state)
 
-        // #3322 — rewrite EVERY stack entry that names this page, in every
-        // tab of the active space. The old `replacePage` overwrote
-        // `pageStack[len-1]` of the ACTIVE tab unconditionally, which meant
-        // (a) the same page open in another tab, or deeper in a back-stack,
-        // kept its pre-rename title forever, and (b) a rename fired while a
-        // DIFFERENT page sat on top (an undo/redo refresh addressed by
-        // pageId, not by position) rewrote that unrelated top entry's id.
-        // Matching on pageId makes both impossible; a rename for a page no
-        // tab holds is simply a no-op.
+        // Match on pageId across every tab and depth: the same page can sit in
+        // several stacks, and a rename must not touch an unrelated top entry.
         let changed = false
         const newTabs = tabs.map((tab) => {
           if (!tab.pageStack.some((entry) => entry.pageId === pageId && entry.title !== title)) {
@@ -716,12 +537,8 @@ export const useTabsStore = create<TabsStore>()(
           const newStack = tab.pageStack.map((entry) =>
             entry.pageId === pageId ? { pageId, title } : entry,
           )
-          // #4287 — carry `enteredFrom` across the rebuild. This literal
-          // silently dropped it (a rename anywhere in the tab reset the
-          // stack's recorded origin, so a later `goBack` fell back to the
-          // pages view); any future `Tab` field must be carried here too.
-          // Built field-by-field rather than spread because `no-map-spread`
-          // rejects spreading inside a `map`.
+          // Built field by field (`no-map-spread`): every `Tab` field must be
+          // carried here, or a rename drops it.
           const renamed: Tab = { id: tab.id, pageStack: newStack, label: tabLabel(newStack) }
           if (tab.enteredFrom !== undefined) renamed.enteredFrom = tab.enteredFrom
           if (tab.blockId !== undefined) renamed.blockId = tab.blockId
@@ -773,8 +590,7 @@ export const useTabsStore = create<TabsStore>()(
           id: String(nextTabId++),
           pageStack: newStack,
           label: title,
-          // #4287 — a new tab opens a fresh stack, so it records its own
-          // origin (read before the `setNavigationView` below).
+          // A fresh stack records its own origin, read before `setNavigationView`.
           enteredFrom: currentEntryView(),
         }
         const newTabs = [...tabs, newTab]
@@ -812,7 +628,6 @@ export const useTabsStore = create<TabsStore>()(
               ].slice(-MAX_CLOSED_TABS)
 
         if (tabs.length <= 1) {
-          // Closing last tab — go to pages view
           set({ ...spliceTabs(state, emptyTabList(), 0), closedTabs })
           setNavigationView('pages')
           setNavigationSelectedBlockId(null)
@@ -855,11 +670,6 @@ export const useTabsStore = create<TabsStore>()(
       },
 
       switchTab: (tabIndex: number) => {
-        // TabBar is hoisted to the app shell and visible from any view
-        // (journal, pages, search, …). Clicking a tab from a non-editor view
-        // must flip `currentView` back to `page-editor` so the user actually
-        // sees the tab's page content. When already in `page-editor` the
-        // same-tab branch stays a pure no-op (preserves existing semantics).
         const state = get()
         const { tabs, activeTabIndex } = readActiveSlice(state)
         if (tabIndex < 0 || tabIndex >= tabs.length) return
@@ -868,21 +678,13 @@ export const useTabsStore = create<TabsStore>()(
         const inEditor = useNavigationStore.getState().currentView === 'page-editor'
         const sameTab = tabIndex === activeTabIndex
         if (sameTab && inEditor) return
-        // #4732 — a switch made from a non-editor view ENTERS this tab's page
-        // stack from a real route, exactly like `navigateToPage` does, so that
-        // route is the stack's new origin. Read BEFORE `setNavigationView`
-        // below overwrites `currentView`; without it `goBack` finds no
-        // `enteredFrom` and Journal → tab click → Back lands on `pages`.
-        // `nextEnteredFrom` yields the tab's existing origin unchanged when
-        // the switch is made from inside the editor, which is why the two
-        // `inEditor` paths need no write of their own.
+        // A switch from a non-editor view enters the stack from that route, its
+        // new origin (#4732); read before `setNavigationView` overwrites
+        // `currentView`. From inside the editor the origin stays as it was.
         const entered = nextEnteredFrom(target)
         if (sameTab) {
-          // Cross-view click on the already-active tab: flip the view, and
-          // record the origin. This branch had no `set()` at all; the
-          // `withRecordedOrigin` identity gate keeps it that way whenever the
-          // origin is unchanged, so the only added store write is one that
-          // genuinely changes state.
+          // Same tab from another view: show the editor; write only if the
+          // origin changed.
           const withOrigin = withRecordedOrigin(tabs, tabIndex, target, entered)
           if (withOrigin !== tabs) set(spliceTabs(state, withOrigin, tabIndex))
           setNavigationView('page-editor')
@@ -923,30 +725,16 @@ export const useTabsStore = create<TabsStore>()(
         tabsBySpace: state.tabsBySpace,
         activeTabIndexBySpace: state.activeTabIndexBySpace,
       }),
-      // CR-PERSIST — coercing migrate. Without it, a future `version: 2`
-      // bump makes zustand's persist middleware feed `undefined` to
-      // `merge`, silently discarding the persisted blob to defaults — the
-      // user loses every open tab and per-space page stack. It also runs
-      // on any legacy/version-mismatched blob, validating each field so a
-      // corrupt `localStorage` payload can't poison the reducers.
-      //
-      // CR-PERSIST (#823): the field-by-field coercion is shared with
-      // `merge` below. zustand only invokes `migrate` on a version
-      // MISMATCH — same-version blobs are coerced by `merge`.
+      // Both coerce: zustand calls `migrate` only on a version mismatch and
+      // hands a same-version blob straight to `merge` (#823). Without
+      // `migrate`, a version bump would discard every tab.
       migrate: (persisted, _version) => coercePersistedTabs(persisted),
-      // CR-PERSIST (#823) — zustand skips `migrate` when the stored
-      // version equals `options.version` (or isn't a number), handing the
-      // raw blob straight to `merge`. Coerce here too so a corrupt
-      // `localStorage` payload that still says `version: 1` (e.g.
-      // `activeTabIndex: -3`, a non-string tab `id`, garbage `pageStack`
-      // entries) can't poison the tab reducers / selectors.
       merge: (persisted, current) => ({
         ...current,
         ...coercePersistedTabs(persisted),
       }),
       onRehydrateStorage: () => (state) => {
-        // Derive nextTabId from every persisted tab (across all spaces) to
-        // avoid ID collisions after a per-space rehydrate.
+        // Derive `nextTabId` from every persisted tab, all spaces included.
         if (!state) return
         const idStreams: Tab[][] = []
         if (Array.isArray(state.tabs)) idStreams.push(state.tabs)
@@ -965,19 +753,14 @@ export const useTabsStore = create<TabsStore>()(
   ),
 )
 
-/** Reset the tab ID counter — useful for test determinism. */
+/** Reset the tab ID counter, for test determinism. */
 export function resetTabIdCounter(): void {
   nextTabId = 1
 }
 
 /**
- * Wire the flat `tabs` / `activeTabIndex` ↔ per-space-slice flush/pull so the
- * active tab set swaps with the per-space slice whenever the user switches
- * space. The flush/pull/first-fire logic lives in the shared
- * `createPerSpaceSlice` primitive (`tabsSlice`): on switch it flushes the
- * outgoing flat fields into `tabsBySpace[oldKey]` and pulls
- * `tabsBySpace[newKey]` (or a single empty tab) into the flat fields; on first
- * fire it seeds an absent slice from the rehydrated flat tabs so a returning
- * user migrated from a pre-per-space shape keeps their tabs accessible.
+ * Swap the flat mirror with the per-space slice on every space switch. On
+ * first fire an absent slice is seeded from the rehydrated flat tabs, so tabs
+ * persisted before per-space slices survive.
  */
 tabsSlice.attach(useTabsStore)

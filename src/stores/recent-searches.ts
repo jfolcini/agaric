@@ -1,22 +1,8 @@
 /**
- * Recent searches — localStorage-backed list of recent search *terms*.
- *
- * Distinct from `recent-pages.ts` (which tracks visited pages): this is
- * the list of query strings the user has actually run, surfaced in the
- * mobile search sheet's empty state (#131) so tapping one re-runs it.
- *
- * Mirrors the `recent-pages` storage shape:
- *  - Per-space partition (`recent_searches:<spaceId>`) so different
- *    spaces never see each other's history.
- *  - Most-recent-first, deduplicated (a re-run term moves to the top
- *    rather than duplicating), capped at MAX_RECENT_SEARCHES.
- *  - Best-effort: every read/write is wrapped so a quota error or an
- *    unavailable `localStorage` (jsdom variants) degrades to "no
- *    history" rather than throwing.
- *
- * Terms are trimmed before storage; empty / whitespace-only terms are
- * ignored. Dedup is case-insensitive (searching "Foo" then "foo" keeps
- * a single entry, preserving the most-recent casing).
+ * Recent search terms, per space, for the mobile search sheet's empty state
+ * (#131), where tapping one re-runs it. Most recent first, capped at
+ * `MAX_RECENT_SEARCHES`, trimmed, deduplicated case-insensitively (the latest
+ * casing wins). Storage failures degrade to no history.
  */
 
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
@@ -24,37 +10,23 @@ import { activeSpaceKey } from '@/stores/active-space'
 
 const MAX_RECENT_SEARCHES = 8
 
-/**
- * Read the recent search terms for the active space, most-recent first.
- * Returns `[]` on any read/parse failure.
- */
+/** The active space's recent terms, most recent first; `[]` on any read failure. */
 export function getRecentSearches(): string[] {
   return readPreference(PREFERENCES.recentSearches, activeSpaceKey())
 }
 
-/**
- * Record a search term at the top of the active-space list.
- *
- * - Trims the term; ignores empty / whitespace-only input.
- * - Case-insensitive dedup: an existing entry (any casing) is removed
- *   so the new casing lands at position 0.
- * - Caps the list at MAX_RECENT_SEARCHES, evicting the oldest.
- */
+/** Put a term at the top of the active space's list; empty input is ignored. */
 export function addRecentSearch(term: string): void {
   const trimmed = term.trim()
   if (trimmed.length === 0) return
   const lower = trimmed.toLowerCase()
   const existing = getRecentSearches().filter((t) => t.toLowerCase() !== lower)
   const next = [trimmed, ...existing].slice(0, MAX_RECENT_SEARCHES)
-  // Quota / unavailable write failures are logged and swallowed by
-  // writePreference — the MRU strip is a convenience.
+  // `writePreference` logs and swallows storage failures.
   writePreference(PREFERENCES.recentSearches, next, activeSpaceKey())
 }
 
-/**
- * Clear the active-space recent-search list (the empty-state's
- * "Clear" affordance).
- */
+/** Clear the active space's list (the empty state's "Clear"). */
 export function clearRecentSearches(): void {
   removePreference(PREFERENCES.recentSearches, activeSpaceKey())
 }

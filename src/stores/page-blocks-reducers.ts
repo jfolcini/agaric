@@ -1,14 +1,7 @@
 /**
- * Mutation reducers for the per-page block store (#2254).
- *
- * Extracted verbatim from `page-blocks.ts` — behavior-preserving move. Every
- * reducer keeps its exact logic and closes over the store's `set`/`get` plus
- * two per-store helpers created by the factory (`splitInProgress`,
- * `enqueueMove`), passed in via `ReducerDeps`. The store core spreads
- * `createReducers({ set, get, splitInProgress, enqueueMove })` into its
- * `createStore` initializer, so the reducers wire in with an unchanged public
- * API. The `load` reducer and initial state stay in the core (they close over
- * the private `loadGeneration` counter).
+ * Mutation reducers for the per-page block store. They close over the store's
+ * `set`/`get` and the per-store helpers in `ReducerDeps`; `load` and the
+ * initial state stay in `page-blocks.ts`, which owns the load generation.
  */
 
 import type { StoreApi } from 'zustand'
@@ -50,37 +43,15 @@ import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 /**
- * Notify the undo store that a new action occurred on the given page, and bump
- * the graph-structure mutation signal.
+ * Record a successful local write: push the undo entry (by the command's
+ * `opRefs`) and bump the graph-structure signal, since any block write,
+ * an edit included, can add or remove a `[[link]]` edge (#1530).
  *
- * #1530: every local block/link/page CRUD op (`createBelow`, `edit`, `remove`,
- * `reorder`, `moveToParent`, `moveBlocks`, `indent`, `dedent`, `moveUp`,
- * `moveDown`, `splitBlock`, `pasteBlocks`, `duplicateBlock`, `applyPageSource`)
- * funnels through here after a successful write, so it is the single funnel
- * for "this page's block/link structure just changed locally." `edit` is
- * included deliberately — editing a block's text can add or remove a
- * `[[link]]`, which is a graph EDGE.
- * Bumping the structure counter here invalidates `GraphView`'s cache so the
- * next graph read reflects the new nodes/edges instead of stale data until the
- * TTL. The `appendBlock` path bumps it separately because that path does not
- * call this helper (its caller owns the undo notification).
- *
- * #2468 — `opRefs` threads the mutation response's `op_refs` (the exact op-log
- * refs the command appended) into the undo store so Ctrl+Z is ref-addressed.
- * Every command this store calls surfaces refs (#5140 brought the two batch
- * commands in line), so the argument is required here.
- *
- * #4729 — `options.undoable = false` keeps the GRAPH half (the mutation really
- * did change the link topology, so the cache must still be invalidated) while
- * skipping the undo half entirely: no stack entry AND no redo invalidation.
- * It is for housekeeping the user did not ask for — a cleanup that occupies
- * the undo stack means the next Ctrl+Z reverts the cleanup instead of the
- * user's own last action, and clearing `redoStack` would eat their Ctrl+Y for
- * the same reason. The only caller is the leaked-empty-block cleanup's
- * `remove`; every user-initiated action keeps the default.
- *
- * #5160 D4 — `options.merge = false` starts an undo entry of its own (a paste;
- * see `onNewAction`).
+ * `undoable: false` keeps the graph bump but skips undo entirely, entry and
+ * redo invalidation both: housekeeping the user did not ask for (the
+ * leaked-empty-block cleanup) must not take their next Ctrl+Z or Ctrl+Y
+ * (#4729). `merge: false` starts an entry of its own (a paste; see
+ * `onNewAction`).
  */
 export function notifyUndoNewAction(
   rootParentId: string | null,
@@ -90,8 +61,6 @@ export function notifyUndoNewAction(
 ): void {
   if (rootParentId && undoable) {
     const { onNewAction } = useUndoStore.getState()
-    // Only forward `coalesceKey` / `merge` when set (content edits, a paste) so
-    // the existing call shape for every other action is unchanged (#2600).
     if (!merge) onNewAction(rootParentId, opRefs, coalesceKey, { merge })
     else if (coalesceKey !== undefined) onNewAction(rootParentId, opRefs, coalesceKey)
     else onNewAction(rootParentId, opRefs)
@@ -100,13 +69,10 @@ export function notifyUndoNewAction(
 }
 
 /**
- * #1484 / #4338 — a paste's `[[Title]]` or `#tag` naming nothing yet creates
- * that page or tag in the same transaction, and the reply lists it ahead of
- * the pasted content. Seed the resolve cache so its chip renders the name at
- * once, and tell the pickers in `spaceId`: the name is already in use as a
- * link, so the next `[[` on it must offer the page rather than "Create new
- * page". The cache's `set` writes under the space live now, so a space switch
- * during the paste seeds the cache under the space switched to.
+ * A paste's `[[Title]]` or `#tag` naming nothing yet creates that page or tag,
+ * listed ahead of the pasted content (#1484, #4338). Seed the resolve cache so
+ * its chip shows the name at once, and tell the pickers in `spaceId`, so the
+ * next `[[` offers the page instead of "Create new page".
  */
 function announceCreatedNames(rows: readonly BlockRow[], spaceId: string | null): void {
   for (const row of rows) {
@@ -120,8 +86,8 @@ function announceCreatedNames(rows: readonly BlockRow[], spaceId: string | null)
 }
 
 /**
- * `state` with one block's content replaced. Copy-on-write of that one slot and
- * key only (#2200): every other block keeps its object, so memoized rows skip.
+ * `state` with one block's content replaced, copying that slot and key only,
+ * so every other row keeps its object and skips its memoized render (#2200).
  */
 function withContent(
   state: PageBlockState,
@@ -137,14 +103,9 @@ function withContent(
 }
 
 /**
- * #400 — compute the 0-based sibling slot of a block among its same-parent
- * siblings (excluding the block itself), reading the current flat-tree order.
- *
- * The slot is the index the block currently occupies in the ordered list of
- * its siblings. Callers use it to derive the target slot for a sibling-swap
- * (moveUp = slot - 1; moveDown = slot + 1 once the block has vacated its own
- * slot) without any `position`-integer arithmetic — the backend assigns the
- * dense rank from the slot.
+ * The block's 0-based slot among its same-parent siblings, in flat-tree order
+ * (#400). Movers send slots and the backend assigns the dense rank, so the
+ * frontend does no `position` arithmetic.
  */
 function siblingSlot(blocks: FlatBlock[], block: FlatBlock): number {
   const parentId = block.parent_id ?? null
@@ -154,15 +115,12 @@ function siblingSlot(blocks: FlatBlock[], block: FlatBlock): number {
   return siblings.findIndex((b) => b.id === block.id)
 }
 
-/** Zustand `set` for the page-block store (functional + object partial forms). */
 type PageBlockSet = StoreApi<PageBlockState>['setState']
 
 /**
- * Per-store dependencies the reducers close over. `set`/`get` are the raw
- * `createStore` initializer args (the un-wrapped `set`, so internal writes keep
- * bypassing the `augmentBlocksUpdate` wrap on `store.setState`, as before).
- * `splitInProgress`, `createsInFlight` and `enqueueMove` are created once per
- * store by the factory.
+ * Per-store dependencies. `set` is the raw initializer `set`, which keeps
+ * `blocksById` itself and bypasses the `augmentBlocksUpdate` wrap on
+ * `store.setState`.
  */
 interface ReducerDeps {
   set: PageBlockSet
@@ -172,7 +130,6 @@ interface ReducerDeps {
   enqueueMove: <T>(blockId: string, run: () => Promise<T>) => Promise<T>
 }
 
-/** Build the store's mutation reducers. See module doc + `ReducerDeps`. */
 export function createReducers({
   set,
   get,
@@ -204,27 +161,18 @@ export function createReducers({
       const afterBlock = blocks[idx]
       if (!afterBlock) return null
 
-      // #400: insert at the slot right after `afterBlock` among its siblings.
       const afterSlot = siblingSlot(blocks, afterBlock)
 
-      // #2849 PR2 — the new block's ULID is CLIENT-SIDE so the row can be
-      // spliced in OPTIMISTICALLY, BEFORE the create IPC resolves. The backend
-      // accepts this id verbatim (`create_block(blockId)`), so the id is stable
-      // from insertion: focus/selection assigned to the new block never have to
-      // relocate to a server-minted id after the round-trip (option (b)). The
-      // provisional parent/depth mirror the anchor's; `position: null` is healed
-      // to the backend's dense rank on success.
+      // The id is minted client-side and the backend uses it verbatim, so the
+      // row is spliced in before the IPC and focus never moves to a server id.
+      // `position: null` heals to the backend's dense rank on success.
       const parentId = afterBlock.parent_id
 
-      // Splice the provisional block in NOW (pre-await), reusing PR1's
-      // `applyProvisionalMove` snapshot+splice infra. The returned handle drives
-      // the resolve-path confirm/heal or the guarded rollback.
       const handle = applyProvisionalMove(set, newId, (state) => {
         const cur = state.blocks
         const curIdx = cur.findIndex((b) => b.id === afterBlockId)
         const curAfter = cur[curIdx] as FlatBlock
-        // In a flat tree the new sibling goes right after the anchor and all of
-        // its descendants.
+        // After the anchor and all its descendants.
         const descendants = getDragDescendants(cur, afterBlockId)
         let insertIdx = curIdx + 1
         while (insertIdx < cur.length && descendants.has((cur[insertIdx] as FlatBlock).id)) {
@@ -246,7 +194,6 @@ export function createReducers({
         }
         const newBlocks = [...cur]
         newBlocks.splice(insertIdx, 0, newBlock)
-        // Single-block insert (perf invariant): only the new block's key.
         return { blocks: newBlocks, touchedIds: [newBlock.id] }
       })
 
@@ -265,15 +212,12 @@ export function createReducers({
         answered()
       }
       try {
-        // The slot is the anchor's + 1, so the anchor must exist first.
+        // The slot is the anchor's + 1, so the anchor's own create must land first.
         if (anchorCreate) await anchorCreate
-        // #5415 — no active space: refuse through the rollback below.
+        // No active space: refuse through the rollback below (#5415).
         const spaceId = useSpaceStore.getState().currentSpaceId
         if (spaceId == null) throw new Error('No active space; cannot create block')
-        // #730 — route through the shared pool_busy retry so a transient
-        // connection-pool blip doesn't surface as a create failure / lost
-        // block. retryOnPoolBusy re-throws every non-pool_busy error
-        // unchanged, so the catch below behaves identically for real errors.
+        // A transient pool_busy blip must not lose the block (#730).
         const result = await retryOnPoolBusy(() =>
           commands
             .createBlock(
@@ -288,27 +232,15 @@ export function createReducers({
         )
         settle()
 
-        // Confirm the provisional insert. Because the block already carries the
-        // client id, success is a no-op confirm (no id swap, focus stays); we
-        // only heal its `position` to the backend's authoritative dense rank.
-        // `reconcileProvisionalMoveSuccess` guards against a concurrent write
-        // that superseded the provisional splice (a racing load() that dropped
-        // or moved it) — reconciling via load() instead of blindly healing.
+        // Heal `position` to the backend's rank; a concurrent load() that
+        // dropped or moved the provisional row reconciles by reloading.
         await reconcileProvisionalMoveSuccess(set, get, handle, result.position)
         notifyUndoNewAction(rootParentId, result.op_refs)
-        // Return the CLIENT id — the id of the block actually in the store (the
-        // backend used it verbatim). Callers (splitBlock's chaining, focus
-        // placement) address the new block by this stable id; it never has to
-        // relocate to a server-minted id.
         return newId
       } catch (err) {
         settle()
-        // Roll back the provisional insert: remove the row + its `blocksById`
-        // entry. `rollbackProvisionalMove` restores the exact pre-op snapshot
-        // when nothing landed since (the common case), or reconciles via load()
-        // when a concurrent write built on the provisional block (e.g. an
-        // immediate child indent) — mirroring PR1's rollback discipline so that
-        // write is not clobbered.
+        // Exact restore when nothing landed since; otherwise reload, so a write
+        // built on the provisional block (an immediate indent) is not clobbered.
         await rollbackProvisionalMove(set, get, handle)
         logger.error('page-blocks', 'Failed to create block', { afterBlockId }, err)
         notify.error(i18n.t('error.createBlockFailed'))
@@ -319,45 +251,22 @@ export function createReducers({
     edit: async (blockId: string, content: string, { merge = true, undoGroup } = {}) => {
       const { rootParentId, blocksById } = get()
       const previousContent = blocksById.get(blockId)?.content
-      // Single-block-edit hot path (perf-review Tier 1 #2, #2200): re-allocating
-      // the entire Map per keystroke fans out to every mounted EditableBlock on a
-      // 2000-block page. Derive `blocksById` from the previous Map and touch
-      // only the edited key — full-scan `buildBlocksById` is reserved for
-      // bulk paths (see invariant comment on `buildBlocksById`). Likewise for
-      // `blocks`: locate the edited slot once (`findIndex`, short-circuits at
-      // the match) and copy-on-write only that index (`slice()` + a single
-      // assignment) instead of walking the WHOLE array through a per-element
-      // `.map()` callback on every keystroke. Unchanged entries keep their
-      // exact prior object reference either way (`.map()`'s `return b` already
-      // did that) — the win is dropping the N-callback-invocation walk, not
-      // the top-level array copy: the array reference still MUST change so
-      // Zustand/React see the update, and downstream per-row `React.memo`
-      // (SortableBlock/EditableBlock) keys off each BLOCK OBJECT's identity,
-      // which this preserves for every entry but the edited one.
+      // Copy only the edited slot and key: rows memo on block object identity,
+      // and a whole-array walk or Map rebuild per keystroke fans out to every
+      // mounted row (#2200).
       set((state) => withContent(state, blockId, content))
       try {
         const pendingCreate = createsInFlight.get(blockId)
         if (pendingCreate) await pendingCreate
-        // #730 — retry a transient pool_busy blip before reverting visible
-        // user text. Without this a 50ms back-pressure spike rolled the
-        // optimistic edit back and toasted "save failed" for text the user
-        // can still see on screen.
+        // Retry pool_busy before rolling back text the user can see (#730).
         const resp = await retryOnPoolBusy(() => commands.editBlock(blockId, content).then(unwrap))
-        // #753 — adopt the backend echo instead of discarding it. The
-        // optimistic update above wrote the raw text we SENT; the backend
-        // may normalize it (`edit_block` echoes the canonical BlockRow),
-        // and dropping the echo left store and backend diverged until the
-        // next full load(). Mirrors reorder's resp handling: recompute
-        // inside the functional updater at commit time, and only adopt
-        // when the block still holds the content this call wrote — a
-        // newer in-flight edit must win over this echo.
+        // Adopt the backend's normalized echo, unless a newer edit already
+        // replaced the text this call wrote (#753).
         if (typeof resp?.content === 'string' && resp.content !== content) {
           set((state) => {
             const cur = state.blocksById.get(blockId)
             if (!cur || cur.content !== content) return {}
             const normalized = { ...cur, content: resp.content }
-            // Same single-slot copy-on-write as the optimistic update above —
-            // avoid the full `.map()` walk for a one-block touch.
             const idx = state.blocks.findIndex((b) => b.id === blockId)
             if (idx < 0) return {}
             const blocks = state.blocks.slice()
@@ -365,11 +274,10 @@ export function createReducers({
             return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [normalized]) }
           })
         }
-        // A list block whose text this device stops opening with a paragraph
-        // leaves the list (`showsListMarker`), once the text is saved. Sync,
-        // undo and restore reach the store through `load()`, so they clear nothing.
-        // Caught here: the text is saved, so a failure must not roll it back.
-        // The clear is in the edit's undo entry: one Ctrl+Z brings back both (#6156).
+        // A list block whose text no longer opens with a paragraph leaves the
+        // list (`showsListMarker`), once the text is saved; sync, undo and
+        // restore go through `load()` and clear nothing. A failure here must not
+        // roll back saved text. The clear joins the edit's undo entry (#6156).
         let opRefs = resp.op_refs
         try {
           if (
@@ -382,28 +290,20 @@ export function createReducers({
         } catch (err) {
           logger.warn('page-blocks', 'clearing the list style failed', { blockId }, err)
         }
-        // #2600 — coalesce a block's debounced mid-typing commits + its final
-        // blur commit into ONE undo entry (key is per-block) so Ctrl+Z reverts
-        // a block edit as a single action despite the finer commit cadence.
-        // Without the key, a `merge: false` entry is not joined by the typing
-        // that follows it either. An `undoGroup` key joins edits of several blocks.
+        // One undo entry per block's typing session (#2600). A `merge: false`
+        // edit gets no key, so the typing after it does not join it either;
+        // an `undoGroup` key joins edits of several blocks.
         const coalesceKey = undoGroup ?? (merge ? `edit:${blockId}` : undefined)
         notifyUndoNewAction(rootParentId, opRefs, coalesceKey, { merge })
         return true
       } catch (err) {
-        // Rollback optimistic update — also a single-block touch.
-        // #824 — mirror the #753 success-path guard (`cur.content !== content`):
-        // only roll back to `previousContent` if the live content is still the
-        // text THIS edit optimistically wrote. If the user has typed past it
-        // (a newer in-flight edit), restoring `previousContent` would clobber
-        // that newer text — so leave it and just surface the failure toast.
+        // Roll back only if the live text is still what this edit wrote; a
+        // newer edit must not be clobbered (#824).
         if (previousContent !== undefined) {
           set((state) => {
             const cur = state.blocksById.get(blockId)
             if (!cur || cur.content !== content) return {}
             const restored = { ...cur, content: previousContent }
-            // Same single-slot copy-on-write as the optimistic update above —
-            // avoid the full `.map()` walk for a one-block touch.
             const idx = state.blocks.findIndex((b) => b.id === blockId)
             if (idx < 0) return {}
             const blocks = state.blocks.slice()
@@ -423,14 +323,11 @@ export function createReducers({
       const pendingCreate = createsInFlight.get(blockId)
       if (pendingCreate) await pendingCreate
       const { rootParentId } = get()
-      // #4729 — see `DeleteBlockOptions`. Default: a user-initiated delete.
+      // Default: a user-initiated delete (#4729).
       const undoable = options?.undoable ?? true
 
-      // #2849 — remove the block (and its descendants) OPTIMISTICALLY, BEFORE
-      // the delete IPC, so the UI updates instantly instead of after the
-      // round-trip. Snapshot the pre-op arrays for an exact rollback if the IPC
-      // rejects. Few-block delete (perf invariant): touch only the removed keys
-      // on the prior Map; the remaining `n - k` entries are reused as-is.
+      // Remove the block and its descendants before the IPC, snapshotting for
+      // an exact rollback.
       let prevBlocks: FlatBlock[] | null = null
       let prevById: Map<string, FlatBlock> | null = null
       let provBlocks: FlatBlock[] | null = null
@@ -450,16 +347,10 @@ export function createReducers({
       })
 
       try {
-        // #730 — pool_busy retry (see edit/createBelow).
         const resp = await retryOnPoolBusy(() => commands.deleteBlock(blockId).then(unwrap))
-        // #2543 — re-confirm the removal at COMMIT time. If a racing sync
-        // load() whose snapshot predated the delete commit restored the block
-        // while delete_block was in flight, re-splice it out now, recomputing
-        // the descendant set from CURRENT state (a concurrent reparent may have
-        // moved blocks in/out of the subtree since the provisional splice — a
-        // block dedented OUT survives, one reparented IN cascades). When the
-        // provisional removal still holds (the common case) `has()` is false
-        // and this is a no-op.
+        // A racing load() whose snapshot predated the delete may have restored
+        // the block: remove it again, recomputing descendants from current
+        // state (#2543).
         set((state) => {
           if (!state.blocksById.has(blockId)) return {}
           const descendants = getDragDescendants(state.blocks, blockId)
@@ -469,18 +360,13 @@ export function createReducers({
             blocksById: cloneBlocksByIdWithout(state.blocksById, [blockId, ...descendants]),
           }
         })
-        // #5246 — chips pointing into the removed subtree render deleted.
+        // Chips pointing into the removed subtree render deleted (#5246).
         useResolveStore.getState().markDeleted(spaceId, [...removedIds, ...resp.affected_page_ids])
-        // Focus/selection cleanup is the caller's responsibility — all current
-        // callers (handleDeleteBlock, handleMerge*, BlockTree
-        // empty-block cleanup) explicitly manage focus after remove() resolves.
+        // Callers manage focus after remove() resolves.
         notifyUndoNewAction(rootParentId, resp.op_refs, undefined, { undoable })
       } catch (err) {
-        // Roll back the optimistic removal. Exact restore when nothing landed
-        // since (the required pre-op state); otherwise reconcile via load() so
-        // a concurrent structural write that touched the still-visually-removed
-        // subtree while delete_block was in flight is not clobbered by
-        // re-inserting the stale snapshot — mirrors edit's guarded rollback.
+        // Exact restore when nothing landed since; otherwise reload, so a
+        // concurrent write to the removed subtree is not clobbered.
         let needsReload = false
         set((state) => {
           if (state.blocks === provBlocks && prevBlocks != null && prevById != null) {
@@ -495,18 +381,11 @@ export function createReducers({
       }
     },
 
-    // Resolves `true` only when the plan FULLY committed (noop counts — there
-    // was nothing to persist). `false` on any failed write, mirroring edit()'s
-    // resolve-false contract: the blur path forwards this outcome to
-    // `discardDraft`, whose `ok === false` gate keeps the crash-recovery
-    // draft row alive when the typed text did not reach the DB (#2451 review
-    // — a void resolution slipped past that gate and deleted the draft even
-    // when the first-line write failed, the #2407 content-loss class on the
-    // split path).
+    // Resolves `true` only when the plan fully committed (a noop included).
+    // The blur path's draft discard keeps the crash-recovery draft on `false`,
+    // so a failed write must never resolve `true` (#2451).
     splitBlock: async (blockId: string, markdown: string): Promise<boolean> => {
-      // Re-entrant duplicate: the first in-flight split owns the writes and
-      // its own outcome; this call persisted nothing, so report false (the
-      // safe direction for a draft-discard gate).
+      // A re-entrant duplicate persisted nothing; `false` is the safe answer.
       if (splitInProgress.has(blockId)) return false
       splitInProgress.add(blockId)
       try {
@@ -515,14 +394,10 @@ export function createReducers({
         if (plan.kind === 'edit-only') {
           return await get().edit(blockId, plan.content)
         }
-        // #5272 — create the after-parts BEFORE shortening the original. A
-        // `[[link]]` whose target lives in another space is accepted only
-        // while a live block of this page still holds it; shortening the
-        // original first removed the only holder, and the create was refused.
-        // Every failure below puts the page back as it was — the blocks
-        // created so far are deleted again and the original is never left
-        // shortened (#730, #2913) — and reports `false`, so the blur path
-        // keeps the draft, which holds the full unsplit markdown.
+        // Create the after-parts before shortening the original: a `[[link]]`
+        // to another space is accepted only while a live block of this page
+        // holds it (#5272). Any failure deletes what was created and leaves the
+        // original whole, reporting `false` so the draft survives (#2913).
         const createdIds: string[] = []
         let lastId = blockId
         for (const content of plan.rest) {
@@ -535,9 +410,8 @@ export function createReducers({
           createdIds.push(newId)
           lastId = newId
         }
-        // `edit()` resolves `false` and restores the original's content when
-        // the write fails; the after-parts below then duplicate text the
-        // original still holds.
+        // A failed `edit()` restores the original, which the after-parts would
+        // then duplicate.
         if (!(await get().edit(blockId, plan.first))) {
           for (const id of createdIds) await get().remove(id)
           return false
@@ -555,41 +429,26 @@ export function createReducers({
         if (!block) return
         const parentId = block.parent_id
 
-        // #400: `newIndex` is a 0-based sibling slot among the block's OTHER
-        // same-parent children. A reorder to the block's current slot is a no-op.
-        //
-        // #928 (f6): the two bases coincide at the block's own slot even though
-        // they count differently — `siblingSlot` returns the index INCLUDING the
-        // block itself, while `newIndex` is the backend slot-basis EXCLUDING self.
-        // Dropping a block onto its own position yields the same count whether
-        // self is counted before it or excluded, so equality here is exact.
+        // `newIndex` is a slot among the block's other siblings, `siblingSlot`
+        // counts self; at the block's own slot the two agree, so equality means
+        // a no-op (#928).
         const currentSlot = siblingSlot(blocks, block)
         if (newIndex === currentSlot) return
 
-        // R5 (#404): same-parent reorder mirrors the resulting sibling order
-        // locally and does NOT call load(). #2849 — apply that splice
-        // OPTIMISTICALLY, BEFORE the IPC, so the UI updates instantly; the moved
-        // block keeps its current `position` (array order is authoritative) and
-        // the backend's dense rank is healed in on resolve.
+        // A same-parent reorder splices locally before the IPC, without a
+        // load() (#404); the rank heals on resolve.
         const handle = applyProvisionalMove(set, blockId, (state) => {
           const cur = state.blocks
           const curBlock = cur.find((b) => b.id === blockId) as FlatBlock
-          // Splice the moved subtree to its new slot among the siblings in the
-          // flat tree. Build moved + remaining, then locate the insertion anchor
-          // from the target sibling slot.
           const descendants = getDragDescendants(cur, blockId)
           const movedSet = new Set([blockId, ...descendants])
           const movedItems = cur.filter((b) => movedSet.has(b.id))
           const remaining = cur.filter((b) => !movedSet.has(b.id))
-          // `remaining` can be scanned twice below for the same anchor id
-          // (getDragDescendants + the insertion anchor lookup) across the
-          // branches. Build the id→index map once so every anchor lookup here
-          // becomes an O(1) `.get()` instead of a `.findIndex()` scan (#2041).
+          // One id-to-index map for the repeated anchor lookups (#2041).
           const remainingIndex = buildIndexById(remaining)
 
-          // The flat index in `remaining` of the (newIndex)-th same-parent
-          // sibling; if newIndex is past the last sibling, insert after the last
-          // sibling's subtree. parentDepth+1 is the sibling depth.
+          // The flat index of the `newIndex`-th sibling, or past the last
+          // sibling's subtree.
           const siblingsRemaining = remaining.filter(
             (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === curBlock.depth,
           )
@@ -606,8 +465,7 @@ export function createReducers({
                 insertAt++
               }
             } else {
-              // No remaining siblings — insert right after the parent, or at the
-              // start of the list when at root level.
+              // No siblings left: right after the parent, or first at root.
               insertAt = parentId == null ? 0 : (remainingIndex.get(parentId) ?? -1) + 1
             }
           } else {
@@ -617,21 +475,16 @@ export function createReducers({
 
           const newBlocks = [...remaining]
           newBlocks.splice(insertAt, 0, ...movedItems)
-          // Same-parent swap: only array order changed, no block object was
-          // rewritten — nothing to touch in the Map (the position heal on resolve
-          // re-allocates the one moved block).
+          // Only order changed: nothing to touch in the Map.
           return { blocks: newBlocks, touchedIds: [] }
         })
 
         try {
-          // #730 — pool_busy retry (see edit/createBelow).
           const resp = await retryOnPoolBusy(() =>
             commands.moveBlock(blockId, parentId, newIndex).then(unwrap),
           )
 
-          // Defensive: a reorder never crosses parents. If the backend echoes a
-          // different parent, the provisional guess was wrong — reload reconciles
-          // FE with the backend (overwriting the provisional splice).
+          // A different parent echoed means the guess was wrong: reload.
           if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
             await get().load()
             notifyUndoNewAction(rootParentId, resp.op_refs)
@@ -650,16 +503,9 @@ export function createReducers({
     moveToParent: async (blockId: string, newParentId: string | null, newIndex: number) => {
       const { rootParentId, blocks } = get()
 
-      // #2900 — extend the #2849 optimistic-move machinery to the cross-parent
-      // DnD reparent, the last mover that still did an unconditional full
-      // `load()`. Only take the optimistic path when the block is loaded
-      // locally AND the requested parent is a safe splice target: root, or a
-      // block currently in the tree that is neither the moved block itself
-      // nor one of its own descendants (reparenting into your own subtree is
-      // nonsensical — the DnD projection never offers it, but this reducer is
-      // a public store action a caller could invoke directly). Anything else
-      // falls back to the pre-#2900 behavior: fire the IPC and unconditionally
-      // reload for "the correct flattened order" the old comment referenced.
+      // Splice optimistically only when the block is loaded and the target is
+      // root or a loaded block outside the moved subtree (#2900); a caller can
+      // still ask for its own subtree. Otherwise move, then reload.
       const block = blocks.find((b) => b.id === blockId)
       const descendants = block ? getDragDescendants(blocks, blockId) : null
       const newParentBlock = newParentId == null ? null : blocks.find((b) => b.id === newParentId)
@@ -685,13 +531,8 @@ export function createReducers({
             const newDepth = newParentId == null ? 0 : (targetParent?.depth ?? curBlock.depth) + 1
             const delta = newDepth - curBlock.depth
 
-            // #2849/#2900 — same subtree depth-rewrite as `dedent`, generalized
-            // to an arbitrary target depth (dedent's target is always exactly
-            // one level up; a DnD reparent can land the block at ANY depth).
-            // Descendants only re-allocate when the depth actually shifts —
-            // e.g. moving between two same-depth parents changes `blockId`'s
-            // `parent_id` but not the subtree's depth — preserving their
-            // object identity in that case (subtree-touch perf invariant).
+            // The subtree shifts by `delta`; descendants keep their objects
+            // when the depth does not change.
             const movedItems: FlatBlock[] = cur
               .filter((b) => movedSet.has(b.id))
               .map((b) => {
@@ -702,13 +543,9 @@ export function createReducers({
               })
 
             const remaining = cur.filter((b) => !movedSet.has(b.id))
-            // `remaining` is scanned repeatedly below for sibling/anchor
-            // lookups. Build the id→index map once (#2041/#2200).
             const remainingIndex = buildIndexById(remaining)
 
-            // #400 — same sibling-slot insertion as `reorder`, generalized to
-            // the TARGET parent's children instead of the block's current
-            // siblings.
+            // Sibling-slot insertion as in `reorder`, among the target's children.
             const siblingsRemaining = remaining.filter(
               (b) => (b.parent_id ?? null) === (newParentId ?? null) && b.depth === newDepth,
             )
@@ -725,8 +562,7 @@ export function createReducers({
                   insertAt++
                 }
               } else {
-                // No remaining siblings under the target parent — insert right
-                // after the parent, or at the start of the list at root level.
+                // No siblings left: right after the parent, or first at root.
                 insertAt = newParentId == null ? 0 : (remainingIndex.get(newParentId) ?? -1) + 1
               }
             } else {
@@ -736,9 +572,6 @@ export function createReducers({
 
             const newBlocks = [...remaining]
             newBlocks.splice(insertAt, 0, ...movedItems)
-            // Subtree-touch (perf invariant): the moved block always
-            // re-allocates (`parent_id` changed); its descendants only when
-            // the depth shift is non-zero (see the `delta` branch above).
             return {
               blocks: newBlocks,
               touchedIds: delta === 0 ? [blockId] : [blockId, ...curDescendants],
@@ -747,23 +580,17 @@ export function createReducers({
         : null
 
       try {
-        // #730 — pool_busy retry (see edit/createBelow).
         const resp = await retryOnPoolBusy(() =>
           commands.moveBlock(blockId, newParentId, newIndex).then(unwrap),
         )
 
         if (!handle) {
-          // No local splice was applied — reload for the correct flattened
-          // order, exactly as before #2900.
           await get().load()
           notifyUndoNewAction(rootParentId, resp.op_refs)
           return
         }
 
-        // Defensive: if the backend echoes a parent other than the one we
-        // requested, the provisional splice guessed wrong — reload reconciles
-        // FE with the backend (mirrors reorder/indent/dedent's parent-echo
-        // guard), overwriting the provisional splice.
+        // A different parent echoed means the guess was wrong: reload.
         if ((resp.new_parent_id ?? null) !== (newParentId ?? null)) {
           await get().load()
           notifyUndoNewAction(rootParentId, resp.op_refs)
@@ -790,10 +617,8 @@ export function createReducers({
       const { rootParentId } = get()
       if (ids.length === 0) return
 
-      // #914 — order the requested ids by their current document position so the
-      // moved run preserves relative order at the destination. Ids absent from
-      // the current tree (vanished mid-gesture) are dropped — there is nothing
-      // to move and the backend would reject them.
+      // Move in document order, so the run keeps its order; drop ids that
+      // vanished mid-gesture.
       const order = new Map(get().blocks.map((b, i) => [b.id, i] as const))
       const ordered = ids
         .filter((id) => order.has(id))
@@ -801,20 +626,12 @@ export function createReducers({
       if (ordered.length === 0) return
 
       try {
-        // #2274 — ONE IPC. `move_blocks_batch` lands the ordered run at
-        // consecutive slots `newIndex, newIndex + 1, …` under `newParentId`
-        // inside a single backend IMMEDIATE transaction (N `MoveBlock` ops),
-        // preserving the #774 slot semantics WITHIN the tx. Replaces the old
-        // per-root `moveBlock` IPC loop + full page reload. #730 — the single
-        // call still goes through the shared pool_busy retry.
+        // One IPC lands the run at consecutive slots in one transaction (#2274).
         const resp = await retryOnPoolBusy(() =>
           commands.moveBlocksBatch(ordered, newParentId, newIndex).then(unwrap),
         )
 
-        // Surgical reconcile from the authoritative response — no blind load().
-        // Computed inside the functional updater so it runs against the state
-        // CURRENT AT COMMIT TIME (a concurrent write mid-flight must survive);
-        // `reconcileBatchMove` returns null to request a reconciling reload.
+        // Reconcile against commit-time state; null asks for a reload.
         let needsReload = false
         set((state) => {
           const next = reconcileBatchMove(state, resp.moves, ordered, newParentId, newIndex)
@@ -829,27 +646,16 @@ export function createReducers({
       } catch (err) {
         logger.error('page-blocks', 'Failed to move blocks', { ids, newParentId, newIndex }, err)
         notify.error(i18n.t('error.moveBlockFailed'))
-        // #2274 — the batch is transactional (all-or-nothing) backend-side and
-        // this reducer applies NO optimistic update before the IPC resolves,
-        // so on error there is nothing to roll back: the moved blocks' tree
-        // shape is exactly what the (rolled-back) backend still holds. R26 —
-        // the old wholesale pre-move snapshot restore here violated the
-        // #714/#1077 commit-time discipline: it clobbered concurrent writes
-        // (an edit echo adoption, a sync-triggered load()) that landed while
-        // the IPC was in flight, diverging the store from the DB until the
-        // next load(). Surface the failure and leave commit-time state alone.
+        // No optimistic update and an all-or-nothing batch: nothing to roll
+        // back, and restoring a snapshot would clobber concurrent writes.
       }
     },
 
-    // #774 — serialize movers per block so a queued second press reads the
-    // post-first-move state (see `enqueueMove` doc).
+    // Movers queue per block (`enqueueMove`, #774).
     indent: (blockId: string) =>
       enqueueMove(blockId, async (): Promise<boolean> => {
         const { blocks, rootParentId } = get()
-        // `blocks` is scanned twice below for `blockId`'s slot (this findIndex
-        // + getDragDescendants' internal lookup). Build the id→index map once
-        // so both become O(1) lookups (#2041/#2200 — mirrors the
-        // dedent/moveDown/reorder conversion).
+        // One id-to-index map for both lookups (#2041).
         const blocksIndex = buildIndexById(blocks)
         const idx = blocksIndex.get(blockId) ?? -1
         if (idx <= 0) return false
@@ -857,56 +663,38 @@ export function createReducers({
         const prevSibling = findPrevSiblingAt(blocks, idx)
         if (!block || !prevSibling) return false
 
-        // #928 — prevent (don't just IPC-reject) an indent that would push the
-        // block's deepest descendant past MAX_BLOCK_DEPTH.
+        // Refuse, not just IPC-reject, an indent past `MAX_BLOCK_DEPTH` (#928).
         if (indentTooDeep(blocks, blockId, prevSibling, blocksIndex)) {
-          // #976 f21 — give sighted users feedback that Tab was rejected. The
-          // keyboard handler's aria-live `announceMoveResult('moveFailed')`
-          // covers AT, but a visual no-op left no explanation; a toast brings
-          // visual + AT feedback to parity (mirrors the delete-boundary toast).
-          // De-duped by `id` so a key-repeat at the depth ceiling shows once.
+          // A toast, so sighted users see why Tab did nothing; deduped across
+          // key repeat (#976).
           notify.error(i18n.t('error.maxNestingReached'), { id: 'max-nesting-reached' })
           return false
         }
 
-        // #400: indent makes the block the LAST child of the previous sibling —
-        // its slot is the prev sibling's current child count (append).
+        // Indent appends: the slot is the previous sibling's child count.
         const prevChildCount = blocks.filter((b) => (b.parent_id ?? null) === prevSibling.id).length
 
-        // #2849 — apply the indent splice OPTIMISTICALLY, BEFORE the IPC, so the
-        // UI updates instantly. `computeIndentedBlocks` assigns the moved block
-        // its provisional `position: 1` (#400 — the real dense rank is the
-        // backend's), so indent does NOT heal position on resolve.
+        // `computeIndentedBlocks` gives the block `position: 1`, so indent
+        // heals no position on resolve.
         const handle = applyProvisionalMove(set, blockId, (state) => {
           const cur = state.blocks
           const curPrev = cur.find((b) => b.id === prevSibling.id) as FlatBlock
           const newBlocks = computeIndentedBlocks(cur, blockId, curPrev)
-          // Subtree-touch (perf invariant): only the indented block and its
-          // descendants got new references; reuse the rest of the prior Map.
           const descendantIds = getDragDescendants(cur, blockId)
           return { blocks: newBlocks, touchedIds: [blockId, ...descendantIds] }
         })
 
         try {
-          // #730 — pool_busy retry (see edit/createBelow).
           const resp = await retryOnPoolBusy(() =>
             commands.moveBlock(blockId, prevSibling.id, prevChildCount).then(unwrap),
           )
 
-          // #774 — mirror reorder/moveUp/moveDown: if the backend echoes a
-          // parent other than the one we requested (prevSibling), our local
-          // "indent under prevSibling" splice would diverge from the backend
-          // tree. Fall back to a structural reload (overwriting the provisional)
-          // instead of silently trusting the requested parent.
+          // A different parent echoed means the splice diverged: reload.
           if (resp.new_parent_id !== prevSibling.id) {
             await get().load()
             notifyUndoNewAction(rootParentId, resp.op_refs)
             return true
           }
-          // Confirm the provisional splice; the double-apply guard reloads if a
-          // concurrent write (interleaved structural move, slot drift) reverted
-          // or superseded it. `null` position → keep the splice's provisional
-          // `position: 1`.
           await reconcileProvisionalMoveSuccess(set, get, handle, null)
           notifyUndoNewAction(rootParentId, resp.op_refs)
           return true
@@ -928,30 +716,20 @@ export function createReducers({
         if (!parent) return false
 
         const newParentId = parent.parent_id
-        // #400: dedent places the block right AFTER its parent among the
-        // grandparent's children → slot = parent's sibling slot + 1.
+        // Dedent lands right after the parent among the grandparent's children.
         const newIndex = siblingSlot(blocks, parent) + 1
 
-        // #2849 — apply the dedent splice OPTIMISTICALLY, BEFORE the IPC, so the
-        // UI updates instantly. The moved block keeps its current `position`;
-        // the backend's dense rank is healed in on resolve.
         const handle = applyProvisionalMove(set, blockId, (state) => {
           const next = computeDedentedBlocks(state.blocks, blockId, parent.id, newParentId)
-          // Subtree-touch (perf invariant): only the moved items got new references.
           return { blocks: next, touchedIds: [blockId, ...getDragDescendants(next, blockId)] }
         })
 
         try {
-          // #730 — pool_busy retry (see edit/createBelow).
           const resp = await retryOnPoolBusy(() =>
             commands.moveBlock(blockId, newParentId, newIndex).then(unwrap),
           )
 
-          // #774 — mirror reorder/moveUp/moveDown: dedent requests a specific
-          // grandparent (`newParentId`). If the backend echoes a different
-          // parent, the provisional "place after parent's subtree" splice would
-          // diverge from the backend tree — reload (overwriting the provisional)
-          // instead of trusting the requested parent.
+          // A different parent echoed means the splice diverged: reload.
           if ((resp.new_parent_id ?? null) !== (newParentId ?? null)) {
             await get().load()
             notifyUndoNewAction(rootParentId, resp.op_refs)
@@ -983,19 +761,13 @@ export function createReducers({
         const sibIndex = siblings.findIndex((b) => b.id === blockId)
         if (sibIndex < 0) return false
 
-        // #922 — outline-edge pop-out (Logseq/Workflowy): moveUp on a FIRST
-        // child escapes the sibling group to become its parent's PREVIOUS
-        // sibling (same depth as the parent, positioned just before it). A
-        // first child at the ROOT (no parent) keeps the legacy no-op — there
-        // is nowhere to pop out to.
+        // A first child pops out to just before its parent (#922); a first
+        // child at root has nowhere to go.
         if (sibIndex === 0) {
           if (parentId == null) return false
           const parent = blocksById.get(parentId)
           if (!parent) return false
-          // The pop-out parent is the grandparent; the target slot is the
-          // parent's own sibling slot, dropping the block right BEFORE the
-          // parent among the grandparent's children. Structural (cross-parent)
-          // → `move_block` IPC + full `load()`, mirroring `moveToParent`.
+          // Cross-parent: move, then reload.
           const newParentId = parent.parent_id ?? null
           const newIndex = siblingSlot(blocks, parent)
           try {
@@ -1013,44 +785,29 @@ export function createReducers({
         }
 
         const prevSibling = siblings[sibIndex - 1] as FlatBlock
-        // #400: target slot is the previous sibling's slot (sibIndex - 1) among
-        // the OTHER children — moving up swaps with the previous sibling.
+        // Swap with the previous sibling.
         const newIndex = sibIndex - 1
 
-        // #2849 — apply the swap splice OPTIMISTICALLY, BEFORE the IPC, so the
-        // UI updates instantly. Same-parent only — moveUp never crosses parents
-        // (it walks the sibling list at fixed depth). The moved block keeps its
-        // current `position`; the backend's dense rank is healed in on resolve.
         const handle = applyProvisionalMove(set, blockId, (state) => {
           const cur = state.blocks
           const movedDescendants = getDragDescendants(cur, blockId)
           const movedSet = new Set([blockId, ...movedDescendants])
           const movedItems = cur.filter((b) => movedSet.has(b.id))
           const remaining = cur.filter((b) => !movedSet.has(b.id))
-          // #2041/#2200 — unlike dedent/moveDown/reorder, this inserts BEFORE
-          // `prevSibling`'s own slot: in a DFS-flattened array a block's
-          // descendants always sit AFTER it, so landing at `prevSibling`'s index
-          // already lands before its whole subtree — no skip-loop, one findIndex.
+          // A block's descendants follow it in the flat array, so its index is
+          // already before the whole subtree.
           const insertAt = remaining.findIndex((b) => b.id === prevSibling.id)
           const newBlocks = [...remaining]
           newBlocks.splice(insertAt, 0, ...movedItems)
-          // Same-parent swap: only array order changed, no block object was
-          // rewritten — nothing to touch (the position heal on resolve
-          // re-allocates the one moved block).
+          // Only order changed: nothing to touch in the Map.
           return { blocks: newBlocks, touchedIds: [] }
         })
 
         try {
-          // The MoveResponse echoes the canonical (parent_id, position) the
-          // backend committed, so we mirror it without a follow-up `list_blocks`
-          // IPC. #730 — pool_busy retry (see edit/createBelow).
           const resp = await retryOnPoolBusy(() =>
             commands.moveBlock(blockId, parentId, newIndex).then(unwrap),
           )
 
-          // Defensive: if the backend echoes a different parent (shouldn't
-          // happen for moveUp, but the response shape allows it), reload
-          // (overwriting the provisional) so descendant chains stay consistent.
           if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
             await get().load()
           } else {
@@ -1080,17 +837,13 @@ export function createReducers({
         const sibIndex = siblings.findIndex((b) => b.id === blockId)
         if (sibIndex < 0) return false
 
-        // #922 — outline-edge pop-out (Logseq/Workflowy): moveDown on a LAST
-        // child escapes the sibling group to become its parent's NEXT sibling
-        // (same depth as the parent, positioned just after it). A last child at
-        // the ROOT (no parent) keeps the legacy no-op.
+        // A last child pops out to just after its parent (#922); a last child
+        // at root has nowhere to go.
         if (sibIndex >= siblings.length - 1) {
           if (parentId == null) return false
           const parent = blocksById.get(parentId)
           if (!parent) return false
-          // Pop out under the grandparent, landing right AFTER the parent among
-          // the grandparent's children → slot = parent's sibling slot + 1.
-          // Structural (cross-parent) → `move_block` IPC + full `load()`.
+          // Cross-parent: move, then reload.
           const newParentId = parent.parent_id ?? null
           const newIndex = siblingSlot(blocks, parent) + 1
           try {
@@ -1108,27 +861,17 @@ export function createReducers({
         }
 
         const nextSibling = siblings[sibIndex + 1] as FlatBlock
-        // #400: moving down swaps with the next sibling. `newIndex` is a slot
-        // among the OTHER children (block excluded): once the block vacates slot
-        // `sibIndex`, the next sibling slides to `sibIndex`, so landing AFTER it
-        // is slot `sibIndex + 1`.
+        // Slots exclude the block: once it vacates `sibIndex` the next sibling
+        // slides there, so landing after it is `sibIndex + 1`.
         const newIndex = sibIndex + 1
 
-        // #2849 — apply the swap splice OPTIMISTICALLY, BEFORE the IPC, so the
-        // UI updates instantly. Same-parent reorder only (see moveUp). The moved
-        // block keeps its current `position`; the backend rank heals on resolve.
         const handle = applyProvisionalMove(set, blockId, (state) => {
           const cur = state.blocks
-          // Move the block AND its descendants past nextSibling AND its
-          // descendants. Build moved + remaining, then re-insert moved right
-          // after nextSibling's last descendant in `remaining`.
+          // Re-insert after the next sibling's subtree.
           const movedDescendants = getDragDescendants(cur, blockId)
           const movedSet = new Set([blockId, ...movedDescendants])
           const movedItems = cur.filter((b) => movedSet.has(b.id))
           const remaining = cur.filter((b) => !movedSet.has(b.id))
-          // `remaining` is scanned twice for nextSibling's slot below
-          // (getDragDescendants + the insertion anchor). Build the id→index map
-          // once so both become O(1) lookups (#2041/#2200).
           const remainingIndex = buildIndexById(remaining)
           const nextDescendants = getDragDescendants(remaining, nextSibling.id, remainingIndex)
           let insertAt = (remainingIndex.get(nextSibling.id) ?? -1) + 1
@@ -1140,13 +883,11 @@ export function createReducers({
           }
           const newBlocks = [...remaining]
           newBlocks.splice(insertAt, 0, ...movedItems)
-          // Same-parent swap: only array order changed, no block object was
-          // rewritten — nothing to touch (the position heal re-allocates it).
+          // Only order changed: nothing to touch in the Map.
           return { blocks: newBlocks, touchedIds: [] }
         })
 
         try {
-          // #730 — pool_busy retry (see edit/createBelow).
           const resp = await retryOnPoolBusy(() =>
             commands.moveBlock(blockId, parentId, newIndex).then(unwrap),
           )
@@ -1174,9 +915,7 @@ export function createReducers({
     ) => {
       const { blocksById, rootParentId } = get()
       if (!blocksById.has(anchorBlockId)) return []
-      // #4391 — the pickers hear of the pages and tags the paste creates in the
-      // space the paste was made in, not whichever one is live when the reply
-      // lands.
+      // The pickers hear of created names in the space the paste was made in (#4391).
       const spaceId = useSpaceStore.getState().currentSpaceId
       try {
         const resp = await retryOnPoolBusy(() =>
@@ -1184,7 +923,7 @@ export function createReducers({
         )
         notifyUndoNewAction(rootParentId, resp.op_refs, undefined, { merge: false })
         announceCreatedNames(resp.blocks, spaceId)
-        // #5160 D11 — a property line the paste kept as text, named.
+        // A property line the paste kept as text, named (#5160).
         if (resp.warnings.length > 0) {
           notify.warning(i18n.t('blockTree.pasteKeptAsText'), {
             description: resp.warnings.join('\n'),
@@ -1192,8 +931,7 @@ export function createReducers({
         }
         const anchor = splice ? resp.blocks.find((b) => b.id === anchorBlockId) : undefined
         if (anchor) {
-          // #5160 D4 — before the reload, which keeps a focused block's text as
-          // the store holds it.
+          // Before the reload, which keeps a focused block's text as the store holds it.
           const content = anchor.content ?? ''
           set((state) => withContent(state, anchorBlockId, content))
           onSpliced?.(content)
@@ -1228,7 +966,7 @@ export function createReducers({
     ): Promise<PageSourceReport> => {
       const { rootParentId } = get()
       if (rootParentId == null) throw new Error('applyPageSource needs a page')
-      // #4391 — see `pasteBlocks`.
+      // As in `pasteBlocks` (#4391).
       const spaceId = useSpaceStore.getState().currentSpaceId
       const resp = await retryOnPoolBusy(() =>
         commands.applyPageSource(rootParentId, source, baseSource, merge, lineIds).then(unwrap),
@@ -1241,22 +979,14 @@ export function createReducers({
     },
 
     appendBlock: (row: BlockRow) => {
-      // Depth 0 — the caller (PageEditor empty-page first-block-create)
-      // creates directly under this page's `rootParentId`, which is the
-      // top-level depth in the flat tree.
+      // The caller creates directly under the page, so depth 0.
       const newBlock: FlatBlock = { ...row, depth: 0 }
-      // Recompute the next blocks array INSIDE the updater (#714 discipline) so
-      // the array and the `blocksById` Map are both derived from the same
-      // commit-time state, never mixing a pre-set snapshot array with a
-      // commit-time Map.
-      // Single-block append (perf invariant): touch only the new key.
+      // Derive the array and the Map from the same commit-time state.
       set((state) => ({
         blocks: [...state.blocks, newBlock],
         blocksById: cloneBlocksByIdWith(state.blocksById, [newBlock]),
       }))
-      // #1530 — this path does NOT route through `notifyUndoNewAction` (the
-      // calling create path owns undo), so bump the graph-structure signal
-      // directly: appending a block can change the page-link graph topology.
+      // The caller owns undo, so bump the graph signal here.
       recordGraphStructureChange()
     },
   }

@@ -1,31 +1,13 @@
 /**
- * Recent-pages store — Zustand state for the desktop-only "Recently visited"
- * Strip AND the unified recent-pages MRU consumed by SearchPanel,
- * CommandPalette, and the PageBrowser sort/grouping (#1149).
+ * Recent-pages store: the MRU behind the "Recently visited" strip,
+ * SearchPanel, CommandPalette and the PageBrowser sort and grouping, the one
+ * source of truth for recent pages (#1149). Visits come from the tabs store's
+ * `navigateToPage`; a revisit moves the entry to the front with the new title.
  *
- * Tracks up to `MAX_RETAINED` recent page visits in MRU order. Visits are
- * recorded by `useNavigationStore.navigateToPage`, the single entry point
- * for page navigation. Re-visiting the same pageId moves the existing entry
- * to the front (MRU dedup) and uses the new title, so stored titles always
- * reflect the most recent navigation.
- *
- * Phase 3 — visits are partitioned by space. `recentPagesBySpace`
- * holds one MRU list per space id (with `__legacy__` for the no-space
- * slice); the flat `recentPages` field mirrors the active-space slice so
- * existing reads (and the `currentSpaceId == null` boot path) keep working
- * without forcing every consumer to thread the space id through.
- *
- * #1149 — this store is now the single source of truth for recent-pages.
- * It used to coexist with `src/lib/recent-pages.ts` (raw-localStorage,
- * sync API) which independently tracked visits under `recent_pages:<spaceId>`
- * keys; a visit recorded in one was invisible to the other's ordering. The
- * lib's superset of features is folded in here:
- *   - single-entry removal (`removeRecentPage`), and
- *   - the imperative `addRecentPage(id, title)` entry point used by the
- *     search/palette click handlers.
- * On hydration a one-time migration merges any pre-existing
- * `recent_pages:<spaceId>` raw keys into `recentPagesBySpace` (see
- * `migrateRawRecentPagesKeys`) and clears them so the merge doesn't repeat.
+ * Visits are partitioned by space (`recentPagesBySpace`, `__legacy__` for no
+ * space); the flat `recentPages` mirrors the active space. On hydration the
+ * raw `recent_pages:<spaceId>` keys of the removed `lib/recent-pages.ts` are
+ * merged in once and cleared (`migrateRawRecentPagesKeys`).
  */
 
 import { create } from 'zustand'
@@ -38,10 +20,8 @@ import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
 /**
- * A recent-page entry. `pageId` + `title` are always present. `visitedAt`
- * (ISO string) is stamped by `addRecentPage`; the navigation-recorded
- * `recordVisit` path omits it (the MRU array order is the recency signal
- * those consumers rely on), so it is optional.
+ * A recent-page entry. `visitedAt` (ISO) is stamped by `addRecentPage`;
+ * `recordVisit` omits it, as array order is the recency signal.
  */
 export interface PageRef {
   pageId: string
@@ -49,12 +29,7 @@ export interface PageRef {
   visitedAt?: string
 }
 
-/**
- * #1149 — the shape the former `lib/recent-pages.ts` exposed to
- * SearchPanel / CommandPalette / PageBrowser. Kept as a thin id-keyed
- * view over the store's `PageRef` so those consumers' `.id` / `.visitedAt`
- * reads survive the migration without a sweeping rename.
- */
+/** The id-keyed view SearchPanel, CommandPalette and PageBrowser read. */
 export interface RecentPage {
   id: string
   title: string
@@ -62,57 +37,37 @@ export interface RecentPage {
 }
 
 /**
- * How many recent visits are retained in the store. The UI renders a
- * responsive subset via CSS grid (`auto-fit` minmax(120px, 180px)) but keeps
- * a deeper list in memory so viewport width changes don't surprise the user
- * with vanished entries.
- *
- * Matches the former `lib/recent-pages.ts` `MAX_RECENT` so the consolidated
- * eviction cap is unchanged (#1149).
+ * Visits retained. The strip shows a width-dependent subset, so a deeper list
+ * keeps entries from vanishing when the viewport changes.
  */
 const MAX_RETAINED = 10
 
-/** Raw-localStorage key prefix used by the now-removed `lib/recent-pages.ts`. */
+/** Raw-localStorage key prefix of the removed `lib/recent-pages.ts`. */
 const RAW_KEY_PREFIX = 'recent_pages'
-/** Pre- single unscoped raw key (migrated into the `__legacy__` slot). */
+/** Its single unscoped key, migrated into the `__legacy__` slot. */
 const RAW_LEGACY_UNSCOPED_KEY = 'recent_pages'
 
 interface RecentPagesState {
   /**
-   * Active-space MRU list — mirrors `recentPagesBySpace[currentSpaceId]`
-   * after every `recordVisit`. Kept top-level so legacy reads work without
-   * threading the space id; use `selectRecentPagesForSpace` for per-space
-   * reads.
+   * The active space's MRU, mirroring `recentPagesBySpace[currentSpaceId]`. Use
+   * `selectRecentPagesForSpace` for per-space reads.
    */
   recentPages: PageRef[]
   /** Per-space MRU lists. Keyed by space id, with `__legacy__` for the no-space slice. */
   recentPagesBySpace: Record<string, PageRef[]>
-  /**
-   * #1149 — one-time guard so the `recent_pages:<spaceId>` raw-key merge
-   * (`migrateRawRecentPagesKeys`) runs at most once across the store's
-   * persisted lifetime. Persisted alongside the MRU so a second session
-   * doesn't re-merge already-cleared keys.
-   */
+  /** Persisted guard so the raw-key merge runs once per install. */
   rawKeysMerged: boolean
   recordVisit: (pageRef: PageRef) => void
-  /**
-   * #1149 — imperative add (search-result / palette click). Stamps a fresh
-   * `visitedAt`, dedups by id, and applies the MAX_RETAINED cap.
-   */
+  /** Add from a search or palette click: stamps `visitedAt`, dedups, caps. */
   addRecentPage: (id: string, title: string) => void
   /**
-   * #3322 — retitle the active space's entry for `pageId` in place, keeping
-   * its MRU position and `visitedAt`. A no-op when the page is
-   * not in this space's MRU (or already carries `title`). The entry is
-   * PERSISTED, so without this a rename left the recents strip — and the
-   * `navigateToPage(pageId, title)` call it makes on click, which re-stamps
-   * the stale title back onto the tab — showing the old title across
-   * restarts. Prefer the cross-store `renamePage` in `@/stores/page-rename`.
+   * Retitle the active space's entry for `pageId` in place, keeping its
+   * position (#3322). The entry is persisted, and a click on it re-stamps its
+   * title onto the tab, so a stale one would outlive restarts. Prefer
+   * `renamePage` in `@/stores/page-rename`.
    */
   renamePage: (pageId: string, title: string) => void
-  /**
-   * #1149 — remove a single entry. Returns true if the id was found.
-   */
+  /** Remove one entry; whether it was found. */
   removeRecentPage: (id: string) => boolean
   /** Clear the MRU list for the active space (does not affect other spaces). */
   clear: () => void
@@ -121,34 +76,20 @@ interface RecentPagesState {
 type RecentState = RecentPagesState
 
 /**
- * Stable empty fallback used by `selectRecentPagesForSpace`. Returning a
- * fresh `[]` from a zustand selector each call retriggers every
- * `useSyncExternalStore` consumer (Object.is equality), which compounded
- * into a `Maximum update depth exceeded` in App-level tests. Keep the
- * reference stable so the selector is idempotent.
- *
- * Cast to mutable `PageRef[]` at the consumer boundary is safe — the
- * selector contract is read-only; every consumer treats the returned
- * array as immutable. We don't widen the public return type to
- * `readonly PageRef[]` to avoid a TS ripple across every consumer
- * (`QuickAccessBar`, `App.tsx`, tests).
+ * Stable empty fallback for `selectRecentPagesForSpace`: a fresh `[]` per call
+ * fails `Object.is` and re-renders every subscriber, up to "Maximum update
+ * depth exceeded". Consumers treat it as read-only, hence the mutable cast.
  */
 const EMPTY_PAGE_REFS: readonly PageRef[] = Object.freeze([])
 
-/** MRU cap (folded in from the former `lib/recent-pages.ts` `writeRecentPages`). */
 function applyCap(pages: PageRef[]): PageRef[] {
   return pages.slice(0, MAX_RETAINED)
 }
 
 /**
- * Per-space MRU selector. Pass `currentSpaceId` from `useSpaceStore`.
- *
- * Reads the per-space slice keyed by `spaceId`. When `spaceId` is null
- * (pre-bootstrap), falls back to the flat `recentPages` mirror so the
- * boot path still renders something. For a real space with no slice
- * yet, returns the shared empty array — the flat field may still hold
- * a different space's mirror if the space-switch subscriber hasn't run,
- * so falling back to it would leak cross-space entries into the strip.
+ * The MRU for `spaceId`. A null space (pre-bootstrap) reads the flat mirror;
+ * a real space with no slice reads empty, since the mirror may still hold
+ * another space's list before the switch subscriber runs.
  */
 export function selectRecentPagesForSpace(state: RecentState, spaceId: string | null): PageRef[] {
   if (spaceId == null) return state.recentPages
@@ -156,14 +97,9 @@ export function selectRecentPagesForSpace(state: RecentState, spaceId: string | 
 }
 
 /**
- * #1149 — non-reactive snapshot read for the `RecentPage`-shaped consumers
- * (PageBrowser sort/grouping, and the SearchPanel/CommandPalette mount-time
- * seed). Returns the active-space slice (or the slice for `spaceId` when
- * given) as `RecentPage[]`. Reads `getState()` so it works
- * outside React (plain comparator helpers) as well as inside hooks.
- *
- * Prefer the reactive `useRecentPagesStore` + `selectRecentPagesForSpace`
- * in components; this is for code paths that need a one-shot read.
+ * Non-reactive `RecentPage[]` read of the active space's slice (or
+ * `spaceId`'s), for code outside React; components use the store with
+ * `selectRecentPagesForSpace`.
  */
 export function getRecentPagesForSpace(spaceId?: string | null): RecentPage[] {
   const state = useRecentPagesStore.getState()
@@ -182,19 +118,11 @@ export function toRecentPage(ref: PageRef): RecentPage {
 }
 
 /**
- * #1149 — one-time merge of the pre-#1149 raw `recent_pages:<spaceId>`
- * localStorage keys (written by the removed `lib/recent-pages.ts`) into the
- * store's `recentPagesBySpace`, merging WITHOUT losing either MRU set:
- *
- *  - Entries present only in the raw key are appended after the store's
- *    existing slice (the store's recency wins for shared ids).
- *  - A shared id keeps the store entry and the newer `visitedAt`.
- *  - The merged slice is MRU capped.
- *
- * The legacy unscoped `recent_pages` key (if present) is folded into the
- * `__legacy__` slot. After a successful merge the raw keys are removed so a
- * later hydrate can't re-merge stale data; the persisted `rawKeysMerged`
- * guard is the belt-and-braces second line of defence.
+ * Merge the raw `recent_pages:<spaceId>` keys of the removed
+ * `lib/recent-pages.ts` into `recentPagesBySpace` without losing either list
+ * (#1149): the store's order wins for shared ids, raw-only ids follow, the
+ * newer `visitedAt` is kept, and the unscoped key goes to `__legacy__`. The raw
+ * keys are removed afterwards; `rawKeysMerged` guards a second run.
  */
 export function migrateRawRecentPagesKeys(bySpace: Record<string, PageRef[]>): {
   bySpace: Record<string, PageRef[]>
@@ -208,7 +136,6 @@ export function migrateRawRecentPagesKeys(bySpace: Record<string, PageRef[]>): {
     return { bySpace, changed: false }
   }
 
-  // Collect raw keys first so we don't mutate the store under iteration.
   const rawKeys: string[] = []
   try {
     for (let i = 0; i < storage.length; i++) {
@@ -248,10 +175,8 @@ export function migrateRawRecentPagesKeys(bySpace: Record<string, PageRef[]>): {
 }
 
 /**
- * Merge a raw `RecentPage[]` (id-keyed) into a store `PageRef[]` slice
- * (pageId-keyed), preserving recency order. The store slice's order wins for
- * shared ids (it is the canonical recency signal); raw-only ids are appended
- * after, and the newer `visitedAt` is kept.
+ * Merge raw entries into a store slice: the store's order wins for shared ids,
+ * raw-only ids follow, the newer `visitedAt` is kept.
  */
 function mergeSlices(storeSlice: PageRef[], rawEntries: RawRecentPage[]): PageRef[] {
   const rawById = new Map(rawEntries.map((r) => [r.id, r]))
@@ -271,7 +196,7 @@ function mergeSlices(storeSlice: PageRef[], rawEntries: RawRecentPage[]): PageRe
   return applyCap(merged)
 }
 
-/** Combine a store entry with its optional raw twin (newer visitedAt wins). */
+/** A store entry with its optional raw twin; the newer `visitedAt` wins. */
 function mergeOne(ref: PageRef, raw: RawRecentPage | undefined): PageRef {
   if (raw == null) return ref
   const visitedAt =
@@ -324,13 +249,9 @@ function parseRawRecentPages(raw: string | null): RawRecentPage[] {
 }
 
 /**
- * CR-PERSIST — coerce an arbitrary persisted JSON value into a valid `PageRef`,
- * or `null` if the shape is unrecoverable. `localStorage` can hold anything
- * (manual edits, a corrupt write, a future-shape downgrade); hydrating it with
- * a bare cast lets a malformed blob crash `recordVisit` /
- * `selectRecentPagesForSpace` / `applyCap`. Requires `pageId` + `title` to be
- * strings; keeps the optional `visitedAt` only when it carries the right
- * primitive type, dropping garbage values.
+ * Coerce a persisted value into a valid `PageRef`, or `null`: `localStorage`
+ * can hold anything, and a bare cast lets a malformed blob crash the reducers.
+ * A `visitedAt` of the wrong type is dropped.
  */
 function coercePageRef(raw: unknown): PageRef | null {
   if (typeof raw !== 'object' || raw === null) return null
@@ -343,7 +264,7 @@ function coercePageRef(raw: unknown): PageRef | null {
   }
 }
 
-/** CR-PERSIST — coerce a persisted value into a `PageRef[]`, dropping invalid entries. */
+/** Coerce a persisted value into a `PageRef[]`, dropping invalid entries. */
 function coercePageRefList(raw: unknown): PageRef[] {
   if (!Array.isArray(raw)) return []
   const out: PageRef[] = []
@@ -354,11 +275,7 @@ function coercePageRefList(raw: unknown): PageRef[] {
   return out
 }
 
-/**
- * CR-PERSIST — coerce a persisted value into a `Record<string, PageRef[]>`,
- * dropping malformed keys (non-array values) and malformed entries within each
- * slice. Array / null / primitive top-level values collapse to an empty map.
- */
+/** Coerce a persisted value into a `Record<string, PageRef[]>`, dropping malformed slices and entries. */
 function coerceRecentPagesBySpace(raw: unknown): Record<string, PageRef[]> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
   const out: Record<string, PageRef[]> = {}
@@ -370,26 +287,9 @@ function coerceRecentPagesBySpace(raw: unknown): Record<string, PageRef[]> {
 }
 
 /**
- * Fold any pre-consolidation `pinned` entries into the bookmark list.
- *
- * Bookmarks used to be a `pinned` flag on recent-page rows; they are now the
- * `starred-pages` preference, and the coercion below drops the flag. Without
- * this, upgrading silently loses every bookmark made from the command palette
- * — and bookmarks are device-local, so a device this has not run on still has
- * its own to rescue.
- *
- * Both storage locations are scanned, because the flag outlived the split
- * between them: the persisted store blob (`pageId`-keyed) and the pre-#1149
- * raw `recent_pages:*` keys (`id`-keyed), which a device that has not yet run
- * that migration still holds. Runs before coercion, adds only ids that are not
- * already bookmarked, and is a no-op once the flag is gone.
- */
-/**
- * The contents of every pre-#1149 `recent_pages*` key still on this device.
- *
- * Reads through a local `Storage` binding, as `migrateRawRecentPagesKeys`
- * above does: these are foreign legacy keys being migrated away, not app
- * preferences to declare in the registry.
+ * The contents of every raw `recent_pages*` key still on this device, read
+ * through a local `Storage` binding: foreign legacy keys, not app preferences
+ * for the registry.
  */
 function rawRecentPageLists(): unknown[][] {
   let storage: Storage
@@ -411,17 +311,19 @@ function rawRecentPageLists(): unknown[][] {
       if (Array.isArray(parsed)) out.push(parsed)
     }
   } catch {
-    // A corrupt entry or a storage read that threw mid-scan: keep whatever
-    // was collected rather than losing the store blob's half too.
+    // A corrupt entry or a throwing read: keep what was collected.
   }
   return out
 }
 
+/**
+ * Fold legacy `pinned` recent-page rows into the `starred-pages` bookmarks.
+ * Coercion drops the flag, and bookmarks are device-local, so without this an
+ * upgrade loses every palette bookmark. Scans the store blob (`pageId`) and the
+ * raw keys (`id`); adds only ids not already starred; a no-op once the flag is gone.
+ */
 function rescuePinnedAsBookmarks(persisted: unknown): boolean {
   const lists: unknown[] = []
-  // A device may hold either location, or both: the store blob is absent on
-  // one that never ran this build, and the raw keys are gone once #1149's
-  // migration has run.
   if (persisted != null && typeof persisted === 'object') {
     const blob = persisted as Record<string, unknown>
     lists.push(blob['recentPages'])
@@ -449,26 +351,16 @@ function rescuePinnedAsBookmarks(persisted: unknown): boolean {
 }
 
 /**
- * Module-scope handoff from `merge`/`migrate` to `onRehydrateStorage`, the
- * only hook that can force the write which strips the rescued flags from
- * storage. Mirrors the `pendingSplits` registry in `use-block-flush.ts`.
+ * Handoff from `merge`/`migrate` to `onRehydrateStorage`, the only hook that
+ * can force the write that strips the rescued flags from storage.
  */
 let pinnedRescueNeedsPersist = false
 
 /**
- * CR-PERSIST (#1578) — coerce an entire persisted recent-pages blob
- * field-by-field. Shared by `migrate` (version-mismatched blobs) and `merge`
- * (same-version blobs): zustand's persist middleware only calls `migrate` when
- * the stored version DIFFERS from `options.version`, so a corrupt blob that
- * still carries `version: 1` (or a non-numeric version) bypasses `migrate`
- * entirely and reaches the default shallow `merge` raw — coercing in `merge`
- * as well closes that path. The coercion is idempotent, so the migrate→merge
- * double pass on version-mismatched blobs is harmless.
- *
- * V0 → v1: v0 stored only `recentPages`. When the blob has no
- * `recentPagesBySpace` map, the flat list is carried into the `__legacy__`
- * per-space slot so consumers that pass `currentSpaceId = null` still see the
- * user's history and the per-space map gains a non-empty seed.
+ * Coerce a whole persisted blob field by field (#1578). Both `migrate` and
+ * `merge` call it: zustand runs `migrate` only on a version mismatch, so a
+ * corrupt blob with the current version reaches `merge` raw. Idempotent. A v0
+ * blob with only `recentPages` carries it into the `__legacy__` slot.
  */
 function coercePersistedRecentPages(
   persisted: unknown,
@@ -490,17 +382,10 @@ function coercePersistedRecentPages(
 }
 
 /**
- * Per-space primitive owning the `recentPagesBySpace` map, the derived flat
- * `recentPages` mirror, and the space-change flush/pull reconcile. Actions call
- * `applyActive` instead of hand-writing both fields; `attach` (below) wires the
- * subscriber.
- *
- * `fallback` is the empty list — switching to a fresh space shows nothing and
- * does NOT seed the space's slot (the cross-space leak vector). `seedOnFirstFire`
- * is restricted to the `__legacy__` key: the flat mirror can hold a *foreign*
- * space's list after a rehydrate, so a real space's slice must never be seeded
- * from it (the "write-time corruption" / Defect-1 path). For a real space with
- * no slice the first fire instead resets the mirror to `[]`.
+ * Per-space slice of the MRU. A fresh space starts empty and is not seeded,
+ * and only `__legacy__` seeds on first fire: after a rehydrate the flat mirror
+ * may hold another space's list, so a real space's slice must never be seeded
+ * from it.
  */
 const recentPagesSlice = createPerSpaceSlice<RecentState, PageRef[]>({
   readMirror: (state) => state.recentPages,
@@ -522,16 +407,10 @@ export const useRecentPagesStore = create<RecentPagesState>()(
       recordVisit: (ref) => {
         const state = get()
         const key = activeSpaceKey()
-        // Build the next MRU from the active space's OWN slice — the
-        // single source of truth. Reading the flat mirror here was the
-        // write-time corruption path: a stale flat field (another space's
-        // list, e.g. after rehydrate) would be copied into this space's slice
-        // and durably persisted.
+        // Build from the space's own slice, never the flat mirror, which may
+        // hold another space's list after a rehydrate.
         const current = state.recentPagesBySpace[key] ?? []
         const filtered = current.filter((p) => p.pageId !== ref.pageId)
-        // The navigation-recorded path stores only `{pageId, title}` — no
-        // `visitedAt`, since the array order is the recency signal these
-        // consumers read.
         const nextEntry: PageRef = {
           pageId: ref.pageId,
           title: ref.title,
@@ -557,9 +436,7 @@ export const useRecentPagesStore = create<RecentPagesState>()(
         const state = get()
         const key = activeSpaceKey()
         const current = state.recentPagesBySpace[key] ?? []
-        // No-op unless this space's MRU actually holds a stale title for the
-        // page — a rename must not reorder the MRU or churn state for a page
-        // that was never visited.
+        // No-op unless the entry holds a stale title; never reorder.
         const idx = current.findIndex((p) => p.pageId === pageId)
         const entry = idx < 0 ? undefined : current[idx]
         if (entry === undefined || entry.title === title) return
@@ -590,50 +467,26 @@ export const useRecentPagesStore = create<RecentPagesState>()(
         recentPagesBySpace: state.recentPagesBySpace,
         rawKeysMerged: state.rawKeysMerged,
       }),
-      // CR-PERSIST (#1578) — coercing migrate. Validates every field so a
-      // legacy/version-mismatched blob (and the v0→v1 flat-only shape) can't
-      // poison `recordVisit` / `selectRecentPagesForSpace` / `applyCap`.
-      // The v0→v1 carry (flat `recentPages` → `__legacy__` slot) lives in
-      // `coercePersistedRecentPages` so it applies on every entry path.
-      //
-      // CR-PERSIST (#1578): the field-by-field coercion is shared with `merge`
-      // below. zustand only invokes `migrate` on a version MISMATCH —
-      // same-version blobs are coerced by `merge`. The bare `version >= 1` cast
-      // this replaced let an already-current-version corrupt blob flow through
-      // unvalidated.
+      // Both coerce: zustand calls `migrate` only on a version mismatch and
+      // hands a same-version blob straight to `merge` (#1578).
       migrate: (persisted: unknown, _version: number) => {
         pinnedRescueNeedsPersist = rescuePinnedAsBookmarks(persisted) || pinnedRescueNeedsPersist
         return coercePersistedRecentPages(persisted)
       },
-      // CR-PERSIST (#1578) — zustand skips `migrate` when the stored version
-      // equals `options.version` (or isn't a number), handing the raw blob
-      // straight to the default shallow `merge`. Coerce here too so a corrupt
-      // `localStorage` payload that still says `version: 1` (e.g. garbage
-      // PageRef entries, a non-array `recentPages`, bad `recentPagesBySpace`
-      // values) can't poison the recent-pages reducers / selectors. Mirrors
-      // tabs.ts / journal.ts.
       merge: (persisted, current) => {
         pinnedRescueNeedsPersist = rescuePinnedAsBookmarks(persisted) || pinnedRescueNeedsPersist
         return { ...current, ...coercePersistedRecentPages(persisted) }
       },
-      // #1149 — after rehydrate, one-time merge the raw `recent_pages:*`
-      // localStorage keys (written by the removed `lib/recent-pages.ts`) into
-      // `recentPagesBySpace`, then clear them. Guarded by `rawKeysMerged` so
-      // it runs at most once across the persisted lifetime.
+      // Merge the raw keys once after rehydrate (#1149).
       onRehydrateStorage: () => (state) => {
-        // Force one write after a rescue, before the raw-key early return —
-        // which fires on exactly the devices that carry pinned rows, so a
-        // write behind it would never happen for them. The point is the write
-        // itself: it persists the COERCED rows, which no longer carry the
-        // flag, so the rescue cannot run twice and resurrect a bookmark the
-        // user has since removed. An empty patch is enough to trigger it.
+        // Force one write after a rescue, before the raw-key early return,
+        // which those same devices take: it persists the coerced rows without
+        // the flag, so the rescue cannot resurrect a bookmark later removed.
         if (pinnedRescueNeedsPersist) {
           pinnedRescueNeedsPersist = false
-          // Deferred: for synchronous storage this callback runs INSIDE
-          // `create()`, before the `useRecentPagesStore` binding exists, and
-          // the resulting ReferenceError is swallowed by zustand's hydrate
-          // chain — leaving the flags in storage and the rescue repeating on
-          // every boot. A microtask lands after the binding is initialised.
+          // Deferred: with synchronous storage this runs inside `create()`,
+          // before `useRecentPagesStore` exists, and zustand swallows the
+          // ReferenceError, so the rescue would repeat every boot.
           queueMicrotask(() => {
             useRecentPagesStore.setState({})
           })
@@ -644,8 +497,6 @@ export const useRecentPagesStore = create<RecentPagesState>()(
         const activeKey = activeSpaceKey()
         useRecentPagesStore.setState({
           recentPagesBySpace: effectiveBySpace,
-          // Reconcile the flat mirror to the active space's (possibly merged)
-          // slice so the boot read reflects the merge.
           recentPages: effectiveBySpace[activeKey] ?? state.recentPages,
           rawKeysMerged: true,
         })
@@ -655,12 +506,7 @@ export const useRecentPagesStore = create<RecentPagesState>()(
 )
 
 /**
- * Flush the outgoing space's slice and pull the incoming space's slice into
- * the flat `recentPages` mirror on a space change. The flush/pull/first-fire
- * logic — including the v0→v1 legacy seed and the Defect-2 rehydrate
- * reconcile — now lives in the shared `createPerSpaceSlice` primitive
- * (`recentPagesSlice`); this is the wired reconcile callback, re-exported
- * because the module-level subscriber fires its first-fire (seed) path once at
- * import, so that path is otherwise unreachable from the test runtime.
+ * The space-change reconcile, exported because its first-fire seed path runs
+ * once at import and is otherwise unreachable from tests.
  */
 export const reconcileRecentPagesOnSpaceChange = recentPagesSlice.attach(useRecentPagesStore)

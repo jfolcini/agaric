@@ -11,12 +11,8 @@ import { canNavigateBack, navigateBack, recordNextAsReplace } from '@/stores/nav
 import { exitViewForTab, useTabsStore } from '@/stores/tabs'
 
 /**
- * Radix-rendered overlay surfaces that should swallow a back press.
- * Scoped to interactive overlay roles — `data-state="open"` alone would
- * also match collapsibles / accordions / tooltips, which must NOT count.
- * Covers Dialog + AlertDialog (and the Sheet built on Dialog), Popover
- * (renders `role="dialog"`), DropdownMenu / ContextMenu (`role="menu"`)
- * and Select (`role="listbox"`).
+ * Open overlays that swallow a back press. Interactive roles only:
+ * `data-state="open"` alone also matches collapsibles and tooltips.
  */
 const OPEN_OVERLAY_SELECTOR = [
   '[role="dialog"][data-state="open"]',
@@ -26,32 +22,14 @@ const OPEN_OVERLAY_SELECTOR = [
 ].join(', ')
 
 /**
- * Step 1 — overlay close. If any overlay is open, dispatch a synthetic
- * Escape `keydown` on the focused element (`document.activeElement`,
- * falling back to `document.body`) and report the press as consumed.
- *
- * One synthetic Escape drives ALL existing dismiss paths at once:
- *  - Radix's DismissableLayer document-capture listener closes the
- *    TOPMOST Radix layer only (dialogs stack correctly under repeated
- *    presses) — it fires for any target, so the dispatch node barely
- *    matters for Radix itself;
- *  - React `onKeyDown` Escape handlers (e.g. the palette action menu,
- *    which `preventDefault`s Radix's escape via `onEscapeKeyDown` and
- *    closes itself instead). React ≥17 delegates events at root/portal
- *    containers, so an event dispatched on `document.body` NEVER
- *    reaches React handlers — its path (body → html → document) skips
- *    every container. A real hardware Escape targets the focused
- *    element; dispatching on `activeElement` reproduces that path and
- *    keeps such inner-layer handlers working (otherwise back presses
- *    would be consumed with no visible effect while, say, the palette
- *    action menu is open — a dead back button);
- *  - the app-level `closeOverlays` bridge in `useAppKeyboardShortcuts`
- *    matches the same event at `window` and dispatches
- *    `CLOSE_ALL_OVERLAYS_EVENT` for non-Radix overlays (and announces
- *    to screen readers).
- *
- * This deliberately reuses the Escape semantics users already have on
- * desktop instead of inventing a second dismiss protocol.
+ * Step 1 — overlay close: with an overlay open, dispatch a synthetic Escape
+ * `keydown` on the focused element and consume the press, reusing the desktop
+ * dismiss paths: Radix closes its topmost layer, React `onKeyDown` handlers
+ * run, and `useAppKeyboardShortcuts` closes non-Radix overlays. Dispatched on
+ * `activeElement`, not `document.body`, because React delegates events at
+ * root and portal containers, which an event on body never reaches; inner
+ * handlers such as the palette's action menu would miss it and Back would do
+ * nothing.
  */
 export function overlayBackHandler(): boolean {
   if (typeof document === 'undefined') return false
@@ -70,26 +48,12 @@ export function overlayBackHandler(): boolean {
 
 /**
  * Step 3 — in-app navigation. Walks the header's Back history first, so the
- * gesture and the ← button agree. With nothing left to go back to (a fresh
- * launch), it falls back to Android's "progressive collapse to the start
- * destination" convention:
- *
- *  - `page-editor` with a non-empty page stack → `useTabsStore.goBack()`
- *    (pops the stack; closes the tab / returns to the view the stack was
- *    opened from at the stack bottom, exactly like the in-app back button).
- *  - `page-editor` with an EMPTY stack (nothing left to pop) → the same exit
- *    view `goBack` would have used: `exitViewForTab` on the active tab
- *    (#4287). This used to hard-code `journal` while `goBack` hard-coded
- *    `pages`, so the gesture and the button disagreed about where leaving
- *    the editor lands; both now read the one `exitViewForTab` rule.
- *  - any non-`journal` view (settings, pages, search, …) → return to the
- *    `journal` start destination.
- *  - `journal` → not handled (`false`): true root, the caller exits.
- *
- * The chain still terminates: a fallback step replaces its history entry
- * rather than pushing one, so it never gives Back an entry to return to; and
- * the exit view is never `page-editor`, so the next press falls into the
- * non-`journal` → `journal` step and the one after that declines.
+ * gesture and the ← button agree. With no history (a fresh launch) it
+ * collapses toward the start destination: in the page editor, pop the tab's
+ * stack (`goBack`), or with an empty stack go to `exitViewForTab`, the rule
+ * `goBack` uses (#4287); from any other view go to `journal`; on `journal`,
+ * decline so the app exits. A fallback step replaces its history entry rather
+ * than pushing one, and the exit view is never the editor, so the chain ends.
  */
 export function navigationBackHandler(): boolean {
   if (canNavigateBack()) {

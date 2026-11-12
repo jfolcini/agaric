@@ -1,14 +1,7 @@
 /**
- * Block focus & selection store — global Zustand singleton.
- *
- * After R-18 split: per-page data (blocks, loading, mutations) lives in
- * PageBlockStore (per-instance via context in page-blocks.ts).
- * This store holds only the cross-page focus/selection state:
- * - Which block is focused (only one at a time across all pages)
- * - Which blocks are selected (multi-select)
- *
- * Selection actions that need block lists (selectAll, rangeSelect)
- * take visibleIds as a parameter since blocks live in per-page stores.
+ * Block focus and selection: the global, cross-page half of block state. Only
+ * one block is focused across all pages; per-page data lives in the page block
+ * stores (`page-blocks.ts`), so selection actions take the visible ids.
  */
 
 import { create } from 'zustand'
@@ -22,12 +15,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
-/**
- * @public Re-exported from `tree-utils` so this store's surface stays
- * unchanged; no in-repo caller uses this specific `stores/blocks` specifier
- * today (consumers import `FlatBlock` straight from `tree-utils`), but
- * removing it would silently narrow the facade.
- */
+/** @public Kept on this facade although callers import `FlatBlock` from `tree-utils`. */
 export type { FlatBlock }
 
 /** Direction for keyboard range extension (#922). */
@@ -39,9 +27,8 @@ interface BlockStore {
   /** IDs of currently selected blocks (multi-select). */
   selectedBlockIds: string[]
   /**
-   * Fixed end of a keyboard range selection (#922). Shift+Arrow grows/shrinks
-   * the selection between this anchor and a moving "focus" end. Null when no
-   * keyboard range is in progress (mouse selection, select-all, or cleared).
+   * Fixed end of a keyboard range selection (#922); Shift+Arrow moves the
+   * other end. Null when no keyboard range is in progress.
    */
   selectionAnchorId: string | null
   /**
@@ -59,50 +46,30 @@ interface BlockStore {
   /** Toggle a block in/out of the selection (Ctrl+Click). */
   toggleSelected: (blockId: string) => void
   /**
-   * Select the contiguous range anchor→block (Shift+Click), REPLACING the prior
-   * selection (#1729 — anchor/focus model, can shrink as well as grow). The
-   * anchor is the persisted `selectionAnchorId` if still visible, else the last
-   * selected block. Requires the visible block IDs from the per-page store.
-   *
-   * #3642 — `visibleIds` is brand-gated (`MountedIds`, see `@/lib/zoom-scope`)
-   * rather than `string[]`. The gate used to live in `BlockTree`'s adapters,
-   * which was sound only because `BlockTree` happened to be the sole caller:
-   * any of the ~30 other modules importing `useBlockStore` could inject an
-   * ungated list here and typecheck. Injecting the selection IS the defect
-   * class (#3251/#3252) — batch delete / batch TODO act on whatever lands in
-   * `selectedBlockIds` — so the gate belongs on the primitive.
+   * Select the range from the anchor to `blockId` (Shift+Click), replacing the
+   * selection so it can shrink as well as grow (#1729). The anchor is
+   * `selectionAnchorId` if still visible, else the cursor. `visibleIds` is
+   * brand-gated (`MountedIds`) on the primitive itself, because an ungated
+   * list injected here is what batch delete and batch TODO then act on (#3642).
    */
   rangeSelect: (blockId: string, visibleIds: MountedIds) => void
   /**
-   * Extend the block selection by one visible block in `direction` (#922 —
-   * Shift+ArrowUp / Shift+ArrowDown in block-select mode). Maintains a fixed
-   * `selectionAnchorId` and a moving `selectionFocusId` so the opposite
-   * direction shrinks the range back, matching standard range-select
-   * semantics (and the Shift+Click anchor model). `visibleIds` is the
-   * tree's rendered order (collapsed/zoomed visibility already applied).
-   *
-   * Seeds the anchor from the cursor on first use, so the range starts at the
-   * cursor block. No-ops with no cursor or no further block in that direction
-   * (selection clamped at the list edge).
-   *
-   * Brand-gated for the same reason as `rangeSelect` (#3642).
+   * Extend the selection by one visible block (Shift+Arrow in block-select
+   * mode, #922): a fixed anchor and a moving focus end, so the opposite
+   * direction shrinks the range. Seeds the anchor from the cursor; a no-op with
+   * no cursor or at the list edge. Brand-gated as `rangeSelect` is.
    */
   extendSelection: (direction: ExtendDirection, visibleIds: MountedIds) => void
   /**
-   * Move the cursor one visible block in `direction` without changing the
-   * selection (#5734 — Ctrl+ArrowUp / Ctrl+ArrowDown in block-select mode).
-   * Clamped at the list edges; a no-op while the cursor is not in `visibleIds`.
-   * Brand-gated like `extendSelection`: Ctrl+Space selects what it lands on.
+   * Move the cursor one visible block without changing the selection
+   * (Ctrl+Arrow, #5734); clamped at the edges, a no-op while the cursor is not
+   * visible. Brand-gated, since Ctrl+Space selects what it lands on.
    */
   moveCursor: (direction: ExtendDirection, visibleIds: MountedIds) => void
   /**
-   * Select all blocks (Ctrl+A when not editing).
-   * Requires the visible block IDs from the per-page store.
-   *
-   * #3642 — gated on the SEPARATE `SelectAllScopeIds` kind, not `MountedIds`:
-   * at the page root Ctrl/Cmd+A is documented to take the whole page including
-   * collapse-hidden rows and rows past the mount cap, so its scope is not the
-   * rendered list and the two must not substitute for one another.
+   * Select all (Ctrl+A when not editing). Gated on `SelectAllScopeIds`, not
+   * `MountedIds`: at the page root it takes collapse-hidden rows and rows past
+   * the mount cap too, so the two must not substitute for each other (#3642).
    */
   selectAll: (visibleIds: SelectAllScopeIds) => void
   /** Clear the selection. */
@@ -141,15 +108,9 @@ export const useBlockStore = create<BlockStore>((set) => ({
     set((state) => {
       const ids = state.selectedBlockIds
       // The cursor stays on the toggled block, selected or not (#5734), so a
-      // second Ctrl+Space undoes the first. The keyboard range resets: the next
-      // Shift+Arrow anchors on the cursor.
-      // #2465 — modes are mutually exclusive on purpose (docs/architecture/
-      // frontend.md "Selector discipline" + editor-and-content.md "Multi-
-      // selection"): entering block-select mode always clears an in-progress
-      // edit, mirroring `setFocused`'s existing "focusing clears selection"
-      // direction. Callers already gate these actions behind `!focusedBlockId`
-      // (see `useBlockTreeKeyboardShortcuts.ts`), so this is normally a no-op
-      // — it exists so the invariant holds even for a direct store call.
+      // second Ctrl+Space undoes the first; the next Shift+Arrow anchors on it.
+      // Block-select and edit mode are exclusive (#2465), so this clears focus
+      // even for a direct store call.
       return {
         selectedBlockIds: ids.includes(blockId)
           ? ids.filter((id) => id !== blockId)
@@ -164,17 +125,10 @@ export const useBlockStore = create<BlockStore>((set) => ({
   rangeSelect: (blockId, visibleIds) => {
     set((state) => {
       const { selectedBlockIds, selectionAnchorId } = state
-      // #1729 — adopt the SAME anchor/focus replace model the keyboard path
-      // (`extendSelection`) and the list surfaces (`useListMultiSelect`) use,
-      // so mouse range-select can SHRINK as well as grow. Previously this
-      // unioned the new range into the prior selection (add-only): a second
-      // Shift+Click nearer the anchor could never deselect rows, diverging from
-      // both Shift+Arrow in the same tree and Shift+Click in Trash/History.
-      // #2465 — every branch below also clears `focusedBlockId`: entering or
-      // extending block-select mode must exit edit mode (mutual exclusivity).
+      // Replace, not union, so a second Shift+Click nearer the anchor shrinks
+      // the range as Shift+Arrow does (#1729). Every branch exits edit mode.
       if (selectedBlockIds.length === 0) {
-        // No selection yet: the click seeds a single-block selection AND the
-        // anchor, so a follow-up Shift+Click/Shift+Arrow ranges from here.
+        // The click seeds the selection and the anchor.
         return {
           selectedBlockIds: [blockId],
           selectionAnchorId: blockId,
@@ -182,9 +136,7 @@ export const useBlockStore = create<BlockStore>((set) => ({
           focusedBlockId: null,
         }
       }
-      // Anchor = the in-progress range anchor if still visible, else the cursor
-      // (matches `extendSelection`'s seeding). The range is anchor→clicked and
-      // REPLACES the prior selection (not unioned).
+      // Anchor: the range's anchor if still visible, else the cursor.
       const anchorId =
         selectionAnchorId && visibleIds.includes(selectionAnchorId)
           ? selectionAnchorId
@@ -202,8 +154,7 @@ export const useBlockStore = create<BlockStore>((set) => ({
       const start = Math.min(anchorIdx, targetIdx)
       const end = Math.max(anchorIdx, targetIdx)
       const rangeIds = visibleIds.slice(start, end + 1)
-      // Persist anchor + focus so a subsequent Shift+Arrow continues from the
-      // clicked end without re-seeding.
+      // Keep anchor and focus so a following Shift+Arrow continues from here.
       return {
         selectedBlockIds: rangeIds,
         selectionAnchorId: anchorId,
@@ -220,10 +171,7 @@ export const useBlockStore = create<BlockStore>((set) => ({
       const cursorId = selectCursorBlockId(state)
       if (cursorId === null) return state
 
-      // Seed the anchor/focus on first use. The anchor is the fixed end; we
-      // prefer an in-progress keyboard range, else the cursor (the same
-      // anchor model as Shift+Click). Both must still be visible to drive the
-      // range.
+      // The anchor is the range in progress if visible, else the cursor.
       const anchorId =
         selectionAnchorId && visibleIds.includes(selectionAnchorId) ? selectionAnchorId : cursorId
       const focusId =
@@ -233,16 +181,14 @@ export const useBlockStore = create<BlockStore>((set) => ({
       const focusIdx = visibleIds.indexOf(focusId)
       if (anchorIdx < 0 || focusIdx < 0) return state
 
-      // Move the focus end by one visible block. Clamp at the list edges
-      // (no wrap) — at the top/bottom the chord is a no-op.
+      // No wrap: at either edge the chord is a no-op.
       const nextFocusIdx = direction === 'down' ? focusIdx + 1 : focusIdx - 1
       if (nextFocusIdx < 0 || nextFocusIdx >= visibleIds.length) return state
 
       const start = Math.min(anchorIdx, nextFocusIdx)
       const end = Math.max(anchorIdx, nextFocusIdx)
       const rangeIds = visibleIds.slice(start, end + 1)
-      // #2465 — extending a block-select range must exit edit mode too
-      // (mutual exclusivity); see the `toggleSelected` comment above.
+      // Exits edit mode too (#2465).
       return {
         selectedBlockIds: rangeIds,
         selectionAnchorId: anchorId,
@@ -261,10 +207,7 @@ export const useBlockStore = create<BlockStore>((set) => ({
     })
   },
 
-  // #2465 — `selectAll` / `setSelected` also clear `focusedBlockId`: any
-  // action that populates the multi-selection must exit edit mode (mutual
-  // exclusivity, mirroring `setFocused`'s existing "focusing clears
-  // selection" direction).
+  // Populating the selection exits edit mode (#2465).
   selectAll: (visibleIds) => {
     set((state) => {
       // The cursor stays where it is, else lands on the first block (#5734): left
@@ -294,9 +237,7 @@ export const useBlockStore = create<BlockStore>((set) => ({
       selectedBlockIds: ids,
       selectionAnchorId: null,
       selectionFocusId: null,
-      // Only clear focus when the new selection is non-empty — an empty
-      // `setSelected([])` behaves like `clearSelected` and must not disturb
-      // an unrelated in-progress edit.
+      // An empty selection must not disturb an unrelated edit.
       focusedBlockId: ids.length > 0 ? null : state.focusedBlockId,
     }))
   },

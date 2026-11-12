@@ -1,19 +1,8 @@
 /**
- * useSearchSheetStore — Zustand singleton for the mobile unified-search
- * sheet.
- *
- * The touch-only entry point that collapses three desktop search
- * surfaces (Ctrl+F in-page find, Cmd+K palette, Ctrl+Shift+F
- * find-in-files) into a single Sheet with two segments: `'in-page'`
- * and `'all-pages'`.
- *
- * Owns:
- *  - `open` — whether the sheet is mounted.
- *  - `mode` — active segment.
- *  - `query` — bridge value mirrored from the active segment's own
- *    store. Carries across segment switches so users get one-tap
- *    re-scope; SearchSheet's lifecycle effect subscribes to each
- *    segment's query and writes back here. Cleared on full close.
+ * Mobile unified-search sheet: one touch Sheet in place of in-page find, the
+ * palette and find-in-files, with `'in-page'` and `'all-pages'` segments.
+ * `query` bridges the segments' own stores, so switching segment re-scopes the
+ * same query; cleared on close.
  */
 
 import { create } from 'zustand'
@@ -21,21 +10,10 @@ import { create } from 'zustand'
 import type { View } from '@/stores/navigation'
 import type { SearchSheetMode } from '@/types/search-sheet-mode'
 
-// #4006 — the mode literal lives in `@/types/search-sheet-mode` so
-// `lib/`-tier consumers can depend on it without importing `stores/`.
-// Re-exported here unchanged so every existing importer of this module
-// keeps working.
+// The mode type lives in `@/types/search-sheet-mode` so `lib/` can use it without importing `stores/`.
 export type { SearchSheetMode } from '@/types/search-sheet-mode'
 
-/**
- * Context-aware default segment picker. The sheet opens to "In this
- * page" when the user is currently reading a page (Journal or
- * page-editor); everywhere else (Pages list, Trash, Settings, Search
- * results view, etc.) defaults to "Across all pages".
- *
- * Exported as a pure function so callers and tests can derive the
- * default without instantiating the store.
- */
+/** The default segment: in-page while reading a page (journal or editor), else all pages. */
 export function defaultModeForView(view: View): SearchSheetMode {
   return view === 'journal' || view === 'page-editor' ? 'in-page' : 'all-pages'
 }
