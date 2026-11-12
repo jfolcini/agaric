@@ -7,6 +7,7 @@
 
 import { render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 
 import { ViewDispatcher, type ViewDispatcherProps } from '@/components/pages/ViewDispatcher'
 
@@ -78,5 +79,12 @@ describe('ViewDispatcher — a crashed view keeps its error panel to itself (#65
     // Returning re-renders page A, which throws again: its own panel, as a view does.
     rerender(<ViewDispatcher {...props({ currentView: 'page-editor', activePage: pageA })} />)
     expect(await screen.findByRole('alert')).toHaveTextContent('page A blew up')
+  })
+
+  it("the crashed view's panel has no a11y violations", async () => {
+    const { container } = render(<ViewDispatcher {...props({ currentView: 'pages' })} />)
+    await screen.findByRole('alert')
+
+    expect(await axe(container)).toHaveNoViolations()
   })
 })
