@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -84,7 +84,7 @@ describe('QueryResultList', () => {
     expect(list?.children).toHaveLength(0)
   })
 
-  it('displays todo_state badge when present', () => {
+  it('draws the task checkbox when todo_state is present, and names the row with it (#6544)', () => {
     const results = [
       makeBlock({ id: 'B1', content: 'TODO task', todo_state: 'TODO' }),
       makeBlock({ id: 'B2', content: 'DONE task', todo_state: 'DONE' }),
@@ -93,19 +93,21 @@ describe('QueryResultList', () => {
 
     render(<QueryResultList results={results} pageTitles={new Map()} />)
 
-    expect(screen.getByText('TODO')).toBeInTheDocument()
-    expect(screen.getByText('DONE')).toBeInTheDocument()
-    expect(screen.getByText('DOING')).toBeInTheDocument()
+    for (const state of ['TODO', 'DONE', 'DOING']) {
+      const row = screen.getByRole('option', { name: `${state} ${state} task` })
+      expect(within(row).getByTestId(`task-checkbox-${state.toLowerCase()}`)).toBeInTheDocument()
+    }
+    // Drawn, not a control: a button may not sit inside a listbox option.
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('does not render badge when todo_state is null', () => {
+  it('draws no task checkbox when todo_state is null', () => {
     const results = [makeBlock({ id: 'B1', content: 'No state' })]
 
     render(<QueryResultList results={results} pageTitles={new Map()} />)
 
     expect(screen.getByText('No state')).toBeInTheDocument()
-    expect(screen.queryByText('TODO')).not.toBeInTheDocument()
-    expect(screen.queryByText('DONE')).not.toBeInTheDocument()
+    expect(screen.queryByTestId(/^task-checkbox-/)).not.toBeInTheDocument()
   })
 
   it('calls onNavigate when clicking a result with page_id', async () => {

@@ -23,27 +23,16 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PRIORITY_CYCLE } from '@/lib/priority-levels'
 import { reloadIfRepeating } from '@/lib/repeat-utils'
-import { nextTaskState, type TodoState } from '@/lib/task-states'
+import { nextTaskState, TASK_STATE_LABEL_KEYS, type TodoState } from '@/lib/task-states'
 import { type PageBlockState, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
 /**
- * i18n keys for the screen-reader-announcement display labels per task
- * state (#4555). Holds KEYS, not literal text — resolved at call time via
- * `stateLabel()` below, not at module scope (a module-scope `t()` call
- * would freeze the label at whatever language was active when this module
- * first loaded).
+ * Display label for a task state, for screen-reader announcements, resolved at
+ * call time so it follows the language (#4555).
  */
-const STATE_LABEL_KEYS = {
-  TODO: 'block.taskState.todo',
-  DOING: 'block.taskState.doing',
-  CANCELLED: 'block.taskState.cancelled',
-  DONE: 'block.taskState.done',
-} satisfies Record<TodoState, string>
-
-/** Display label for a task state, for screen-reader announcements. */
 function stateLabel(state: TodoState): string {
-  return i18n.t(STATE_LABEL_KEYS[state])
+  return i18n.t(TASK_STATE_LABEL_KEYS[state])
 }
 
 export interface UseBlockPropertiesReturn {

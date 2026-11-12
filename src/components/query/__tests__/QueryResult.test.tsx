@@ -855,6 +855,96 @@ describe('QueryResult – table mode', () => {
     }
   })
 
+  describe('columns the query names (#6544)', () => {
+    const filter = { type: 'Leaf', primitive: { type: 'Tag', tag: 'T1' } } as const
+    const rows = [
+      makeBlock({
+        id: 'B1',
+        content: 'Task A',
+        parent_id: 'P1',
+        page_id: 'P1',
+        due_date: '2025-06-01',
+      }),
+      makeBlock({ id: 'B2', content: 'Task B', parent_id: 'P1', page_id: 'P1', priority: '1' }),
+    ]
+    const propRow = { value_num: null, value_date: null, value_ref: null, value_bool: null }
+    const batch = {
+      B1: [
+        { ...propRow, key: 'owner', value_text: 'ana' },
+        { ...propRow, key: 'area', value_text: 'fe' },
+      ],
+      B2: [{ ...propRow, key: 'area', value_text: 'be' }],
+    }
+
+    it('shows exactly the named columns in their order, with an empty cell for a missing value', async () => {
+      mockTagResults(rows, batch)
+      const expression = encodeInlineQueryPayload({
+        filter,
+        table: true,
+        columns: ['due_date', 'owner'],
+      })
+      render(<QueryResult expression={expression} />)
+
+      const table = await screen.findByRole('table')
+      await waitFor(() => {
+        expect(
+          within(table)
+            .getAllByRole('columnheader')
+            .map((h) => h.textContent),
+        ).toEqual(['Content', 'Due Date', 'owner', 'Page'])
+      })
+      const [, rowA, rowB] = within(table).getAllByRole('row')
+      expect(within(rowA as HTMLElement).getAllByRole('cell')[2]).toHaveTextContent('ana')
+      expect(within(rowB as HTMLElement).getAllByRole('cell')[2]).toHaveTextContent('\u2014')
+    })
+
+    it('the column picker writes the chosen columns into the query', async () => {
+      mockTagResults(rows, batch)
+      const onSave = vi.fn(async () => true)
+      const user = userEvent.setup()
+      render(<QueryResult expression={TABLE_EXPRESSION} blockId="Q1" onSave={onSave} />)
+      await screen.findByRole('table')
+      await screen.findByText('ana')
+
+      await user.click(screen.getByRole('button', { name: i18n.t('queryResult.columns.trigger') }))
+      await user.click(await screen.findByRole('checkbox', { name: 'Priority' }))
+
+      expect(onSave).toHaveBeenCalledWith(
+        `${TABLE_EXPRESSION} columns:todo_state,due_date,scheduled_date,area,owner`,
+      )
+    })
+
+    it('the column picker moves a column earlier', async () => {
+      mockTagResults(rows, batch)
+      const onSave = vi.fn(async () => true)
+      const user = userEvent.setup()
+      const expression = `${TABLE_EXPRESSION} columns:due_date,owner`
+      render(<QueryResult expression={expression} blockId="Q1" onSave={onSave} />)
+      await screen.findByText('ana')
+
+      await user.click(screen.getByRole('button', { name: i18n.t('queryResult.columns.trigger') }))
+      await user.click(
+        await screen.findByRole('button', {
+          name: i18n.t('queryResult.columns.moveUp', { column: 'owner' }),
+        }),
+      )
+
+      expect(onSave).toHaveBeenCalledWith(`${TABLE_EXPRESSION} columns:owner,due_date`)
+    })
+
+    it('has no a11y violations with the column picker open', async () => {
+      mockTagResults(rows, batch)
+      const user = userEvent.setup()
+      const { container } = render(
+        <QueryResult expression={TABLE_EXPRESSION} blockId="Q1" onSave={vi.fn(async () => true)} />,
+      )
+      await screen.findByText('ana')
+      await user.click(screen.getByRole('button', { name: i18n.t('queryResult.columns.trigger') }))
+      await screen.findByRole('checkbox', { name: 'Priority' })
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
   it('re-reads a custom property column when only that property changes (#5298)', async () => {
     _resetBlockPropertyEventsForTest()
     let context = 'home'

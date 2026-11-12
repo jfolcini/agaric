@@ -4,7 +4,7 @@
  * Validates:
  *  - Renders upcoming blocks with count badge
  *  - Returns null for empty blocks
- *  - Shows todo_state badge
+ *  - Shows the task checkbox, named with its state
  *  - Sorts blocks by due_date
  *  - Navigation on click
  *  - Navigation on keyboard (Enter)
@@ -13,7 +13,7 @@
  *  - a11y audit passes (axe)
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -54,7 +54,7 @@ describe('UpcomingSection', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  it('shows todo_state badge when present', () => {
+  it('shows the task checkbox, named with its state, when present (#6544)', () => {
     render(
       <UpcomingSection
         blocks={[makeBlock({ id: 'B1', todo_state: 'DOING' })]}
@@ -62,10 +62,11 @@ describe('UpcomingSection', () => {
       />,
     )
 
-    expect(screen.getByText('DOING')).toBeInTheDocument()
+    const marker = screen.getByRole('button', { name: t('block.taskCycle', { state: 'DOING' }) })
+    expect(within(marker).getByTestId('task-checkbox-doing')).toBeInTheDocument()
   })
 
-  it('does not show todo_state badge when null', () => {
+  it('draws no task checkbox when todo_state is null', () => {
     render(
       <UpcomingSection
         blocks={[makeBlock({ id: 'B1', todo_state: null })]}
@@ -73,7 +74,7 @@ describe('UpcomingSection', () => {
       />,
     )
 
-    expect(screen.queryByText(/^(TODO|DOING|DONE)$/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('task-marker')).not.toBeInTheDocument()
   })
 
   it('sorts blocks by due_date ascending', () => {

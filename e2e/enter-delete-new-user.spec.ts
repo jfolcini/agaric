@@ -91,7 +91,7 @@ test.describe('Escape from a block @editor @journal', () => {
 
       await expect(page.getByTestId('batch-toolbar')).toHaveCount(0)
       await expect(page.getByText('Delete').locator('visible=true')).toHaveCount(0)
-      await expect(page.getByTestId('task-checkbox-todo')).toBeVisible()
+      await expect(rows(page).getByTestId('task-checkbox-todo')).toBeVisible()
       expect(await textBoxes(page)).toEqual(atRest)
       await page.keyboard.press('Escape')
     }
@@ -105,7 +105,7 @@ test.describe('Escape from a block @editor @journal', () => {
 
     await page.keyboard.press('Shift+ArrowDown')
     await expect(page.getByTestId('batch-toolbar')).toContainText('2 selected')
-    await expect(page.getByTestId('task-checkbox-todo')).toBeVisible()
+    await expect(rows(page).getByTestId('task-checkbox-todo')).toBeVisible()
   })
 })
 

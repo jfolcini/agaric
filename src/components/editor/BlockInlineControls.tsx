@@ -1,8 +1,9 @@
 import type { LucideIcon } from 'lucide-react'
-import { Calendar, CalendarDays, Check, ChevronRight, Paperclip, Repeat, X } from 'lucide-react'
+import { Calendar, CalendarDays, ChevronRight, Paperclip, Repeat } from 'lucide-react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { TaskCheckbox, TaskMarkerButton } from '@/components/editor/TaskMarkerButton'
 import { InlinePropertyChip } from '@/components/properties/InlinePropertyChip'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -28,6 +29,7 @@ export function priorityLabel(priority: string): string {
 // Names from BlockInlineControls keep working after
 // deduplication.
 export { dueDateColor, formatCompactDate }
+export { TaskCheckbox, TaskMarkerButton }
 
 interface DateChipProps {
   date: string
@@ -71,74 +73,6 @@ export function DateChip({
       <Icon className="size-[calc(var(--agaric-font-size,1rem)*0.875)] flex-shrink-0" />
       {compact}
     </button>
-  )
-}
-
-interface CheckboxStyle {
-  className: string
-  testId?: string
-  icon?: React.ReactNode
-}
-
-/**
- * A state's dot: a circle at the centre of the box's inner square, drawn as an
- * SVG that fills it, so it stays round and centred at any font size and pixel
- * ratio, where a box sized in `em` is snapped to whole pixels off centre.
- */
-function TaskDot({ className }: { className: string }) {
-  return (
-    <svg viewBox="0 0 12 12" className={cn('size-full', className)} aria-hidden="true">
-      <circle cx="6" cy="6" r="3" fill="currentColor" />
-    </svg>
-  )
-}
-
-const EMPTY_STYLE: CheckboxStyle = {
-  className: 'task-checkbox-empty border-muted-foreground/40 transition-colors',
-  testId: 'task-checkbox-empty',
-}
-
-const TASK_CHECKBOX_STYLES: Record<string, CheckboxStyle> = {
-  DONE: {
-    className: 'task-checkbox-done border-task-done bg-task-done flex items-center justify-center',
-    testId: 'task-checkbox-done',
-    icon: <Check className="size-[0.75em] text-task-done-foreground" />,
-  },
-  DOING: {
-    className:
-      'task-checkbox-doing border-task-doing bg-task-doing/20 flex items-center justify-center',
-    testId: 'task-checkbox-doing',
-    icon: <TaskDot className="text-task-doing" />,
-  },
-  CANCELLED: {
-    // CANCELLED is visually "closed but not completed" — muted grey with an X glyph.
-    className:
-      'task-checkbox-cancelled border-task-cancelled bg-task-cancelled/20 flex items-center justify-center',
-    testId: 'task-checkbox-cancelled',
-    icon: <X className="size-[0.75em] text-task-cancelled" />,
-  },
-  TODO: {
-    className: 'task-checkbox-todo border-muted-foreground',
-    testId: 'task-checkbox-todo',
-  },
-  _custom: {
-    className:
-      'task-checkbox-custom border-task-custom bg-task-custom/20 flex items-center justify-center',
-    icon: <TaskDot className="text-task-custom" />,
-  },
-  _empty: EMPTY_STYLE,
-}
-
-export function TaskCheckbox({ state }: { state: string | null | undefined }) {
-  const key = !state ? '_empty' : TASK_CHECKBOX_STYLES[state] ? state : '_custom'
-  const style = TASK_CHECKBOX_STYLES[key] ?? EMPTY_STYLE
-  return (
-    <div
-      className={cn('task-checkbox size-[1em] rounded border-2', style.className)}
-      data-testid={style.testId}
-    >
-      {style.icon}
-    </div>
   )
 }
 
@@ -299,42 +233,6 @@ export function BlockCollapseControl({
       </TooltipTrigger>
       <TooltipContent side="bottom" sideOffset={4}>
         {isCollapsed ? t('block.expandTip') : t('block.collapseTip')}
-      </TooltipContent>
-    </Tooltip>
-  )
-}
-
-/** A task's checkbox (suppressed in multi-select mode by the caller). */
-function TaskMarkerButton({
-  blockId,
-  todoState,
-  onToggleTodo,
-}: {
-  blockId: string
-  todoState: string
-  onToggleTodo?: ((blockId: string) => void) | undefined
-}): React.ReactElement {
-  const { t } = useTranslation()
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          className="task-marker flex-shrink-0 p-0.5 focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
-          data-testid="task-marker"
-          // #1498: keep editor focus on click (see collapse-toggle note).
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onToggleTodo?.(blockId)
-          }}
-          aria-label={t('block.taskCycle', { state: todoState })}
-        >
-          <TaskCheckbox state={todoState} />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" sideOffset={4}>
-        {t('block.todoCycleTip', { state: todoState })}
       </TooltipContent>
     </Tooltip>
   )

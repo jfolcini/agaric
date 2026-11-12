@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next'
 
 import { DependencyIndicator } from '@/components/common/DependencyIndicator'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
+import { TaskMarkerButton } from '@/components/editor/TaskMarkerButton'
 import { PageLink } from '@/components/pages/PageLink'
 import { DateChipEditor } from '@/components/properties/DateChipEditor'
 import { renderRichContent } from '@/components/RichContentRenderer'
@@ -37,6 +38,7 @@ import { useBlockReschedule } from '@/hooks/useBlockReschedule'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useRovingRowFocus } from '@/hooks/useListKeyboardNavigation'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
+import { useTaskStateCycle } from '@/hooks/useTaskStateCycle'
 import { announce } from '@/lib/announcer'
 import {
   displayPageTitle,
@@ -172,6 +174,7 @@ DueDateChip.displayName = 'DueDateChip'
 
 interface BlockMetadataRowProps {
   dueDateBlockId: string | null | undefined
+  taskState: string | null | undefined
   statusIconState: string | null | undefined
   statusIconShowDone: boolean | undefined
   priority: string | null | undefined
@@ -186,6 +189,7 @@ interface BlockMetadataRowProps {
 
 function BlockMetadataRowInner({
   dueDateBlockId,
+  taskState,
   statusIconState,
   statusIconShowDone,
   priority,
@@ -199,7 +203,9 @@ function BlockMetadataRowInner({
 }: BlockMetadataRowProps): React.ReactElement | null {
   // Bail out cheaply when no metadata is requested at all (DonePanel
   // without showCompletedIcon, etc.) so we don't emit phantom DOM.
+  const cycleTaskState = useTaskStateCycle()
   if (
+    !taskState &&
     statusIconState === undefined &&
     (priority == null || priority === '') &&
     !dueDate &&
@@ -211,6 +217,14 @@ function BlockMetadataRowInner({
 
   return (
     <>
+      {taskState && dueDateBlockId && (
+        <TaskMarkerButton
+          blockId={dueDateBlockId}
+          todoState={taskState}
+          onToggleTodo={(id) => void cycleTaskState(id, taskState)}
+        />
+      )}
+
       {statusIconState !== undefined && (
         <StatusIcon
           state={statusIconState}
@@ -272,6 +286,12 @@ export interface BlockListItemProps {
   emptyContentFallback?: string
   // ── Typed metadata primitives (perf-review Tier 1.4 metadata half) ──
 
+  /**
+   * The block's task state, drawn as the block's own checkbox, which cycles it
+   * (#6544). Toggles the block `dueDateBlockId ?? blockId` names; omit, or pass
+   * `null` for a block that is not a task, to draw none.
+   */
+  taskState?: string | null
   /**
    * Status icon state (e.g. `'TODO'`, `'DOING'`, `'DONE'`, `'CANCELLED'`).
    * Pass `null` to render the default TODO circle; omit to skip entirely.
@@ -351,6 +371,7 @@ function BlockListItemInner({
   content,
   contentMaxLength: _contentMaxLength = 120,
   emptyContentFallback,
+  taskState,
   statusIconState,
   statusIconShowDone,
   priority,
@@ -464,10 +485,11 @@ function BlockListItemInner({
   )
 
   // Below `sm` the title keeps the first line, after the leading status icon
-  // (the row's only `svg` child), and the chips and source wrap under it: on
+  // (the row's only `svg` child) or task checkbox, and the chips and source wrap under it: on
   // one line a 360 px phone squeezed the title to a few characters a line.
   const hasLeadingIcon =
     showCompletedIcon === true ||
+    Boolean(taskState) ||
     (statusIconState !== undefined && !(statusIconState === 'DONE' && statusIconShowDone === false))
 
   const row = (
@@ -479,7 +501,7 @@ function BlockListItemInner({
       className={cn(
         listRowVariants({
           className:
-            'gap-2 cursor-pointer max-sm:flex-wrap max-sm:gap-y-1 max-sm:[&>svg]:order-first',
+            'gap-2 cursor-pointer max-sm:flex-wrap max-sm:gap-y-1 max-sm:[&>svg]:order-first max-sm:[&>.task-marker]:order-first',
         }),
         blockId && 'cursor-grab',
         isFocused && 'list-cursor',
@@ -504,6 +526,7 @@ function BlockListItemInner({
           children (perf-review Tier 1.4 metadata half). */}
       <BlockMetadataRow
         dueDateBlockId={dueDateBlockId ?? blockId}
+        taskState={taskState}
         statusIconState={statusIconState}
         statusIconShowDone={statusIconShowDone}
         priority={priority}

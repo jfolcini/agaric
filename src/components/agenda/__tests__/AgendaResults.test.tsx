@@ -2,7 +2,7 @@
  * Tests for AgendaResults component (#606).
  *
  * Validates:
- *  1. Renders block items with status icons, priority badges, content
+ *  1. Renders block items with task checkboxes, priority badges, content
  *  2. Shows due date chip when block has due_date
  *  3. Shows source page breadcrumb from pageTitles
  *  4. Click on item calls onNavigateToPage
@@ -12,7 +12,7 @@
  *  8. A11y audit passes (axe)
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { format, subDays } from 'date-fns'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -41,6 +41,8 @@ vi.mock('lucide-react', () => ({
   AlertCircle: (props: Record<string, unknown>) => (
     <svg data-testid="icon-alert-circle" {...props} />
   ),
+  Check: (props: Record<string, unknown>) => <svg data-testid="icon-check" {...props} />,
+  X: (props: Record<string, unknown>) => <svg data-testid="icon-x" {...props} />,
 }))
 
 vi.mock('@/components/RichContentRenderer', () => ({
@@ -162,8 +164,8 @@ describe('AgendaResults', () => {
     })
   })
 
-  // 1. Renders block items with status icons, priority badges, content
-  it('renders block items with status icons, priority badges, and content', () => {
+  // 1. Renders block items with task checkboxes, priority badges, content
+  it('renders block items with task checkboxes, priority badges, and content', () => {
     const blocks = [
       makeBlock({ id: 'B1', todo_state: 'TODO', priority: '1', content: 'Buy groceries' }),
       makeBlock({ id: 'B2', todo_state: 'DOING', priority: '2', content: 'Write report' }),
@@ -177,10 +179,11 @@ describe('AgendaResults', () => {
     expect(screen.getByText('Write report')).toBeInTheDocument()
     expect(screen.getByText('Ship feature')).toBeInTheDocument()
 
-    // Status icons
-    expect(screen.getAllByTestId('icon-todo').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByTestId('icon-doing')).toBeInTheDocument()
-    expect(screen.getByTestId('icon-done')).toBeInTheDocument()
+    // The block's own task checkbox, named with its state (#6544)
+    for (const state of ['TODO', 'DOING', 'DONE']) {
+      const marker = screen.getByRole('button', { name: t('block.taskCycle', { state }) })
+      expect(within(marker).getByTestId(`task-checkbox-${state.toLowerCase()}`)).toBeInTheDocument()
+    }
 
     // Priority badges
     expect(screen.getByText('P1')).toBeInTheDocument()

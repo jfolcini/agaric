@@ -41,6 +41,7 @@ The Due Panel surfaces today's tasks that have a due / scheduled / property-deri
 - **Source filter pills**: *All / Due / Scheduled / Properties*. Click one to narrow the list to that source only.
 - **Hide-before-scheduled toggle**: hides scheduled tasks whose scheduled date hasn't arrived yet (useful if you only want what's actionable now).
 - **Overdue label**: tasks past their due date show *(Xd overdue)*. Clicking jumps to the task in its source page.
+- **Task checkbox**: each task row, overdue and upcoming ones too, carries the block's own checkbox, which steps the task's state as a click in the block does.
 
 ## Done Panel (Daily mode)
 
@@ -53,6 +54,7 @@ Flat task list across a date range with filtering, sorting, and grouping. Its he
 - **Default state filter** opens with TODO and DOING only — DONE / CANCELLED are hidden until you clear the filter. This keeps "what's in flight" the first thing you see.
 - **Default grouping**: by page. Tasks without a page collect into a muted "No page" group at the end.
 - **Default sort**: by state (DOING → TODO → DONE → CANCELLED). Within a state, by date.
+- **Task checkbox**: a task's row carries the block's own checkbox, which steps its state as a click in the block does (TODO → DOING → DONE → CANCELLED → no state).
 
 ### Filter dimensions
 

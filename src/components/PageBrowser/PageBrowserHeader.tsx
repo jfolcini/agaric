@@ -3,7 +3,8 @@
  *
  * Search first (#5637): the first row is the search input, the sort
  * dropdown, saved views and the New page button that opens the New page
- * dialog; below it, the buttons that open the page-adjacent views (#5269).
+ * dialog; below it, the named buttons that open the page-adjacent views
+ * (#5269, #6544).
  * A phone gets one row (#5927): search, sort as an icon, a ⋮ menu holding
  * saved views and the view buttons, and New page as an icon.
  * The search input is the view's primary focus only with a fine pointer, so
@@ -277,30 +278,43 @@ export function PageBrowserHeader({
         </Button>
       </div>
 
+      {/* The names show once the row has room for all five (a container
+          query, since the sidebar takes part of a tablet's width); below that
+          the buttons are icons, their names visually hidden and in the tooltip. */}
       {!isMobile && (
-        <div className="flex items-center gap-1">
-          {VIEW_BUTTONS.map(({ id: view, icon: Icon, labelKey }) => {
-            const label = t(labelKey)
-            return (
-              <IconButton
-                key={view}
-                variant="ghost"
-                className="relative"
-                tooltip={label}
-                // The name replaces the button's content for assistive tech, so
-                // the count the badge shows has to be in the name as well.
-                ariaLabel={viewButtonLabel(view, label)}
-                onClick={() => setView(view)}
-              >
-                <Icon />
-                {view === 'trash' && trashCount > 0 && (
-                  <Badge tone="secondary" size="xs" className="absolute -top-1 -right-1">
-                    {trashCount}
-                  </Badge>
-                )}
-              </IconButton>
-            )
-          })}
+        <div className="@container">
+          <div className="flex items-center gap-1">
+            {VIEW_BUTTONS.map(({ id: view, icon: Icon, labelKey }) => {
+              const label = t(labelKey)
+              return (
+                <Tooltip key={view}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="relative px-2 @xl:px-3 [@media(pointer:coarse)]:min-w-11"
+                      // The count the badge shows has to be in the name as well.
+                      aria-label={viewButtonLabel(view, label)}
+                      onClick={() => setView(view)}
+                    >
+                      <Icon aria-hidden="true" />
+                      <span className="sr-only @xl:not-sr-only">{label}</span>
+                      {view === 'trash' && trashCount > 0 && (
+                        <Badge
+                          tone="secondary"
+                          size="xs"
+                          className="absolute -top-1 -right-1 @xl:static"
+                        >
+                          {trashCount}
+                        </Badge>
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{label}</TooltipContent>
+                </Tooltip>
+              )
+            })}
+          </div>
         </div>
       )}
     </div>

@@ -11,11 +11,13 @@ import type React from 'react'
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { TaskMarkerButton } from '@/components/editor/TaskMarkerButton'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { AlertListRow } from '@/components/ui/alert-list-row'
 import { Badge } from '@/components/ui/badge'
 import { SectionTitle, type SectionTitleColor } from '@/components/ui/section-title'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
+import { useTaskStateCycle } from '@/hooks/useTaskStateCycle'
 import { useToday } from '@/hooks/useToday'
 import type { BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
@@ -30,7 +32,6 @@ const variantConfig: Record<
     sectionClass: string
     titleColor: SectionTitleColor
     keyPrefix: string
-    badgeState: 'overdue' | 'default'
     dateColor: string
   }
 > = {
@@ -38,14 +39,12 @@ const variantConfig: Record<
     sectionClass: 'overdue-section mb-3',
     titleColor: 'overdue',
     keyPrefix: 'overdue',
-    badgeState: 'overdue',
     dateColor: 'text-alert-error-foreground',
   },
   pending: {
     sectionClass: 'upcoming-section mb-3',
     titleColor: 'pending',
     keyPrefix: 'upcoming',
-    badgeState: 'default',
     dateColor: 'text-muted-foreground',
   },
 }
@@ -109,6 +108,7 @@ export function AlertSection({
 }: AlertSectionProps): React.ReactElement | null {
   const { t } = useTranslation()
   const config = variantConfig[variant]
+  const cycleTaskState = useTaskStateCycle()
 
   const today = new Date(`${useToday()}T00:00:00`)
 
@@ -145,9 +145,11 @@ export function AlertSection({
                 }}
               >
                 {block.todo_state && (
-                  <Badge tone="status" size="compact" statusState={config.badgeState}>
-                    {block.todo_state}
-                  </Badge>
+                  <TaskMarkerButton
+                    blockId={block.id}
+                    todoState={block.todo_state}
+                    onToggleTodo={(id) => void cycleTaskState(id, block.todo_state as string)}
+                  />
                 )}
                 {showPriorityBadge && block.priority && (
                   <Badge tone="priority" size="sm" priorityLevel={block.priority}>

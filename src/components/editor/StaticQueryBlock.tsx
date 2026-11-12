@@ -51,8 +51,9 @@ export function StaticQueryBlock({
     (e: React.MouseEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement
       // Let the chevron toggle, edit-query pencil, and PageLink badge
-      // handle their own clicks.
-      if (target.closest('button, a, [role="link"]')) return
+      // handle their own clicks, and the column picker's popover, which
+      // React bubbles here through its portal.
+      if (target.closest('button, a, [role="link"], [data-slot="popover-content"]')) return
       // Otherwise treat the click as "focus this block" (or select, with
       // modifier keys) and suppress the downstream item-level navigation
       // that would otherwise send us away to a result's parent page.

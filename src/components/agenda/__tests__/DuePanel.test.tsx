@@ -84,6 +84,8 @@ vi.mock('lucide-react', () => ({
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
   CalendarDays: (props: Record<string, unknown>) => <svg data-testid="calendar-days" {...props} />,
   Repeat: (props: Record<string, unknown>) => <svg data-testid="repeat-icon" {...props} />,
+  Check: (props: Record<string, unknown>) => <svg data-testid="check-icon" {...props} />,
+  X: (props: Record<string, unknown>) => <svg data-testid="x-icon" {...props} />,
 }))
 
 vi.mock('@/components/ui/button', async (importOriginal) => {

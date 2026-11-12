@@ -34,6 +34,11 @@ export interface InlineQuerySpec {
   filter: FilterExpr
   /** Render matches as a table (vs. the default list). */
   table: boolean
+  /**
+   * The table's columns after Content, in order, as property keys (#6544).
+   * Absent: derived from the properties the loaded rows carry.
+   */
+  columns?: string[]
 }
 
 /** Marker prefix that distinguishes a structured payload from legacy text. */
@@ -55,6 +60,7 @@ export function encodeInlineQueryPayload(spec: InlineQuerySpec): string {
   const json = JSON.stringify({
     filter: spec.filter,
     ...(spec.table ? { table: true } : {}),
+    ...(spec.columns ? { columns: spec.columns } : {}),
   })
   return INLINE_QUERY_V2_PREFIX + utf8ToBase64Url(json)
 }
@@ -88,8 +94,17 @@ export function decodeInlineQueryPayload(payload: string): InlineQuerySpec | nul
     const json = base64UrlToUtf8(trimmed.slice(INLINE_QUERY_V2_PREFIX.length))
     const parsed: unknown = JSON.parse(json)
     if (typeof parsed !== 'object' || parsed === null) return null
-    const { filter, table } = parsed as { filter?: unknown; table?: unknown }
-    return isFilterExpr(filter) ? { filter, table: table === true } : null
+    const { filter, table, columns } = parsed as {
+      filter?: unknown
+      table?: unknown
+      columns?: unknown
+    }
+    if (!isFilterExpr(filter)) return null
+    const spec: InlineQuerySpec = { filter, table: table === true }
+    if (Array.isArray(columns) && columns.every((c) => typeof c === 'string')) {
+      spec.columns = columns
+    }
+    return spec
   } catch {
     return null
   }

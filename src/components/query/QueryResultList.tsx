@@ -1,11 +1,11 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { TaskCheckbox } from '@/components/editor/TaskMarkerButton'
 import {
   QueryResultRowContent,
   useRefTitleResolver,
 } from '@/components/query/QueryResultRowContent'
-import { Badge } from '@/components/ui/badge'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import type { BlockRow } from '@/lib/bindings'
 import { displayPageTitle } from '@/lib/date-utils'
@@ -71,7 +71,7 @@ export function QueryResultList({
         const pageTitle = storedPageTitle && displayPageTitle(storedPageTitle)
         // An `aria-label` REPLACES the row's contents as its accessible name,
         // so it has to carry everything the row shows, not just the body: the
-        // todo badge and the parent-page name are rendered inside this same
+        // task checkbox and the parent-page name are rendered inside this same
         // `role="option"` and were part of the computed name before the label
         // existed ("TODO call the plumber My Page"). Naming the row after the
         // body alone would quietly drop the state and the page from what a
@@ -112,21 +112,10 @@ export function QueryResultList({
                 index === focusedIndex && 'list-cursor',
               )}
             >
-              {block.todo_state && (
-                <Badge
-                  tone="status"
-                  size="compact"
-                  statusState={
-                    block.todo_state === 'DONE'
-                      ? 'DONE'
-                      : block.todo_state === 'DOING'
-                        ? 'DOING'
-                        : 'default'
-                  }
-                >
-                  {block.todo_state}
-                </Badge>
-              )}
+              {/* The block's checkbox, drawn but not a control: a button may
+                  not sit inside a listbox option (#6544). The row's name
+                  carries the state. */}
+              {block.todo_state && <TaskCheckbox state={block.todo_state} />}
               <span className="flex-1 truncate">
                 {displayMarkdown !== null ? (
                   <QueryResultRowContent content={displayMarkdown} />

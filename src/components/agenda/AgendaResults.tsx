@@ -411,7 +411,7 @@ export function AgendaResults({
         // Metadata primitives — rendered by `BlockListItem`'s internal
         // `BlockMetadataRow` sub-component (memoed) so a parent re-render
         // without prop changes does NOT allocate fresh React elements per row.
-        statusIconState={block.todo_state}
+        taskState={block.todo_state}
         priority={block.priority}
         priorityVariant="agenda"
         dueDate={block.due_date}
