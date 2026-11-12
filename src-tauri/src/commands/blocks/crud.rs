@@ -778,8 +778,11 @@ pub(crate) async fn reject_taken_names(
 
 /// [`delete_block_inner`]'s validation phase, inside its IMMEDIATE tx
 /// (TOCTOU-safe): the block exists, is live, and is not a non-empty space.
-/// Returns its `block_type`.
-async fn verify_deletable_in_tx(tx: &mut CommandTx, block_id: &str) -> Result<String, AppError> {
+/// Returns its `block_type` and, for a space, the saved views it takes along.
+async fn verify_deletable_in_tx(
+    tx: &mut CommandTx,
+    block_id: &str,
+) -> Result<(String, Vec<String>), AppError> {
     // #2037 pt2: also read `block_type` so the post-commit dispatch can
     // narrow the cache-rebuild fan-out for a CONTENT block (skip
     // `RebuildTagsCache`/`RebuildPagesCache`).
@@ -813,25 +816,42 @@ async fn verify_deletable_in_tx(tx: &mut CommandTx, block_id: &str) -> Result<St
     .fetch_optional(&mut ***tx)
     .await?
     .is_some();
-    if is_space_block {
-        // #533 Phase 2: pages in this space carry `blocks.space_id = ?`
-        // (the old `block_properties(key='space')` rows are gone).
-        let child_count: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
-             WHERE b.deleted_at IS NULL \
-             AND b.block_type = 'page' \
-             AND b.space_id = ?",
-            block_id,
-        )
-        .fetch_one(&mut ***tx)
-        .await?;
-        if child_count > 0 {
-            return Err(AppError::InvalidOperation(format!(
-                "cannot delete space '{block_id}': it contains {child_count} pages"
-            )));
-        }
+    let views = if is_space_block {
+        saved_views_of_space_in_tx(tx, block_id).await?
+    } else {
+        Vec::new()
+    };
+    Ok((row.block_type, views))
+}
+
+/// The saved views (#6544) of the space `space_id`, which a delete of the
+/// space takes with it: the Spaces tab, like every page list, does not show
+/// them, so a space holding nothing else reads as empty. Any other live page
+/// refuses the delete, counted as the Spaces tab counts. Pages in a space
+/// carry `blocks.space_id` (#533).
+async fn saved_views_of_space_in_tx(
+    tx: &mut CommandTx,
+    space_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let pages = sqlx::query!(
+        r#"SELECT b.id AS "id!: String",
+                  b.id IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')
+                      AS "saved_view!: bool"
+           FROM blocks b
+           WHERE b.deleted_at IS NULL AND b.block_type = 'page' AND b.space_id = ?1
+           ORDER BY b.id"#,
+        space_id,
+    )
+    .fetch_all(&mut ***tx)
+    .await?;
+    let (views, others): (Vec<_>, Vec<_>) = pages.into_iter().partition(|page| page.saved_view);
+    if !others.is_empty() {
+        return Err(AppError::InvalidOperation(format!(
+            "cannot delete space '{space_id}': it contains {} pages",
+            others.len()
+        )));
     }
-    Ok(row.block_type)
+    Ok(views.into_iter().map(|page| page.id).collect())
 }
 
 /// Soft-delete a block and all its descendants (cascade).
@@ -886,15 +906,22 @@ pub async fn delete_block_inner(
     tx.commit_and_dispatch(materializer).await?;
     dispatch_deletes(pool, materializer, std::slice::from_ref(&deleted)).await;
 
+    // A deleted space's saved views count with it, as in the batch delete.
+    let all = std::iter::once(&deleted).chain(&deleted.swept);
     Ok(DeleteResponse {
         block_id,
         deleted_at: deleted.deleted_at,
         // The cohort INCLUDES the seed (depth-0 anchor of `collect_delete_cohort`'s
         // active CTE), so its length equals the old cascade UPDATE's
         // `rows_affected()` exactly — the same set of rows the UPDATE touched.
-        descendants_affected: deleted.effects.deleted_cohort.len() as u64,
+        descendants_affected: all
+            .clone()
+            .map(|d| d.effects.deleted_cohort.len() as u64)
+            .sum(),
         // #4523 — the PAGE subset of that same cohort; see above.
-        affected_page_ids: deleted.affected_page_ids,
+        affected_page_ids: all
+            .flat_map(|d| d.affected_page_ids.iter().cloned())
+            .collect(),
     })
 }
 
@@ -905,6 +932,8 @@ pub(crate) struct DeleteInTx {
     pub(crate) effects: agaric_engine::apply::kernel::ApplyEffects,
     pub(crate) affected_page_ids: Vec<String>,
     pub(crate) deleted_at: i64,
+    /// The saved views (#6544) a deleted space took with it, one delete each.
+    pub(crate) swept: Vec<DeleteInTx>,
 }
 
 /// Soft-delete ONE block (cascade) inside an already-open [`CommandTx`],
@@ -927,7 +956,11 @@ pub(crate) async fn delete_block_in_tx(
         block_id: BlockId::from_trusted(&block_id),
     });
 
-    let block_type = verify_deletable_in_tx(tx, &block_id).await?;
+    let (block_type, views) = verify_deletable_in_tx(tx, &block_id).await?;
+    let mut swept = Vec::with_capacity(views.len());
+    for view in views {
+        swept.push(Box::pin(delete_block_in_tx(tx, state, device_id, view)).await?);
+    }
 
     // Single timestamp for both op_log and blocks — reverse_delete_block uses
     // record.created_at as deleted_at_ref, so they must match exactly.
@@ -1024,6 +1057,7 @@ pub(crate) async fn delete_block_in_tx(
         effects,
         affected_page_ids,
         deleted_at: now,
+        swept,
     })
 }
 
@@ -1036,6 +1070,7 @@ pub(crate) async fn dispatch_deletes(
     deletes: &[DeleteInTx],
 ) {
     for deleted in deletes {
+        Box::pin(dispatch_deletes(pool, materializer, &deleted.swept)).await;
         // #2344 NEW post-commit engine cohort fan-out — the LOCAL counterpart of
         // the `dispatch_delete_descendants` call `apply_op` runs after ITS commit.
         // The in-tx engine apply of `delete_block_in_tx`
@@ -1065,7 +1100,8 @@ pub(crate) async fn dispatch_deletes(
 
 /// [`delete_blocks_by_ids_inner`]'s validation phase, inside its IMMEDIATE
 /// tx: resolve the live root set and refuse the batch if any root is a
-/// non-empty space. Returns `(id, block_type)` per live root.
+/// non-empty space. Returns `(id, block_type)` per live root, the saved views
+/// of any space among them first.
 async fn load_deletable_roots_in_tx(
     tx: &mut CommandTx,
     ids_json: &str,
@@ -1095,7 +1131,9 @@ async fn load_deletable_roots_in_tx(
     // space. Same reasoning as `delete_block_inner`: a partial delete
     // would silently leak orphan pages whose `space` ref dangles. We
     // surface the FIRST offending space + its child count so the
-    // operator sees actionable detail.
+    // operator sees actionable detail. The saved views of any space among the
+    // roots go first, as the single delete takes a space's views before it.
+    let mut roots = Vec::with_capacity(live_roots.len());
     for (root, _root_block_type) in &live_roots {
         // #708: registry-backed "is a space" check — see the single-row
         // path above.
@@ -1105,24 +1143,12 @@ async fn load_deletable_roots_in_tx(
                 .await?
                 .is_some();
         if is_space_block {
-            // #533 Phase 2: pages in this space carry `blocks.space_id`.
-            let child_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
-                 WHERE b.deleted_at IS NULL \
-                 AND b.block_type = 'page' \
-                 AND b.space_id = ?",
-                root,
-            )
-            .fetch_one(&mut ***tx)
-            .await?;
-            if child_count > 0 {
-                return Err(AppError::InvalidOperation(format!(
-                    "cannot delete space '{root}': it contains {child_count} pages"
-                )));
-            }
+            let views = saved_views_of_space_in_tx(tx, root).await?;
+            roots.extend(views.into_iter().map(|view| (view, "page".to_owned())));
         }
     }
-    Ok(live_roots)
+    roots.extend(live_roots);
+    Ok(roots)
 }
 
 /// One delete root's post-commit engine fan-out inputs: the appended

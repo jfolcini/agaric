@@ -423,3 +423,82 @@ async fn a_saved_view_is_read_by_its_property_its_id_and_the_trash() {
     );
     v.mat.shutdown();
 }
+
+impl Vault {
+    /// The live blocks still in the vault's space.
+    async fn live_in_space(&self) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE space_id = ? AND deleted_at IS NULL")
+            .bind(&self.space)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+
+    /// The `delete_block` ops appended for `block`.
+    async fn delete_ops(&self, block: &BlockId) -> i64 {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log WHERE op_type = 'delete_block' AND block_id = ?",
+        )
+        .bind(block.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .unwrap()
+    }
+}
+
+/// A space whose only live pages are saved views reads as empty in the Spaces
+/// tab, so it deletes, and each view goes with it as its own delete.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_holding_only_saved_views_deletes_with_them() {
+    let v = vault().await;
+    delete_block_inner(&v.pool, DEV, &v.mat, v.plan.clone())
+        .await
+        .unwrap();
+    delete_block_inner(&v.pool, DEV, &v.mat, BlockId::from_trusted(&v.space))
+        .await
+        .expect("a space holding only views deletes");
+    settle(&v.mat).await;
+    assert_eq!(v.live_in_space().await, 0, "the view went with its space");
+    assert_eq!(v.delete_ops(&v.view).await, 1, "the view's delete is an op");
+    v.mat.shutdown();
+}
+
+/// The batch delete takes a space's views with it as the single delete does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_delete_of_a_space_holding_only_saved_views_takes_them() {
+    let v = vault().await;
+    delete_block_inner(&v.pool, DEV, &v.mat, v.plan.clone())
+        .await
+        .unwrap();
+    delete_blocks_by_ids_inner(&v.pool, DEV, &v.mat, vec![BlockId::from_trusted(&v.space)])
+        .await
+        .expect("a space holding only views deletes");
+    settle(&v.mat).await;
+    assert_eq!(v.live_in_space().await, 0, "the view went with its space");
+    assert_eq!(v.delete_ops(&v.view).await, 1, "the view's delete is an op");
+    v.mat.shutdown();
+}
+
+/// A space that still holds a page is refused, counting only what the Spaces
+/// tab counts, and its view stays.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_holding_a_page_and_a_saved_view_is_refused() {
+    let v = vault().await;
+    for err in [
+        delete_block_inner(&v.pool, DEV, &v.mat, BlockId::from_trusted(&v.space))
+            .await
+            .map(|_| ())
+            .unwrap_err(),
+        delete_blocks_by_ids_inner(&v.pool, DEV, &v.mat, vec![BlockId::from_trusted(&v.space)])
+            .await
+            .map(|_| ())
+            .unwrap_err(),
+    ] {
+        assert!(
+            matches!(&err, AppError::InvalidOperation(m) if m.ends_with("it contains 1 pages")),
+            "{err:?}"
+        );
+    }
+    assert_eq!(v.live_in_space().await, 2, "the page and the view stay");
+    v.mat.shutdown();
+}

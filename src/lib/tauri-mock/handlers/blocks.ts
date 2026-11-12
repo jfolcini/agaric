@@ -975,6 +975,25 @@ function writeBatchTypedProperties(
   })
 }
 
+/**
+ * #6544 — the live saved views of the space `spaceId` (none when it is no
+ * space), in id order: a delete of the space takes them with it
+ * (`saved_views_of_space_in_tx`).
+ */
+function savedViewsOfSpace(spaceId: string): string[] {
+  if (properties.get(spaceId)?.get('is_space')?.['value_text'] !== 'true') return []
+  return [...blocks.values()]
+    .filter(
+      (b) =>
+        b['block_type'] === 'page' &&
+        !b['deleted_at'] &&
+        b['space_id'] === spaceId &&
+        isSavedViewPage(b),
+    )
+    .map((b) => b['id'] as string)
+    .toSorted()
+}
+
 export const blocksHandlers = {
   // #3870 — mirrors `list_blocks_inner`'s DISPATCH CHAIN, not a conjunction of
   // filters: exactly one branch runs, and each brings its own `ORDER BY` and
@@ -1577,8 +1596,13 @@ export const blocksHandlers = {
     if (target['deleted_at'] != null) {
       throw invalidOperationRejection(`block '${blockId}' is already deleted`)
     }
+    // #6544 — a space's saved views go first, each its own delete.
+    const swept = savedViewsOfSpace(blockId).map((viewId) => {
+      const viewCohort = deleteCohort(blocks, viewId, nextCohortMarker())
+      return { cohort: viewCohort, op: pushOp('delete_block', { block_id: viewId }) }
+    })
     const now = nextCohortMarker()
-    const cohort = deleteCohort(blocks, blockId, now)
+    const cohort = [...swept.flatMap((view) => view.cohort), ...deleteCohort(blocks, blockId, now)]
     const op = pushOp('delete_block', { block_id: blockId })
     // #4523 — the PAGE members of the cohort the walk just tombstoned. The
     // walk does NOT stop at a nested page, exactly as the backend cascade does
@@ -1594,7 +1618,10 @@ export const blocksHandlers = {
       deleted_at: now,
       descendants_affected: cohort.length,
       affected_page_ids: affectedPageIds,
-      op_refs: [{ device_id: op.device_id, seq: op.seq }],
+      op_refs: [...swept.map((view) => view.op), op].map(({ device_id, seq }) => ({
+        device_id,
+        seq,
+      })),
     }
   },
 
@@ -1614,11 +1641,13 @@ export const blocksHandlers = {
     // The same monotonic marker `delete_block` mints: `list_trash` orders on
     // it, and two deletes in one millisecond must not share it.
     const now = nextCohortMarker()
-    // Resolve live roots (skip missing or already-deleted).
-    const liveRoots = inputIds.filter((id) => {
+    // Resolve live roots (skip missing or already-deleted); the saved views of
+    // any space among them go first (#6544), as `load_deletable_roots_in_tx`.
+    const resolved = inputIds.filter((id) => {
       const b = blocks.get(id)
       return b && !b['deleted_at']
     })
+    const liveRoots = [...resolved.flatMap(savedViewsOfSpace), ...resolved]
     // BFS from every root, soft-delete every reachable descendant whose
     // `deleted_at` is currently NULL.
     //
