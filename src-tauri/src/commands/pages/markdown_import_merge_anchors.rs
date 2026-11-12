@@ -14,8 +14,8 @@ static NAMED_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::n
 /// A name on a block the save creates: the placeholder id its links carry
 /// until [`link_new_named_blocks`] knows the block, and the block's content.
 pub(super) struct NewNamedBlock {
-    placeholder: String,
-    content: String,
+    pub(super) placeholder: String,
+    pub(super) content: String,
 }
 
 /// `text` with each Obsidian `^name` marker taken off the block it ends, and
@@ -130,19 +130,8 @@ pub(super) async fn link_new_named_blocks(
     fresh: &[NewNamedBlock],
 ) -> Result<Vec<agaric_store::op::OpRef>, AppError> {
     let mut op_refs = Vec::new();
-    if fresh.is_empty() {
-        return Ok(op_refs);
-    }
-    let buffer = get_page_buffer_inner(ctx.pool, &ctx.page_id).await?;
-    let blocks = import::parse_document_outline(&buffer.text).blocks;
-    for named in fresh {
-        let mut holders = blocks.iter().filter(|block| block.content == named.content);
-        let target = match (holders.next(), holders.next()) {
-            (Some(block), None) => block
-                .line
-                .and_then(|line| buffer.line_ids.get(line - 1).cloned().flatten()),
-            _ => None,
-        };
+    let targets = new_block_ids(ctx, fresh).await?;
+    for (named, target) in fresh.iter().zip(targets) {
         let token = format!("(({}))", named.placeholder);
         let link = if let Some(id) = &target {
             format!("(({id}))")
@@ -157,6 +146,31 @@ pub(super) async fn link_new_named_blocks(
         op_refs.extend(replace_in_page(ctx, &token, &link).await?);
     }
     Ok(op_refs)
+}
+
+/// The block the save made of each of `fresh`'s content, found in the page's
+/// buffer; `None` where no one block holds it.
+pub(super) async fn new_block_ids(
+    ctx: &ImportCtx<'_>,
+    fresh: &[NewNamedBlock],
+) -> Result<Vec<Option<String>>, AppError> {
+    if fresh.is_empty() {
+        return Ok(Vec::new());
+    }
+    let buffer = get_page_buffer_inner(ctx.pool, &ctx.page_id).await?;
+    let blocks = import::parse_document_outline(&buffer.text).blocks;
+    Ok(fresh
+        .iter()
+        .map(|named| {
+            let mut holders = blocks.iter().filter(|block| block.content == named.content);
+            match (holders.next(), holders.next()) {
+                (Some(block), None) => block
+                    .line
+                    .and_then(|line| buffer.line_ids.get(line - 1).cloned().flatten()),
+                _ => None,
+            }
+        })
+        .collect())
 }
 
 /// Replace `token` with `with` in each block of the page whose text holds it.

@@ -420,7 +420,7 @@ fn pair_blocks(base: &Base, blocks: Vec<import::ParsedBlock>) -> Result<Buffer, 
 
 /// Each block's parent among `blocks`, `None` for a top-level one, nested as
 /// `create_parsed_blocks` nests them.
-fn outline_parents(blocks: &[import::ParsedBlock]) -> Vec<Option<usize>> {
+pub(super) fn outline_parents(blocks: &[import::ParsedBlock]) -> Vec<Option<usize>> {
     let mut open: Vec<usize> = Vec::new();
     blocks
         .iter()

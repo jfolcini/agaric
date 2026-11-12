@@ -804,7 +804,9 @@ async fn finish_merged_import(
     } = merged;
     let ops = finish_merge(&mut ctx, &source, vault_files).await?;
     saved.op_refs.extend(ops);
+    let collapsed = fold_ids(&ctx, source.collapsed).await?;
     let mut result = merged_result(ctx.progress, page_id, title, saved);
+    result.collapsed = collapsed;
     result.warnings.extend(ctx.warnings);
     Ok(result)
 }
@@ -1135,6 +1137,10 @@ use import_merge_source::*;
 #[path = "markdown_import_merge_anchors.rs"]
 mod import_merge_anchors;
 use import_merge_anchors::*;
+
+#[path = "markdown_import_merge_outline.rs"]
+mod import_merge_outline;
+use import_merge_outline::*;
 
 #[path = "markdown_import_front_matter.rs"]
 mod import_front_matter;
