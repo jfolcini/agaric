@@ -77,7 +77,9 @@ const mockedInvoke = vi.mocked(invoke)
 
 /** Install a command-keyed `invoke`; anything unlisted fails by name. */
 function stubTemplates(handlers: TypedInvokeHandlers): void {
-  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({ get_batch_properties: () => ({}), ...handlers }),
+  )
 }
 
 /** The `query_by_property` envelope — a `PageResponse` always carries `total_count`. */

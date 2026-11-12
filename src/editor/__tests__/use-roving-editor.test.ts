@@ -2232,12 +2232,12 @@ describe('  host-unmount popup sweep', () => {
 // unchanged → null), so these pin the no-persist contract at that gate.
 
 describe('computeContentDelta — canonicalization is not an edit (#711)', () => {
-  it('no-edit blur on `3. buy milk` does NOT persist (serializer renumbers to 1.)', () => {
-    const original = '3. buy milk'
+  it('no-edit blur on `3. buy milk` / `9. eggs` does NOT persist (serializer renumbers to 4.)', () => {
+    const original = '3. buy milk\n9. eggs'
     // Focus+blur with zero edits: the doc is exactly parse(original).
     const delta = computeContentDelta(original, parse(original) as DocNode)
     // The serializer DOES canonicalize…
-    expect(delta.newMarkdown).toBe('1. buy milk')
+    expect(delta.newMarkdown).toBe('3. buy milk\n4. eggs')
     // …but that is not an edit.
     expect(delta.changed).toBe(false)
   })
@@ -2268,10 +2268,10 @@ describe('computeContentDelta — canonicalization is not an edit (#711)', () =>
   })
 
   it('control: a real edit IS persisted even when the original canonicalizes', () => {
-    const original = '3. buy milk'
-    const delta = computeContentDelta(original, parse('3. buy oat milk') as DocNode)
+    const original = '3. buy milk\n9. eggs'
+    const delta = computeContentDelta(original, parse('3. buy oat milk\n9. eggs') as DocNode)
     expect(delta.changed).toBe(true)
-    expect(delta.newMarkdown).toBe('1. buy oat milk')
+    expect(delta.newMarkdown).toBe('3. buy oat milk\n4. eggs')
   })
 
   it('control: a real edit through a REAL editor is persisted', () => {

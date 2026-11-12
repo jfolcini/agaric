@@ -72,16 +72,19 @@ describe('computeContentDelta — underscore escaping contexts', () => {
 })
 
 describe('computeContentDelta — list canonicalization with marks', () => {
-  it('`3. **item**` renumbers to `1. **item**` without being flagged as an edit', () => {
-    const delta = noEditDelta('3. **item**')
+  it('`3. **item**` / `9. **more**` renumbers to `3.` / `4.` without being flagged as an edit', () => {
+    const delta = noEditDelta('3. **item**\n9. **more**')
     expect(delta.changed).toBe(false)
-    expect(delta.newMarkdown).toBe('1. **item**')
+    expect(delta.newMarkdown).toBe('3. **item**\n4. **more**')
   })
 
   it('a real text edit within a renumbered list item IS flagged', () => {
-    const delta = computeContentDelta('3. **item**', parse('3. **items**') as DocNode)
+    const delta = computeContentDelta(
+      '3. **item**\n9. **more**',
+      parse('3. **items**\n9. **more**') as DocNode,
+    )
     expect(delta.changed).toBe(true)
-    expect(delta.newMarkdown).toBe('1. **items**')
+    expect(delta.newMarkdown).toBe('3. **items**\n4. **more**')
   })
 })
 

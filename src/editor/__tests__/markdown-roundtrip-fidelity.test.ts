@@ -635,7 +635,7 @@ describe('#4071/#4076: markdown-string convergence on the SECOND pass', () => {
    */
   it('#4071: two ordered lists split by an indented paragraph converge in ONE pass', () => {
     const { once, twice } = passes('   1. item\n    - item\n3. item')
-    expect(once).toBe('1. item\n\\    \\- item\n1. item')
+    expect(once).toBe('1. item\n\\    \\- item\n3. item')
     expect(twice).toBe(once)
     // and the structure survives: still THREE sibling blocks, not one list
     expect((parse(once).content ?? []).map((b) => b.type)).toEqual([
@@ -658,30 +658,6 @@ describe('#4071/#4076: markdown-string convergence on the SECOND pass', () => {
     const { once, twice } = passes('   - item\n\t    - item\n\t> > > \t\t- item\n- item')
     expect(once).toBe('- item\n  - item\n\\    > > > \t\t- item\n- item')
     expect(twice).toBe(once)
-  })
-
-  /**
-   * #4076.2 is NOT a convergence failure and is NOT fixed here — pinned so the
-   * distinction is on the record rather than rediscovered.
-   *
-   * `> > 3. item` converges in one pass; what it loses is the literal ordinal,
-   * which the parser discards and the serializer regenerates from position.
-   * That is the DOCUMENTED design, not an oversight: ordered numbers are
-   * computed from a block's position among its siblings, never stored
-   * (`docs/architecture/list-ergonomics.md` § Markdown round-trip, and
-   * `src/lib/list-ordinals.ts`, which recomputes them for the block tree).
-   * Carrying `start` through the markdown pair alone would make the two halves
-   * disagree — markdown would say `3.` where the editor renders `1.` — so it is
-   * a design change across the block model, not a serializer fix.
-   *
-   * Renumbering is lossy but IDEMPOTENT, which is why no property catches it.
-   */
-  it('#4076.2: an ordered list inside a blockquote renumbers from 1, and is stable', () => {
-    const { once, twice } = passes('> > 3. item')
-    expect(once).toBe('> > 1. item')
-    expect(twice).toBe(once)
-    // identical at the top level — nothing about this is blockquote-specific
-    expect(passes('3. item').once).toBe('1. item')
   })
 
   /**
