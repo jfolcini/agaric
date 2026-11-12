@@ -2302,4 +2302,86 @@ mod tests {
             "R's purge would cascade onto L, written after its own cohort's delete"
         );
     }
+    /// #6543 oracle — the pre-fix candidate query. The new one only removes
+    /// candidates: always a subset, equal when no block is late, and the late
+    /// test flips exactly at the ULID millisecond equal to `deleted_at`.
+    #[tokio::test]
+    async fn purge_candidates_are_a_subset_of_the_pre_6543_query_and_late_test_is_exact() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let ulid_at =
+            |ms: i64, n: u128| ulid::Ulid::from_parts(u64::try_from(ms).unwrap(), n).to_string();
+        let old = |pool: SqlitePool| async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM blocks WHERE deleted_at IS NOT NULL AND deleted_at < ? \
+                 ORDER BY deleted_at ASC, id ASC",
+            )
+            .bind(i64::MAX)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+        let new = |pool: SqlitePool| async move {
+            let mut ids = fetch_purge_candidates(&pool, i64::MAX, 100_000)
+                .await
+                .unwrap();
+            ids.sort();
+            ids
+        };
+        let insert = |id: String, parent: Option<String>, deleted_at: i64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+                     VALUES (?, 'content', '', ?, 0, ?)",
+                )
+                .bind(id)
+                .bind(parent)
+                .bind(deleted_at)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+
+        // No late block (incl. a short non-ULID id and a ULID created in the
+        // delete's own millisecond): identical to the old query.
+        let t: i64 = 1_700_000_000_123;
+        insert("AGED0001".into(), None, t).await;
+        insert(ulid_at(t, 1), None, t).await;
+        insert(ulid_at(t - 1, 2), None, t).await;
+        let mut got = new(pool.clone()).await;
+        let mut want = old(pool.clone()).await;
+        got.sort();
+        want.sort();
+        assert_eq!(got, want);
+        assert_eq!(got.len(), 3);
+
+        // One ms later than the delete is late: its whole cohort is held back,
+        // an unrelated cohort and the ancestor chain behave as documented.
+        let t2 = t + 10_000_000;
+        let parent = ulid_at(t2 - 5, 3);
+        let late = ulid_at(t2 + 1, 4);
+        let other = ulid_at(t2 - 5, 5);
+        insert(parent.clone(), None, t2 + 50).await;
+        insert(late.clone(), Some(parent.clone()), t2).await;
+        insert(other.clone(), None, t2).await;
+        let got = new(pool.clone()).await;
+        let want = old(pool.clone()).await;
+        assert_eq!(want.len(), 6);
+        assert!(
+            got.iter().all(|id| want.contains(id)),
+            "new must be a subset"
+        );
+        assert_eq!(
+            got.len(),
+            3,
+            "late, its cohort mate and its ancestor are held back"
+        );
+        for held in [&parent, &late, &other] {
+            assert!(!got.contains(held), "{held} must be held back");
+        }
+    }
 }

@@ -14,6 +14,8 @@ The issue placed the test in `agaric-sync`'s `loro_sync_tests.rs`. `tombstone_pu
 
 Not covered: an edit to a block that existed before the delete, a purge that already ran before the sync, and a writer whose clock runs behind the deleter's, so the late block's ULID predates the delete.
 
-SQL in a `query!` changed. The `.sqlx` caches were not regenerated because the worktree predates the single-cache layout (#6583).
+The `.sqlx` cache is regenerated for the new `query!`.
+
+`purge_candidates_are_a_subset_of_the_pre_6543_query_and_late_test_is_exact` keeps the old query as an oracle: new is a subset of old, equal when no block is late, and the late test flips exactly one ms after `deleted_at`.
 
 Ran: targeted nextest on the purge tests, red first, then each new clause falsified; `cargo check`, clippy and fmt across the workspace.
