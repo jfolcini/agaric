@@ -67,14 +67,13 @@ export const settings: Record<string, string> = {
   'settings.history.openButton': 'Open edit history',
   // #5360 — the `status` id stays for `?settings=status`, deep links and `go-status`.
   'settings.tabStatus': 'App health',
-  // #4555 — UI language. `System` resolves to English until a second catalog
-  // is substantially translated (`resolveLocale`); the other two pin a
-  // locale. English and Español are deliberately NOT
+  // #4555 — UI language. `System` follows the device language list; the
+  // other two pin a locale. English and Español are deliberately NOT
   // translated per locale: a language picker names each language in that
   // language, so these values are the same in every catalog.
   'settings.languageLabel': 'Language',
   'settings.languageHelp':
-    'System uses English until Agaric is fully translated into your device language. Anything not translated yet is shown in English.',
+    'System follows your device language. Anything not translated yet is shown in English.',
   'settings.languageSystem': 'System',
   'settings.languageEnglish': 'English',
   'settings.languageSpanish': 'Español',

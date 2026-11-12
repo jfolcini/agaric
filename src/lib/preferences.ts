@@ -1027,12 +1027,13 @@ const TOOLTIP_DELAY_PREFERENCE: PreferenceDefinition<TooltipDelay> = {
  * else (a hand-edited value, or a locale a future build dropped) resets to
  * the default.
  *
- * The default is `'en'`, and `'system'` resolves to English too
- * (`resolveLocale`), until a locale other than English is substantially
- * translated: Spanish covers a small fraction of the keys, so following a
- * Spanish device would put `<html lang="es">` over a mostly English UI, the
- * mis-announcement `applyDocumentLang` exists to prevent. Once coverage is
- * real, `'system'` follows the device and becomes the default.
+ * The default is `'en'`, NOT `'system'`, and stays that way until a locale
+ * other than English is substantially translated. `'system'` on a device set
+ * to `es` resolves to `es` for a user who never opened Settings: 42 of 3,056
+ * keys, so `<html lang="es">` over a ~99% English UI — the exact
+ * mis-announcement `applyDocumentLang` exists to prevent. The help text that
+ * explains the gap only reaches people who opened the tab. `'system'` is the
+ * right default once coverage is real; it is one line here.
  */
 const LANGUAGE_PREFERENCE: PreferenceDefinition<LanguagePreference> = {
   key: 'agaric-language',
