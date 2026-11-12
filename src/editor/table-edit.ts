@@ -17,9 +17,11 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import { type EditorState, Plugin, TextSelection, type Transaction } from '@tiptap/pm/state'
 import { addColumn, addRow, cellAround, TableMap } from '@tiptap/pm/tables'
 
+import { findTextPieces, type MarkdownNode } from '@/lib/in-page-find/block-text'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { isMac } from '@/lib/platform'
 import { type SortDirection, sortedRowOrder } from '@/lib/table-sort'
+import { useResolveStore } from '@/stores/resolve'
 
 /** Where the caret is in its table, by row and column index. */
 export interface TableCaret {
@@ -119,7 +121,12 @@ export function sortTableByColumn(editor: Editor, direction: SortDirection): boo
   const at = tableCaret(editor.state)
   if (at === null) return false
   const [header, ...body] = childrenOf(editor.state.doc.nodeAt(at.tablePos) as PMNode)
-  const cells = body.map((row) => row.maybeChild(at.col)?.textContent ?? '')
+  const resolveTitle = (id: string) => useResolveStore.getState().resolveTitle(id)
+  // The text the cell shows: a chip holds no text of its own, only its title.
+  const cells = body.map((row) => {
+    const cell = row.maybeChild(at.col)
+    return cell ? findTextPieces(cell.toJSON() as MarkdownNode, resolveTitle).text : ''
+  })
   const order = sortedRowOrder(cells, direction)
   if (order.every((from, to) => from === to)) return false
   const rows = [header as PMNode, ...order.map((i) => body[i] as PMNode)]

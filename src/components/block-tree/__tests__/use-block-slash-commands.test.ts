@@ -651,6 +651,25 @@ describe('useBlockSlashCommands handleTemplateSelect', () => {
     expect(params.load).not.toHaveBeenCalled()
   })
 
+  it('reloads the page when the insert fails, so blocks that landed show', async () => {
+    vi.mocked(insertTemplateBlocks).mockRejectedValueOnce(new Error('set_property failed'))
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleTemplateSelect('TEMPLATE_1')
+    })
+
+    expect(params.load).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('slash.templateInsertFailed')
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'useTemplateSelection',
+      'template insert failed',
+      { templatePageId: 'TEMPLATE_1' },
+      expect.any(Error),
+    )
+  })
+
   // #5292 — the inserted blocks can carry `[[links]]`, and the page-store `load()`
   // that follows does not bump the graph-structure counter.
   describe('graph-structure counter', () => {

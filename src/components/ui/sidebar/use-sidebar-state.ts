@@ -12,7 +12,7 @@ import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
  *   - Controlled / uncontrolled `open` state (with cookie persistence).
  *   - `openMobile` Sheet visibility.
  *   - `isMobile`: whether the sidebar is the Sheet rather than pinned
- *     (`useIsMobile`, or a touch screen under `SHEET_MAX_HEIGHT` tall).
+ *     (`useIsMobile`, or a touch screen matching `SHORT_VIEWPORT_QUERY`).
  *   - `sidebarWidth` + `isResizing`, persisted to localStorage with
  *     min-width clamp and 50-vw soft cap.
  *   - `toggleSidebar` helper that respects the mobile/desktop split.
@@ -28,18 +28,17 @@ export const SIDEBAR_WIDTH_DEFAULT = 224
 export const SIDEBAR_WIDTH_MIN = 120
 /** A phone on its side is wider than the mobile breakpoint, but a pinned
  *  sidebar beside so short a screen leaves the notes a sliver. */
-const SHEET_MAX_HEIGHT = 500
-
-function isShortViewport(): boolean {
-  return window.innerHeight < SHEET_MAX_HEIGHT
-}
+const SHORT_VIEWPORT_QUERY = '(max-height: 499px)'
 
 function useIsShortViewport(): boolean {
-  const [isShort, setIsShort] = React.useState(isShortViewport)
+  const [isShort, setIsShort] = React.useState(
+    () =>
+      typeof window.matchMedia === 'function' && window.matchMedia(SHORT_VIEWPORT_QUERY).matches,
+  )
   React.useEffect(() => {
     if (typeof window.matchMedia !== 'function') return
-    const mql = window.matchMedia(`(max-height: ${SHEET_MAX_HEIGHT - 1}px)`)
-    const onChange = () => setIsShort(isShortViewport())
+    const mql = window.matchMedia(SHORT_VIEWPORT_QUERY)
+    const onChange = () => setIsShort(mql.matches)
     mql.addEventListener('change', onChange)
     return () => mql.removeEventListener('change', onChange)
   }, [])

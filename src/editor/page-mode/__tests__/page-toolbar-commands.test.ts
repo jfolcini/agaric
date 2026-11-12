@@ -1,7 +1,7 @@
 /**
  * Every block command block mode's toolbar can send (#5691): page mode answers
- * it (`pageToolbarCommands`) or leaves it out with a reason, so a command added
- * to the toolbar later cannot be silently inert there. The bus gives a focused
+ * it (`pageToolbarCommands`), so a command added to the toolbar later cannot be
+ * silently inert there. The bus gives a focused
  * target every command and does nothing for one it has no handler for. The
  * names are read from the toolbar's source, as `source-toolbar-parity.test.ts`
  * reads its config.
@@ -41,9 +41,6 @@ const SENT = [
   ...new Set(TOOLBAR_SOURCES.flatMap((src) => [...src.matchAll(LITERAL_CALL)].map((m) => m[1]))),
 ] as string[]
 
-/** Sent by the toolbar, not answered in page mode. */
-const LEFT_OUT: Record<string, string> = {}
-
 const handled = new Set(
   Object.keys(
     pageToolbarCommands({} as Editor, { current: {} as never }, createPageBlockStore('P')),
@@ -63,14 +60,7 @@ describe('the block commands the toolbar sends', () => {
     for (const name of SENT) expect(Object.keys(BLOCK_EVENTS)).toContain(name)
   })
 
-  it.each(SENT)('%s is answered in page mode, or left out with a reason', (name) => {
-    expect(handled.has(name) || LEFT_OUT[name] !== undefined).toBe(true)
-  })
-
-  it('leave out only what it sends and page mode does not answer', () => {
-    for (const name of Object.keys(LEFT_OUT)) {
-      expect(SENT).toContain(name)
-      expect(handled.has(name)).toBe(false)
-    }
+  it.each(SENT)('%s is answered in page mode', (name) => {
+    expect(handled.has(name)).toBe(true)
   })
 })

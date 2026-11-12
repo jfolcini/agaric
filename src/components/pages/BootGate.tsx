@@ -47,13 +47,15 @@ export function BootGate({ children }: { children: React.ReactNode }) {
 
   if (state === 'booting') {
     return (
-      <output
+      <div
         aria-live="polite"
         className="flex h-screen flex-col items-center justify-center gap-3 transition-opacity duration-moderate"
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> takes phrasing content only, and this wraps a <p>
+        role="status"
       >
         <Spinner size="xl" className="text-muted-foreground" aria-hidden="true" />
         <p className="text-sm text-muted-foreground">{t('boot.starting')}</p>
-      </output>
+      </div>
     )
   }
 

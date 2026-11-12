@@ -577,8 +577,7 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       e.preventDefault()
       const x = e.key === 'ArrowUp' ? ctx.caretX() : null
       cb.onFlush()
-      if (x === null) cb.onFocusPrev()
-      else cb.onFocusPrev(x)
+      cb.onFocusPrev(x ?? undefined)
     },
   },
   // ArrowDown on the last visual line, ArrowRight at end → next block
@@ -599,8 +598,7 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       e.preventDefault()
       const x = e.key === 'ArrowDown' ? ctx.caretX() : null
       cb.onFlush()
-      if (x === null) cb.onFocusNext()
-      else cb.onFocusNext(x)
+      cb.onFocusNext(x ?? undefined)
     },
   },
   // Backspace on empty block → delete block (unless sole remaining block).

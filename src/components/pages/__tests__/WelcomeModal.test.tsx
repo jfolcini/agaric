@@ -221,7 +221,7 @@ describe('WelcomeModal', () => {
   it('displays the three workflow rows', () => {
     render(<WelcomeModal />)
 
-    expect(screen.getByText('Press / for tasks & dates')).toBeInTheDocument()
+    expect(screen.getByText('Type / for tasks & dates')).toBeInTheDocument()
     expect(screen.getByText('Type [[ to link, @ to tag')).toBeInTheDocument()
     expect(screen.getByText('Select text to format')).toBeInTheDocument()
   })
@@ -236,7 +236,7 @@ describe('WelcomeModal', () => {
 
     const items = screen.getAllByRole('listitem')
     expect(items).toHaveLength(3)
-    expect(items[0]).toHaveTextContent('Press / for tasks & dates')
+    expect(items[0]).toHaveTextContent('Type / for tasks & dates')
     expect(items[1]).toHaveTextContent('Type [[ to link, @ to tag')
     expect(items[2]).toHaveTextContent('Select text to format')
   })
@@ -247,7 +247,7 @@ describe('WelcomeModal', () => {
     render(<WelcomeModal />)
 
     const items = screen.getAllByRole('listitem')
-    expect(items[0]).toHaveTextContent('Press / for tasks & dates')
+    expect(items[0]).toHaveTextContent('Type / for tasks & dates')
     expect(items[0]).toHaveTextContent(
       'Open the command menu to add tasks, dates, headings, and more.',
     )

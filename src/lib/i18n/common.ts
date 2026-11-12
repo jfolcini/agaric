@@ -314,13 +314,12 @@ export const common: Record<string, string> = {
   // #214 Phase 1B \u2014 three concrete workflow rows that teach the core
   // gestures (slash menu, link/tag, inline formatting) instead of the
   // earlier six abstract feature blurbs.
-  'welcome.workflowSlash': 'Press / for tasks & dates',
+  'welcome.workflowSlash': 'Type / for tasks & dates',
   'welcome.workflowSlashDesc': 'Open the command menu to add tasks, dates, headings, and more.',
   'welcome.workflowLinkTag': 'Type [[ to link, @ to tag',
   'welcome.workflowLinkTagDesc': 'Connect pages with [[links]] and organize blocks with @tags.',
   'welcome.workflowFormat': 'Select text to format',
   'welcome.workflowFormatDesc': 'Highlight any text to make it bold, italic, or underlined.',
-  'welcome.workflowSlashTouch': 'Type / for tasks & dates',
   'welcome.workflowFormatTouch': 'Format with the toolbar',
   'welcome.workflowFormatDescTouch':
     'Tap a block, then use the toolbar above the keyboard to make text bold, italic, or underlined.',

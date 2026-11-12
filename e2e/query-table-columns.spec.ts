@@ -41,7 +41,7 @@ test('picked query table columns keep their order after navigating away and back
     await page.keyboard.press('Escape')
   }
   await picker.click()
-  await page.getByRole('button', { name: 'Move project left' }).click()
+  await page.getByRole('button', { name: 'Move project up' }).click()
   await page.keyboard.press('Escape')
   await expect(headers).toHaveText(['Content', 'project', 'context', 'Page'])
 

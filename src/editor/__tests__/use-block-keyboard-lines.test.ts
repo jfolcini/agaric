@@ -118,7 +118,7 @@ describe('Arrow Up / Down between blocks (#6537)', () => {
   it('ArrowLeft at the start leaves without an x, so the caret lands at the default place', () => {
     const cb = callbacks()
     handleBlockKeyDown(press('ArrowLeft'), twoParagraphs(1, 1, true), cb)
-    expect(cb.onFocusPrev).toHaveBeenCalledWith()
+    expect(cb.onFocusPrev).toHaveBeenCalledWith(undefined)
   })
 })
 

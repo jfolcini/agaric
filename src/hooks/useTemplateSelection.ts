@@ -11,6 +11,7 @@ import type { TFunction } from 'i18next'
 import { useCallback, useState } from 'react'
 
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '@/lib/template-utils'
 import { useBlockStore } from '@/stores/blocks'
@@ -101,8 +102,11 @@ export function useTemplateSelection({
           if (cursorBlockId) useBlockStore.getState().setFocused(cursorBlockId)
           notify.success(t('slash.templateInserted'))
         }
-      } catch {
+      } catch (err) {
+        logger.warn('useTemplateSelection', 'template insert failed', { templatePageId }, err)
         notify.error(t('slash.templateInsertFailed'))
+        // Blocks that landed before the failure are saved and on the undo stack.
+        await load()
       }
     },
     [focusedBlockId, blocks, rootParentId, load, t],

@@ -21,6 +21,7 @@ import {
 import type { DocNode } from '@/editor/types'
 import { contentExtensions } from '@/editor/use-roving-editor'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
+import { useResolveStore } from '@/stores/resolve'
 
 const TABLE = [
   '| Name | Qty | Due |',
@@ -29,6 +30,9 @@ const TABLE = [
   '| apple | 9 | 2025-12-24 |',
   '| fig |  | 2026-01-15 |',
 ].join('\n')
+
+const PEAR = '01HZ0000000000000000000PEA'
+const APPLE = '01HZ0000000000000000000APP'
 
 let editor: Editor | undefined
 
@@ -196,6 +200,20 @@ describe('sortTableByColumn', () => {
     )
     ed.commands.undo()
     expect(saved(ed)).toBe(TABLE)
+  })
+
+  it('sorts a column of chips by the titles they show', () => {
+    const titles: Record<string, string> = { [PEAR]: 'pear', [APPLE]: 'apple' }
+    const original = useResolveStore.getState().resolveTitle
+    useResolveStore.setState({ resolveTitle: (id: string) => titles[id] ?? id })
+    try {
+      const ed = setup(`| tag | n |\n| --- | --- |\n| #[${PEAR}] | 1 |\n| [[${APPLE}]] | 2 |`)
+      caretInCell(ed, 'tag')
+      expect(sortTableByColumn(ed, 'asc')).toBe(true)
+      expect(saved(ed)).toBe(`| tag | n |\n| --- | --- |\n| [[${APPLE}]] | 2 |\n| #[${PEAR}] | 1 |`)
+    } finally {
+      useResolveStore.setState({ resolveTitle: original })
+    }
   })
 
   it('writes nothing when the rows are already in order', () => {
