@@ -282,6 +282,37 @@ async fn a_stale_save_that_only_deletes_lines_keeps_a_block_agaric_added_since()
     assert_eq!(fx.contents(&page).await, ["a", "c", "d"]);
 }
 
+/// A save that keeps a line only the newest text holds is an edit of that
+/// text, however many blank lines an older one shares with it: read against
+/// the older text, its lines would pair with that text's blocks, and the kept
+/// line would turn up twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_keeping_a_line_only_the_newest_text_holds_is_read_against_it() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["a", "b", "c"]).await;
+    fx.tick().await;
+    for word in ["d", "e"] {
+        create_block_inner(
+            &fx.pool,
+            DEV,
+            &fx.mat,
+            "content".into(),
+            word.into(),
+            Some(BlockId::from_trusted(&page)),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    fx.tick().await;
+    assert!(fx.read().contains("\ne"), "{}", fx.read());
+
+    fx.write("x\n\ne\n\ny\n");
+    fx.settle_file().await;
+
+    assert_eq!(fx.contents(&page).await, ["x", "e", "y"]);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_new_line_is_a_new_block_and_saving_the_file_again_adds_no_twin() {
     let mut fx = Fx::new().await;

@@ -341,3 +341,23 @@ fn deletes_and_adds_on_both_sides_duplicate_none() {
         ]))
         .unwrap();
 }
+
+/// A third shape, from main's CI: two blocks added and a tick, then lines
+/// deleted from the file around an Agaric edit, one edited and one added.
+#[test]
+fn deleted_lines_around_an_agaric_edit_then_an_edited_and_added_line_duplicate_none() {
+    Runtime::new()
+        .unwrap()
+        .block_on(converges(vec![
+            Step::AddBlock,
+            Step::AddBlock,
+            Step::Tick { undo: false },
+            Step::DeleteFromFile(397_629_553_900_395_725),
+            Step::DeleteFromFile(860_142_960_001_034_132),
+            Step::EditBlock(1_958_451_248_194_157_785),
+            Step::DeleteFromFile(26_059_251_025_058_115),
+            Step::EditFile(15_544_763_365_755_265_410),
+            Step::AddToFile,
+        ]))
+        .unwrap();
+}
