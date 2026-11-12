@@ -410,6 +410,19 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     [groupedRows],
   )
 
+  // Keyed by what the row shows, so a re-sort (a bookmark toggle moves a page
+  // between sections) moves each row's DOM, focus and state with its page.
+  const getItemKey = useCallback(
+    (index: number) => {
+      const row = groupedRows[index]
+      if (row == null) return index
+      if (row.kind === 'header') return `header:${row.section}`
+      if (row.kind === 'tree-page') return `tree:${row.node.nodeKey ?? row.node.fullPath}`
+      return row.page.id
+    },
+    [groupedRows],
+  )
+
   // oxlint-disable-next-line react/incompatible-library -- The Compiler skips memoizing a component that calls this API, so nothing virtualizer-derived is cached inside this component; the residual hazard the diagnostic names is such a value reaching a MEMOIZED consumer. The only virtualizer values leaving this render body are the live `VirtualItem` (`virtualRow`) and `measureElement`, both handed to `PageBrowserRowRenderer` — a plain function component, NOT `React.memo`, so there is no shallow-compare that could hold a stale window. react-virtual 3.14.10 builds the Virtualizer once (`useState(() => new Virtualizer(...))`) and virtual-core 3.17.8 assigns `measureElement` in the constructor, so the function identities the rule names never change; what does change per render is `getVirtualItems()`/`getTotalSize()`. (#4409)
   const virtualizer = useVirtualizer({
     count: virtualItemCount,
@@ -418,6 +431,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     // (~44px) and tree-page rows (~44px for the root; descendants
     // render inside the same DOM wrapper).
     estimateSize,
+    getItemKey,
     overscan: 5,
   })
 
@@ -471,9 +485,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // every load-more re-runs `scrollToIndex(focusedIndex)` and yanks the
   // viewport back to the focused row (index 0 by default), defeating infinite
   // scroll. The mapping is read from a ref so data growth doesn't re-trigger.
+  // Mounting is not a move either: a list still cached renders whole on the
+  // first frame, and scrolling to row 0 then undoes the scroll restoration.
   const pageIndexToRowIndexRef = useRef(pageIndexToRowIndex)
   pageIndexToRowIndexRef.current = pageIndexToRowIndex
+  const scrolledIndexRef = useRef(focusedIndex)
   useEffect(() => {
+    if (focusedIndex === scrolledIndexRef.current) return
+    scrolledIndexRef.current = focusedIndex
     if (focusedIndex < 0) return
     const rowIndex = pageIndexToRowIndexRef.current[focusedIndex] ?? focusedIndex
     virtualizer.scrollToIndex(rowIndex, { align: 'auto' })
