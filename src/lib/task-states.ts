@@ -12,6 +12,14 @@ export type TodoState = (typeof TASK_STATES)[number]
 /** Locked click cycle: none -> TODO -> DOING -> DONE -> CANCELLED -> none. */
 export const TASK_CYCLE: readonly (TodoState | null)[] = [null, ...TASK_STATES]
 
+/** i18n keys of each state's spoken label, for the announcement a state change makes. */
+export const TASK_STATE_LABEL_KEYS = {
+  TODO: 'block.taskState.todo',
+  DOING: 'block.taskState.doing',
+  CANCELLED: 'block.taskState.cancelled',
+  DONE: 'block.taskState.done',
+} as const satisfies Record<TodoState, string>
+
 /** Agenda order: active work first, then queued, completed, cancelled, and no state. */
 export const TASK_STATE_SORT_ORDER = [
   'DOING',

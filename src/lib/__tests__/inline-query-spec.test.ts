@@ -44,6 +44,24 @@ describe('inline-query-spec', () => {
     expect(decoded?.table).toBe(true)
   })
 
+  it('round-trips an ordered column list (#6544)', () => {
+    const spec: InlineQuerySpec = { filter: NESTED, table: true, columns: ['due_date', 'owner'] }
+    expect(decodeInlineQueryPayload(encodeInlineQueryPayload(spec))).toEqual(spec)
+  })
+
+  it('encodes a spec without columns exactly as before (#6544)', () => {
+    const payload = encodeInlineQueryPayload({ filter: NESTED, table: true })
+    expect(payload).toBe(
+      INLINE_QUERY_V2_PREFIX + utf8ToBase64Url(JSON.stringify({ filter: NESTED, table: true })),
+    )
+    expect(decodeInlineQueryPayload(payload)).toEqual({ filter: NESTED, table: true })
+  })
+
+  it('drops a columns field that is not a list of strings (#6544)', () => {
+    const payload = `v2:${utf8ToBase64Url(JSON.stringify({ filter: NESTED, columns: [1, 'a'] }))}`
+    expect(decodeInlineQueryPayload(payload)).toEqual({ filter: NESTED, table: false })
+  })
+
   it('round-trips unicode property values', () => {
     const filter: FilterExpr = {
       type: 'Leaf',

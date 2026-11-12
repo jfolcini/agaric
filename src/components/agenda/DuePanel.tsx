@@ -394,6 +394,7 @@ export function DuePanel({
                             // memo shallow-compare hits cleanly across
                             // parent re-renders (perf-review Tier 1.4
                             // metadata half, 2026-05-14).
+                            taskState={block.todo_state}
                             priority={block.priority}
                             priorityBadgeClassName="due-panel-priority [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
                             pageId={block.page_id}

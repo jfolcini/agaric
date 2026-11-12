@@ -36,6 +36,7 @@ import type { FilterPrimitive } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { encodeInlineQueryPayload, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { logger } from '@/lib/logger'
+import { readQueryColumns, writeQueryColumns } from '@/lib/query-result-columns'
 import { parseQueryExpression } from '@/lib/query-utils'
 import { cn } from '@/lib/utils'
 import {
@@ -211,7 +212,7 @@ export function QueryBuilderModal({
   }, [initialExpression])
 
   // ---- Expression generation ----
-  const expression = useMemo(() => {
+  const filterExpression = useMemo(() => {
     // Advanced mode emits the structured `v2:` payload run by the rich engine.
     // An empty tree (no leaves) is not a meaningful saved query, so it is
     // treated as invalid (empty string) — same gate as the simple form's empty
@@ -254,6 +255,13 @@ export function QueryBuilderModal({
     backlinkTarget,
     showAsTable,
   ])
+  // #6544 — the builder edits the filter; a table's column list rides along.
+  const expression = useMemo(() => {
+    const named = initialExpression ? readQueryColumns(initialExpression) : null
+    return filterExpression && showAsTable
+      ? writeQueryColumns(filterExpression, named)
+      : filterExpression
+  }, [filterExpression, showAsTable, initialExpression])
 
   // ---- Plain-English readable summary ----
   // Surfaces a humanised paraphrase of the generated `expression` above the

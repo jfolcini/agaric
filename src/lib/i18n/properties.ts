@@ -535,6 +535,10 @@ export const properties: Record<string, string> = {
   // #3315 item 3 — accessible name for the same header when more pages remain
   // unloaded: the sort is over the loaded rows, not the column.
   'queryResult.sortByPartial': 'Sort by {{column}} (loaded rows only)',
+  'queryResult.columns.trigger': 'Choose columns',
+  'queryResult.columns.moveUp': 'Move {{column}} left',
+  'queryResult.columns.moveDown': 'Move {{column}} right',
+  'queryResult.columns.automatic': 'Columns from the results',
   'filter.dimension.status.description': 'Task workflow state — TODO, DOING, DONE, CANCELLED',
   'filter.dimension.priority.description': 'Priority level — A (highest) through C',
   'filter.dimension.dueDate.description': 'Hard due date — overdue if past',

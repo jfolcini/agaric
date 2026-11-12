@@ -1,14 +1,17 @@
-import type { TFunction } from 'i18next'
 import { Pencil, Search } from 'lucide-react'
 import type React from 'react'
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
+import {
+  QueryColumnPicker,
+  type QueryColumnPickerProps,
+} from '@/components/query/QueryColumnPicker'
 import { QueryResultList } from '@/components/query/QueryResultList'
-import type { TableColumn } from '@/components/query/QueryResultTable'
 import { QueryResultTable } from '@/components/query/QueryResultTable'
+import { useQueryTableColumns } from '@/components/query/use-query-table-columns'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -16,57 +19,19 @@ import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { useQueryExecution } from '@/hooks/useQueryExecution'
 import { useQuerySorting } from '@/hooks/useQuerySorting'
 import { unwrap } from '@/lib/app-error'
-import type { BlockRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { countFilterLeaves, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
-import { buildCustomPropsMap, deriveCustomColumns } from '@/lib/query-result-columns'
+import { buildCustomPropsMap } from '@/lib/query-result-columns'
 import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { usePageBlockStoreOptional } from '@/stores/page-blocks'
+
+export { detectColumns } from '@/components/query/use-query-table-columns'
 
 // #5441 — lazy: the builder loads when "edit query" is first used, not with every query block.
 const QueryBuilderModal = lazy(() =>
   import('@/components/dialogs/QueryBuilderModal').then((m) => ({ default: m.QueryBuilderModal })),
 )
-
-/**
- * Known block property keys that can become table columns. Holds i18n KEYS,
- * not literal text — the display label is resolved inside `detectColumns()`
- * from the `t` the CALLER passes in, not a module-scope import (#4555).
- */
-const KNOWN_PROPERTY_KEYS: { key: keyof BlockRow; labelKey: string }[] = [
-  { key: 'todo_state', labelKey: 'query.column.status' },
-  { key: 'priority', labelKey: 'query.column.priority' },
-  { key: 'due_date', labelKey: 'query.column.dueDate' },
-  { key: 'scheduled_date', labelKey: 'query.column.scheduled' },
-]
-
-/**
- * Build the table column set: the fixed Content + known-property columns,
- * followed by data-driven columns for any custom properties present on the
- * result blocks (sorted alphabetically).
- *
- * #4555 — `t` is a PARAMETER, not a module-scope import, and deliberately
- * so: the only caller (`QueryResult`, below) reads it from
- * `useTranslation()` and lists it in the `useMemo` dependency array.
- * `useTranslation()`'s `t`
- * changes IDENTITY on `changeLanguage`, so that's what makes the memo
- * recompute and the column headers actually follow a language change — a
- * module-scope `t` import has a stable identity forever, so nothing would
- * ever invalidate the memo and the headers would freeze at whatever
- * language was active on first render.
- */
-export function detectColumns(
-  results: BlockRow[],
-  customProps: Map<string, Map<string, string>>,
-  t: TFunction,
-): TableColumn[] {
-  return [
-    { key: 'content', label: t('query.column.content') },
-    ...KNOWN_PROPERTY_KEYS.map(({ key, labelKey }) => ({ key, label: t(labelKey) })),
-    ...deriveCustomColumns(results, customProps),
-  ]
-}
 
 /** Render query expression as styled filter pills. */
 function QueryExpressionPills({ expression }: { expression: string }): React.ReactElement {
@@ -97,7 +62,8 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
   }
 
   for (const [key, value] of Object.entries(parsed.params)) {
-    if (key === 'type') continue
+    // The column list is the table's layout, not a filter (#6544).
+    if (key === 'type' || key === 'columns') continue
     pills.push(
       <Badge key={`param-${key}`} tone="secondary">
         {key}: {value}
@@ -187,6 +153,22 @@ function SortPartialNotice({
   )
 }
 
+/**
+ * The column picker, for a table a block holds (#6544). A component of its own
+ * so its guard adds no decision point to `QueryResult`, as `SortPartialNotice`.
+ */
+function ColumnPickerSlot({
+  blockId,
+  tableMode,
+  ...picker
+}: QueryColumnPickerProps & {
+  blockId: string | undefined
+  tableMode: boolean
+}): React.ReactElement | null {
+  if (!blockId || !tableMode) return null
+  return <QueryColumnPicker {...picker} />
+}
+
 export interface QueryResultProps {
   /** The raw query expression, e.g. "type:tag expr:project" */
   expression: string
@@ -268,13 +250,26 @@ export function QueryResult({
     customProps,
   })
 
-  const columns = useMemo(() => detectColumns(results, customProps, t), [results, customProps, t])
-
   // #2663 — the page store's `edit()` action (tolerant of no ambient
   // `PageBlockStoreProvider`, e.g. in isolated tests: falls back to a shared
   // empty store whose writes are inert). Selecting the action itself (not a
   // value) keeps this reference stable across renders.
   const editPageBlock = usePageBlockStoreOptional((s) => s.edit)
+
+  const writeExpression = useCallback(
+    (next: string): Promise<boolean> =>
+      blockId
+        ? (onSave?.(next) ?? editPageBlock(blockId, `{{query ${next}}}`))
+        : Promise.resolve(false),
+    [blockId, editPageBlock, onSave],
+  )
+
+  const { columns, picker } = useQueryTableColumns({
+    expression,
+    results,
+    customProps,
+    writeExpression,
+  })
 
   const handleBuilderSave = useCallback(
     async (newExpression: string) => {
@@ -300,8 +295,7 @@ export function QueryResult({
       // refetches on its own — calling `fetchResults()` here would just
       // re-run the OLD expression from this closure before that prop
       // update lands.
-      const ok = await (onSave?.(newExpression) ??
-        editPageBlock(blockId, `{{query ${newExpression}}}`))
+      const ok = await writeExpression(newExpression)
       if (!ok) return
       setBuilderOpen(false)
       // Edge case the prop-driven refetch above can't cover: if the saved
@@ -317,7 +311,7 @@ export function QueryResult({
       // call above had.
       if (newExpression === expression) fetchResults()
     },
-    [blockId, editPageBlock, expression, fetchResults, onSave],
+    [blockId, expression, fetchResults, writeExpression],
   )
 
   return (
@@ -349,6 +343,7 @@ export function QueryResult({
           </span>
           <ChevronToggle isExpanded={!collapsed} />
         </button>
+        <ColumnPickerSlot blockId={blockId} tableMode={tableMode} {...picker} />
         {blockId && (
           <Button
             variant="ghost"

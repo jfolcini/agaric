@@ -12,6 +12,7 @@
 
 import type { BlockRow, PropertyRow } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
+import { decodeInlineQueryPayload, encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { APP_MANAGED_BUILTIN_KEYS } from '@/lib/property-save-utils'
 
 /** Prefix that marks a custom-property column key, keeping it distinct from
@@ -97,4 +98,26 @@ export function columnValue(
     return customProps.get(block.id)?.get(propKey) ?? null
   }
   return (block[columnKey as keyof BlockRow] as string | null) ?? null
+}
+
+/** A text query names its columns as `columns:a,b`, beside `table:true`. */
+const TEXT_COLUMNS_PARAM = /(?:^|\s)columns:(\S*)/
+
+/** The table columns a `{{query}}` payload names in order (#6544), or `null` to derive them. */
+export function readQueryColumns(expression: string): string[] | null {
+  const structured = decodeInlineQueryPayload(expression)
+  if (structured) return structured.columns ?? null
+  const match = TEXT_COLUMNS_PARAM.exec(expression)
+  return match ? (match[1] ?? '').split(',').filter((key) => key !== '') : null
+}
+
+/** `expression` naming `columns` as its table columns, or naming none when `null`. */
+export function writeQueryColumns(expression: string, columns: string[] | null): string {
+  const structured = decodeInlineQueryPayload(expression)
+  if (structured) {
+    const { filter, table } = structured
+    return encodeInlineQueryPayload(columns ? { filter, table, columns } : { filter, table })
+  }
+  const text = expression.replace(TEXT_COLUMNS_PARAM, '').trim()
+  return columns ? `${text} columns:${columns.join(',')}` : text
 }

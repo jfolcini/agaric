@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import type { PropertyRow } from '@/lib/bindings'
+import type { FilterExpr } from '@/lib/bindings'
+import { decodeInlineQueryPayload, encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import {
   buildCustomPropsMap,
   columnValue,
   deriveCustomColumns,
   propertyRowDisplay,
+  readQueryColumns,
+  writeQueryColumns,
 } from '@/lib/query-result-columns'
 
 function row(overrides: Partial<PropertyRow> & { key: string }): PropertyRow {
@@ -107,5 +111,34 @@ describe('the user-set built-ins (#5364)', () => {
       ],
     })
     expect(map.get('B1')).toEqual(new Map([['meeting_date', '2026-10-17']]))
+  })
+})
+
+describe('the columns a query names (#6544)', () => {
+  const filter: FilterExpr = { type: 'Leaf', primitive: { type: 'Tag', tag: 'T1' } }
+  const v2 = encodeInlineQueryPayload({ filter, table: true })
+
+  it('reads and writes the list on a structured query', () => {
+    expect(readQueryColumns(v2)).toBeNull()
+    const written = writeQueryColumns(v2, ['due_date', 'owner'])
+    expect(readQueryColumns(written)).toEqual(['due_date', 'owner'])
+    expect(decodeInlineQueryPayload(written)).toEqual({
+      filter,
+      table: true,
+      columns: ['due_date', 'owner'],
+    })
+    expect(writeQueryColumns(written, null)).toBe(v2)
+  })
+
+  it('reads and writes the list on a text query', () => {
+    const text = 'type:tag expr:project table:true'
+    expect(readQueryColumns(text)).toBeNull()
+    const written = writeQueryColumns(text, ['owner', 'priority'])
+    expect(written).toBe('type:tag expr:project table:true columns:owner,priority')
+    expect(readQueryColumns(written)).toEqual(['owner', 'priority'])
+    expect(writeQueryColumns(written, ['due_date'])).toBe(
+      'type:tag expr:project table:true columns:due_date',
+    )
+    expect(writeQueryColumns(written, null)).toBe(text)
   })
 })

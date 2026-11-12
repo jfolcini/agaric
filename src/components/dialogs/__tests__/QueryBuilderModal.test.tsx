@@ -801,6 +801,38 @@ describe('QueryBuilderModal', () => {
     })
   })
 
+  describe('the column list a table query names (#6544)', () => {
+    it('keeps it when a text query is saved', async () => {
+      const user = userEvent.setup()
+      const onSave = vi.fn()
+      render(
+        <QueryBuilderModal
+          {...defaultProps}
+          onSave={onSave}
+          initialExpression="type:tag expr:work table:true columns:owner,due_date"
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: /update query/i }))
+      expect(onSave).toHaveBeenCalledWith('type:tag expr:work table:true columns:owner,due_date')
+    })
+
+    it('keeps it when a structured query is saved', async () => {
+      const user = userEvent.setup()
+      const onSave = vi.fn()
+      const filter = {
+        type: 'And' as const,
+        children: [
+          { type: 'Leaf' as const, primitive: { type: 'Priority' as const, values: ['high'] } },
+        ],
+      }
+      const payload = encodeInlineQueryPayload({ filter, table: true, columns: ['owner'] })
+      render(<QueryBuilderModal {...defaultProps} onSave={onSave} initialExpression={payload} />)
+      await user.click(screen.getByRole('button', { name: /update query/i }))
+      const saved = onSave.mock.calls[0]?.[0] as string
+      expect(decodeInlineQueryPayload(saved)?.columns).toEqual(['owner'])
+    })
+  })
+
   // -----------------------------------------------------------------------
   // #2665 — the dialog mounts under both the desktop Dialog path and the
   // mobile Sheet path via useDialogOrSheet('dialog'). Assert on body

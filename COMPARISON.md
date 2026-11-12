@@ -285,7 +285,7 @@ Logseq 2.0 turned this into its strongest domain. Agaric is behind, not ahead.
 | Grouping | 2.0: group-by in the Views system | All 7 group keys reachable in the builder (#4804, `src/components/AdvancedQuery/QueryControlsBar.tsx`); groups show a bounded preview with no expand | Done |
 | Aggregation | `{{function (sum :qty)}}` + arbitrary SCI functions | count/sum/avg/min/max, global + per-group; the target can be a property (#4804) | Partial |
 | Sorting | `sort-by`, table-header sort; 2.0.2 sorts missing values last (#13485) | Multi-key over a closed column set + bm25 relevance | Done |
-| Query result table | `query-table:: true` + column picker; 2.0: Table/List/Gallery views with pinned, resizable columns and inline editing | Columns auto-derived from properties on the loaded page; **no column picker** | Partial |
+| Query result table | `query-table:: true` + column picker; 2.0: Table/List/Gallery views with pinned, resizable columns and inline editing | Columns derived from the loaded rows' properties until picked; a column picker chooses and orders them, kept in the block; no widths or inline editing | Partial |
 | Live-updating results | Yes (DataScript reactivity) | Inline queries refetch on property and graph-structure events, including ones arriving by sync (`src/hooks/useQueryExecution.ts`, #5316) | Done |
 | Saved queries | Query nodes live in the graph | Saved views were invisible after a space migration until #5828; they are now per-space `localStorage`, **not synced**, and old views stay invisible | Partial |
 | User-facing query language | Text you can read, diff, paste, version | **None.** `v2:<base64url(JSON)>` only; a text language was explicitly dropped in #4804 | Gap |

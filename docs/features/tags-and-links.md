@@ -114,6 +114,8 @@ Supported query types:
 
 The result is paginated, sortable, and respects the active space.
 
+A query shown as a table derives its columns from the properties the loaded rows carry, until you pick them: the columns button beside the edit button shows, hides and orders them, and the choice is written into the query block, so it syncs with it and the table keeps its shape as rows change. *Columns from the results* goes back to deriving them. Content comes first and the page last either way. An exported Markdown file does not keep the choice yet. A task's state shows in a list row as the block's checkbox, drawn but not clickable.
+
 ## Tag references in property values
 
 A property of type *ref* can point at a tag as well as a page (e.g. a custom `area` key holding `@ops`). Tag references resolve like page links: rename-safe, click-to-navigate. Note the built-in `assignee` and `location` keys are plain text, not refs.
