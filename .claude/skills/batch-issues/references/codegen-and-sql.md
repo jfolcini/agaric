@@ -2,15 +2,13 @@
 
 Run after the matching Rust change and before committing.
 
-## sqlx `.sqlx/` caches
+## sqlx `.sqlx/` cache
 
-Any `query!` / `query_as!` / `query_scalar!` change, including a column-type override or moving one between crates: `just gen-sqlx` (why not bare `cargo sqlx prepare`: the recipe's comment in `justfile`), then stage all four caches. A `FromRow` field change needs no regen. The regen needs a `dev.db` that matches the branch (`pitfalls.md`).
+Any `query!` / `query_as!` / `query_scalar!` change, including a column-type override: `just gen-sqlx` (why not bare `cargo sqlx prepare`: the recipe's comment in `justfile`), then stage `src-tauri/.sqlx`, the only cache (every member and the fuzz workspace resolve from the workspace root's). A `FromRow` field change needs no regen. The regen needs a `dev.db` that matches the branch (`pitfalls.md`).
 
-Only CI's four `prepare --check` lanes and, partially, the `check-sqlx-cache-drift` hook catch a wrong-scope prune. The hook judges the staged index, so stage all four caches before trusting it: a half-staged regen reads as drift, and an unstaged one reads as clean.
+Only pre-push Phase E and CI's `prepare --check` in `lint` catch a wrong-scope prune.
 
-After every regen, read `git status --short src-tauri/.sqlx src-tauri/*/.sqlx`. A mass deletion is a wipe (wrong scope, a stale `dev.db`, or another cargo build holding the lock), not a cleanup: restore those directories from `HEAD` and re-run with nothing else building. One or two deleted entries whose queries no longer exist are a prior PR's leftovers: keep them in the diff and say so.
-
-The hook flags a crate that swaps one shared query for another (it drops a query its siblings still use and adds a new one, so the diff net-removes no `query!` site). Once `just gen-sqlx` over all four caches has produced that deletion, commit with `SKIP=check-sqlx-cache-drift` and the reason in the message. The pre-push verify runs the same guard over the range, out of a commit `SKIP`'s reach, so the push takes `SKIP_CI_VERIFY='<reason>'`; CI's per-crate `prepare --check` lanes are the gate.
+After every regen, read `git status --short src-tauri/.sqlx`. A mass deletion is a wipe (wrong scope, a stale `dev.db`, or another cargo build holding the lock), not a cleanup: restore the directory from `HEAD` and re-run with nothing else building. One or two deleted entries whose queries no longer exist are a prior PR's leftovers: keep them in the diff and say so.
 
 `prepare --check` exiting 0 with "potentially unused queries found in .sqlx" is not clean: the cache holds entries no query produces. Regenerate.
 

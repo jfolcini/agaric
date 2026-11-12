@@ -226,7 +226,7 @@ describe('Agaric real-backend agent access from Settings (#5740) @mcp @settings'
     // History lists newest first: the two newest deletes are the revert's.
     await openEditHistory()
     const deletes =
-      '//*[@data-history-item][.//*[@data-testid="history-type-badge"][normalize-space(.)="delete_block"]]'
+      '//*[@data-history-item][.//*[@data-testid="history-type-badge"][@data-op-type="delete_block"]]'
     for (const n of [1, 2]) {
       const select = $(`(${deletes})[${n}]`).$('button[role="checkbox"]')
       await select.waitForClickable({

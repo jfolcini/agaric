@@ -35,6 +35,7 @@ function createTestStore(blocks: FlatBlock[]): StoreApi<PageBlockState> {
     blocksById,
     rootParentId: 'PAGE_1',
     loading: false,
+    completedLoads: 1,
     truncatedTotal: null,
     staleFocusedBlock: null,
     getBlockById: (id: string) => blocksById.get(id),

@@ -3055,7 +3055,7 @@ jobs:
     if: needs.select-lanes.outputs.full_suite == 'true'
     runs-on: ubuntu-24.04
     # Whole-tree prek in every stage (clippy, cargo doc with the #4665
-    # rustdoc lints, knip, lychee, …) plus the four sqlx offline checks.
+    # rustdoc lints, knip, lychee, …) plus the sqlx offline cache check.
     timeout-minutes: 60
     permissions:
       contents: read
@@ -3067,7 +3067,7 @@ jobs:
           persist-credentials: false
 
       - name: Free disk space on runner
-        # The clippy hook's check tree plus the four sqlx-prepare passes are
+        # The clippy hook's check tree plus the sqlx-prepare pass are
         # heavy; drop the unused preinstalled toolchains first.
         run: |
           set -euo pipefail
@@ -3118,38 +3118,19 @@ jobs:
         run: |
           if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
 
-      # sqlx offline cache checks (4 lanes) — one per crate carrying a
-      # committed `.sqlx/` cache, mirroring `_validate.yml`'s lint job. This is
-      # the pre-push `verify-ci-equivalent` hook Phase E, invoked directly: the
+      # sqlx offline cache check of `src-tauri/.sqlx`, the one cache, with
+      # `--workspace` on both sides as `just gen-sqlx` writes it. This is the
+      # pre-push `verify-ci-equivalent` hook Phase E, invoked directly: the
       # hook itself recurses into a nested whole-tree prek run and fail-exits
-      # on the empty push range a scheduled on-`main` run always has. The three
-      # non-root crates get absolute throwaway DBs under `runner.temp`, since a
-      # relative sqlite path resolves against the workspace root, not the crate
-      # dir. The action creates + migrates each DB, so an absent file never
-      # false-fails this.
-      - name: sqlx offline cache check (root, dev.db)
+      # on the empty push range a scheduled on-`main` run always has. The
+      # action creates + migrates the DB, so an absent file never false-fails
+      # this.
+      - name: sqlx offline cache check
         uses: ./.github/actions/sqlx-offline-check
         with:
           working-directory: src-tauri
           database-url: 'sqlite:dev.db'
-
-      - name: sqlx offline cache check (agaric-store)
-        uses: ./.github/actions/sqlx-offline-check
-        with:
-          working-directory: src-tauri/agaric-store
-          database-url: 'sqlite:${{ runner.temp }}/agaric-store-sqlx-prepare.db'
-
-      - name: sqlx offline cache check (agaric-engine)
-        uses: ./.github/actions/sqlx-offline-check
-        with:
-          working-directory: src-tauri/agaric-engine
-          database-url: 'sqlite:${{ runner.temp }}/agaric-engine-sqlx-prepare.db'
-
-      - name: sqlx offline cache check (agaric-sync)
-        uses: ./.github/actions/sqlx-offline-check
-        with:
-          working-directory: src-tauri/agaric-sync
-          database-url: 'sqlite:${{ runner.temp }}/agaric-sync-sqlx-prepare.db'
+          prepare-args: '--workspace -- --workspace --tests'
 
       - name: Install lychee (prebuilt binary)
         # The `lychee` prek hook is a `local` hook calling the system binary;

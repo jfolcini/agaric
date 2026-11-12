@@ -65,7 +65,7 @@ test.describe('Keyboard range selection across an ancestor collapse (#922) @edit
     await page.keyboard.press('Escape')
     await expect(page.locator('[data-testid="block-editor"]')).not.toBeVisible()
     await expect(childById).toHaveClass(/block-selected/)
-    await expect(batchToolbar).toContainText('1')
+    await expect(batchToolbar).toHaveCount(0)
 
     await page.keyboard.press('Shift+ArrowDown')
     await expect(batchToolbar).toContainText('2')

@@ -1,124 +1,39 @@
 /**
- * GlobalDateControls — the App header's journal shortcuts on every view but
- * the journal itself (which renders `JournalControls`). Every handler calls
- * `setView('journal')`.
+ * GlobalDateControls — the App header's Today button on every view but the
+ * journal itself (which renders `JournalControls`). Today's page is where most
+ * writing happens, so every view carries the same one button (#6548); the
+ * journal's own header has Agenda and the calendar.
  *
- * Today is on every view: today's page is where most writing happens. The
- * Agenda + calendar pair only joins it on the content/navigation views in
- * `DATE_CONTROL_VIEWS`; on the tool/admin views and the page editor a bare
- * calendar trio reads as off-context (#1740).
- *
- * None of it shows on a touch phone: the drawer's Journal entry is one tap
+ * It does not show on a touch phone: the drawer's Journal entry is one tap
  * away, and the row is for the view's own title. A narrow mouse window keeps it.
  */
 
-import { Calendar as CalendarIcon } from 'lucide-react'
 import type React from 'react'
-import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useShallow } from 'zustand/react/shallow'
 
 import { Button } from '@/components/ui/button'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useJournalStore } from '@/stores/journal'
-import { useNavigationStore, type View } from '@/stores/navigation'
-
-// #5441 — lazy: the calendar (react-day-picker) loads when it is first opened.
-const JournalCalendarDropdown = lazy(() =>
-  import('@/components/journal/JournalCalendarDropdown').then((m) => ({
-    default: m.JournalCalendarDropdown,
-  })),
-)
-
-const DATE_CONTROL_VIEWS: ReadonlySet<View> = new Set<View>(['pages', 'search', 'tags', 'query'])
+import { useNavigationStore } from '@/stores/navigation'
 
 export function GlobalDateControls(): React.ReactElement | null {
   const { t } = useTranslation()
-  const { currentDate, navigateToDate } = useJournalStore(
-    useShallow((s) => ({ currentDate: s.currentDate, navigateToDate: s.navigateToDate })),
-  )
-  const { currentView, setView } = useNavigationStore(
-    useShallow((s) => ({ currentView: s.currentView, setView: s.setView })),
-  )
-  const [calendarOpen, setCalendarOpen] = useState(false)
+  const navigateToDate = useJournalStore((s) => s.navigateToDate)
+  const setView = useNavigationStore((s) => s.setView)
   const isTouch = useIsTouch()
   const isMobile = useIsMobile()
 
   if (isTouch && isMobile) return null
 
   function handleToday() {
-    const today = new Date()
     setView('journal')
-    navigateToDate(today, 'daily')
-  }
-
-  function handleAgenda() {
-    const today = new Date()
-    setView('journal')
-    navigateToDate(today, 'agenda')
-  }
-
-  function handleSelectDate(day: Date) {
-    setView('journal')
-    navigateToDate(day, 'daily')
-    setCalendarOpen(false)
-  }
-
-  function handleSelectWeek(dates: Date[]) {
-    if (dates.length > 0) {
-      setView('journal')
-      navigateToDate(dates[0] as Date, 'weekly')
-      setCalendarOpen(false)
-    }
-  }
-
-  function handleSelectMonth(month: Date) {
-    setView('journal')
-    navigateToDate(month, 'monthly')
-    setCalendarOpen(false)
+    navigateToDate(new Date(), 'daily')
   }
 
   return (
-    <div className="flex items-center gap-1">
-      <Button variant="outline" size="xs" onClick={handleToday} aria-label={t('journal.goToToday')}>
-        {t('journal.today')}
-      </Button>
-      {DATE_CONTROL_VIEWS.has(currentView) && (
-        <>
-          <Button
-            variant="outline"
-            size="xs"
-            onClick={handleAgenda}
-            aria-label={t('journal.goToAgenda')}
-          >
-            {t('journal.agenda')}
-          </Button>
-          <div className="relative">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={t('journal.openCalendar')}
-              aria-expanded={calendarOpen}
-              aria-haspopup="dialog"
-              onClick={() => setCalendarOpen((o) => !o)}
-            >
-              <CalendarIcon className="h-4 w-4" />
-            </Button>
-            {calendarOpen && (
-              <Suspense fallback={null}>
-                <JournalCalendarDropdown
-                  currentDate={currentDate}
-                  onSelectDate={handleSelectDate}
-                  onSelectWeek={handleSelectWeek}
-                  onSelectMonth={handleSelectMonth}
-                  onClose={() => setCalendarOpen(false)}
-                />
-              </Suspense>
-            )}
-          </div>
-        </>
-      )}
-    </div>
+    <Button variant="outline" size="xs" onClick={handleToday} aria-label={t('journal.goToToday')}>
+      {t('journal.today')}
+    </Button>
   )
 }

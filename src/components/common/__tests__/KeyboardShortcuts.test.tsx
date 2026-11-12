@@ -610,8 +610,8 @@ describe('KeyboardShortcuts', () => {
 
     it('reflects a rebound search chord in the essential entry', () => {
       setPlatform('Linux x86_64')
-      // The "search" essential entry is backed by the `findInPage` catalog id.
-      setCustomShortcut('findInPage', 'Ctrl + G')
+      // The "search" essential entry is backed by the `focusSearch` catalog id (#6548).
+      setCustomShortcut('focusSearch', 'Ctrl + G')
       render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const row = screen.getByText(t('keyboard.essential.search')).closest('tr') as HTMLElement
@@ -628,6 +628,39 @@ describe('KeyboardShortcuts', () => {
       const row = screen.getByText(t('keyboard.essential.undo')).closest('tr') as HTMLElement
       const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
       expect(kbdTexts).toEqual(['⌘', 'Z'])
+    })
+  })
+
+  // #6548 — the sheet's own labels must say what the key does.
+  describe('labels (#6548)', () => {
+    it('describes Enter as adding a block below, which is what it does', () => {
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
+
+      const row = screen.getByText(t('keyboard.saveBlockAndClose')).closest('tr') as HTMLElement
+      expect(Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)).toEqual(['Enter'])
+      expect(t('keyboard.saveBlockAndClose')).toBe('Save block and add a new block below')
+    })
+
+    it('binds the Essential "Search your notes" row to the search-everywhere chord', () => {
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
+
+      const row = screen.getByText('Search your notes').closest('tr') as HTMLElement
+      expect(Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)).toEqual([
+        'Ctrl',
+        'Shift',
+        'F',
+      ])
+    })
+
+    it('prints the Shortcut / Action header row once', () => {
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
+
+      expect(
+        screen.getAllByRole('columnheader', { name: t('keyboard.shortcutHeader') }),
+      ).toHaveLength(1)
+      expect(
+        screen.getAllByRole('columnheader', { name: t('keyboard.actionHeader') }),
+      ).toHaveLength(1)
     })
   })
 })

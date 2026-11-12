@@ -491,12 +491,8 @@ describe('i18n catalog — plural forms for {{count}}-interpolating keys (#3860,
  */
 describe('i18n catalog — plural forms, direct literal checks (#3882)', () => {
   it('blockTree.deletedMessageUndo', () => {
-    expect(i18n.t('blockTree.deletedMessageUndo', { count: 1 })).toBe(
-      'Deleted 1 block — Ctrl+Z to undo',
-    )
-    expect(i18n.t('blockTree.deletedMessageUndo', { count: 3 })).toBe(
-      'Deleted 3 blocks — Ctrl+Z to undo',
-    )
+    expect(i18n.t('blockTree.deletedMessageUndo', { count: 1 })).toBe('Deleted 1 block')
+    expect(i18n.t('blockTree.deletedMessageUndo', { count: 3 })).toBe('Deleted 3 blocks')
   })
 
   it('blockTree.repeatLimitedMessage', () => {

@@ -25,7 +25,7 @@
 import type React from 'react'
 import { useLayoutEffect, useEffect, useRef, useState } from 'react'
 
-import { Kbd } from '@/components/ui/kbd'
+import { KbdChord } from '@/components/ui/kbd'
 import { cn } from '@/lib/utils'
 
 /** Gap between the anchor row and the menu edge, in px. */
@@ -40,7 +40,7 @@ export interface PaletteAction {
   id: string
   /** Human label rendered as the menu item content. */
   label: string
-  /** Optional right-aligned shortcut hint chip (e.g. `↵`, `⌘↵`). */
+  /** Optional right-aligned chord in catalog notation (`↵`, `Ctrl + Enter`). */
   hint?: string
 }
 
@@ -189,7 +189,10 @@ export function PaletteActionMenu({
           {a.hint != null && (
             // #1005 — canonical chip; legible on the menu item's focus/hover
             // accent fill. Decorative within an interactive row → aria-hidden.
-            <Kbd aria-hidden="true">{a.hint}</Kbd>
+            // `KbdChord` shows `Ctrl` as this platform's mod key.
+            <span aria-hidden="true" data-testid={`palette-action-${a.id}-hint`}>
+              <KbdChord keys={a.hint} />
+            </span>
           )}
         </button>
       ))}

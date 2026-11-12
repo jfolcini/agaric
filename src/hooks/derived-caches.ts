@@ -6,7 +6,8 @@
  * of them are dropped; a cache added later goes here, and every caller gets it.
  *
  * Not here: the page stores and the resolve store, which each caller reloads
- * for the pages it can name, and the space list, which only a peer changes.
+ * for the pages it can name (a tree reads its rows' properties again on each
+ * load of its store), and the space list, which only a peer changes.
  */
 
 import { invalidatePageBrowserData } from '@/hooks/usePageBrowserData'

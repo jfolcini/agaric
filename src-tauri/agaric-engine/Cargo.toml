@@ -3,9 +3,7 @@
 #
 # Wave E0 established the crate with the query-free leaf `bibliography` module.
 # Wave E1 folds in the Loro CRDT runtime (`loro`) — the first query-bearing
-# engine module, so the crate now carries its own `.sqlx` offline cache
-# (migrations symlink + committed cache + a 3rd `sqlx prepare` CI lane,
-# mirroring `agaric-store`). Later waves fold in the `dag` materializer. The
+# engine module. Later waves fold in the `dag` materializer. The
 # `agaric` crate depends on this via a version-pinned path dep and re-exports
 # each module (`pub use agaric_engine::{bibliography, loro};` …) so existing
 # `crate::bibliography::…` / `crate::loro::…` paths keep resolving unchanged
@@ -96,7 +94,7 @@ loro-internal = "=1.13.6"
 # Version/features mirror the app crate exactly.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # loro's `projection` writer runs `sqlx::query!` macros against the workspace
-# schema (offline-cached under this crate's `.sqlx`). Version/features mirror
+# schema (offline-cached in the workspace-root `.sqlx`). Version/features mirror
 # the app crate exactly for cargo feature-unification.
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 # loro's `projection` parses RFC-3339 timestamps via `chrono::DateTime`.

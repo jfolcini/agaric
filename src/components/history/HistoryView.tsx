@@ -36,10 +36,12 @@ import type { HistoryEntry, PageResponse } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { categorizeHistoryError, type HistoryErrorCategory } from '@/lib/categorize-history-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { ALL_PAGES_HISTORY_ID } from '@/lib/history-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
 import { requireActiveScope } from '@/lib/space-scope'
+import { type HistoryPageScope, useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
 export function HistoryView(): React.ReactElement {
@@ -51,6 +53,20 @@ export function HistoryView(): React.ReactElement {
   // #5415 — history is read in the active space, like every other view; the
   // former *All spaces* switch was the one cross-space read left in the app.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  // #6535 — the page menu hands off the page to scope to. It is kept with the
+  // space it was opened in, so a space switch while mounted drops it.
+  const pendingHistoryPage = useNavigationStore((s) => s.pendingHistoryPage)
+  const [pageScope, setPageScope] = useState<{
+    page: HistoryPageScope
+    spaceId: string | null
+  } | null>(() =>
+    pendingHistoryPage == null ? null : { page: pendingHistoryPage, spaceId: currentSpaceId },
+  )
+  useEffect(() => {
+    if (pendingHistoryPage != null) useNavigationStore.getState().setPendingHistoryPage(null)
+  }, [pendingHistoryPage])
+  const scopedPage = pageScope?.spaceId === currentSpaceId ? pageScope.page : null
+  const historyPageId = scopedPage?.id ?? ALL_PAGES_HISTORY_ID
   const { expandedKeys, diffCache, loadingDiffs, handleToggleDiff } = useHistoryDiffToggle<string>(
     (entry) => entryKey(entry),
   )
@@ -73,8 +89,8 @@ export function HistoryView(): React.ReactElement {
   // none is forwarded. Exported so `reloadAfterMutation` can reset this exact
   // cache entry without re-deriving (and risking drift from) the key.
   const queryKey = useMemo(
-    () => ['pageHistory', opTypeFilter, currentSpaceId],
-    [opTypeFilter, currentSpaceId],
+    () => ['pageHistory', historyPageId, opTypeFilter, currentSpaceId],
+    [historyPageId, opTypeFilter, currentSpaceId],
   )
   const {
     data,
@@ -97,7 +113,7 @@ export function HistoryView(): React.ReactElement {
         try {
           const result = unwrap(
             await commands.listPageHistory(
-              '__all__',
+              historyPageId,
               opTypeFilter ?? null,
               requireActiveScope(currentSpaceId),
               pageParam ?? null,
@@ -113,6 +129,7 @@ export function HistoryView(): React.ReactElement {
               'Failed to load history page',
               {
                 category,
+                pageId: historyPageId,
                 opTypeFilter: opTypeFilter ?? null,
                 spaceId: currentSpaceId,
                 cursor: pageParam ?? null,
@@ -229,7 +246,7 @@ export function HistoryView(): React.ReactElement {
   // the previous scope doesn't leak into the new one. `resetKey` resets focus.
   useEffect(() => {
     clearSelection()
-  }, [opTypeFilter, currentSpaceId, clearSelection])
+  }, [historyPageId, opTypeFilter, currentSpaceId, clearSelection])
 
   // Glue selection+focus row click together for HistoryListView.
   const handleRowClick = useCallback(
@@ -261,19 +278,39 @@ export function HistoryView(): React.ReactElement {
     reloadChangedPageStores()
   }, [clearSelection, queryKey])
 
+  const showAllPages = useCallback(() => {
+    setPageScope(null)
+    // The button goes away with the scope; the list is where the user was.
+    listRef.current?.focus()
+  }, [])
+
   // ── Render ───────────────────────────────────────────────────────
 
   return (
     <div className="history-view space-y-4">
-      {/* Op log compaction card.
+      {/* Op log compaction card, left out of a page's history because it
+          removes old history from every page.
           Wrapped in FeatureErrorBoundary so a status-fetch / compaction crash
           here doesn't take out the rest of HistoryView (UX Tier 3). */}
-      <FeatureErrorBoundary name="CompactionCard">
-        <CompactionCard />
-      </FeatureErrorBoundary>
+      {scopedPage == null && (
+        <FeatureErrorBoundary name="CompactionCard">
+          <CompactionCard />
+        </FeatureErrorBoundary>
+      )}
 
       <ViewHeader>
         <div className="history-view-header space-y-2">
+          {scopedPage != null && (
+            <div className="flex items-center justify-between gap-2">
+              <p className="min-w-0 truncate text-sm font-medium">
+                {t('history.pageScope', { title: scopedPage.title })}
+              </p>
+              <Button variant="outline" size="sm" className="shrink-0" onClick={showAllPages}>
+                {t('history.showAllPages')}
+              </Button>
+            </div>
+          )}
+
           {/* Filter bar */}
           <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />
 
@@ -320,7 +357,10 @@ export function HistoryView(): React.ReactElement {
 
       {/* Empty state. */}
       {!loading && !error && entries.length === 0 && (
-        <EmptyState icon={Clock} message={t('history.emptyCurrentSpace')} />
+        <EmptyState
+          icon={Clock}
+          message={scopedPage == null ? t('history.emptyCurrentSpace') : t('history.emptyPage')}
+        />
       )}
 
       <HistoryListView
@@ -396,6 +436,7 @@ export function HistoryView(): React.ReactElement {
           setConfirmRestore(open)
           if (!open) setRestoreTarget(null)
         }}
+        pageId={historyPageId}
         restoreTarget={restoreTarget}
         onSuccess={reloadAfterMutation}
       />

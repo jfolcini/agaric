@@ -39,6 +39,7 @@ import {
   _resetAttachmentInvalidationForTest,
   getAttachmentInvalidationKey,
 } from '@/lib/attachment-invalidation'
+import { truncateId } from '@/lib/format'
 import {
   _resetGraphStructureEventsForTest,
   getGraphStructureKey,
@@ -68,6 +69,9 @@ vi.mock('@/lib/announcer', () => ({
 // `getByTestId('history-item-N')` / `getAllByRole('row')` assertion
 // working without per-test changes.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
+
+/** Matches a row's op-type badge, not the filter menu's option of the same label. */
+const BADGE = { selector: '[data-testid="history-type-badge"]' }
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
@@ -169,8 +173,8 @@ describe('HistoryView', () => {
     render(<HistoryView />)
 
     // Op type badges
-    expect(await screen.findByText('edit_block')).toBeInTheDocument()
-    expect(screen.getByText('create_block')).toBeInTheDocument()
+    expect(await screen.findByText(t('history.opTypeEdit'), BADGE)).toBeInTheDocument()
+    expect(screen.getByText(t('history.opTypeCreate'), BADGE)).toBeInTheDocument()
 
     // Payload previews
     expect(screen.getByText('Updated content')).toBeInTheDocument()
@@ -190,7 +194,7 @@ describe('HistoryView', () => {
     render(<HistoryView />)
 
     const checkbox = await screen.findByRole('checkbox', {
-      name: /Select operation edit_block #1/,
+      name: /Select operation Edit #1/,
     })
     expect(checkbox).not.toBeChecked()
 
@@ -321,7 +325,7 @@ describe('HistoryView', () => {
     // Press space to toggle
     await user.keyboard(' ')
 
-    const checkbox = screen.getByRole('checkbox', { name: /Select operation edit_block #1/ })
+    const checkbox = screen.getByRole('checkbox', { name: /Select operation Edit #1/ })
     expect(checkbox).toBeChecked()
 
     // Press space again to untoggle
@@ -412,7 +416,7 @@ describe('HistoryView', () => {
 
     render(<HistoryView />)
 
-    await screen.findByText('purge_block')
+    await screen.findByText(t('history.opTypePurge'), BADGE)
 
     const checkboxes = screen.getAllByRole('checkbox')
     // purge_block checkbox should be disabled
@@ -737,7 +741,7 @@ describe('HistoryView', () => {
 
     render(<HistoryView />)
 
-    await screen.findByText('purge_block')
+    await screen.findByText(t('history.opTypePurge'), BADGE)
 
     const item = screen.getByTestId('history-item-0')
     expect(item).toHaveClass('opacity-50')
@@ -798,7 +802,7 @@ describe('HistoryView', () => {
 
     render(<HistoryView />)
 
-    await screen.findByText('purge_block')
+    await screen.findByText(t('history.opTypePurge'), BADGE)
 
     const item = screen.getByTestId('history-item-0')
     await user.click(item)
@@ -856,7 +860,7 @@ describe('HistoryView', () => {
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
 
     // Selection should be preserved
-    const checkbox = screen.getByRole('checkbox', { name: /Select operation edit_block #1/ })
+    const checkbox = screen.getByRole('checkbox', { name: /Select operation Edit #1/ })
     expect(checkbox).toBeChecked()
     expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
   })
@@ -1250,9 +1254,9 @@ describe('HistoryView', () => {
     })
   })
 
-  // -- Device ID display --------------------------------------------------------
+  // -- Device display -----------------------------------------------------------
 
-  it('shows device_id for each entry', async () => {
+  it("shows the device for each entry: this one, or the synced one's id", async () => {
     const page = {
       items: [
         makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000, 'ABCDEF1234567890'),
@@ -1262,6 +1266,7 @@ describe('HistoryView', () => {
           { content: 'item 2' },
           1736848800000,
           'XY987654AABBCCDD',
+          true,
         ),
       ],
       next_cursor: null,
@@ -1274,9 +1279,8 @@ describe('HistoryView', () => {
 
     await screen.findByText('item 1')
 
-    // device_id truncated to first 8 chars
-    expect(screen.getByText('dev:ABCDEF12')).toBeInTheDocument()
-    expect(screen.getByText('dev:XY987654')).toBeInTheDocument()
+    expect(screen.getByText(t('device.thisDevice'))).toBeInTheDocument()
+    expect(screen.getByText(truncateId('XY987654AABBCCDD'))).toBeInTheDocument()
   })
 
   describe('restore to here', () => {

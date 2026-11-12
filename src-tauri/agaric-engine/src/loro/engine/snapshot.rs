@@ -40,6 +40,19 @@ impl LoroEngine {
             .export(ExportMode::Snapshot)
             .map_err(|e| AppError::validation(format!("loro: export snapshot: {e}")))
     }
+    /// [`Self::export_snapshot`] stamped as engine format `version`: the blob
+    /// another build would have saved, for tests.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn export_snapshot_as_format(&self, version: i64) -> Result<Vec<u8>, AppError> {
+        self.doc
+            .get_map(ENGINE_META_ROOT)
+            .insert(FIELD_FORMAT_VERSION, LoroValue::from(version))
+            .map_err(|e| AppError::validation(format!("loro: stamp format version: {e}")))?;
+        self.doc.commit();
+        self.doc
+            .export(ExportMode::Snapshot)
+            .map_err(|e| AppError::validation(format!("loro: export snapshot: {e}")))
+    }
     /// Stamp the current [`ENGINE_FORMAT_VERSION`] into [`ENGINE_META_ROOT`]
     /// under [`FIELD_FORMAT_VERSION`] (#1584).
     ///
@@ -75,6 +88,11 @@ impl LoroEngine {
             Ok(LoroValue::I64(n)) => Some(n),
             _ => Some(i64::MIN), // present but unparseable → sentinel the gate rejects
         }
+    }
+    /// The engine format version stamped into this doc: `None` when it carries
+    /// no stamp, a negative sentinel when the stamp is not an integer.
+    pub fn format_version_stamp(&self) -> Option<i64> {
+        Self::read_format_version(&self.doc.get_map(ENGINE_META_ROOT))
     }
     /// Reject an import whose stamped engine format version is newer than this
     /// build supports, or present but not a valid integer (#1584).
@@ -167,9 +185,8 @@ impl LoroEngine {
         // marker gates it).
         //
         // Best-effort: a migration failure must NOT fail import. Propagating it
-        // would make `rehydrate_registry` skip the space and the next op mint a
-        // fresh EMPTY engine, diverging the CRDT from the populated SQL blocks
-        // for the whole space. Log loudly and install the doc UNMIGRATED (tree
+        // would stop boot (`rehydrate_registry`, #6525) over a doc that
+        // imported fine. Log loudly and install the doc UNMIGRATED (tree
         // fractional / creation order); the next successful create/move
         // reprojects the affected sibling group (#400, review).
         self.migrate_legacy_sibling_order_best_effort();

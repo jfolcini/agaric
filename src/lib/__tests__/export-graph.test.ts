@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import JSZip from 'jszip'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makePageHeading } from '@/__tests__/fixtures'
@@ -16,7 +17,9 @@ import {
   resolveAttachmentRefsForCopy,
   sanitizeSegment,
 } from '@/lib/export-graph'
+import { t } from '@/lib/i18n'
 import { scanAttachmentRefs } from '@/lib/import-attachments'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -1599,6 +1602,28 @@ describe('downloadBlob', () => {
       clickSpy.mockRestore()
       createObjectURL.mockRestore()
       revokeObjectURL.mockRestore()
+    }
+  })
+
+  // #6538 — the Android WebView handles no `blob:` download, so the anchor
+  // would write nothing; the diagram viewer's SVG download reaches this.
+  it('on Android clicks no anchor and says file saving is unavailable', () => {
+    const userAgent = vi
+      .spyOn(navigator, 'userAgent', 'get')
+      .mockReturnValue(
+        'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36',
+      )
+    __resetPlatformCacheForTests()
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    try {
+      downloadBlob(new Blob(['<svg/>']), 'diagram.svg')
+
+      expect(clickSpy).not.toHaveBeenCalled()
+      expect(toast.info).toHaveBeenCalledWith(t('data.fileSaveUnavailableAndroid'))
+    } finally {
+      clickSpy.mockRestore()
+      userAgent.mockRestore()
+      __resetPlatformCacheForTests()
     }
   })
 })

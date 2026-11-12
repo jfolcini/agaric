@@ -973,6 +973,12 @@ export function PaletteBody({
           {t('palette.noResults', { query: trimmedQuery })}
         </div>
       )}
+      {showWelcomeEmpty && !isMobile && (
+        // Above the list for the same reason, with the Navigate commands below it.
+        <p className="px-3 py-3 text-sm text-muted-foreground" data-testid="palette-welcome-empty">
+          {t('palette.welcomeEmpty')}
+        </p>
+      )}
       <CommandList
         className="max-h-[60dvh]"
         onClickCapture={handleListClickCapture}
@@ -1003,11 +1009,14 @@ export function PaletteBody({
                 t={t}
               />
             )}
-            {showWelcomeEmpty && (
-              <CommandEmpty data-testid="palette-welcome-empty">
-                {t('palette.welcomeEmpty')}
-              </CommandEmpty>
-            )}
+            {showWelcomeEmpty &&
+              (isMobile ? (
+                <CommandEmpty data-testid="palette-welcome-empty">
+                  {t('palette.welcomeEmpty')}
+                </CommandEmpty>
+              ) : (
+                <CommandsModeBody navigateOnly onEscalate={escalate} onClose={onClose} t={t} />
+              ))}
             {showNoResults && (
               // Obsidian's quick switcher offers the query as a new page; the
               // New page dialog every new-page entry point opens takes it from here.
@@ -1068,7 +1077,7 @@ export function PaletteBody({
       {showMobileEscalation && (
         <MobileEscalationButton onEscalate={() => escalate(trimmedQuery)} t={t} />
       )}
-      {/* The footer surfaces ↵/⌘↵/esc keyboard chips; on touch (mobile search
+      {/* The footer surfaces the open / new-tab / close keyboard chips; on touch (mobile search
           sheet) they're not actionable, so only show on desktop. */}
       {mode === 'search' && !linkMode && !isMobile && <PaletteFooterHint t={t} />}
       {actionMenu != null && (

@@ -25,6 +25,7 @@ import { axe } from 'vitest-axe'
 
 import { SpaceSwitcher } from '@/components/layout/SpaceSwitcher'
 import type { SpaceRow } from '@/lib/bindings'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
@@ -209,8 +210,7 @@ describe('SpaceSwitcher', () => {
   })
 
   // Each non-disabled SelectItem must carry a digit-hotkey
-  // hint chip (`Alt+1`, `Alt+2`, … on Linux/Windows; `⌥1`, `⌥2`, … on
-  // macOS) so the shortcut is discoverable without consulting the
+  // hint chip (`Alt+1`, `Alt+2`, …) so the shortcut is discoverable without consulting the
   // keyboard cheat-sheet. The chip is rendered for the first nine
   // spaces in alphabetical order; the disabled "Manage spaces…"
   // placeholder must NOT carry a chip — it isn't bound to a hotkey
@@ -220,10 +220,6 @@ describe('SpaceSwitcher', () => {
 
     render(<SpaceSwitcher />)
 
-    // jsdom's UA does not match macOS, so `isMac()` returns false and
-    // the chip text is the spelled-out modifier (`Alt+N`). This keeps
-    // the assertion deterministic across platforms running the test
-    // suite.
     const select = screen.getByRole('combobox', { name: /Switch space/ })
     const options = select.querySelectorAll('option')
     // 2 spaces + 1 Manage placeholder.
@@ -244,13 +240,28 @@ describe('SpaceSwitcher', () => {
     expect(manageOption.textContent).not.toMatch(/Alt\+\d/)
     // Belt-and-braces: the data-testid'd chip elements are exactly two
     // (one per space) and not attached to the placeholder, and each
-    // carries the spelled-out modifier text (`Alt+N`) on non-macOS.
+    // carries the spelled-out modifier text (`Alt+N`).
     const chips = document.querySelectorAll('[data-testid^="space-hotkey-hint-"]')
     expect(chips).toHaveLength(2)
     expect(chips[0]?.getAttribute('data-testid')).toBe('space-hotkey-hint-1')
     expect(chips[0]?.textContent).toBe('Alt+1')
     expect(chips[1]?.getAttribute('data-testid')).toBe('space-hotkey-hint-2')
     expect(chips[1]?.textContent).toBe('Alt+2')
+  })
+
+  // #6548 — macOS names the same key the chord's own way, not as `⌥1`.
+  it('spells the hint chip out on macOS too', () => {
+    const originalPlatform = navigator.platform
+    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+    __resetPlatformCacheForTests()
+    try {
+      seedSpaces([PERSONAL, WORK])
+      render(<SpaceSwitcher />)
+      expect(screen.getByTestId('space-hotkey-hint-1').textContent).toBe('Alt+1')
+    } finally {
+      Object.defineProperty(navigator, 'platform', { value: originalPlatform, configurable: true })
+      __resetPlatformCacheForTests()
+    }
   })
 
   // ── trigger replaces "Space:" prefix with an accent dot ──
@@ -410,9 +421,7 @@ describe('SpaceSwitcher', () => {
     await user.hover(tooltipTrigger as HTMLElement)
 
     // Both space mappings should surface inside the tooltip — Personal
-    // first (alphabetical), Work second. jsdom's UA is not macOS so
-    // `isMac()` returns false and the chord text is the spelled-out
-    // modifier (`Alt+N`).
+    // first (alphabetical), Work second.
     await waitFor(
       async () => {
         const personalHint = await screen.findAllByText(/Alt\+1\s+Personal/)

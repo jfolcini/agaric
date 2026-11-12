@@ -64,7 +64,7 @@
 
 use sqlx::SqlitePool;
 
-use crate::loro::engine::LoroEngine;
+use crate::loro::engine::{ENGINE_FORMAT_VERSION, LoroEngine};
 use crate::loro::registry::LoroEngineRegistry;
 use agaric_core::error::AppError;
 use agaric_store::space::SpaceId;
@@ -185,57 +185,38 @@ pub async fn load_all_space_snapshots(
 
 /// Boot-time rehydration: load every persisted snapshot and seed the
 /// registry with pre-built engines.  Called once during app setup
-/// before any op-apply runs.  Errors per space are logged + continued
-/// — a single corrupt snapshot never blocks the rest of the workspace.
+/// before any op-apply runs.
+///
+/// A snapshot that will not import is an error and installs nothing (#6525):
+/// a skipped space would get an empty engine on first access, and the next save
+/// would replace the unreadable blob with it under the same PeerID. Boot turns
+/// the error into its fatal dialog.
 ///
 /// Every snapshot is imported before any index is rebuilt, and one log line
 /// marks the boundary, so `scripts/measure-boot.mjs` times the two passes
 /// apart (#5707).
 ///
-/// Returns the number of engines successfully rehydrated.
+/// Returns the number of engines rehydrated.
 pub async fn rehydrate_registry(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     device_id: &str,
-) -> usize {
+) -> Result<usize, AppError> {
     let started = std::time::Instant::now();
-    let rows = match load_all_space_snapshots(pool).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "loro:rehydrate_registry: load_all_space_snapshots failed; \
-                 starting with empty registry",
-            );
-            return 0;
-        }
-    };
+    let rows = load_all_space_snapshots(pool).await?;
 
     let mut imported = Vec::with_capacity(rows.len());
     for (space_id_str, bytes) in rows {
-        let space_id = SpaceId::from_trusted(&space_id_str);
         // #792: derive the engine's PeerID from the registry's current
         // peer-id epoch (installed at boot from `app_settings`, refreshed
         // by `reload_registry_from_db` after a RESET) so rehydrated
         // engines and lazily-created ones agree on the device's peer id.
-        let mut engine = match LoroEngine::with_peer_id_epoch(device_id, registry.peer_epoch()) {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::warn!(
-                    space_id = %space_id_str,
-                    error = %e,
-                    "loro:rehydrate_registry: with_peer_id failed; skipping space",
-                );
-                continue;
-            }
-        };
+        let mut engine = LoroEngine::with_peer_id_epoch(device_id, registry.peer_epoch())?;
         match engine.import_deferring_index(&bytes) {
-            Ok(needs_index) => imported.push((space_id, engine, needs_index)),
-            Err(e) => tracing::warn!(
-                space_id = %space_id_str,
-                error = %e,
-                "loro:rehydrate_registry: import failed; skipping space",
-            ),
+            Ok(needs_index) => {
+                imported.push((SpaceId::from_trusted(&space_id_str), engine, needs_index));
+            }
+            Err(e) => return Err(unreadable_snapshot(&space_id_str, &engine, &e)),
         }
     }
     tracing::info!(
@@ -250,7 +231,23 @@ pub async fn rehydrate_registry(
         }
         registry.install_engine(space_id, engine);
     }
-    ok
+    Ok(ok)
+}
+
+/// The error for a snapshot that failed to import into `engine`, worded for the
+/// boot dialog: a stamp newer than this build names the fix.
+fn unreadable_snapshot(space_id: &str, engine: &LoroEngine, cause: &AppError) -> AppError {
+    let supported = i64::from(ENGINE_FORMAT_VERSION);
+    match engine.format_version_stamp() {
+        Some(found) if found > supported => AppError::Snapshot(format!(
+            "This vault was last opened by a newer version of Agaric (engine format {found}; \
+             this version reads up to {supported}). Install that newer version to open it."
+        )),
+        _ => AppError::Snapshot(format!(
+            "The saved state of space {space_id} cannot be read ({cause}). Agaric stopped \
+             rather than overwrite it."
+        )),
+    }
 }
 
 /// In-process engine reload after a wholesale replace of the Loro sidecar
@@ -314,7 +311,7 @@ pub async fn reload_registry_from_db(
         registry.set_peer_epoch(epoch);
     }
     registry.clear();
-    Ok(rehydrate_registry(pool, registry, device_id).await)
+    rehydrate_registry(pool, registry, device_id).await
 }
 
 /// What one [`save_all_engines`] pass did.
@@ -510,12 +507,10 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 /// `INSERT OR REPLACE` above, so excluding it costs nothing.)
 ///
 /// Spaces with NO engine in the registry are excluded because "not
-/// attempted" is NOT the same as "clean" for them: `rehydrate_registry`
-/// SKIPS a space whose blob fails to import (and one whose peer-id mint
-/// fails), leaving the row in place with no engine behind it. Such a row
-/// is unverified, not clean — advancing it would assert that an
-/// unreadable blob reflects the whole log and would suppress the rebuild
-/// the boot heal exists to drive. `snapshot_dirty_engines` phase 2 also
+/// attempted" is NOT the same as "clean" for them: a row with no engine
+/// behind it was never verified against one, and advancing it would assert
+/// that a blob nobody read reflects the whole log and would suppress the
+/// rebuild the boot heal exists to drive. `snapshot_dirty_engines` phase 2 also
 /// skips a dirty space that is absent from the map, which this exclusion
 /// covers as well.
 ///
@@ -598,9 +593,8 @@ async fn advance_clean_space_watermarks(
             continue;
         }
         // A row whose space is absent from `installed` never had its blob
-        // verified against an engine in this pass (a failed rehydrate import
-        // is the live case), so it is left pinning `MIN` — which is precisely
-        // the full-rebuild signal it needs.
+        // verified against an engine in this pass, so it is left pinning
+        // `MIN` — which is precisely the full-rebuild signal it needs.
         if !installed.iter().any(|s| s.as_str() == space_id) {
             continue;
         }
@@ -901,7 +895,9 @@ mod tests {
 
         // Fresh registry: rehydrate.
         let registry = LoroEngineRegistry::new();
-        let n = rehydrate_registry(&pool, &registry, "device-1").await;
+        let n = rehydrate_registry(&pool, &registry, "device-1")
+            .await
+            .expect("rehydrate");
         assert_eq!(n, 2, "both spaces must rehydrate");
         assert_eq!(registry.len(), 2);
 
@@ -936,7 +932,9 @@ mod tests {
                         .await
                         .expect("save");
                 }
-                rehydrate_registry(&pool, &LoroEngineRegistry::new(), "device-1").await
+                rehydrate_registry(&pool, &LoroEngineRegistry::new(), "device-1")
+                    .await
+                    .expect("rehydrate")
             })
         });
         assert_eq!(n, 2);
@@ -1323,17 +1321,17 @@ mod tests {
 
     /// #3309 — "not attempted this pass" is NOT the same as "clean". A row
     /// whose space has NO engine in the registry was never verified against
-    /// anything: `rehydrate_registry` SKIPS a space whose blob fails to
-    /// import, leaving exactly this shape. Advancing such a row would claim
-    /// an unreadable blob reflects the whole op-log and would suppress the
-    /// boot rebuild that is the only thing that can repair it.
+    /// anything. Advancing such a row would claim a blob nobody read reflects
+    /// the whole op-log and would suppress the boot rebuild that is the only
+    /// thing that can repair it. (Boot no longer leaves this shape behind: a
+    /// blob that fails to import stops it, #6525.)
     #[tokio::test]
     async fn save_all_engines_does_not_advance_watermark_of_unrehydrated_space_3309() {
         let (pool, _dir) = fresh_pool().await;
         let registry = LoroEngineRegistry::new();
         let space_a = SpaceId::from_trusted(SPACE_A);
 
-        // B has a row but NO engine — the failed-rehydrate shape.
+        // B has a row but NO engine — the row-without-an-engine shape.
         seed_row(&pool, SPACE_B, 1).await;
         seed_op_log_head(&pool, 500).await;
         {
@@ -2083,7 +2081,9 @@ mod tests {
         // Simulate a fresh process boot: rehydrate a brand-new registry
         // strictly from whatever `loro_doc_state` now holds.
         let booted = LoroEngineRegistry::new();
-        let n = rehydrate_registry(&pool, &booted, "device-1").await;
+        let n = rehydrate_registry(&pool, &booted, "device-1")
+            .await
+            .expect("rehydrate");
 
         assert_eq!(
             n, 1,

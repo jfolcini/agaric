@@ -77,7 +77,7 @@ async function replaceBlockText(from: string, to: string): Promise<void> {
 async function editRow(marker: string) {
   const row = $(
     '//*[@data-history-item]' +
-      '[.//*[@data-testid="history-type-badge"][normalize-space(.)="edit_block"]]' +
+      '[.//*[@data-testid="history-type-badge"][@data-op-type="edit_block"]]' +
       `[.//*[contains(@class, "history-item-preview")][contains(normalize-space(.), "${marker}")]]`,
   )
   await row.waitForDisplayed({

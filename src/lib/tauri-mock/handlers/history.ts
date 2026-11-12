@@ -794,8 +794,7 @@ export const historyHandlers = {
     // same way `revert_ops` above already handles them (#4870). Filtering them
     // out under-counted `ops_reverted` and left the op-log tail short.
     // `select_ops_after_target` (history.rs) takes an UNSCOPED query when
-    // `page_id == "__all__"` and the page-scoped one otherwise. The only UI
-    // call site passes `__all__`, which is why an unscoped sweep looked right.
+    // `page_id == "__all__"` and the page-scoped one otherwise.
     const pageId = a['pageId'] as string
     const scope = pageId === GLOBAL_HISTORY_PAGE_ID ? null : pageSubtreeIds(pageId)
     const newer = sortOpLogNewestFirst(

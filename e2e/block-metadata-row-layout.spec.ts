@@ -114,8 +114,7 @@ test.describe('Block metadata row layout, desktop (#5332) @editor @mobile', () =
     await focusBlockById(page, (await row.getAttribute('data-block-id')) ?? '')
     await replaceEditorText(page, LONG_TEXT)
     await saveBlock(page, 'Escape')
-    // That Escape leaves the block selected, which hides its task checkbox;
-    // a second Escape clears the selection.
+    // That Escape leaves the block selected; a second Escape clears the selection.
     await page.keyboard.press('Escape')
     await expect(row.getByTestId('task-marker')).toBeVisible()
 

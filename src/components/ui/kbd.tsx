@@ -93,13 +93,17 @@ export function KbdChord({ keys, size, className }: KbdChordProps): React.ReactE
           // oxlint-disable-next-line react/no-array-index-key -- tokens are positional and never reordered, so the index uniquely + stably identifies each Fragment; keying by token text alone produced duplicate keys for repeated tokens (#1562)
           <Fragment key={`${i}-${alt}`}>
             {i > 0 && <span className="mx-1 font-normal text-muted-foreground">/</span>}
-            {parts.map((part, j) => (
-              // oxlint-disable-next-line react/no-array-index-key -- tokens are positional and never reordered, so the index uniquely + stably identifies each Fragment; keying by token text alone produced duplicate keys for repeated tokens (#1562)
-              <Fragment key={`${i}-${j}-${part}`}>
-                {j > 0 && <span className="mx-0.5 font-normal text-muted-foreground">+</span>}
-                <Kbd size={size}>{part}</Kbd>
-              </Fragment>
-            ))}
+            {/* Alternatives wrap between each other; from `sm` up one never
+                breaks mid-chord. A phone's narrow column still wraps it. */}
+            <span className="inline-flex flex-wrap items-center sm:flex-nowrap">
+              {parts.map((part, j) => (
+                // oxlint-disable-next-line react/no-array-index-key -- tokens are positional and never reordered, so the index uniquely + stably identifies each Fragment; keying by token text alone produced duplicate keys for repeated tokens (#1562)
+                <Fragment key={`${i}-${j}-${part}`}>
+                  {j > 0 && <span className="mx-0.5 font-normal text-muted-foreground">+</span>}
+                  <Kbd size={size}>{part}</Kbd>
+                </Fragment>
+              ))}
+            </span>
           </Fragment>
         )
       })}

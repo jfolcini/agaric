@@ -17,7 +17,7 @@
 
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import {
@@ -25,6 +25,18 @@ import {
   PaletteActionMenu,
   type PaletteActionMenuProps,
 } from '@/components/palette/PaletteActionMenu'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
+
+const ORIGINAL_PLATFORM = navigator.platform
+
+function setPlatform(value: string): void {
+  Object.defineProperty(navigator, 'platform', { value, configurable: true })
+  __resetPlatformCacheForTests()
+}
+
+afterEach(() => {
+  setPlatform(ORIGINAL_PLATFORM)
+})
 
 const ANCHOR = {
   bottom: 100,
@@ -39,7 +51,7 @@ const ANCHOR = {
 } as DOMRect
 
 const ACTIONS: ReadonlyArray<PaletteAction> = [
-  { id: 'open', label: 'Open in new tab', hint: '⌘↵' },
+  { id: 'open', label: 'Open in new tab', hint: 'Ctrl + Enter' },
   { id: 'bookmark', label: 'Bookmark' },
   { id: 'delete', label: 'Delete page' },
 ]
@@ -86,11 +98,20 @@ describe('PaletteActionMenu', () => {
     expect(screen.queryByRole('menuitem')).not.toBeInTheDocument()
   })
 
-  it('renders the optional hint chip as decorative (aria-hidden)', () => {
+  // The catalog's `Ctrl` is the platform mod key (#6548).
+  it.each([
+    ['Linux x86_64', 'Ctrl'],
+    ['Win32', 'Ctrl'],
+    ['MacIntel', '⌘'],
+  ])('renders the optional hint chip as decorative (aria-hidden) on %s', (platform, mod) => {
+    setPlatform(platform)
     renderMenu()
 
-    const hint = screen.getByText('⌘↵')
-    expect(hint).toBeInTheDocument()
+    const hint = screen.getByTestId('palette-action-open-hint')
+    expect(Array.from(hint.querySelectorAll('kbd')).map((k) => k.textContent)).toEqual([
+      mod,
+      'Enter',
+    ])
     expect(hint).toHaveAttribute('aria-hidden', 'true')
   })
 

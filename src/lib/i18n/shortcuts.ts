@@ -55,7 +55,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.moveToNextBlock': 'Move to next block',
   'keyboard.followLink': 'Follow the link',
   'keyboard.condition.atLink': 'At a page link or block reference',
-  'keyboard.saveBlockAndClose': 'Save block and close editor',
+  'keyboard.saveBlockAndClose': 'Save block and add a new block below',
   'keyboard.leaveBlockAndSelect': 'Save block, close editor and select the block',
   'keyboard.deleteBlock': 'Delete block',
   'keyboard.mergeWithPrevious': 'Merge with previous',

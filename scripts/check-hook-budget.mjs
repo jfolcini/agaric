@@ -31,7 +31,7 @@ import { join } from 'node:path'
 
 // The cap is the hook count, with no headroom (#6566): every new hook either
 // replaces one or raises this number in a reviewed diff.
-const HOOK_CAP = 105
+const HOOK_CAP = 104
 // Anchored on this file's own location, not the cwd: prek invokes hooks from
 // the repo root today, but nothing in the hook contract guarantees it, and the
 // sibling change in this same commit adds the identical anchor to

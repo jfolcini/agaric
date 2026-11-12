@@ -76,8 +76,7 @@
 # ─── always_run, not a `files:` key (prek.toml) ───────────────────────────
 #
 # The hook stanza uses `always_run = true` with no `files` regex, for the
-# reason `check-sqlx-cache-drift` and `migrations-immutable` already
-# document: prek's changed-file set EXCLUDES deletions, so a `files`-keyed
+# reason `migrations-immutable` already documents: prek's changed-file set EXCLUDES deletions, so a `files`-keyed
 # hook is skipped outright on a commit that only deletes a session log —
 # verified against prek 0.3.8, which reported "(no files to check)Skipped"
 # for exactly that commit. A path-keyed trigger would also be one more

@@ -93,7 +93,7 @@ test.describe('HistoryView batch revert @pages', () => {
     const createEntry = page
       .locator('[data-history-item]')
       .filter({
-        has: page.locator('[data-testid="history-type-badge"]', { hasText: 'create_block' }),
+        has: page.locator('[data-testid="history-type-badge"][data-op-type="create_block"]'),
       })
       .first()
     await expect(createEntry).toBeVisible()
@@ -134,7 +134,7 @@ test.describe('HistoryView batch revert @pages', () => {
     const deleteEntry = page
       .locator('[data-history-item]')
       .filter({
-        has: page.locator('[data-testid="history-type-badge"]', { hasText: 'delete_block' }),
+        has: page.locator('[data-testid="history-type-badge"][data-op-type="delete_block"]'),
       })
       .first()
     await expect(deleteEntry).toBeVisible()
@@ -189,7 +189,7 @@ test.describe('HistoryView batch revert @pages', () => {
     const deleteEntry = page
       .locator('[data-history-item]')
       .filter({
-        has: page.locator('[data-testid="history-type-badge"]', { hasText: 'delete_block' }),
+        has: page.locator('[data-testid="history-type-badge"][data-op-type="delete_block"]'),
       })
       .first()
     await deleteEntry.getByRole('checkbox').click()
