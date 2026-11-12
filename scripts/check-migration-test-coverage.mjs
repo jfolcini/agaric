@@ -25,9 +25,7 @@
 // filter's `_0[0-9]{3}_` half would actually select. It does NOT run
 // nextest, compile anything, or need `DATABASE_URL`: this is a textual scan
 // over migration filenames and Rust test-function names, the same "narrow
-// and mechanical" scoping the rest of this repo's prek guards use — see
-// `check-pr-overlap-trust-boundary.mjs`'s header for the same argument made
-// at length.
+// and mechanical" scoping the rest of this repo's prek guards use.
 //
 // ─── Baseline (shrink-only) ────────────────────────────────────────────
 //
@@ -106,9 +104,8 @@ const BASELINE_FILE = join(REPO_ROOT, 'src-tauri', 'migrations-test-coverage-bas
 // The exact files AGENTS.md names as carrying migration tests: "These live
 // in db::tests (src-tauri/src/db/tests.rs) — and a few siblings under
 // snapshot/spaces." Scoped to these three, not every `*.rs` file in the
-// tree, for the same reason `check-android-trigger.mjs` and
-// `check-pr-overlap-trust-boundary.mjs` scope to the ONE file each is
-// about: this is insurance for the specific convention AGENTS.md documents,
+// tree, for the same reason `check-android-trigger.mjs` scopes to the ONE
+// file it is about: this is insurance for the specific convention AGENTS.md documents,
 // not a general "does some test somewhere mention this migration" search. A
 // test with the right name sitting in a file OTHER than these three does
 // not satisfy the documented convention (nor would it be selected by

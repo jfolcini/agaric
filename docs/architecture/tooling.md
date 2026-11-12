@@ -14,7 +14,7 @@ Because both consumers come from the same token tree, the handler and the bindin
 
 Bindings are generated into `src/lib/bindings.ts` by the `regenerate_ts_bindings` ignored test (`cargo test --lib -- specta_tests --ignored`). The generated file is checked in. A Rust test gate (`ts_bindings_up_to_date`) runs in CI; the generated content is whitespace-and-header-normalised before compare, so cosmetic diffs don't fail the gate.
 
-The frontend never calls `invoke()` directly (enforced by the `no-raw-invoke` prek hook). It calls the generated `commands.*` surface and unwraps with `unwrap` from `@/lib/app-error`. The hand-written wrapper layer that used to sit on top is gone (#2927), along with the ratchet that retired it; what survives is the small permanent floor in `src/lib/ipc-helpers.ts`. See [`frontend.md § Tauri command surface`](frontend.md).
+The frontend never calls `invoke()` directly (enforced by an oxlint `no-restricted-imports` entry in `.oxlintrc.json`). It calls the generated `commands.*` surface and unwraps with `unwrap` from `@/lib/app-error`. The hand-written wrapper layer that used to sit on top is gone (#2927), along with the ratchet that retired it; what survives is the small permanent floor in `src/lib/ipc-helpers.ts`. See [`frontend.md § Tauri command surface`](frontend.md).
 
 ## Compile-time SQL
 
@@ -43,8 +43,7 @@ Notable hooks that enforce architectural contracts:
 
 - **`tauri-command-sanitize`** — see Security § Error sanitization below.
 - **`tauri-mock-parity`** — fails if `src/lib/tauri-mock/handlers.ts` is missing a handler the frontend calls.
-- **`no-raw-invoke`** — no bare `invoke()` in app code.
-- **`lib-layering`** — ranks the frontend tiers `lib(0) ← stores(1) ← hooks(2) ← components(3)` and fails a commit where a lower tier imports a higher one (#3121). No baseline: any upward import fails. Distinct from `import-cycles` (which only proves acyclicity) and `store-layering` (store-to-store edges only); `src/editor/`, `src/workers/` and `src/types/` are out of scope on both sides. Full rules in [`frontend.md`](frontend.md) § `lib-layering` — the frontend tier guard.
+- **`lib-layering`** — ranks the frontend tiers `lib(0) ← stores(1) ← hooks(2) ← components(3)` and fails CI where a lower tier imports a higher one (#3121). No baseline: any upward import fails. Distinct from `import-cycles` (which only proves acyclicity) and `store-layering` (store-to-store edges only); `src/editor/`, `src/workers/` and `src/types/` are out of scope on both sides. Full rules in [`frontend.md`](frontend.md) § `lib-layering` — the frontend tier guard.
 - **`migrations-immutable`** — refuses changes to already-shipped migrations.
 - **`migrations-strict-tables`** — every new schema migration must use `STRICT` mode.
 - **`ipc-error-path-coverage`** — every Tauri command's error paths must be exercised by tests.

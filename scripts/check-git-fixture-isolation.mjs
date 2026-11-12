@@ -509,7 +509,7 @@ export function checkFixtureIsolation(files) {
 /** Throws with every offending file named, or returns silently. */
 export function assertFixtureIsolation({ scriptsDir = SCRIPTS_DIR } = {}) {
   const files = listGuardedScripts(scriptsDir)
-  // Wiring guard (mirrors check-zizmor-version-pin.mjs), PER EXTENSION. A
+  // Wiring guard, PER EXTENSION. A
   // total-count check is not enough: this guard's own #4015 defect was a scan
   // that found ~30 files and reported "checked" while an entire language went
   // uninspected, so the thing that has to be impossible is a scanned

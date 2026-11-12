@@ -2,74 +2,63 @@
 # ─────────────────────────────────────────────────────────────────────
 # axe-presence check.
 #
-# Per src/__tests__/AGENTS.md § Accessibility audit, every component test file in
-# src/components/__tests__/*.test.tsx must include at least one
-# axe(...) audit. Without this, accessibility regressions slip
+# Per src/__tests__/AGENTS.md § Accessibility audit, every component test
+# file (`*.test.tsx` under src/components/ and src/editor/) must include at
+# least one axe audit. Without this, accessibility regressions slip
 # through component additions because reviewers can't catch the
 # missing audit by eye on every PR.
 #
-# This script lists every .test.tsx in src/components/__tests__/ that
-# does NOT contain a real axe audit. The positive match requires BOTH
-# an `await axe(` call and a `toHaveNoViolations` assertion (#818) —
-# the old loose `axe(` pattern was satisfied by a mere COMMENT
-# mentioning 'axe(', which defeated the check, and either token alone
-# can still appear in a comment.
+# A real audit is BOTH an `await axe(` call and a `toHaveNoViolations`
+# assertion (#818): either token alone can sit in a comment.
 #
 # Opt-out (#818): a test file that genuinely renders no DOM (e.g. a
 # hook-wiring test that only asserts store/event plumbing) may carry a
-# `// axe-exempt: <reason>` marker — same allow-marker idiom as
-# `// allow-raw-tx:` / `# snapshot-allow-*`. The reason is mandatory:
-# a bare `// axe-exempt:` with nothing after the colon does not count.
+# `// axe-exempt: <reason>` marker. The reason is mandatory: a bare
+# `// axe-exempt:` with nothing after the colon does not count.
+#
+# scripts/axe-presence-baseline.txt lists the files that had neither when
+# the scan widened past src/components/__tests__/ (#6566). It only
+# shrinks: a listed file that gains an audit or an exemption, or is
+# deleted, fails until its line is removed.
 #
 # Usage: scripts/check-axe-presence.sh
-# Exit:  0 = clean, 1 = at least one file missing axe(...).
+# Exit:  0 = clean, 1 = a file missing an audit or a stale baseline line,
+#        2 = nothing to scan (repo layout changed).
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
+export LC_ALL=C
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
-TESTS_DIR="$ROOT/src/components/__tests__"
+cd "$(dirname "$0")/.."
+BASELINE=scripts/axe-presence-baseline.txt
 
-if [ ! -d "$TESTS_DIR" ]; then
-  echo "ERROR: $TESTS_DIR does not exist — repo layout changed?"
+mapfile -t files < <(find src/components src/editor -name '*.test.tsx' | sort)
+if [ "${#files[@]}" -eq 0 ]; then
+  echo "ERROR: no *.test.tsx under src/components or src/editor — repo layout changed?"
+  exit 2
+fi
+if [ ! -r "$BASELINE" ]; then
+  echo "ERROR: $BASELINE is missing or unreadable."
   exit 2
 fi
 
-missing=""
-count=0
-exempt=0
-for f in "$TESTS_DIR"/*.test.tsx; do
-  [ -e "$f" ] || continue
-  count=$((count + 1))
-  # Real audit: an actual axe call AND the assertion. Requiring BOTH
-  # tokens (not either) keeps a stray comment mentioning just
-  # 'toHaveNoViolations' (or just 'await axe(') from satisfying the
-  # check — the same comment-defeat #818 closed for the old loose
-  # 'axe(' pattern. Covers both shapes in the tree:
-  #   expect(await axe(container)).toHaveNoViolations()
-  #   const results = await axe(container); expect(results).toHaveNoViolations()
-  if grep -q -E "await[[:space:]]+axe[[:space:]]*\(" "$f" \
-    && grep -q "toHaveNoViolations" "$f"; then
-    continue
-  fi
-  # Explicit opt-out with a non-empty reason.
-  if grep -q -E "//[[:space:]]*axe-exempt:[[:space:]]*[^[:space:]]" "$f"; then
-    exempt=$((exempt + 1))
-    continue
-  fi
-  missing="${missing}${f}"$'\n'
-done
-missing=${missing%$'\n'}
+# `|| true`: grep exits 1 when nothing matches, which is an empty list here.
+mapfile -t with_axe < <(grep -l -E 'await[[:space:]]+axe[[:space:]]*\(' "${files[@]}" || true)
+audited=()
+if [ "${#with_axe[@]}" -gt 0 ]; then
+  mapfile -t audited < <(grep -l 'toHaveNoViolations' "${with_axe[@]}" || true)
+fi
+mapfile -t exempt < <(grep -l -E '//[[:space:]]*axe-exempt:[[:space:]]*[^[:space:]]' "${files[@]}" || true)
 
-if [ -n "$missing" ]; then
-  echo "ERROR: component test files missing axe(...) audit:"
-  while IFS= read -r f; do
-    echo "  ${f#"$ROOT/"}"
-  done <<<"$missing"
+missing=$(comm -23 <(printf '%s\n' "${files[@]}") <(printf '%s\n' "${audited[@]}" "${exempt[@]}" | sort -u))
+listed=$({ grep -v -E '^(#|$)' "$BASELINE" || true; } | sort)
+new=$(comm -23 <(printf '%s\n' "$missing") <(printf '%s\n' "$listed"))
+stale=$(comm -13 <(printf '%s\n' "$missing") <(printf '%s\n' "$listed"))
+
+if [ -n "$new" ]; then
+  echo "ERROR: component test files missing an axe audit:"
+  while IFS= read -r f; do echo "  $f"; done <<<"$new"
   echo ""
-  echo "Every src/components/__tests__/*.test.tsx must include at least one"
-  echo "axe audit (expect(await axe(container)).toHaveNoViolations()) per"
-  echo "src/__tests__/AGENTS.md § Accessibility audit. Add an 'a11y' it() block following"
-  echo "the pattern in that doc, e.g.:"
+  echo "Add an 'a11y' it() block following src/__tests__/AGENTS.md § Accessibility audit:"
   echo ""
   echo "  it('has no a11y violations', async () => {"
   echo "    const { container } = render(<MyComponent />)"
@@ -80,7 +69,13 @@ if [ -n "$missing" ]; then
   echo ""
   echo "Non-rendering test files (hook-wiring only, no DOM) may opt out"
   echo "with a '// axe-exempt: <reason>' comment instead."
-  exit 1
 fi
+if [ -n "$stale" ]; then
+  echo "ERROR: $BASELINE lists files that now audit, are exempt, or are gone:"
+  while IFS= read -r f; do echo "  $f"; done <<<"$stale"
+  echo "Delete those lines; the baseline only shrinks."
+fi
+if [ -n "$new" ] || [ -n "$stale" ]; then exit 1; fi
 
-echo "OK: all $count component test files include an axe(...) audit ($exempt axe-exempt)."
+n_listed=$(printf '%s' "$listed" | grep -c . || true)
+echo "OK: ${#files[@]} component test files: ${#audited[@]} audit, ${#exempt[@]} axe-exempt, $n_listed grandfathered in $BASELINE."

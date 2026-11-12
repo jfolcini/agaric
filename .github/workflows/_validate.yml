@@ -641,7 +641,7 @@ jobs:
           # scripts/setup-hooks.sh (which installs these versions locally,
           # replacing any different one already on PATH) and the same pins
           # in the two scheduled-deep-checks.yml install steps. Verified by
-          # scripts/check-prek-version-pin.mjs.
+          # scripts/check-tool-pins.mjs.
           tool: prek@0.3.8,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.46.0,sqruff@0.38.0
 
       # ci/path-conditional-jobs: the cargo-* plugins are invoked only by the
@@ -1129,7 +1129,12 @@ jobs:
         # `docs/architecture/*.md` here.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: prek run --all-files markdownlint md-link-targets doc-vs-code-paths typos remove-after-markers architecture-citations dead-symbol-citations
+        run: prek run --all-files markdownlint md-link-targets typos remove-after-markers architecture-citations dead-symbol-citations
+
+      - name: Run doc-vs-code-paths (manual-stage hook)
+        # A `manual`-stage hook, which the default-stage run above drops
+        # without a word when named, so it needs the explicit selector.
+        run: prek run --all-files --hook-stage manual doc-vs-code-paths
 
       - name: Run lychee link check (pre-push-staged hook)
         # lychee is staged `pre-push` in prek.toml, so it needs the explicit

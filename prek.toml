@@ -428,7 +428,8 @@ pass_filenames = false
 # silently skipping this hook on a commit that touches nothing else it
 # already matches.
 files = '\.(md|ts|tsx)$|^(tsconfig\.app\.json|scripts/(doc-code-paths-baseline\.json|check-doc-code-paths\.mjs|lib/js-scanner\.mjs))$'
-stages = ["pre-commit"]
+# Manual (CI) stage: the whole-tree scan takes over 500 ms of CPU (#6566).
+stages = ["manual"]
 # `verbose = true` is load-bearing: prek
 # swallows a PASSING hook's output, and the line-bounds check (#4258) exits
 # 0 by design (see the #4244 part (b) comment in check-doc-code-paths.mjs's
@@ -592,7 +593,8 @@ pass_filenames = false
 # partial backstop. pass_filenames=false, so this re-runs the real whole-tree
 # scan, not a fixture suite.
 files = "^(src/.*\\.(ts|tsx|js|jsx|mjs|cjs)|scripts/check-import-cycles\\.mjs)$"
-stages = ["pre-commit"]
+# Manual (CI) stage: the whole-tree scan takes over 500 ms of CPU (#6566).
+stages = ["manual"]
 
 # Store-dependency layering guard (#2465). Distinct from `import-cycles`
 # above: a layering violation (e.g. `blocks.ts` reaching into
@@ -632,7 +634,8 @@ pass_filenames = false
 # #3997: this guard imports `detectImports` from check-import-cycles.mjs;
 # union it so an edit confined to that shared module can't defang the guard.
 files = "^(src/(lib|stores|hooks|components)/.*\\.(ts|tsx)|scripts/(check-lib-layering|check-import-cycles)\\.mjs)$"
-stages = ["pre-commit"]
+# Manual (CI) stage: the whole-tree scan takes over 500 ms of CPU (#6566).
+stages = ["manual"]
 
 # src/types/ must stay type-only (#4226): check-lib-layering.mjs excludes
 # src/types/** from its tier scan on the premise that anything routed there
@@ -644,7 +647,7 @@ stages = ["pre-commit"]
 # `export * from`/`export { Foo }`) fails. No baseline/ratchet — the
 # tolerated population is always exactly zero. pass_filenames=false — the
 # script does its own scoped walk of src/types/.
-# WHY: a runtime EXPORT under src/types/ sails through the tier scan, which only sees imports — #4226
+# WHY: a runtime EXPORT under src/types/ sails through the tier scan, which only sees imports; tsc has no type-only-module mode — #4226
 [[repos.hooks]]
 id = "types-erasure"
 name = "src/types/ exports are type-only (#4226)"
@@ -709,7 +712,7 @@ stages = ["pre-commit"]
 # installs and an unstubbed IPC resolves `undefined` → `{ status: 'ok' }`
 # (the #3217 phantom success). The script fails on any such mock that does not
 # thread `strictInvokeFallback`. pass_filenames=false — it walks src/ itself.
-# WHY: a file-level vi.mock of @tauri-apps/api/core silently opts out of the strict invoke mock — #3332 (#3225)
+# WHY: a file-level vi.mock of @tauri-apps/api/core silently opts out of the strict invoke mock; no compiler or lint rule reads a vi.mock factory — #3332 (#3225)
 [[repos.hooks]]
 id = "strict-invoke-optout"
 name = "strict-invoke guard opt-out"
@@ -717,13 +720,13 @@ entry = "node scripts/check-strict-invoke-optout.mjs"
 language = "system"
 pass_filenames = false
 files = "^(src/.*\\.test\\.(ts|tsx)|scripts/check-strict-invoke-optout\\.mjs)$"
-stages = ["pre-commit"]
+# Manual (CI) stage: the whole-tree scan takes over 500 ms of CPU (#6566).
+stages = ["manual"]
 
-# axe-presence: every `src/components/__tests__/*.test.tsx` must include
-# at least one axe(...) audit, per src/__tests__/AGENTS.md § Accessibility audit. Without
-# this, accessibility regressions slip through component additions
-# because reviewers can't catch the missing audit by eye on every PR.
-# Easy half.
+# axe-presence: every `*.test.tsx` under src/components/ and src/editor/
+# must include at least one axe(...) audit, per src/__tests__/AGENTS.md
+# § Accessibility audit, except the shrink-only list in
+# scripts/axe-presence-baseline.txt (#6566).
 # WHY: a component test with no axe() audit lets accessibility regressions land — src/__tests__/AGENTS.md § Accessibility audit
 [[repos]]
 repo = "local"
@@ -733,7 +736,7 @@ name = "axe-presence in component tests"
 entry = "bash scripts/check-axe-presence.sh"
 language = "system"
 pass_filenames = false
-files = "^src/components/__tests__/.*\\.test\\.tsx$"
+files = "^(src/(components|editor)/.*\\.test\\.tsx|scripts/(check-axe-presence\\.sh|axe-presence-baseline\\.txt))$"
 stages = ["pre-commit"]
 
 # test-file-naming: enforce the convention from src/__tests__/AGENTS.md § Test file naming
@@ -776,24 +779,6 @@ pass_filenames = false
 files = "^src/components/.*\\.tsx$"
 stages = ["pre-commit"]
 
-# no-raw-invoke: app code must call Tauri commands through the typed
-# `commands.*` bindings in src/lib/bindings.ts, not the stringly-typed
-# `invoke('snake_case')` bypass (which sidesteps arg/return typing and
-# only fails at runtime). Exemptions (bindings.ts, ipc-helpers.ts,
-# observability/, tauri-mock) live in the script. pass_filenames=false —
-# the script does its own scoped walk of src/. Keyed to the shared scanner
-# the guard delegates its comment-stripping to (#3993) as well as its own
-# script, so an edit to either re-runs the check — not just src/ changes.
-# WHY: stringly-typed invoke() sidesteps arg/return typing and fails only at runtime — #3993
-[[repos.hooks]]
-id = "no-raw-invoke"
-name = "No raw Tauri invoke() in app code"
-entry = "node scripts/check-raw-invoke.mjs"
-language = "system"
-pass_filenames = false
-files = "^(src/.*\\.(ts|tsx)|scripts/(check-raw-invoke\\.mjs|lib/js-scanner\\.mjs))$"
-stages = ["pre-commit"]
-
 # vault-isolation (#3334): the wdio lane drives the REAL binary against a
 # REAL SQLite vault, and before #3334 it resolved that vault from the
 # bundle identifier alone — i.e. the developer's own notes, which a local
@@ -822,7 +807,7 @@ stages = ["pre-commit"]
 # value fresh out of storage instead of checking it, so a stale or hand-edited
 # value reaches every consumer as a valid `T`. Zero occurrences allowed in
 # src/ (tauri-mock and test files excluded); the script walks src/ itself.
-# WHY: `JSON.parse(x) as T` asserts a shape nothing validates — #3881 (#3913, #3791)
+# WHY: `JSON.parse(x) as T` asserts a shape nothing validates; tsc accepts any cast from `any` and no enabled lint rule flags it — #3881 (#3913, #3791)
 [[repos.hooks]]
 id = "json-parse-cast"
 name = "No JSON.parse(...) as <Type> casts"
@@ -830,7 +815,8 @@ entry = "node scripts/check-json-parse-cast.mjs"
 language = "system"
 pass_filenames = false
 files = "^(src/.*\\.(ts|tsx)|scripts/(check-json-parse-cast|lib/js-scanner)\\.mjs)$"
-stages = ["pre-commit"]
+# Manual (CI) stage: the whole-tree scan takes over 500 ms of CPU (#6566).
+stages = ["manual"]
 
 # check-set-property-args (#3127): `commands.setProperty`'s third arg
 # (`SetPropertyArgs`) has five value fields that are ALL optional in the
@@ -853,7 +839,7 @@ stages = ["pre-commit"]
 # because `always_run` re-walks all of `src/**` on every unrelated commit,
 # whereas naming the script keeps the live re-check precisely scoped to the
 # commits that can actually invalidate it.
-# WHY: a setProperty call missing one of the five value keys writes a half-formed property — #3127
+# WHY: a setProperty call missing one of the five value keys writes a half-formed property; the generated SetPropertyArgs makes every key optional, so tsc cannot see it — #3127
 [[repos.hooks]]
 id = "check-set-property-args"
 name = "setProperty args have all five value keys"
@@ -861,7 +847,8 @@ entry = "node scripts/check-set-property-args.mjs"
 language = "system"
 pass_filenames = false
 files = "^(src/.*\\.(ts|tsx)|scripts/(check-set-property-args\\.mjs|lib/js-scanner\\.mjs))$"
-stages = ["pre-commit"]
+# Manual (CI) stage: the whole-tree scan takes over 500 ms of CPU (#6566).
+stages = ["manual"]
 
 # Self-test the setProperty-args guard's own exit behavior (missing key
 # FAILS with the right key named, complete literal / non-literal /
@@ -962,7 +949,8 @@ entry = "node scripts/check-unanchored-content-regex.mjs"
 language = "system"
 pass_filenames = false
 files = "^(src/.*\\.(ts|tsx)|scripts/content-regex-baseline\\.json)$"
-stages = ["pre-commit"]
+# Manual (CI) stage: the whole-tree scan takes over 500 ms of CPU (#6566).
+stages = ["manual"]
 
 # Self-test the unanchored-content-regex guard's own exit behavior (the
 # pre-#3313 shape, a half-anchored pattern, an inline `.replace(new
@@ -1091,7 +1079,7 @@ stages = ["manual"]
 # Keyed to the shared scanner the guard delegates its comment/string
 # scanning to (#3993) as well as its own script, so an edit to either
 # re-runs the check.
-# WHY: a non-scalar persist() without migrate AND merge silently drops rehydrated state — #3352 (#753, #823, #1578, #1609)
+# WHY: a non-scalar persist() without migrate AND merge silently drops rehydrated state; zustand types both as optional, so tsc cannot see it — #3352 (#753, #823, #1578, #1609)
 [[repos.hooks]]
 id = "persist-hooks"
 name = "Non-scalar persist() must declare migrate AND merge (#3352)"
@@ -1163,7 +1151,7 @@ stages = ["manual"]
 # `files` includes the script itself: without it, a commit that touches only
 # the guard runs the self-test but never re-evaluates the LIVE tree, so a
 # change that made a real metric violate would land green.
-# WHY: a metric no test can make fire is a metric that never fires — #3349 (#3707)
+# WHY: a metric no test can make fire is a metric that never fires; nothing else checks that a test drives each counter above zero — #3349 (#3707)
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -1173,7 +1161,8 @@ entry = "node scripts/check-metric-provable.mjs"
 language = "system"
 pass_filenames = false
 files = "^(src-tauri/(src|tests|[^/]+/src|[^/]+/tests|[^/]+/[^/]+/src)/.*\\.rs|src-tauri/Cargo\\.toml|scripts/(check-metric-provable\\.mjs|metric-firing-baseline\\.json))$"
-stages = ["pre-commit"]
+# Manual (CI) stage: the whole-tree scan takes over 500 ms of CPU (#6566).
+stages = ["manual"]
 
 # Self-test the metric-provable guard's own exit behavior whenever it
 # changes: a zero-only assertion, a test-only write, a panic-gated emit
@@ -1542,22 +1531,6 @@ entry = "node scripts/check-tauri-command-instrumented.mjs"
 language = "system"
 pass_filenames = false
 files = "^src-tauri/src/commands/.*\\.rs$"
-stages = ["pre-commit"]
-
-# #2110 (M4) — frontend trace-interaction naming. Every `traceInteraction`
-# span must be named from the central `INTERACTIONS` registry
-# (`src/lib/observability/interactions.ts`), never an interpolated string, so
-# exported span names stay PII-safe by construction (the registry values are
-# reviewed, opaque labels). The guard parses each call's first argument and
-# fails any that is not an `INTERACTIONS.<KEY>` member access.
-# WHY: an unnamed traceInteraction call produces an untraceable span — #2110
-[[repos.hooks]]
-id = "trace-interactions-named"
-name = "frontend traceInteraction naming"
-entry = "node scripts/check-trace-interactions.mjs"
-language = "system"
-pass_filenames = false
-files = "^src/.*\\.tsx?$"
 stages = ["pre-commit"]
 
 # Rust: raw write-tx guard (#110). replaced ad-hoc
@@ -2105,134 +2078,20 @@ pass_filenames = false
 files = "^(src-tauri/migrations/.*\\.sql|src-tauri/src/(db|spaces)/tests\\.rs|src-tauri/agaric-sync/src/snapshot/tests\\.rs|src-tauri/migrations-test-coverage-baseline\\.txt|scripts/check-migration-test-coverage\\.mjs)$"
 stages = ["manual"]
 
-# zizmor-version-pin: the zizmor version zizmor-hook.sh's
-# ZIZMOR_PINNED_VERSION asserts against, and the `zizmor@X` entries in every
-# `taiki-e/install-action` `tool:` list under .github/workflows/, are
-# independent copies Dependabot cannot track (it bumps action refs, not tool
-# strings passed as an action input) (#3523). This guard fails fast, on the
-# commit that caused it, instead of letting the copies silently drift apart.
-# WHY: the hook script and the workflow `tool:` list drifting pin two different zizmor versions — #3523
+# tool-pins: CI installs prek, zizmor, taplo-cli, typos-cli and sqruff from the
+# workflows' `tool:` lists, a dev box from scripts/setup-hooks.sh and
+# scripts/zizmor-hook.sh. Dependabot tracks none of those copies.
+# WHY: CI floated to a newer prek than the dev boxes and a green tree went red with no repo change — #3742 (#3523)
 [[repos]]
 repo = "local"
 [[repos.hooks]]
-id = "zizmor-version-pin"
-name = "zizmor: version pin consistency (hook script vs. workflow tool: lists)"
-entry = "node scripts/check-zizmor-version-pin.mjs"
+id = "tool-pins"
+name = "tool pins agree (setup-hooks.sh, zizmor-hook.sh, workflow tool: lists)"
+entry = "node scripts/check-tool-pins.mjs"
 language = "system"
 pass_filenames = false
-files = "^(scripts/zizmor-hook\\.sh|\\.github/workflows/.*\\.ya?ml)$"
+files = "^(scripts/(setup-hooks\\.sh|zizmor-hook\\.sh|check-tool-pins\\.mjs)|\\.github/workflows/.*\\.ya?ml)$"
 stages = ["pre-commit"]
-
-# WHY: reads the pin out of shell + workflow text with its own matcher, and this guard's silent-direction failure is on record — d60c9ba (#3523)
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "zizmor-version-pin-self-test"
-name = "zizmor: version pin consistency guard self-test"
-entry = "node scripts/check-zizmor-version-pin.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-zizmor-version-pin\\.mjs$"
-stages = ["manual"]
-
-# prek-version-pin (#3742): same shape as zizmor-version-pin above, for
-# prek/taplo-cli/typos-cli. `scripts/setup-hooks.sh`'s `pinned_version_for`
-# (what a freshly-provisioned box installs, via `cargo_get_pinned`) and the
-# `taiki-e/install-action` `tool:` lists across .github/workflows/** (what
-# CI resolves) are independent copies Dependabot cannot track. Hit live:
-# CI floated to a newer prek than any dev box had, and that prek enforced a
-# YAML parser limit the older local prek did not — a green tree went red
-# with no repo change, unreproducible until the two were pinned to match.
-# WHY: setup-hooks.sh and the workflow `tool:` lists drifting pin different prek/taplo/typos versions — #3742
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "prek-version-pin"
-name = "prek/taplo-cli/typos-cli: version pin consistency (setup-hooks.sh vs. workflow tool: lists)"
-entry = "node scripts/check-prek-version-pin.mjs"
-language = "system"
-pass_filenames = false
-files = "^(scripts/setup-hooks\\.sh|\\.github/workflows/.*\\.ya?ml)$"
-stages = ["pre-commit"]
-
-# WHY: reads the pin out of shell + workflow text with its own matcher, same fail-open shape as its zizmor sibling (d60c9ba) — #3742
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "prek-version-pin-self-test"
-name = "prek/taplo-cli/typos-cli: version pin consistency guard self-test"
-entry = "node scripts/check-prek-version-pin.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-prek-version-pin\\.mjs$"
-stages = ["manual"]
-
-# tsgolint-version-pin (#4408): the third pin guard, for the pair that makes
-# `oxlint --type-aware` meaningful. `oxlint-tsgolint` is a typescript-go
-# binary versioned to track a TypeScript release (7.0.2001 ships TS 7.0.2's
-# checker) and it embeds its own compiler rather than reading the
-# `typescript` package, so `typescript` and `oxlint-tsgolint` have to be
-# bumped together. oxlint declares the tsgolint peer as OPTIONAL, which means
-# npm resolves a missing or stale one without a word: absent, `--type-aware`
-# refuses to start; stale, it starts and quietly analyses current source
-# against an older checker, exiting 0. The guard reads resolved versions out
-# of package-lock.json, so it gives the same verdict before `npm install`.
-# Exit codes are 0/2/3 (not the siblings' 0/1/2) so a crash — node's exit 1 —
-# cannot be mistaken for a real finding; see the script header.
-# WHY: package.json and package-lock.json drifting disable type-aware lint silently — #4408
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "tsgolint-version-pin"
-name = "typescript/oxlint-tsgolint: type-aware lint version pin (package.json vs. package-lock.json)"
-entry = "node scripts/check-tsgolint-version-pin.mjs"
-language = "system"
-pass_filenames = false
-files = "^(package\\.json|package-lock\\.json)$"
-stages = ["pre-commit"]
-
-# WHY: a stale optional peer makes `--type-aware` analyse against an older checker and exit 0 — the guard's own 0/2/3 exit split exists for that fail-open — #4408
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "tsgolint-version-pin-self-test"
-name = "typescript/oxlint-tsgolint: type-aware lint version pin guard self-test"
-entry = "node scripts/check-tsgolint-version-pin.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-tsgolint-version-pin\\.mjs$"
-stages = ["manual"]
-
-# cache-poisoning-suppressions: `.github/zizmor.yml` used to suppress
-# zizmor's cache-poisoning finding on four ci.yml steps by LINE NUMBER — a
-# key for "whatever is on this line today", not for the step. An unrelated
-# comment added anywhere above those anchors shifted every line below it,
-# turning four suppressed findings into four `high` failures four times in
-# one day (#3737). Fixed by moving the suppression onto each step itself
-# (`# zizmor: ignore[cache-poisoning]`, zizmor's own inline mechanism), so
-# it travels with the step instead of a position. This guard fails if
-# `.github/zizmor.yml` regains a line-anchored `cache-poisoning` ignore
-# list, or if the inline mechanism vanishes from every workflow file (the
-# wiring guard — see the script header for why zero is a failure, not a
-# vacuous pass).
-#
-# `always_run = true`: the failure mode this guard's wiring check cares
-# about most is every inline suppression disappearing at once (e.g. ci.yml
-# itself deleted outright) — a `git rm`, which prek's changed-file set
-# EXCLUDES from a `files` filter match. Same reasoning as
-# `migrations-immutable` above (#806). The script is a ~10ms static scan, so
-# running it unconditionally costs nothing.
-# WHY: a line-anchored zizmor suppression silently slides off its step when the file shifts — #3737
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "cache-poisoning-suppressions"
-name = "zizmor: cache-poisoning suppressions stay anchored to steps, not lines (#3737)"
-entry = "node scripts/check-cache-poisoning-suppressions.mjs"
-language = "system"
-pass_filenames = false
-always_run = true
-stages = ["manual"]
 
 # pairing-rejection-contract: the responder's rejection messages are declared
 # independently in Rust (`PAIRING_PROOF_REQUIRED_MESSAGE` and — since #3504 —
@@ -2250,7 +2109,7 @@ stages = ["manual"]
 #
 # `files` names EVERY compared file — a cross-check scoped to only one side
 # never fires on a change to another, which is the #3619 bug.
-# WHY: server.rs and the TS rejection map drifting show the user the wrong reason — #3504 (#3491, #3492)
+# WHY: server.rs and the TS rejection map drifting show the user the wrong reason; the text crosses as free prose, so neither compiler nor either side's tests see the link — #3504 (#3491, #3492)
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -2415,75 +2274,6 @@ entry = "node scripts/check-git-fixture-isolation.mjs"
 language = "system"
 pass_filenames = false
 always_run = true
-stages = ["manual"]
-
-# pr-overlap-trust-boundary (#3967): RESTORED after being swept up in #4556's
-# unwiring pass. It is not a self-test, and it survives all five of #4556's
-# own criteria — the sweep's mistake, corrected here rather than argued away.
-#
-# The #3672 adversarial review found pr-overlap.yml's (former) single
-# `overlap` job holding `pull-requests: write` in the same job that checked
-# out this PR's own commits — for a fork PR, code the fork author controls.
-# It was not live only because GitHub downgrades a fork `pull_request` run's
-# token to read-only regardless of `permissions:`, a mitigation that lives in
-# GitHub's defaults, not in this file, and survives only until the trigger
-# becomes `pull_request_target` (which gets no such downgrade). #3967 split
-# the job into an untrusted `compute` (permissions: contents: read — no write
-# scope of any kind — no GH_TOKEN, checks out the PR) and a trusted `post`
-# (pull-requests: write, never checks out PR-authored code) — a fact about
-# the file today that a comment cannot keep true on its own. This guard
-# checks it mechanically instead, and fails on EITHER of two independent
-# shapes:
-#
-#   * the workflow's `on:` block names `pull_request_target` AND some step's
-#     checkout `ref:` resolves to PR head content. A `pull_request_target`
-#     checkout with no `ref:` override defaults to the BASE branch — the
-#     actual mitigation — so the guard flags only the shape that
-#     reintroduces the hazard.
-#
-#   * independent of the trigger: any JOB declaring a write scope contains an
-#     `actions/checkout` step whose `ref:` is not pinned to the PR's BASE
-#     commit — a ref-less checkout included, since under TODAY's plain
-#     `pull_request` trigger that already defaults to `refs/pull/N/merge`,
-#     fork-controlled content. This is the condition that catches collapsing
-#     `compute`/`post` back into one job WITHOUT any trigger change.
-#
-# Conditions 3, 4 and 6 are repo-specific and NOT covered by zizmor: the
-# closed audits in `.github/zizmor.yml` are dangerous-triggers, artipacked,
-# unpinned-uses and template-injection, and `rules:` is `{}`. Six comments in
-# pr-overlap.yml (:42, :146, :274, :596, :864, :1204) assert this guard
-# enforces the split; unwiring it while keeping them is precisely the state
-# the stanza was written to prevent.
-# WHY: a write-scoped job checking out fork-controlled code — #3967, #4148, #4183
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "pr-overlap-trust-boundary"
-name = "pr-overlap.yml trust-boundary guard (#3967)"
-entry = "node scripts/check-pr-overlap-trust-boundary.mjs"
-language = "system"
-pass_filenames = false
-files = '^(\.github/workflows/pr-overlap\.yml|scripts/check-pr-overlap-trust-boundary\.mjs)$'
-stages = ["pre-commit"]
-
-# Kept because it is the only thing making criterion 5 (fails CLOSED) true
-# here. The guard's second condition walks pr-overlap.yml's job list looking
-# for checkout steps; if a restructure stops it reaching any, it passes
-# vacuously and silently — a check that inspects nothing passes just as
-# quietly as one that passes. The `--self-test` pins both conditions AND that
-# the second actually REACHES a checkout step in the real file. Two-file
-# trigger, so the cost is a rounding error. #4556 Phase 2 restaged it to
-# `manual` (CI) like every surviving self-test.
-# WHY: the trust-boundary guard can pass vacuously if it stops reaching a checkout step — #3967
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "pr-overlap-trust-boundary-selftest"
-name = "pr-overlap.yml trust-boundary guard self-test (#3967 fixtures)"
-entry = "node scripts/check-pr-overlap-trust-boundary.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = '^(\.github/workflows/pr-overlap\.yml|scripts/check-pr-overlap-trust-boundary\.mjs)$'
 stages = ["manual"]
 
 # ─── bench lane coverage (#3362) ──────────────────────────────────

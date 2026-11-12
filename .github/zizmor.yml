@@ -1,6 +1,5 @@
 # zizmor's config. No baselined findings: `rules: {}` is deliberately empty.
 # The only suppressions in the tree are inline `# zizmor: ignore[...]` comments
 # on the steps they cover (in ci.yml today), which travel with the step instead
-# of by line number. `scripts/check-cache-poisoning-suppressions.mjs` guards
-# that: it fails if this file regains a line-anchored ignore list.
+# of by line number (#3737).
 rules: {}
