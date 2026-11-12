@@ -190,7 +190,7 @@ function PropertyFlagBadge({ token, label }: PropertyFlagBadgeProps): React.Reac
       // title (which truncates) keeps usable width instead of collapsing to a
       // few characters. Counts + flags return at `sm`+; the short relative-time
       // stays.
-      className="inline-flex shrink-0 items-center rounded-md border border-border/60 px-1.5 py-0 text-[10px] font-medium text-muted-foreground max-sm:hidden"
+      className="inline-flex shrink-0 items-center rounded-md border border-border/60 px-1.5 py-0 text-xs font-medium text-muted-foreground max-sm:hidden"
     >
       #{label}
     </span>
@@ -276,11 +276,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
     } else {
       prefetchIntent.schedule(pageId)
     }
-    // `prefetchIntent` itself is NOT a dep — `schedule`/`cancel` are
-    // identity-stable for the hook's lifetime (see `useDebouncedCallback`),
-    // so this only needs to re-run when the offscreen membership or the
-    // page id actually changes.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `prefetchIntent`'s `schedule`/`cancel` are identity-stable for the hook's lifetime (`useDebouncedCallback`)
   }, [isTouch, offscreen, pageId])
 
   const observeRef = useCallback(

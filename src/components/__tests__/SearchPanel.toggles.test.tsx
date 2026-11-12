@@ -590,7 +590,7 @@ describe('SearchPanel history dropdown aria parity (FE-A13)', () => {
     const notice = await screen.findByTestId('search-regex-scope-notice')
     expect(notice).toHaveTextContent(t('search.regexScopeNotice'))
     // Announced, not merely decorative.
-    expect(notice).toHaveAttribute('role', 'status')
+    expect(notice).toHaveRole('status')
   })
 
   it('#3315 item 1: an empty regex result set says the scan window was bounded', async () => {

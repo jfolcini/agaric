@@ -6,13 +6,10 @@
  * with no axe violations.
  */
 
-import { createRequire } from 'node:module'
-
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, ipc, test, waitForBoot } from './helpers'
+import { axeViolations, expect, ipc, test, waitForBoot } from './helpers'
 
-const axePath = createRequire(import.meta.url).resolve('axe-core')
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const EDITOR = '[data-testid="page-mode-editor"]'
 const HINT = 'Supports Markdown. Type / for commands'
@@ -93,17 +90,6 @@ async function seedDocument(page: Page) {
   return seeded
 }
 
-async function axeViolations(page: Page): Promise<string[]> {
-  await page.addScriptTag({ path: axePath })
-  return page.evaluate(async () => {
-    const { axe } = window as unknown as {
-      axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-    }
-    const { violations } = await axe.run(document.querySelector('.page-editor') as Element)
-    return violations.map((v) => v.id)
-  })
-}
-
 const opacity = (locator: Locator) => locator.evaluate((el) => getComputedStyle(el).opacity)
 
 test.describe('page mode document look (#5691) @editor @pages', () => {
@@ -133,7 +119,7 @@ test.describe('page mode document look (#5691) @editor @pages', () => {
         .evaluate((el) => getComputedStyle(el).marginTop)
     expect(await gap(ids[4])).toBe('12px')
     expect(await gap(ids[7])).toBe('4px')
-    expect(await axeViolations(page)).toEqual([])
+    expect(await axeViolations(page, '.page-editor')).toEqual([])
   })
 
   test('a property chip shows on the pointer, the caret and the focus, Shift+Tab reaches it, and it passes axe', async ({
@@ -185,6 +171,6 @@ test.describe('page mode document look (#5691) @editor @pages', () => {
     await page.keyboard.press('Shift+Tab')
     await expect(chip.getByRole('button', { name: 'Assignee: Ana' })).toBeFocused()
     await expect.poll(() => opacity(chip)).toBe('1')
-    expect(await axeViolations(page)).toEqual([])
+    expect(await axeViolations(page, '.page-editor')).toEqual([])
   })
 })

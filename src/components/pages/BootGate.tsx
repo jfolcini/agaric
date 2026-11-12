@@ -91,7 +91,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             onClick={() => setShowDetails((v) => !v)}
-            className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+            className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline focus-ring-visible"
             data-testid="boot-show-details"
           >
             {showDetails ? t('boot.hideDetailsButton') : t('boot.showDetailsButton')}

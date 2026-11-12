@@ -452,7 +452,7 @@ export function UnfinishedTasks({
       <section
         aria-label={t('unfinished.loading')}
         aria-busy="true"
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- intentional <section> landmark wrapping a block skeleton; <output> is inline phrasing-only and would drop the region semantics and break layout
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> takes phrasing content only, and this wraps <LoadingSkeleton>'s block rows
         role="status"
         data-testid="unfinished-tasks-loading"
       >
@@ -548,7 +548,7 @@ export function UnfinishedTasks({
       {!collapsed && loading && (
         <div
           aria-busy="true"
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- kept as role="status" so the in-body loading indicator is discoverable via [role="status"]; <output> drops the explicit attribute relied on by callers/tests
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> takes phrasing content only, and this wraps <LoadingSkeleton>'s block rows
           role="status"
           data-testid="unfinished-tasks-body-loading"
           className="mt-1"

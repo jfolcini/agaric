@@ -39,6 +39,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -275,42 +276,40 @@ export function FilterHelperPopover({
       >
         {mode === 'menu' && (
           <div data-testid="filter-helper-menu">
-            {/* a role="menu" must contain only menuitem children
-                (axe aria-required-children); the tip sits OUTSIDE it. */}
-            <div role="menu" aria-label={t('search.addFilter')}>
-              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={openTagMode}>
-                <span className="font-medium">{t('search.filterCategory.tag')}</span>
-                <span className="ml-2 text-xs text-muted-foreground">tag:#name</span>
-              </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('pathInclude')}>
-                <span className="font-medium">{t('search.filterCategory.pathInclude')}</span>
-                <span className="ml-2 text-xs text-muted-foreground">path:Journal/*</span>
-              </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('pathExclude')}>
-                <span className="font-medium">{t('search.filterCategory.pathExclude')}</span>
-                <span className="ml-2 text-xs text-muted-foreground">not-path:Archive/**</span>
-              </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('state')}>
-                <span className="font-medium">{t('search.filterCategory.state')}</span>
-                <span className="ml-2 text-xs text-muted-foreground">state:TODO</span>
-              </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('priority')}>
-                <span className="font-medium">{t('search.filterCategory.priority')}</span>
-                <span className="ml-2 text-xs text-muted-foreground">priority:1</span>
-              </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('due')}>
-                <span className="font-medium">{t('search.filterCategory.due')}</span>
-                <span className="ml-2 text-xs text-muted-foreground">due:today</span>
-              </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('scheduled')}>
-                <span className="font-medium">{t('search.filterCategory.scheduled')}</span>
-                <span className="ml-2 text-xs text-muted-foreground">scheduled:next-week</span>
-              </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('prop')}>
-                <span className="font-medium">{t('search.filterCategory.prop')}</span>
-                <span className="ml-2 text-xs text-muted-foreground">prop:key=value</span>
-              </PopoverMenuItem>
-            </div>
+            {/* Plain buttons in the popover's dialog, not role="menu": a menu
+                promises arrow-key navigation (same model as AddFilterPopover). */}
+            <PopoverMenuItem onClick={openTagMode}>
+              <span className="font-medium">{t('search.filterCategory.tag')}</span>
+              <span className="ml-2 text-xs text-muted-foreground">tag:#name</span>
+            </PopoverMenuItem>
+            <PopoverMenuItem onClick={() => setMode('pathInclude')}>
+              <span className="font-medium">{t('search.filterCategory.pathInclude')}</span>
+              <span className="ml-2 text-xs text-muted-foreground">path:Journal/*</span>
+            </PopoverMenuItem>
+            <PopoverMenuItem onClick={() => setMode('pathExclude')}>
+              <span className="font-medium">{t('search.filterCategory.pathExclude')}</span>
+              <span className="ml-2 text-xs text-muted-foreground">not-path:Archive/**</span>
+            </PopoverMenuItem>
+            <PopoverMenuItem onClick={() => setMode('state')}>
+              <span className="font-medium">{t('search.filterCategory.state')}</span>
+              <span className="ml-2 text-xs text-muted-foreground">state:TODO</span>
+            </PopoverMenuItem>
+            <PopoverMenuItem onClick={() => setMode('priority')}>
+              <span className="font-medium">{t('search.filterCategory.priority')}</span>
+              <span className="ml-2 text-xs text-muted-foreground">priority:1</span>
+            </PopoverMenuItem>
+            <PopoverMenuItem onClick={() => setMode('due')}>
+              <span className="font-medium">{t('search.filterCategory.due')}</span>
+              <span className="ml-2 text-xs text-muted-foreground">due:today</span>
+            </PopoverMenuItem>
+            <PopoverMenuItem onClick={() => setMode('scheduled')}>
+              <span className="font-medium">{t('search.filterCategory.scheduled')}</span>
+              <span className="ml-2 text-xs text-muted-foreground">scheduled:next-week</span>
+            </PopoverMenuItem>
+            <PopoverMenuItem onClick={() => setMode('prop')}>
+              <span className="font-medium">{t('search.filterCategory.prop')}</span>
+              <span className="ml-2 text-xs text-muted-foreground">prop:key=value</span>
+            </PopoverMenuItem>
             <p className="mt-2 px-2 text-xs text-muted-foreground">
               {t('search.filterCategoryTip')}
             </p>
@@ -326,7 +325,7 @@ export function FilterHelperPopover({
               className="h-8"
               placeholder={t('search.searchTags')}
               aria-label={t('search.searchTags')}
-              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- explicit role="combobox" on the tag-query <input> drives the aria-activedescendant listbox below; the native combobox mapping differs and would drop the aria-expanded/aria-controls wiring this custom popup relies on
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- the native comboboxes (<select>, <input list>) cannot drive this async, filtered listbox of tags
               role="combobox"
               // The input is the actual text-entry field, so it must stay in
               // the tab order (`tabIndex={0}`); `interactive-supports-focus`
@@ -343,42 +342,44 @@ export function FilterHelperPopover({
               // oxlint-disable-next-line jsx-a11y/no-autofocus -- this combobox renders only after the user switches into tag mode inside the open filter popover; focusing it lets them type the tag query immediately (the listbox below is driven by this input via aria-activedescendant)
               autoFocus
             />
-            <ul
-              id={TAG_LISTBOX_ID}
-              // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role, jsx-a11y/prefer-tag-over-role -- `<ul role="listbox">` is the canonical WAI-ARIA listbox container for the combobox popup (mirrors VirtualizedResultListbox / SearchHistoryDropdown); keyboard activation flows through aria-activedescendant on the input, and <datalist>/<select> can't host the per-option <button> rows this widget uses.
-              role="listbox"
-              className="mt-2 max-h-60 overflow-y-auto list-none m-0 p-0"
-              aria-label={t('search.filterHelper.tagResultsLabel')}
-            >
-              {tagLoading && (
-                <li role="presentation" className="px-2 py-1 text-xs text-muted-foreground">
-                  …
-                </li>
-              )}
-              {!tagLoading && tagSuggestions.length === 0 && (
-                <li role="presentation" className="px-2 py-1 text-xs text-muted-foreground">
-                  {t('search.noTagsFound')}
-                </li>
-              )}
-              {!tagLoading &&
-                tagSuggestions.map((tag, idx) => (
-                  <li key={tag.tag_id} role="presentation">
-                    <button
-                      type="button"
-                      id={tagOptionId(tag.tag_id)}
-                      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="option" on the <button> row of the custom combobox listbox; the native <option> tag can't carry a clickable button with hover/focus styling
-                      role="option"
-                      aria-selected={idx === activeIndex}
-                      tabIndex={-1}
-                      onClick={() => handleTagSelect(tag)}
-                      className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-accent focus-ring-visible text-sm [@media(pointer:coarse)]:min-h-11 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
-                      data-active={idx === activeIndex}
-                    >
-                      #{tag.name}
-                    </button>
+            <ScrollArea className="mt-2 max-h-60" viewportClassName="[&>div]:!block">
+              <ul
+                id={TAG_LISTBOX_ID}
+                // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role, jsx-a11y/prefer-tag-over-role -- `<ul role="listbox">` is the canonical WAI-ARIA listbox container for the combobox popup (mirrors VirtualizedResultListbox / SearchHistoryDropdown); keyboard activation flows through aria-activedescendant on the input, and <datalist>/<select> can't host the per-option <button> rows this widget uses.
+                role="listbox"
+                className="list-none m-0 p-0"
+                aria-label={t('search.filterHelper.tagResultsLabel')}
+              >
+                {tagLoading && (
+                  <li role="presentation" className="px-2 py-1 text-xs text-muted-foreground">
+                    …
                   </li>
-                ))}
-            </ul>
+                )}
+                {!tagLoading && tagSuggestions.length === 0 && (
+                  <li role="presentation" className="px-2 py-1 text-xs text-muted-foreground">
+                    {t('search.noTagsFound')}
+                  </li>
+                )}
+                {!tagLoading &&
+                  tagSuggestions.map((tag, idx) => (
+                    <li key={tag.tag_id} role="presentation">
+                      <button
+                        type="button"
+                        id={tagOptionId(tag.tag_id)}
+                        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="option" on the <button> row of the custom combobox listbox; the native <option> tag can't carry a clickable button with hover/focus styling
+                        role="option"
+                        aria-selected={idx === activeIndex}
+                        tabIndex={-1}
+                        onClick={() => handleTagSelect(tag)}
+                        className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-accent focus-ring-visible text-sm [@media(pointer:coarse)]:min-h-11 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
+                        data-active={idx === activeIndex}
+                      >
+                        #{tag.name}
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            </ScrollArea>
             <div className="mt-2 flex justify-end">
               <Button type="button" variant="outline" size="sm" onClick={() => setMode('menu')}>
                 {t('search.filterHelper.back')}

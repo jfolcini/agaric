@@ -5,22 +5,10 @@
  * contrast is measured.
  */
 
-import { createRequire } from 'node:module'
+import { expect, ipc, openPage, runAxe, test, waitForBoot, waitForStableBlockRows } from './helpers'
 
-import { expect, ipc, openPage, test, waitForBoot, waitForStableBlockRows } from './helpers'
-
-const axePath = createRequire(import.meta.url).resolve('axe-core')
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const TITLE = 'Closed task contrast'
-
-interface AxeNode {
-  html: string
-}
-interface AxeResult {
-  violations: Array<{ id: string; nodes: AxeNode[] }>
-  passes: Array<{ id: string; nodes: AxeNode[] }>
-  incomplete: Array<{ id: string; nodes: AxeNode[] }>
-}
 
 test.describe('closed tasks in block mode @editor @journal', () => {
   test('done and cancelled text clears 4.5:1, and axe measured it', async ({ page }) => {
@@ -50,18 +38,7 @@ test.describe('closed tasks in block mode @editor @journal', () => {
     await waitForStableBlockRows(page, 3)
     await expect(page.locator('.sortable-block .line-through')).toHaveCount(2)
 
-    await page.addScriptTag({ path: axePath })
-    const result = await page.evaluate(() =>
-      (
-        window as unknown as {
-          axe: {
-            run: (el: Element, opts: { runOnly: string[] }) => Promise<AxeResult>
-          }
-        }
-      ).axe.run(document.querySelector('.page-editor') as Element, {
-        runOnly: ['color-contrast'],
-      }),
-    )
+    const result = await runAxe(page, '.page-editor', { runOnly: ['color-contrast'] })
 
     expect(result.violations).toEqual([])
     // Under `opacity`, axe cannot measure the text and files it as `incomplete`

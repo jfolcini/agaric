@@ -116,7 +116,8 @@ export function SearchToggleRow({
               // distinguishable independent of colour perception. The
               // small dot below the icon is a second, redundant
               // shape-only indicator.
-              pressed && 'bg-secondary text-foreground shadow-sm ring-1 ring-inset ring-ring',
+              pressed &&
+                'bg-secondary text-foreground shadow-(--shadow-resting) ring-1 ring-inset ring-ring',
               'disabled:pointer-events-none disabled:opacity-50',
             )}
           >

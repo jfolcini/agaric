@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import type { SavedPagesView } from '@/lib/preferences'
 
 export interface SavedViewsDropdownProps {
@@ -96,42 +97,44 @@ export function SavedViewsDropdown({
               {t('pageBrowser.savedViews.empty')}
             </p>
           ) : (
-            <ul className="flex flex-col gap-0.5 list-none m-0 p-0 max-h-64 overflow-y-auto">
-              {views.map((view) => {
-                const isActive = activeView?.id === view.id
-                return (
-                  <li key={view.id} className="flex items-center gap-0.5">
-                    <PopoverMenuItem
-                      active={isActive}
-                      aria-current={isActive ? 'true' : undefined}
-                      className="flex items-center gap-2 flex-1 min-w-0"
-                      onClick={() => {
-                        onApply(view)
-                        setOpen(false)
-                      }}
-                      aria-label={t('pageBrowser.savedViews.apply', { name: view.name })}
-                    >
-                      {isActive ? (
-                        <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                      ) : (
-                        <span className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                      )}
-                      <span className="truncate">{view.name}</span>
-                    </PopoverMenuItem>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      className="shrink-0 text-muted-foreground hover:text-destructive"
-                      aria-label={t('pageBrowser.savedViews.delete', { name: view.name })}
-                      onClick={() => onDelete(view)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </li>
-                )
-              })}
-            </ul>
+            <ScrollArea className="max-h-64" viewportClassName="[&>div]:!block">
+              <ul className="flex flex-col gap-0.5 list-none m-0 p-0">
+                {views.map((view) => {
+                  const isActive = activeView?.id === view.id
+                  return (
+                    <li key={view.id} className="flex items-center gap-0.5">
+                      <PopoverMenuItem
+                        active={isActive}
+                        aria-current={isActive ? 'true' : undefined}
+                        className="flex items-center gap-2 flex-1 min-w-0"
+                        onClick={() => {
+                          onApply(view)
+                          setOpen(false)
+                        }}
+                        aria-label={t('pageBrowser.savedViews.apply', { name: view.name })}
+                      >
+                        {isActive ? (
+                          <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        ) : (
+                          <span className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        )}
+                        <span className="truncate">{view.name}</span>
+                      </PopoverMenuItem>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                        aria-label={t('pageBrowser.savedViews.delete', { name: view.name })}
+                        onClick={() => onDelete(view)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </ScrollArea>
           )}
           {canSaveCurrentView && (
             <>

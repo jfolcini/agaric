@@ -209,16 +209,14 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
         {/* Polite live region — announces that a query is (re)running so
             screen-reader users get more than silence while the list refetches.
             Mirrors SearchStatusRegion. */}
-        <div
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level status region sibling to (not wrapping) the results list
-          role="status"
+        <output
           aria-live="polite"
           aria-atomic="true"
           className="sr-only"
           data-testid="advanced-query-status"
         >
           {loading ? t('advancedQuery.searching') : ''}
-        </div>
+        </output>
 
         {/* Initial load only (no previous results to keep on screen):
             list-shaped skeleton mirroring QueryResultList rows. On a refetch

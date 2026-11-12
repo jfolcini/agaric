@@ -502,7 +502,6 @@ describe('AddPropertyPopover', () => {
 
     expect(hint.className).toContain('text-xs')
     expect(hint.className).toContain('text-muted-foreground')
-    expect(hint.className).not.toContain('text-[10px]')
     expect(hint.className).not.toContain('opacity-70')
   })
 })

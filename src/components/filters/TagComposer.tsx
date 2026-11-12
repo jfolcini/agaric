@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { SearchInput } from '@/components/ui/search-input'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { unwrap } from '@/lib/app-error'
@@ -261,25 +262,27 @@ function AddTagPopover({
 
         {/* Resolved tag matches. */}
         {matches.length > 0 && (
-          <ul className="m-0 max-h-48 list-none space-y-0.5 overflow-y-auto p-0">
-            {matches.map((tag) => (
-              <li key={tag.tag_id}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  className="w-full justify-between"
-                  onClick={() => {
-                    onAddTag(tag.tag_id, tag.name)
-                    reset()
-                  }}
-                >
-                  <span className="truncate">{tag.name}</span>
-                  <span className="text-muted-foreground">({tag.usage_count})</span>
-                </Button>
-              </li>
-            ))}
-          </ul>
+          <ScrollArea className="max-h-48" viewportClassName="[&>div]:!block">
+            <ul className="m-0 list-none space-y-0.5 p-0">
+              {matches.map((tag) => (
+                <li key={tag.tag_id}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="w-full justify-between"
+                    onClick={() => {
+                      onAddTag(tag.tag_id, tag.name)
+                      reset()
+                    }}
+                  >
+                    <span className="truncate">{tag.name}</span>
+                    <span className="text-muted-foreground">({tag.usage_count})</span>
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </ScrollArea>
         )}
       </PopoverContent>
     </Popover>

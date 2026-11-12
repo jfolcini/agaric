@@ -192,11 +192,8 @@ function EmbeddedRow({
   }
 
   return (
-    // Passive container while unlocked, exactly as `StaticBlock`'s own row is:
-    // the click mounts the roving editor, and keyboard users reach the same
-    // content through the inner chips. No handler at all while locked, so the
-    // read-only embed stays inert.
-    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
+    // No handler at all while locked, so the read-only embed stays inert.
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events -- a passive surface while unlocked, as `StaticBlock`'s row is: the click mounts the editor, and keyboard users reach the content through the inner chips
     <div
       className={cn(
         'embed-row w-full min-h-[1.5rem] rounded-md px-3 py-1 text-left text-sm',

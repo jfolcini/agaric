@@ -79,13 +79,7 @@ export function SearchStatusRegion({
     t,
   )
   return (
-    <div
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level status wrapper region; <output> is inline-level and would change the block flow of the status text container
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-      data-testid="search-results-status"
-    >
+    <output aria-live="polite" aria-atomic="true" data-testid="search-results-status">
       {/* Announcement only: the match summary, EmptyState, error banner, header
           spinner and the emptied input already show every state. */}
       {statusText !== null && (
@@ -93,6 +87,6 @@ export function SearchStatusRegion({
           {statusText}
         </span>
       )}
-    </div>
+    </output>
   )
 }

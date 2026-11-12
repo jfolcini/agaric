@@ -386,7 +386,7 @@ describe('AgendaResults', () => {
     expect(notice).toHaveTextContent(/load more/i)
     // Non-blocking polite live region (mirrors the SearchPanel capped
     // notice) — it must be announced, not merely painted.
-    expect(notice).toHaveAttribute('role', 'status')
+    expect(notice).toHaveRole('status')
   })
 
   it('#3291: shows no warning once every matching task is loaded', () => {

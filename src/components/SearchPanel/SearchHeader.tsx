@@ -77,7 +77,7 @@ export function SearchHeader({
       <div className="mx-auto max-w-list">
         <form
           onSubmit={onSubmit}
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="search" must stay on the <form> that owns onSubmit; the <search> element is not a form-submitting element, so swapping would lose submit handling
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a <search> wrapper is a landmark only from WebKit 17 (Safari 17, WebKitGTK 2.42); older macOS and Linux webviews would drop it
           role="search"
           className="search-panel-header flex flex-wrap items-center gap-2"
           // Stays pinned on a phone while the results scroll (App.tsx's outlet).

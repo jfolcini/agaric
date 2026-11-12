@@ -92,9 +92,7 @@ export function ModeChipRow({
  * without reading prose. Hidden in link mode and commands mode
  * because the modifier-key vocabulary changes per mode.
  *
- * Round-1 shipped this as a flat `text-[10px]` string;
- * `<kbd>`-rendered chord chips match Raycast / Linear and respect
- * the project's 11px typography floor.
+ * `<kbd>`-rendered chord chips match Raycast / Linear.
  */
 export function PaletteFooterHint({
   t,

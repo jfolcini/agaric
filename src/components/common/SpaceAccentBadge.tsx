@@ -94,7 +94,7 @@ export function SpaceAccentBadge({
       style={{ backgroundColor: accentVar(space.accent_color) }}
       className={cn(
         'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-        'text-sm font-semibold text-white shadow-sm',
+        'text-sm font-semibold text-white shadow-(--shadow-resting)',
         // Touch target — bumps the hit area to 44px on coarse pointers
         // without changing the 32px visual footprint, matching
         // AGENTS.md "Mandatory patterns" for touch-target sizing.

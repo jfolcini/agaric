@@ -349,7 +349,7 @@ export function AgendaResults({
       <div
         className="agenda-results-loading flex items-center justify-center gap-2 py-8"
         aria-busy="true"
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> defaults to display:inline and would break this flex centering container; keep role="status" on the div
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> takes phrasing content only, and this wraps <LoadingSkeleton>'s block rows
         role="status"
       >
         <LoadingSkeleton count={3} height="h-10" />
@@ -558,14 +558,12 @@ export function AgendaResults({
             capped notice: same `role="status"` polite live region, announced
             on appearance, never blocking. */}
             {hasMore && (
-              <div
-                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
-                role="status"
+              <output
                 data-testid="agenda-partial-order-notice"
-                className="agenda-partial-order-notice rounded-lg border border-alert-warning-border bg-alert-warning p-2 text-xs text-alert-warning-foreground"
+                className="agenda-partial-order-notice block rounded-lg border border-alert-warning-border bg-alert-warning p-2 text-xs text-alert-warning-foreground"
               >
                 {t('agenda.partialOrderNotice')}
-              </div>
+              </output>
             )}
 
             {isMobile ? (
@@ -614,7 +612,6 @@ export function AgendaResults({
           focusedIndex={focusedIndex}
           onNavigateToPage={onNavigateToPage}
           showDate
-          headingLevel="h2"
         />
         {projected && (
           <LoadMoreButton

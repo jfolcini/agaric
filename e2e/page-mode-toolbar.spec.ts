@@ -6,13 +6,10 @@
  * and coming back; and block mode's heading chords, read back the same way.
  */
 
-import { createRequire } from 'node:module'
-
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, ipc, test, waitForBoot } from './helpers'
+import { axeViolations, expect, ipc, test, waitForBoot } from './helpers'
 
-const axePath = createRequire(import.meta.url).resolve('axe-core')
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const EDITOR = '[data-testid="page-mode-editor"]'
 const TITLE = 'Toolbar page'
@@ -152,17 +149,7 @@ test.describe('page mode toolbar (#5691) @editor @pages', () => {
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(5)
     await expect(toolbar(page)).toBeVisible()
 
-    await page.addScriptTag({ path: axePath })
-    const violations = await page.evaluate(async () => {
-      const { axe } = window as unknown as {
-        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
-      }
-      const found = await axe.run(
-        document.querySelector('[data-testid="formatting-toolbar"]') as Element,
-      )
-      return found.violations.map((v) => v.id)
-    })
-    expect(violations).toEqual([])
+    expect(await axeViolations(page, '[data-testid="formatting-toolbar"]')).toEqual([])
     await expect(toolbar(page).getByRole('button', { name: 'Discard' })).toHaveCount(0)
 
     // Bold, from the Format menu, on a selected word.

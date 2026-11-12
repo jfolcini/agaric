@@ -1035,7 +1035,7 @@ describe('UnlinkedReferences', () => {
     // ListViewState shows skeleton (spinner) when loading with empty items
     await waitFor(() => {
       expect(document.querySelector('[aria-busy="true"]')).toBeInTheDocument()
-      expect(document.querySelector('[role="status"]')).toBeInTheDocument()
+      expect(document.querySelector('.unlinked-references-loading')).toHaveRole('status')
     })
   })
 

@@ -142,7 +142,7 @@ export function SourcePageFilter({
                 <button
                   key={page.pageId}
                   type="button"
-                  className="source-page-filter-item flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                  className="source-page-filter-item flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground focus-ring-visible"
                   onClick={(e) => handlePageClick(e, page.pageId)}
                   onKeyDown={(e) => handlePageKeyDown(e, page.pageId)}
                 >

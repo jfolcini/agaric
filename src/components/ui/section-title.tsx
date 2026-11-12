@@ -37,7 +37,7 @@ const colorClassFor = (color: SectionTitleColor): string => {
   }
 }
 
-interface SectionTitleProps extends React.ComponentProps<'h4'> {
+interface SectionTitleProps extends React.ComponentProps<'h2'> {
   color?: SectionTitleColor
   label: string
   count: number
@@ -52,7 +52,7 @@ const SectionTitle = ({
   className,
   ...rest
 }: SectionTitleProps) => (
-  <h4
+  <h2
     ref={ref}
     data-slot="section-title"
     {...rest}
@@ -64,7 +64,7 @@ const SectionTitle = ({
   >
     <span>{label}</span>
     <span className="text-muted-foreground font-normal">({count})</span>
-  </h4>
+  </h2>
 )
 
 SectionTitle.displayName = 'SectionTitle'

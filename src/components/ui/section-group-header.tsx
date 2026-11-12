@@ -4,7 +4,7 @@
  *
  * Rationale for adding alongside `SectionTitle` rather than extending it:
  *
- *  - `SectionTitle` is an `<h4>` heading-style component with
+ *  - `SectionTitle` is an `<h2>` heading-style component with
  *    `text-xs font-semibold mb-1.5 flex items-center gap-1` and no
  *    background. It carries semantic heading weight (`color` prop maps
  *    to status tokens, label + numeric count layout).

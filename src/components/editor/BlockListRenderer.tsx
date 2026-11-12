@@ -492,7 +492,7 @@ function MountBoundaryRow({
     <li className="list-none m-0 p-0" data-testid="block-tree-mount-boundary">
       <button
         type="button"
-        className="w-full rounded-lg border border-dashed border-border bg-transparent p-2 text-sm text-muted-foreground hover:bg-accent"
+        className="w-full rounded-lg border border-dashed border-border bg-transparent p-2 text-sm text-muted-foreground hover:bg-accent focus-ring-visible"
         onClick={onExpand}
       >
         {t('blockTree.mountBoundary', { count: hiddenCount })}

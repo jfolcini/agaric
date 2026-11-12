@@ -153,7 +153,7 @@ export function ImageResizeHandle({
     >
       <span
         aria-hidden="true"
-        className="size-3 rounded-sm border border-border bg-background shadow-sm"
+        className="size-3 rounded-sm border border-border bg-background shadow-(--shadow-resting)"
       />
     </span>
   )

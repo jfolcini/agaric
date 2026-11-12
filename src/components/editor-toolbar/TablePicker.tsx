@@ -122,15 +122,15 @@ export function TablePicker({
                   <button
                     key={`${r}-${c}`}
                     type="button"
-                    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="gridcell" on the clickable cell <button> inside the role="grid"/role="row" picker
+                    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a native <td> needs a <table> ancestor, and this picker is a flex grid of cell <button>s
                     role="gridcell"
                     aria-label={t('toolbar.tableDimensionsCell', { rows: r, cols: c })}
                     aria-selected={active}
                     data-testid={`table-cell-${r}-${c}`}
                     className={
                       active
-                        ? 'h-5 w-5 rounded-sm border border-ring bg-ring/30'
-                        : 'h-5 w-5 rounded-sm border border-border bg-muted/30'
+                        ? 'h-5 w-5 rounded-sm border border-ring bg-ring/30 focus-ring-visible'
+                        : 'h-5 w-5 rounded-sm border border-border bg-muted/30 focus-ring-visible'
                     }
                     onPointerEnter={() => {
                       setRows(r)

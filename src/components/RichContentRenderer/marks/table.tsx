@@ -2,6 +2,7 @@ import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import { renderInlineContent } from '@/components/RichContentRenderer/marks/inline'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import type {
   ParagraphNode,
   TableCellAlign,
@@ -104,13 +105,13 @@ export function renderTableBlock(
   const bodyRows = hasHeader ? rows.slice(1) : rows
 
   return (
-    <div key={key} className="my-1 overflow-x-auto">
+    <ScrollArea key={key} orientation="horizontal" className="my-1">
       <table data-testid="rich-table" className="w-auto border-collapse border border-border">
         {headerRows.length > 0 && (
           <thead>{headerRows.map((row, r) => renderRow(row, `${key}-h-${r}`))}</thead>
         )}
         <tbody>{bodyRows.map((row, r) => renderRow(row, `${key}-r-${r}`))}</tbody>
       </table>
-    </div>
+    </ScrollArea>
   )
 }

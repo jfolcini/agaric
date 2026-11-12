@@ -59,9 +59,9 @@ export function SavedViews({ spaceKey }: SavedViewsProps): React.ReactElement {
       aria-label={t('advancedQuery.savedViews.label')}
       data-testid="advanced-query-saved-views"
     >
-      <h3 className="text-xs font-medium text-muted-foreground">
+      <h2 className="text-xs font-medium text-muted-foreground">
         {t('advancedQuery.savedViews.label')}
-      </h3>
+      </h2>
 
       {views.length === 0 && <EmptyState message={t('advancedQuery.savedViews.empty')} compact />}
 

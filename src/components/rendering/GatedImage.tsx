@@ -209,7 +209,7 @@ export function GatedImage({
       {showLoad ? (
         <button
           type="button"
-          className="rounded border border-input bg-background px-1.5 py-0.5 text-xs text-foreground hover:bg-accent hover:text-accent-foreground"
+          className="rounded border border-input bg-background px-1.5 py-0.5 text-xs text-foreground hover:bg-accent hover:text-accent-foreground focus-ring-visible"
           data-testid="image-load-button"
           // Add the exact host to the allowlist; the policy hook re-snapshots via
           // the synthetic storage event, re-rendering this image as allowed.

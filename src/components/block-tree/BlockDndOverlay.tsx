@@ -92,12 +92,11 @@ export function BlockDndOverlay({
     <>
       {/* SR announcement for DnD projected drop position + subtree size */}
       {activeId && projected && (
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- intentional SR-only live region (aria-live/atomic); native <output> has implicit aria-live differences and an "Output" semantic role
-        <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        <output aria-live="polite" aria-atomic="true" className="sr-only">
           {isSubtree
             ? t('blockTree.dnd.movingSubtree', { count, depth: projected.depth })
             : t('blockTree.dnd.moving', { depth: projected.depth })}
-        </div>
+        </output>
       )}
       {/* Drag overlay: a translucent ghost of the dragged row follows the
           cursor at the projected indent (Notion/Logseq style). For a subtree
@@ -115,7 +114,7 @@ export function BlockDndOverlay({
               {ghost}
               {isSubtree && (
                 <span
-                  className="absolute -top-2 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none text-primary-foreground shadow"
+                  className="absolute -top-2 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-xs font-semibold leading-none text-primary-foreground shadow"
                   data-testid="sortable-block-overlay-count"
                 >
                   {count}

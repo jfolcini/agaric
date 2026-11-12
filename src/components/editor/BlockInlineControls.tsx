@@ -393,15 +393,13 @@ function RepeatIndicator({ repeatValue }: { repeatValue: string }): React.ReactE
   const { t } = useTranslation()
   const label = formatRepeatLabel(repeatValue, t)
   return (
-    <span
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- inline status chip rendered among sibling chips; native <output> carries an implicit "Output" semantic and is not a drop-in for this inline <span> badge
-      role="status"
+    <output
       className="repeat-indicator flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground max-sm:px-2.5 max-sm:py-1"
       aria-label={t('block.repeats', { value: label })}
     >
       <Repeat className="size-[calc(var(--agaric-font-size,1rem)*0.75)] flex-shrink-0" />
       {label}
-    </span>
+    </output>
   )
 }
 

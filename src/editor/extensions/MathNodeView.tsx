@@ -150,7 +150,10 @@ function MathNodeViewBody({ props, display }: MathNodeViewBodyProps): React.Reac
           type="button"
           // A button sizes to its content, so a display equation's own scroller
           // never overflows and the column clips it; fill the column instead (#5693).
-          className={cn('math-rendered cursor-pointer', display && 'block w-full')}
+          className={cn(
+            'math-rendered cursor-pointer focus-ring-visible',
+            display && 'block w-full',
+          )}
           data-testid="math-rendered"
           aria-label={t('math.editSource')}
           // preventDefault on mousedown so clicking the math does not blur the

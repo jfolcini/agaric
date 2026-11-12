@@ -395,7 +395,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
             'min-w-0 transition-[text-decoration-color,color] duration-moderate',
             // #1243: NO active-block highlight here. A focused block already
             // gets its own indicator — the `block-editor` box rendered by
-            // EditableBlock (`ring-1 ring-border bg-accent/[0.06] shadow-sm`,
+            // EditableBlock (`ring-1 ring-border bg-accent/[0.06]`, a resting shadow,
             // rounded). The earlier #1232 red `border-l-primary` bar +
             // `bg-sidebar-accent` tint layered a second, alarm-red highlight on
             // top of that grey box and let the tint bleed to the left edge

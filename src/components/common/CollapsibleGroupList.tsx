@@ -19,6 +19,7 @@ import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { IconButton } from '@/components/ui/icon-button'
 import { displayPageTitle } from '@/lib/date-utils'
 import { getPageDisplayName, type PageDisplay } from '@/lib/page-display'
+import { cn } from '@/lib/utils'
 
 /**
  * Bounded cache for the per-group `getPageDisplayName(title,
@@ -232,10 +233,11 @@ function CollapsibleGroupListInner<G extends GroupItem>({
               <button
                 type="button"
                 onClick={() => onToggleGroup(group.page_id)}
-                className={
+                className={cn(
+                  'focus-ring-visible',
                   headerClassName ??
-                  'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors'
-                }
+                    'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors',
+                )}
                 aria-expanded={isExpanded}
                 title={display.title}
               >

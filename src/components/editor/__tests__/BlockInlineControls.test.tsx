@@ -601,11 +601,11 @@ describe('BlockMetadataRow', () => {
     )
 
     // It must NOT be a <button> (no click target, screen readers should not
-    // announce "button"). It is rendered as a <span role="status">.
+    // announce "button"). It is rendered as an <output>, a status.
     const indicator = container.querySelector('.repeat-indicator') as HTMLElement
     expect(indicator).toBeInTheDocument()
-    expect(indicator.tagName).toBe('SPAN')
-    expect(indicator.getAttribute('role')).toBe('status')
+    expect(indicator.tagName).toBe('OUTPUT')
+    expect(indicator).toHaveRole('status')
     expect(indicator.getAttribute('aria-label')).toContain('weekly')
   })
 

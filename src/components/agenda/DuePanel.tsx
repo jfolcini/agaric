@@ -281,7 +281,7 @@ export function DuePanel({
             <div
               className="due-panel-loading flex items-center gap-2 px-2 py-2"
               aria-busy="true"
-              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> defaults to display:inline and would break this flex skeleton container; keep role="status" on the div
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> takes phrasing content only, and this wraps <LoadingSkeleton>'s block rows
               role="status"
             >
               <LoadingSkeleton count={3} height="h-10" />
@@ -425,7 +425,6 @@ export function DuePanel({
                   firstFlatIndex={groupedCount}
                   focusedIndex={focusedIndex}
                   onNavigateToPage={onNavigateToPage}
-                  headingLevel="h4"
                 />
 
                 {/* Load more */}

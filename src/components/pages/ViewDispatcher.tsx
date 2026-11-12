@@ -173,7 +173,7 @@ export interface ViewDispatcherProps {
  */
 function ViewFallback(): ReactElement {
   return (
-    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level skeleton fallback; native <output> is display:inline and would collapse the space-y-2 vertical layout
+    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> takes phrasing content only, and this wraps <LoadingSkeleton>'s block rows
     <div className="space-y-2" aria-busy="true" role="status" data-testid="view-fallback">
       <LoadingSkeleton count={4} height="h-6" />
     </div>

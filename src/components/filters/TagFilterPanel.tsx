@@ -654,7 +654,7 @@ export function TagFilterPanel(): React.ReactElement {
   return (
     <div className="tag-filter-panel space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">{t('tagFilter.title')}</h3>
+        <h2 className="text-sm font-semibold">{t('tagFilter.title')}</h2>
         {/* #1426 — opt into the nested And/Or/Not composer. */}
         <Button
           variant="ghost"
@@ -736,9 +736,9 @@ export function TagFilterPanel(): React.ReactElement {
       {/* Matching tags from prefix search */}
       {filteredMatching.length > 0 && (
         <section className="rounded-lg border bg-card p-3">
-          <h4 className="mb-2 text-sm font-medium text-muted-foreground">
+          <h3 className="mb-2 text-sm font-medium text-muted-foreground">
             {t('tagFilter.matchingTagsTitle')}
-          </h4>
+          </h3>
           <div
             className="space-y-1"
             ref={matchingTagsRef}
@@ -805,9 +805,9 @@ export function TagFilterPanel(): React.ReactElement {
       {/* Results */}
       {results.length > 0 && (
         <section className="tag-filter-results relative space-y-3">
-          <h4 className="text-sm font-medium text-muted-foreground">
+          <h3 className="text-sm font-medium text-muted-foreground">
             {t('tagFilter.resultsTitle')} ({results.length})
-          </h4>
+          </h3>
           <div
             ref={resultsListRef}
             role="grid"
@@ -866,16 +866,14 @@ export function TagFilterPanel(): React.ReactElement {
             })}
           </div>
           {loading && (
-            <div
+            <output
               className="pointer-events-none absolute inset-x-0 top-1/2 flex -translate-y-1/2 items-center justify-center"
-              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- absolutely-positioned flex overlay; swapping to <output> would break the centering layout
-              role="status"
               aria-live="polite"
               data-testid="tag-filter-results-loading"
             >
               <Spinner size="lg" />
               <span className="sr-only">{t('tagFilter.loadingMessage')}</span>
-            </div>
+            </output>
           )}
         </section>
       )}

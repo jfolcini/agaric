@@ -161,15 +161,13 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
 
   if (loading) {
     return (
-      <div
+      <output
         className="flex items-center gap-2 rounded-md bg-muted px-3 py-4 text-sm text-muted-foreground"
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- kept as role="status" so the loading state is discoverable via the explicit role attribute relied on by callers/tests; <output> drops it
-        role="status"
         data-testid="mermaid-loading"
       >
         <Spinner size="sm" />
         <span>{t('mermaid.loading')}</span>
-      </div>
+      </output>
     )
   }
 

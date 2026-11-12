@@ -14,15 +14,10 @@ export function renderMermaidBlock(code: string, key: string): React.ReactElemen
     <Suspense
       key={key}
       fallback={
-        /* oxlint-disable jsx-a11y/prefer-tag-over-role -- keep the literal role="status": RichContentRenderer/StaticBlock tests query container.querySelector('[role="status"]'), which an <output>'s implicit role does not satisfy */
-        <div
-          className="flex items-center gap-2 rounded-md bg-muted px-3 py-4 text-sm text-muted-foreground"
-          role="status"
-        >
+        <output className="flex items-center gap-2 rounded-md bg-muted px-3 py-4 text-sm text-muted-foreground">
           <Spinner size="sm" />
           <span>{i18n.t('mermaid.loading')}</span>
-        </div>
-        /* oxlint-enable jsx-a11y/prefer-tag-over-role */
+        </output>
       }
     >
       <LazyMermaidDiagram code={code} />

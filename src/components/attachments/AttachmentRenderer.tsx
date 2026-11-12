@@ -427,7 +427,7 @@ function AttachmentImage({
           aria-hidden="true"
           data-testid="image-resize-hint"
           title={t('attachment.resizeHint')}
-          className="pointer-events-none absolute right-1 top-1 z-[5] rounded bg-popover/80 p-0.5 text-muted-foreground opacity-0 shadow-sm transition-opacity duration-normal group-focus-within:opacity-50 group-hover:opacity-50 [@media(hover:none)]:opacity-50"
+          className="pointer-events-none absolute right-1 top-1 z-[5] rounded bg-popover/80 p-0.5 text-muted-foreground opacity-0 shadow-(--shadow-resting) transition-opacity duration-normal group-focus-within:opacity-50 group-hover:opacity-50 [@media(hover:none)]:opacity-50"
         >
           <MoveHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
@@ -469,7 +469,7 @@ function AttachmentImage({
           data-testid="image-resize-handle"
           aria-hidden="true"
           title={t('attachment.resizeHandle')}
-          className={`absolute bottom-1 z-[6] h-3.5 w-3.5 touch-none rounded-sm border border-white/70 bg-popover/80 opacity-0 shadow-sm transition-opacity duration-normal group-focus-within:opacity-70 group-hover:opacity-70 [@media(hover:none)]:opacity-60 ${
+          className={`absolute bottom-1 z-[6] h-3.5 w-3.5 touch-none rounded-sm border border-white/70 bg-popover/80 opacity-0 shadow-(--shadow-resting) transition-opacity duration-normal group-focus-within:opacity-70 group-hover:opacity-70 [@media(hover:none)]:opacity-60 ${
             handleOnLeft ? 'left-1 cursor-nesw-resize' : 'right-1 cursor-nwse-resize'
           }`}
           onPointerDown={handleResizeStart}
@@ -482,7 +482,7 @@ function AttachmentImage({
         {dragWidth != null && (
           <span
             data-testid="image-resize-live"
-            className={`pointer-events-none absolute bottom-1 z-[6] rounded bg-popover/90 px-1.5 py-0.5 text-xs font-medium text-foreground shadow-sm ${
+            className={`pointer-events-none absolute bottom-1 z-[6] rounded bg-popover/90 px-1.5 py-0.5 text-xs font-medium text-foreground shadow-(--shadow-resting) ${
               handleOnLeft ? 'right-1' : 'left-1'
             }`}
           >

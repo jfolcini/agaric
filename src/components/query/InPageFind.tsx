@@ -604,9 +604,7 @@ export function InPageFind({
         )}
         data-testid="in-page-find-nav"
       >
-        <span
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- explicit role="status" is asserted by the InPageFind a11y test and kept on the <span> so the counter stays a span-styled inline live region; <output> would change the element identity the toolbar layout/tests depend on
-          role="status"
+        <output
           aria-live="polite"
           data-testid="in-page-find-counter"
           className={cn(
@@ -615,7 +613,7 @@ export function InPageFind({
           )}
         >
           {counterText}
-        </span>
+        </output>
         {variant === 'embedded' && <span className="flex-1" />}
         <Button
           type="button"
@@ -668,15 +666,13 @@ export function InPageFind({
         </span>
       )}
       {skippedLongNodes > 0 && !regexError && (
-        <span
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- sibling inline status span matching the counter's role="status" convention in this toolbar; kept a <span> for layout/markup consistency rather than swapping to <output>
-          role="status"
+        <output
           aria-live="polite"
           data-testid="in-page-find-skipped"
           className="text-xs text-muted-foreground"
         >
           {t('findInPage.skippedLongPassages', { count: skippedLongNodes })}
-        </span>
+        </output>
       )}
     </div>
   )

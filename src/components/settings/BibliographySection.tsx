@@ -19,6 +19,7 @@ import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
@@ -151,7 +152,7 @@ export function BibliographyResultPanel({
     <div
       className="import-result mt-3 text-xs space-y-1"
       data-testid="bib-import-result"
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level status wrapper holding the summary <p> and the <details> list, same as the markdown import-result region; <output> is inline-level and would change the block flow
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> takes phrasing content only, and this wraps a <p> and a <details> list
       role="status"
       aria-live="polite"
       aria-atomic="true"
@@ -169,23 +170,22 @@ export function BibliographyResultPanel({
               {t('data.importWarningsHeading', { count: result.warnings.length })}
             </span>
           </summary>
-          <ul
-            className="mt-1 space-y-0.5 max-h-40 overflow-y-auto"
-            data-testid="bib-import-warning-list"
-          >
-            {result.warnings.map((warning, i) => (
-              <li
-                // Warnings are free-form strings and may repeat, so
-                // index-qualify the key to keep it stable+unique.
-                // oxlint-disable-next-line react/no-array-index-key -- warning strings are free-form and may duplicate; the list is render-only (no reorder/insert), so the positional index is a stable, unique key
-                key={`bib-warn-${i}-${warning}`}
-                className="text-status-pending-foreground"
-                data-testid="bib-import-warning-item"
-              >
-                {warning}
-              </li>
-            ))}
-          </ul>
+          <ScrollArea className="mt-1 max-h-40" viewportClassName="[&>div]:!block">
+            <ul className="space-y-0.5" data-testid="bib-import-warning-list">
+              {result.warnings.map((warning, i) => (
+                <li
+                  // Warnings are free-form strings and may repeat, so
+                  // index-qualify the key to keep it stable+unique.
+                  // oxlint-disable-next-line react/no-array-index-key -- warning strings are free-form and may duplicate; the list is render-only (no reorder/insert), so the positional index is a stable, unique key
+                  key={`bib-warn-${i}-${warning}`}
+                  className="text-status-pending-foreground"
+                  data-testid="bib-import-warning-item"
+                >
+                  {warning}
+                </li>
+              ))}
+            </ul>
+          </ScrollArea>
         </details>
       )}
     </div>

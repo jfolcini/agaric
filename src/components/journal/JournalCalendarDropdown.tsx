@@ -91,8 +91,6 @@ function CalendarDayButton({
             <span
               key={d.key}
               className={cn('h-[5px] w-[5px] rounded-full ring-1 ring-background', d.color)}
-              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- decorative CSS dot; an <img> would demand src/alt and break the inline ring/color styling
-              role="img"
               aria-hidden
             />
           ))}

@@ -6,11 +6,10 @@
  * and the saved block never holds the syntax.
  */
 
-import { createRequire } from 'node:module'
-
 import { devices, type Page } from '@playwright/test'
 
 import {
+  axeViolations,
   expect,
   ipc,
   navigateToView,
@@ -21,7 +20,6 @@ import {
   waitForBoot,
 } from './helpers'
 
-const axePath = createRequire(import.meta.url).resolve('axe-core')
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const TITLE = 'Chip reveal'
 const BLOCK_EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
@@ -164,15 +162,6 @@ const CHIPS = [
   { type: 'tag_ref', chip: 'tag-ref-chip', expected: ['#'] },
   { type: 'block_ref', chip: 'block-ref-chip', expected: ['((', '))'] },
 ] as const
-
-async function axeViolations(page: Page, scope: string): Promise<string[]> {
-  await page.addScriptTag({ path: axePath })
-  return page.evaluate(async (s) => {
-    // @ts-expect-error injected global
-    const results = await window.axe.run(document.querySelector(s))
-    return results.violations.map((v: { id: string }) => v.id)
-  }, scope)
-}
 
 test.describe('Markdown syntax around chips in blocks (#5974) @editor @markdown @mobile', () => {
   test.use({ viewport: { width: 1280, height: 800 } })
