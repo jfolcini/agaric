@@ -2164,7 +2164,7 @@ async fn structural_op_parent_read_names_an_absent_target() {
 /// (already-child) move's slot to `count - 1`: the node vacates its own slot
 /// first, so the addressable range among the OTHER children shrinks by one.
 /// The FE replicates the symmetric slot math separately — `moveDown`
-/// (`src/stores/page-blocks.ts:1233`) emits `newIndex = sibIndex + 1`, which
+/// (`src/stores/page-blocks-reducers.ts`) emits `newIndex = sibIndex + 1`, which
 /// for the LAST sibling lands one past the shrunk range. Nothing cross-checks
 /// that the FE-emitted `newIndex` and the engine clamp agree at the tail.
 ///

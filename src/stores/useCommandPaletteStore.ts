@@ -76,7 +76,10 @@ interface CommandPaletteState {
    * character was a shortcut, and keeping it would loop the mode router.
    */
   enterModeWithQuery: (next: PaletteMode, q: string) => void
-  /** Write or clear the escalation slot; the caller closes the palette and shows `'search'`. */
+  /**
+   * Write or clear the handoff slot; the caller shows `'search'`, closing the
+   * palette when escalating from it.
+   */
   setPendingViewQuery: (q: string | null) => void
 }
 

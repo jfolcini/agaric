@@ -12,7 +12,7 @@ the model precisely enough to drive the follow-up implementation work.
 Agaric is a block outliner: every block is a row in the `blocks` table
 (`src-tauri/migrations/0001_initial.sql:5`), nesting is `parent_id` + `position`
 (same file, lines 9–10), and structure is edited with indent / dedent
-(`src/stores/page-blocks-types.ts:99`). A single **roving** ProseMirror editor
+(`PageBlockState.indent` / `dedent` in `src/stores/page-blocks-types.ts`). A single **roving** ProseMirror editor
 mounts on the focused block and unmounts on blur; every other block renders as
 static HTML (`src/editor/use-roving-editor.ts:1`, `docs/architecture/editor-and-content.md`
 § Roving-editor invariant).
@@ -131,7 +131,7 @@ Two options were considered:
 - **Column-backed on `blocks` (not recommended for v1).** Only justified if
   ordered-number recomputation needs an indexed SQL query over siblings, which
   it does not (the sibling set is already materialised in the per-page store,
-  `src/stores/page-blocks-types.ts:15`). Column-backing costs an `ALTER TABLE`, updates to
+  `PageBlockState.blocks` in `src/stores/page-blocks-types.ts`). Column-backing costs an `ALTER TABLE`, updates to
   all four column-list consts in `src-tauri/agaric-store/src/pagination/block_row_columns.rs:64`, every `query_as!`,
   the `BlockRow` / `ActiveBlockRow` structs, and the generated `bindings.ts`.
 

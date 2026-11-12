@@ -18,7 +18,13 @@ Edits went through a script that replaces only line ranges where every original 
 2. `git show HEAD:$f | esbuild --loader=ts --minify-whitespace` against the same command on the working file, for all 36 files: `diff -r` printed nothing.
 3. Types, which esbuild erases, were checked too: each changed file's HEAD and working source, with comments removed by `oxc-parser` and whitespace collapsed, are equal ("32 changed files, 0 differ").
 
-Comment share (comment-only lines / non-blank lines, counted with `oxc-parser`): `src/stores` went from 5379/11159 (48.2%) to 2333/8113 (28.8%).
+Comment share (comment-only lines / non-blank lines, counted with `oxc-parser`): `src/stores` went from 5379/11159 (48.2%) to 2337/8117 (28.8%).
+
+## Review fixes
+
+- `undo.ts`: `isPermanentRevertFailure` again says why a taken alias (`DuplicatePageAlias`) is dropped while a taken title keeps its entry. `useCommandPaletteStore.ts`: `setPendingViewQuery`'s doc no longer says every caller closes the palette (`TaggedItemsSection` escalates without one).
+- Line-number citations into the trimmed files, and older stale ones into `src/stores`, now name the symbol: `src/lib/name-change-bus.ts`, `src/components/block-tree/use-block-slash-commands/helpers.ts`, `BlockTree.test.tsx`, `ViewDispatcher.test.tsx`, `docs/architecture/list-ergonomics.md`, `scripts/check-persist-hooks.mjs`, `src-tauri/tests/command_integration/conformance.rs`.
+- `scripts/doc-code-paths-baseline.json`: the two entries for citations this pass deleted (`recent-pages.ts`, `search-history.ts`) are pruned; the manual-stage `doc-vs-code-paths` hook failed on them.
 
 ## Checks run
 

@@ -268,15 +268,5 @@
     "file": "src/lib/tauri-mock/handlers/shared.ts",
     "ref": "agaric-store/src/pagination/history.rs:180,222",
     "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
-  },
-  {
-    "file": "src/stores/recent-pages.ts",
-    "ref": "src/lib/recent-pages.ts",
-    "reason": "Prose intentionally describes a REMOVED file (\"the former `lib/recent-pages.ts`\", \"the now-removed `lib/recent-pages.ts`\", used 8 times in this file as historical context for the consolidated store). The file is deliberately gone, not moved; there is no current path to repoint to without rewriting the historical narrative itself."
-  },
-  {
-    "file": "src/stores/search-history.ts",
-    "ref": "stores/recent-pages.ts:99",
-    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   }
 ]

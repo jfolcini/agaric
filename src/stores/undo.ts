@@ -231,8 +231,9 @@ function withoutEntry(undoStack: UndoStackEntry[], entry: UndoStackEntry): UndoS
  * replicated op), `not_found` (op compacted away), `non_reversible`.
  *
  * A taken page or tag name (`DuplicatePageTitle`, #6051) keeps its entry: its
- * toast names the holder, and the same Ctrl+Z works once that is renamed.
- * Some `non_reversible` moves are only temporarily impossible (prior parent in
+ * toast names the holder, and the same Ctrl+Z works once that is renamed. A
+ * taken alias (`DuplicatePageAlias`) is dropped: its toast is generic, so a
+ * kept entry would fail blind. Some `non_reversible` moves are only temporarily impossible (prior parent in
  * trash, now a descendant, in another space), but the error carries no
  * sub-kind to tell them apart, and keeping them all restores the wedge. A
  * transient error (`pool_busy`, `database`, a dropped IPC) keeps its entry.

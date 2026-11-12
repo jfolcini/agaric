@@ -64,7 +64,7 @@ export async function applyContentEdit(
     // mutation in `pageStore.edit()`. Pre-fix this was missing, so a
     // user could `Cmd+Z` past a slash command and `Cmd+Shift+Z` would
     // resurrect the wrong content. Mirror the `pageStore.edit()`
-    // contract (`src/stores/page-blocks-reducers.ts:298`) by calling `notifyUndo` here.
+    // contract (`edit` in `src/stores/page-blocks-reducers.ts`) by calling `notifyUndo` here.
     // #2468 — thread the edit's op ref(s) for ref-addressed undo.
     notifyUndo(ctx.rootParentId, resp.op_refs)
     ctx.pageStore.setState((state) => ({

@@ -225,7 +225,7 @@ describe('ViewDispatcher — routing', () => {
 // #1685 — fresh-space default render path (integration)
 // ---------------------------------------------------------------------------
 //
-// The space-switch subscriber in navigation.ts:327 forces
+// The space-switch subscriber (`navigationSlice` in navigation.ts) forces
 // currentView='page-editor' when a user switches into a brand-new space
 // (one with no recorded per-space view). For a fresh space the tab list is
 // also empty, so App derives activePage=null. Prior coverage asserted only
