@@ -348,8 +348,15 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
     namedIds.set(spaceId, new Set(pages.map((p) => p.id)))
   }
 
-  /** Replace `tagColors` with the `color` properties of `tagIds`; a failed read keeps the last. */
+  /** Bumped by `setSyncedTagColor`, so a colour read already in flight cannot overwrite it. */
+  let tagColorWrites = 0
+
+  /**
+   * Replace `tagColors` with the `color` properties of `tagIds`; a failed read keeps the last,
+   * and so does a read that the user outran by switching space or setting a colour.
+   */
   async function refreshTagColors(spaceId: string, tagIds: string[]): Promise<void> {
+    const writesAtStart = tagColorWrites
     const colors: Record<string, string> = {}
     try {
       for (let i = 0; i < tagIds.length; i += TARGETED_PRELOAD_MAX_IDS) {
@@ -364,6 +371,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       logger.warn('ResolveStore', 'failed to read tag colours', { spaceId }, err)
       return
     }
+    if (activeSpaceId() !== spaceId || tagColorWrites !== writesAtStart) return
     const next = migrateTagColors(colors).colors
     const prev = get().tagColors
     const same =
@@ -479,13 +487,15 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
     _preloaded: false,
     tagColors: {},
 
-    setSyncedTagColor: (tagId, color) =>
+    setSyncedTagColor: (tagId, color) => {
+      tagColorWrites++
       set((state) => {
         const tagColors = { ...state.tagColors }
         if (color === null) delete tagColors[tagId]
         else tagColors[tagId] = color
         return { tagColors }
-      }),
+      })
+    },
 
     preload: (spaceId, forceRefresh = false, changedPageIds) => {
       // Fail closed before the space store hydrates: the cross-space barrier

@@ -605,6 +605,58 @@ describe('preload tag colours', () => {
     )
     warnSpy.mockRestore()
   })
+
+  /** Park the colour read of a preload of TAG_1 so the test decides when it settles. */
+  function deferColourRead(): Array<(v: CommandReturns['get_batch_properties']) => void> {
+    const deferred: Array<(v: CommandReturns['get_batch_properties']) => void> = []
+    stubInvoke(mockedInvoke, {
+      list_all_pages_in_space: () => [],
+      list_all_tags_in_space: () => [tagRow('TAG_1', 'one')],
+      get_batch_properties: () =>
+        new Promise<CommandReturns['get_batch_properties']>((resolve) => deferred.push(resolve)),
+    })
+    return deferred
+  }
+
+  const staleBlue = { TAG_1: [makePropertyRow({ key: 'color', value_text: 'accent-blue' })] }
+
+  it('drops the colours of a space the user left while they were read', async () => {
+    const deferred = deferColourRead()
+    const preload = useResolveStore.getState().preload(TEST_SPACE_ID)
+    await vi.waitFor(() => expect(deferred).toHaveLength(1))
+
+    useSpaceStore.setState({ currentSpaceId: OTHER_SPACE_ID })
+    useResolveStore.setState({ tagColors: { TAG_9: 'accent-green' } })
+    deferred[0]?.(staleBlue)
+    await preload
+
+    expect(useResolveStore.getState().tagColors).toEqual({ TAG_9: 'accent-green' })
+  })
+
+  it('keeps a colour set while the preload was reading', async () => {
+    const deferred = deferColourRead()
+    const preload = useResolveStore.getState().preload(TEST_SPACE_ID)
+    await vi.waitFor(() => expect(deferred).toHaveLength(1))
+
+    useResolveStore.getState().setSyncedTagColor('TAG_1', 'accent-green')
+    deferred[0]?.(staleBlue)
+    await preload
+
+    expect(useResolveStore.getState().tagColors).toEqual({ TAG_1: 'accent-green' })
+  })
+
+  it('keeps a colour cleared while the preload was reading', async () => {
+    useResolveStore.setState({ tagColors: { TAG_1: 'accent-blue' } })
+    const deferred = deferColourRead()
+    const preload = useResolveStore.getState().preload(TEST_SPACE_ID)
+    await vi.waitFor(() => expect(deferred).toHaveLength(1))
+
+    useResolveStore.getState().setSyncedTagColor('TAG_1', null)
+    deferred[0]?.(staleBlue)
+    await preload
+
+    expect(useResolveStore.getState().tagColors).toEqual({})
+  })
 })
 
 // ---------------------------------------------------------------------------
