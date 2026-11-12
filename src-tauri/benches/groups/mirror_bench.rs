@@ -10,7 +10,9 @@
 //!     mirror already wrote: a full pass that renders every page and compares
 //!     it with the text last written, writing nothing
 //!   - `mirror_idle_tick` — a tick with nothing to write: the polling scan,
-//!     one stat per file and per folder, paid every `TICK`
+//!     one stat per file and per folder, paid every `TICK`; once per
+//!     setting: as set by default, reading back off, copying on, and a
+//!     second space turned off
 //!   - `mirror_catchup_pass` — the full pass a snapshot catch-up asks for
 //!     (a sync naming no page) at 100K blocks
 //!   - `mirror_copy_first` — the first full pass with copying on, every
@@ -31,7 +33,10 @@ use tokio::runtime::Runtime;
 
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::add_attachment_with_bytes_inner;
-use agaric_lib::commands::mirror::{set_mirror_copy_files_inner, set_mirror_folder_inner};
+use agaric_lib::commands::mirror::{
+    get_mirror_status_inner, set_mirror_copy_files_inner, set_mirror_folder_inner,
+    set_mirror_read_back_inner, set_mirror_space_inner,
+};
 use agaric_lib::commands::pages::{
     SourceSaveFlags, apply_page_source_inner, get_page_buffer_inner,
 };
@@ -43,6 +48,7 @@ use agaric_lib::mirror::{Mirror, MirrorState};
 const DEV: &str = "BENCH-MIRROR-DEVICE";
 const SPACE: &str = "01SPACE0000000000000000001";
 const SPACE_NAME: &str = "Bench";
+const OTHER_SPACE: &str = "01SPACE0000000000000000002";
 
 /// A vault of `pages` pages of `blocks_per_page` blocks each in one space,
 /// and a mirror over an empty folder, with the ingest on as the app runs it.
@@ -67,58 +73,7 @@ async fn vault(pages: usize, blocks_per_page: usize) -> Vault {
     let db = TempDir::new().unwrap();
     let pool = init_pool(&db.path().join("bench.db")).await.unwrap();
     let mut tx = pool.begin().await.unwrap();
-    sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-         VALUES (?, 'page', ?, NULL, NULL, ?)",
-    )
-    .bind(SPACE)
-    .bind(SPACE_NAME)
-    .bind(SPACE)
-    .execute(&mut *tx)
-    .await
-    .unwrap();
-    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
-        .bind(SPACE)
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    sqlx::query(
-        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'is_space', 'true')",
-    )
-    .bind(SPACE)
-    .execute(&mut *tx)
-    .await
-    .unwrap();
-    for p in 0..pages {
-        let page = page_id(p);
-        sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, position, page_id, space_id) \
-             VALUES (?, 'page', ?, ?, ?, ?)",
-        )
-        .bind(&page)
-        .bind(format!("Page {p}"))
-        .bind(p as i64 + 1)
-        .bind(&page)
-        .bind(SPACE)
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-        for b in 0..blocks_per_page {
-            sqlx::query(
-                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
-                 VALUES (?, 'content', ?, ?, ?, ?, ?)",
-            )
-            .bind(block_id(p, b))
-            .bind(format!("Block {b} of page {p}: a sentence of ordinary note text."))
-            .bind(&page)
-            .bind(b as i64 + 1)
-            .bind(&page)
-            .bind(SPACE)
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        }
-    }
+    insert_space(&mut tx, SPACE, SPACE_NAME, 0..pages, blocks_per_page).await;
     tx.commit().await.unwrap();
 
     let folder = TempDir::new().unwrap();
@@ -141,6 +96,69 @@ async fn vault(pages: usize, blocks_per_page: usize) -> Vault {
         folder,
         data,
         _db: db,
+    }
+}
+
+/// The space `id`, named `name`, holding pages `numbers` of `blocks_per_page`
+/// blocks each.
+async fn insert_space(
+    tx: &mut sqlx::SqliteConnection,
+    id: &str,
+    name: &str,
+    numbers: std::ops::Range<usize>,
+    blocks_per_page: usize,
+) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', ?, NULL, NULL, ?)",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'is_space', 'true')",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    for p in numbers {
+        let page = page_id(p);
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, page_id, space_id) \
+             VALUES (?, 'page', ?, ?, ?, ?)",
+        )
+        .bind(&page)
+        .bind(format!("Page {p}"))
+        .bind(p as i64 + 1)
+        .bind(&page)
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        for b in 0..blocks_per_page {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+                 VALUES (?, 'content', ?, ?, ?, ?, ?)",
+            )
+            .bind(block_id(p, b))
+            .bind(format!("Block {b} of page {p}: a sentence of ordinary note text."))
+            .bind(&page)
+            .bind(b as i64 + 1)
+            .bind(&page)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
     }
 }
 
@@ -310,24 +328,56 @@ fn bench_startup_pass(c: &mut Criterion) {
     rt.block_on(async { vault.mat.shutdown() });
 }
 
+/// The idle tick under each setting, over one vault: 10K pages in one space
+/// and 100 in a second, the space `space_off` turns off.
 fn bench_idle_tick(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
     const PAGES: usize = 10_000;
-    let (vault, mut mirror) = rt.block_on(mirrored(PAGES, 5));
-    // A second tick lists every folder once, as a running mirror has.
-    rt.block_on(mirror.tick()).unwrap();
+    const OTHER: usize = 100;
     let mut group = c.benchmark_group("mirror_idle_tick");
     group.sample_size(20);
-    group.bench_function(BenchmarkId::from_parameter(PAGES), |b| {
-        b.iter(|| rt.block_on(mirror.tick()).unwrap());
-    });
+    for setting in ["default", "read_back_off", "copy_files_on", "space_off"] {
+        let rt = Runtime::new().unwrap();
+        let vault = rt.block_on(async {
+            let vault = vault(PAGES, 5).await;
+            let mut conn = vault.pool.acquire().await.unwrap();
+            insert_space(&mut conn, OTHER_SPACE, "Other", PAGES..PAGES + OTHER, 5).await;
+            drop(conn);
+            let (pool, state) = (&vault.pool, &vault.state);
+            match setting {
+                "read_back_off" => set_mirror_read_back_inner(pool, DEV, state, false, &[]).await,
+                "copy_files_on" => set_mirror_copy_files_inner(pool, DEV, state, true).await,
+                "space_off" => set_mirror_space_inner(pool, DEV, state, OTHER_SPACE, false).await,
+                _ => get_mirror_status_inner(pool, DEV, state).await,
+            }
+            .unwrap();
+            vault
+        });
+        let mut mirror = rt.block_on(vault.open());
+        // A first pass writes every page; a second lists every folder once,
+        // as a running mirror has.
+        rt.block_on(mirror.tick()).unwrap();
+        rt.block_on(mirror.tick()).unwrap();
+        let files = if setting == "space_off" {
+            PAGES
+        } else {
+            PAGES + OTHER
+        };
+        assert_eq!(
+            file_count(vault.folder.path()),
+            files,
+            "{setting}: one file per page"
+        );
+        group.bench_function(BenchmarkId::new(setting, PAGES), |b| {
+            b.iter(|| rt.block_on(mirror.tick()).unwrap());
+        });
+        assert_eq!(
+            file_count(vault.folder.path()),
+            files,
+            "{setting}: an idle tick writes nothing"
+        );
+        rt.block_on(async { vault.mat.shutdown() });
+    }
     group.finish();
-    assert_eq!(
-        file_count(vault.folder.path()),
-        PAGES,
-        "an idle tick writes nothing"
-    );
-    rt.block_on(async { vault.mat.shutdown() });
 }
 
 fn bench_catchup_pass(c: &mut Criterion) {

@@ -3,8 +3,9 @@
 // setting 2).
 //
 // A space turned off in Settings › Data is no longer written: its unchanged
-// files are removed from the folder, and the other spaces' stay. The mock has
-// no mirror task, so only this lane can show it.
+// files are removed from the folder, the other spaces' stay, and a page added
+// to it gets no file. The mock has no mirror task, so only this lane can
+// show it.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -36,6 +37,7 @@ const KEPT = runScopedMarker('wdio-spaces-kept')
 const KEPT_BLOCK = runScopedMarker('wdio-spaces-kept-block')
 const OTHER_SPACE = runScopedMarker('wdio-spaces-other')
 const OTHER_PAGE = runScopedMarker('wdio-spaces-other-page')
+const NEW_PAGE = runScopedMarker('wdio-spaces-new-page')
 
 const folder = mkdtempSync(path.join(os.tmpdir(), 'wdio-mirror-spaces-'))
 
@@ -96,5 +98,26 @@ describe('Agaric real-backend Markdown mirror, which spaces are mirrored (#5363)
     })
     expect((await invoke<MirrorStatus>('get_mirror_status')).unmirrored_spaces).toEqual([other])
     expect(existsSync(kept)).toBe(true)
+
+    // A page added to the space while it is off gets no file.
+    await invoke('create_page_in_space', { parentId: null, content: NEW_PAGE, spaceId: other })
+    // Two passes ending after it, so one began after it.
+    let since = Date.now()
+    for (const pass of ['first', 'second']) {
+      await browser.waitUntil(
+        async () => {
+          const ended = (await invoke<MirrorStatus>('get_mirror_status')).last_pass_ms ?? 0
+          if (ended <= since) return false
+          since = ended
+          return true
+        },
+        { timeout: NAV_TIMEOUT, timeoutMsg: `no ${pass} pass after the page was added` },
+      )
+    }
+    expect(
+      readdirSync(folder, { recursive: true, withFileTypes: true }).filter(
+        (entry) => entry.name === `${NEW_PAGE}.md`,
+      ),
+    ).toEqual([])
   })
 })
