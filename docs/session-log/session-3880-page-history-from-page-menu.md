@@ -1,4 +1,4 @@
-# Session 3865 — readable History rows, and page history from the page menu (#6535)
+# Session 3880 — readable History rows, and page history from the page menu (#6535)
 
 - **Set out to do** the first two checkboxes of #6535: readable History rows with the compaction control out of the lead position, and a page-scoped History reached from the page menu. Both landed, the second first; the third (agent badge) was out of scope.
 - **Checkbox 1, readable rows.** The orchestrator approved editing the tests that pinned the raw strings.
