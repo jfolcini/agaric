@@ -15,7 +15,6 @@
  * On a phone it is a bottom sheet (`useDialogOrSheet`), in thumb reach.
  */
 
-import { parseISO } from 'date-fns'
 import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -29,6 +28,7 @@ import { SheetBody } from '@/components/ui/sheet'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { parseDate } from '@/lib/parse-date'
+import { parseISODate } from '@/stores/journal'
 
 const TITLE_KEYS: Partial<Record<DatePickerMode, string>> = {
   due: 'datePicker.dueTitle',
@@ -53,7 +53,7 @@ export function BlockDatePicker({
 }): React.ReactElement {
   const { t } = useTranslation()
   const title = t(TITLE_KEYS[mode ?? 'date'] ?? 'journal.datePickerLabel')
-  const selected = value === null ? undefined : parseISO(value)
+  const selected = (value === null ? null : parseISODate(value)) ?? undefined
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description } = parts
   const { weekStartsOn } = useWeekStart()
