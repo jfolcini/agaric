@@ -32,6 +32,7 @@ import { TableHeader } from '@tiptap/extension-table-header'
 import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
 import { DOMSerializer, type Node as PMNode } from '@tiptap/pm/model'
+import { Selection } from '@tiptap/pm/state'
 import { type Editor, Extension, ReactNodeViewRenderer, useEditor } from '@tiptap/react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 
@@ -1380,12 +1381,16 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // (ProseMirror's splitBlock semantics; marks spanning the caret are carried
   // into each half by `doc.cut`). Returns null when there is no editor or the
   // selection is a range (a non-collapsed selection has no single split point).
+  // At the very end the tail is '' (#6547): `doc.cut` would keep an empty
+  // heading or quote there, serialised as `# ` / `> `, and the sibling Enter
+  // creates past a heading's end is a paragraph.
   const splitAtCaret = useCallback((): { before: string; after: string } | null => {
     if (!editor) return null
     const { from, empty } = editor.state.selection
     if (!empty) return null
     const { doc } = editor.state
     const before = serialize(doc.cut(0, from).toJSON() as DocNode, notifyUnknownNodeTypeToast)
+    if (from === Selection.atEnd(doc).from) return { before, after: '' }
     const after = serialize(doc.cut(from).toJSON() as DocNode, notifyUnknownNodeTypeToast)
     return { before, after }
   }, [editor])
