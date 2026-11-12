@@ -101,7 +101,8 @@ test.describe('Deleting a block @editor @journal', () => {
     await page.keyboard.press('Backspace')
 
     await expect(rows(page)).toHaveCount(1)
+    // Read once: a retrying `toHaveCount(0)` waits out a toast's lifetime and passes.
+    expect(await toasts(page).count()).toBe(0)
     await expect(rows(page)).toContainText('kept')
-    await expect(toasts(page)).toHaveCount(0)
   })
 })

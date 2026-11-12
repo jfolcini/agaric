@@ -838,7 +838,7 @@ function SortableBlockInner({
         <SwipeAffordances
           blockId={blockId}
           swipeRowDescId={swipeRowDescId}
-          onDelete={onDelete}
+          onDelete={onDelete && deleteWithUndo}
           onIndent={onIndent}
           onDedent={onDedent}
           gestureIntent={swipeGestureIntent}
