@@ -4,9 +4,8 @@
  * Ordered-list numbers are never stored — they are derived from a block's
  * position among consecutive same-depth, same-parent `ordered` siblings and
  * recomputed whenever the visible tree changes (reorder / insert / style
- * toggle). This mirrors the markdown serializer, which emits positional
- * numbers (`markdown-serialize.ts` `serializeOrderedList`) and discards any
- * literal ordinal on parse. See `docs/architecture/list-ergonomics.md`.
+ * toggle). An ordered list inside one block's text keeps its own start number
+ * instead (`serializeOrderedList`, #6530). See `docs/architecture/list-ergonomics.md`.
  */
 
 import type { ListStyle } from '@/lib/list-style'

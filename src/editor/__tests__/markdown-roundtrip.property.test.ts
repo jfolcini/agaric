@@ -376,9 +376,14 @@ const arbBulletList: fc.Arbitrary<BlockLevelNode> = fc
   .array(arbListItem, { minLength: 1, maxLength: 3 })
   .map((items) => ({ type: 'bulletList' as const, content: items }))
 
+// #6530: a list keeps the number it starts at; 1 is the start a list without `attrs` has.
 const arbOrderedList: fc.Arbitrary<BlockLevelNode> = fc
-  .array(arbListItem, { minLength: 1, maxLength: 3 })
-  .map((items) => ({ type: 'orderedList' as const, content: items }))
+  .tuple(fc.array(arbListItem, { minLength: 1, maxLength: 3 }), fc.integer({ min: 0, max: 999 }))
+  .map(([items, start]) =>
+    start === 1
+      ? { type: 'orderedList' as const, content: items }
+      : { type: 'orderedList' as const, attrs: { start }, content: items },
+  )
 
 /** Block math latex (kept `$`-free and edge-trimmed: the block fence takes the
  * body verbatim and re-trims on parse, so only trimmed bodies are canonical). */

@@ -1460,9 +1460,10 @@ function serializeOrderedList(
   onUnknownNode?: (type: string) => void,
 ): string {
   if (!node.content || node.content.length === 0) return ''
+  const start = node.attrs?.start ?? 1
   return node.content
     .map((item: ListItemNode, idx: number) =>
-      serializeListItem(item, `${idx + 1}. `, onUnknownNode),
+      serializeListItem(item, `${start + idx}. `, onUnknownNode),
     )
     .join('\n')
 }

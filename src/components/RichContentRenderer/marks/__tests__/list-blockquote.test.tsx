@@ -63,3 +63,15 @@ describe('renderBlock — blockquote with non-paragraph children (#1534)', () =>
     expect(bq?.textContent).toContain('beta')
   })
 })
+
+describe('renderBlock — orderedList start (#6530)', () => {
+  it('numbers a list from the number it starts at', () => {
+    const { container } = render(<>{renderBlock(firstBlock('5. five\n6. six'), 'k', ctx)}</>)
+    expect(container.querySelector('ol')?.getAttribute('start')).toBe('5')
+  })
+
+  it('writes no start for a list starting at 1', () => {
+    const { container } = render(<>{renderBlock(firstBlock('1. one'), 'k', ctx)}</>)
+    expect(container.querySelector('ol')?.hasAttribute('start')).toBe(false)
+  })
+})

@@ -231,6 +231,8 @@ export interface ListItemNode {
 
 export interface OrderedListNode {
   readonly type: 'orderedList'
+  /** The number the list starts at, when not 1 (#6530). TipTap's node always carries both. */
+  readonly attrs?: { readonly start?: number; readonly type?: string | null }
   readonly content?: readonly ListItemNode[]
 }
 

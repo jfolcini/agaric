@@ -635,7 +635,7 @@ describe('#4071/#4076: markdown-string convergence on the SECOND pass', () => {
    */
   it('#4071: two ordered lists split by an indented paragraph converge in ONE pass', () => {
     const { once, twice } = passes('   1. item\n    - item\n3. item')
-    expect(once).toBe('1. item\n\\    \\- item\n1. item')
+    expect(once).toBe('1. item\n\\    \\- item\n3. item')
     expect(twice).toBe(once)
     // and the structure survives: still THREE sibling blocks, not one list
     expect((parse(once).content ?? []).map((b) => b.type)).toEqual([
@@ -658,30 +658,6 @@ describe('#4071/#4076: markdown-string convergence on the SECOND pass', () => {
     const { once, twice } = passes('   - item\n\t    - item\n\t> > > \t\t- item\n- item')
     expect(once).toBe('- item\n  - item\n\\    > > > \t\t- item\n- item')
     expect(twice).toBe(once)
-  })
-
-  /**
-   * #4076.2 is NOT a convergence failure and is NOT fixed here — pinned so the
-   * distinction is on the record rather than rediscovered.
-   *
-   * `> > 3. item` converges in one pass; what it loses is the literal ordinal,
-   * which the parser discards and the serializer regenerates from position.
-   * That is the DOCUMENTED design, not an oversight: ordered numbers are
-   * computed from a block's position among its siblings, never stored
-   * (`docs/architecture/list-ergonomics.md` § Markdown round-trip, and
-   * `src/lib/list-ordinals.ts`, which recomputes them for the block tree).
-   * Carrying `start` through the markdown pair alone would make the two halves
-   * disagree — markdown would say `3.` where the editor renders `1.` — so it is
-   * a design change across the block model, not a serializer fix.
-   *
-   * Renumbering is lossy but IDEMPOTENT, which is why no property catches it.
-   */
-  it('#4076.2: an ordered list inside a blockquote renumbers from 1, and is stable', () => {
-    const { once, twice } = passes('> > 3. item')
-    expect(once).toBe('> > 1. item')
-    expect(twice).toBe(once)
-    // identical at the top level — nothing about this is blockquote-specific
-    expect(passes('3. item').once).toBe('1. item')
   })
 
   /**
@@ -1102,5 +1078,45 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
     expect(md).toBe(' *y*')
     expect(parse(md)).toEqual(doc(paragraph(text(' '), it_('y'))))
     expect(serialize(parse(md))).toBe(md)
+  })
+})
+
+describe('#6530: an ordered list keeps the number it starts at', () => {
+  const once = (s: string) => serialize(parse(s))
+
+  it.each([
+    ['5. five\n6. six', '5. five\n6. six'],
+    ['3. item', '3. item'],
+    ['> > 3. item', '> > 3. item'],
+    ['- a\n  7. nested', '- a\n  7. nested'],
+    ['0. zero', '0. zero'],
+    // only the first number is kept; the rest count on from it
+    ['5. five\n9. six', '5. five\n6. six'],
+    ['1. one\n2. two', '1. one\n2. two'],
+  ])('%j is written back as %j', (md, written) => {
+    expect(once(md)).toBe(written)
+    expect(once(written)).toBe(written)
+  })
+
+  it('reads the start onto the list node, and none for a list starting at 1', () => {
+    expect(parse('5. five')).toEqual(
+      doc({
+        type: 'orderedList',
+        attrs: { start: 5 },
+        content: [listItem(paragraph(text('five')))],
+      }),
+    )
+    expect(parse('1. one')).toEqual(doc(orderedList(listItem(paragraph(text('one'))))))
+  })
+
+  it('writes the start an editor list carries (TipTap emits `start: 1` and `type: null`)', () => {
+    const editorList = (start: number) =>
+      doc({
+        type: 'orderedList',
+        attrs: { start, type: null },
+        content: [listItem(paragraph(text('a'))), listItem(paragraph(text('b')))],
+      } as unknown as Parameters<typeof doc>[0])
+    expect(serialize(editorList(5))).toBe('5. a\n6. b')
+    expect(serialize(editorList(1))).toBe('1. a\n2. b')
   })
 })

@@ -16,6 +16,7 @@ import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '@/lib/templa
 import { useBlockStore } from '@/stores/blocks'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
+import { useUndoStore } from '@/stores/undo'
 
 export interface TemplatePagePreview {
   id: string
@@ -86,6 +87,12 @@ export function useTemplateSelection({
           pageTitle,
           onCursorBlock: (blockId) => {
             cursorBlockId = blockId
+          },
+          // One Ctrl+Z takes the whole insert back (#6530).
+          onOpRefs: (refs) => {
+            if (rootParentId) {
+              useUndoStore.getState().onNewAction(rootParentId, refs, undefined, { merge: false })
+            }
           },
         })
         if (ids.length > 0) {

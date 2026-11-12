@@ -263,7 +263,7 @@ site page named in the row or in the Appendix.
 | --- | --- | --- | --- |
 | Core templates | A template folder; `{{title}}`, `{{date}}`, `{{time}}` with Moment formats | Template pages, a Templates view, two variable grammars including `{{cursor}}` | Done |
 | Scripting | **Templater** (6.16M): JavaScript, prompts, file operations (**memory**, 2025) | None | Gap |
-| Known defect | N/A | `/template` inserts blocks with `properties: {}` (`insertTemplateBlocks` in `src/lib/template-utils.ts`), so a template's task states and dates do not arrive; journal templates carry them | Partial |
+| Known defect | N/A | `/template` copies task states, priorities, dates and properties, and one undo takes the insert back, but it writes one transaction per nesting level (`insertTemplateBlocks` in `src/lib/template-utils.ts`), so a level that fails leaves the ones above it; journal templates copy in one | Partial |
 | Unique note creator | Core plugin (timestamp-named notes) | None; ids are intrinsic | Design choice |
 
 ### 11. Graph and Canvas
@@ -583,7 +583,7 @@ low / medium / high; cost low is hours to days, medium is weeks, high is a month
 | 11 | **A readable query language** | Dataview users expect to paste a query. The engine exists; the text form was dropped | medium | medium | low |
 | 12 | **One user stylesheet** | A single custom CSS file covers most of what snippets are used for, on the token layer that already exists | medium | low | low to medium: support burden when the DOM changes |
 | 13 | **Translations** | Finish Spanish; open a contribution path. Every string already passes through `t()` | medium | medium | low |
-| 14 | **Editor parity items** | `%%comments%%`, outgoing-links list, `/template` keeping properties, searches shorter than three characters | medium | low each | low |
+| 14 | **Editor parity items** | `%%comments%%`, outgoing-links list, `/template` in one transaction, searches shorter than three characters | medium | low each | low |
 | 15 | **PDF and static HTML export** | Sharing a page with someone who does not use the app | low to medium | medium | low |
 | 16 | **Fix the README** | It still describes a WebSocket transport, four journal modes, five property types and inline block-ref content | low | low | low |
 
