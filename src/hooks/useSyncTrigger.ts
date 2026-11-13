@@ -171,12 +171,8 @@ async function syncOnePeerWithToast(
           if (update.state === 'error') endSession(unanswered ? 'failed' : 'reported')
         }
       }
-      if (!pressed) {
-        await startSync(peerId, onProgress)
-        return 'complete'
-      }
-      await startSync(peerId, onProgress, true)
-      return sessionEnd
+      await startSync(peerId, onProgress, pressed)
+      return pressed ? sessionEnd : 'complete'
     }
     const ending = await runWithTimeout(run(), SYNC_TIMEOUT_MS, new Error('Sync timeout'))
     if (ending === 'reported') return false
@@ -204,7 +200,7 @@ async function syncOnePeerWithToast(
         label: i18n.t('sync.retryAction'),
         onClick: () => {
           // Fire-and-forget — a fresh toast surfaces on subsequent failure.
-          void syncOnePeerWithToast(peerId)
+          void syncOnePeerWithToast(peerId, undefined, true)
         },
       },
     })

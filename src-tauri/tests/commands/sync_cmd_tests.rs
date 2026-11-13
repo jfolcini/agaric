@@ -855,7 +855,10 @@ async fn a_pressed_start_sync_clears_that_peers_backoff_and_dials_6523() {
         .expect("a press dials a peer in backoff");
 
     assert_eq!(info.state, "queued");
-    assert!(scheduler.may_retry("peer-1"), "the press clears the backoff");
+    assert!(
+        scheduler.may_retry("peer-1"),
+        "the press clears the backoff"
+    );
     assert_eq!(scheduler.failure_count("peer-1"), 0);
     assert!(
         !scheduler.may_retry("peer-2"),
@@ -997,7 +1000,8 @@ async fn sync_start_sync_succeeds_when_a_different_peer_is_syncing() {
 
     let _daemon_session = scheduler.try_lock_peer(&busy_key).unwrap();
 
-    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-idle".into(), true).await;
+    let result =
+        start_sync_inner(&pool, &scheduler, "device-local", "peer-idle".into(), true).await;
     assert!(
         result.is_ok(),
         "the busy probe is per-peer, not a global sync mutex; got: {:?}",
@@ -1022,7 +1026,14 @@ async fn sync_start_sync_succeeds_for_a_peer_with_no_bound_endpoint_id() {
         .await
         .unwrap();
 
-    let result = start_sync_inner(&pool, &scheduler, "device-local", "legacy-peer".into(), true).await;
+    let result = start_sync_inner(
+        &pool,
+        &scheduler,
+        "device-local",
+        "legacy-peer".into(),
+        true,
+    )
+    .await;
     assert!(
         result.is_ok(),
         "an unbound peer must still be triggerable, got: {:?}",
@@ -1058,9 +1069,15 @@ async fn sync_start_sync_rejects_a_corrupt_stored_endpoint_id() {
         .await
         .expect("the column CHECK admits this value — that is the point");
 
-    let err = start_sync_inner(&pool, &scheduler, "device-local", "corrupt-peer".into(), true)
-        .await
-        .expect_err("an unparseable stored endpoint id must not be silently skipped");
+    let err = start_sync_inner(
+        &pool,
+        &scheduler,
+        "device-local",
+        "corrupt-peer".into(),
+        true,
+    )
+    .await
+    .expect_err("an unparseable stored endpoint id must not be silently skipped");
     assert!(
         matches!(err, AppError::Validation { .. }),
         "a corrupt row must surface as a Validation error, not a lock result or a \

@@ -500,7 +500,7 @@ impl CommandTx {
     ///
     /// A commit that wrote ops is a local edit, and runs the materializer's
     /// [`on_local_commit`](crate::materializer::Materializer::on_local_commit)
-    /// hook, unless it runs inside [`following_a_sync`].
+    /// hook, unless it runs inside `following_a_sync`.
     ///
     /// Returns the number of dispatches that fired. Dispatch failures
     /// are logged at warn level and do not surface here.
@@ -537,10 +537,7 @@ impl CommandTx {
         self.committed = true;
         let drained = std::mem::take(&mut self.pending);
         let count = drained.len();
-        let wrote_ops = count > 0 || !self.undispatched.is_empty();
-        if wrote_ops && FOLLOWS_A_SYNC.try_with(|()| ()).is_err() {
-            materializer.note_local_commit();
-        }
+        self.note_local_edit(materializer, count);
         for entry in drained {
             match entry {
                 PendingDispatch::Background(record) => {
@@ -614,6 +611,15 @@ impl CommandTx {
                 .await
             }
             _ => Ok(()),
+        }
+    }
+
+    /// Run the local-commit hook when this commit wrote ops (`dispatched` of
+    /// them queued a dispatch) and does not follow a sync session.
+    fn note_local_edit(&self, materializer: &crate::materializer::Materializer, dispatched: usize) {
+        let wrote_ops = dispatched > 0 || !self.undispatched.is_empty();
+        if wrote_ops && FOLLOWS_A_SYNC.try_with(|()| ()).is_err() {
+            materializer.note_local_commit();
         }
     }
 
@@ -867,6 +873,50 @@ mod tests {
             .expect("commit_and_dispatch should succeed");
         assert_eq!(dispatched, 1, "the enqueued record should have dispatched");
         // No panic on drop ⇒ test passes.
+    }
+
+    /// #6551: a commit that wrote ops is a local edit and runs the hook once,
+    /// dispatched or not. A commit that wrote none does not, and neither does
+    /// one made by the work that follows a sync session.
+    #[tokio::test]
+    async fn the_local_commit_hook_runs_for_a_commit_that_wrote_ops_6551() {
+        use crate::materializer::Materializer;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let pool = bare_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let hook_runs = Arc::new(AtomicUsize::new(0));
+        materializer.on_local_commit({
+            let hook_runs = Arc::clone(&hook_runs);
+            move || {
+                hook_runs.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let commit = async |queue: fn(&mut CommandTx)| {
+            let mut tx = CommandTx::begin_immediate(&pool, "test_local_commit_hook")
+                .await
+                .unwrap();
+            queue(&mut tx);
+            tx.commit_and_dispatch(&materializer).await.unwrap();
+            hook_runs.load(Ordering::SeqCst)
+        };
+
+        assert_eq!(commit(|_| {}).await, 0, "no op written");
+        assert_eq!(
+            commit(|tx| tx.enqueue_background(fake_op_record())).await,
+            1,
+            "a dispatched op"
+        );
+        assert_eq!(
+            commit(|tx| tx.enqueue_without_dispatch(fake_op_record())).await,
+            2,
+            "an op written without a dispatch"
+        );
+        assert_eq!(
+            following_a_sync(commit(|tx| tx.enqueue_background(fake_op_record()))).await,
+            2,
+            "a commit that follows a sync session"
+        );
     }
 
     /// #1316: the LEGITIMATE rollback-with-pending path. A `CommandTx` that

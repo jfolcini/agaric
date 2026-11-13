@@ -2021,6 +2021,79 @@ mod tests {
         waiter.abort();
     }
 
+    /// When each round opened, measured from the call, while `changes` runs.
+    async fn round_times(
+        sched: &Arc<SyncScheduler>,
+        changes: impl Future<Output = ()>,
+    ) -> Vec<Duration> {
+        let start = tokio::time::Instant::now();
+        let rounds = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let waiter = {
+            let (sched, rounds) = (Arc::clone(sched), Arc::clone(&rounds));
+            tokio::spawn(async move {
+                loop {
+                    sched.wait_for_debounced_change().await;
+                    rounds.lock().unwrap().push(start.elapsed());
+                }
+            })
+        };
+        changes.await;
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        waiter.abort();
+        rounds.lock().unwrap().clone()
+    }
+
+    /// #6551: commits that keep arriving inside the edit window are one round,
+    /// opened one window after the last of them.
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_of_local_edits_is_one_round_after_the_last_6551() {
+        let sched = Arc::new(SyncScheduler::new());
+        let between_commits = Duration::from_secs(1);
+
+        let rounds = round_times(&sched, async {
+            sched.notify_local_edit();
+            tokio::time::sleep(between_commits).await;
+            sched.notify_local_edit();
+            tokio::time::sleep(between_commits).await;
+            sched.notify_local_edit();
+        })
+        .await;
+
+        assert_eq!(rounds, vec![between_commits * 2 + LOCAL_EDIT_DEBOUNCE]);
+    }
+
+    /// #6551: a round asked for now opens after its own short window whether
+    /// the edit came before it or after it, and the next edit is back on the
+    /// edit window.
+    #[tokio::test(start_paused = true)]
+    async fn a_local_edit_does_not_hold_back_a_round_asked_for_now_6551() {
+        let gap = Duration::from_millis(100);
+
+        let sched = Arc::new(SyncScheduler::new());
+        let edit_then_press = round_times(&sched, async {
+            sched.notify_local_edit();
+            tokio::time::sleep(gap).await;
+            sched.notify_change();
+        })
+        .await;
+        assert_eq!(edit_then_press, vec![gap + DEFAULT_DEBOUNCE]);
+
+        let sched = Arc::new(SyncScheduler::new());
+        let later_edit = Duration::from_secs(5);
+        let press_then_edit = round_times(&sched, async {
+            sched.notify_change();
+            tokio::time::sleep(gap).await;
+            sched.notify_local_edit();
+            tokio::time::sleep(later_edit).await;
+            sched.notify_local_edit();
+        })
+        .await;
+        assert_eq!(
+            press_then_edit,
+            vec![DEFAULT_DEBOUNCE, gap + later_edit + LOCAL_EDIT_DEBOUNCE]
+        );
+    }
+
     /// Test helper: build a `PeerRef` with only the two fields
     /// `peers_due_for_resync` reads (`peer_id`, `synced_at`); the rest
     /// default to None / 0. Keeps the resync tests as terse as the

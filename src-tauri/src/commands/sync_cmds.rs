@@ -592,7 +592,7 @@ pub async fn start_sync(
         user_initiated,
     )
     .await
-        .map_err(sanitize_internal_error)
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: cancel an active sync session.
