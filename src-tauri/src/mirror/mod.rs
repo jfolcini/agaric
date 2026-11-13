@@ -490,6 +490,8 @@ pub struct Mirror {
 struct Races {
     /// Once the file is read.
     after_read: Option<Race>,
+    /// Once the mirror has decided to write it, before it does.
+    before_write: Option<Race>,
     /// Once it is written.
     after_write: Option<Race>,
 }
@@ -926,12 +928,14 @@ impl Mirror {
         };
         (ingest.notify)(ingested.event);
         if let Some(shadow) = ingested.shadow {
-            // Written back only over the bytes read; either way the page's
-            // file is this one now, and a newer save is read as its edit.
+            // Written back only over the bytes read, in the file as seen
+            // before this read of it; either way the page's file is this one
+            // now, and a newer save is read as its edit.
+            self.seen.stats.insert(page_id.clone(), file_stat(&target));
             if shadow.text.as_bytes() != bytes
                 && store::read_optional(&target)?.as_deref() == Some(bytes.as_slice())
             {
-                store::write_atomic(&target, shadow.text.as_bytes())?;
+                self.write_file(&page_id, &target, &shadow.text)?;
             }
             self.record(&page_id, path, shadow)?;
         }
@@ -1311,16 +1315,47 @@ impl Mirror {
         true
     }
 
-    /// Write `text` as the page's file, seen as it was written: a stat taken
-    /// after could be that of a save landing behind the write.
-    fn write_file(&mut self, page_id: &str, target: &Path, text: &str) -> std::io::Result<()> {
-        let written = store::write_atomic(target, text.as_bytes())?;
+    /// Write `text` as the page's file, unless the file is no longer the one
+    /// seen before it was read: a save from another editor landed since, and
+    /// is left for the next pass to read in first. `false` then, and the
+    /// page stays dirty, its file differing from the one seen. This narrows
+    /// the window in which such a save is written over to the gap between
+    /// this stat and the rename ([`store::write_atomic_over`]); it does not
+    /// close it.
+    ///
+    /// What is written is seen as it was written: a stat taken after could
+    /// be that of a save landing behind the write.
+    fn write_file(&mut self, page_id: &str, target: &Path, text: &str) -> std::io::Result<bool> {
+        #[cfg(test)]
+        run(&mut self.races.before_write, target);
+        let seen = self.seen.stats.get(page_id).copied();
+        let written =
+            store::write_atomic_over(target, text.as_bytes(), || seen == Some(file_stat(target)))?;
+        let Some(written) = written else {
+            return Ok(false);
+        };
         self.seen
             .stats
             .insert(page_id.to_owned(), stat_of(&written));
         #[cfg(test)]
         run(&mut self.races.after_write, target);
-        Ok(())
+        Ok(true)
+    }
+
+    /// Write `shadow` as the page's file at `path` and keep it as the text
+    /// last written there; [`Wrote::Diverged`], with nothing kept, when the
+    /// file changed since it was read ([`Mirror::write_file`]).
+    fn write_and_record(
+        &mut self,
+        root: &Path,
+        page_id: &str,
+        path: &str,
+        shadow: Shadow,
+    ) -> Result<Wrote, AppError> {
+        if !self.write_file(page_id, &root.join(path), &shadow.text)? {
+            return Ok(Wrote::Diverged);
+        }
+        self.record(page_id, path, shadow)
     }
 
     /// Write the page's render at `path` over the text last written there,
@@ -1407,7 +1442,7 @@ impl Mirror {
                     return Ok(Wrote::Paused(why));
                 }
                 create_folders_below(root, path)?;
-                self.write_file(page_id, &target, &shadow.text)?;
+                return self.write_and_record(root, page_id, path, shadow);
             }
         }
         self.record(page_id, path, shadow)
@@ -1555,13 +1590,12 @@ impl Mirror {
                 return Ok(Wrote::Paused(why));
             }
             // Written back as the render, as an ingest writes back LF and no BOM.
-            self.write_file(page_id, &root.join(path), &render.text)?;
             let shadow = Shadow {
                 text: render.text.clone(),
                 line_ids: render.line_ids.clone(),
                 buffer: Some(render.buffer.clone()),
             };
-            return self.record(page_id, path, shadow);
+            return self.write_and_record(root, page_id, path, shadow);
         }
         let Some(ingest) = self.ingest() else {
             return Ok(Wrote::Diverged);
@@ -1615,7 +1649,7 @@ impl Mirror {
             if let Some(why) = pause_reason(root, &self.device_id) {
                 return Ok(Wrote::Paused(why));
             }
-            self.write_file(page_id, &target, &shadow.text)?;
+            return self.write_and_record(root, page_id, path, shadow);
         }
         self.record(page_id, path, shadow)
     }
