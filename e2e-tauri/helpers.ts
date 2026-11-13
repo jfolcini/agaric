@@ -1617,7 +1617,7 @@ export async function clipboardText(): Promise<string> {
 }
 
 /**
- * The bytes of the file a WebView download (`downloadBlob`'s `<a download>`)
+ * The bytes of the file a WebView download (`saveBlob`'s `<a download>`)
  * wrote after `since` under a name `name` matches; the file is deleted once
  * read. The app registers no download handler, so WebKitGTK picks the folder:
  * with the sandbox's empty `XDG_CONFIG_HOME` there is no Downloads folder and

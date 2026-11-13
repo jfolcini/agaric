@@ -1,6 +1,6 @@
 /**
  * The page kebab's *Save as Markdown file* (#6546): it saves the Markdown
- * *Export as Markdown* copies as `<title>.md` through `downloadBlob`, and is
+ * *Export as Markdown* copies as `<title>.md` through `saveBlob`, and is
  * absent on Android, whose WebView saves no `blob:` download.
  */
 
@@ -36,8 +36,9 @@ const ANDROID_UA =
 
 let pageStore: StoreApi<PageBlockState>
 let exportPageMarkdown: () => string
+let saveToDownloads: (args: unknown) => null
 
-// The anchor `downloadBlob` clicks, read at click time: what the webview saves.
+// The anchor `saveBlob` clicks, read at click time: what the webview saves.
 let saved: { blob: Blob | undefined; download: string }[]
 let createObjectURL: ReturnType<typeof vi.spyOn>
 
@@ -55,6 +56,7 @@ beforeEach(() => {
     isReady: true,
   })
   // An attachment ref, so the copy's rewrite shows in what is saved.
+  saveToDownloads = () => null
   exportPageMarkdown = () => `# ${TITLE}\n\n- see ![shot](attachment:${ATTACHMENT_ID})\n`
   vi.mocked(invoke).mockImplementation(
     mockInvokeCommands({
@@ -71,6 +73,7 @@ beforeEach(() => {
         { id: PAGE_ID, title: TITLE, block_type: 'page', deleted: false },
       ],
       export_page_markdown: () => exportPageMarkdown(),
+      save_to_downloads: (args) => saveToDownloads(args),
       read_attachment_meta: () => ({
         id: ATTACHMENT_ID,
         block_id: 'B1',
@@ -172,6 +175,57 @@ describe('PageHeader Save as Markdown file', () => {
     expect(createObjectURL).not.toHaveBeenCalled()
     expect(saved).toEqual([])
     expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+  })
+
+  describe('on macOS (#6652)', () => {
+    beforeEach(() => {
+      vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel')
+      __resetPlatformCacheForTests()
+    })
+    afterEach(() => {
+      __resetPlatformCacheForTests()
+    })
+
+    it('saves through the backend, then shows the success toast', async () => {
+      const calls: unknown[] = []
+      saveToDownloads = (args) => {
+        calls.push(args)
+        return null
+      }
+      const user = userEvent.setup()
+      renderHeader()
+      await openMenu(user)
+
+      await user.click(screen.getByRole('menuitem', { name: t('pageHeader.saveMarkdownFile') }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+          t('pageHeader.markdownFileSaved', { fileName: 'Work_Plans_ Q3_.md' }),
+        )
+      })
+      const bytes = new TextEncoder().encode(`# ${TITLE}\n\n- see ![shot](shot.png)\n`)
+      expect(calls).toEqual([
+        { fileName: 'Work_Plans_ Q3_.md', bytes: btoa(String.fromCodePoint(...bytes)) },
+      ])
+      expect(saved).toEqual([])
+    })
+
+    it('shows the error toast and no success toast when the backend cannot save', async () => {
+      saveToDownloads = () => {
+        throw new Error('disk full')
+      }
+      const user = userEvent.setup()
+      renderHeader()
+      await openMenu(user)
+
+      await user.click(screen.getByRole('menuitem', { name: t('pageHeader.saveMarkdownFile') }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('pageHeader.markdownFileSaveFailed'))
+      })
+      expect(saved).toEqual([])
+      expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+    })
   })
 
   it('is reached by ArrowDown from Export as Markdown and runs on Enter', async () => {

@@ -334,6 +334,8 @@ macro_rules! agaric_commands {
             // Bug report
             $crate::commands::bug_report::collect_bug_report_metadata,
             $crate::commands::bug_report::read_logs_for_report,
+            // File saves on macOS, where the webview saves none (#6652)
+            $crate::commands::downloads::save_to_downloads,
             // Reconciliation oracle against the live vault (#4886)
             $crate::commands::reconciliation::compute_reconciliation_report,
             $crate::commands::reconciliation::rebuild_derived_state,

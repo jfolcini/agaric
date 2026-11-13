@@ -35,9 +35,10 @@ import { spaceMoveFailureMessage, useSpaceMove } from '@/hooks/useSpaceMove'
 import { refreshAfterUndoRedo } from '@/hooks/useUndoShortcuts'
 import { announce } from '@/lib/announcer'
 import { unwrap, validationCode } from '@/lib/app-error'
+import { saveBlob } from '@/lib/attachment-utils'
 import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
-import { downloadBlob, nameToFlatSegment, pageMarkdownForCopy } from '@/lib/export-graph'
+import { nameToFlatSegment, pageMarkdownForCopy } from '@/lib/export-graph'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
@@ -242,7 +243,7 @@ export function PageHeader({
     const fileName = `${nameToFlatSegment(title.slice(0, read))}.md`
     try {
       const markdown = await pageMarkdownForCopy(pageId)
-      downloadBlob(new Blob([markdown], { type: 'text/markdown' }), fileName)
+      await saveBlob(new Blob([markdown], { type: 'text/markdown' }), fileName)
       notify.success(t('pageHeader.markdownFileSaved', { fileName }))
     } catch (err) {
       logger.error('PageHeader', 'Failed to save the page as a Markdown file', { pageId }, err)
