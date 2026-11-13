@@ -27,7 +27,7 @@ use agaric_sync::sync_protocol::loro_sync::{
 use super::SpacePlacementSink;
 use crate::commands::{
     create_block_inner, create_page_in_space_inner, create_space_inner, edit_block_inner,
-    set_todo_state_inner,
+    edit_block_inner_with_base, set_todo_state_inner,
 };
 use crate::materializer::Materializer;
 use crate::mcp::view_notify::RecordingViewChangeEmitter;
@@ -497,6 +497,61 @@ async fn a_session_that_imports_only_a_property_definition_saves_it_6525() {
     assert!(
         def.is_some(),
         "the definition is in B's engine after the kill"
+    );
+    a.shutdown();
+    b.shutdown();
+}
+
+/// #6533 — a sync import reaches the engine before it takes the writer lock
+/// to project. An editor's save that wins the lock in between is rebased on
+/// the engine's text, which holds the peer's edit the row does not hold yet.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_between_a_sync_import_and_its_projection_keeps_the_peers_edit_6533() {
+    let (a, b, space, _page, x) = paired().await;
+    edit_block_inner(&a.pool, DEV_A, &a.mat, x.clone(), "Xabc".into())
+        .await
+        .unwrap();
+    let (_, export) = a
+        .mat
+        .loro_state()
+        .registry
+        .snapshot_all_engines()
+        .into_iter()
+        .find(|(s, _)| *s == space)
+        .unwrap();
+    b.mat
+        .loro_state()
+        .registry
+        .with_engine(&space, DEV_B, |engine| engine.import(&export.unwrap()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            b.engine_content(&space, &x).as_deref(),
+            b.sql_content(&x).await.as_str()
+        ),
+        (Some("Xabc"), "abc"),
+        "the fixture: imported, not yet projected"
+    );
+
+    let saved = edit_block_inner_with_base(
+        &b.pool,
+        DEV_B,
+        &b.mat,
+        x.clone(),
+        "abcY".into(),
+        Some("abc".into()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(saved.content.as_deref(), Some("XabcY"));
+    assert_eq!(
+        (
+            b.engine_content(&space, &x).as_deref(),
+            b.sql_content(&x).await.as_str()
+        ),
+        (Some("XabcY"), "XabcY")
     );
     a.shutdown();
     b.shutdown();

@@ -12,6 +12,7 @@ use super::super::*;
 // #882: the create-block / set-property tx cores moved to the neutral
 // `agaric_engine::block_ops` layer. The `*_inner` wrappers below (which own
 // the transaction + post-commit dispatch) stay here and call into domain.
+use agaric_engine::apply::loro_apply::engine_block_content;
 use agaric_engine::block_ops::{create_block_in_tx, set_property_in_tx};
 use agaric_store::space::{SpaceId, SpaceScope};
 
@@ -517,7 +518,17 @@ pub(crate) async fn edit_block_in_tx(
     let existing = existing
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
     // Before every check on the text, so they see what is written.
-    let to_text = rebased_onto(existing.content.as_deref(), base_text, to_text)?;
+    let to_text = match base_text {
+        Some(base) => {
+            // The text the edit is diffed against: the engine's, which a sync
+            // import reaches before the row.
+            let block = BlockId::from_trusted(&block_id);
+            let engine_text = engine_block_content(tx, state, device_id, &block).await?;
+            let current = engine_text.as_deref().or(existing.content.as_deref());
+            rebased_onto(current.unwrap_or_default(), base, to_text)?
+        }
+        None => to_text,
+    };
     if existing.block_type == "tag" {
         reject_spaced_tag_name(&to_text)?;
     }
@@ -618,15 +629,10 @@ pub(crate) async fn edit_block_in_tx(
 
 /// `to_text` with the editor's change replayed on `current` when the editor
 /// started from another text and the two changes do not overlap.
-fn rebased_onto(
-    current: Option<&str>,
-    base_text: Option<&str>,
-    to_text: String,
-) -> Result<String, AppError> {
-    let current = current.unwrap_or_default();
-    let Some(base) = base_text.filter(|base| *base != current) else {
+fn rebased_onto(current: &str, base: &str, to_text: String) -> Result<String, AppError> {
+    if base == current {
         return Ok(to_text);
-    };
+    }
     let Some(rebased) = agaric_engine::edit_rebase::rebase_edit(base, &to_text, current) else {
         return Ok(to_text);
     };
