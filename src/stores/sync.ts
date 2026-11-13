@@ -63,9 +63,16 @@ interface SyncStore {
   opsReceived: number
   opsSent: number
   peerProgress: Record<string, PeerSyncProgress>
+  /**
+   * Spaces whose changes are not sent to other devices, as the backend's last
+   * `sync:export_refused` report listed them (#6523). Not session state: a
+   * state change leaves it.
+   */
+  exportRefusedSpaces: string[]
 
   setState: (state: SyncState, error?: string | null) => void
   setWaiting: (peerId: string) => void
+  setExportRefusedSpaces: (spaceIds: string[]) => void
   setPeers: (peers: PeerInfo[]) => void
   updateLastSynced: (timestamp: string) => void
   setOpsReceived: (count: number) => void
@@ -83,6 +90,7 @@ const INITIAL_STATE = {
   opsReceived: 0,
   opsSent: 0,
   peerProgress: {} as Record<string, PeerSyncProgress>,
+  exportRefusedSpaces: [] as string[],
 }
 
 export const useSyncStore = create<SyncStore>((set) => ({
@@ -94,6 +102,10 @@ export const useSyncStore = create<SyncStore>((set) => ({
 
   setWaiting: (peerId: string) => {
     set({ state: 'waiting', error: null, waitingFor: peerId })
+  },
+
+  setExportRefusedSpaces: (spaceIds: string[]) => {
+    set({ exportRefusedSpaces: spaceIds })
   },
 
   setPeers: (peers: PeerInfo[]) => {

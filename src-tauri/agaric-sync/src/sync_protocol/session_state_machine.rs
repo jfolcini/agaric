@@ -1675,6 +1675,7 @@ impl SyncOrchestrator {
         // back to a snapshot, so a stale advertised vv is safe. Skipped
         // entirely when the registry is empty (nothing to ship).
         let mut messages: VecDeque<LoroSyncMessage> = VecDeque::with_capacity(space_ids.len());
+        let mut refused: Vec<agaric_store::space::SpaceId> = Vec::new();
         if !space_ids.is_empty() {
             // #2040: read the vault-wide SQL-soft-deleted id set ONCE for this
             // whole sync round, then thread it into every per-space
@@ -1721,9 +1722,13 @@ impl SyncOrchestrator {
                             "loro: #1257 freshness gate refused export for space; \
                              skipping it in this push (rebuild-from-op-log required)"
                         );
+                        refused.push(sid.clone());
                     }
                 }
             }
+        }
+        if let Some(report) = loro_sync::export_refusal_report(&refused) {
+            self.emit(report);
         }
 
         // Empty-stream short-circuit. Nothing to ship — no registered spaces

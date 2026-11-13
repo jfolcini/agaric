@@ -405,6 +405,22 @@ pub fn first_engine_live_block_sql_deleted(
         .cloned()
 }
 
+/// Whether the last export round reported a refused space. One device per
+/// process, so one flag.
+static EXPORT_REFUSAL_REPORTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// The report an export round owes the frontend for the spaces the #1257 gate
+/// refused (#6523): one on every round that refused a space, and one empty
+/// report on the first round after it that refused none.
+pub fn export_refusal_report(refused: &[SpaceId]) -> Option<crate::sync_events::SyncEvent> {
+    let reported_before =
+        EXPORT_REFUSAL_REPORTED.swap(!refused.is_empty(), std::sync::atomic::Ordering::Relaxed);
+    (reported_before || !refused.is_empty()).then(|| crate::sync_events::SyncEvent::ExportRefused {
+        space_ids: refused.iter().map(|s| s.as_str().to_owned()).collect(),
+    })
+}
+
 /// Validate the protocol version and extract `(space_id, bytes)`.  For
 /// Update, also gate the import on the reachability check — if the peer's
 /// `from_vv` is unreachable from our local `oplog_vv()`, break with

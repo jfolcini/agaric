@@ -202,6 +202,10 @@ pub enum SyncEvent {
         /// has no text to name.
         reason_key: Option<String>,
     },
+    /// The spaces whose outbound export this round refused because engine and
+    /// SQL disagree about a deleted block (#6523). Each report replaces the
+    /// last one, so an empty list says every space exports again.
+    ExportRefused { space_ids: Vec<String> },
 }
 
 /// A [`SyncEvent::Error`] the frontend explains in its own words (#5728).
@@ -241,6 +245,8 @@ pub const EVENT_SYNC_INTERNET_FACING_BIND: &str = "sync:internet_facing_bind";
 /// Emitted when the OS starts or stops blocking this app's network traffic (#3852).
 /// Payload is [`SyncEvent::NetworkBlockedByOs`].
 pub const EVENT_SYNC_NETWORK_BLOCKED: &str = "sync:network_blocked";
+/// Payload is [`SyncEvent::ExportRefused`].
+pub const EVENT_SYNC_EXPORT_REFUSED: &str = "sync:export_refused";
 
 // ---------------------------------------------------------------------------
 // mDNS status (#2506) — backfill for the peers/device-management surface
@@ -855,6 +861,21 @@ mod tests {
         // only thing keeping the listener attached to the emitter is that this
         // string does not change.
         assert_eq!(EVENT_SYNC_NETWORK_BLOCKED, "sync:network_blocked");
+        // #6523 — mirrored by `SYNC_EXPORT_REFUSED_EVENT` in
+        // `src/hooks/useSyncExportRefused.ts`.
+        assert_eq!(EVENT_SYNC_EXPORT_REFUSED, "sync:export_refused");
+    }
+
+    /// `useSyncExportRefused.ts` reads `space_ids` off this payload by name.
+    #[test]
+    fn export_refused_serializes_its_space_ids_6523() {
+        let event = SyncEvent::ExportRefused {
+            space_ids: vec!["SPACE_A".into()],
+        };
+        assert_eq!(
+            serde_json::to_value(&event).expect("serialize ExportRefused"),
+            serde_json::json!({ "type": "export_refused", "space_ids": ["SPACE_A"] }),
+        );
     }
 
     // ── NetworkBlockedByOs variant (#3852) ─────────────────────────

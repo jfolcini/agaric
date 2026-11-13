@@ -122,6 +122,7 @@ pub async fn try_offer_loro_snapshot_catchup(
     // rebuild — never shipped as a half-truth.
     let sql_deleted = loro_sync::read_sql_soft_deleted_ids(pool).await?;
     let mut messages: Vec<LoroSyncMessage> = Vec::new();
+    let mut refused: Vec<agaric_store::space::SpaceId> = Vec::new();
     for sid in &space_ids {
         match loro_sync::prepare_outgoing(registry, sid, device_id, None, &sql_deleted).await? {
             Some(msg) => messages.push(msg),
@@ -131,8 +132,12 @@ pub async fn try_offer_loro_snapshot_catchup(
                     peer_id = %remote_device_id,
                     "loro-snapshot catch-up: freshness gate refused space export; skipping"
                 );
+                refused.push(sid.clone());
             }
         }
+    }
+    if let Some(report) = loro_sync::export_refusal_report(&refused) {
+        event_sink.on_sync_event(report);
     }
 
     if messages.is_empty() {

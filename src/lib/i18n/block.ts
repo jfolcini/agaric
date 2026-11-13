@@ -163,6 +163,13 @@ export const block: Record<string, string> = {
     '{{count}} background cache rebuilds pending — search, agenda, and counts may be briefly stale.',
   'status.bgStaleHint':
     'Note content is never affected. Results reconcile automatically within an hour; restart the app to retry sooner.',
+  // #6523 — a space whose changes are held back from other devices.
+  'status.exportRefusedMessage_one':
+    'Changes in the space {{spaces}} are not reaching your other devices: its sync data and its database disagree about a deleted block.',
+  'status.exportRefusedMessage_other':
+    'Changes in the spaces {{spaces}} are not reaching your other devices: their sync data and their database disagree about a deleted block.',
+  'status.exportRefusedHint':
+    'Agaric repairs this at the next sync when it can. If this message stays, restart Agaric, and retry any change listed under “Sync changes that could not be applied” in Settings › Sync & devices. If it is still here after that, report a bug from Help.',
   'status.syncStatusTitle': 'Sync status',
   'status.syncIdle': 'Idle',
   'status.syncSyncing': 'Syncing...',
