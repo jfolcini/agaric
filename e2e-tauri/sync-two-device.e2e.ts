@@ -644,7 +644,13 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
     // through the reload the pull brings. Leaving the page would drop them.
     it("the open page's undo and redo survive a pull of the peer's edits", async () => {
       if (peer === undefined || paired === undefined) throw new Error('the pairing test failed')
-      const { appBlockId, peerBlockId } = paired
+      const { pageId, peerBlockId } = paired
+      // A block of plain text: a click on the app's own block, which links the
+      // meeting page by now, can land on the link instead of opening the editor.
+      const before = runScopedMarker('wdio-sync-undo-before')
+      const appBlockId = await peer.createBlock(pageId, before)
+      await reopenSharedPage()
+      await pullUntilRowReads(appBlockId, before, 'the app never showed the new block')
       const appEdit = runScopedMarker('wdio-sync-undo-app')
       const peerText = `${(await peer.getBlock(peerBlockId)).content} ${runScopedMarker('wdio-sync-undo-peer')}`
       const peerOver = runScopedMarker('wdio-sync-undo-over')
@@ -667,8 +673,6 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
           })
       }
 
-      await reopenSharedPage()
-      const before = await stored(appBlockId)
       await editBlock(appBlockId)
       await typeMarkerVerified(appEdit)
       await browser.keys(['Escape'])
