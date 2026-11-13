@@ -13,7 +13,10 @@ import { makePage } from '@/__tests__/fixtures'
 import { type PageListEnvelope, pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
-import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
+import {
+  EXCLUDE_JOURNAL_PAGES_FILTER,
+  usePageBrowserFiltersStore,
+} from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
 // Capture every `estimateSize` callback passed to `useVirtualizer` so the
@@ -382,6 +385,38 @@ describe('PageBrowser', () => {
       expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P3')
 
       await user.selectOptions(screen.getByRole('combobox', { name: /sort order/i }), 'created')
+      await waitFor(() => expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P1'))
+    })
+
+    // Kept in place, the cursor would stay on its row index: Two after the
+    // text narrows the list to One and Two, Three after the others.
+    it.each([
+      ['filter text', () => userEvent.type(screen.getByPlaceholderText('Search pages...'), 'o')],
+      [
+        'filter chip',
+        () =>
+          act(async () =>
+            usePageBrowserFiltersStore
+              .getState()
+              .addFilter('SPACE_TEST', EXCLUDE_JOURNAL_PAGES_FILTER),
+          ),
+      ],
+      ['space', () => act(async () => useSpaceStore.setState({ currentSpaceId: 'SPACE_OTHER' }))],
+    ])('a new %s returns the cursor to the first row', async (_trigger, change) => {
+      usePageBrowserFiltersStore.setState({ filtersBySpace: { SPACE_TEST: [], SPACE_OTHER: [] } })
+      stubPageRowInvoke(mockedInvoke, {
+        list_pages_with_metadata: () =>
+          pageList(
+            ['One', 'Two', 'Three'].map((content, i) => makePage({ id: `P${i + 1}`, content })),
+          ),
+      })
+      render(<PageBrowser />)
+      await screen.findByText('Three')
+      const grid = screen.getByRole('grid')
+      await userEvent.keyboard('{ArrowDown}{ArrowDown}')
+      expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P3')
+
+      await change()
       await waitFor(() => expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P1'))
     })
   })

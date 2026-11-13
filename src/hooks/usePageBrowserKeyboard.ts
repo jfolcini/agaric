@@ -21,7 +21,7 @@ import { type RefObject, useEffect } from 'react'
 interface UsePageBrowserKeyboardParams {
   /** Returns `true` when the navigation handler consumed the key. */
   navHandleKeyDown: (e: KeyboardEvent) => boolean
-  /** The list container: Enter and Space open the cursor's page only from it. */
+  /** The list container: Enter and Space open the cursor's page only from it or from <body>. */
   listRef: RefObject<HTMLElement | null>
   selectAllPages: () => void
   clearMultiSelection: () => void

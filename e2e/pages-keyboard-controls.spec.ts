@@ -1,14 +1,7 @@
 import type { Page } from '@playwright/test'
 
+import { pageRow } from './domain'
 import { activeAlertDialog, expect, navigateToView, test, waitForBoot } from './helpers'
-
-/** The Pages list row for the page titled `title`. */
-function pageRow(page: Page, title: string) {
-  return page
-    .getByRole('grid')
-    .locator('[data-page-item]')
-    .filter({ has: page.locator(`.page-browser-item-title[title="${title}"]`) })
-}
 
 const pageTitle = (page: Page) => page.locator('[aria-label="Page title"]')
 

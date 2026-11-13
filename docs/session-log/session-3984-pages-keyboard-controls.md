@@ -17,14 +17,21 @@ the rendered window and focus fell to the body. A `rangeExtractor` keeps the foc
 Decisions and traps:
 
 - Search avoids the first bug with a handler on the listbox itself. Trash and History use the same
-  document listener and dodge it with `stopPropagation` on each control; their header buttons are
-  not covered, read in the code and not run. Left for its own change.
+  document listener and dodge it with `stopPropagation` on each row control and in the batch
+  toolbar. A throwaway spec in review showed the rest is not covered: Space on Trash's *Restore
+  all* and *Empty trash*, and on History's op-type legend and *Load more*, selects the cursor row
+  instead of pressing the button, and while a History row is selected Enter on its legend opens
+  the revert confirmation. Left for its own change.
 - The shared `useListKeyboardNavigation` hook is unchanged: Pages is the only view that sends Enter
   from the document to "open".
 - The agenda's `rangeExtractor` reads the focused row's `data-index`, which still holds the old
   position while a re-sort renders. Pages records the row's key in `onFocus` instead.
-- A held off-screen row stays mounted until focus moves; one extra row at most.
+- A held off-screen row stays mounted until focus lands elsewhere in the list; one extra row at
+  most.
 
-Ran: the PageBrowser, keyboard-hook, Trash and batch-toolbar vitest suites, typecheck, the ten
-`e2e/pages-*` spec files and a second batch of twelve related specs. The rest of the selection and
-the WebdriverIO specs were left to CI.
+Review added a test that a new filter text, filter chip or space each return the cursor to the
+first row; each fails with its part dropped from the reset key.
+
+Ran: the full vitest suite, typecheck, lint, every pre-commit hook, the ten `e2e/pages-*` spec
+files and fourteen related specs (Trash, History, batch toolbar, keyboard, axe). The rest of the
+Playwright selection and the WebdriverIO specs were left to CI.

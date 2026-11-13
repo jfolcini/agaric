@@ -55,8 +55,9 @@ export function BatchActionToolbar({
       aria-describedby={!suppressRangeSelectHint ? 'batch-range-select-hint' : undefined}
       // A button here acts on its own Enter or Space. The list behind the
       // toolbar hears keys at the document and would act on the same press
-      // (Trash and History toggle the cursor row on Space). A toolbar that
-      // handles keys must be focusable, but it is no Tab stop: its buttons are.
+      // (Trash and History toggle the cursor row on Space, and History opens
+      // its revert confirmation on Enter). A toolbar that handles keys must be
+      // focusable, but it is no Tab stop: its buttons are.
       tabIndex={-1}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
