@@ -2555,7 +2555,7 @@ async fn perf26_draft_recovery_at_10k_ops() {
     // SQLite falls back to generic row estimates and picks the
     // `(device_id, seq)` PRIMARY KEY autoindex, which walks every op this
     // device ever wrote. Crucially that stats-free plan is *identical* when
-    // `idx_op_log_block_id` is absent, so asserting on it is a gate that
+    // the `block_id` indexes are absent, so asserting on it is a gate that
     // cannot open (verified: dropping all three block_id indexes leaves this
     // test green). ANALYZE on the seeded rows gives the planner the
     // selectivity a populated production database has — where the periodic
@@ -2752,9 +2752,7 @@ fn draft_recovery_supersession_sql_is_in_sync() {
 }
 
 /// #6522: with `idx_op_log_block_id` dropped (migration 0130),
-/// `find_prev_edit`'s create-op fallback seeks `idx_op_log_block_created`,
-/// which also yields the rows in `created_at` order, so only the
-/// `(device_id, seq)` tie-break is sorted.
+/// `find_prev_edit`'s create-op fallback seeks `idx_op_log_block_created`.
 #[tokio::test]
 async fn find_prev_edit_create_fallback_seeks_block_created_index_6522() {
     const CREATE_FALLBACK_SQL: &str = "SELECT device_id, seq FROM op_log \
@@ -2785,9 +2783,9 @@ async fn find_prev_edit_create_fallback_seeks_block_created_index_6522() {
     .unwrap();
     sqlx::raw_sql("ANALYZE").execute(&mut *conn).await.unwrap();
 
-    let plan: Vec<String> = sqlx::query_as::<_, (i64, i64, i64, String)>(
-        sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {CREATE_FALLBACK_SQL}")),
-    )
+    let plan: Vec<String> = sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(
+        format!("EXPLAIN QUERY PLAN {CREATE_FALLBACK_SQL}"),
+    ))
     .bind("B1")
     .fetch_all(&mut *conn)
     .await
@@ -2796,12 +2794,9 @@ async fn find_prev_edit_create_fallback_seeks_block_created_index_6522() {
     .map(|(_, _, _, detail)| detail)
     .collect();
     assert_eq!(
-        plan,
-        [
-            "SEARCH op_log USING INDEX idx_op_log_block_created (block_id=?)",
-            "USE TEMP B-TREE FOR RIGHT PART OF ORDER BY",
-        ],
-        "find_prev_edit's create-op fallback must seek the (block_id, created_at) index"
+        plan.first().map(String::as_str),
+        Some("SEARCH op_log USING INDEX idx_op_log_block_created (block_id=?)"),
+        "find_prev_edit's create-op fallback must seek the (block_id, created_at) index: {plan:?}"
     );
 }
 

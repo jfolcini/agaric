@@ -58,7 +58,7 @@ fn history_cursor(last: &HistoryEntry) -> Cursor {
 ///
 /// B.2: queries the native `block_id` column (migration 0030)
 /// directly, replacing the old `LIKE` pre-filter + `json_extract`
-/// fallback. The `idx_op_log_block_id` index makes this O(log N) instead
+/// fallback. The `idx_op_log_block_created` index makes this O(log N) instead
 /// of a full op_log scan with per-row JSON parsing.
 ///
 /// Optional `op_type_filter` pushes the FE-side
@@ -419,6 +419,7 @@ async fn list_single_page_history(
     // Before this attachment-probe OR was added, `ol.block_id IN (SELECT
     // id FROM page_blocks)` was the query's only top-level predicate and
     // planned as `SEARCH ol USING INDEX idx_op_log_block_id (block_id=?)`
+    // (the index migration 0130 dropped for `idx_op_log_block_created`)
     // — an indexed seek, ~0.03–1.6 ms regardless of whether the page had
     // matching rows. With this OR in place it plans as `SCAN ol USING
     // INDEX idx_op_log_created` (the index only avoids the `ORDER BY`

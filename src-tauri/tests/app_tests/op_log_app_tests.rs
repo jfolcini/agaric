@@ -235,8 +235,8 @@ async fn remote_op_insert_defaults_origin_to_user() {
 
 /// SQL-review B-2: `dag.rs` must read the native indexed `block_id`
 /// column, not the legacy `json_extract(payload, '$.block_id')`
-/// expression. Migration 0030 added the native column (with the
-/// covering `idx_op_log_block_id` index) and every INSERT path
+/// expression. Migration 0030 added the native column (indexed, today by
+/// `idx_op_log_block_created`) and every INSERT path
 /// populates it; migration 0048 dropped the legacy expression index,
 /// so any surviving `json_extract` lookup would degrade to a full
 /// `op_log` scan. This regression guard reads the engine's `dag.rs`

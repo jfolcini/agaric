@@ -6599,7 +6599,8 @@ mod block_history_plan_6522 {
             .map(|(_, _, _, detail)| detail)
             .collect();
             for alias in ["ol", "src_add"] {
-                let seek = format!("SEARCH {alias} USING INDEX idx_op_log_block_created (block_id=?)");
+                let seek =
+                    format!("SEARCH {alias} USING INDEX idx_op_log_block_created (block_id=?)");
                 assert!(
                     lines.contains(&seek),
                     "analyzed={analyzed}: expected `{seek}` in {lines:#?}"
