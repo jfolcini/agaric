@@ -24,7 +24,7 @@ import { requireActiveScope } from '@/lib/space-scope'
 
 export const PDF_ATTACHMENT_KEY = 'pdf_attachment'
 export const PDF_PAGE_KEY = 'pdf_page'
-export const PDF_BOXES_KEY = 'pdf_boxes'
+const PDF_BOXES_KEY = 'pdf_boxes'
 
 /** pdf.js's `AnnotationEditorType.HIGHLIGHT`. */
 const HIGHLIGHT = 9
