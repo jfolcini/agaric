@@ -76,8 +76,8 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip_all, err)]
-pub async fn save_file_to_downloads(
-    app: tauri::AppHandle,
+pub async fn save_file_to_downloads<R: Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, FileSaveState>,
     file_name: String,
     mime_type: String,

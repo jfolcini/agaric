@@ -289,9 +289,9 @@ macro_rules! agaric_commands {
             $crate::commands::speech::speak_text,
             $crate::commands::speech::stop_speaking,
             // Android's file save (#6546)
-            $crate::commands::file_save::save_file_to_downloads,
+            $crate::commands::file_save::save_file_to_downloads::<tauri::Wry>,
             // Android's check for a newer release (#6546)
-            $crate::commands::release_check::check_latest_release,
+            $crate::commands::release_check::check_latest_release::<tauri::Wry>,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown::<tauri::Wry>,
             // The pages an import merges its files into (#6277 G5).

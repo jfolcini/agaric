@@ -26,6 +26,8 @@ Four Android items built without a phone, by the maintainer's decision of 2026-1
 - The pre-commit `tsc` hook stashes unstaged changes but not untracked files, so an untracked file that imports an unstaged change fails the commit of something else.
 - `just gen-sqlx` empties `.sqlx` and refills it. `git status` mid-run shows a mass deletion; read it only after the recipe exits.
 - `register_managed_state` sits at the 70-line cap. The suspend arm moved to `on_app_suspended`.
+- Since #6720 a command that takes an `AppHandle` is generic over the runtime and listed as `cmd::<tauri::Wry>` in `agaric_commands!`. A branch cut before it is green alone and does not compile once merged; the second merge of `main` here caught it.
+- Two PRs opened minutes apart both took session-log number 4100; `session-log-pr-collision` cancels the whole run and names the number each should take.
 
 ## What ran
 
