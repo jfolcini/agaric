@@ -1827,7 +1827,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 69;
+    const MUTATING_ARM_COUNT: usize = 70;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

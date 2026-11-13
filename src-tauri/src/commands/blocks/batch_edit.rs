@@ -52,7 +52,7 @@ pub struct EditBlocksBatchResponse {
 /// - [`AppError::Validation`] — empty `edits`, or more than
 ///   `MAX_BATCH_BLOCK_IDS` of them
 /// - whatever [`edit_block_inner`] refuses an edit with; nothing is written
-#[instrument(skip_all, fields(edits = edits.len()), err)]
+#[instrument(skip_all, fields(count = edits.len()), err)]
 pub async fn edit_blocks_batch_inner(
     pool: &SqlitePool,
     device_id: &str,
