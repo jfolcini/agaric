@@ -30,10 +30,11 @@
  * takes it back. Refused, it goes in as a plain-text paste puts it.
  *
  * Editing that block while `paste_blocks` runs is the one loss: unsaved text
- * wins over a change from elsewhere (`remote-patch.ts`), so the block keeps
- * what was typed, not what was pasted into it, and with several blocks the text
- * after the range is then in it and in the last block pasted. Block mode loses
- * the typed text there instead (`remount` in `paste-into-block.ts`).
+ * wins over a change from elsewhere to the same text (`remote-patch.ts`), so
+ * the block then keeps what was typed, not what was pasted into it, and with
+ * several blocks the text after the range is then in it and in the last block
+ * pasted. Block mode loses the typed text there instead (`remount` in
+ * `paste-into-block.ts`).
  */
 
 import { Extension, type JSONContent } from '@tiptap/core'

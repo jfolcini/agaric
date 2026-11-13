@@ -340,3 +340,68 @@ describe('QuickCaptureDialog', () => {
     })
   })
 })
+
+// #6555 — an `agaric://capture?text=…` link opens the dialog holding its text.
+describe('QuickCaptureDialog — text from a capture link', () => {
+  const LINK_TEXT = 'Read later #reading\n[[Inbox]] https://example.com'
+
+  it('opens holding the text exactly as if typed, and saves nothing by itself', async () => {
+    render(<QuickCaptureDialog open onOpenChange={() => {}} prefill={{ text: LINK_TEXT }} />)
+
+    expect(screen.getByTestId('quick-capture-textarea')).toHaveValue(LINK_TEXT)
+    expect(screen.getByTestId('quick-capture-save')).toBeEnabled()
+    // Positive control for the zero-call check: the IPC mock is live (see the Capture test below).
+    await act(async () => {})
+    expect(mockedInvoke).not.toHaveBeenCalledWith('quick_capture_block', expect.anything())
+  })
+
+  it('saves the link text when the user presses Capture', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    render(<QuickCaptureDialog open onOpenChange={onOpenChange} prefill={{ text: LINK_TEXT }} />)
+
+    await user.click(screen.getByTestId('quick-capture-save'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('quick_capture_block', {
+        content: LINK_TEXT,
+        spaceId: 'SPACE_PERSONAL',
+      })
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('puts a second link below what the user typed instead of replacing it', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <QuickCaptureDialog open onOpenChange={() => {}} prefill={{ text: 'first link' }} />,
+    )
+    const textarea = screen.getByTestId('quick-capture-textarea')
+    await user.type(textarea, ' and my note')
+
+    rerender(<QuickCaptureDialog open onOpenChange={() => {}} prefill={{ text: 'second link' }} />)
+
+    expect(textarea).toHaveValue('first link and my note\nsecond link')
+  })
+
+  it('a link into an empty field fills it, and an empty link changes nothing', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<QuickCaptureDialog open onOpenChange={() => {}} />)
+    const textarea = screen.getByTestId('quick-capture-textarea')
+
+    rerender(<QuickCaptureDialog open onOpenChange={() => {}} prefill={{ text: 'from a link' }} />)
+    expect(textarea).toHaveValue('from a link')
+
+    await user.clear(textarea)
+    await user.type(textarea, 'typed')
+    rerender(<QuickCaptureDialog open onOpenChange={() => {}} prefill={{ text: '' }} />)
+    expect(textarea).toHaveValue('typed')
+  })
+
+  it('passes axe with the link text in the field', async () => {
+    const { container } = render(
+      <QuickCaptureDialog open onOpenChange={() => {}} prefill={{ text: LINK_TEXT }} />,
+    )
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})

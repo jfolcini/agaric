@@ -39,6 +39,25 @@ async fn resolve_doc_space(
     Ok(registered.map(|s| agaric_store::space::SpaceId::from_trusted(&s)))
 }
 
+/// `block_id`'s text in the doc an edit of it is diffed against, or `None`
+/// when no doc holds the block and the edit goes to SQL only.
+///
+/// A sync import reaches the doc before it takes the writer lock to project,
+/// so in that gap this text holds a peer's edit the `blocks` row does not.
+pub async fn engine_block_content(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    block_id: &agaric_core::ulid::BlockId,
+) -> Result<Option<String>, AppError> {
+    let Some(space_id) = resolve_doc_space(&mut *conn, block_id, false).await? else {
+        return Ok(None);
+    };
+    state.registry.with_engine(&space_id, device_id, |engine| {
+        engine.read_block_content(block_id.as_str())
+    })?
+}
+
 /// [`agaric_store::space::resolve_block_space`], which skips tombstones. On
 /// boot replay SQL already holds the ops after this one, so the tombstone may
 /// come from a later op and the row resolves through its own `space_id`, the

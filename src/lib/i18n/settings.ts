@@ -124,6 +124,8 @@ export const settings: Record<string, string> = {
   'quickCapture.saveButton': 'Capture',
   'quickCapture.successToast': "Captured to today's journal",
   'quickCapture.failureToast': "Couldn't save quick capture",
+  'quickCapture.linkTooLong':
+    "The link's text is longer than a block can hold, so Quick Capture did not open.",
   'settings.tabHelp': 'About',
   'settings.tabNotifications': 'Tasks & reminders',
   'notifications.description':

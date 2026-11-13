@@ -215,6 +215,55 @@ async fn page_buffer_hides_the_saved_view_and_a_save_keeps_it() {
     assert!(md.contains("saved_view: v1:e30\n"), "{md}");
 }
 
+/// A PDF highlight's place in its file (#6629) is the app's: the buffer and the
+/// mirror's file do not show it, so a save that edits the block keeps it, and
+/// the export writes it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_buffer_hides_a_highlights_place_and_a_save_keeps_it() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, body) = front_matter_page(&pool, &mat).await;
+    let place = [
+        ("pdf_attachment", "01J6629ATTACHMENT000000001"),
+        ("pdf_boxes", "[[40,90,140,114]]"),
+        ("pdf_page", "2"),
+    ];
+    for (key, value) in place {
+        set_text(&pool, &mat, &body, key, value).await;
+    }
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    assert_eq!(
+        base,
+        format!("---\naliases: [Home base]\ntags: [work]\nstage: open\n---\n\nbody ^{body}\n")
+    );
+    let file = get_page_file_inner(&pool, page.as_str())
+        .await
+        .unwrap()
+        .text;
+    assert!(!file.contains("pdf_"), "{file}");
+
+    let source = with(&base, "body ^", "body, read ^");
+    save_source(&pool, &mat, &page, &source, &base)
+        .await
+        .unwrap();
+
+    let kept = sqlx::query_as::<_, (String, String)>(
+        "SELECT key, value_text FROM block_properties \
+         WHERE block_id = ? AND key LIKE 'pdf_%' ORDER BY key",
+    )
+    .bind(body.as_str())
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let place = place.map(|(key, value)| (key.to_owned(), value.to_owned()));
+    assert_eq!(kept, place);
+    let md = export_page_markdown_inner(&pool, page.as_str())
+        .await
+        .unwrap();
+    assert!(md.contains("pdf_page:: 2\n"), "{md}");
+}
+
 /// `aliases:` and `tags:` are the page's aliases and tags: an item added is
 /// added, a tag no page of the space names is created, and an item left out is
 /// removed.

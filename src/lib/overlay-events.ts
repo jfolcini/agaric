@@ -66,6 +66,16 @@ export function openNewPageDialog(initialTitle = ''): void {
 }
 
 /**
+ * Global "open Quick Capture" DOM event; `detail` is text for the field, from an
+ * `agaric://capture?text=…` link (#6555). `useAppDialogs` opens the dialog.
+ */
+export const OPEN_QUICK_CAPTURE_EVENT = 'agaric:openQuickCapture'
+
+export function openQuickCapture(text: string): void {
+  window.dispatchEvent(new CustomEvent<string>(OPEN_QUICK_CAPTURE_EVENT, { detail: text }))
+}
+
+/**
  * Global "open the New meeting dialog" DOM event, sent by the palette's
  * *New meeting* (#5364). The meeting is linked from that day's journal.
  * `useAppDialogs` opens the dialog.

@@ -72,6 +72,7 @@ import type { AttachmentRow, OpRef } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '@/lib/block-utils'
 import { t } from '@/lib/i18n'
 import { matchesShortcutBinding, tipTapShortcutMap } from '@/lib/keyboard-config'
+import { pdfSourceOf } from '@/lib/pdf-highlights'
 import { scrollParentY } from '@/lib/scroll-parent'
 import type { TodoState } from '@/lib/task-states'
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -513,7 +514,8 @@ class PageBlockView implements NodeView {
     if (sameMetadata(this.shownMetadata, metadata)) return
     this.shownMetadata = metadata
     const { priority, dueDate, scheduledDate, properties, attachments } = metadata
-    // As `SortableBlock` filters them: the repeat rule has its own chip, the rest are the app's.
+    // As `SortableBlock` filters them: the repeat rule and a highlight's place have their own
+    // chips, the rest are the app's.
     const filteredProperties = properties.filter(({ key }) => !INTERNAL_PROPERTY_KEYS.has(key))
     const repeats = properties.some(({ key }) => key === 'repeat')
     const drawn =
@@ -521,6 +523,7 @@ class PageBlockView implements NodeView {
       dueDate !== null ||
       scheduledDate !== null ||
       repeats ||
+      pdfSourceOf(properties) !== null ||
       filteredProperties.length > 0 ||
       attachments.length > 0
     if (id === null || !drawn) {

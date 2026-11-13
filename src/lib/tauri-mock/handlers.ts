@@ -172,8 +172,13 @@ export const PLUGIN_HANDLERS: Record<string, Handler> = {
   // browser has no webview to zoom, so success is the whole model.
   'plugin:webview|set_webview_zoom': returnNull,
   // Deep-link is registered on desktop AND mobile; `null` is the real
-  // "launched normally, no pending URL" response for `getCurrent()`.
-  'plugin:deep-link|get_current': returnNull,
+  // "launched normally, no pending URL" response for `getCurrent()`. A spec
+  // stands in for the OS launching the app by a link by setting
+  // `localStorage['__mockLaunchUrl']` before boot (#6555).
+  'plugin:deep-link|get_current': () => {
+    const url = globalThis.localStorage?.getItem('__mockLaunchUrl')
+    return url == null ? null : [url]
+  },
   // Clipboard / opener / shell are registered on desktop AND mobile;
   // copy-link and external-link e2e flows rely on the success path.
   'plugin:clipboard-manager|write_text': clipboardWriteText,
