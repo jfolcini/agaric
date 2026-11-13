@@ -1,8 +1,8 @@
-# Flathub manifest scaffold for Agaric.
+# Flathub manifest draft for Agaric.
 #
-# STATUS: scaffold-only — NOT submitted to Flathub yet. See
-# `packaging/flathub/README.md` for the submission plan and the open
-# questions that block submission today.
+# STATUS: DO NOT SUBMIT. Flathub accepts neither an AI-drafted manifest
+# nor one that repackages a binary, and this is both; it is also stale
+# against the current release. See `packaging/flathub/README.md`.
 #
 # The manifest below mirrors the existing AppImage build path so the
 # Flatpak builder reuses the same compiled bundle (rather than

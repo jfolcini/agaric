@@ -119,7 +119,7 @@ target (`src-tauri/gen/` holds `android` only). Desktop bundles are not code-sig
 | Funding | User-supported, no investors (about page) | None |
 | Security review | Cure53 (2023-12, 2024-10, 2024-12), Trail of Bits (2025-12) (security page) | SLSA provenance, Scorecard, CodeQL; no third-party audit |
 | Ecosystem | 10,253 plugins, 1,011 themes | None |
-| Stores | App Store, Google Play, Flathub (community maintained) | None; a Flathub manifest is "scaffold only" (`packaging/flathub/README.md`) |
+| Stores | App Store, Google Play, Flathub (community maintained) | None; a winget manifest is ready to submit (`packaging/winget/`), and Flathub needs a hand-written from-source manifest first (`packaging/flathub/README.md`) |
 | User base | Not published by Obsidian; top plugin has 9.0M downloads | No public user base |
 
 ---
@@ -571,7 +571,7 @@ low / medium / high; cost low is hours to days, medium is weeks, high is a month
 | # | Item | Why it ranks here | Impact | Cost | Risk |
 | --- | --- | --- | --- | --- | --- |
 | 1 | **Sync beyond one network** | The casual user's test is "phone on mobile data, laptop at home". Discovery is mDNS only and the relay does not discover (`docs/features/sync.md`). Smallest version: pair once on the LAN, then let already-paired peers find each other through the relay | high | high | medium: the `endpoint::lan_only` guards and the "no cloud" promise both move |
-| 2 | **Store distribution and signing** | Sideloading and Gatekeeper warnings end most trials. Google Play or F-Droid, Flathub (the manifest is a scaffold), signed macOS and Windows bundles | high | medium | low |
+| 2 | **Store distribution and signing** | Sideloading and Gatekeeper warnings end most trials. Google Play or F-Droid, Flathub (needs a hand-written from-source manifest), winget (manifest ready to submit), signed macOS and Windows bundles | high | medium | low |
 | 3 | **Database backup and restore** | A single opaque file with no backup is the first objection from a files-first user. A scheduled local snapshot with a restore command | high | low to medium | low |
 | 4 | **The Markdown mirror as a first-class mode** | It answers "my notes are not files". Today it is off, desktop only, and refuses a non-empty folder. Next steps: adopt an existing Obsidian vault in place, an onboarding choice, then Android | high | medium (desktop), high (Android) | medium: two-way ingest is a data-loss surface; the fuzz and convergence tests (#6507, #6509) are the right start |
 | 5 | **iOS** | No iPhone app rules out a large share of note-takers | high | high | medium: store review, local-network permission, background limits |

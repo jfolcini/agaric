@@ -100,7 +100,7 @@ test.describe('Error scenarios @boot', () => {
     await expect(banner).toHaveCount(0)
   })
 
-  test('shows error toast when edit fails', async ({ page }) => {
+  test('shows error toast when the Enter split fails', async ({ page }) => {
     await openGettingStarted(page)
 
     // Click the first seed block to open the editor. Static blocks are
@@ -108,17 +108,20 @@ test.describe('Error scenarios @boot', () => {
     const firstBlock = page.locator('[data-testid="block-static"]').first()
     await firstBlock.click()
 
-    // Now inject an error for future edit_block calls
+    // Now inject an error for future split_block calls
     await page.evaluate(() => {
-      ;(window as unknown as MockErrorWindow).__injectMockError?.('edit_block', 'Content too large')
+      ;(window as unknown as MockErrorWindow).__injectMockError?.(
+        'split_block',
+        'Content too large',
+      )
     })
 
-    // Type additional content to trigger an edit on blur
+    // Type additional content at the caret, which lands mid-text
     const editor = page.getByRole('textbox', { name: 'Block editor' })
     await expect(editor).toBeVisible()
     await editor.pressSequentially(' modified', { delay: 30 })
 
-    // Press Enter to save (triggers edit_block which will fail)
+    // Press Enter mid-text to split (one split_block, which will fail)
     await editor.press('Enter')
 
     // Verify error feedback appears

@@ -176,7 +176,7 @@ A page's kebab → *Copy app link* copies its `agaric://page/<id>` link, to past
 
 The capture link takes one parameter, `text`, percent-encoded as `encodeURIComponent` writes it (`+` also reads as a space); other parameters are ignored. A bookmarklet that captures the page you are reading: `javascript:location.href='agaric://capture?text='+encodeURIComponent(document.title+' '+location.href)`. Without `text` Quick Capture opens empty. Newlines, `[[links]]` and `#tags` arrive as plain text, as if typed. If Quick Capture is already open, the text goes below what you typed. A text longer than a block can hold, or a malformed escape (a `%` not followed by two hex digits, or bytes that are not UTF-8), opens nothing; the first says so in a toast.
 
-On **Android** the custom scheme isn't available, so the same three routes are served as App Links instead: `https://agaric.app/o/block/<id>`, `/o/page/<id>`, `/o/settings/<tab>`. Use those when linking from a mobile app.
+On **Android** no link opens the app yet: the scheme is not registered there (#6555).
 
 ## Pitfalls to know
 
