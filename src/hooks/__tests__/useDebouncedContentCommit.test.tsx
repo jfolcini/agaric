@@ -93,7 +93,7 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
 
-    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'hello')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'hello', { baseText: 'h' })
     expect(markCommitted).toHaveBeenCalledExactlyOnceWith('hello')
     expect(state.original).toBe('hello')
   })
@@ -123,7 +123,7 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
     expect(getSpy).toHaveBeenCalledTimes(1)
-    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'abcd')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'abcd', { baseText: '' })
   })
 
   it('does not commit when the content is unchanged since the last commit', async () => {
@@ -183,7 +183,7 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
 
-    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', '')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', '', { baseText: 'status:: done' })
   })
 
   // #5160 D2 — the flush acts only on what the edit added, and so does this
@@ -204,7 +204,9 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
 
-    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'hello!\ncontext:: home')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'hello!\ncontext:: home', {
+      baseText: 'hello\ncontext:: home',
+    })
     expect(markCommitted).toHaveBeenCalledExactlyOnceWith('hello!\ncontext:: home')
   })
 
@@ -223,7 +225,9 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
 
-    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'use std::vector<int> here')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'use std::vector<int> here', {
+      baseText: '',
+    })
     expect(markCommitted).toHaveBeenCalledExactlyOnceWith('use std::vector<int> here')
   })
 
@@ -286,7 +290,9 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
 
-    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'buy milk - [ ] not at the start')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'buy milk - [ ] not at the start', {
+      baseText: '',
+    })
     expect(markCommitted).toHaveBeenCalledExactlyOnceWith('buy milk - [ ] not at the start')
     expect(state.original).toBe('buy milk - [ ] not at the start')
   })
@@ -334,7 +340,7 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
 
-    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed', { baseText: 'base' })
     // The baseline is rebased ONLY on success — a failed commit leaves it at
     // 'base' so the eventual blur unmount() still sees a delta and re-commits.
     expect(markCommitted).not.toHaveBeenCalled()
@@ -360,7 +366,7 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
-    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed', { baseText: 'base' })
 
     // Block switches away, THEN the in-flight commit resolves successfully.
     state.activeBlockId = 'OTHER'
@@ -400,7 +406,9 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
     await act(async () => {
       await flushActiveDraft()
     })
-    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed but not yet idle')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed but not yet idle', {
+      baseText: 'base',
+    })
     expect(markCommitted).toHaveBeenCalledExactlyOnceWith('typed but not yet idle')
     expect(state.original).toBe('typed but not yet idle')
 

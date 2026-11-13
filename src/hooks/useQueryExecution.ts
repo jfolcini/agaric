@@ -13,6 +13,7 @@ import { decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { queryClient } from '@/lib/query-client'
+import { compileQueryText, isLegacyQueryText } from '@/lib/query-text'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
 import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
@@ -236,11 +237,37 @@ export async function fetchRichInlineQuery(
 }
 
 /**
+ * Execute a query block written in the search syntax (#6628): compiled to the
+ * engine's filter (`compileQueryText`) and run like a `v2:` payload. A token
+ * the block cannot run is a validation error naming each one and its column,
+ * never an empty result.
+ */
+export async function fetchTextInlineQuery(
+  expression: string,
+  pageCursor?: string,
+  spaceId?: string | null,
+): Promise<QueryFetchResult> {
+  if (!spaceId) return EMPTY_FETCH_RESULT
+  const compiled = await compileQueryText(expression, {
+    listTags: async () => unwrap(await commands.listAllTagsInSpace(requireActiveScope(spaceId))),
+  })
+  if (!compiled.ok) {
+    const message =
+      compiled.problems.length === 0
+        ? t('query.expressionEmpty')
+        : compiled.problems.map((problem) => t('query.text.problem', { ...problem })).join('; ')
+    throw new QueryValidationError(message)
+  }
+  return await fetchRichInlineQuery(compiled.filter, pageCursor, spaceId)
+}
+
+/**
  * Resolve which execution path an inline query uses and run it (#1951 P2):
- * structured `v2:` payloads and faithfully-translatable legacy text queries run
- * through the rich `run_advanced_query` engine; anything the translator refuses
- * keeps the original legacy per-type dispatch. Exported for the legacy↔rich
- * equivalence tests.
+ * structured `v2:` payloads and search-syntax text (#6628) run through the
+ * rich `run_advanced_query` engine; the older query text is translated to it
+ * where faithfully expressible, and anything the translator refuses keeps the
+ * original legacy per-type dispatch. Exported for the legacy↔rich equivalence
+ * tests.
  */
 export async function resolveInlineQuery(
   expression: string,
@@ -250,6 +277,9 @@ export async function resolveInlineQuery(
   const structured = decodeInlineQueryPayload(expression)
   if (structured) {
     return await fetchRichInlineQuery(structured.filter, pageCursor, spaceId)
+  }
+  if (!isLegacyQueryText(expression)) {
+    return await fetchTextInlineQuery(expression, pageCursor, spaceId)
   }
   const parsed = parseQueryExpression(expression)
   const resolved = await resolveLegacyQueryToFilterExpr(parsed, {
@@ -328,9 +358,10 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
       queryKey: ['queryExecution', currentSpaceId, expression],
       // Resolve the execution path (#1951 P2):
       //   1. A structured (`v2:`) payload runs through the rich engine.
-      //   2. A legacy text query is translated to a `FilterExpr` and ALSO run
+      //   2. Search-syntax text (#6628) is compiled and runs there too.
+      //   3. A legacy text query is translated to a `FilterExpr` and ALSO run
       //      through the rich engine when faithfully expressible.
-      //   3. Anything the translator refuses (a backlinks query without a
+      //   4. Anything the translator refuses (a backlinks query without a
       //      target, non-eq reserved filters, key-only, unknown) keeps the
       //      original legacy dispatch.
       // Page-title resolution is folded IN so each page carries its own titles.

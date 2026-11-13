@@ -1,4 +1,4 @@
-# Session 4037 — `agaric://capture?text=` opens Quick Capture prefilled
+# Session 4041 — `agaric://capture?text=` opens Quick Capture prefilled
 
 First checkbox of #6555, continued in a cloud session from the overnight batch's parked `wip:` commit (#6667).
 

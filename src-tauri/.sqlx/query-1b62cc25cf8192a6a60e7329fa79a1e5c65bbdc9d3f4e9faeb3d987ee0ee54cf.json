@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id AS \"block_id!: String\" FROM op_log\n           WHERE op_type = 'create_block' AND is_replicated = 0\n             AND block_id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "block_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "1b62cc25cf8192a6a60e7329fa79a1e5c65bbdc9d3f4e9faeb3d987ee0ee54cf"
+}

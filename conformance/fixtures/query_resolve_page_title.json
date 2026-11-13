@@ -1,0 +1,343 @@
+{
+  "description": "#6527 — READ-command differential over `resolve_page_title`, the single-title lookup the New page dialog, the welcome tour, the Templates view and the date picker ask instead of listing every page of the space. It answers as `create_page_in_space` resolves a title (`SpacePageNames`, #6278): the live page titled under `name_key` (trim, Unicode case, NFC), the smallest id first, with its title as written; else the trimmed title. Titles only: S2's alias `plans` answers no page. A blank title takes the first free `Untitled N` among the titles: S4 `Untitled` and S5 `untitled 2` (another case) are taken, S6 `Untitled 4` is past the first gap, so the answer is `Untitled 3`. The one op trashes S3, whose title then answers no page. S7 and S8 hold one title in two cases, as a vault from before titles were unique per space may: the smaller id answers, the page a create opens. Every step answers one row, so none is declared empty.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Café",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Roadmap",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Old title",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Untitled",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "untitled 2",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Untitled 4",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Twin",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B7",
+        "parent_id": null,
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "TWIN",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B8",
+        "parent_id": null,
+        "position": 8,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "title_held_under_another_spelling",
+      "rows": ["resolved_page_title#page_id=B1#title=Café"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "alias_is_no_page",
+      "rows": ["resolved_page_title#page_id=null#title=PLANS"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "trashed_title_is_no_page",
+      "rows": ["resolved_page_title#page_id=null#title=Old title"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "unheld_title_comes_back_trimmed",
+      "rows": ["resolved_page_title#page_id=null#title=Fresh page"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "blank_takes_first_free_untitled",
+      "rows": ["resolved_page_title#page_id=null#title=Untitled 3"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "rust_whitespace_is_blank",
+      "rows": ["resolved_page_title#page_id=null#title=Untitled 3"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tied_title_answers_the_smaller_id",
+      "rows": ["resolved_page_title#page_id=B7#title=Twin"],
+      "total_count": null
+    }
+  ],
+  "name": "query_resolve_page_title",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "title": " CAFÉ "
+      },
+      "command": "resolve_page_title",
+      "comment": "Upper case, the accent decomposed (NFD) and padded: one name with S1's `Café` under `name_key`, answered with S1 and its title as written. A mock comparing raw text, folding case without NFC, or not trimming answers no page.",
+      "name": "title_held_under_another_spelling"
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "title": "PLANS"
+      },
+      "command": "resolve_page_title",
+      "comment": "`plans` is S2's alias. The lookup reads titles only, as the create opens only a title holder (it refuses an alias), so no page, and the name comes back as given.",
+      "name": "alias_is_no_page"
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "title": "Old title"
+      },
+      "command": "resolve_page_title",
+      "comment": "S3 is trashed by the op, so its title answers no page.",
+      "name": "trashed_title_is_no_page"
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "title": "  Fresh page  "
+      },
+      "command": "resolve_page_title",
+      "comment": "No page holds it: no page, and the title a new page takes, trimmed.",
+      "name": "unheld_title_comes_back_trimmed"
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "title": ""
+      },
+      "command": "resolve_page_title",
+      "comment": "`Untitled` and `untitled 2` are taken under `name_key`, `Untitled 3` is free: the first gap, not the number after the highest (`Untitled 4`).",
+      "name": "blank_takes_first_free_untitled"
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "title": "  "
+      },
+      "command": "resolve_page_title",
+      "comment": "U+0085 is Unicode White_Space, which Rust's `trim` strips and JS's `trim()` keeps: a blank title on both stacks only if the mock trims as Rust does.",
+      "name": "rust_whitespace_is_blank"
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "title": "twin"
+      },
+      "command": "resolve_page_title",
+      "comment": "S7 `Twin` and S8 `TWIN` hold one title: the smaller id, S7, with its own spelling.",
+      "name": "tied_title_answers_the_smaller_id"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Café",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Roadmap",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Old title",
+        "id": "S3",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "page",
+        "content": "Untitled",
+        "id": "S4",
+        "parent_id": null,
+        "position": 4
+      },
+      {
+        "block_type": "page",
+        "content": "untitled 2",
+        "id": "S5",
+        "parent_id": null,
+        "position": 5
+      },
+      {
+        "block_type": "page",
+        "content": "Untitled 4",
+        "id": "S6",
+        "parent_id": null,
+        "position": 6
+      },
+      {
+        "block_type": "page",
+        "content": "Twin",
+        "id": "S7",
+        "parent_id": null,
+        "position": 7
+      },
+      {
+        "block_type": "page",
+        "content": "TWIN",
+        "id": "S8",
+        "parent_id": null,
+        "position": 8
+      }
+    ],
+    "page_aliases": [
+      {
+        "alias": "plans",
+        "page_id": "S2"
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

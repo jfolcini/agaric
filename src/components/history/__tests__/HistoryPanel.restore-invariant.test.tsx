@@ -92,6 +92,7 @@ describe('HistoryPanel restorability invariant (#1610)', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'BLOCK001',
         toText: 'Old content',
+        baseText: null,
       })
     })
     await waitFor(() => {

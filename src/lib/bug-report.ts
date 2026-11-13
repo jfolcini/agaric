@@ -8,6 +8,7 @@
  */
 
 import type { BugReport, ReconciliationReport } from '@/lib/bindings'
+import { formatBytes } from '@/lib/format'
 import { i18n } from '@/lib/i18n'
 import { GROUP_KEYS, groupByKind, problemId, tableId } from '@/lib/integrity-report'
 
@@ -147,6 +148,17 @@ export function formatRetryQueue(summary: BugReport['retry_queue']): string {
   return `${parts.join(', ')} (${summary.task_kinds.join(', ')})`
 }
 
+/** #6563: one Environment line with the op log's on-disk cost — the table and
+ *  index pages, then rows and payload bytes per op type, largest payload
+ *  first. Answers whether full-text `edit_block` payloads dominate the vault. */
+export function formatOpLog(summary: NonNullable<BugReport['op_log']>): string {
+  const byType = summary.by_op_type
+    .toSorted((a, b) => b.payload_bytes - a.payload_bytes)
+    .map((t) => `${t.op_type} ${t.rows} rows / ${formatBytes(t.payload_bytes)}`)
+  const sizes = `table ${formatBytes(summary.table_bytes)}, indexes ${formatBytes(summary.index_bytes)}`
+  return byType.length === 0 ? `${sizes}; empty` : `${sizes}; ${byType.join(', ')}`
+}
+
 /** #4886: the `## Integrity check` section — the reconciliation oracle's
  *  report, rendered for a human reading a GitHub issue.
  *
@@ -233,6 +245,8 @@ export function formatReportBody(params: FormatReportBodyParams): string {
     `- **Device ID:** \`${truncateDeviceId(metadata.device_id)}\` _(truncated)_`,
     `- **Retry queue:** ${formatRetryQueue(metadata.retry_queue)}`,
   ]
+  // Absent from a build older than #6563, a failed read, or the mock.
+  if (metadata.op_log != null) envLines.push(`- **Op log:** ${formatOpLog(metadata.op_log)}`)
   sections.push(envLines.join('\n'))
 
   sections.push('## Recent errors')

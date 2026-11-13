@@ -24,8 +24,9 @@
 //!   `property_definitions` rows written before definitions were ops (#5841).
 //!   Each gets its `SetPropertyDef`.
 //! * [`engine_missing_blocks`](crate::repair::engine_missing_blocks) — live
-//!   blocks their space's Loro engine lost to a purge after a pre-#5418 boot
-//!   replay (#5670). Each is hydrated back from its rows.
+//!   blocks this device created that their space's Loro engine does not hold:
+//!   lost to a purge after a pre-#5418 boot replay (#5670), or created under
+//!   a peer's page the engine lacked (#6525). Each is hydrated from its rows.
 //! * [`attachments`](crate::repair::attachments) — `attachments` rows written
 //!   before attachments were in the engine (#5608). Each row's fields enter its
 //!   block's doc.

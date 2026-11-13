@@ -96,6 +96,7 @@ describe('stored block content vectors (#5160)', () => {
         blockId: 'BLOCK',
         loaded: row.content,
         changed: typoFixed(row.content),
+        base: row.content,
         edit: () => Promise.resolve(true),
         splitBlock: () => Promise.resolve(true),
         rootParentId: null,

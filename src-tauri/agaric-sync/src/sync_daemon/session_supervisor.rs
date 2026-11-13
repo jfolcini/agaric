@@ -1745,7 +1745,7 @@ fn refuse_on_identity_mismatch(
 /// loop this replaces paid a full connect timeout on a dead path before trying a
 /// live one, which is exactly the multi-homed LAN case — a device on both WiFi and
 /// Ethernet — that the address list exists for.
-fn dial_addr(
+pub(super) fn dial_addr(
     ctx: &SyncSessionContext<'_>,
     peer: &DiscoveredPeer,
     endpoint_id: iroh::EndpointId,

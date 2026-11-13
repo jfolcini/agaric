@@ -194,13 +194,14 @@ function disambiguate(base: string, id: string, seen: Set<string>): string {
 }
 
 /**
- * Map a space's display name to a filesystem-safe top-level ZIP folder name
- * for {@link exportAllSpacesAsZip} (#2964). Unlike a page title, a space
- * name is never namespaced, so any `/` it happens to contain is flattened to
- * `_` (not treated as a nesting separator, unlike {@link titleToZipPath})
- * before the usual per-segment sanitization (`sanitizeSegment`) runs.
+ * Map a name read as one path segment to a filesystem-safe one: a space's
+ * display name as a top-level ZIP folder for {@link exportAllSpacesAsZip}
+ * (#2964), a page title as the name of the one file it is saved to. Any `/`
+ * it holds is flattened to `_` (not treated as a nesting separator, unlike
+ * {@link titleToZipPath}) before the usual per-segment sanitization
+ * (`sanitizeSegment`) runs.
  */
-function spaceNameToFolderName(name: string): string {
+export function nameToFlatSegment(name: string): string {
   return sanitizeSegment(name.replaceAll('/', '_'))
 }
 
@@ -484,7 +485,7 @@ export interface ExportAllSpacesResult {
  * not a parallel reimplementation.
  *
  * Folder names are a filesystem-safe form of each space's display name
- * ({@link spaceNameToFolderName}); two spaces whose names sanitize to the same
+ * ({@link nameToFlatSegment}); two spaces whose names sanitize to the same
  * folder name are disambiguated with the exact id-suffix scheme page-title
  * collisions already use ({@link disambiguate}), so one space's pages can never
  * be silently merged into another's folder.
@@ -505,7 +506,7 @@ export async function exportAllSpacesAsZip(): Promise<ExportAllSpacesResult> {
   const allSkippedAttachments: SkippedAttachmentEntry[] = []
 
   for (const space of spaces) {
-    const folder = disambiguate(spaceNameToFolderName(space.name), space.id, folderNamesSeen)
+    const folder = disambiguate(nameToFlatSegment(space.name), space.id, folderNamesSeen)
     const {
       exportedPages: spaceExportedPages,
       skippedPageEntries,

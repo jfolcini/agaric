@@ -52,15 +52,21 @@ Cursor pagination uses a block-id keyset (Created sort) or a `(value, id)` compo
 
 ## Inline query blocks
 
-`{{query: ...}}` blocks render a live filtered list inline. The query body is the user-editable text; the result is what renders below.
+A block whose whole text is `{{query …}}` renders the query's results in place of its text (`StaticBlock` → `QueryResult`). The text after the `{{query` marker is one of three forms, told apart in this order (#6628):
 
-Implementation reuses the same `query_by_tags` / `query_by_property` / `list_backlinks_filtered` IPCs. Re-fetches on every materialize commit that touches the relevant tables (`block:properties-changed` event for property queries; tag-cache invalidation for tag queries).
+1. **`v2:<base64url(JSON)>`**: the builder's advanced mode, a `FilterExpr` with its `table` / `columns` (`src/lib/inline-query-spec.ts`). Export writes it as `v2n:<names> <description>` and import reads it back (`src-tauri/src/commands/pages/inline_query_md.rs`).
+2. **The older query text** (`parseQueryExpression`, `src/lib/query-utils.ts`): `tag:prefix`, `property:k=v`, `type:tag expr:…`, `type:property key:… value:…`, `type:backlinks target:…`. `resolveLegacyQueryToFilterExpr` translates it to a `FilterExpr` where faithful; the rest keeps the legacy per-type IPCs. Frozen: read, never extended.
+3. **The search syntax**, read by the search box's own parser (`src/lib/search-query/`, no prefix of its own) and compiled to a `FilterExpr` by `compileQueryText` (`src/lib/query-text.ts`): each tag token is a `Tag` leaf (the name looked up in the space as the search box looks it up, or a `#[ULID]` chip's own id), states and priorities one `State` / `Priority` leaf per sign, `prop:` a typed `HasProperty` (`infer_property_value`'s typing), `due:` / `scheduled:` a `DatePredicate`. Every form runs on `run_advanced_query`.
 
-`QueryResult` (frontend component) handles paginate / sort / group; the user-facing visual builder is `QueryBuilderModal`.
+`isLegacyQueryText` decides between 2 and 3. Both texts have `tag:`, with different meanings: the older one's is a name prefix, attached or inline, repeats OR'd; the search syntax's is the exact tag, attached, repeats AND'd. A block is the older text when it uses a key only that text reads (`property`, `type`, `expr`, `key`, `value`, `target`, `operator`, `date`) or its only keyed words are `tag:` words without `#` (the older text skips a word with no key), which is every block stored before the search syntax, so none changes its results; the search serializer always writes `tag:#…`. `table:` and `columns:` are view words both texts carry; the reader blanks them before parsing, and the search box never registers them.
+
+A search token the engine cannot run faithfully is an error naming it and its column, never an empty result: `under:` (no leaf reads inherited tags), `path:` / `not-path:` (the engine's `PathGlob` matches the page's own row, search matches the blocks on it), and for now a relative date bucket and free text. A text with no filter at all is an error too, not the whole space.
+
+The stored text is the block's content: sync, *Edit as Markdown*, the MCP tools and the Markdown export carry it unchanged, a `#[ULID]` chip exported as `#name` as anywhere else. Results refetch on graph-structure changes and property events (`useQueryExecution`).
 
 ## Visual query builder
 
-`BacklinkFilterBuilder` and `QueryBuilderModal` are the two visual surfaces. They produce the same `BacklinkFilter` / `TagExpr` shapes the inline-query and agenda surfaces consume. One model, three UI entry points.
+`BacklinkFilterBuilder` and `QueryBuilderModal` are the two visual surfaces. `QueryBuilderModal`'s simple mode writes the older query text, its advanced mode a `v2:` payload; it does not read a search-syntax block yet.
 
 ## Pagination invariant
 

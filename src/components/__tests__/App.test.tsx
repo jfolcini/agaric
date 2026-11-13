@@ -571,6 +571,7 @@ describe('App', () => {
       if (cmd === 'list_spaces')
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
       if (cmd === 'list_all_pages_in_space') return []
+      if (cmd === 'resolve_page_title') return { title: 'Untitled', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
       return emptyPage
     })
@@ -605,6 +606,7 @@ describe('App', () => {
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
       if (cmd === 'list_all_pages_in_space')
         return [{ id: 'P_OLD_0000000000000000000', content: 'Untitled' }]
+      if (cmd === 'resolve_page_title') return { title: 'Untitled 2', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
       return emptyPage
     })
@@ -639,6 +641,7 @@ describe('App', () => {
       if (cmd === 'list_spaces')
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
       if (cmd === 'list_all_pages_in_space') return []
+      if (cmd === 'resolve_page_title') return { title: 'Quarterly review', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
       return emptyPage
     })
@@ -674,6 +677,7 @@ describe('App', () => {
       if (cmd === 'list_spaces')
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
       if (cmd === 'list_all_pages_in_space') return []
+      if (cmd === 'resolve_page_title') return { title: 'From the palette', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
       return emptyPage
     })
@@ -1738,6 +1742,7 @@ describe('App', () => {
         if (cmd === 'list_spaces')
           return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
         if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'resolve_page_title') return { title: 'Untitled', page_id: null }
         if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }
@@ -1768,6 +1773,7 @@ describe('App', () => {
         if (cmd === 'list_spaces')
           return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
         if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'resolve_page_title') return { title: 'Untitled', page_id: null }
         if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }
