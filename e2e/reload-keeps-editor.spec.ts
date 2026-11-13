@@ -484,3 +484,50 @@ test.describe('a reload brings the peer’s text into a focused block with nothi
     await expect(editor).toBeFocused()
   })
 })
+
+test.describe('a dirty editor’s save keeps the peer’s edit a reload brought (#6533) @editor @sync', () => {
+  const PEER_TEXT = `Peer: ${GS3_TEXT}`
+
+  /** Type into GS3, then have a peer's edit of its start arrive under the unsaved key. */
+  async function typeThenPeerEdits(page: Page): Promise<Locator> {
+    const editor = await focusBlockById(page, GS3)
+    await delayPageLoads(page, 0)
+    // Inside the commit debounce: the typed key is not saved yet.
+    await page.keyboard.type('!')
+    await ipc(page, 'edit_block', { blockId: GS3, toText: PEER_TEXT })
+    await emitMockEvent(page, 'sync:complete', syncComplete([PAGE_GS]))
+    await expect.poll(() => loadsSettled(page, PAGE_GS)).toBe(1)
+    await expect(editor).toHaveText(`${GS3_TEXT}!`)
+    return editor
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+  })
+
+  test('the idle commit, the keys after it and leaving save both edits', async ({ page }) => {
+    const editor = await typeThenPeerEdits(page)
+
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${PEER_TEXT}!`)
+    // The editor still shows its own text: the next commit starts from it.
+    await expect(editor).toHaveText(`${GS3_TEXT}!`)
+    await page.keyboard.type('?')
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${PEER_TEXT}!?`)
+    await page.keyboard.type('.')
+
+    await blurEditors(page)
+
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${PEER_TEXT}!?.`)
+    await expect(page.locator(`li[data-block-id="${GS3}"]`)).toContainText(`${PEER_TEXT}!?.`)
+  })
+
+  test('leaving the block saves both edits and shows them', async ({ page }) => {
+    await typeThenPeerEdits(page)
+
+    await blurEditors(page)
+
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${PEER_TEXT}!`)
+    await expect(page.locator(`li[data-block-id="${GS3}"]`)).toContainText(`${PEER_TEXT}!`)
+  })
+})

@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock, makeBlockRow, makePageHeading } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
 import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockDatePicker } from '@/components/block-tree/use-block-date-picker'
 import { announce } from '@/lib/announcer'
@@ -55,7 +55,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockDatePic
 }
 
 /**
- * The five commands the four mode handlers can reach, each answering what its
+ * The commands the four mode handlers can reach, each answering what its
  * binding declares; a test overrides the one it is about. Anything else the
  * hook fires fails by name instead of resolving `undefined`.
  *
@@ -70,7 +70,8 @@ function stubDatePickerInvoke(overrides: TypedInvokeHandlers = {}): void {
       op_refs: [{ device_id: 'dev1', seq: 11 }],
       ...makeBlockRow({ id: args['blockId'] as string }),
     }),
-    list_all_pages_in_space: () => [],
+    get_journal_page_by_date: () => null,
+    resolve_page_title: (args) => ({ title: args['title'] as string, page_id: null }),
     create_page_in_space: () => 'DATE_PAGE_1',
     ...overrides,
   })
@@ -450,10 +451,9 @@ describe('useBlockDatePicker handleDatePick — repeat-until mode', () => {
 
 describe('useBlockDatePicker handleDatePick — date mode', () => {
   it('creates date page when none exists', async () => {
-    // The defaults are the "no existing page" case: `list_all_pages_in_space`
-    // answers an empty `PageHeading[]` (a flat array — no `.items` wrapper, no
-    // pagination clamp) and `create_page_in_space` the new page's ULID as a
-    // plain String contract.
+    // The defaults are the "no existing page" case: `get_journal_page_by_date`
+    // answers null, `resolve_page_title` no page for the legacy title, and
+    // `create_page_in_space` the new page's ULID as a plain String contract.
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
 
@@ -462,8 +462,11 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith(
-      'list_all_pages_in_space',
-      expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_TEST' } }),
+      'get_journal_page_by_date',
+      expect.objectContaining({
+        date: '2025-01-15',
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
+      }),
     )
     // / H-3b — date pages route through `create_page_in_space` so
     // they own a `space` property and surface in PageBrowser. The
@@ -486,9 +489,8 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
 
   it('uses existing date page if found', async () => {
     stubDatePickerInvoke({
-      list_all_pages_in_space: () => [
-        makePageHeading({ id: 'EXISTING_PAGE', content: '2025-01-15' }),
-      ],
+      get_journal_page_by_date: () =>
+        makeBlockRow({ id: 'EXISTING_PAGE', block_type: 'page', content: '2025-01-15' }),
     })
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
@@ -505,10 +507,10 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
   // chain (BlockTree's onSelect drops the promise), so any failure became an
   // unhandled promise rejection with the picker silently closed. It now owns
   // its error path like the other mode handlers.
-  it('shows error toast when listing pages fails (no unhandled rejection)', async () => {
+  it('shows error toast when looking up the date page fails (no unhandled rejection)', async () => {
     stubDatePickerInvoke({
-      list_all_pages_in_space: () => {
-        throw new Error('list failed')
+      get_journal_page_by_date: () => {
+        throw new Error('lookup failed')
       },
     })
     const params = makeDefaultParams()
@@ -590,9 +592,8 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
   // picker (see `nameChangeGenerationRef`'s #4337 item 5 note).
   it('does not call registerCreatedPage when an existing date page is reused (#4319)', async () => {
     stubDatePickerInvoke({
-      list_all_pages_in_space: () => [
-        makePageHeading({ id: 'EXISTING_PAGE', content: '2025-06-01' }),
-      ],
+      get_journal_page_by_date: () =>
+        makeBlockRow({ id: 'EXISTING_PAGE', block_type: 'page', content: '2025-06-01' }),
     })
     const registerCreatedPage = vi.fn()
     const params = makeDefaultParams({ registerCreatedPage })
@@ -604,6 +605,64 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
 
     expect(mockedInvoke).not.toHaveBeenCalledWith('create_page_in_space', expect.anything())
     expect(registerCreatedPage).not.toHaveBeenCalled()
+  })
+})
+
+// #6527 — a page titled in the pre-ISO `DD/MM/YYYY` form is still the day's
+// page, looked up by title only when the day has no journal page.
+describe('useBlockDatePicker handleDatePick — legacy date title', () => {
+  const legacyPage = (args: Record<string, unknown>) => ({
+    title: args['title'] as string,
+    page_id: args['title'] === '01/06/2025' ? 'LEGACY_PAGE' : null,
+  })
+
+  it('links the page titled in the legacy form instead of creating one', async () => {
+    stubDatePickerInvoke({ resolve_page_title: legacyPage })
+    const registerCreatedPage = vi.fn()
+    const params = makeDefaultParams({ registerCreatedPage })
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleDatePick(new Date(2025, 5, 1))
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('create_page_in_space', expect.anything())
+    expect(registerCreatedPage).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
+  it('asks for no legacy title when the day has a journal page', async () => {
+    stubDatePickerInvoke({
+      get_journal_page_by_date: () =>
+        makeBlockRow({ id: 'EXISTING_PAGE', block_type: 'page', content: '2025-06-01' }),
+      resolve_page_title: legacyPage,
+    })
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleDatePick(new Date(2025, 5, 1))
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('get_journal_page_by_date', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('resolve_page_title', expect.anything())
+  })
+
+  it('shows error toast when the legacy title lookup fails', async () => {
+    stubDatePickerInvoke({
+      resolve_page_title: () => {
+        throw new Error('lookup failed')
+      },
+    })
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleDatePick(new Date(2025, 5, 1))
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('create_page_in_space', expect.anything())
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.insertDateLinkFailed')
   })
 })
 

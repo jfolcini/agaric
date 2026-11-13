@@ -426,6 +426,7 @@ pub(crate) async fn edit_block_resolving_names_in_tx(
         device_id,
         block_id.as_str().to_owned(),
         content,
+        None,
     )
     .await?;
     Ok((tx, row, warnings))
@@ -531,6 +532,7 @@ pub(super) async fn splice_into_anchor(
         device_id,
         id.to_owned(),
         first.content.clone(),
+        None,
     )
     .await?;
     apply_block_properties(tx, materializer, device_id, id, &first.properties, lines).await?;

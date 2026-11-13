@@ -197,6 +197,7 @@ describe('HistoryPanel', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'BLOCK001',
         toText: 'Old content',
+        baseText: null,
       })
     })
 
@@ -764,6 +765,7 @@ describe('HistoryPanel', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
           blockId: 'BLOCK001',
           toText: 'CURRENT TEXT',
+          baseText: null,
         })
       })
 
@@ -992,6 +994,7 @@ describe('HistoryPanel', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
           blockId: 'BLOCK001',
           toText: 'Old content',
+          baseText: null,
         })
       })
 
@@ -1175,6 +1178,7 @@ describe('HistoryPanel', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
           blockId: 'BLOCK001',
           toText: 'newest',
+          baseText: null,
         })
       })
       // No dialog gets in the way of the keyboard flow.
@@ -1247,6 +1251,7 @@ describe('HistoryPanel', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
           blockId: 'BLOCK001',
           toText: 'middle', // seq=2, index 1 in the fixture
+          baseText: null,
         })
       })
       // Crucially: the ORIGINALLY-focused row (seq=3 / 'newest') is

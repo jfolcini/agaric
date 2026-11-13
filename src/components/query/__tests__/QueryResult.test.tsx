@@ -2195,6 +2195,7 @@ describe('QueryResult – Edit Query button', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK1',
       toText: '{{query type:tag expr:updated}}',
+      baseText: null,
     })
 
     // Modal should close after save
