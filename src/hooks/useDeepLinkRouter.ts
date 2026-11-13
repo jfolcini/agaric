@@ -16,10 +16,6 @@
  *     `CapturePayload` (#6555). `useAppDialogs` listens for it, since it owns
  *     the Quick Capture dialog; `handleCapturePayload` here applies it.
  *
- * On Android the same routes arrive as App Links
- * (`https://agaric.app/o/<host>/<id>`); both shapes are handled identically
- * on the launch path by `dispatchLaunchUrl` (#741).
- *
  * The Rust router validates ULIDs (uppercase Crockford base32) and
  * non-empty tab names before emitting; the defensive checks here are
  * defense-in-depth so a malformed payload from a future source can't
@@ -82,15 +78,6 @@ export type CapturePayload = { kind: 'prefill'; text: string } | { kind: 'tooLon
 /** The block content cap in UTF-8 bytes; mirrors `MAX_CONTENT_LENGTH` in
  *  `src-tauri/agaric-engine/src/block_ops.rs`. */
 export const MAX_CAPTURE_TEXT_BYTES = 256 * 1024
-
-/** HTTPS authority registered for Android App Links — must mirror
- *  `APP_LINK_HOST` in `src-tauri/src/deeplink/mod.rs` and the
- *  `plugins.deep-link.mobile[].host` entry in `tauri.conf.json`. */
-export const APP_LINK_HOST = 'agaric.app'
-/** First path segment of an Android App Link (`https://agaric.app/o/…`) —
- *  mirrors `APP_LINK_PREFIX` in `src-tauri/src/deeplink/mod.rs` and the
- *  `plugins.deep-link.mobile[].pathPrefix` `"/o/"` entry. */
-export const APP_LINK_PREFIX = 'o'
 
 /** Defensive shape check for `BlockNavigatePayload`. */
 function isBlockNavigatePayload(p: unknown): p is BlockNavigatePayload {
@@ -409,15 +396,7 @@ export function useDeepLinkRouter(): void {
 /**
  * Parse a launch-time deep-link URL and dispatch through the same handlers
  * as live events.  Mirrors the Rust `parse_deep_link` / `dispatch_url` pair
- * exactly so behaviour stays consistent across the two paths and both URL
- * shapes:
- *
- *   - `agaric://<host>/<id>`              — custom scheme (desktop launch args)
- *   - `https://agaric.app/o/<host>/<id>`  — Android App Link (cold-start, #741)
- *
- * Without the `https` arm an Android App Link that cold-starts the app would
- * be captured by `getCurrent()` and silently dropped here, re-creating the
- * #741 no-op on the launch path even though live events route fine.  Logs at
+ * exactly so behaviour stays consistent across the two paths.  Logs at
  * `warn` level on every rejection.
  */
 export function dispatchLaunchUrl(raw: string): void {
@@ -429,42 +408,16 @@ export function dispatchLaunchUrl(raw: string): void {
     return
   }
 
-  // Normalise the two accepted shapes into (host, identifier).  `URL` strips
-  // the leading `/` from `pathname`; split and keep only non-empty segments
-  // so a trailing/doubled slash doesn't shift the mapping.
-  let host: string
-  let identifier: string | undefined
-  if (parsed.protocol === 'agaric:') {
-    host = parsed.hostname.toLowerCase()
-    // First non-empty segment is the identifier (matches the Rust router).
-    identifier = parsed.pathname.split('/').find((s) => s.length > 0)
-  } else if (parsed.protocol === 'https:') {
-    // Only `https://agaric.app/o/<host>/<id>` is a deep link; any other
-    // https authority is an ordinary web URL and must not be routed.
-    if (parsed.hostname.toLowerCase() !== APP_LINK_HOST) {
-      logger.warn('deeplink', 'launch URL has wrong scheme', {
-        url: raw,
-        protocol: parsed.protocol,
-      })
-      return
-    }
-    const segments = parsed.pathname.split('/').filter((s) => s.length > 0)
-    if (segments[0] !== APP_LINK_PREFIX) {
-      logger.warn('deeplink', 'launch URL has unknown host', {
-        url: raw,
-        host: segments[0] ?? '',
-      })
-      return
-    }
-    host = (segments[1] ?? '').toLowerCase()
-    identifier = segments[2]
-  } else {
+  if (parsed.protocol !== 'agaric:') {
     logger.warn('deeplink', 'launch URL has wrong scheme', {
       url: raw,
       protocol: parsed.protocol,
     })
     return
   }
+  const host = parsed.hostname.toLowerCase()
+  // First non-empty segment is the identifier (matches the Rust router).
+  const identifier = parsed.pathname.split('/').find((s) => s.length > 0)
 
   if (host === 'capture') {
     const payload = captureLinkPayload(parsed.search)

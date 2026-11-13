@@ -1795,3 +1795,25 @@ export async function syncTooltipLines(page: Page): Promise<Locator> {
   await button.focus()
   return page.getByRole('tooltip').locator(':scope > div > span')
 }
+
+/**
+ * Pin a comment saying `words` on page `n` of the open PDF reader, its Comment
+ * tool on. pdf.js places a new box among the page's other annotations one timer
+ * after making it, by taking it out of the document, and gives it the focus
+ * back one timer later; keys typed in between go to the dialog and are lost.
+ */
+export async function pinPdfComment(page: Page, n: number, words: string): Promise<void> {
+  const reader = activeDialog(page)
+  const pageBox = reader.locator(`.pdfViewer .page[data-page-number="${n}"]`)
+  // The button shows pressed before pdf.js is in comment mode; the layer says when it is.
+  await pageBox
+    .locator('.annotationEditorLayer.freetextEditing')
+    .click({ position: { x: 30, y: 30 } })
+  const box = reader.getByRole('textbox')
+  // Placing the box is also what ties it to the page's text for a screen reader.
+  const id = await box.getAttribute('id')
+  await expect(pageBox.locator(`.textLayer [aria-owns~="${id}"]`)).toBeAttached()
+  await expect(box).toBeFocused()
+  await page.keyboard.type(words)
+  await expect(box).toHaveText(words)
+}

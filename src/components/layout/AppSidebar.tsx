@@ -79,8 +79,7 @@ function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
 
 /**
  * The sync button's "last synced" line. #6523 — while waiting for an away
- * device, it names that device and its own last sync instead: this session's
- * "last synced" would read "never" beside it.
+ * device, it names that device and its own last sync instead.
  */
 function lastSyncedLine(
   t: TFunction,
