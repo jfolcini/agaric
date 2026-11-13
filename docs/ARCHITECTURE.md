@@ -18,6 +18,7 @@ How the system is built. Companion to:
 | ↳ Op-log wire format (byte layout, versioning) | [`architecture/op-log-format.md`](architecture/op-log-format.md) |
 | ↳ Schema-design lessons learned | [`architecture/schema-lessons.md`](architecture/schema-lessons.md) |
 | Content format, serializer, editor architecture, undo/redo | [`architecture/editor-and-content.md`](architecture/editor-and-content.md) |
+| ↳ PDF highlights and pinned comments as blocks | [`architecture/pdf-annotations.md`](architecture/pdf-annotations.md) |
 | Frontend architecture + spaces (stores, ViewDispatcher, per-space slicing) | [`architecture/frontend.md`](architecture/frontend.md) |
 | Pages view (page rows, sort modes, grooming) | [`architecture/pages-view.md`](architecture/pages-view.md) |
 | Filters (compound grooming + agenda filter model) | [`architecture/filters.md`](architecture/filters.md) |
