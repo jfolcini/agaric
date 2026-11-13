@@ -1,4 +1,4 @@
-# Session 4097 — an image pasted as HTML is gated like a typed one
+# Session 4098 — an image pasted as HTML is gated like a typed one
 
 Found while writing page mode's paste specs for #6714 (session 4095). Page mode keeps ProseMirror's own HTML paste, which reads `<img>` through the image node's parse rule. That rule took any `src`, so `<img src="javascript:alert(1)">` pasted from a web page was stored as `![evil](javascript:alert(1))` and drawn as an image whose load the browser refuses. Block mode converts pasted HTML before it reaches the schema and drops such an image there (`html-paste-1439.spec.ts`), so only page mode showed it.
 
