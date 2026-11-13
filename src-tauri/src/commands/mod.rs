@@ -210,8 +210,9 @@ pub use queries::{
 };
 pub use recovery::get_recovery_status;
 pub use spaces::{
-    McpSpaceRow, SpaceRow, create_page_in_space, create_page_in_space_inner, create_space,
-    create_space_inner, list_spaces, list_spaces_inner, list_spaces_registry_inner,
+    McpSpaceRow, ResolvedPageTitle, SpaceRow, create_page_in_space, create_page_in_space_inner,
+    create_space, create_space_inner, list_spaces, list_spaces_inner, list_spaces_registry_inner,
+    resolve_page_title, resolve_page_title_inner,
 };
 pub use sync_cmds::{
     QuarantinedSlotList, SyncRelaySettings, cancel_pairing, cancel_pairing_inner, cancel_sync,

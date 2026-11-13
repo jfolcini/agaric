@@ -1,0 +1,40 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT op_type AS \"op_type!: String\", COUNT(*) AS \"rows!: i64\", COALESCE(SUM(length(CAST(payload AS BLOB))), 0) AS \"payload_bytes!: i64\" FROM op_log GROUP BY op_type ORDER BY op_type",
+  "describe": {
+    "columns": [
+      {
+        "name": "op_type!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "op_type"
+          }
+        }
+      },
+      {
+        "name": "rows!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "payload_bytes!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "41e72604b1fad1aa8dffc78320a2fe3d3c4ed2121d1fd3b3e5e605fc657dd2c2"
+}
