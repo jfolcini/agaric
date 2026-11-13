@@ -53,7 +53,7 @@ import {
   type PdfHighlight,
   repointHighlightBlocks,
 } from '@/lib/pdf-highlights'
-import { type PageBlockState, usePageBlockStoreApi } from '@/stores/page-blocks'
+import { getPageStore, type PageBlockState, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
@@ -111,10 +111,24 @@ function annotatedFilename(filename: string): string {
 }
 
 /**
+ * The mounted store of page `pageId`, the reader's own when that is its page.
+ * The reader also opens from a highlight block's chip, which can sit on another
+ * page than the PDF's owner; a page that is not open has no store and no undo.
+ */
+function openStoreOf(
+  pageStore: StoreApi<PageBlockState>,
+  pageId: string | null | undefined,
+): StoreApi<PageBlockState> | undefined {
+  if (pageId == null) return undefined
+  return pageStore.getState().rootParentId === pageId ? pageStore : getPageStore(pageId)
+}
+
+/**
  * Point the owning block's `attachment:<from>` links at `to`; `false` when the
  * edit was refused. The text is the backend's, because page mode saves past
- * the page store; the edit goes through the store, so the editor showing the
- * block takes the new text, page mode's document among them.
+ * the page store; the edit goes through the store of the owner's page, so the
+ * editor showing the block takes the new text, page mode's document among
+ * them, and the undo entry is that page's.
  */
 async function repointBlockLinks(
   pageStore: StoreApi<PageBlockState>,
@@ -122,16 +136,19 @@ async function repointBlockLinks(
   from: string,
   to: string,
 ): Promise<boolean> {
-  const { content } = unwrap(await commands.getBlock(blockId))
+  const { content, page_id } = unwrap(await commands.getBlock(blockId))
   if (!content?.includes(attachmentRef(from))) return true
   const repointed = content.replaceAll(attachmentRef(from), attachmentRef(to))
-  return pageStore.getState().edit(blockId, repointed, { merge: false })
+  const ownerStore = openStoreOf(pageStore, page_id)
+  if (ownerStore) return ownerStore.getState().edit(blockId, repointed, { merge: false })
+  unwrap(await commands.editBlock(blockId, repointed, null))
+  return true
 }
 
 /**
  * Add a block for each new highlight under `ownerId`, pointing at the copy that
- * holds them, as one undo entry. A refusal is toasted: the highlights are in the
- * file all the same.
+ * holds them, as one undo entry of the owner's page. A refusal is toasted: the
+ * highlights are in the file all the same.
  */
 async function addHighlightBlocks(
   pageStore: StoreApi<PageBlockState>,
@@ -143,10 +160,12 @@ async function addHighlightBlocks(
   if (highlights.length === 0) return
   try {
     const specs = highlightBlockSpecs(ownerId, attachmentId, highlights)
-    const { op_refs } = unwrap(await commands.createBlocksBatch(specs))
-    const { rootParentId } = pageStore.getState()
-    if (rootParentId !== null) {
-      useUndoStore.getState().onNewAction(rootParentId, op_refs, undefined, { merge: false })
+    const { blocks, op_refs } = unwrap(await commands.createBlocksBatch(specs))
+    const pageId = blocks[0]?.page_id
+    const ownerStore = openStoreOf(pageStore, pageId)
+    if (pageId != null && ownerStore) {
+      useUndoStore.getState().onNewAction(pageId, op_refs, undefined, { merge: false })
+      if (ownerStore !== pageStore) void ownerStore.getState().load()
     }
     recordGraphStructureChange()
   } catch (err) {
