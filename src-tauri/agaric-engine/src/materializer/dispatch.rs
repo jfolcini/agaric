@@ -214,7 +214,7 @@ const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 7] = [
 /// #421 FTS narrowing ([`inbound_sync_fts_tasks`]) in the SAME function.
 /// `block_tag_refs` is a purely per-block-content-derived cache: a block's
 /// rows are the inline `#[ULID]` tag tokens in ITS OWN content, filtered to
-/// live same-space tag blocks. `cache::push_desired_pairs` (the full
+/// live same-space tag blocks. `cache::compute_desired_pairs` (the full
 /// rebuild) is DESIGNED to be the union over live blocks of exactly what
 /// `cache::reindex_block_tag_refs` computes per block (same `deleted_at IS
 /// NULL`, tag-block, and source-space filters — pinned by #375/#678), so the
@@ -472,7 +472,7 @@ const SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX: usize = SYNC_FTS_PER_BLOCK_MAX;
 /// Pure (no queue/IO) so the strategy is unit-testable. Correctness: a block's
 /// `block_tag_refs` rows derive ONLY from its own content's inline `#[ULID]`
 /// tokens (filtered to live same-space tag blocks); the full rebuild
-/// (`cache::push_desired_pairs`) is by design the union over live blocks of
+/// (`cache::compute_desired_pairs`) is by design the union over live blocks of
 /// exactly what `cache::reindex_block_tag_refs` computes per block, so the
 /// per-block fan-out over `changed_blocks` equals the full rebuild (and matches
 /// the local-edit reindex path; proven by the `#2667` equivalence integration
@@ -1258,17 +1258,14 @@ impl Materializer {
         block_type_hint: Option<&str>,
         move_same_page: Option<bool>,
     ) -> Result<(), AppError> {
-        // The op, when it is a local lifecycle one. Binding it here leaves the
-        // burst flags below no unparsed case to choose a default for.
-        let lifecycle_op = OpType::from_str(&record.op_type).ok().filter(|op| {
-            matches!(
-                op,
-                OpType::DeleteBlock | OpType::RestoreBlock | OpType::PurgeBlock
-            )
-        });
+        let parsed_op = OpType::from_str(&record.op_type);
+        let is_local_lifecycle = matches!(
+            parsed_op,
+            Ok(OpType::DeleteBlock | OpType::RestoreBlock | OpType::PurgeBlock)
+        );
         let mut arm_lifecycle = false;
         for task in invalidations_for_op(record, block_type_hint, move_same_page)? {
-            if lifecycle_op.is_some() && is_global_lifecycle_rebuild(&task) {
+            if is_local_lifecycle && is_global_lifecycle_rebuild(&task) {
                 // Defer the global rebuild to the trailing debounce; every
                 // member of the set is armed by the flags below.
                 arm_lifecycle = true;
@@ -1276,11 +1273,12 @@ impl Materializer {
             }
             self.try_enqueue_background(task)?;
         }
-        if let (true, Some(op)) = (arm_lifecycle, &lifecycle_op) {
-            self.arm_lifecycle_rebuild_debounce(
-                !narrows_to_content_lifecycle(op, block_type_hint),
-                keeps_page_ids_rebuild(op),
-            );
+        if arm_lifecycle {
+            let needs_full = !parsed_op
+                .as_ref()
+                .is_ok_and(|op| narrows_to_content_lifecycle(op, block_type_hint));
+            let needs_page_ids = parsed_op.as_ref().is_ok_and(keeps_page_ids_rebuild);
+            self.arm_lifecycle_rebuild_debounce(needs_full, needs_page_ids);
         }
         if record.op_type == "edit_block" {
             self.maybe_enqueue_fts_optimize()?;

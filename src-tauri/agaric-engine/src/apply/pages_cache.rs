@@ -102,7 +102,7 @@ pub async fn recompute_pages_cache_counts_for_pages(
     let unique: HashSet<&String> = page_ids.iter().collect();
     let unique: Vec<&String> = unique.into_iter().collect();
     let json = serde_json::to_string(&unique)?;
-    // `+src.space_id`: see `with_computed_page_counts` — without the
+    // `+src.space_id`: see `recompute_pages_cache_counts_of` — without the
     // unary `+` the planner scans the whole space per page.
     sqlx::query!(
         "UPDATE pages_cache SET \

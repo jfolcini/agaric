@@ -4758,7 +4758,7 @@ async fn reindex_block_tag_refs_split_excludes_cross_space_and_deleted_tag_375()
     );
 }
 
-/// #375: the full rebuild (`push_desired_pairs`) must apply the same
+/// #375: the full rebuild (`compute_desired_pairs`) must apply the same
 /// cross-space exclusion the incremental path does — otherwise a snapshot
 /// restore / boot fallback / explicit rebuild re-admits cross-space tag-refs.
 #[tokio::test]

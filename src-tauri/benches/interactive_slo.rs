@@ -3139,8 +3139,8 @@ fn bench_move_block(c: &mut Criterion) {
 /// (#6522). The materializer has the app's read pool, so its rebuilds run the
 /// forms the app runs, and each settle also reports the slowest foreground
 /// write issued while it drained ([`worst_write_during_settle`]). The shape
-/// check runs per call, not once before
-/// the loop, because a mutator must not preflight the measured fixture.
+/// check runs per call, not once before the loop, because a mutator must not
+/// preflight the measured fixture.
 /// Measurement only: no budget until `bench-slo` has measured them.
 fn bench_delete_restore_block(c: &mut Criterion) {
     const DELETE: &str = "delete_block (leaf of 2K-block page) @ 100K";
@@ -3324,7 +3324,10 @@ const SETTLE_WRITE_INTERVAL: Duration = Duration::from_millis(2);
 /// writes took: how long a foreground write waits for the writer lock behind
 /// the rebuilds a command left (#6522). The settled time cannot show that,
 /// because nothing else asks for the lock while it is measured.
-async fn worst_write_during_settle(write_pool: &SqlitePool, materializer: &Materializer) -> Duration {
+async fn worst_write_during_settle(
+    write_pool: &SqlitePool,
+    materializer: &Materializer,
+) -> Duration {
     let settled = Cell::new(false);
     let settle = async {
         materializer.flush_background().await.unwrap();
