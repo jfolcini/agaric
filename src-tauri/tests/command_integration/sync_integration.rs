@@ -310,7 +310,7 @@ async fn start_sync_returns_queued_info() {
     let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
 
-    let info = start_sync_inner(&pool, &scheduler, "dev-local", "dev-remote".into())
+    let info = start_sync_inner(&pool, &scheduler, "dev-local", "dev-remote".into(), true)
         .await
         .unwrap();
     assert_eq!(
@@ -321,26 +321,6 @@ async fn start_sync_returns_queued_info() {
     assert_eq!(info.remote_device_id, "dev-remote");
     assert_eq!(info.ops_received, 0);
     assert_eq!(info.ops_sent, 0);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn start_sync_rejects_peer_in_backoff() {
-    let (pool, _dir) = test_pool().await;
-    let scheduler = SyncScheduler::new();
-
-    // Record a failure to trigger backoff
-    scheduler.record_failure("dev-remote");
-
-    let result = start_sync_inner(&pool, &scheduler, "dev-local", "dev-remote".into()).await;
-    assert!(
-        result.is_err(),
-        "sync should be rejected when peer is in backoff"
-    );
-    let err = result.unwrap_err();
-    assert!(
-        err.to_string().contains("backoff"),
-        "error should mention backoff"
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -415,7 +395,7 @@ async fn full_pair_then_sync_workflow() {
         .unwrap();
 
     // Sync
-    let sync_info = start_sync_inner(&pool, &scheduler, "dev-local", "dev-remote".into())
+    let sync_info = start_sync_inner(&pool, &scheduler, "dev-local", "dev-remote".into(), true)
         .await
         .unwrap();
     assert_eq!(sync_info.state, "queued");

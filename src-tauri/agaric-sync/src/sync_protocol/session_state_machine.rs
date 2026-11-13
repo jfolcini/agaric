@@ -211,6 +211,8 @@ pub struct SyncOrchestrator {
     /// incremental-export floor when the initiator advertises no vv for a
     /// space, retiring the every-tick full-snapshot churn (#610).
     peer_advertised_loro_vvs: Vec<crate::sync_protocol::types::SpaceVersionVector>,
+    /// See [`Self::peer_holds_news`].
+    peer_holds_news: bool,
     /// #2481 phase 1: `true` once the peer advertised
     /// `HeadExchange { op_log_replication: true }`. The responder gates the
     /// audit-only op-log push on this — it only appends `OpLogBatch`
@@ -294,6 +296,7 @@ impl SyncOrchestrator {
             preexisting_peer_ids: std::collections::BTreeSet::new(),
             streamed_to_peer: false,
             peer_advertised_loro_vvs: Vec::new(),
+            peer_holds_news: false,
             peer_op_log_replication: false,
             peer_op_log_batch_chunked: false,
             peer_advertised_heads: Vec::new(),
@@ -911,6 +914,15 @@ impl SyncOrchestrator {
             return Ok(Some(SyncMessage::ResetRequired {
                 reason: REASON.into(),
             }));
+        }
+
+        // #6551: a session is a pull, so what the peer holds beyond us reaches
+        // us only when we dial it. Note it now, for the daemon to act on once
+        // this session has ended.
+        // The floor is read only for a peer that is ahead, which is rare.
+        if peer_advertises_news(&local_loro_vvs, &loro_vvs, &[])? {
+            let answered = self.persisted_peer_loro_floor().await?;
+            self.peer_holds_news = peer_advertises_news(&local_loro_vvs, &loro_vvs, &answered)?;
         }
 
         // Outgoing streaming-phase payload is one
@@ -2117,6 +2129,13 @@ impl SyncOrchestrator {
     /// retry / snapshot-transfer respectively.
     pub fn is_succeeded(&self) -> bool {
         self.state == SyncState::Complete
+    }
+
+    /// Whether the peer that dialled us advertised state we lack and have not
+    /// already pulled for: the responder's cue to pull back (#6551). Always
+    /// `false` on the dialling side, which receives no `HeadExchange`.
+    pub fn peer_holds_news(&self) -> bool {
+        self.peer_holds_news
     }
 
     /// Whether the peer refused this session over the engine format, a

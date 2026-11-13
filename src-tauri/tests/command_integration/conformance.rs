@@ -87,6 +87,7 @@ use agaric_store::op::{
     MoveBlockPayload, OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
     SetPropertyPayload,
 };
+use agaric_store::task_locals::{ACTOR, Actor, ActorContext};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -505,9 +506,20 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value, created_ids
         other => panic!("conformance op '{other}' is not wired in the Rust runner"),
     };
 
-    let record = agaric_store::op_log::append_local_op(pool, DEV, payload)
-        .await
-        .expect("append_local_op");
+    // An op with an `agent` is appended as an MCP tool call appends it: under
+    // that agent's actor, which stamps `op_log.origin = 'agent:<name>'`.
+    let append = agaric_store::op_log::append_local_op(pool, DEV, payload);
+    let record = match op.get("agent").and_then(Value::as_str) {
+        Some(name) => {
+            let ctx = ActorContext {
+                actor: Actor::Agent { name: name.into() },
+                request_id: "conformance".into(),
+            };
+            ACTOR.scope(ctx, append).await
+        }
+        None => append.await,
+    }
+    .expect("append_local_op");
     // `dispatch_op` runs the foreground ApplyOp (engine apply + reproject),
     // flushes the foreground queue, then enqueues the background fan-out;
     // `settle` (flush_background) drains block_links / FTS / cache rebuilds.
