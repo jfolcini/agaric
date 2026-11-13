@@ -403,8 +403,8 @@ pub async fn try_receive_snapshot_catchup(
 /// Merge one inbound space snapshot into the local engine and fan its changed
 /// blocks out to the cache rebuilds.
 ///
-/// Returns the page ids the merge touched, for the caller to accumulate across
-/// the whole catch-up.
+/// Adds the page ids the merge touched to `changed_page_ids`, which the caller
+/// accumulates across the whole catch-up.
 async fn merge_one_snapshot(
     pool: &SqlitePool,
     engine: &EngineReloadCtx<'_>,
@@ -412,19 +412,25 @@ async fn merge_one_snapshot(
     remote_device_id: &str,
     loro_msg: LoroSyncMessage,
     event_sink: &Arc<dyn SyncEventSink>,
-) -> Result<Vec<String>, AppError> {
+    changed_page_ids: &mut Vec<String>,
+) -> Result<(), AppError> {
     // Merge semantics: `apply_remote` imports the snapshot into our engine
     // (preserving unsynced local content) and reprojects the changed blocks into
     // SQL inside its own transaction.
     match loro_sync::apply_remote(pool, engine.registry, engine.device_id, loro_msg).await? {
         ApplyOutcome::Imported {
             changed_blocks,
-            changed_page_ids,
+            changed_page_ids: touched,
             kept,
             ..
         } => {
             if let Some(report) = loro_sync::local_text_kept_report(&kept) {
                 event_sink.on_sync_event(report);
+            }
+            for pid in touched {
+                if !changed_page_ids.contains(&pid) {
+                    changed_page_ids.push(pid);
+                }
             }
             // Non-fatal: the projection already committed inside apply_remote; a
             // queue-closed error must not unwind the catch-up (mirrors the
@@ -439,7 +445,7 @@ async fn merge_one_snapshot(
                     "loro-snapshot catch-up: failed to enqueue inbound-sync cache rebuilds"
                 );
             }
-            Ok(changed_page_ids)
+            Ok(())
         }
         ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
             Err(AppError::InvalidOperation(format!(
@@ -582,20 +588,16 @@ async fn receive_loro_snapshot_catchup(
     let mut is_last = first_is_last;
     loop {
         bytes_received += loro_msg_payload_len(&loro_msg);
-        for pid in merge_one_snapshot(
+        merge_one_snapshot(
             pool,
             &engine,
             materializer,
             remote_device_id,
             loro_msg,
             event_sink,
+            &mut changed_page_ids,
         )
-        .await?
-        {
-            if !changed_page_ids.contains(&pid) {
-                changed_page_ids.push(pid);
-            }
-        }
+        .await?;
         if is_last {
             break;
         }

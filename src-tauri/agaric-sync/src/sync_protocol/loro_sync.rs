@@ -718,6 +718,53 @@ pub async fn apply_remote(
     })
 }
 
+/// An import that changed, purged and retyped nothing (#2264).
+fn is_noop_diff(
+    changed: &[agaric_core::ulid::BlockId],
+    purged: &[agaric_core::ulid::BlockId],
+    def_keys: &[String],
+    tag_scope: &agaric_engine::loro::engine::TagScope,
+) -> bool {
+    changed.is_empty()
+        && purged.is_empty()
+        && def_keys.is_empty()
+        && matches!(tag_scope, agaric_engine::loro::engine::TagScope::Subtrees(roots) if roots.is_empty())
+}
+
+/// #6561: the ops that keep a block are in no op log, so the space is saved
+/// before a concurrent session can export them, as for a mirrored tombstone
+/// ([`mirror_sql_tombstones_onto_engine`]). The inbox row outlives a failure.
+async fn save_kept_blocks(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    kept: &[agaric_engine::loro::engine::KeptLocalText],
+) -> Result<(), AppError> {
+    if !kept.is_empty()
+        && agaric_engine::loro::snapshot::save_all_engines(pool, registry)
+            .await
+            .persisted_through
+            .is_none()
+    {
+        return Err(AppError::Snapshot(
+            "the blocks kept from a purge were not saved".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// #6561: a kept block's `page_id` named the purged page until now, and the
+/// sweep deletes that page before any cache rebuild restamps the block.
+async fn restamp_kept_pages(
+    tx: &mut sqlx::SqliteConnection,
+    kept: &[agaric_engine::loro::engine::KeptLocalText],
+) -> Result<(), AppError> {
+    for page in kept {
+        agaric_store::block_descendants::rederive_page_and_space_ids(tx, page.page_id.as_str())
+            .await?;
+    }
+    Ok(())
+}
+
 /// #6561: the notice for the Trash pages an import created, `None` when it
 /// kept nothing.
 pub fn local_text_kept_report(
@@ -2427,19 +2474,7 @@ pub(crate) async fn import_and_project(
         kept,
     } = import_payload_into_engine(registry, device_id, space_id, payload)?;
 
-    // #6561: the ops that keep a block are in no op log, so the space is saved
-    // before a concurrent session can export them, as for a mirrored tombstone
-    // (`mirror_sql_tombstones_onto_engine`). The inbox row outlives a failure.
-    if !kept.is_empty()
-        && agaric_engine::loro::snapshot::save_all_engines(pool, registry)
-            .await
-            .persisted_through
-            .is_none()
-    {
-        return Err(AppError::Snapshot(
-            "the blocks kept from a purge were not saved".to_owned(),
-        ));
-    }
+    save_kept_blocks(pool, registry, &kept).await?;
 
     let clearable_ids = clearable_slot_ids(
         registry,
@@ -2461,10 +2496,7 @@ pub(crate) async fn import_and_project(
     // slot (#535) with a single autocommit DELETE (no `BEGIN IMMEDIATE`
     // writer lock); the DELETE is a no-op if the row is already gone,
     // preserving the double-replay safety of the tx-coupled path below.
-    let noop_diff = changed_blocks.is_empty()
-        && purged_blocks.is_empty()
-        && def_keys.is_empty()
-        && matches!(&tag_scope, agaric_engine::loro::engine::TagScope::Subtrees(roots) if roots.is_empty());
+    let noop_diff = is_noop_diff(&changed_blocks, &purged_blocks, &def_keys, &tag_scope);
     // `changed_blocks` is `mut` for the #4083 ancestor backfill below, which may
     // prepend engine ancestors SQL has no row for.
     let (mut changed_blocks, rank_only_blocks, tag_scope, def_keys) = if noop_diff {
@@ -2540,15 +2572,7 @@ pub(crate) async fn import_and_project(
 
     let swept_tombstones = project_pass_c(&mut tx, &changed_blocks, &block_states).await?;
 
-    // #6561: a kept block's `page_id` named the purged page until now, and the
-    // sweep deletes that page before any cache rebuild restamps the block.
-    for page in &kept {
-        agaric_store::block_descendants::rederive_page_and_space_ids(
-            &mut tx,
-            page.page_id.as_str(),
-        )
-        .await?;
-    }
+    restamp_kept_pages(&mut tx, &kept).await?;
 
     project_pass_d(&mut tx, registry, &purged_blocks, tombstone_purged).await?;
 
