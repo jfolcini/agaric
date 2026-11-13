@@ -1,4 +1,4 @@
-# Session 4085 — the conformance command leg crosses the app's IPC surface (#6529 stage 1a)
+# Session 4091 — the conformance command leg crosses the app's IPC surface (#6529 stage 1a)
 
 The session was briefed to build stage 1b of #6529, the bridge binary, as "the next unticked stage". Stage 1a was unticked too and none of it was on `main`: no `HeadlessApp`, a `Wry`-only `build_invoke_handler`, no PR, no branch but the spike's. Stage 1b serves a `HeadlessApp`, so it cannot come first. This PR is stage 1a alone, on the branch the brief named (`claude/6529-headless-bridge-1b`).
 
