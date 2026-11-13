@@ -53,6 +53,10 @@ type TagRow = (String, String, i64, Option<String>);
 ///     tag.space_id`, #5275): a `block_tags` / `block_tag_refs` row
 ///     survives the block's move to another space, and the Tags view is
 ///     space-scoped.
+///   - Neither counts a template page or a block on one (#6659): the tag's
+///     page lists its holders with a query that leaves them out, and the
+///     count is the number on that list's badge. The guard is the agenda's
+///     (`DESIRED_AGENDA_SQL`).
 ///   - Tags with zero usage are included via the LEFT JOIN + COALESCE.
 ///
 /// Output is sorted by `b.id ASC` so the sort-merge diff in
@@ -109,7 +113,10 @@ macro_rules! desired_tags_sql {
                      JOIN blocks tag ON tag.id = bt.tag_id
                      WHERE blk.deleted_at IS NULL AND ",
             $usage_space,
-            " IS tag.space_id",
+            " IS tag.space_id
+                       AND NOT EXISTS (
+                           SELECT 1 FROM block_properties tp
+                           WHERE tp.block_id = blk.page_id AND tp.key = 'template')",
             $of_block_tags,
             "
                      UNION
@@ -119,7 +126,10 @@ macro_rules! desired_tags_sql {
                      JOIN blocks tag ON tag.id = btr.tag_id
                      WHERE blk.deleted_at IS NULL AND ",
             $usage_space,
-            " IS tag.space_id",
+            " IS tag.space_id
+                       AND NOT EXISTS (
+                           SELECT 1 FROM block_properties tp
+                           WHERE tp.block_id = blk.page_id AND tp.key = 'template')",
             $of_tag_refs,
             "
                  )
@@ -134,6 +144,11 @@ macro_rules! desired_tags_sql {
 }
 
 const DESIRED_TAGS_SQL: &str = desired_tags_sql!("blk.space_id", "", "", "");
+
+/// The texts that decide a tag's count, for the derivation golden: a change
+/// to either is a change to what `tags_cache` should hold.
+#[cfg(test)]
+pub(crate) const TAG_USAGE_RULE: [&str; 2] = [DESIRED_TAGS_SQL, DESIRED_TAG_USAGE_SQL];
 
 /// [`DESIRED_TAGS_SQL`] for the tags in the JSON id array `?1` alone, before
 /// the name de-duplication: the same text with the usage rows and the tag
@@ -200,6 +215,9 @@ const DESIRED_TAG_USAGE_SQL: &str =
                  JOIN blocks blk ON blk.id = bt.block_id
                  JOIN blocks tag ON tag.id = bt.tag_id
                  WHERE blk.deleted_at IS NULL AND +blk.space_id IS tag.space_id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM block_properties tp
+                       WHERE tp.block_id = blk.page_id AND tp.key = 'template')
                    AND bt.tag_id = ?1
                  UNION
                  SELECT btr.source_id AS block_id
@@ -207,6 +225,9 @@ const DESIRED_TAG_USAGE_SQL: &str =
                  JOIN blocks blk ON blk.id = btr.source_id
                  JOIN blocks tag ON tag.id = btr.tag_id
                  WHERE blk.deleted_at IS NULL AND +blk.space_id IS tag.space_id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM block_properties tp
+                       WHERE tp.block_id = blk.page_id AND tp.key = 'template')
                    AND btr.tag_id = ?1
              )
          ) t
@@ -599,7 +620,13 @@ pub async fn rebuild_tags_cache_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
-    super::rebuild_with_timing("tags", || rebuild_tags_cache_impl(write_pool, read_pool)).await
+    super::rebuild_with_timing("tags", || rebuild_tags_cache_impl(write_pool, read_pool)).await?;
+    crate::derivations::record_split(
+        write_pool,
+        read_pool,
+        crate::derivations::Derivation::TagUsage,
+    )
+    .await
 }
 
 async fn rebuild_tags_cache_impl(
@@ -1527,6 +1554,57 @@ mod tests {
             full_rebuild_snapshot(&pool).await,
             vec![(TODO_WORK.to_owned(), "todo".to_owned(), 1)],
             "the full rebuild drops it too"
+        );
+    }
+
+    /// #6659: a tag's count leaves out what its page's list leaves out: a
+    /// template page and the blocks on it, whether the tag is attached or
+    /// written inline. The rebuild and the one-tag refresh count alike.
+    #[tokio::test]
+    async fn usage_count_leaves_out_template_pages_and_their_blocks_6659() {
+        let (pool, _dir) = test_pool().await;
+        insert_tag(&pool, "TAG", "meeting").await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES \
+             ('PG', 'page', 'Notes', NULL, 'PG'), ('NOTE', 'content', 'n', 'PG', 'PG'), \
+             ('TPL', 'page', 'Meeting template', NULL, 'TPL'), \
+             ('SLOT', 'content', 's', 'TPL', 'TPL'), ('INLINE', 'content', 'i', 'TPL', 'TPL')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             VALUES ('TPL', 'template', 'true')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for holder in ["NOTE", "TPL", "SLOT"] {
+            add_tag(&pool, holder, "TAG").await;
+        }
+        sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES ('INLINE', 'TAG')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_tags_cache(&pool).await.unwrap();
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![cached("TAG", "meeting", 1)],
+            "NOTE alone: the template page, its tagged block and its block that names the \
+             tag inline are left out"
+        );
+
+        sqlx::query("UPDATE tags_cache SET usage_count = 9")
+            .execute(&pool)
+            .await
+            .unwrap();
+        refresh_tag_usage_count(&pool, "TAG").await.unwrap();
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![cached("TAG", "meeting", 1)],
+            "the one-tag refresh counts as the rebuild does"
         );
     }
 

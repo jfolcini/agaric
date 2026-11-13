@@ -2027,6 +2027,12 @@ fn push_property_op_invalidations(
             // here (nor, after a move away, are they in the table to find on
             // the move back), so the whole table is re-derived, before the
             // tags cache that counts it.
+            // #6659: a tag's count leaves out the blocks of a template page,
+            // so making a page a template, or an ordinary page again, moves
+            // the count of every tag its blocks hold.
+            if key == "template" {
+                tasks.push(MaterializeTask::RebuildTagsCache);
+            }
             if key == SPACE_PROPERTY_KEY {
                 tasks.push(MaterializeTask::RebuildBlockTagRefsCache);
                 tasks.push(MaterializeTask::RebuildTagsCache);
@@ -3255,7 +3261,8 @@ mod tests {
     }
 
     /// #5423: `template` re-scopes every block on the page, so both its set
-    /// and its delete keep the full projected rebuild.
+    /// and its delete keep the full projected rebuild. #6659: they also
+    /// recount the tags, whose counts leave template pages out.
     #[test]
     fn invalidations_for_op_template_key_keeps_full_projected_rebuild_5423() {
         for (op_type, payload) in [
@@ -3269,8 +3276,12 @@ mod tests {
             let tasks = invalidations_for_op(&r, None, None).unwrap();
             assert_eq!(
                 labels(&tasks),
-                vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
-                "{op_type} template must rebuild the whole projected cache",
+                vec![
+                    "RebuildAgendaCache",
+                    "RebuildProjectedAgendaCache",
+                    "RebuildTagsCache"
+                ],
+                "{op_type} template must rebuild the whole projected cache and the tag counts",
             );
         }
     }
