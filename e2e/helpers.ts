@@ -750,12 +750,17 @@ interface AxeRunOptions {
  * Run the bundled axe-core in the page over the element `scope` selects, or the
  * whole document when it is omitted. A `scope` that matches nothing throws: a run
  * over no element would report no violations.
+ *
+ * It first waits for the view pane to finish fading in: the pane stays at opacity 0
+ * until the view's fade-in timer fires, axe skips every node under it, and
+ * `toBeVisible` ignores opacity.
  */
 export async function runAxe(
   page: Page,
   scope?: string,
   options: AxeRunOptions = {},
 ): Promise<AxeResults> {
+  await expect(page.getByTestId('view-transition-wrapper')).toHaveCSS('opacity', '1')
   if (!(await page.evaluate(() => 'axe' in window))) await page.addScriptTag({ path: AXE_PATH })
   return page.evaluate(
     async ({ selector, opts }) => {

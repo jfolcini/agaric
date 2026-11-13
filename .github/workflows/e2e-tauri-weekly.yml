@@ -135,7 +135,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash scripts/classify-changes.sh >> "$GITHUB_OUTPUT"
 
-  # Build once, then run the specs in three shards from the build's binaries
+  # Build once, then run the specs in four shards from the build's binaries
   # (#5849): a build per shard would cost each shard minutes of compile for a
   # few minutes of specs. Every spec file boots the app on its own vault, so a
   # file runs the same in any shard (e2e-tauri/AGENTS.md § Rules).
@@ -273,7 +273,7 @@ jobs:
       fail-fast: false
       matrix:
         # One leg for a spec-only diff: it runs just the changed specs.
-        shard: ${{ fromJSON(needs.detect.outputs.real_backend_specs == '' && '[1, 2, 3]' || '[1]') }}
+        shard: ${{ fromJSON(needs.detect.outputs.real_backend_specs == '' && '[1, 2, 3, 4]' || '[1]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

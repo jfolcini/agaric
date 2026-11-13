@@ -3656,6 +3656,46 @@ async fn tags_cache_keeps_one_row_per_space_for_a_shared_name_5237() {
     assert_tags_cache_reconciled(&pool, "two spaces sharing a tag name").await;
 }
 
+/// #6659 — a holder on a template page, and the template page itself, do not
+/// count: the fold leaves them out, and production's rebuild writes exactly
+/// what the fold derives.
+#[tokio::test]
+async fn tags_cache_leaves_out_template_pages_and_their_blocks_6659() {
+    let (pool, _dir) = tc_fixture().await;
+    const TEMPLATE: &str = "01TCTEMPLATE66590000000000";
+    const SLOT: &str = "01TCSLOT665900000000000000";
+    bl_insert_page(&pool, TEMPLATE, None).await;
+    bl_insert_content(&pool, SLOT, TEMPLATE, None, "placeholder").await;
+    // dynamic-sql: test-only fixture seed.
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'template', 'true')",
+    )
+    .bind(TEMPLATE)
+    .execute(&pool)
+    .await
+    .expect("mark the template page");
+    tc_tag_edge(&pool, TEMPLATE, TC_TAG_USED).await;
+    tc_tag_edge(&pool, SLOT, TC_TAG_USED).await;
+    tc_inline_ref(&pool, SLOT, TC_TAG_ZERO).await;
+
+    let expected = rebuild_tags_cache_from_base(&pool, &dump_blocks(&pool).await.expect("dump"))
+        .await
+        .expect("from-base rebuild");
+    assert_eq!(
+        (
+            expected[TC_TAG_USED].usage_count,
+            expected[TC_TAG_ZERO].usage_count
+        ),
+        (2, 0),
+        "the fixture's two live holders, and neither the template page nor its block"
+    );
+
+    agaric_store::cache::rebuild_tags_cache(&pool)
+        .await
+        .expect("rebuild_tags_cache");
+    assert_tags_cache_reconciled(&pool, "holders on a template page").await;
+}
+
 /// **The acceptance criterion.** `tags_cache` reconciles against a from-base
 /// fold, and every rule the fold transcribes is armed.
 #[tokio::test]

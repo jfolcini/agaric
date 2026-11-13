@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id AS \"id!\", COALESCE(b.space_id, p.space_id) AS \"space?\"\n           FROM blocks b\n           LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL\n           WHERE b.deleted_at IS NULL",
+  "query": "SELECT b.id AS \"id!\", COALESCE(b.space_id, p.space_id) AS \"space?\"\n               FROM blocks b\n               LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL\n               WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.id IN (SELECT value FROM json_each(?))",
   "describe": {
     "columns": [
       {
@@ -22,12 +22,12 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false,
       true
     ]
   },
-  "hash": "76ba346edee4dd90799c5816b056d966960666f46a58869d3926dfdcc2215459"
+  "hash": "c8c75251c771020f92077320469f84d7b64400e4db73139f3210abd2ba9d1b4b"
 }

@@ -4077,6 +4077,13 @@ mod tests {
         .await
         .unwrap();
 
+        // A tag with no `tags_cache` row, so the rebuild enqueued below has a
+        // row to write: one that finds nothing stale takes no writer lock.
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('TAG_2541', 'tag', 't')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
         // Take the writer hostage so every consumer write waits on the 5s
         // busy_timeout instead of completing.
         let hostage = agaric_store::db::begin_immediate_logged(&pool, "test_2541_hostage")

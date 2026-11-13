@@ -160,4 +160,38 @@ test.describe('A tag page lists what the tag is on @pages', () => {
     await expect(page.getByText('No pages have this tag.')).toBeVisible()
     await expect(page.getByText('No blocks have this tag.')).toBeVisible()
   })
+
+  test('the Tags list count leaves out a template page and its blocks, as the tag page does', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const tags = await ipc<{ tag_id: string; name: string }[]>(page, 'list_all_tags_in_space', {
+      scope: { kind: 'active', space_id: PERSONAL },
+    })
+    const idea = tags.find((t) => t.name === 'idea')?.tag_id as string
+    const notes = await createPage(page, 'Notes Page')
+    const ordinary = await createBlock(page, 'Ordinary', notes)
+    await ipc(page, 'add_tag', { blockId: ordinary, tagId: idea })
+    const standup = await createPage(page, 'Standup Page')
+    const slot = await createBlock(page, 'Slot', standup)
+    await ipc(page, 'add_tag', { blockId: slot, tagId: idea })
+    await ipc(page, 'add_tag', { blockId: standup, tagId: idea })
+
+    await navigateToView(page, 'Tags')
+    await expect(page.getByTestId('tag-item-idea')).toHaveText('idea3')
+
+    await openPage(page, 'Standup Page')
+    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+    await activePopover(page).getByText('Save as template').click()
+    await expect(page.getByText('Saved as template')).toBeVisible()
+
+    // The badge is the number of rows the tag's page lists.
+    await navigateToView(page, 'Tags')
+    await expect(page.getByTestId('tag-item-idea')).toHaveText('idea1')
+    await openTag(page, 'idea')
+    const blocks = page.getByRole('region', { name: 'Blocks', exact: true })
+    await expect(blocks.locator('[data-backlink-item]')).toHaveText(['Ordinary'])
+    await expect(page.getByText('No pages have this tag.')).toBeVisible()
+    await expect(page.getByText('Slot')).toHaveCount(0)
+  })
 })
