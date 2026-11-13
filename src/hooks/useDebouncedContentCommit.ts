@@ -77,7 +77,7 @@ export function useDebouncedContentCommit(params: {
   isFocused: boolean
   blockId: string
   rovingEditorRef: RefObject<RovingEditorHandle>
-  edit: (blockId: string, content: string) => Promise<boolean>
+  edit: (blockId: string, content: string, options?: { baseText?: string }) => Promise<boolean>
 }): {
   /**
    * #2938 — (re)arm the trailing content-commit debounce. Called from the
@@ -125,7 +125,9 @@ export function useDebouncedContentCommit(params: {
     if (classifyUnmountFlush(re.originalMarkdown, md).kind !== 'edit') return
 
     try {
-      const ok = await edit(blockId, md)
+      // The baseline stays the editor's own text after a rebased commit, so
+      // each later commit is rebased from it too.
+      const ok = await edit(blockId, md, { baseText: re.storedMarkdown })
       // Rebase the delta baseline ONLY after a durable commit, and only if
       // the editor is still mounted on this block. On failure — or if the
       // block was blurred while the IPC was in flight — leave the baseline

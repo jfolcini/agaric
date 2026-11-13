@@ -73,7 +73,7 @@ export function SpaceNameEditor({
       return
     }
     try {
-      unwrap(await commands.editBlock(spaceId, trimmed))
+      unwrap(await commands.editBlock(spaceId, trimmed, null))
       await onRefresh()
     } catch (err) {
       logger.error(LOG_MODULE, 'rename failed', { spaceId }, err)

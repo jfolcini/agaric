@@ -55,7 +55,7 @@ export async function applyContentEdit(
     return true
   }
   try {
-    const resp = unwrap(await commands.editBlock(ctx.blockId, newContent))
+    const resp = unwrap(await commands.editBlock(ctx.blockId, newContent, null))
     // #4963 — bypasses the store reducer that bumps the counter; a `[[link]]`
     // dropped by the conversion is a graph edge gone.
     recordGraphStructureChange()

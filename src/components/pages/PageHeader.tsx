@@ -483,7 +483,7 @@ export function PageHeader({
       const spaceId = useSpaceStore.getState().currentSpaceId
       try {
         // #2468 — thread the rename's op ref(s) so Ctrl+Z is ref-addressed.
-        const resp = unwrap(await commands.editBlock(pageId, newTitle))
+        const resp = unwrap(await commands.editBlock(pageId, newTitle, null))
         useUndoStore.getState().onNewAction(pageId, resp.op_refs)
         // #3322 — one fan-out to every store that holds a title copy (tabs +
         // recents + resolve); see `@/stores/page-rename`.

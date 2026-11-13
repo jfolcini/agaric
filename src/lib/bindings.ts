@@ -42,10 +42,13 @@ export const commands = {
 	after: string,
 } | null) => typedError<WithOps<PastedBlocks>, AppError>(__TAURI_INVOKE("paste_blocks", { anchorBlockId, input, splice })),
 	/**
-	 *  Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
+	 *  Tauri command: edit a block's content. Delegates to
+	 *  [`edit_block_inner_with_base`]; `base_text` is the text an editor started
+	 *  from, and the returned row carries the text written, which differs from
+	 *  `to_text` when the edit was rebased.
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
 	 */
-	editBlock: (blockId: BlockId, toText: string) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText })),
+	editBlock: (blockId: BlockId, toText: string, baseText: string | null) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText, baseText })),
 	/**
 	 *  Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].

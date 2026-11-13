@@ -3248,6 +3248,7 @@ describe('BlockTree heading slash command execution', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: '# My heading text',
+        baseText: null,
       })
     })
 
@@ -3287,6 +3288,7 @@ describe('BlockTree heading slash command execution', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: '### Small heading',
+        baseText: null,
       })
     })
 
@@ -3325,6 +3327,7 @@ describe('BlockTree heading slash command execution', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: '## Medium',
+        baseText: null,
       })
     })
   })
@@ -3784,6 +3787,7 @@ describe('BlockTree handleMergeWithPrev', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'Hello World',
+        baseText: null,
       })
     })
 
@@ -3843,6 +3847,7 @@ describe('BlockTree handleMergeWithPrev', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'AlphaBeta',
+        baseText: null,
       })
     })
     // B1 moved under A (slot 0 — A had no children) BEFORE B was deleted.
@@ -3900,10 +3905,15 @@ describe('BlockTree handleMergeWithPrev', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'AlphaBeta',
+        baseText: null,
       })
     })
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'A', toText: 'Alpha' })
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: 'Alpha',
+        baseText: null,
+      })
     })
     // CRITICAL: the source is NOT deleted — the child subtree is not lost.
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
@@ -3934,12 +3944,17 @@ describe('BlockTree handleMergeWithPrev', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'AlphaBeta',
+        baseText: null,
       })
     })
     // …then the failed remove was detected (block still in the store) and the
     // hook's revert-edit path fired.
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'A', toText: 'Alpha' })
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: 'Alpha',
+        baseText: null,
+      })
     })
     // The source block was never dropped from the store.
     expect(pageStore.getState().blocksById.has('B')).toBe(true)
@@ -4015,6 +4030,7 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'b1',
         toText: '# hello world',
+        baseText: null,
       })
     })
     // The editor is remounted with the converted content so the conversion is
@@ -4040,7 +4056,11 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
     })
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'b1', toText: '# hello' })
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'b1',
+        toText: '# hello',
+        baseText: null,
+      })
     })
     // The mounted editor (on b2) is untouched.
     expect(mockUnmount).not.toHaveBeenCalled()
@@ -4066,7 +4086,11 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
     })
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'b1', toText: 'hello' })
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'b1',
+        toText: 'hello',
+        baseText: null,
+      })
     })
     expect(vi.mocked(setListStyle)).toHaveBeenCalledWith('b1', 'ordered')
   })
@@ -4201,6 +4225,7 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'b1',
         toText: '# hello world',
+        baseText: null,
       })
     })
     // No remount with the (unsaved) converted content on failure.
@@ -5570,7 +5595,11 @@ describe('BlockTree leaked-empty-block cleanup', () => {
         answered.resolve(undefined)
       })
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'NEW', toText: '' })
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+          blockId: 'NEW',
+          toText: '',
+          baseText: null,
+        })
       })
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('get_properties', { blockId: 'NEW' })
@@ -5596,6 +5625,7 @@ describe('BlockTree leaked-empty-block cleanup', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
           blockId: 'NEW',
           toText: 'context:: home',
+          baseText: null,
         })
       })
       await act(async () => {})
@@ -7338,6 +7368,7 @@ describe('B-7: whitespace click saves edits when DOM-unfocused', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'edited content',
+        baseText: null,
       })
     })
 
@@ -7378,6 +7409,7 @@ describe('B-8: unfocused Escape saves edits', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'unsaved edits',
+        baseText: null,
       })
     })
 
@@ -7427,6 +7459,7 @@ describe('B-14: zoom clears focus on invisible block', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'C',
         toText: 'pending C edits',
+        baseText: null,
       })
     })
   })

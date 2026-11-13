@@ -429,13 +429,28 @@ pub(crate) async fn create_tag_in_space_in_tx(
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
-#[instrument(skip(pool, device_id, materializer, to_text), err)]
 pub async fn edit_block_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
     block_id: BlockId,
     to_text: String,
+) -> Result<BlockRow, AppError> {
+    edit_block_inner_with_base(pool, device_id, materializer, block_id, to_text, None).await
+}
+
+/// [`edit_block_inner`] for an editor: `base_text` is the text it started
+/// from. When the block no longer holds it, the editor's change is replayed
+/// on the current text (`rebase_edit`), so a peer's edit the editor has not
+/// seen survives unless the two changed the same text.
+#[instrument(skip(pool, device_id, materializer, to_text, base_text), err)]
+pub async fn edit_block_inner_with_base(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: BlockId,
+    to_text: String,
+    base_text: Option<String>,
 ) -> Result<BlockRow, AppError> {
     // #107: BlockId newtype already normalises to canonical uppercase on
     // construction (AGENTS.md invariant #8 — ULID uppercase for blake3 hash
@@ -460,6 +475,7 @@ pub async fn edit_block_inner(
         device_id,
         block_id,
         to_text,
+        base_text.as_deref(),
     )
     .await?;
     tx.commit_and_dispatch(materializer).await?;
@@ -474,24 +490,20 @@ pub async fn edit_block_inner(
 /// lifecycle (BEGIN / arm / COMMIT); this helper only enqueues the op via
 /// `enqueue_edit_background` so the caller's single `commit_and_dispatch`
 /// drains every enqueued op in FIFO order.
-#[instrument(skip(tx, state, device_id, to_text), err)]
+#[instrument(skip(tx, state, device_id, to_text, base_text), err)]
 pub(crate) async fn edit_block_in_tx(
     tx: &mut CommandTx,
     state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     block_id: String,
     to_text: String,
+    base_text: Option<&str>,
 ) -> Result<BlockRow, AppError> {
     // Validate content length BEFORE fetching any row. Content length is a
     // pure function of the input needing no DB state, so an over-length
     // payload is rejected without the wasted existence fetch (fail fast on
     // the input).
-    if to_text.len() > MAX_CONTENT_LENGTH {
-        return Err(AppError::validation(format!(
-            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
-            to_text.len()
-        )));
-    }
+    reject_overlong_content(&to_text)?;
 
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
@@ -504,6 +516,8 @@ pub(crate) async fn edit_block_in_tx(
 
     let existing = existing
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
+    // Before every check on the text, so they see what is written.
+    let to_text = rebased_onto(existing.content.as_deref(), base_text, to_text)?;
     if existing.block_type == "tag" {
         reject_spaced_tag_name(&to_text)?;
     }
@@ -600,6 +614,34 @@ pub(crate) async fn edit_block_in_tx(
         scheduled_date: existing.scheduled_date,
         page_id: existing.page_id,
     })
+}
+
+/// `to_text` with the editor's change replayed on `current` when the editor
+/// started from another text and the two changes do not overlap.
+fn rebased_onto(
+    current: Option<&str>,
+    base_text: Option<&str>,
+    to_text: String,
+) -> Result<String, AppError> {
+    let current = current.unwrap_or_default();
+    let Some(base) = base_text.filter(|base| *base != current) else {
+        return Ok(to_text);
+    };
+    let Some(rebased) = agaric_engine::edit_rebase::rebase_edit(base, &to_text, current) else {
+        return Ok(to_text);
+    };
+    reject_overlong_content(&rebased)?;
+    Ok(rebased)
+}
+
+fn reject_overlong_content(text: &str) -> Result<(), AppError> {
+    if text.len() > MAX_CONTENT_LENGTH {
+        return Err(AppError::validation(format!(
+            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
+            text.len()
+        )));
+    }
+    Ok(())
 }
 
 /// #4723 — page titles are unique per space under `name_key` (trim, case,
@@ -3315,7 +3357,10 @@ pub async fn create_block(
     .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
+/// Tauri command: edit a block's content. Delegates to
+/// [`edit_block_inner_with_base`]; `base_text` is the text an editor started
+/// from, and the returned row carries the text written, which differs from
+/// `to_text` when the edit was rebased.
 /// #2468: the response carries the produced op ref(s) — see [`create_block`].
 #[tauri::command]
 #[specta::specta]
@@ -3323,13 +3368,15 @@ pub async fn edit_block(
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     to_text: String,
+    base_text: Option<String>,
 ) -> Result<WithOps<BlockRow>, AppError> {
-    capture_op_refs(edit_block_inner(
+    capture_op_refs(edit_block_inner_with_base(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         block_id,
         to_text,
+        base_text,
     ))
     .await
     .map_err(sanitize_internal_error)
