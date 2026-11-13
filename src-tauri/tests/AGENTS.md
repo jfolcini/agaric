@@ -163,7 +163,7 @@ npx oxfmt --write conformance/fixtures/   # from the repo root
 - Seed so the wrong answer differs from insertion order; otherwise an unsorted result passes an ordering pin.
 - The markdown renders are backend-only by decision (#5071): `QUERY_STEPS_BACKEND_ONLY` in `conformance-coverage.test.ts`, each step pinned against a backend-authored `<fixture>.<step>.txt` sibling in `conformance/fixtures/`.
 - Both runners seed through raw SQL (`conformance.rs`, `src/lib/tauri-mock/__tests__/conformance-replay.ts`), skipping the repairs a production op runs. A change that removes a repair or adds a derived column updates both seeders.
-- `conformance_fuzz` is `#[ignore]`d and runs only in the weekly `bench-perf-gates` lane. After changing what a command requires or the mock refuses, run it: `cargo nextest run --workspace --run-ignored only -E 'test(conformance_fuzz)'`.
+- `conformance_fuzz` runs a fixed seed's chains on every PR (`mock_matches_backend_on_fixed_seed_op_chains_6567`) and a random seed's, `#[ignore]`d, in the weekly `bench-perf-gates` lane. After changing what a command requires or the mock refuses, run the random one too: `cargo nextest run --workspace --run-ignored only -E 'test(conformance_fuzz)'`.
 
 ## Mutants
 

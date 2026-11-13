@@ -54,7 +54,7 @@ Cursor pagination uses a block-id keyset (Created sort) or a `(value, id)` compo
 
 A block whose whole text is `{{query …}}` renders the query's results in place of its text (`StaticBlock` → `QueryResult`). The text after the `{{query` marker is one of three forms, told apart in this order (#6628):
 
-1. **`v2:<base64url(JSON)>`**: the builder's advanced mode, a `FilterExpr` with its `table` / `columns` (`src/lib/inline-query-spec.ts`). Export writes it as `v2n:<names> <description>` and import reads it back (`src-tauri/src/commands/pages/inline_query_md.rs`).
+1. **`v2:<base64url(JSON)>`**: the builder's advanced mode for a filter the search syntax cannot say, a `FilterExpr` with its `table` / `columns` (`src/lib/inline-query-spec.ts`). Export writes it as `v2n:<names> <description>` and import reads it back (`src-tauri/src/commands/pages/inline_query_md.rs`).
 2. **The older query text** (`parseQueryExpression`, `src/lib/query-utils.ts`): `tag:prefix`, `property:k=v`, `type:tag expr:…`, `type:property key:… value:…`, `type:backlinks target:…`. `resolveLegacyQueryToFilterExpr` translates it to a `FilterExpr` where faithful; the rest keeps the legacy per-type IPCs. Frozen: read, never extended.
 3. **The search syntax**, read by the search box's own parser (`src/lib/search-query/`, no prefix of its own) and compiled to a `FilterExpr` by `compileQueryText` (`src/lib/query-text.ts`): each tag token is a `Tag` leaf (the name looked up in the space as the search box looks it up, or a `#[ULID]` chip's own id), states and priorities one `State` / `Priority` leaf per sign, `prop:` a typed `HasProperty` (`infer_property_value`'s typing), `due:` / `scheduled:` a `DatePredicate`. Every form runs on `run_advanced_query`.
 
@@ -66,7 +66,7 @@ The stored text is the block's content: sync, *Edit as Markdown*, the MCP tools 
 
 ## Visual query builder
 
-`BacklinkFilterBuilder` and `QueryBuilderModal` are the two visual surfaces. `QueryBuilderModal`'s simple mode writes the older query text, its advanced mode a `v2:` payload; it does not read a search-syntax block yet.
+`BacklinkFilterBuilder` and `QueryBuilderModal` are the two visual surfaces. `QueryBuilderModal`'s simple mode writes the older query text. Its advanced mode writes the search syntax when the filter is a root `And` of leaves the syntax has a token for, and a `v2:` payload otherwise, and says which. `filterToQueryText` (`src/lib/query-text.ts`) writes the words leaf by leaf, a tag as its `#[ULID]` chip, and keeps them only when `compileQueryText` reads them back as the same leaves and `isLegacyQueryText` does not claim them: an `Or`, a group, a negated leaf, a leaf with no token, or a value the reader would retype (the text `5`) stays `v2:`. The modal opens a search-syntax block in advanced mode with the filter it compiles to; a block holding a token the engine cannot run is not opened, since saving the form would overwrite it. A stored `v2:` block is rewritten as text only when it is saved from the builder.
 
 ## Pagination invariant
 
