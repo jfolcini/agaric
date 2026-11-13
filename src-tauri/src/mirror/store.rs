@@ -165,21 +165,25 @@ pub fn marker_device(root: &Path) -> std::io::Result<Option<String>> {
 }
 
 pub fn write_marker(root: &Path, device_id: &str) -> std::io::Result<()> {
-    write_atomic(&root.join(MARKER_NAME), format!("{device_id}\n").as_bytes())
+    write_atomic(&root.join(MARKER_NAME), format!("{device_id}\n").as_bytes()).map(drop)
 }
 
 /// `bytes` at `path`, all or nothing: written to a temporary file beside it,
-/// synced, then renamed over it.
-pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+/// synced, then renamed over it. Returns the file's metadata as written,
+/// read from the temporary file before the rename.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<std::fs::Metadata> {
     let name = path
         .file_name()
         .ok_or_else(|| std::io::Error::other(format!("{} names no file", path.display())))?;
     let temp = path.with_file_name(format!(".{}.agaric-tmp", name.to_string_lossy()));
-    let written = std::fs::File::create(&temp).and_then(|mut file| {
-        file.write_all(bytes)?;
-        file.sync_all()
-    });
-    let renamed = written.and_then(|()| std::fs::rename(&temp, path));
+    let written = std::fs::File::create(&temp)
+        .and_then(|mut file| {
+            file.write_all(bytes)?;
+            file.sync_all()
+        })
+        // By path once closed, as the mirror's scan stats the file.
+        .and_then(|()| std::fs::metadata(&temp));
+    let renamed = written.and_then(|written| std::fs::rename(&temp, path).map(|()| written));
     if renamed.is_err() {
         // The temporary file is ours; what failed is reported, not this.
         let _ = std::fs::remove_file(&temp);
