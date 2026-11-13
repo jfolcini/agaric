@@ -1,4 +1,4 @@
-# Session 4092 — macOS file saves go through the backend; *Print…* in the page menu
+# Session 4097 — macOS file saves go through the backend; *Print…* in the page menu
 
 Two items built without the hardware that can confirm them, on the maintainer's decision of 2026-11-13: code that needs a Mac or a Windows PC to verify merges now, and the hardware checks move to #6514 and #6515 as checklist lines. One PR, #6652 and the last box of #6558.
 
