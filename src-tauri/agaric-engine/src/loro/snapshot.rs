@@ -25,7 +25,7 @@
 //!   Catches and logs per-space errors so one bad space never blocks the
 //!   others.
 //! - [`save_engines_and_advance_cursor`] — the pass the periodic, background,
-//!   exit, session-end and mobile-suspend triggers run: [`save_all_engines`],
+//!   exit, session-end, mobile-suspend and compaction triggers run: [`save_all_engines`],
 //!   then the apply cursor moves to what it persisted, so boot replays only the
 //!   ops after it (#5418).
 //!

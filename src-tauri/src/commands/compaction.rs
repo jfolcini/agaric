@@ -110,7 +110,7 @@ pub async fn get_compaction_status(
         .map_err(sanitize_internal_error)
 }
 
-/// Inner implementation for [`compact_op_log_cmd`], testable without Tauri state.
+/// The purge alone, which [`save_engines_then_compact`] runs after its save.
 ///
 /// `ops_deleted` is the number of rows the purge actually removed.
 #[instrument(skip(pool), fields(retention_days), err)]
@@ -143,7 +143,7 @@ pub async fn compact_op_log_cmd_inner(
 /// The purge deletes ops above the apply cursor too, the ones boot replay
 /// restores an engine from, so a snapshot pass puts them in `loro_doc_state`
 /// first. A pass that left a dirty engine unwritten purges nothing: those ops
-/// are then the only copy of that engine's blocks.
+/// are then all that boot can restore that engine from.
 #[instrument(skip(pool, materializer), err)]
 pub async fn save_engines_then_compact(
     pool: &SqlitePool,

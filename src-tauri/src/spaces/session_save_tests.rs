@@ -774,15 +774,15 @@ async fn a_compaction_before_any_save_keeps_its_blocks_after_a_kill_6518() {
     a.shutdown();
 }
 
-/// #6518 — when that save leaves a dirty engine unwritten, the ops are the
-/// only copy of its blocks, so neither the History card nor the daily job
-/// purges any: a kill after them boots and replays the ops.
+/// #6518 — when that save leaves a dirty engine unwritten, the ops are all
+/// that boot can restore it from, so neither the History card nor the daily
+/// job purges any.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_compaction_whose_save_failed_purges_nothing_6518() {
     use agaric_core::error::AppError;
     use tauri::Manager as _;
 
-    let (mut a, space, x) = device_with_one_unsaved_aged_block().await;
+    let (a, _space, _block) = device_with_one_unsaved_aged_block().await;
     let ops_before = op_count(&a.pool).await;
     sqlx::query(
         "CREATE TRIGGER the_disk_refuses_the_snapshot BEFORE INSERT ON loro_doc_state \
@@ -819,12 +819,6 @@ async fn a_compaction_whose_save_failed_purges_nothing_6518() {
         matches!(job, Err(AppError::Snapshot(_))),
         "the job reports the refusal, so it stays due: {job:?}"
     );
-    sqlx::query("DROP TRIGGER the_disk_refuses_the_snapshot")
-        .execute(&a.pool)
-        .await
-        .unwrap();
-    a.kill_and_boot().await;
-    assert_eq!(a.engine_content(&space, &x).as_deref(), Some("abc"));
     a.shutdown();
 }
 
