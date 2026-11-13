@@ -82,7 +82,7 @@
 //! | `fts_blocks` (#3345) | `blocks` — `content`, `deleted_at`, and the tag/page names and block-ref first lines the refs resolve to | `update_fts_for_block` / `remove_fts_for_block` / `reindex_fts_references` / `rebuild_fts_index` (the four FTS tasks; NOTHING writes it inside `apply_op_tx`) |
 //! | `blocks.space_id` on DERIVED rows (#3345) | `blocks` — `parent_id`, `block_type`, and the owning PAGE's own `space_id` | `maintain_pages_cache_counts_after_op`'s Create arm (in-tx, from the owning page) + `set_block_space_id_from_parent` (the post-commit re-stamp, the space half of the `SetBlockPageId` task) / `project_set_property_to_sql` + `project_delete_property_to_sql` (the in-tx page-group write of a `space` op) / `rederive_page_and_space_ids` (the in-tx move arm) / `rebuild_space_ids` (the vault-wide arm, second half of `RebuildPageIds`) — see [`fold_block_space_ids`] for what "derived" excludes |
 //! | `block_tag_refs` (the INLINE tag index, #3345) | `blocks` — **`blocks.content`** | `reindex_block_tag_refs(_in_tx/_split/_split_in_tx)` / `rebuild_block_tag_refs_cache` (the vault-wide arm) — audited by [`reconcile_block_tag_refs`], NOT by [`reconcile`] |
-//! | `tags_cache.usage_count` (#3345) | `blocks`, `block_tags` **and** `block_tag_refs` (explicit + inline, so it rides on Artefact 12) | `rebuild_tags_cache(_split)` / `refresh_tag_usage_count` — audited by [`reconcile_tags_cache`], NOT by [`reconcile`] |
+//! | `tags_cache.usage_count` (#3345) | `blocks`, `block_tags` **and** `block_tag_refs` (explicit + inline, so it rides on Artefact 12), plus `block_properties` for the `template` key that takes a page's blocks out of the count (#6659) | `rebuild_tags_cache(_split)` / `refresh_tag_usage_count` — audited by [`reconcile_tags_cache`], NOT by [`reconcile`] |
 //! | `agenda_cache` (the date roll-up, #3345) | `blocks`, `block_properties` **and** `block_tags` | `rebuild_agenda_cache(_split)` (the `RebuildAgendaCache` task) — audited by [`reconcile_agenda_cache`], NOT by [`reconcile`] |
 //! | `projected_agenda_cache` (the recurrence horizon, #3345) | `blocks` **and** `block_properties`, plus a `today` the caller supplies | `rebuild_projected_agenda_cache(_split)` (the `RebuildProjectedAgendaCache` task) — audited by [`reconcile_projected_agenda`], NOT by [`reconcile`] |
 //! | `pages_cache.{title_sort_key,last_edited_ms,space_id}` (the Pages sort keys, #5371) | the cached `pages_cache.title`; `op_log` and `blocks.page_id` for a floor; the page's `blocks.space_id` | the page-row rebuild, its restore insert (`insert_missing_pages_cache_rows`) and the page-create INSERT (key, space) / `raise_pages_last_edited_ms` on every op-landing path (last edited) / `sync_pages_cache_space_ids` in a `space` op's projection (space) — audited by [`reconcile_pages_cache_sort_keys`], NOT by [`reconcile`] |
@@ -1475,8 +1475,9 @@ async fn dump_tags_cache(pool: &SqlitePool) -> Result<BTreeMap<String, DerivedTa
 ///     a NULL-content tag gets no row at all;
 ///   * `usage_count` is `COUNT(*)` over the `UNION` (not `UNION ALL`, so
 ///     DISTINCT) of `block_tags` and `block_tag_refs`, each arm keeping only
-///     pairs whose SOURCE block is live and in the tag's own space (#5275 —
-///     the rows survive the block's move to another space). A tag with no
+///     pairs whose SOURCE block is live, in the tag's own space (#5275 —
+///     the rows survive the block's move to another space) and not on a
+///     template page (#6659, [`fold_template_pages`]). A tag with no
 ///     usages still gets a row, via the `LEFT JOIN` + `COALESCE(…, 0)`;
 ///   * duplicate names collapse (#626): `tags_cache` is `UNIQUE (space_id,
 ///     name)` but `blocks.content` is not, so among live tags of ONE SPACE
@@ -1497,15 +1498,23 @@ pub async fn rebuild_tags_cache_from_base(
 ) -> Result<BTreeMap<String, DerivedTagRow>, AppError> {
     let explicit = dump_block_tags(pool).await?;
     let inline = dump_block_tag_refs(pool).await?;
-    Ok(fold_tags_cache_from_base(blocks, &explicit, &inline))
+    let properties = dump_block_properties(pool).await?;
+    Ok(fold_tags_cache_from_base(
+        blocks,
+        &explicit,
+        &inline,
+        &properties,
+    ))
 }
 
 fn fold_tags_cache_from_base(
     blocks: &[BaseBlock],
     explicit: &[(String, String)],
     inline: &[(String, String)],
+    properties: &[BaseProperty],
 ) -> BTreeMap<String, DerivedTagRow> {
     let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+    let template_pages = fold_template_pages(properties);
 
     // Distinct (tag, source) pairs from both arms, source-liveness and
     // same-space enforced — the `UNION`'s dedup and each arm's `JOIN blocks …
@@ -1524,6 +1533,13 @@ fn fold_tags_cache_from_base(
             continue;
         };
         if source.deleted_at.is_some() || source.space_id != tag.space_id {
+            continue;
+        }
+        if source
+            .page_id
+            .as_deref()
+            .is_some_and(|page| template_pages.contains(page))
+        {
             continue;
         }
         usages.entry(tag_id).or_default().insert(source_id);
@@ -2950,7 +2966,7 @@ fn date_tag_date(content: Option<&str>) -> Option<String> {
 /// rebuild may store per key.
 ///
 /// Transcribed from `DESIRED_AGENDA_SQL` (`agaric-store/src/cache/agenda.rs`)
-/// and the dedup in `apply_sort_merge_rebuild`, folded in Rust rather than
+/// and the dedup in `merge_agenda_streams`, folded in Rust rather than
 /// re-expressed as SQL so this is an independent recomputation:
 ///
 ///   * four upstreams, in precedence order — any `block_properties` row with a
@@ -2988,9 +3004,9 @@ pub async fn rebuild_agenda_cache_from_base(
     Ok(fold_agenda_cache_from_base(blocks, &properties, &explicit))
 }
 
-/// The pages both agenda folds exclude — `NOT EXISTS (SELECT 1 FROM
-/// block_properties tp WHERE tp.block_id = b.page_id AND tp.key = 'template')`:
-/// the KEY's presence excludes, whatever its value.
+/// The pages the agenda folds and the tag-count fold exclude — `NOT EXISTS
+/// (SELECT 1 FROM block_properties tp WHERE tp.block_id = b.page_id AND
+/// tp.key = 'template')`: the KEY's presence excludes, whatever its value.
 fn fold_template_pages(properties: &[BaseProperty]) -> BTreeSet<&str> {
     properties
         .iter()
