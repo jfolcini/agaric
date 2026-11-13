@@ -1949,10 +1949,11 @@ async fn a_new_file_read_in_otherwise_than_saved_is_written_back_as_read() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_new_file_anchoring_no_page_s_block_is_a_page_of_its_own() {
+async fn a_new_file_anchoring_no_page_s_block_is_no_vanished_file_renamed() {
     let mut fx = Fx::new().await;
     let (alpha, _) = fx.page("Alpha", &["one"]).await;
     fx.tick().await;
+    std::fs::remove_file(fx.root.join(ALPHA)).unwrap();
     write_at(
         &fx,
         "TestSpace/Gamma.md",
@@ -1960,9 +1961,9 @@ async fn a_new_file_anchoring_no_page_s_block_is_a_page_of_its_own() {
     );
     fx.settle_file().await;
 
-    assert_eq!(pages_titled(&fx, "Gamma").await.len(), 1);
-    assert_eq!(fx.contents(&alpha).await, ["one"], "no page is renamed");
-    assert!(fx.root.join(ALPHA).exists());
+    let gamma = pages_titled(&fx, "Gamma").await;
+    assert_eq!(gamma.len(), 1);
+    assert_ne!(gamma[0], alpha, "Alpha's vanished file is not this one");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2056,6 +2057,8 @@ async fn a_file_written_before_its_state_was_saved_is_adopted_not_read() {
     fx.tick().await;
     assert!(fx.read().starts_with("* one\n"), "{}", fx.read());
     fx.mirror.pages.insert(page.clone(), stale);
+    // The pass a restart would run, over every page.
+    fx.mirror.full_due = true;
     fx.tick().await;
 
     assert!(fx.status().await.diverged.is_empty(), "nothing to settle");
