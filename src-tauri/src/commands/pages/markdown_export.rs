@@ -1737,7 +1737,12 @@ pub(super) fn render_clipboard_source(
 /// back to the same page and the export writes it.
 fn drop_pdf_places(properties: &mut HashMap<String, Vec<FrontmatterRow>>) {
     for rows in properties.values_mut() {
-        rows.retain(|prop| !matches!(prop.key.as_str(), "pdf_attachment" | "pdf_page" | "pdf_boxes"));
+        rows.retain(|prop| {
+            !matches!(
+                prop.key.as_str(),
+                "pdf_attachment" | "pdf_page" | "pdf_boxes"
+            )
+        });
     }
 }
 

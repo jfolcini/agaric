@@ -55,6 +55,15 @@ async function seedPdf(page: Page): Promise<void> {
   }, TWO_PAGE_PDF_B64)
 }
 
+/** Switch the open page to page mode, which does not outlast a navigation. */
+async function enterPageMode(page: Page): Promise<void> {
+  await page
+    .getByRole('radiogroup', { name: 'Editing mode' })
+    .getByRole('radio', { name: 'Page' })
+    .click()
+  await expect(page.locator(`[data-page-block-id="${BLOCK_GS_1}"]`)).toBeVisible()
+}
+
 /** Select page `n`'s text in the open reader with Highlight on, as a drag over it does. */
 async function highlightTextOfPage(page: Page, n: number, text: string): Promise<void> {
   const reader = activeDialog(page)
@@ -178,7 +187,7 @@ test.describe('A PDF highlight becomes a block that links back to its page (#662
     const first = await highlightPageTwoAndSave(page)
     expectPageTwoHighlight(await highlightBlocksOf(page, first))
     const [block] = await highlightBlocksOf(page, first)
-    const row = page.locator(`[data-block-id="${block?.id}"]`)
+    const row = page.getByTestId('block-static').and(page.locator(`[data-block-id="${block?.id}"]`))
     await expect(row).toHaveText('Page two')
     const chip = page.getByRole('button', { name: 'Open report (annotated).pdf at page 2' })
     await expect(chip).toHaveText('report (annotated).pdf · p. 2')
@@ -188,15 +197,22 @@ test.describe('A PDF highlight becomes a block that links back to its page (#662
     await expectOnLiveCopy(page, await reopenFromChipAndSave(page), first)
   })
 
+  test('undo takes the block back and leaves the PDF', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    const first = await highlightPageTwoAndSave(page)
+    expectPageTwoHighlight(await highlightBlocksOf(page, first))
+
+    await page.keyboard.press('Control+z')
+    await expect.poll(async () => (await highlightBlocksOf(page, first)).length).toBe(0)
+    const meta = await ipc<AttachmentRow>(page, 'read_attachment_meta', { attachmentId: first })
+    expect(meta.filename).toBe('report (annotated).pdf')
+  })
+
   test('page mode: Save adds the block, and its chip reopens the reader there', async ({
     page,
   }) => {
     await openPage(page, 'Getting Started')
-    await page
-      .getByRole('radiogroup', { name: 'Editing mode' })
-      .getByRole('radio', { name: 'Page' })
-      .click()
-    await expect(page.locator(`[data-page-block-id="${BLOCK_GS_1}"]`)).toBeVisible()
+    await enterPageMode(page)
     const first = await highlightPageTwoAndSave(page)
     expectPageTwoHighlight(await highlightBlocksOf(page, first))
     const [block] = await highlightBlocksOf(page, first)
@@ -208,6 +224,7 @@ test.describe('A PDF highlight becomes a block that links back to its page (#662
     ).toBeVisible()
 
     await reopenPage(page, 'Getting Started')
+    await enterPageMode(page)
     await expect(row).toContainText('Page two')
     await expectOnLiveCopy(page, await reopenFromChipAndSave(page), first)
   })

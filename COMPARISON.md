@@ -428,7 +428,7 @@ token-scoped REST API is still on master only, a month after it merged.
 | Plugin / extension system | **642 marketplace packages (72 themes)**; 148 declare DB support (23%), 63 of them DB-only, and 314 declare `effect: true` (49%, **un-sandboxed in the host origin**). Counted from `plugins.json` on 2026-11-11 by script, so not like-for-like with the 2026-10-21 hand tally (~625, ~132, ~309) | **No plugin API, no custom CSS, no user scripts.** 6 built-in themes plus an OS-following auto, font sizes, motion controls, full keyboard rebinding (not re-read). The seams are MCP (§12) and, on desktop, the Markdown mirror's files |
 | Flashcards / SRS | OG: SM-5. **2.0: FSRS, does not import SM-5 data**; 2.0.2 "practice again" (#13410) | Not priority per user |
 | Whiteboard | OG: tldraw fork. **2.0: REMOVED**, with slides and Excalidraw | Not priority per user |
-| PDF highlight-to-block | OG: highlights become blocks on an `hls__` page. 2.0: `#PDF Annotation` tag; 2.0.2 imports annotations | pdf.js reader with highlight + comment; saving bakes annotations into a new attachment, moves the owning block's `attachment:<id>` links to it and deletes the original (#6629); a link copied into another block still names the original |
+| PDF highlight-to-block | OG: highlights become blocks on an `hls__` page. 2.0: `#PDF Annotation` tag; 2.0.2 imports annotations | pdf.js reader with highlight + comment; saving bakes annotations into a new attachment, moves the owning block's `attachment:<id>` links to it and deletes the original (#6629); a link copied into another block still names the original. Each new highlight becomes a child block of the PDF's owner on Save, with a source chip that reopens the reader on its page (#6629); comments make no block, and no existing annotation is imported |
 | Zotero | OG: built-in. **2.0: REMOVED**, community plugin | BibTeX/CSL-JSON importer to typed reference pages |
 | Org-mode | OG only; 2.0 dropped it | Design choice |
 
@@ -485,7 +485,7 @@ These four, ranked, open [Part 9](#part-9-what-would-actually-make-agaric-superi
 | **Backups** | 2.0: automated on desktop and browser, last 12 retained | Three pre-migration database copies, a manual export, the desktop mirror; nothing scheduled |
 | **Platform reach** | 2.0: a native iOS app in invite-only testing and a native Android app taking backer sign-ups, an APK in the release; OG on the App Store and F-Droid | Android sideload only; no iOS |
 | **Community** | 45.6k stars, 2.9k forks, an active forum, years of workflows | One maintainer; a public repository with 20 stars and 1 fork |
-| **Research workflow** | PDF highlight-to-block, Zotero (OG), a mature reader | Reader with annotation, BibTeX import, no highlight-to-block |
+| **Research workflow** | PDF highlight-to-block, Zotero (OG), a mature reader | Reader with annotation, highlight-to-block on Save, BibTeX import |
 
 ---
 
@@ -1000,7 +1000,7 @@ below are the 2026-10-21 summary, left as written.
 | Templates | Templates view and variables; `/template` drops properties (§14) | Done |
 | Namespaces | Tree view and breadcrumbs (§2) | Done |
 | Graph view | Global + local (§4) | Done |
-| PDF annotation | Reader with highlights and comments; no highlight-to-block (§17) | Partial |
+| PDF annotation | Reader with highlights and comments; highlights become blocks, comments do not (§17) | Partial |
 | Flashcards, whiteboards | None; 2.0 also removed whiteboards (§17) | Gap |
 | Sync | Free on one network, against paid RTC (§13) | Design choice |
 | Plain files (OG) | SQLite + Loro; an opt-in, desktop-only Markdown mirror, which reads edits back on `main` only (§2) | Design choice |
