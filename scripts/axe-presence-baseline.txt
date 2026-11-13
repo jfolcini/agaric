@@ -39,7 +39,6 @@ src/components/editor/__tests__/useLazyRovingEditor.test.tsx
 src/components/filters/__tests__/stateVocabulary.test.tsx
 src/components/history/__tests__/HistoryPanel.page-rename-fanout.test.tsx
 src/components/history/__tests__/HistoryPanel.restore-invariant.test.tsx
-src/components/mobile/__tests__/SearchSheet.preload.test.tsx
 src/components/pages/__tests__/PageEditor.page-mode-source.test.tsx
 src/components/pages/__tests__/ViewDispatcher.preload.test.tsx
 src/components/palette/__tests__/TagsModeBody.test.tsx
