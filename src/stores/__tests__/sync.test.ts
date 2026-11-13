@@ -77,6 +77,26 @@ describe('useSyncStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // setExportRefusedSpaces (#6523)
+  // ---------------------------------------------------------------------------
+  describe('setExportRefusedSpaces', () => {
+    it('replaces the refused spaces, and reset clears them', () => {
+      useSyncStore.getState().setExportRefusedSpaces(['SPACE_A', 'SPACE_B'])
+      useSyncStore.getState().setExportRefusedSpaces(['SPACE_B'])
+      expect(useSyncStore.getState().exportRefusedSpaces).toEqual(['SPACE_B'])
+
+      useSyncStore.getState().reset()
+      expect(useSyncStore.getState().exportRefusedSpaces).toEqual([])
+    })
+
+    it('outlives a state change, as a refused space is no session state', () => {
+      useSyncStore.getState().setExportRefusedSpaces(['SPACE_A'])
+      useSyncStore.getState().setState('idle')
+      expect(useSyncStore.getState().exportRefusedSpaces).toEqual(['SPACE_A'])
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // setPeers
   // ---------------------------------------------------------------------------
   describe('setPeers', () => {

@@ -3722,67 +3722,387 @@ async fn apply_remote_purge_writes_tombstone_before_failed_projection_2292() {
     assert_eq!(remaining, 0, "the replayed slot must be cleared");
 }
 
-/// #1257 freshness gate — DIVERGENCE case. The sender's engine still
-/// holds a block as LIVE while SQL has soft-deleted it (the eager-apply
-/// gap: a delete reached SQL but not the engine). `prepare_outgoing` MUST
-/// refuse: emit NO payload (`Ok(None)`) and never export the stale block.
+// ---------------------------------------------------------------------
+// #6565 — the export gate mirrors SQL's tombstone before it refuses
+// ---------------------------------------------------------------------
+
+const TOMBSTONE_MS: i64 = 1_777_593_600_000;
+
+/// Give `registry`'s engine for `space` a live block `id` under `parent`.
+fn engine_create(registry: &LoroEngineRegistry, space: &SpaceId, id: &str, parent: Option<&str>) {
+    registry
+        .for_space(space, "device-A")
+        .expect("for_space")
+        .engine_mut()
+        .apply_create_block(id, "content", "from-A", parent, 0)
+        .expect("create");
+}
+
+/// A `blocks` row for `id`, soft-deleted at `deleted_at` when given.
+async fn sql_insert_block(
+    pool: &SqlitePool,
+    id: &str,
+    parent: Option<&str>,
+    deleted_at: Option<i64>,
+) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+         VALUES (?, 'content', 'from-A', ?, 1, ?)",
+    )
+    .bind(id)
+    .bind(parent)
+    .bind(deleted_at)
+    .execute(pool)
+    .await
+    .expect("insert block");
+}
+
+/// The engine's `deleted_at` for `id`: `None` while it holds the block live.
+fn engine_deleted_at(registry: &LoroEngineRegistry, space: &SpaceId, id: &str) -> Option<String> {
+    registry
+        .with_engine(space, "device-A", |engine| engine.read_deleted_at(id))
+        .expect("with_engine")
+        .expect("read_deleted_at")
+}
+
+fn engine_vv(registry: &LoroEngineRegistry, space: &SpaceId) -> Vec<u8> {
+    registry.loro_vv(space).expect("the space has an engine")
+}
+
+/// A write-ahead inbox row for `space`: an inbound change SQL has yet to
+/// project.
+async fn sql_insert_pending_inbound(pool: &SqlitePool, space: &SpaceId) {
+    sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, x'00', 0)")
+        .bind(space.as_str())
+        .execute(pool)
+        .await
+        .expect("insert inbox row");
+}
+
+/// A quarantined inbound change for `space`: one boot replay gave up on.
+async fn sql_insert_quarantined_inbound(pool: &SqlitePool, space: &SpaceId) {
+    sqlx::query(
+        "INSERT INTO loro_sync_quarantine (inbox_id, space_id, bytes, declared_end_vv, \
+         last_reason, unresolved_boots, first_seen_at_ms, quarantined_at_ms) \
+         VALUES (1, ?, x'00', '[]', 'projection failed', 5, 0, 0)",
+    )
+    .bind(space.as_str())
+    .execute(pool)
+    .await
+    .expect("insert quarantine row");
+}
+
+/// `id`'s `deleted_at` in the snapshot saved for `space`.
+async fn saved_deleted_at(pool: &SqlitePool, space: &SpaceId, id: &str) -> Option<String> {
+    let bytes = agaric_engine::loro::snapshot::load_snapshot(pool, space)
+        .await
+        .expect("load_snapshot")
+        .expect("the space has a saved snapshot");
+    let mut saved = LoroEngine::with_peer_id("device-A").expect("engine");
+    saved.import(&bytes).expect("import the saved snapshot");
+    saved.read_deleted_at(id).expect("read_deleted_at")
+}
+
+/// #6565 — the sender's engine holds a block live that SQL has soft-deleted.
+/// The export mirrors SQL's tombstone onto the engine, saves the space, and
+/// exports: engine and SQL agree, and the payload carries the delete with
+/// SQL's timestamp. The save comes first because the write is in no op log: a
+/// crash after an unsaved export would hand its op id to the next edit, which
+/// the peer would then drop as one it already holds.
 #[tokio::test]
-async fn prepare_outgoing_refuses_when_engine_live_block_is_sql_deleted() {
+async fn prepare_outgoing_mirrors_the_sql_tombstone_onto_the_engine_and_exports() {
     let (pool, _dir) = fresh_pool().await;
     let registry = LoroEngineRegistry::new();
     let space = SpaceId::from_trusted(SPACE_A);
-
-    // Engine A holds BLOCK_A as live (never deleted in the engine).
-    {
-        let mut g = registry.for_space(&space, "device-A").expect("for_space");
-        g.engine_mut()
-            .apply_create_block(BLOCK_A, "content", "from-A", None, 0)
-            .expect("create A");
-    }
-    // The engine indeed reports it as exportable-live.
-    {
-        let mut g = registry.for_space(&space, "device-A").expect("for_space");
-        let live = g.engine_mut().live_block_ids().expect("live ids");
-        assert!(
-            live.iter().any(|id| id == BLOCK_A),
-            "precondition: engine must hold BLOCK_A as live"
-        );
-    }
-
-    // SQL has the row but it is SOFT-DELETED (deleted_at set) — and the
-    // engine was NOT told. This is the divergence the gate must catch.
-    sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
-             VALUES (?, 'content', 'from-A', NULL, 1, ?)",
-    )
-    .bind(BLOCK_A)
-    .bind(agaric_store::db::now_ms())
-    .execute(&pool)
-    .await
-    .expect("insert soft-deleted block");
-
-    // Initial-sync (snapshot) export must REFUSE.
-    let snap = prepare_outgoing_for_pool(&pool, &registry, &space, "device-A", None)
-        .await
-        .expect("prepare_outgoing must not error");
-    assert!(
-        snap.is_none(),
-        "stale engine (engine-live block is SQL-deleted) must refuse the \
-             snapshot export, got a payload: {snap:?}"
+    engine_create(&registry, &space, BLOCK_A, None);
+    sql_insert_block(&pool, BLOCK_A, None, Some(TOMBSTONE_MS)).await;
+    assert_eq!(
+        engine_deleted_at(&registry, &space, BLOCK_A),
+        None,
+        "precondition: the engine holds BLOCK_A live"
     );
 
-    // Incremental (update) export must ALSO refuse — the gate runs before
-    // the export branch, independent of peer_vv.
-    let some_vv: Vec<u8> = {
-        let mut g = registry.for_space(&space, "device-A").expect("for_space");
-        g.engine_mut().version_vector()
-    };
-    let upd = prepare_outgoing_for_pool(&pool, &registry, &space, "device-A", Some(&some_vv))
+    let snapshot = prepare_outgoing_for_pool(&pool, &registry, &space, "device-A", None)
         .await
-        .expect("prepare_outgoing must not error");
+        .expect("prepare_outgoing must not error")
+        .expect("the repaired space exports");
+
+    assert_eq!(
+        engine_deleted_at(&registry, &space, BLOCK_A),
+        Some(TOMBSTONE_MS.to_string()),
+        "the engine holds SQL's tombstone, timestamp included"
+    );
+    assert_eq!(
+        saved_deleted_at(&pool, &space, BLOCK_A).await,
+        Some(TOMBSTONE_MS.to_string()),
+        "the tombstone is saved by the time it is exported"
+    );
+    let LoroSyncMessage::Snapshot { bytes, .. } = snapshot else {
+        panic!("expected a snapshot, got {snapshot:?}");
+    };
+    let mut receiver = LoroEngine::with_peer_id("device-B").expect("receiver");
+    receiver.import(&bytes).expect("import snapshot");
+    assert_eq!(
+        receiver.read_deleted_at(BLOCK_A).expect("read"),
+        Some(TOMBSTONE_MS.to_string()),
+        "the payload carries the delete"
+    );
+
+    // Nothing left to repair: a second export writes nothing more.
+    let vv = engine_vv(&registry, &space);
+    prepare_outgoing_for_pool(&pool, &registry, &space, "device-A", Some(&vv))
+        .await
+        .expect("prepare_outgoing must not error")
+        .expect("a consistent space exports");
+    assert_eq!(engine_vv(&registry, &space), vv, "no second write");
+}
+
+/// #6565 — the peer receives the delete: a device that already holds a parent
+/// and its child live trashes both, with the sender's timestamp, on the first
+/// sync after the sender's repair.
+#[tokio::test]
+async fn a_peer_receives_the_delete_the_export_repair_mirrored() {
+    let (pool_a, _dir_a) = fresh_pool().await;
+    let (pool_b, _dir_b) = fresh_pool().await;
+    let registry_a = LoroEngineRegistry::new();
+    let space = SpaceId::from_trusted(SPACE_A);
+    engine_create(&registry_a, &space, BLOCK_A, None);
+    engine_create(&registry_a, &space, BLOCK_B, Some(BLOCK_A));
+    sql_insert_block(&pool_a, BLOCK_A, None, None).await;
+    sql_insert_block(&pool_a, BLOCK_B, Some(BLOCK_A), None).await;
+
+    // B syncs while both blocks are live everywhere.
+    let first = prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
+        .await
+        .expect("prepare")
+        .expect("a consistent space exports");
+    let registry_b = LoroEngineRegistry::new();
+    apply_remote(&pool_b, &registry_b, "device-B", first)
+        .await
+        .expect("B applies the snapshot");
+    assert_eq!(
+        deleted_at_of(&pool_b, &[BLOCK_A, BLOCK_B]).await,
+        vec![None, None],
+        "precondition: B holds both blocks live"
+    );
+
+    // A's SQL deletes the subtree; A's engine never hears of it.
+    sqlx::query("UPDATE blocks SET deleted_at = ?")
+        .bind(TOMBSTONE_MS)
+        .execute(&pool_a)
+        .await
+        .expect("soft-delete in SQL only");
+
+    let vv_b = registry_b.loro_vv(&space).expect("B has the space");
+    let update = prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", Some(&vv_b))
+        .await
+        .expect("prepare")
+        .expect("the repaired space exports");
+    assert_eq!(
+        [BLOCK_A, BLOCK_B].map(|id| engine_deleted_at(&registry_a, &space, id)),
+        [
+            Some(TOMBSTONE_MS.to_string()),
+            Some(TOMBSTONE_MS.to_string())
+        ],
+        "A's engine holds a tombstone for the parent and for the child"
+    );
+    apply_remote(&pool_b, &registry_b, "device-B", update)
+        .await
+        .expect("B applies the update");
+
+    assert_eq!(
+        deleted_at_of(&pool_b, &[BLOCK_A, BLOCK_B]).await,
+        vec![Some(TOMBSTONE_MS), Some(TOMBSTONE_MS)],
+        "B trashes the subtree as one cohort, at A's timestamp"
+    );
+}
+
+/// `blocks.deleted_at` of each of `ids`, in order.
+async fn deleted_at_of(pool: &SqlitePool, ids: &[&str]) -> Vec<Option<i64>> {
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        out.push(
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(pool)
+                .await
+                .expect("the block has a row"),
+        );
+    }
+    out
+}
+
+/// #6565 — the repair cannot delete a block SQL holds live. The round's
+/// soft-deleted set is read once, before the per-space loop, so it can name
+/// a block the user has restored since. The repair re-reads SQL: it mirrors
+/// the tombstone SQL still holds (BLOCK_A), leaves the restored block
+/// (BLOCK_B) live in the engine, and the space exports with both as SQL has
+/// them.
+#[tokio::test]
+async fn the_export_repair_leaves_a_block_restored_since_the_round_began() {
+    let (pool, _dir) = fresh_pool().await;
+    let registry = LoroEngineRegistry::new();
+    let space = SpaceId::from_trusted(SPACE_A);
+    engine_create(&registry, &space, BLOCK_A, None);
+    engine_create(&registry, &space, BLOCK_B, None);
+    sql_insert_block(&pool, BLOCK_A, None, Some(TOMBSTONE_MS)).await;
+    sql_insert_block(&pool, BLOCK_B, None, Some(TOMBSTONE_MS)).await;
+
+    let round_set = read_sql_soft_deleted_ids(&pool).await.expect("read");
+    sqlx::query("UPDATE blocks SET deleted_at = NULL WHERE id = ?")
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .expect("the user restores BLOCK_B");
+
+    let exported = prepare_outgoing(&pool, &registry, &space, "device-A", None, &round_set)
+        .await
+        .expect("prepare_outgoing must not error")
+        .expect("the repair settled the space, so it exports");
+    assert_eq!(
+        engine_deleted_at(&registry, &space, BLOCK_B),
+        None,
+        "the restored block stays live in the engine"
+    );
+    assert_eq!(
+        engine_deleted_at(&registry, &space, BLOCK_A),
+        Some(TOMBSTONE_MS.to_string()),
+        "the block SQL still holds deleted is mirrored"
+    );
+    let LoroSyncMessage::Snapshot { bytes, .. } = exported else {
+        panic!("expected a snapshot");
+    };
+    let mut receiver = LoroEngine::with_peer_id("device-B").expect("receiver");
+    receiver.import(&bytes).expect("import snapshot");
+    assert_eq!(
+        receiver.read_deleted_at(BLOCK_B).expect("read"),
+        None,
+        "the peer receives the restored block live"
+    );
+}
+
+/// #6565 — while an inbound change for the space is unprojected, the engine
+/// may hold a peer's restore that SQL has yet to see: SQL, not the engine, is
+/// the stale side. That is so while the change waits in the write-ahead
+/// inbox, and stays so once boot replay has given up on it and quarantined
+/// it. The repair stands down, writes nothing, and the export is refused. A
+/// change for another space does not hold this one back.
+#[tokio::test]
+async fn the_export_repair_stands_down_while_an_inbound_change_is_unprojected() {
+    let (pool, _dir) = fresh_pool().await;
+    let registry = LoroEngineRegistry::new();
+    let space = SpaceId::from_trusted(SPACE_A);
+    let other_space = SpaceId::from_trusted("01HZ00000000000000000000SQ");
+    engine_create(&registry, &space, BLOCK_A, None);
+    sql_insert_block(&pool, BLOCK_A, None, Some(TOMBSTONE_MS)).await;
+    let vv = engine_vv(&registry, &space);
+    let refused_with_nothing_written = || async {
+        let refused = prepare_outgoing_for_pool(&pool, &registry, &space, "device-A", None)
+            .await
+            .expect("prepare_outgoing must not error");
+        refused.is_none() && engine_vv(&registry, &space) == vv
+    };
+
+    sql_insert_pending_inbound(&pool, &space).await;
     assert!(
-        upd.is_none(),
-        "stale engine must refuse the update export too, got: {upd:?}"
+        refused_with_nothing_written().await,
+        "a change waiting in the inbox holds the repair off"
+    );
+
+    sqlx::query("DELETE FROM loro_sync_inbox")
+        .execute(&pool)
+        .await
+        .expect("boot replay gives up on the change");
+    sql_insert_quarantined_inbound(&pool, &space).await;
+    assert!(
+        refused_with_nothing_written().await,
+        "a quarantined change holds the repair off"
+    );
+
+    sqlx::query("UPDATE loro_sync_quarantine SET space_id = ?")
+        .bind(other_space.as_str())
+        .execute(&pool)
+        .await
+        .expect("the quarantined change is another space's");
+    sql_insert_pending_inbound(&pool, &other_space).await;
+    prepare_outgoing_for_pool(&pool, &registry, &space, "device-A", None)
+        .await
+        .expect("prepare_outgoing must not error")
+        .expect("another space's unprojected changes do not hold this one back");
+    assert_eq!(
+        engine_deleted_at(&registry, &space, BLOCK_A),
+        Some(TOMBSTONE_MS.to_string())
+    );
+}
+
+/// #6565 — the repair writes only what the engine still holds live once it
+/// has the write lock. The ids it is handed were read before it waited for
+/// the lock: an import that finished meanwhile can have purged one from the
+/// engine while its SQL row waits for the deferred sweep.
+#[tokio::test]
+async fn the_export_repair_skips_a_block_the_engine_no_longer_holds() {
+    let (pool, _dir) = fresh_pool().await;
+    let registry = LoroEngineRegistry::new();
+    let space = SpaceId::from_trusted(SPACE_A);
+    engine_create(&registry, &space, BLOCK_A, None);
+    sql_insert_block(&pool, BLOCK_A, None, Some(TOMBSTONE_MS)).await;
+    sql_insert_block(&pool, BLOCK_B, None, Some(TOMBSTONE_MS)).await;
+
+    let settled = mirror_sql_tombstones_onto_engine(
+        &pool,
+        &registry,
+        &space,
+        "device-A",
+        &[BLOCK_B.to_owned(), BLOCK_A.to_owned()],
+    )
+    .await
+    .expect("a block gone from the engine is no error");
+    assert!(settled);
+    assert_eq!(
+        engine_deleted_at(&registry, &space, BLOCK_A),
+        Some(TOMBSTONE_MS.to_string()),
+        "the block the engine holds is still mirrored"
+    );
+}
+
+/// #6565 — the repair waits for a write in flight and decides on what it
+/// committed. A restore that has written SQL and not yet committed holds the
+/// write lock; a repair that read past it would see the block deleted, and
+/// tombstone in the engine a block the user is restoring.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_export_repair_waits_for_a_write_in_flight() {
+    let (pool, _dir) = fresh_pool().await;
+    let registry = LoroEngineRegistry::new();
+    let space = SpaceId::from_trusted(SPACE_A);
+    engine_create(&registry, &space, BLOCK_A, None);
+    sql_insert_block(&pool, BLOCK_A, None, Some(TOMBSTONE_MS)).await;
+    let round_set = read_sql_soft_deleted_ids(&pool).await.expect("read");
+
+    let mut restore = pool.begin_with("BEGIN IMMEDIATE").await.expect("begin");
+    sqlx::query("UPDATE blocks SET deleted_at = NULL WHERE id = ?")
+        .bind(BLOCK_A)
+        .execute(&mut *restore)
+        .await
+        .expect("restore, uncommitted");
+
+    let export = prepare_outgoing(&pool, &registry, &space, "device-A", None, &round_set);
+    tokio::pin!(export);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut export)
+            .await
+            .is_err(),
+        "the export waits while the restore holds the write lock"
+    );
+    restore.commit().await.expect("commit the restore");
+
+    export
+        .await
+        .expect("prepare_outgoing must not error")
+        .expect("the space exports as the committed restore left it");
+    assert_eq!(
+        engine_deleted_at(&registry, &space, BLOCK_A),
+        None,
+        "the restored block was not tombstoned"
     );
 }
 
@@ -3833,62 +4153,6 @@ async fn prepare_outgoing_exports_normally_when_engine_and_sql_agree() {
 // ---------------------------------------------------------------------
 // #2040 — soft-deleted-id read hoisted out of the per-space loop
 // ---------------------------------------------------------------------
-
-/// #2040 unit: `first_engine_live_block_sql_deleted` selects the SAME
-/// element the pre-refactor `Vec` + `sort()` + `into_iter().next()` chose —
-/// the lexicographically smallest engine-live id that SQL has soft-deleted —
-/// but via `.iter().min()` with no allocation / full sort. The live set is
-/// passed out of `due_date` order on purpose so a no-op (returning the
-/// first encountered, not the minimum) would fail.
-#[test]
-fn first_engine_live_block_sql_deleted_picks_min_like_old_sort() {
-    let sql_deleted: std::collections::HashSet<String> = [BLOCK_A, BLOCK_C, BLOCK_E]
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect();
-
-    // Engine-live set: two are soft-deleted (C3, A1), one is alive (B2).
-    // Insertion order puts the LARGER deleted id (C3) first to prove we
-    // return the minimum, not the first hit.
-    let live = vec![
-        BLOCK_C.to_string(),
-        BLOCK_B.to_string(),
-        BLOCK_A.to_string(),
-    ];
-    let hit = first_engine_live_block_sql_deleted(&live, &sql_deleted);
-    assert_eq!(
-        hit.as_deref(),
-        Some(BLOCK_A),
-        "must return the lexicographically smallest matching id (old sort+first)"
-    );
-
-    // Replicate the OLD algorithm explicitly and assert parity.
-    let mut old: Vec<String> = live
-        .iter()
-        .filter(|id| sql_deleted.contains(*id))
-        .cloned()
-        .collect();
-    old.sort();
-    assert_eq!(
-        hit,
-        old.into_iter().next(),
-        "must match the old sort-then-first"
-    );
-
-    // No engine-live block is soft-deleted → None.
-    let none_live = vec![BLOCK_B.to_string(), BLOCK_D.to_string()];
-    assert_eq!(
-        first_engine_live_block_sql_deleted(&none_live, &sql_deleted),
-        None,
-        "no intersection must yield None"
-    );
-    // Empty live set → None (the old early-return path).
-    assert_eq!(
-        first_engine_live_block_sql_deleted(&[], &sql_deleted),
-        None,
-        "empty live set must yield None"
-    );
-}
 
 /// #2040 integration: the soft-deleted set is read ONCE and reused across
 /// multiple spaces. We read it via `read_sql_soft_deleted_ids`, assert its
@@ -3962,11 +4226,11 @@ async fn read_sql_soft_deleted_ids_read_once_reused_across_spaces() {
             .expect("create C");
     }
 
-    let msg_a = prepare_outgoing(&registry, &space_a, "device-A", None, &sql_deleted)
+    let msg_a = prepare_outgoing(&pool, &registry, &space_a, "device-A", None, &sql_deleted)
         .await
         .expect("prepare A")
         .expect("space A export must not be refused (A1 is alive)");
-    let msg_b = prepare_outgoing(&registry, &space_b, "device-A", None, &sql_deleted)
+    let msg_b = prepare_outgoing(&pool, &registry, &space_b, "device-A", None, &sql_deleted)
         .await
         .expect("prepare B")
         .expect("space B export must not be refused (C3 is alive)");
@@ -4000,10 +4264,12 @@ async fn read_sql_soft_deleted_ids_read_once_reused_across_spaces() {
             .apply_create_block(BLOCK_B, "content", "deleted-in-sql", None, 0)
             .expect("create B2");
     }
-    let a_again = prepare_outgoing(&registry2, &space_a, "device-A", None, &sql_deleted)
+    // An unprojected inbound change keeps the #6565 repair off space B.
+    sql_insert_pending_inbound(&pool, &space_b).await;
+    let a_again = prepare_outgoing(&pool, &registry2, &space_a, "device-A", None, &sql_deleted)
         .await
         .expect("prepare A again");
-    let b_refused = prepare_outgoing(&registry2, &space_b, "device-A", None, &sql_deleted)
+    let b_refused = prepare_outgoing(&pool, &registry2, &space_b, "device-A", None, &sql_deleted)
         .await
         .expect("prepare B refused-path");
     assert!(
