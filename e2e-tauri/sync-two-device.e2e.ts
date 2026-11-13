@@ -690,7 +690,7 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
       const spaceId = (spaces.find((space) => space.name === 'Personal') ?? spaces[0])?.id
       const file = ({ name, bytes }: { name: string; bytes: Buffer }) => ({
         filename: name,
-        bytes: [...bytes],
+        bytes: bytes.toString('base64'),
       })
       // The dialog's call, linked from the block both devices share.
       const made = await invoke<{ page_id: string; recording_block_id: string }>('add_meeting', {
@@ -809,6 +809,15 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
             `the state card did not settle on Idle, 1 peer and a time: ${JSON.stringify(seen)}`,
           )
         })
+    })
+
+    // #6526 — what the other device's manual address field takes. The mock has no
+    // endpoint, so only this lane can show the row.
+    it("Settings shows this device's sync address", async () => {
+      await openSyncSettings()
+      const address = await $('[data-testid="local-sync-address"]')
+      await address.waitForDisplayed({ timeout: NAV_TIMEOUT })
+      expect(await address.getText()).toMatch(/^\d+\.\d+\.\d+\.\d+:[1-9]\d*$/)
     })
 
     // #5739 — the peer freezes, so the app's dial gets no answer. Cancel must end

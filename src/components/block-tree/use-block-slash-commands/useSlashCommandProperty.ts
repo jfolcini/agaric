@@ -25,7 +25,7 @@ import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
 import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import { commands } from '@/lib/bindings'
-import { guessMimeType, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
+import { blobToBase64, guessMimeType, isAttachmentAllowed } from '@/lib/file-utils'
 import { clearListStyles } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -274,9 +274,13 @@ function handleAttach(ctx: SlashCommandContext): void {
       ? notify.loading(ctx.t('blockTree.attachingFileMessage', { filename }))
       : undefined
     try {
-      const bytes = await readFileBytes(file)
       unwrap(
-        await commands.addAttachmentWithBytes(ctx.blockId, filename, mimeType, Array.from(bytes)),
+        await commands.addAttachmentWithBytes(
+          ctx.blockId,
+          filename,
+          mimeType,
+          await blobToBase64(file),
+        ),
       )
       recordAttachmentInvalidation()
       if (progressToastId !== undefined) notify.dismiss(progressToastId)

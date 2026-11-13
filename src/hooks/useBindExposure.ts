@@ -48,8 +48,8 @@ export function useBindExposure(): InternetFacingBind | null {
   const enabled = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   const [bind, setBind] = useState<InternetFacingBind | null>(null)
 
-  // Live event: emitted once per daemon start, and the daemon can restart
-  // (dormant → active) onto a different address within one app session.
+  // Live event: emitted at each internet-facing bind, and the daemon can bind
+  // again (dormant → active, a network change) within one app session.
   useTauriEventListener<unknown>(
     SYNC_INTERNET_FACING_BIND_EVENT,
     (event) => {

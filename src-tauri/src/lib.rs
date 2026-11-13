@@ -227,6 +227,7 @@ macro_rules! agaric_commands {
             // `sync:internet_facing_bind` listener, so this query is how the
             // banner gets on screen at all, not a fallback.
             $crate::commands::sync_cmds::get_bind_exposure_status,
+            $crate::commands::sync_cmds::get_local_sync_address,
             // #4035 — the OS network-block status as it stands NOW. Not a race
             // fix like the two above: `sync:network_blocked` fires only on a
             // transition, so a pairing dialog reopened during one continuous
@@ -3452,6 +3453,11 @@ mod specta_tests {
     /// in the `agaric_commands!` macro near the top of `lib.rs`; this
     /// function and `run()` both expand it so they cannot drift.
     fn specta_builder() -> Builder<tauri::Wry> {
+        use agaric_sync::sync_events::{
+            BlocksChangedEvent, EVENT_BLOCKS_CHANGED, EVENT_SYNC_COMPLETE, EVENT_SYNC_ERROR,
+            SyncEvent,
+        };
+
         // tauri-specta 2.0.0-rc.25 forbids BigInt-style integer types
         // (u64/i64/u128/i128/usize/isize) in TypeScript exports by default
         // because JS `number` is f64 and silently loses precision above
@@ -3464,6 +3470,15 @@ mod specta_tests {
         // ever needs to carry values >2^53.
         Builder::<tauri::Wry>::new()
             .commands(agaric_commands!())
+            // #6539 — the events `useSyncEvents` reloads on are not commands,
+            // so their payload types and names are registered by hand: a
+            // renamed field or event then fails `ts_bindings_up_to_date` and
+            // the frontend type check, where it used to compile on both sides.
+            .typ::<SyncEvent>()
+            .typ::<BlocksChangedEvent>()
+            .constant("EVENT_SYNC_COMPLETE", EVENT_SYNC_COMPLETE)
+            .constant("EVENT_SYNC_ERROR", EVENT_SYNC_ERROR)
+            .constant("EVENT_BLOCKS_CHANGED", EVENT_BLOCKS_CHANGED)
             .dangerously_cast_bigints_to_number()
     }
 

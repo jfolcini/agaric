@@ -55,7 +55,7 @@ describe('attachment add → undo → redo (mock-internal)', () => {
       blockId,
       filename: 'notes.txt',
       mimeType: 'text/plain',
-      bytes: [104, 105],
+      bytes: 'aGk=',
     }) as Record<string, unknown>
 
     const addOp = opLog.at(-1)
@@ -96,7 +96,7 @@ describe('attachment add → undo → redo (mock-internal)', () => {
       blockId,
       filename: 'notes.txt',
       mimeType: 'text/plain',
-      bytes: [104, 105],
+      bytes: 'aGk=',
     }) as Record<string, unknown>
     const attachmentId = added['id'] as string
 
@@ -145,7 +145,7 @@ describe('attachment add → undo → redo (mock-internal)', () => {
       blockId,
       filename: 'notes.txt',
       mimeType: 'text/plain',
-      bytes: [104, 105],
+      bytes: 'aGk=',
     }) as Record<string, unknown>
     dispatch('delete_attachment', { attachmentId: added['id'] })
 

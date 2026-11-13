@@ -671,9 +671,8 @@ const LINK_PREVIEW_HOVER_FETCH_PREFERENCE: PreferenceDefinition<boolean> = {
  * The value is the **address**, not a boolean, and that is the whole point:
  * the notice returns by itself when the device binds a *different* public
  * address (new network, DHCP change, moved onto a cloud host), which is
- * exactly when it has something new to say. Keying it on the address:port
- * instead would be equivalent to not being dismissible at all — the bind
- * requests port 0, so the port changes on every restart.
+ * exactly when it has something new to say. The port is left out of the key:
+ * it says nothing about where the device sits on the network.
  *
  * `scope: 'device'` because what is being acknowledged is this machine's
  * position on the network, which no space or document has any bearing on.

@@ -55,7 +55,10 @@ pub enum SyncProgressUpdate {
 }
 
 /// Payload sent over Tauri events for sync progress/completion/errors.
-#[derive(Debug, Clone, Serialize)]
+///
+/// `Type` puts it in `bindings.ts`, where the frontend's listeners take their
+/// payload types from (#6539): `ts_bindings_up_to_date` fails on a renamed field.
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SyncEvent {
     Progress {
@@ -141,7 +144,7 @@ pub enum SyncEvent {
     /// once bound. The frontend should surface this to the user instead of
     /// showing an Empty peer list.
     MdnsDisabled { reason: String },
-    /// #3864: emitted once per daemon start when the sync endpoint bound a
+    /// #3864: emitted each time the sync endpoint binds a
     /// **globally-routable** address, so the QUIC listener may be reachable
     /// from outside the local network.
     ///
@@ -159,9 +162,7 @@ pub enum SyncEvent {
     InternetFacingBind {
         /// The bound IPv4 address, e.g. `"192.160.160.80"`.
         address: String,
-        /// The UDP port the listener actually got. The bind requests port 0,
-        /// so this is assigned by the OS **and differs on every start** — it
-        /// identifies the current listener, it is not a stable firewall rule.
+        /// The UDP port the listener is bound to.
         port: u16,
     },
     /// #3852: the operating system says it is blocking (or has stopped
@@ -209,8 +210,7 @@ pub enum SyncEvent {
 }
 
 /// A [`SyncEvent::Error`] the frontend explains in its own words (#5728).
-/// Serialized in snake case; `SyncErrorPayload` in `useSyncEvents.ts` mirrors it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncErrorCode {
     /// The peer runs another engine format (#2130). Updating the older device
@@ -302,8 +302,7 @@ pub struct MdnsStatusState(pub std::sync::Mutex<MdnsStatus>);
 pub struct InternetFacingBind {
     /// The bound IPv4 address, e.g. `"192.160.160.80"`.
     pub address: String,
-    /// The UDP port of that listener. OS-assigned (the bind requests port 0),
-    /// so it changes on every daemon start.
+    /// The UDP port of that listener.
     pub port: u16,
 }
 
@@ -414,7 +413,7 @@ pub const EVENT_BLOCKS_CHANGED: &str = "blocks:changed";
 ///
 /// A write no page owns (MCP `create_tag`) names the block itself, so the
 /// frontend still drops its derived caches without the empty set's full reload.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct BlocksChangedEvent {
     #[serde(default)]
     pub changed_page_ids: Vec<String>,
@@ -423,8 +422,8 @@ pub struct BlocksChangedEvent {
     /// (#6541). Those can shift the numbering a page's positional undo
     /// addresses, so the frontend re-anchors the pages' undo. A sync session's
     /// own changes are a peer's replicated ops, which that numbering leaves
-    /// out, so `false` keeps the pages' undo and redo. Typed by hand in
-    /// `useSyncEvents.ts`, which reads an absent field as `true`.
+    /// out, so `false` keeps the pages' undo and redo. The frontend reads an
+    /// absent field as `true`.
     pub local_ops_appended: bool,
 }
 

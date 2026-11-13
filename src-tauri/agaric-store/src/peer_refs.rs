@@ -1113,6 +1113,43 @@ pub async fn get_local_device_name(pool: &SqlitePool) -> Result<Option<String>, 
     Ok(value.filter(|v| !v.trim().is_empty()))
 }
 
+// ---------------------------------------------------------------------------
+// The sync endpoint's port (#6526)
+// ---------------------------------------------------------------------------
+
+const SYNC_PORT_KEY: &str = "sync.endpoint_port";
+
+/// Record the port the sync endpoint bound, for the next launch to bind again: a
+/// peer's cached address and a firewall rule both name it.
+pub async fn set_sync_port(pool: &SqlitePool, port: u16) -> Result<(), AppError> {
+    let now = crate::db::now_ms();
+    let port = port.to_string();
+    sqlx::query!(
+        "INSERT INTO app_settings (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             updated_at = excluded.updated_at",
+        SYNC_PORT_KEY,
+        port,
+        now,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The port the sync endpoint last bound; `None` before the first bind.
+pub async fn get_sync_port(pool: &SqlitePool) -> Result<Option<u16>, AppError> {
+    let value: Option<String> = sqlx::query_scalar!(
+        "SELECT value FROM app_settings WHERE key = ?",
+        SYNC_PORT_KEY,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(value.and_then(|port| port.parse().ok()))
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -2641,6 +2678,18 @@ mod tests {
             "the value is refreshed each boot, so a machine renamed in system settings \
              stops advertising its old name"
         );
+    }
+
+    #[tokio::test]
+    async fn the_sync_port_round_trips_and_is_replaced_6526() {
+        let (pool, _dir) = test_pool().await;
+        assert_eq!(get_sync_port(&pool).await.unwrap(), None);
+
+        set_sync_port(&pool, 41234).await.unwrap();
+        assert_eq!(get_sync_port(&pool).await.unwrap(), Some(41234));
+
+        set_sync_port(&pool, 50001).await.unwrap();
+        assert_eq!(get_sync_port(&pool).await.unwrap(), Some(50001));
     }
 
     /// A blank hostname is not a name. Reading it back as `None` is what keeps a
