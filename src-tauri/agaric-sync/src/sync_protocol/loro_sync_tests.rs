@@ -4154,62 +4154,6 @@ async fn prepare_outgoing_exports_normally_when_engine_and_sql_agree() {
 // #2040 — soft-deleted-id read hoisted out of the per-space loop
 // ---------------------------------------------------------------------
 
-/// #2040 unit: `first_engine_live_block_sql_deleted` selects the SAME
-/// element the pre-refactor `Vec` + `sort()` + `into_iter().next()` chose —
-/// the lexicographically smallest engine-live id that SQL has soft-deleted —
-/// but via `.iter().min()` with no allocation / full sort. The live set is
-/// passed out of `due_date` order on purpose so a no-op (returning the
-/// first encountered, not the minimum) would fail.
-#[test]
-fn first_engine_live_block_sql_deleted_picks_min_like_old_sort() {
-    let sql_deleted: std::collections::HashSet<String> = [BLOCK_A, BLOCK_C, BLOCK_E]
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect();
-
-    // Engine-live set: two are soft-deleted (C3, A1), one is alive (B2).
-    // Insertion order puts the LARGER deleted id (C3) first to prove we
-    // return the minimum, not the first hit.
-    let live = vec![
-        BLOCK_C.to_string(),
-        BLOCK_B.to_string(),
-        BLOCK_A.to_string(),
-    ];
-    let hit = first_engine_live_block_sql_deleted(&live, &sql_deleted);
-    assert_eq!(
-        hit.as_deref(),
-        Some(BLOCK_A),
-        "must return the lexicographically smallest matching id (old sort+first)"
-    );
-
-    // Replicate the OLD algorithm explicitly and assert parity.
-    let mut old: Vec<String> = live
-        .iter()
-        .filter(|id| sql_deleted.contains(*id))
-        .cloned()
-        .collect();
-    old.sort();
-    assert_eq!(
-        hit,
-        old.into_iter().next(),
-        "must match the old sort-then-first"
-    );
-
-    // No engine-live block is soft-deleted → None.
-    let none_live = vec![BLOCK_B.to_string(), BLOCK_D.to_string()];
-    assert_eq!(
-        first_engine_live_block_sql_deleted(&none_live, &sql_deleted),
-        None,
-        "no intersection must yield None"
-    );
-    // Empty live set → None (the old early-return path).
-    assert_eq!(
-        first_engine_live_block_sql_deleted(&[], &sql_deleted),
-        None,
-        "empty live set must yield None"
-    );
-}
-
 /// #2040 integration: the soft-deleted set is read ONCE and reused across
 /// multiple spaces. We read it via `read_sql_soft_deleted_ids`, assert its
 /// contents, then drive `prepare_outgoing` for two different spaces with

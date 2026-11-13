@@ -272,11 +272,11 @@ pub async fn prepare_outgoing(
     // an export that changes nothing leaves the space clean (#6525).
     let live_block_ids: Vec<String> =
         registry.with_engine(space_id, device_id, |engine| engine.live_block_ids())??;
-    if let Some(stale_id) = first_engine_live_block_sql_deleted(&live_block_ids, sql_deleted) {
-        let stale: Vec<String> = live_block_ids
-            .into_iter()
-            .filter(|id| sql_deleted.contains(id))
-            .collect();
+    let stale: Vec<String> = live_block_ids
+        .into_iter()
+        .filter(|id| sql_deleted.contains(id))
+        .collect();
+    if !stale.is_empty() {
         let settled =
             mirror_sql_tombstones_onto_engine(pool, registry, space_id, device_id, &stale)
                 .await
@@ -293,7 +293,7 @@ pub async fn prepare_outgoing(
             tracing::warn!(
                 space_id = %space_id.as_str(),
                 device_id = %device_id,
-                stale_block_id = %stale_id,
+                stale_block_id = stale.iter().min().map_or("", String::as_str),
                 "loro_sync: #1257 freshness gate REFUSED export — engine holds a \
                  block SQL has soft-deleted (engine stale vs SQL) and mirroring \
                  SQL's tombstone did not settle it; emitting no sync payload this round"
@@ -375,7 +375,9 @@ pub async fn prepare_outgoing(
 ///
 /// The tombstones are in no op log, so the space is saved before the caller
 /// exports them: after a crash the engine would otherwise mint its next op
-/// under an id the peer already holds, and the peer would drop that op.
+/// under an id the peer already holds, and the peer would drop that op. A
+/// failed save refuses this round only. The space stays dirty for the
+/// periodic save, and a later round exports whether or not that has run.
 pub(super) async fn mirror_sql_tombstones_onto_engine(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -477,32 +479,6 @@ pub async fn read_sql_soft_deleted_ids(
             .into_iter()
             .collect();
     Ok(sql_deleted)
-}
-
-/// #1257: return the first `block_id` that the engine holds as live but
-/// which SQL has soft-deleted (`deleted_at IS NOT NULL`), or `None` when the
-/// two agree.
-///
-/// `sql_deleted` is the pre-fetched vault-wide soft-deleted set (#2040 — read
-/// once per round by [`read_sql_soft_deleted_ids`], not per space). We
-/// intersect the engine-live set against it in memory rather than emitting an
-/// `IN (...)` over a potentially large live set. Returns a deterministic first
-/// hit for stable log output.
-///
-/// #2040: the deterministic first hit is the lexicographically smallest
-/// matching id. The previous code collected all matches into a `Vec`, sorted
-/// it, and took `.into_iter().next()` (the minimum); `.iter().min()` selects
-/// the same element under the same ordering without the allocation + full
-/// sort.
-pub fn first_engine_live_block_sql_deleted(
-    live_block_ids: &[String],
-    sql_deleted: &std::collections::HashSet<String>,
-) -> Option<String> {
-    live_block_ids
-        .iter()
-        .filter(|id| sql_deleted.contains(*id))
-        .min()
-        .cloned()
 }
 
 /// Whether the last export round reported a refused space. One device per
