@@ -1,4 +1,4 @@
-# Session 4113 — A root entering a space appends; a rebind clears two statuses; page mode batches its creates and deletes
+# Session 4116 — A root entering a space appends; a rebind clears two statuses; page mode batches its creates and deletes
 
 Four leftovers from older issues, one PR: #6527's last box, #6526's two latching statuses, #5363's boot measurement, #6559 box 4.
 
