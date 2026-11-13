@@ -44,7 +44,7 @@ function stubTemplates(handlers: TypedInvokeHandlers = {}): void {
   stubInvoke(mockedInvoke, {
     query_by_property: () => emptyPage,
     first_child_for_blocks: () => ({}),
-    list_all_pages_in_space: () => [],
+    resolve_page_title: (args) => ({ title: args['title'] as string, page_id: null }),
     ...handlers,
   })
 }
@@ -854,7 +854,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
-        if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'resolve_page_title') return { title: 'My Template', page_id: null }
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') {
           return {
@@ -913,18 +913,7 @@ describe('TemplatesView', () => {
       const user = userEvent.setup()
       const mockedToastError = vi.mocked(toast.error)
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_all_pages_in_space') {
-          return [
-            {
-              id: 'P_EXISTING',
-              content: 'My Template',
-              todo_state: null,
-              priority: null,
-              due_date: null,
-              scheduled_date: null,
-            },
-          ]
-        }
+        if (cmd === 'resolve_page_title') return { title: 'My Template', page_id: 'P_EXISTING' }
         return emptyPage
       })
 
@@ -950,18 +939,7 @@ describe('TemplatesView', () => {
       const user = userEvent.setup()
       const mockedToastError = vi.mocked(toast.error)
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_all_pages_in_space') {
-          return [
-            {
-              id: 'P_EXISTING',
-              content: 'My Template ',
-              todo_state: null,
-              priority: null,
-              due_date: null,
-              scheduled_date: null,
-            },
-          ]
-        }
+        if (cmd === 'resolve_page_title') return { title: 'My Template ', page_id: 'P_EXISTING' }
         return emptyPage
       })
 
@@ -987,7 +965,7 @@ describe('TemplatesView', () => {
     it("publishes an 'added' event before the template property is set", async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'resolve_page_title') return { title: 'My Template', page_id: null }
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') {
           return {
@@ -1036,7 +1014,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
-        if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'resolve_page_title') return { title: 'My Template', page_id: null }
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') throw new Error('property fail')
         return emptyPage
@@ -1073,7 +1051,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
-        if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'resolve_page_title') return { title: 'My Template', page_id: null }
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') {
           return {
@@ -1107,7 +1085,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
-        if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'resolve_page_title') return { title: 'My Template', page_id: null }
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') {
           return {
@@ -1137,7 +1115,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
-        if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'resolve_page_title') return { title: 'My Template', page_id: null }
         if (cmd === 'create_page_in_space') throw new Error('backend fail')
         return emptyPage
       })
@@ -1155,13 +1133,35 @@ describe('TemplatesView', () => {
       expect(input.value).toBe('My Template')
     })
 
+    it('shows error toast and creates nothing when the title lookup fails', async () => {
+      const user = userEvent.setup()
+      const mockedToastError = vi.mocked(toast.error)
+      stubTemplates({
+        resolve_page_title: () => {
+          throw new Error('lookup fail')
+        },
+      })
+
+      render(<TemplatesView />)
+
+      const input = (await screen.findByPlaceholderText('New template name...')) as HTMLInputElement
+      await user.type(input, 'My Template')
+      await user.click(screen.getByRole('button', { name: /create template/i }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith('Failed to create template')
+      })
+      expect(mockedInvoke).not.toHaveBeenCalledWith('create_page_in_space', expect.anything())
+      expect(input.value).toBe('My Template')
+    })
+
     it('shows error toast and preserves input when setProperty fails', async () => {
       const user = userEvent.setup()
       const mockedToastError = vi.mocked(toast.error)
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
-        if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'resolve_page_title') return { title: 'My Template', page_id: null }
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') throw new Error('property fail')
         return emptyPage

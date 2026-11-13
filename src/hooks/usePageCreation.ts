@@ -4,10 +4,11 @@
  * `createPage(name)` creates a page in the active space and returns it, or
  * the page that already carries `name` in any case or normal form
  * (`create_page_in_space` resolves an existing title to that page, #6278),
- * under its own title. A blank name picks the first free
- * `Untitled N`. A failure is mapped to a message in `createError` (a
- * duplicate-name conflict is user-actionable, anything else is not) and
- * `createPage` returns `null`, so the caller can keep its form open.
+ * under its own title. A blank name takes the first free `Untitled N`. The
+ * backend answers both (`resolve_page_title`, #6527). A failure is mapped to
+ * a message in `createError` (a duplicate-name conflict is user-actionable,
+ * anything else is not) and `createPage` returns `null`, so the caller can
+ * keep its form open.
  *
  * The Pages list is not patched here: every local write marks it stale
  * (`watchLocalWrites` → `invalidatePageBrowserData`), and the caller opens the
@@ -22,9 +23,8 @@ import { isConflict, unwrap, validationCode } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
-import { nameKey } from '@/lib/name-tokens'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import { untitledTitle } from '@/lib/untitled-page'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -63,17 +63,13 @@ export function usePageCreation(): UsePageCreationResult {
       setCreateError(null)
       try {
         // #4723 — `create_page_in_space` RESOLVES an existing title to that
-        // page instead of creating one, so read the space's titles first: a
-        // blank name needs a free `Untitled N`, and a taken title is opened.
-        const spacePages = unwrap(
-          await commands.listAllPagesInSpace({ kind: 'active', space_id: activeSpaceId }, null),
+        // page instead of creating one, so ask first: a taken title is
+        // opened under its own title, and a blank name gets a free `Untitled N`.
+        const resolved = unwrap(
+          await commands.resolvePageTitle(rawName.trim(), requireActiveScope(activeSpaceId)),
         )
-        const name = rawName.trim() || untitledTitle(spacePages.map((page) => page.content))
-        // #6278 — under the key the backend resolves by, opened as titled.
-        const existing = spacePages.find(
-          (page) => page.content !== null && nameKey(page.content) === nameKey(name),
-        )
-        if (existing) return { id: existing.id, title: existing.content ?? name }
+        if (resolved.page_id !== null) return { id: resolved.page_id, title: resolved.title }
+        const name = resolved.title
         const id = unwrap(await commands.createPageInSpace(null, name, activeSpaceId))
         // #4338 — publish so a warm `[[` picker cache offers the page at once.
         notifyPageAdded(id, name, activeSpaceId)

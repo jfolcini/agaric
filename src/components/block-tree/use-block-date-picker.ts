@@ -182,16 +182,12 @@ async function handleDateMode(ctx: DatePickContext): Promise<void> {
     if (currentSpaceId === null || currentSpaceId === undefined) {
       throw new Error('No active space; cannot create date page')
     }
-    // limit-clamp-followup — `listAllPagesInSpace` returns every page in
-    // the active space (no pagination, no silent clamp), so journal /
-    // date pages past index 99 are no longer truncated.  The
-    // `currentSpaceId` null-check above guarantees a real spaceId, so no
-    // pre-bootstrap fallback is needed here.
-    const pages = unwrap(
-      await commands.listAllPagesInSpace(requireActiveScope(currentSpaceId), null),
-    )
-    const existing = pages.find((p) => p.content === ctx.dateStr || p.content === ctx.legacyStr)
-    let datePageId = existing?.id
+    // #6527 — two point lookups, not a listing of every page in the space:
+    // the day's journal page, else a page titled in the legacy form.
+    const scope = requireActiveScope(currentSpaceId)
+    let datePageId =
+      unwrap(await commands.getJournalPageByDate(ctx.dateStr, scope))?.id ??
+      unwrap(await commands.resolvePageTitle(ctx.legacyStr, scope)).page_id
     if (!datePageId) {
       const newPageId = unwrap(await commands.createPageInSpace(null, ctx.dateStr, currentSpaceId))
       datePageId = newPageId

@@ -44,6 +44,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import { nameKey } from '@/lib/name-tokens'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { useBootStore } from '@/stores/boot'
 import { useNavigationStore } from '@/stores/navigation'
@@ -71,8 +72,8 @@ const navigateToPageSpy = vi.fn()
 /**
  * #3308 — a stateful fake of the sample-pages IPC surface.
  *
- * `createSamplePages` is idempotent now: it sweeps the space with
- * `list_all_pages_in_space` first, reuses a page whose title already
+ * `createSamplePages` is idempotent now: it asks `resolve_page_title` for
+ * each sample title first, reuses a page whose title already
  * matches, and (for a reused page) reads its children via `list_blocks` so
  * only the missing bodies are re-created. A stateless per-command mock
  * cannot express that, so this helper keeps the created pages/blocks in
@@ -91,15 +92,11 @@ function installSampleIpcMock(opts: { failCreateBlockCall?: number } = {}): {
   let createBlockCalls = 0
 
   mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-    if (cmd === 'list_all_pages_in_space') {
-      return pages.map((page) => ({
-        id: page.id,
-        content: page.content,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-      }))
+    if (cmd === 'resolve_page_title') {
+      const title = (args as { title: string }).title
+      // Under the key the backend resolves a title by (#6278).
+      const page = pages.find((p) => nameKey(p.content) === nameKey(title))
+      return { title: page?.content ?? title, page_id: page?.id ?? null }
     }
     if (cmd === 'create_page_in_space') {
       const content = (args as { content: string }).content
@@ -300,8 +297,8 @@ describe('WelcomeModal', () => {
   // `create_block`. So the sequence is:
   //   2× `create_page_in_space` (Getting Started + Quick Tips)
   // + 6× `create_block` (3 content children for each page)
-  // = 8 IPC invocations, plus the #3308 idempotence sweep
-  // (`list_all_pages_in_space`) that runs first = 9 total.
+  // = 8 IPC invocations, plus the #3308 idempotence check
+  // (`resolve_page_title`) before each page = 10 total.
   it('"Create sample pages" calls create_page_in_space + create_block and dismisses', async () => {
     const user = userEvent.setup()
 
@@ -313,8 +310,8 @@ describe('WelcomeModal', () => {
     await user.click(sampleBtn)
 
     await waitFor(() => {
-      // 1 existing-page sweep + 2 page creates + 6 child block creates.
-      expect(mockedInvoke).toHaveBeenCalledTimes(9)
+      // 2 existing-page checks + 2 page creates + 6 child block creates.
+      expect(mockedInvoke).toHaveBeenCalledTimes(10)
     })
 
     // Verify it created the two pages via the new IPC — assert via i18n
@@ -360,7 +357,7 @@ describe('WelcomeModal', () => {
     await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledTimes(9)
+      expect(mockedInvoke).toHaveBeenCalledTimes(10)
     })
 
     // Page titles ride on `create_page_in_space`.
@@ -403,8 +400,9 @@ describe('WelcomeModal', () => {
 
     // First create_page_in_space call (Getting Started page) rejects —
     // the remaining calls are short-circuited by the try/catch.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') return []
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'resolve_page_title')
+        return { title: (args as { title: string }).title, page_id: null }
       throw new Error('database is locked')
     })
 
@@ -423,6 +421,25 @@ describe('WelcomeModal', () => {
     // Modal stays open; onboarding flag NOT set so the user can retry
     // (or pick a different action) on next launch.
     expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
+    expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
+  })
+
+  it('shows an error toast and creates nothing when the sample title lookup rejects', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      throw new Error(`database is locked (${cmd})`)
+    })
+
+    render(<WelcomeModal />)
+    await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        i18n.t('welcome.samplePagesFailed'),
+        expect.objectContaining({ action: expect.anything() }),
+      )
+    })
+    expect(mockedInvoke.mock.calls.map(([cmd]) => cmd)).toEqual(['resolve_page_title'])
     expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
   })
 
@@ -632,8 +649,9 @@ describe('WelcomeModal', () => {
   it('shows an in-flight Spinner in the "Create sample pages" button while creation is pending', async () => {
     const user = userEvent.setup()
     let resolveFirstPage: (id: string) => void = () => {}
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') return []
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'resolve_page_title')
+        return { title: (args as { title: string }).title, page_id: null }
       if (cmd === 'create_page_in_space') {
         return new Promise<string>((resolve) => {
           resolveFirstPage = resolve

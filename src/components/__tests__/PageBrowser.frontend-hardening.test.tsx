@@ -218,6 +218,9 @@ describe('PageBrowser', () => {
       mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
+        if (cmd === 'resolve_page_title') {
+          return Promise.resolve({ title: (args as { title: string }).title, page_id: null })
+        }
         if (cmd === 'list_page_aliases_by_prefix') return Promise.resolve([])
         if (cmd === 'search_blocks') {
           return Promise.resolve({

@@ -523,6 +523,13 @@ const UNFIT_MOVE_COUNTS_TOKEN = {
   attrKeys: ['moved', 'occupied', 'unfit_there'],
 } as const
 
+/** `resolve_page_title`'s `ResolvedPageTitle` (#6527): no id when no page holds the title. */
+const RESOLVED_PAGE_TITLE_TOKEN = {
+  kind: 'headed',
+  head: 'resolved_page_title',
+  attrKeys: ['page_id', 'title'],
+} as const
+
 /** `resolve_page_by_alias`'s `(page_id, title)` hit (#3830). */
 const PAGE_ALIAS_HIT_TOKEN = { kind: 'tuple', names: ['page_id', 'title'] } as const
 /** `list_page_aliases_by_prefix`'s `(page_id, alias, title)` rows (#3830). */
@@ -999,6 +1006,12 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   resolve_page_by_alias: {
     rows: { kind: 'bare-row' },
     token: PAGE_ALIAS_HIT_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  resolve_page_title: {
+    rows: { kind: 'bare-row' },
+    token: RESOLVED_PAGE_TITLE_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },

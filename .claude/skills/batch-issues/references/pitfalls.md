@@ -26,6 +26,10 @@ Dependabot force-pushes its branch on rebase or supersession, sometimes under a 
 
 Never take a Dependabot `Cargo.lock` verbatim: it is a snapshot of an older `main` and reverts any bump landed since (an advisory fix). Apply its lock hunks three-way onto `main`; a local `cargo update -p X --precise V` can re-point unrelated edges, so read the lock diff either way.
 
+### Another session ships your item while it builds
+
+The claim check at launch does not cover the build: another session merged the same item meanwhile, and a builder cut from an older `origin/main` built a duplicate that only its reviewer caught. Before committing a builder's work, and again before launching its reviewer, `git fetch` and check `git log origin/main --since=<launch time> --grep '#N'` and the open PRs; drop the build if the item shipped.
+
 ### A staged change carried across branches
 
 After a failed commit, never `git switch` with changes still staged: they ride into the other branch. Finish or unstage first.
@@ -84,6 +88,7 @@ Splitting a file breaks path-keyed guards even for a verbatim move. Rebase onto 
 
 ## Shell
 
-- Never pipe a build, test run, or push through `tail` or `head`, and never read a piped exit code: `$?` is the last stage's, and a truncated log hides the failure. Redirect to a file and read the summary line.
+- Never pipe a build, test run, or push through `tail`, `head` or `grep`, and never read a piped exit code: `$?` is the last stage's, and a truncated log hides the failure. Redirect to a file and read the summary line.
+- A foreground command that outruns its tool timeout (a `flock` wait, a commit whose hooks build Rust) moves to the background, and its return reads as done: a commit made right before launching a reviewer was still in its pre-commit hooks. After any commit, read `git log --oneline -1` and `git status -s` before the next step, and give a commit with Rust hooks a long timeout.
 - `pgrep -f` / `pkill -f` match their own shell's command line. Find a process by port or PID.
 - Run a changed `.mjs` guard and its self-test on Node 22 as well as 24: 22 is the `engines` floor, and `node:sqlite` warns there only.

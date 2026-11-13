@@ -154,6 +154,8 @@ export function createReducers({
   | 'applyPageSource'
   | 'appendBlock'
 > {
+  /** How many `edit`s of each block have not answered yet. */
+  const editsInFlight = new Map<string, number>()
   return {
     createBelow: async (afterBlockId: string, content = '', newId = newBlockId()) => {
       const { blocks, rootParentId } = get()
@@ -248,20 +250,27 @@ export function createReducers({
       }
     },
 
-    edit: async (blockId: string, content: string, { merge = true, undoGroup } = {}) => {
+    edit: async (blockId: string, content: string, { merge = true, undoGroup, baseText } = {}) => {
       const { rootParentId, blocksById } = get()
       const previousContent = blocksById.get(blockId)?.content
       // Copy only the edited slot and key: rows memo on block object identity,
       // and a whole-array walk or Map rebuild per keystroke fans out to every
       // mounted row (#2200).
       set((state) => withContent(state, blockId, content))
+      // An edit of the block still on its way has not moved the editor's
+      // baseline yet: rebased from the older text, this one would write that
+      // edit's change a second time. It goes as sent instead.
+      const base = editsInFlight.has(blockId) ? null : (baseText ?? null)
+      editsInFlight.set(blockId, (editsInFlight.get(blockId) ?? 0) + 1)
       try {
         const pendingCreate = createsInFlight.get(blockId)
         if (pendingCreate) await pendingCreate
         // Retry pool_busy before rolling back text the user can see (#730).
-        const resp = await retryOnPoolBusy(() => commands.editBlock(blockId, content).then(unwrap))
-        // Adopt the backend's normalized echo, unless a newer edit already
-        // replaced the text this call wrote (#753).
+        const resp = await retryOnPoolBusy(() =>
+          commands.editBlock(blockId, content, base).then(unwrap),
+        )
+        // Adopt the text the backend wrote (a stale editor's edit is rebased),
+        // unless a newer edit already replaced the text this call wrote (#753).
         if (typeof resp?.content === 'string' && resp.content !== content) {
           set((state) => {
             const cur = state.blocksById.get(blockId)
@@ -314,6 +323,10 @@ export function createReducers({
         logger.error('page-blocks', 'Failed to edit block', { blockId }, err)
         notify.error(i18n.t('error.saveFailed'))
         return false
+      } finally {
+        const others = (editsInFlight.get(blockId) ?? 1) - 1
+        if (others > 0) editsInFlight.set(blockId, others)
+        else editsInFlight.delete(blockId)
       }
     },
 
