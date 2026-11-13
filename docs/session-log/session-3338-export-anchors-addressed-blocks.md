@@ -1,9 +1,0 @@
-# Session 3338 — the export anchors every addressed block
-
-#6277 A3 (decision 6). A page's Markdown export put ` ^ULID` only on a block that a ref on the *same* page pointed at. A cross-page `[[Title#^ULID]]` and `{{embed [[Title#^ULID]]}}` therefore had no anchor to land on. A folder import of an export, for example a ZIP restore onto a device without sync, turned every cross-page block ref into a page link and widened every block embed to its whole page.
-
-The export now anchors each block of the page that something addresses: a `block_ref` row of `block_links` from any live source (embeds are `block_ref` rows too), a live `value_ref` property, or a live attachment. One `json_each` query over the page's descendants (`load_addressed_blocks`) fills `PageExportData.addressed_blocks`, which replaces `same_page_ref_targets`. The #5363 mirror can reuse the set. The same-page targets parsed from the page's own content stay in the set, because the materializer fills `block_links` in the background and an export taken right after typing a ref would otherwise miss its anchor. The importer needed no change: it already resolves a cross-file anchor when the target file carries it.
-
-Red: `an_exported_cross_page_ref_and_embed_restore_by_folder_import`. Before the fix the import read `see [[<page>]]` and `{{embed [[<page>]]}}`. `export_anchors_a_block_a_ref_property_names` pins the `value_ref` arm and that an unaddressed block gets no anchor. The attachment arm is pinned by the regenerated `markdown_documents.export.txt`. Each arm was falsified by breaking its `EXISTS` clause.
-
-Ran: the export/import/anchor/markdown filters of the `commands` test binary and the lib, `conformance_fixtures_match_backend`, clippy over the workspace, `SQLX_OFFLINE=true cargo check --workspace --all-targets`.

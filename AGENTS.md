@@ -143,6 +143,7 @@ Before writing frontend code, check those four places for an existing primitive,
 - 44 px touch targets via `[@media(pointer:coarse)]` (`touch-hit-area` for a chip that must keep its row height), and touch-only layout keyed on `useIsTouch() && useIsMobile()`, never width alone; focus rings via `focus-ring-visible` (opaque 3 px; a half-alpha `ring-ring/50` fails 3:1); `aria-label` on every icon-only button, through `t()` i18n keys.
 - `EmptyState` for empty lists, `LoadingSkeleton` for initial loads, `Spinner` for action feedback.
 - Anything that creates DOM outside React (portals, `ReactRenderer`, `computePosition`) logs failures via `logger.warn`, guards stale callbacks, and carries `data-editor-portal` on its outermost element if it must not blur the editor (`src/hooks/useEditorBlur.ts`). Reference: `src/editor/suggestion-renderer.ts`.
+- A list that hears Enter / Space at the document returns early on `pressesFocusedControl` (`src/hooks/useListKeyboardNavigation.ts`), or the key on a button in the view opens the cursor's row instead of pressing the button.
 - Searchable pickers and filter inputs debounce IPC with `useDebouncedCallback` at 300 ms; `cancel()` before the non-search path.
 - Import `INTERNAL_PROPERTY_KEYS` (`src/lib/block-utils.ts`) and `NON_DELETABLE_PROPERTIES` (`src/lib/property-save-utils.ts`, mirrors `is_builtin_property_key` in Rust); never redeclare them inline.
 - React 19: `ref` is a normal prop (`ref?: React.Ref<T>`); no `React.forwardRef`, no `React.ComponentRef`, no ambient `JSX.*`.
@@ -217,7 +218,7 @@ Maintainer only, through `scripts/release.sh <version>`; the tag push publishes.
 
 ### Acceptance is falsification
 
-A test that cannot fail covers nothing. Before calling a test done, break the code it covers, see it go red, restore. Falsify in one shell command that backs up (`cp f /tmp/f.bak`), restores on exit (`trap 'cp /tmp/f.bak f' EXIT`), mutates, confirms the mutation applied (`! cmp -s`), and runs: a mutation left between tool calls by an interrupted run has shipped (#4287). The red must be the assertion you predicted; a build break or startup failure is not a kill. Run `git diff` before your final message. Where mutation testing reaches the code, a killed mutant is the strongest form:
+A test that cannot fail covers nothing. Before calling a test done, break the code it covers, see it go red, restore. Falsify in one shell command that backs up (`cp /abs/f /tmp/f.bak`), restores on exit (`trap 'cp /tmp/f.bak /abs/f' EXIT`; a relative path misses after a `cd`), mutates once (a second mutation in the same command backs up the first's mutated file), confirms the mutation applied (`! cmp -s`), and runs: a mutation left between tool calls by an interrupted run has shipped (#4287). The red must be the assertion you predicted; a build break or startup failure is not a kill. Run `git diff` before your final message. Where mutation testing reaches the code, a killed mutant is the strongest form:
 
 ```bash
 node scripts/run-mutation.mjs <module>       # frontend

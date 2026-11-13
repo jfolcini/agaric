@@ -5,6 +5,7 @@
  */
 
 import { fireEvent, renderHook } from '@testing-library/react'
+import type { RefObject } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
@@ -12,6 +13,7 @@ import { useTrashListShortcuts } from '@/hooks/useTrashListShortcuts'
 import type { BlockRow } from '@/lib/bindings'
 
 interface Opts {
+  listRef: RefObject<HTMLElement | null>
   filteredBlocks: BlockRow[]
   focusedIndex: number
   selectedSize: number
@@ -27,6 +29,7 @@ const blocks: BlockRow[] = [makeBlock({ id: 'A' }), makeBlock({ id: 'B' }), make
 
 function makeOpts(overrides: Partial<Opts> = {}): Opts {
   return {
+    listRef: { current: null },
     filteredBlocks: blocks,
     focusedIndex: 0,
     selectedSize: 0,
@@ -81,7 +84,7 @@ describe('useTrashListShortcuts', () => {
     const opts = makeOpts({ focusedIndex: 1 })
     renderHook(() => useTrashListShortcuts(opts))
 
-    fireEvent.keyDown(document, { key: ' ' })
+    fireEvent.keyDown(document.body, { key: ' ' })
 
     expect(opts.toggleSelection).toHaveBeenCalledTimes(1)
     expect(opts.toggleSelection).toHaveBeenCalledWith('B')

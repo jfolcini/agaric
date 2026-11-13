@@ -18,6 +18,7 @@
  * remaining props.
  */
 
+import type { TFunction } from 'i18next'
 import { AlertCircle, CheckSquare, ChevronsLeft, Plus, RefreshCw, WifiOff } from 'lucide-react'
 import { type ElementType, memo, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -43,11 +44,12 @@ import {
 import { useMinuteClock } from '@/hooks/useMinuteClock'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { type NavItem, SETTINGS_NAV_ITEM, SIDEBAR_NAV_ITEMS } from '@/lib/nav-items'
+import { waitingForPeerLabel } from '@/lib/sync-waiting-label'
 import { cn } from '@/lib/utils'
 import { useJournalStore } from '@/stores/journal'
 import type { View } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
-import { type SyncState, useSyncStore } from '@/stores/sync'
+import { type PeerInfo, type SyncState, useSyncStore } from '@/stores/sync'
 
 /**
  * Compute the CSS class for the sync status dot colour.
@@ -73,6 +75,24 @@ function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
       return 'bg-muted-foreground'
     }
   }
+}
+
+/**
+ * The sync button's "last synced" line. #6523 — while waiting for an away
+ * device, it names that device and its own last sync instead: this session's
+ * "last synced" would read "never" beside it.
+ */
+function lastSyncedLine(
+  t: TFunction,
+  now: number,
+  lastSyncedAt: string | null,
+  peers: readonly PeerInfo[],
+  waitingFor: string | null,
+): string {
+  if (waitingFor !== null) return waitingForPeerLabel(peers, waitingFor, t, now)
+  return lastSyncedAt
+    ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t, now) })
+    : t('sidebar.lastSyncedNever')
 }
 
 const LAST_SYNCED_ID = 'sidebar-last-synced'
@@ -124,6 +144,7 @@ function AppSidebarInner({
   const syncPeers = useSyncStore((s) => s.peers)
   const lastSyncedAt = useSyncStore((s) => s.lastSyncedAt)
   const syncError = useSyncStore((s) => s.error)
+  const waitingFor = useSyncStore((s) => s.waitingFor)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const { isMobile, setOpenMobile } = useSidebar()
@@ -131,15 +152,13 @@ function AppSidebarInner({
   const setJournalMode = useJournalStore((s) => s.setMode)
   const onTasks = currentView === 'journal' && journalMode === 'agenda'
   const now = useMinuteClock()
-  const lastSyncedLabel = lastSyncedAt
-    ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t, now) })
-    : t('sidebar.lastSyncedNever')
   const syncUnavailable = syncing || !isOnline
   // Offline wins, then no peers, as they do for the dot; a running sync
   // replaces the old error.
   const hasPeers = syncPeers.length > 0
   const syncSettled = isOnline && !syncing
   const syncFailed = syncSettled && hasPeers && syncState === 'error'
+  const lastSyncedLabel = lastSyncedLine(t, now, lastSyncedAt, syncPeers, waitingFor)
   const syncStatusLabel = syncFailed
     ? t('sync.failed', { message: syncError ?? '' })
     : syncSettled && !hasPeers

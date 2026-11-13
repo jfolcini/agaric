@@ -4,12 +4,13 @@
 
 ## Optimistic and async writers
 
-Check every new or changed writer against all four; tests rarely catch these races.
+Check every new or changed writer against all five; tests rarely catch these races.
 
 1. **Serialize per block.** Writers that read slot or content state before an `await` chain through `enqueueMove` (`page-blocks.ts`), or a two-press sequence computes both requests from one snapshot.
 2. **Snapshot inside the queued run**, not before `enqueueMove`, or the queue serializes calls that still read stale state.
 3. **Rollback is reference-guarded.** On failure, restore only if live state still equals what this call wrote; otherwise `load()`. `edit` and `rollbackProvisionalMove` (`page-blocks-move.ts`) are the reference.
 4. **Never coalesce into an undo entry whose undo is in flight** (`undoInProgressEntry` in `undo.ts`); it jams Ctrl+Z.
+5. **An undo entry carries the op refs of every write it covers**, clears included (the command returns `WithOps` through `capture_op_refs`): one ref-less write drops the entry to positional undo, which can take back an unrelated edit in the same window.
 
 A callee that catches and logs its own error defeats the caller's abort or rollback: let it throw, or return a result the caller checks.
 

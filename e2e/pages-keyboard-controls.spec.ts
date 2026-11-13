@@ -43,6 +43,17 @@ test.describe('Enter and Space press the focused control in the Pages view @page
     await expect(pageTitle(page)).toHaveText('Meeting Notes Template')
   })
 
+  test('Enter on a row a click focused beside its title opens no page', async ({ page }) => {
+    // The click lands in the row's padding: it focuses the row, and the cursor
+    // stays on Getting Started.
+    const row = pageRow(page, 'Quick Notes')
+    await row.click({ position: { x: 1, y: 1 } })
+    await expect(row).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expectStillOnPages(page)
+    await expect(row).toBeFocused()
+  })
+
   test('Space on a bookmark star toggles that page and keeps focus on the star', async ({
     page,
   }) => {
