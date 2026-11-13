@@ -13,7 +13,7 @@
  * List (#1263).
  */
 
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { defaultRangeExtractor, type Range, useVirtualizer } from '@tanstack/react-virtual'
 import { FileText, Plus, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -364,12 +364,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   const virtualItemCount = groupedRows.length
 
-  const {
-    focusedIndex,
-    setFocusedIndex,
-    handleKeyDown: navHandleKeyDown,
-  } = useListKeyboardNavigation({
+  const { focusedIndex, handleKeyDown: navHandleKeyDown } = useListKeyboardNavigation({
     itemCount: filteredPages.length,
+    // A new space, filter or sort resets the cursor; loading more only clamps it.
+    resetKey: `${currentSpaceId ?? ''}|${filterText}|${sortOption}|${wireFiltersKey}`,
     homeEnd: true,
     pageUpDown: true,
     listRef,
@@ -378,11 +376,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       if (page) onPageSelect?.(page.id, page.content ?? undefined)
     },
   })
-
-  // Reset focusedIndex when filter / sort changes.
-  useEffect(() => {
-    setFocusedIndex(0)
-  }, [filterText, sortOption, wireFiltersKey, setFocusedIndex])
 
   // P1-F1 — append the settled result count to the pending filter
   // announcement once the refetch finishes (#1263).
@@ -418,6 +411,23 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     [groupedRows],
   )
 
+  // The row holding DOM focus stays mounted wherever a re-sort moves it: a
+  // bookmark toggle moves its page into or out of Bookmarks, often out of the
+  // window, and unmounting the row dropped focus to <body>. Held by key, since
+  // the move changes its index.
+  const focusedRowKeyRef = useRef<string | number | null>(null)
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const indexes = defaultRangeExtractor(range)
+      const key = focusedRowKeyRef.current
+      if (key == null) return indexes
+      const held = groupedRows.findIndex((row) => pageBrowserRowKey(row) === key)
+      if (held < 0 || indexes.includes(held)) return indexes
+      return [...indexes, held].toSorted((a, b) => a - b)
+    },
+    [groupedRows],
+  )
+
   // oxlint-disable-next-line react/incompatible-library -- The Compiler skips memoizing a component that calls this API, so nothing virtualizer-derived is cached inside this component; the residual hazard the diagnostic names is such a value reaching a MEMOIZED consumer. The only virtualizer values leaving this render body are the live `VirtualItem` (`virtualRow`) and `measureElement`, both handed to `PageBrowserRowRenderer` — a plain function component, NOT `React.memo`, so there is no shallow-compare that could hold a stale window. react-virtual 3.14.10 builds the Virtualizer once (`useState(() => new Virtualizer(...))`) and virtual-core 3.17.8 assigns `measureElement` in the constructor, so the function identities the rule names never change; what does change per render is `getVirtualItems()`/`getTotalSize()`. (#4409)
   const virtualizer = useVirtualizer({
     count: virtualItemCount,
@@ -427,6 +437,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     // render inside the same DOM wrapper).
     estimateSize,
     getItemKey,
+    rangeExtractor,
     overscan: 5,
   })
 
@@ -466,6 +477,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // Document-level keyboard handling (list nav + batch selection, #1263).
   usePageBrowserKeyboard({
     navHandleKeyDown,
+    listRef,
     selectAllPages,
     clearMultiSelection,
     multiSelectedSize: multiSelected.size,
@@ -664,6 +676,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           // no-match state (see `viewportGridAttrs`).
           ...viewportGridAttrs({ showNoMatch, hasStarred, activeDescendantId, t }),
           tabIndex: 0,
+          onFocus: (e) => {
+            const row = (e.target as HTMLElement).closest('[data-index]')
+            focusedRowKeyRef.current =
+              row == null ? null : getItemKey(Number(row.getAttribute('data-index')))
+          },
           // Section presence flags exposed for tests / styling hooks.
           // The unified model means either or both can be
           // present independently; consumers that want section-aware

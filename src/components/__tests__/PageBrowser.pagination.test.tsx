@@ -347,6 +347,44 @@ describe('PageBrowser', () => {
       expect(scrollToOffsetMock).not.toHaveBeenCalled()
     })
   })
+  describe('list cursor across a load-more and a new sort', () => {
+    // More rows are the same list, so the cursor keeps its row (reset to row 0,
+    // it dragged the list back to the top). A new sort is a new list.
+    it('keeps the cursor row as more pages load, and a new sort returns it to the first', async () => {
+      const user = userEvent.setup()
+      let releasePage2 = () => {}
+      const page2Released = new Promise<void>((resolve) => {
+        releasePage2 = resolve
+      })
+      stubPageRowInvoke(mockedInvoke, {
+        list_pages_with_metadata: (args) =>
+          args['cursor'] == null
+            ? pageList(
+                ['One', 'Two', 'Three'].map((content, i) => makePage({ id: `P${i + 1}`, content })),
+                { next_cursor: 'cursor_abc', has_more: true },
+              )
+            : page2Released.then(() =>
+                pageList([
+                  makePage({ id: 'P4', content: 'Four' }),
+                  makePage({ id: 'P5', content: 'Five' }),
+                ]),
+              ),
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Three')
+      const grid = screen.getByRole('grid')
+      await user.keyboard('{ArrowDown}{ArrowDown}')
+      expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P3')
+
+      await act(async () => releasePage2())
+      expect(await screen.findByText('Five')).toBeInTheDocument()
+      expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P3')
+
+      await user.selectOptions(screen.getByRole('combobox', { name: /sort order/i }), 'created')
+      await waitFor(() => expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P1'))
+    })
+  })
   describe('  estimateSize referential stability', () => {
     it('estimateSize identity is preserved across re-renders that do not change groupedRows', async () => {
       const user = userEvent.setup()
