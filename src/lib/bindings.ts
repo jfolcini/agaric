@@ -50,6 +50,11 @@ export const commands = {
 	 */
 	editBlock: (blockId: BlockId, toText: string, baseText: string | null) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText, baseText })),
 	/**
+	 *  Tauri command: edit many blocks in one transaction. Delegates to
+	 *  [`edit_blocks_batch_inner`]; the response carries the appended op refs.
+	 */
+	editBlocksBatch: (edits: BlockEdit[]) => typedError<WithOps<EditBlocksBatchResponse>, AppError>(__TAURI_INVOKE("edit_blocks_batch", { edits })),
+	/**
 	 *  Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
 	 *  #4523: it also carries `affected_page_ids`, the page ids inside the cascade
@@ -183,7 +188,7 @@ export const commands = {
 	/**  Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`]. */
 	getBacklinks: (blockId: BlockId, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, scope })),
 	/**  Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`]. */
-	getBlockHistory: (blockId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry_Serialize>, AppError>(__TAURI_INVOKE("get_block_history", { blockId, opTypeFilter, cursor, limit })),
+	getBlockHistory: (blockId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppError>(__TAURI_INVOKE("get_block_history", { blockId, opTypeFilter, cursor, limit })),
 	/**  Tauri command: get materializer queue status. Delegates to [`get_status_inner`]. */
 	getStatus: () => typedError<StatusInfo, AppError>(__TAURI_INVOKE("get_status")),
 	/**
@@ -391,7 +396,7 @@ export const commands = {
 	/**  Tauri command: batch-fetch properties. Delegates to [`get_batch_properties_inner`]. */
 	getBatchProperties: (blockIds: BlockId[]) => typedError<{ [key in string]: PropertyRow[] }, AppError>(__TAURI_INVOKE("get_batch_properties", { blockIds })),
 	/**  Tauri command: list page history. Delegates to [`list_page_history_inner`]. */
-	listPageHistory: (pageId: string, opTypeFilter: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry_Serialize>, AppError>(__TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, scope, cursor, limit })),
+	listPageHistory: (pageId: string, opTypeFilter: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppError>(__TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, scope, cursor, limit })),
 	/**  Tauri command: batch revert ops. Delegates to [`revert_ops_inner`]. */
 	revertOps: (ops: OpRef[]) => typedError<UndoResult[], AppError>(__TAURI_INVOKE("revert_ops", { ops })),
 	/**  Tauri command: undo page op. Delegates to [`undo_page_op_inner`]. */
@@ -1879,6 +1884,16 @@ export type BindExposureStatus = {
 };
 
 /**
+ *  One edit of [`edit_blocks_batch`]: `to_text` replaces the block's content
+ *  only while that content is still `expected`.
+ */
+export type BlockEdit = {
+	blockId: BlockId,
+	expected: string,
+	toText: string,
+};
+
+/**
  *  Newtype wrapper around ULID for type safety and consistent serialisation.
  *  Stores the canonical uppercase Crockford base32 representation.
  * 
@@ -2347,6 +2362,15 @@ export type Draft = {
 	draft_anchor_device: string | null,
 };
 
+/**  Reply of [`edit_blocks_batch`]. */
+export type EditBlocksBatchResponse = {
+	/**
+	 *  The blocks left alone, in request order: in the Trash, gone, or no
+	 *  longer holding the `expected` content.
+	 */
+	skipped: BlockId[],
+};
+
 /**
  *  A boolean tree over [`FilterPrimitive`] leaves.
  * 
@@ -2634,10 +2658,7 @@ export type GroupedBacklinkResponse = {
 };
 
 /**  Row returned by block history queries (op_log entries for a block). */
-export type HistoryEntry = HistoryEntry_Serialize | HistoryEntry_Deserialize;
-
-/**  Row returned by block history queries (op_log entries for a block). */
-export type HistoryEntry_Deserialize = {
+export type HistoryEntry = {
 	device_id: string,
 	seq: number,
 	op_type: string,
@@ -2654,32 +2675,9 @@ export type HistoryEntry_Deserialize = {
 	is_replicated: boolean,
 	/**
 	 *  The name of the MCP agent that wrote the op (`op_log.origin =
-	 *  'agent:<name>'`), absent for every other origin.
+	 *  'agent:<name>'`), `None` for every other origin.
 	 */
 	agent: string | null,
-};
-
-/**  Row returned by block history queries (op_log entries for a block). */
-export type HistoryEntry_Serialize = {
-	device_id: string,
-	seq: number,
-	op_type: string,
-	payload: string,
-	/**  Epoch-ms (op_log.created_at is INTEGER since migration 0079). */
-	created_at: number,
-	/**
-	 *  #2481 phase 2: `true` for a **foreign** op replicated from a peer as
-	 *  append-only audit metadata (`op_log.is_replicated = 1`) — surfaced in
-	 *  the History view for cross-device attribution and to gate revert
-	 *  (replicated rows are not locally revertible; see
-	 *  `reverse::reject_replicated_targets`). Local-authored ops are `false`.
-	 */
-	is_replicated: boolean,
-	/**
-	 *  The name of the MCP agent that wrote the op (`op_log.origin =
-	 *  'agent:<name>'`), absent for every other origin.
-	 */
-	agent?: string | null,
 };
 
 /**

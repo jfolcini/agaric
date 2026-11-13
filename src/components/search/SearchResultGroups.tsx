@@ -34,9 +34,12 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CollapsibleGroupList } from '@/components/common/CollapsibleGroupList'
+import { ReplacePreviewRow } from '@/components/search/ReplacePreviewRow'
 import { ResultCountSummary } from '@/components/search/ResultCountSummary'
 import { SearchResultBlockRow } from '@/components/search/SearchResultBlockRow'
 import { VirtualizedResultListbox } from '@/components/search/VirtualizedResultListbox'
+import type { ReplacePreview } from '@/components/SearchPanel/useSearchReplace'
+import { Checkbox } from '@/components/ui/checkbox'
 import { listCardVariants, listHeaderVariants } from '@/components/ui/list-item'
 import type { SearchBlockRow } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
@@ -68,6 +71,8 @@ export interface SearchResultGroupsProps {
   onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => boolean
   /** Click handler for a group's page-title link (navigates to the page). */
   onPageTitleClick?: (pageId: string, title: string) => void
+  /** The replace preview (#6608): rows show their change and are ticked, not opened. */
+  replacePreview?: ReplacePreview | undefined
 }
 
 export function SearchResultGroups({
@@ -80,6 +85,7 @@ export function SearchResultGroups({
   loadingResultId,
   onKeyDown,
   onPageTitleClick,
+  replacePreview,
 }: SearchResultGroupsProps): React.ReactElement | null {
   const { t } = useTranslation()
   if (groups.length === 0) return null
@@ -179,8 +185,31 @@ export function SearchResultGroups({
         // rows mounts only its visible window. The roving a11y model is
         // preserved unchanged: per-group `role="listbox"`, per-group
         // `aria-activedescendant`, and the focused row scrolled into view.
+        {...(replacePreview
+          ? {
+              renderHeaderExtra: (group: SearchResultGroup, title: string) => {
+                const ticked = group.blocks.filter((b) => replacePreview.isTicked(b.id)).length
+                return (
+                  <Checkbox
+                    checked={
+                      ticked === group.blocks.length ? true : ticked === 0 ? false : 'indeterminate'
+                    }
+                    onCheckedChange={(checked) =>
+                      replacePreview.onSetTicked(
+                        group.blocks.map((b) => b.id),
+                        checked === true,
+                      )
+                    }
+                    aria-label={t('search.replace.tickPage', { pageTitle: title })}
+                    data-testid={`search-replace-page-${group.page_id}`}
+                  />
+                )
+              },
+            }
+          : {})}
         renderGroupList={(group, title) => (
           <VirtualizedResultListbox
+            multiselectable={replacePreview !== undefined}
             blocks={group.blocks}
             activeRowId={activeDescendantFor(group)}
             activeRowIndex={activeRowIndexFor(group)}
@@ -190,20 +219,36 @@ export function SearchResultGroups({
             onKeyDown={(e) => {
               if (onKeyDown(e)) e.preventDefault()
             }}
-            renderRow={(block, style, measureRef, index) => (
-              <SearchResultBlockRow
-                key={block.id}
-                row={block}
-                id={`search-result-${block.id}`}
-                isFocused={!!focusedRow && focusedRow.id === block.id}
-                onClick={() => onResultClick(block)}
-                page={{ id: group.page_id, title }}
-                loading={loadingResultId === block.id}
-                style={style}
-                measureRef={measureRef}
-                dataIndex={index}
-              />
-            )}
+            renderRow={(block, style, measureRef, index) =>
+              replacePreview ? (
+                <ReplacePreviewRow
+                  key={block.id}
+                  blockId={block.id}
+                  id={`search-result-${block.id}`}
+                  matches={replacePreview.matchesOf(block)}
+                  replacement={replacePreview.replacement}
+                  ticked={replacePreview.isTicked(block.id)}
+                  isFocused={!!focusedRow && focusedRow.id === block.id}
+                  onToggle={() => replacePreview.onToggleRow(block.id)}
+                  style={style}
+                  measureRef={measureRef}
+                  dataIndex={index}
+                />
+              ) : (
+                <SearchResultBlockRow
+                  key={block.id}
+                  row={block}
+                  id={`search-result-${block.id}`}
+                  isFocused={!!focusedRow && focusedRow.id === block.id}
+                  onClick={() => onResultClick(block)}
+                  page={{ id: group.page_id, title }}
+                  loading={loadingResultId === block.id}
+                  style={style}
+                  measureRef={measureRef}
+                  dataIndex={index}
+                />
+              )
+            }
           />
         )}
       />

@@ -55,6 +55,7 @@ function makeEntry(
     payload: JSON.stringify(payload),
     created_at: createdAt,
     is_replicated: isReplicated,
+    agent: null,
   }
 }
 

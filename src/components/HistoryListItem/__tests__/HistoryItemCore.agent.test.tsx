@@ -22,7 +22,7 @@ vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useTagClickHandler: vi.fn(() => vi.fn()),
 }))
 
-function editEntry(agent?: string): HistoryEntry {
+function editEntry(agent: string | null = null): HistoryEntry {
   return {
     device_id: 'DEVICE01XXXXXXXX',
     seq: 1,
@@ -30,7 +30,7 @@ function editEntry(agent?: string): HistoryEntry {
     payload: JSON.stringify({ to_text: 'hi' }),
     created_at: 1736942400000,
     is_replicated: false,
-    ...(agent === undefined ? {} : { agent }),
+    agent,
   }
 }
 

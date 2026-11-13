@@ -163,6 +163,14 @@
       "cursor": null,
       "error": null,
       "has_more": false,
+      "name": "search_fts_quoted_phrases",
+      "rows": ["B6", "B2", "B3"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
       "name": "search_blank_query_parent_filter",
       "rows": ["B4", "B3", "B2"],
       "total_count": null
@@ -307,6 +315,21 @@
       "command": "search_blocks",
       "comment": "Arm 4 — every toggle off, so `search_with_toggles` short-circuits to the FTS5 MATCH path. The trigram tokenizer matches `widget` as a SUBSTRING and case-insensitively, so all four edited blocks hit. This is the contrast row-set the two post-filter steps below narrow: same term, three different answers.",
       "name": "search_fts_widget"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "\"widget \" \" notes\""
+      },
+      "command": "search_blocks",
+      "comment": "#6608 — a query of quoted phrases, as replace across pages sends its find text: each phrase is a substring test and the phrases are AND-joined, wherever each sits. S2, S3 and S6 hold both `widget ` and ` notes`; S4 holds `widget ` and ` note about`, so it is out. A mock that looks for the whole query, quotes included, answers [].",
+      "name": "search_fts_quoted_phrases"
     },
     {
       "args": {

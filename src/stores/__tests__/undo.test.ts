@@ -1856,6 +1856,7 @@ describe('useUndoStore', () => {
         payload: JSON.stringify({ block_id: blockId }),
         created_at: 1000 + opRef.seq,
         is_replicated: isReplicated,
+        agent: null,
       }
     }
 

@@ -9,12 +9,16 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
 use agaric_lib::commands::{
-    batch_resolve_inner, create_block_inner, edit_block_inner, get_batch_properties_inner,
-    get_block_history_inner, get_block_inner, list_blocks_inner, set_property_inner,
+    BlockEdit, batch_resolve_inner, create_block_inner, edit_block_inner, edit_blocks_batch_inner,
+    get_batch_properties_inner, get_block_history_inner, get_block_inner, list_blocks_inner,
+    set_property_inner,
 };
 // #4499: `test-util` is on for bench targets (they resolve dev-dependencies),
 // so the shared fixture is reachable and the inline copies are gone.
-use agaric_lib::commands::tests::common::{TEST_SPACE_ID, assign_all_to_test_space};
+use agaric_lib::commands::tests::common::{
+    DEV, TEST_SPACE_ID, append_child, assign_all_to_test_space, space_page,
+};
+use agaric_store::pagination::MAX_BATCH_BLOCK_IDS;
 
 /// Base `op_log.created_at` value, epoch milliseconds (2025-01-15T12:00:00Z).
 /// `created_at` is INTEGER-NOT-NULL since migration 0079 (#109 Phase 2); the
@@ -797,6 +801,54 @@ fn bench_edit_block_at_scale(c: &mut Criterion) {
     group.finish();
 }
 
+/// One `edit_blocks_batch` of `MAX_BATCH_BLOCK_IDS` blocks (#6608): how long the
+/// largest replace across pages holds the writer. The blocks are made through
+/// the commands, so each edit takes the engine path a real one takes.
+fn bench_edit_blocks_batch_at_cap(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "edit_batch_cap"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    let text =
+        |block: usize, round: usize| format!("Block {block} holds needle {round} in a line.");
+    let ids = rt.block_on(async {
+        let page = space_page(&pool, &materializer).await;
+        let mut ids = Vec::with_capacity(MAX_BATCH_BLOCK_IDS);
+        for block in 0..MAX_BATCH_BLOCK_IDS {
+            ids.push(append_child(&pool, &materializer, &page, &text(block, 0)).await);
+        }
+        ids
+    });
+
+    let mut group = c.benchmark_group("edit_blocks_batch");
+    group.sample_size(10);
+    let round = std::cell::Cell::new(0);
+    group.bench_function("at_cap", |b| {
+        b.to_async(&rt).iter(|| {
+            let from = round.replace(round.get() + 1);
+            let edits = ids
+                .iter()
+                .enumerate()
+                .map(|(block, id)| BlockEdit {
+                    block_id: id.clone(),
+                    expected: text(block, from),
+                    to_text: text(block, from + 1),
+                })
+                .collect();
+            let (pool, materializer) = (&pool, &materializer);
+            async move {
+                let reply = edit_blocks_batch_inner(pool, DEV, materializer, edits)
+                    .await
+                    .unwrap();
+                // A skipped block is a write not timed.
+                assert!(reply.skipped.is_empty());
+            }
+        });
+    });
+    group.finish();
+    rt.block_on(async { materializer.shutdown() });
+}
+
 /// Benchmark list_blocks (first page of 50) with 100 / 1K / 10K / 100K total blocks.
 fn bench_list_blocks_at_scale(c: &mut Criterion) {
     let mut group = c.benchmark_group("list_blocks_at_scale");
@@ -958,6 +1010,7 @@ criterion_group!(
     scale_benches,
     bench_create_block_at_scale,
     bench_edit_block_at_scale,
+    bench_edit_blocks_batch_at_cap,
     bench_list_blocks_at_scale,
 );
 
