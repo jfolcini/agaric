@@ -1,4 +1,4 @@
-# Session 4061 — Query board, read-only slice (#6542)
+# Session 4063 — Query board, read-only slice (#6542)
 
 The maintainer opened plan #6542 on 2026-11-13: a design note first, then a first read-only slice if the note left nothing open. The note is a comment on the issue; this is the slice.
 
