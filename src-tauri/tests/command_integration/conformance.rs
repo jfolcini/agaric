@@ -34,10 +34,10 @@
 //! test-only `Materializer::dispatch_op` helper (`ApplyOp` in normal mode plus
 //! background fan-out). Validation that exists only in the command layer, and
 //! the value a command returns, never reach that boundary — so an op may opt
-//! in to the OTHER leg with `"via": "command"` (#4670): that op alone runs its
-//! `*_inner`, and its return value or refusal, with the events its wrapper
-//! emits, is recorded in `expected_ops` (`conformance_command.rs`). Every other
-//! op keeps the payload replay.
+//! in to the OTHER leg with `"via": "command"` (#4670): that op alone crosses
+//! the app's IPC surface, and its response or refusal, with the events its
+//! wrapper emits, is recorded in `expected_ops` (`conformance_command.rs`).
+//! Every other op keeps the payload replay.
 //!
 //! The runner therefore SEEDS each fixture's seed blocks into the test
 //! materializer's per-space Loro tree (mirroring the raw-SQL seed insert) so
@@ -93,6 +93,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use super::conformance_command::{Declarations, relabel_records, run_command_op};
+use super::conformance_ipc::IpcTransport;
 use super::conformance_snapshot::{Snapshot, build_snapshot_with_order};
 
 // ---------------------------------------------------------------------------
@@ -1661,6 +1662,8 @@ pub async fn replay_fixture(
     let mut op_refs: Vec<(String, i64)> = read_op_refs_in_op_order(&pool).await;
     let mut op_records: Vec<Value> = Vec::new();
     let mut command_op_names: BTreeSet<String> = BTreeSet::new();
+    // Built for the first `via: "command"` op; most fixtures have none.
+    let mut ipc: Option<IpcTransport> = None;
     if let Some(ops) = fixture["ops"].as_array() {
         for op in ops.clone() {
             let command = op["command"].as_str().expect("op command");
@@ -1707,17 +1710,10 @@ pub async fn replay_fixture(
             // op that ran; the engine-parity guard after them stays
             // unconditional, which is what proves the refusal was atomic.
             let applied = if via_command {
-                let record = run_command_op(
-                    &pool,
-                    &mat,
-                    app_data_dir.path(),
-                    &name,
-                    &op,
-                    &created_ids,
-                    &op_refs,
-                    declarations,
-                )
-                .await;
+                let ipc =
+                    ipc.get_or_insert_with(|| IpcTransport::new(&pool, &mat, app_data_dir.path()));
+                let record =
+                    run_command_op(ipc, &name, &op, &created_ids, &op_refs, declarations).await;
                 settle(&mat).await;
                 let op_name = record["name"].as_str().expect("record name").to_owned();
                 assert!(

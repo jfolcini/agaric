@@ -91,8 +91,8 @@ pub(crate) fn prepare_notification(
 /// [`AppError::Validation`].
 #[tauri::command]
 #[specta::specta]
-pub async fn notify_task(
-    app: tauri::AppHandle,
+pub async fn notify_task<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     notification: TaskNotification,
 ) -> Result<(), AppError> {
     notify_task_inner(&app, &notification)

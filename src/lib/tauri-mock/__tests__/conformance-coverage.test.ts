@@ -93,10 +93,11 @@ function extractRustCommandSignatures(): Map<string, string> {
       } else if (entry.name.endsWith('.rs')) {
         const source = readFileSync(full, 'utf8')
         // `#[tauri::command…]`, any further attributes (`#[instrument…]`), then
-        // the fn header. The arg list is balance-scanned so nested generics /
-        // tuples in a parameter type cannot truncate it.
+        // the fn header, with the `<R: tauri::Runtime>` a command taking an
+        // `AppHandle<R>` carries. The arg list is balance-scanned so nested
+        // generics / tuples in a parameter type cannot truncate it.
         const re =
-          /#\[tauri::command[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*pub\s+(?:async\s+)?fn\s+(\w+)\s*\(/g
+          /#\[tauri::command[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*pub\s+(?:async\s+)?fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(/g
         for (const m of source.matchAll(re)) {
           let depth = 0
           let i = (m.index ?? 0) + m[0].length - 1

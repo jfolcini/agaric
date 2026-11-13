@@ -79,8 +79,8 @@ pub fn save_to_downloads_inner(
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip_all, err)]
-pub async fn save_to_downloads(
-    app: tauri::AppHandle,
+pub async fn save_to_downloads<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     file_name: String,
     bytes: Base64Bytes,
 ) -> Result<(), AppError> {
