@@ -17,4 +17,4 @@
 --
 -- mock-unaffected: the mock has no fts_blocks table.
 
-SELECT 1;
+CREATE INDEX idx_fts_blocks_content_block ON fts_blocks_content (c0);

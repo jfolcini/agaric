@@ -7736,19 +7736,17 @@ async fn fts_blocks_0130_block_id_index_keeps_existing_rows_6534() {
     apply_migrations_through(&pool, 129, 130).await;
 
     assert_eq!(rows(pool.clone()).await, seeded);
-    let indexed_columns: Vec<String> = sqlx::query_scalar(
-        "SELECT name FROM pragma_index_info('idx_fts_blocks_content_block')",
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+    let indexed_columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_index_info('idx_fts_blocks_content_block')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
     assert_eq!(indexed_columns, ["c0"]);
-    let hits: Vec<String> = sqlx::query_scalar(
-        "SELECT block_id FROM fts_blocks WHERE fts_blocks MATCH '\"会議室\"'",
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+    let hits: Vec<String> =
+        sqlx::query_scalar("SELECT block_id FROM fts_blocks WHERE fts_blocks MATCH '\"会議室\"'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
     assert_eq!(hits, ["B0000000000000000000000003"]);
 
     agaric_store::fts::remove_fts_for_block(&pool, "B0000000000000000000000002")

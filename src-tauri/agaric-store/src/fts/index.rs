@@ -186,21 +186,15 @@ pub async fn update_fts_for_block_with_maps(
     match row {
         None => {
             // Block doesn't exist — remove from FTS if present
-            delete_fts_row_query(block_id)
-                .execute(&mut *tx)
-                .await?;
+            delete_fts_row_query(block_id).execute(&mut *tx).await?;
         }
         Some(ref r) if r.deleted_at.is_some() => {
             // deleted_at IS NOT NULL — remove from FTS
-            delete_fts_row_query(block_id)
-                .execute(&mut *tx)
-                .await?;
+            delete_fts_row_query(block_id).execute(&mut *tx).await?;
         }
         Some(ref r) if r.content.is_none() => {
             // content IS NULL — remove from FTS
-            delete_fts_row_query(block_id)
-                .execute(&mut *tx)
-                .await?;
+            delete_fts_row_query(block_id).execute(&mut *tx).await?;
         }
         Some(r) => {
             // Active block with content — strip via pre-loaded maps and index.
@@ -209,9 +203,7 @@ pub async fn update_fts_for_block_with_maps(
                 strip_for_fts_with_maps(block_id, &content, tag_names, page_titles, block_titles);
 
             // Delete existing entry
-            delete_fts_row_query(block_id)
-                .execute(&mut *tx)
-                .await?;
+            delete_fts_row_query(block_id).execute(&mut *tx).await?;
 
             // Insert new entry
             sqlx::query!(
@@ -285,9 +277,7 @@ pub async fn update_fts_for_block_split_with_maps(
 
     if should_delete {
         // Phase 2a: Delete only — minimal write lock
-        delete_fts_row_query(block_id)
-            .execute(write_pool)
-            .await?;
+        delete_fts_row_query(block_id).execute(write_pool).await?;
         return Ok(());
     }
 
@@ -298,9 +288,7 @@ pub async fn update_fts_for_block_split_with_maps(
 
     // Phase 2b: Write — minimal transaction
     let mut tx = crate::db::begin_immediate_logged(write_pool, "fts_update_block_write").await?;
-    delete_fts_row_query(block_id)
-        .execute(&mut *tx)
-        .await?;
+    delete_fts_row_query(block_id).execute(&mut *tx).await?;
     sqlx::query!(
         "INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)",
         block_id,
@@ -317,9 +305,7 @@ pub async fn update_fts_for_block_split_with_maps(
 
 /// Remove a block from the FTS index (for soft-delete/purge).
 pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
-    delete_fts_row_query(block_id)
-        .execute(pool)
-        .await?;
+    delete_fts_row_query(block_id).execute(pool).await?;
     Ok(())
 }
 
@@ -339,9 +325,7 @@ pub async fn remove_fts_for_blocks<S: AsRef<str>>(
         return Ok(());
     }
     let ids_json = serde_json::to_string(&ids.iter().map(AsRef::as_ref).collect::<Vec<_>>())?;
-    delete_fts_rows_query(&ids_json)
-    .execute(pool)
-    .await?;
+    delete_fts_rows_query(&ids_json).execute(pool).await?;
     Ok(())
 }
 
@@ -500,9 +484,7 @@ pub async fn reindex_fts_for_ids(pool: &SqlitePool, ids: &[String]) -> Result<()
         .await?;
 
         // Batch delete this chunk's old FTS entries (1 query per chunk)
-        delete_fts_rows_query(&ids_json)
-        .execute(&mut *tx)
-        .await?;
+        delete_fts_rows_query(&ids_json).execute(&mut *tx).await?;
 
         // Stage (id, stripped) pairs for the chunk, then emit
         // multi-row `INSERT INTO fts_blocks` via QueryBuilder. The previous

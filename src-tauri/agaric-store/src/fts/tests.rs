@@ -8311,10 +8311,8 @@ async fn fts_delete_by_block_id_plans_pin_the_rowid_lookup_6534() {
             .collect();
         assert_eq!(
             on_content,
-            [
-                "SEARCH fts_blocks_content USING COVERING INDEX \
-                 idx_fts_blocks_content_block (c0=?)"
-            ],
+            ["SEARCH fts_blocks_content USING COVERING INDEX \
+                 idx_fts_blocks_content_block (c0=?)"],
             "{statement}: the rowid must come from the block-id index; plan was {plan:?}"
         );
     }
@@ -8391,21 +8389,32 @@ async fn fts_rowid_deletes_remove_the_rows_the_scan_deletes_removed_6534() {
     );
 }
 
+/// The full rebuild never runs the by-rowid deletes (it empties the table), so
+/// it is the oracle for every writer that does: after any run of edits,
+/// deletes, restores, purges and tag or page renames, each followed by the
+/// writers production runs for that change, `fts_blocks` holds what a rebuild
+/// from the same `blocks` produces.
 mod incremental_equals_rebuild_6534 {
     use super::*;
     use proptest::prelude::*;
 
-    const BLOCKS: [&str; 5] = [
+    /// Content blocks first, then the tag and the page the contents name.
+    const BLOCKS: [&str; 7] = [
         BLOCK_A,
         BLOCK_B,
         BLOCK_C,
         BLOCK_D,
         "01HQBLKE00000000000000BKE1",
+        TAG_ULID,
+        PAGE_ULID,
     ];
+    const CONTENT_BLOCKS: usize = 5;
+
+    const NAMES: [&str; 5] = ["rust", "golang", "Plain café page", "会議室メモ", ""];
 
     /// Phrases searched after the run; each is three characters or longer,
     /// the trigram tokenizer's floor.
-    const PROBES: [&str; 5] = ["plain", "café", "会議室", "AND", "rust"];
+    const PROBES: [&str; 6] = ["plain", "café", "会議室", "AND", "rust", "golang"];
 
     #[derive(Debug, Clone)]
     enum Step {
@@ -8414,6 +8423,12 @@ mod incremental_equals_rebuild_6534 {
             block: usize,
             content: Option<String>,
             writer: u8,
+        },
+        /// The tag or the page takes a new name, which every block naming it
+        /// indexes.
+        Rename {
+            named: usize,
+            name: &'static str,
         },
         Delete {
             block: usize,
@@ -8435,27 +8450,36 @@ mod incremental_equals_rebuild_6534 {
             Just(Some("   ".to_string())),
             Just(Some("plain words here".to_string())),
             Just(Some("\"plain\" AND (words) OR NOT x* ^y -z".to_string())),
-            Just(Some("NEAR(plain words, 2) stripped:plain {a b}".to_string())),
+            Just(Some(
+                "NEAR(plain words, 2) stripped:plain {a b}".to_string()
+            )),
             Just(Some("naïve café, 会議室の予約 🍄".to_string())),
             Just(Some(format!("**bold** #[{TAG_ULID}] and [[{PAGE_ULID}]]"))),
+            Just(Some(format!("tagged #[{TAG_ULID}]"))),
+            Just(Some(format!("see [[{PAGE_ULID}]]"))),
             "\\PC{0,24}".prop_map(Some),
         ]
     }
 
     fn step() -> impl Strategy<Value = Step> {
-        let block = 0..BLOCKS.len();
+        let content_block = 0..CONTENT_BLOCKS;
+        let any_block = 0..BLOCKS.len();
         prop_oneof![
-            4 => (block.clone(), content(), any::<u8>())
+            4 => (content_block.clone(), content(), any::<u8>())
                 .prop_map(|(block, content, writer)| Step::Write { block, content, writer }),
-            2 => (block.clone(), any::<u8>())
+            2 => (CONTENT_BLOCKS..BLOCKS.len(), proptest::sample::select(&NAMES[..]))
+                .prop_map(|(named, name)| Step::Rename { named, name }),
+            2 => (any_block.clone(), any::<u8>())
                 .prop_map(|(block, writer)| Step::Delete { block, writer }),
-            2 => block.clone().prop_map(|block| Step::Restore { block }),
-            1 => (block, any::<u8>()).prop_map(|(block, writer)| Step::Purge { block, writer }),
+            2 => any_block.prop_map(|block| Step::Restore { block }),
+            1 => (content_block, any::<u8>())
+                .prop_map(|(block, writer)| Step::Purge { block, writer }),
         ]
     }
 
-    /// Change `blocks`, then run one of the incremental writers production
-    /// runs for that change.
+    /// Change `blocks`, then run the incremental writers the materializer
+    /// runs for that change (`materializer::dispatch`, and the cohort fan-outs
+    /// in `materializer::handlers::apply`).
     async fn apply(pool: &SqlitePool, step: &Step) {
         match step {
             Step::Write {
@@ -8475,6 +8499,9 @@ mod incremental_equals_rebuild_6534 {
                 .execute(pool)
                 .await
                 .unwrap();
+                // A rename finds the blocks that link the page through
+                // `block_links`.
+                crate::cache::reindex_block_links(pool, id).await.unwrap();
                 match writer % 3 {
                     0 => update_fts_for_block(pool, id).await,
                     1 => update_fts_for_block_split(pool, pool, id).await,
@@ -8482,10 +8509,24 @@ mod incremental_equals_rebuild_6534 {
                 }
                 .unwrap();
             }
+            Step::Rename { named, name } => {
+                let id = BLOCKS[*named];
+                sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+                    .bind(name)
+                    .bind(id)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+                reindex_fts_references(pool, id).await.unwrap();
+                update_fts_for_block(pool, id).await.unwrap();
+            }
             Step::Delete { block, writer } => {
                 let id = BLOCKS[*block];
                 soft_delete_block(pool, id).await;
                 remove(pool, id, *writer).await;
+                reindex_fts_for_ids(pool, &page_and_tag_referrers(pool, &[id]).await.unwrap())
+                    .await
+                    .unwrap();
             }
             Step::Restore { block } => {
                 let id = BLOCKS[*block];
@@ -8494,9 +8535,9 @@ mod incremental_equals_rebuild_6534 {
                     .execute(pool)
                     .await
                     .unwrap();
-                reindex_fts_for_ids(pool, &[id.to_string()])
-                    .await
-                    .unwrap();
+                let mut ids = vec![id.to_string()];
+                ids.extend(page_and_tag_referrers(pool, &[id]).await.unwrap());
+                reindex_fts_for_ids(pool, &ids).await.unwrap();
             }
             Step::Purge { block, writer } => {
                 let id = BLOCKS[*block];
