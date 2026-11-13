@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { mapBackendState, useSyncEvents } from '@/hooks/useSyncEvents'
+import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { useRecentPagesStore } from '@/stores/recent-pages'
@@ -19,6 +20,7 @@ const {
   mockListen,
   toastMock,
   mockSetState,
+  mockSetWaiting,
   mockSetOpsReceived,
   mockSetOpsSent,
   mockUpdateLastSynced,
@@ -41,6 +43,7 @@ const {
   } = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), warning: vi.fn() })
 
   const setState = vi.fn()
+  const setWaiting = vi.fn()
   const setOpsReceived = vi.fn()
   const setOpsSent = vi.fn()
   const updateLastSynced = vi.fn()
@@ -101,6 +104,7 @@ const {
     mockListen: listen,
     toastMock: mock,
     mockSetState: setState,
+    mockSetWaiting: setWaiting,
     mockSetOpsReceived: setOpsReceived,
     mockSetOpsSent: setOpsSent,
     mockUpdateLastSynced: updateLastSynced,
@@ -131,6 +135,7 @@ vi.mock('@/stores/sync', () => ({
   useSyncStore: {
     getState: vi.fn(() => ({
       setState: mockSetState,
+      setWaiting: mockSetWaiting,
       setOpsReceived: mockSetOpsReceived,
       setOpsSent: mockSetOpsSent,
       updateLastSynced: mockUpdateLastSynced,
@@ -1146,50 +1151,6 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    // #5728 — a peer on another engine format. The backend codes the error and
-    // this side words it, naming the peer when the store knows its name.
-    describe('#5728 a version mismatch says to update both devices', () => {
-      const mismatch = (remoteDeviceId: string) => ({
-        payload: {
-          type: 'error',
-          message: 'peer engine format v3 incompatible with local v4',
-          remote_device_id: remoteDeviceId,
-          code: 'engine_format_mismatch',
-        },
-      })
-
-      it('names a peer the store knows, in the store and the toast', async () => {
-        mockSyncPeers.push({ peerId: 'device-42', name: 'Pixel 8' })
-        const { unmount } = renderHook(() => useSyncEvents())
-        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
-
-        getListenerCallback('sync:error')(mismatch('device-42'))
-
-        const sentence =
-          'This device and Pixel 8 run different versions of Agaric. Update both to the latest version, then sync again.'
-        expect(mockSetState).toHaveBeenCalledWith('error', sentence)
-        expect(mockedToastError).toHaveBeenCalledWith(
-          `Sync failed: ${sentence}`,
-          expect.objectContaining({ id: 'sync-error' }),
-        )
-        unmount()
-      })
-
-      it('says "the other device" for a peer with no name', async () => {
-        mockSyncPeers.push({ peerId: 'device-42', name: null })
-        const { unmount } = renderHook(() => useSyncEvents())
-        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
-
-        getListenerCallback('sync:error')(mismatch('device-42'))
-
-        expect(mockSetState).toHaveBeenCalledWith(
-          'error',
-          'This device and the other device run different versions of Agaric. Update both to the latest version, then sync again.',
-        )
-        unmount()
-      })
-    })
-
     // #6538 — Android does not update itself, so the mismatch toast says where.
     describe('#6538 the version-mismatch toast on Android links the releases page', () => {
       const mismatch = {
@@ -1198,6 +1159,7 @@ describe('useSyncEvents', () => {
           message: 'peer engine format v3 incompatible with local v4',
           remote_device_id: 'device-42',
           code: 'engine_format_mismatch',
+          peer_is_older: false,
         },
       }
       const originalUA = navigator.userAgent
@@ -1252,6 +1214,169 @@ describe('useSyncEvents', () => {
 
         const opts = mockedToastError.mock.calls[0]?.[1] as { action?: unknown }
         expect(opts.action).toBeUndefined()
+        unmount()
+      })
+    })
+
+    // #5728 / #6523 — a peer on another engine format. The responder knows both
+    // formats and the initiator reads the refusal frame, so either device names
+    // the one to update, and the peer when the store knows its name.
+    describe('#6523 a version mismatch names the device to update', () => {
+      const mismatch = (peerIsOlder: boolean) => ({
+        payload: {
+          type: 'error',
+          message: 'peer engine format v3 incompatible with local v4',
+          remote_device_id: 'device-42',
+          code: 'engine_format_mismatch',
+          peer_is_older: peerIsOlder,
+        },
+      })
+
+      it.each([
+        [true, 'sync.versionMismatchUpdatePeer'],
+        [false, 'sync.versionMismatchUpdateThisDevice'],
+      ])('with peer_is_older %s, names the peer in the store and the toast', async (older, key) => {
+        mockSyncPeers.push({ peerId: 'device-42', name: 'Pixel 8' })
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(mismatch(older))
+
+        const sentence = t(key, { peer: 'Pixel 8' })
+        expect(mockSetState).toHaveBeenCalledExactlyOnceWith('error', sentence)
+        expect(mockedToastError).toHaveBeenCalledWith(
+          t('sync.failed', { message: sentence }),
+          expect.objectContaining({ id: 'sync-error' }),
+        )
+        unmount()
+      })
+
+      it.each([
+        [true, 'sync.versionMismatchUpdatePeerUnnamed'],
+        [false, 'sync.versionMismatchUpdateThisDeviceUnnamed'],
+      ])(
+        'with peer_is_older %s, says "the other device" for a peer with no name',
+        async (older, key) => {
+          mockSyncPeers.push({ peerId: 'device-42', name: null })
+          const { unmount } = renderHook(() => useSyncEvents())
+          await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+          getListenerCallback('sync:error')(mismatch(older))
+
+          expect(mockSetState).toHaveBeenCalledExactlyOnceWith('error', t(key))
+          unmount()
+        },
+      )
+
+      it('offers no releases action on Android when the other device is the one to update', async () => {
+        const originalUA = navigator.userAgent
+        Object.defineProperty(navigator, 'userAgent', {
+          configurable: true,
+          get: () => 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile Safari/537.36',
+        })
+        try {
+          const { unmount } = renderHook(() => useSyncEvents())
+          await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+          getListenerCallback('sync:error')(mismatch(true))
+          getListenerCallback('sync:error')(mismatch(false))
+
+          const actions = mockedToastError.mock.calls.map(
+            (call) => (call[1] as { action?: { label: string } }).action?.label,
+          )
+          expect(actions).toEqual([undefined, t('help.updateOpenReleasesButton')])
+          unmount()
+        } finally {
+          Object.defineProperty(navigator, 'userAgent', {
+            configurable: true,
+            get: () => originalUA,
+          })
+        }
+      })
+    })
+
+    // #6523 — a peer that synced before closed the session without answering
+    // our HeadExchange: how a build without the refusal frame ends a mismatch.
+    describe('#6523 an unanswered handshake says to check the versions', () => {
+      const unanswered = {
+        payload: {
+          type: 'error',
+          message: 'Sync failed: [transport::session] read length prefix: stream finished early',
+          remote_device_id: 'device-42',
+          code: 'handshake_unanswered',
+        },
+      }
+
+      it('names a peer the store knows, in the store and the toast', async () => {
+        mockSyncPeers.push({ peerId: 'device-42', name: 'Pixel 8' })
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(unanswered)
+
+        const sentence = t('sync.handshakeUnanswered', { peer: 'Pixel 8' })
+        expect(mockSetState).toHaveBeenCalledExactlyOnceWith('error', sentence)
+        expect(mockedToastError).toHaveBeenCalledWith(
+          t('sync.failed', { message: sentence }),
+          expect.objectContaining({ id: 'sync-error' }),
+        )
+        unmount()
+      })
+
+      it('words it without a name for a peer with none', async () => {
+        mockSyncPeers.push({ peerId: 'device-42', name: null })
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(unanswered)
+
+        expect(mockSetState).toHaveBeenCalledExactlyOnceWith(
+          'error',
+          t('sync.handshakeUnansweredUnnamed'),
+        )
+        unmount()
+      })
+    })
+
+    // #6523 — a paired device that neither answers nor announces itself is
+    // away. The status says so; nothing failed, so nothing is toasted.
+    describe('#6523 an away peer reads as waiting, not as a failure', () => {
+      const away = (code?: 'peer_away') => ({
+        payload: {
+          type: 'error',
+          message:
+            'Waiting for the peer: it did not answer, and it is not announcing itself on the network',
+          remote_device_id: 'device-42',
+          ...(code === undefined ? {} : { code }),
+        },
+      })
+
+      it('sets the waiting state for that peer, with no toast or announcement', async () => {
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(away('peer_away'))
+
+        expect(mockSetWaiting).toHaveBeenCalledExactlyOnceWith('device-42')
+        expect(mockSetState).not.toHaveBeenCalled()
+        expect(mockedToastError).not.toHaveBeenCalled()
+        expect(mockedAnnounce).not.toHaveBeenCalled()
+        unmount()
+      })
+
+      it('the same text without the code is still a failure', async () => {
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(away())
+
+        const { message } = away().payload
+        expect(mockSetWaiting).not.toHaveBeenCalled()
+        expect(mockSetState).toHaveBeenCalledExactlyOnceWith('error', message)
+        expect(mockedToastError).toHaveBeenCalledWith(
+          t('sync.failed', { message }),
+          expect.objectContaining({ id: 'sync-error' }),
+        )
         unmount()
       })
     })

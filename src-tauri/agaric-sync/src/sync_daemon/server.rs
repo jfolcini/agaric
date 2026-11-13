@@ -82,7 +82,7 @@ use std::sync::atomic::AtomicBool;
 use crate::apply_host::ApplyHost;
 use crate::sync_constants::HANDSHAKE_TIMEOUT;
 use crate::sync_events::{SyncEvent, SyncEventSink};
-use crate::sync_protocol::{SyncMessage, SyncOrchestrator, clamp_device_name};
+use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState, clamp_device_name};
 use crate::sync_scheduler::SyncScheduler;
 use crate::transport::driver::{Role, SessionLimits, finish_session, run_session};
 use crate::transport::service::InboundSession;
@@ -351,6 +351,7 @@ async fn reject(
             message: message.to_owned(),
             remote_device_id: remote_device_id.to_owned(),
             code: None,
+            peer_is_older: None,
         });
     }
     send_sync_message(
@@ -1283,6 +1284,15 @@ async fn handle_incoming_sync_inner(
     .await;
 
     let end = drive_responder_session(&ctx, &mut session, &mut orch, opening, &cancel).await?;
+
+    // A session the orchestrator refused (the engine-format gate, #6523) ends
+    // here: its refusal frame is sent, and a session that moved nothing binds
+    // and records nothing.
+    if let SyncState::Failed(reason) = &end.state {
+        let reason = reason.clone();
+        finish_responder(&ctx, &mut session, &orch, end.spoke_last).await;
+        return Err(AppError::InvalidOperation(reason));
+    }
 
     // Who owes the shutdown wait, tracked across the two post-loop phases.
     //

@@ -628,3 +628,51 @@ describe('a standing sync error is not colour-only (#6528)', () => {
     expect(syncButton.querySelector('.lucide-refresh-cw')).toBeInTheDocument()
   })
 })
+
+// #6523 — a paired device that is away reads as waiting: the button names the
+// device and its own last sync, in a neutral dot and glyph, never as an error.
+describe('an away device reads as waiting, not as a failure (#6523)', () => {
+  const lastSyncedAt = new Date(Date.now() - 5 * 60_000).toISOString()
+  const peer: PeerInfo = { peerId: 'PEER1', lastSyncedAt, resetCount: 0, name: 'Pixel 8' }
+  const waiting = t('sync.waitingForPeer', {
+    peer: 'Pixel 8',
+    time: t('sidebar.minutesAgo', { count: 5 }),
+  })
+
+  beforeEach(() => {
+    useSyncStore.setState({ peers: [peer] })
+    useSyncStore.getState().setWaiting('PEER1')
+  })
+
+  it('names the device and its last sync in the Sync button description and tooltip', async () => {
+    const user = userEvent.setup()
+    renderSidebar()
+
+    const syncButton = screen.getByRole('button', { name: t('sidebar.sync') })
+    expect(syncButton).toHaveAccessibleDescription(waiting)
+
+    await user.hover(syncButton)
+    await waitFor(() => {
+      const tooltip = screen.getByRole('tooltip')
+      expect(tooltip.textContent).toContain(waiting)
+      expect(tooltip.textContent).not.toContain(t('sidebar.lastSyncedNever'))
+    })
+  })
+
+  it('keeps the sync glyph and a neutral dot', () => {
+    renderSidebar()
+
+    const syncButton = screen.getByRole('button', { name: t('sidebar.sync') })
+    expect(syncButton.querySelector('.lucide-refresh-cw')).toBeInTheDocument()
+    expect(syncButton.querySelector('.lucide-circle-alert')).toBeNull()
+    const dot = screen.getByTestId('sync-button-status-dot')
+    expect(dot).toHaveClass('bg-muted-foreground')
+    expect(dot).not.toHaveClass('bg-destructive')
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = renderSidebar()
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})

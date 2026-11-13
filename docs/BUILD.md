@@ -330,6 +330,8 @@ Useful flags (see `scripts/release.sh --help`):
 - `--skip-verify-build` — skip the ~5-10 min local bundle build (rely on CI).
 - `-y` / `--yes` — skip the confirmation prompt.
 
+**An engine-format bump** (`ENGINE_FORMAT_VERSION`) stops sync with every older build, so desktop and Android must ship it in the same release: never publish by hand a draft whose Android job failed.
+
 > **Why local, and why there's no CI "release" button.** Cutting a release means pushing a bump commit to `main`, which requires bypassing the branch ruleset. The in-workflow `GITHUB_TOKEN` is not a ruleset bypass actor (and its pushes don't trigger workflows anyway), so a CI bump can't land without a long-lived PAT — rejected on security grounds. The maintainer is an admin bypass actor, so the bump is cut locally and only the resulting tag triggers CI. This keeps branch protection intact (1 review + admin bypass) with no PAT. `scripts/bump-version.sh <version> --commit --tag --push` is still available if you want to drive the steps yourself.
 
 ### What `release.yml` does on tag push
