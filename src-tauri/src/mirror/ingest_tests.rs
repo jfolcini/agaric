@@ -379,6 +379,62 @@ async fn a_save_landing_during_an_ingest_is_not_written_over() {
     );
 }
 
+/// Save the page's file from outside, `from` replaced by `to`, when the
+/// mirror reaches the race this is set as. The save changes the file's
+/// length, so no timestamp's resolution hides it.
+fn save_outside(from: &'static str, to: &'static str) -> Option<Race> {
+    Some(Box::new(move |file| {
+        let text = std::fs::read_to_string(file).unwrap();
+        std::fs::write(file, text.replace(from, to)).unwrap();
+    }))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_landing_right_after_a_write_is_read_in() {
+    let mut fx = Fx::new().await;
+    let (page, blocks) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    fx.edit(&blocks[0], "two").await;
+    fx.mirror.races.after_write = save_outside("two", "outside");
+    fx.tick().await;
+    fx.mirror.races.after_write = None;
+    let saved = fx.read();
+    assert!(saved.contains("outside"), "{saved}");
+
+    fx.settle_file().await;
+    assert_eq!(fx.contents(&page).await, ["outside"]);
+    assert_eq!(fx.read(), saved);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_landing_right_after_an_unchanged_file_is_read_is_read_in() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    // A full pass reads every page's file, and writes none here.
+    fx.mirror.full_due = true;
+    fx.mirror.races.after_read = save_outside("one", "outside");
+    fx.tick().await;
+    fx.mirror.races.after_read = None;
+    let saved = fx.read();
+    assert!(saved.contains("outside"), "{saved}");
+
+    fx.settle_file().await;
+    assert_eq!(fx.contents(&page).await, ["outside"]);
+    assert_eq!(fx.read(), saved);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_leaves_its_file_unchanged_to_the_next_tick() {
+    let mut fx = Fx::new().await;
+    let (_, blocks) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    assert_eq!(fx.mirror.changed_files(&fx.root), Vec::<String>::new());
+    fx.edit(&blocks[0], "two").await;
+    fx.tick().await;
+    assert_eq!(fx.mirror.changed_files(&fx.root), Vec::<String>::new());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_emptied_or_undecodable_file_is_refused_and_left_alone() {
     for bytes in [&b""[..], b"\n  \n", b"caf\xe9\n"] {

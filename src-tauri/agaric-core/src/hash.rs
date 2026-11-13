@@ -37,10 +37,8 @@
 ///   entries sorted lexicographically by `[device_id, seq]`, **deduplicated**
 ///   (no repeated `(device_id, seq)` pairs), and serialized as **compact JSON
 ///   with no insignificant whitespace** (i.e. `serde_json::to_string`, not the
-///   pretty/spaced form). `append_merge_op` (`dag.rs`) produces exactly this
-///   shape via `sort()` + `dedup()` + `serde_json::to_string`; any second
-///   implementation that spaces the JSON or skips the dedup would compute a
-///   different hash for the same logical parents. See the byte-identical
+///   pretty/spaced form). Any implementation that spaces the JSON or skips
+///   the dedup would compute a different hash for the same logical parents. See the byte-identical
 ///   I-Core-11 conformance anchor in `op_log/mod.rs`.
 /// - `payload`: The canonical JSON string of the op payload (keys ordered
 ///   alphabetically via `serde_json::to_value` → BTreeMap). **All ULID fields in the payload MUST be
@@ -68,10 +66,9 @@ pub fn compute_op_hash(
     // determinism. They are checked here as **dev-time** invariants
     // only — a plain `assert!` would turn a corrupt op into a release
     // panic at the op-log ingest gate (`verify_op_hash` →
-    // `insert_remote_op`). Callers that ingest untrusted/remote content
-    // (`insert_remote_op`) MUST reject NUL bytes *gracefully* before
-    // reaching this function (see the `\0`-rejection gate at the top of
-    // `insert_remote_op` in `dag.rs`);
+    // `ingest_remote_record`). Callers that ingest untrusted/remote content
+    // MUST reject NUL bytes *gracefully* before reaching this function (see
+    // `verify_remote_record_integrity` in `dag.rs`);
     // this is a pure hash function and never panics in release on bad
     // input — it simply hashes the (ambiguous) bytes it was given.
     debug_assert!(
@@ -557,9 +554,9 @@ mod tests {
     //
     // #1600 — these are `debug_assert!`s (not `assert!`): in release
     // `compute_op_hash` never panics on a NUL byte. The
-    // production-facing rejection lives in `dag::insert_remote_op`,
+    // production-facing rejection lives in `dag::ingest_remote_record`,
     // which returns `AppError::InvalidOperation` *before* reaching this
-    // function (see `null_byte_*` tests in `dag/tests.rs`). These tests
+    // function (see the null-byte tests in `agaric-sync/src/dag_tests`). These tests
     // only run under the debug `cfg`, where the `debug_assert!` fires.
     // The `#[cfg(debug_assertions)]` gate is load-bearing: in a release
     // test build `debug_assert!` is compiled out, so `compute_op_hash`

@@ -413,13 +413,23 @@ tauri-plugin-global-shortcut = "2"
 # #2972 / #2919 — native, webview-independent error dialog shown at the two
 # boot-fatal exit points in `lib.rs` (a failed Tauri build and a failed `setup`
 # orchestration) before the process exits, so a downgrade / failed-update /
-# corrupt-DB failure no longer exits silently with only a log line. We use the
-# `gtk3` backend (not the default `xdg-portal`) because Tauri already links GTK
-# on Linux at these exact `gtk-sys`/`glib-sys`/`gobject-sys` 0.18 versions, so
-# this reuses them with no duplicate native deps and gives a natively-blocking
-# `MessageDialog::show()`.  Desktop-only: `rfd` 0.17 has no Android/iOS backend
-# (#3072); mobile surfaces boot-fatal errors via the platform + a log line.
-rfd = { version = "0.17", default-features = false, features = ["gtk3"] }
+# corrupt-DB failure no longer exits silently with only a log line. A failed
+# `setup` on Linux is the exception: `rfd` runs GTK dialogs on a thread of its
+# own, which never gets the main context the running event loop holds, so that
+# dialog is GTK's own (`gtk_boot_failure_dialog`). We use the `gtk3` backend
+# (not the default `xdg-portal`) because Tauri already links GTK on Linux at
+# these exact `gtk-sys`/`glib-sys`/`gobject-sys` 0.18 versions, so this reuses
+# them with no duplicate native deps.  Desktop-only: `rfd` 0.17 has no
+# Android/iOS backend (#3072); mobile surfaces boot-fatal errors via the
+# platform + a log line.
+# `common-controls-v6` (Windows only) is what labels the boot-failure dialog's
+# *Open data folder* / *Copy details* buttons (#6554); without it Windows shows
+# Yes / No / Cancel. The ComCtl32 v6 manifest it needs is tauri-build's default,
+# and Tauri's own default `common-controls-v6` already links that API.
+rfd = { version = "0.17", default-features = false, features = [
+    "gtk3",
+    "common-controls-v6",
+] }
 
 [profile.release]
 lto = "thin"

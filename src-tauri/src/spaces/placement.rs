@@ -158,7 +158,7 @@ impl SpacePlacementSink {
         let device_id = self.device_id.clone();
         let materializer = self.materializer.clone();
         let view = self.view.clone();
-        tokio::spawn(async move {
+        tokio::spawn(crate::db::following_a_sync(async move {
             save_engines_after_session(&pool, &materializer).await;
             let placed =
                 match place_space_less_blocks(&pool, &read_pool, &device_id, &materializer).await {
@@ -204,7 +204,7 @@ impl SpacePlacementSink {
             if !repaired.renamed.is_empty() {
                 view.emit_pages_renamed(repaired.renamed);
             }
-        })
+        }))
     }
 }
 
@@ -568,6 +568,35 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(refs, 1);
+        materializer.shutdown();
+    }
+
+    /// #6551 — the placement writes ops, and a local commit asks for a sync
+    /// round. Placement follows a session, so its commit must ask for none.
+    #[tokio::test]
+    async fn the_placement_after_a_session_asks_for_no_sync_round_6551() {
+        let (pool, _dir) = seeded_pool().await;
+        let tag_id = seed_synced_in_orphan_tag(&pool).await;
+        let materializer = Materializer::new(pool.clone());
+        let rounds_asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        materializer.on_local_commit({
+            let rounds_asked = Arc::clone(&rounds_asked);
+            move || {
+                rounds_asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        let (sink, _recording, _view) = sink(&pool, &materializer);
+
+        sink.on_sync_event(complete(None));
+        let task = sink.last_task.lock().unwrap().take().expect("spawned");
+        task.await.unwrap();
+
+        assert_eq!(
+            space_of(&pool, &tag_id).await.as_deref(),
+            Some(SPACE_WORK_ULID),
+            "precondition: the placement committed its op"
+        );
+        assert_eq!(rounds_asked.load(std::sync::atomic::Ordering::SeqCst), 0);
         materializer.shutdown();
     }
 
