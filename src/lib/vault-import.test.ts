@@ -588,6 +588,18 @@ describe('vaultRestoreSpaces', () => {
     ])
   })
 
+  it('names a space by its folder when its space file names it with anything but text', async () => {
+    const spaces = await vaultRestoreSpaces([
+      spaceJson(
+        'Vault/Work/.agaric/space.json',
+        '{"name": 7, "propertyDefinitions": [], "titles": {}}',
+      ),
+      folderFile(['- b'], 'b.md', 'Vault/Work/b.md'),
+    ])
+
+    expect(spaces?.map(({ name }) => name)).toEqual(['Work'])
+  })
+
   it('is not put off by a hidden file the system left at the top level', async () => {
     const spaces = await vaultRestoreSpaces([
       folderFile(['\0'], '.DS_Store', 'Vault/.DS_Store', ''),
