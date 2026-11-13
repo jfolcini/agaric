@@ -1,4 +1,4 @@
-# Session 4097 — the agenda counts follow a date write; the release vault holds an attachment, a compaction and a peer; release.sh writes it
+# Session 4099 — the agenda counts follow a date write; the release vault holds an attachment, a compaction and a peer; release.sh writes it
 
 Finishes #6567: the stale-views box, the upgrade-path box and the release step, as the maintainer decided them on 2026-11-13.
 
