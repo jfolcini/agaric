@@ -1350,6 +1350,111 @@ async fn only_a_purge_runs_the_vault_wide_page_id_rebuild_6522() {
     mat.shutdown();
 }
 
+/// A trashed subtree whose ids drifted while it sat in the trash.
+struct DriftedTrash6522 {
+    pool: SqlitePool,
+    _dir: TempDir,
+    mat: Materializer,
+    page_a: agaric_core::ulid::BlockId,
+    space_a: String,
+    parent: agaric_core::ulid::BlockId,
+    child: agaric_core::ulid::BlockId,
+}
+
+/// `page_a` (space A) → `parent` → `child`, with the child trashed before the
+/// parent, so the child is its own trash root and restoring it brings the
+/// parent back as its ancestor chain. Both then carry `page_b`'s page and space
+/// B, planted by hand: no command leaves this drift today, but a restore is the
+/// last write before those rows are live again, and no vault-wide rebuild
+/// follows it. The materializer is shut down, so whatever ids the restore
+/// leaves are its own transaction's.
+async fn drifted_trash_6522() -> DriftedTrash6522 {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let space_a = test_space(&pool, "A").await;
+    let space_b = test_space(&pool, "B").await;
+    let page_a = create_6522(&pool, &mat, "page", None).await;
+    let page_b = create_6522(&pool, &mat, "page", None).await;
+    let parent = create_6522(&pool, &mat, "content", Some(&page_a)).await;
+    let child = create_6522(&pool, &mat, "content", Some(&parent)).await;
+    settle(&mat).await;
+    for (page, space) in [(&page_a, &space_a), (&page_b, &space_b)] {
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")
+            .bind(space)
+            .bind(page.as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    for block in [&child, &parent] {
+        delete_block_inner(&pool, DEV, &mat, block.clone())
+            .await
+            .unwrap();
+    }
+    settle(&mat).await;
+    sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id IN (?, ?)")
+        .bind(page_b.as_str())
+        .bind(&space_b)
+        .bind(parent.as_str())
+        .bind(child.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+    mat.shutdown();
+    DriftedTrash6522 {
+        pool,
+        _dir,
+        mat,
+        page_a,
+        space_a,
+        parent,
+        child,
+    }
+}
+
+/// The restored rows carry the page and space their place in the tree gives
+/// them, which is all the vault-wide rebuild would change.
+async fn assert_restore_rederived_ids_6522(t: &DriftedTrash6522, restore: &str) {
+    let restored = page_and_space_ids_6522(&t.pool).await;
+    for block in [&t.parent, &t.child] {
+        let row = restored.iter().find(|r| r.0 == block.as_str()).unwrap();
+        assert_eq!(
+            (row.1.as_deref(), row.2.as_deref()),
+            (Some(t.page_a.as_str()), Some(t.space_a.as_str())),
+            "{restore} must re-derive page_id and space_id of {block} in its own transaction"
+        );
+    }
+    rebuild_page_and_space_ids_6522(&t.pool).await;
+    assert_eq!(
+        page_and_space_ids_6522(&t.pool).await,
+        restored,
+        "{restore} leaves nothing for the full rebuild to change"
+    );
+}
+
+/// Batch restore re-derives `page_id` and `space_id` for its cohort and the
+/// ancestor chain it brings back, as single restore does (#6522).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_restore_rederives_page_and_space_ids_6522() {
+    let t = drifted_trash_6522().await;
+    let restored = restore_blocks_by_ids_inner(&t.pool, DEV, &t.mat, vec![t.child.clone()])
+        .await
+        .unwrap();
+    assert_eq!(restored.affected_count, 1, "the child; the chain is not counted");
+    assert_restore_rederived_ids_6522(&t, "batch restore").await;
+}
+
+/// Restore-all re-derives `space_id` as well as `page_id` (#6522).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_all_rederives_page_and_space_ids_6522() {
+    let t = drifted_trash_6522().await;
+    let restored = restore_all_deleted_inner(&t.pool, DEV, &t.mat)
+        .await
+        .unwrap();
+    assert_eq!(restored.affected_count, 2, "parent and child");
+    assert_restore_rederived_ids_6522(&t, "restore-all").await;
+}
+
 // ======================================================================
 // #6522 — the premise under random command sequences
 // ======================================================================
