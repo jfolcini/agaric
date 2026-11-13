@@ -544,7 +544,7 @@ function BlockListItemInner({
           (e.g. SearchPanel). Agenda shows full content. */}
       <span
         className={cn(
-          'text-sm min-w-0 flex-1 max-sm:order-first',
+          'tag-chip-row text-sm min-w-0 flex-1 max-sm:order-first',
           hasLeadingIcon ? 'max-sm:basis-[calc(100%-2rem)]' : 'max-sm:basis-full',
           contentClassName,
         )}

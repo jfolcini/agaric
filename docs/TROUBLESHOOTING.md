@@ -1,8 +1,9 @@
 # Troubleshooting
 
-The local-dev failure modes you are most likely to hit on this codebase, each
-with the symptom, the cause, and the exact fix. For full setup and build details
-see [`BUILD.md`](./BUILD.md).
+The failure modes you are most likely to hit, each with the symptom, the cause,
+and the exact fix: local development on this codebase, and a vault that will not
+open ([§8](#8-agaric-failed-to-start-the-vault-will-not-open)). For full setup
+and build details see [`BUILD.md`](./BUILD.md).
 
 ## Table of contents
 
@@ -13,6 +14,7 @@ see [`BUILD.md`](./BUILD.md).
 - [5. `dev.db` does not exist](#5-devdb-does-not-exist)
 - [6. `sqlx prepare --check` fails with a stale-schema error, not a missing `dev.db`](#6-sqlx-prepare---check-fails-with-a-stale-schema-error-not-a-missing-devdb)
 - [7. Large file blocked by pre-commit](#7-large-file-blocked-by-pre-commit)
+- [8. Agaric failed to start: the vault will not open](#8-agaric-failed-to-start-the-vault-will-not-open)
 
 ## 1. Mold linker not found
 
@@ -255,3 +257,84 @@ its path to the hook's `exclude` pattern in `prek.toml`:
 
 Keep the exclusion as narrow as possible (a specific path, not a broad glob) so
 the guard still catches accidental large additions elsewhere.
+
+## 8. Agaric failed to start: the vault will not open
+
+### Symptom
+
+On desktop, a dialog titled *Agaric failed to start* says Agaric could not open
+your vault, shows the error, and links this section. Agaric quits when you close
+it. *Open data folder* opens the folder that holds the vault; *Copy details*
+copies the version, the platform, the error and this section's address. Paste
+them before you close the dialog: on Linux the copy can go when Agaric quits.
+
+On Android nothing shows: Agaric closes as it starts. The error follows
+`fatal error during application setup` in `adb logcat | grep RustStdoutStderr`,
+which works on a release build.
+
+### Cause
+
+Opening, upgrading or reading the vault failed. The error says which:
+
+- `migration <N> was previously applied but is missing in the resolved migrations`,
+  or *This vault was last opened by a newer version of Agaric*: this version is
+  older than the one that last opened the vault.
+- `while executing migration <N>`: this version's upgrade of the database failed.
+- `file is not a database`, `database disk image is malformed`, or *The saved
+  state of space … cannot be read*: the vault is damaged.
+
+### Fix
+
+The data folder holds the vault (`notes.db`, with `notes.db-wal` and
+`notes.db-shm` beside it), its backups, and the log (`logs/agaric.log`):
+
+| Platform | Data folder |
+|---|---|
+| Linux | `~/.local/share/com.agaric.app/` (under `$XDG_DATA_HOME` when that is set) |
+| macOS | `~/Library/Application Support/com.agaric.app/` |
+| Windows | `%APPDATA%\com.agaric.app\` |
+| Android | `/data/data/com.agaric.app/`, private to the app |
+
+**Before anything else, quit Agaric and copy the whole data folder somewhere
+else.** A start that fails can save the vault as a new backup and delete the
+oldest one, and the steps below change the folder.
+
+The backups: before each update that changes the database, Agaric copies it to
+`notes.db.pre-migration-<time>` beside it, and keeps the newest three. Each is a
+complete database file; its modified time is when it was taken. To open one:
+
+1. Move `notes.db`, `notes.db-wal` and `notes.db-shm` out of the data folder. A
+   `-wal` left behind belongs to the file you moved, not to the backup.
+2. Copy the backup to `notes.db` in the data folder.
+3. Start Agaric. A backup taken before an update is upgraded again.
+
+What was written after the backup was taken is not in it. Then, by cause:
+
+- **An older version:** install the version that last opened the vault, or a
+  newer one. The vault was not changed; there is nothing to restore.
+- **A failed upgrade:** to go back to the version you ran before, restore the
+  oldest backup taken since the update, then install that version: an upgrade
+  can stop part way, and the older version cannot open a vault left half
+  upgraded. Report the error with *Copy details*.
+- **A damaged vault on a paired device:** set the device up fresh. Move the
+  whole data folder out of place, start Agaric and pair it again (Settings ›
+  Sync & devices): the first sync brings back everything the other devices
+  hold, which is all this device had synced. It comes back as a new device, so
+  unpair its old entry on the other devices.
+- **A damaged vault on a device that was never paired:** restore the newest
+  backup taken before the failures started.
+
+**Do not keep using a restored backup on a device that has synced since the
+backup was taken.** Its other devices hold later history for it than the backup
+has, and once the restored copy records a change, every sync with them fails for
+good (the restored-copy pitfall in [Sync](features/sync.md#pitfalls-to-know)).
+Use it only to export what the other devices lack (Settings › Data › *Export all
+spaces*), then set the device up fresh as above and import that export. Import
+only what is missing: a page whose title the space already holds is updated in
+place to the file's text.
+
+On Android only a debug build reaches the data folder
+(`adb shell run-as com.agaric.app`). On a release build, clear Agaric's storage
+in the system's app settings, or reinstall it, and pair it again: its notes come
+back from its other devices, and a phone that was never paired cannot reach its
+backups.
