@@ -745,7 +745,7 @@ impl FilterPrimitive {
     /// - **1 (per-row, cheap):** `Priority` (a single equality scan over
     ///   `blocks.priority`, no dedicated index) and `LastEdited` (on Search
     ///   and the advanced query a correlated `MAX(created_at)` subquery over
-    ///   `op_log`, served per-row via `idx_op_log_block_id`; on Pages a
+    ///   `op_log`, served per-row via `idx_op_log_block_created`; on Pages a
     ///   column compare — ranked by its costlier form).
     /// - **2 (GLOB):** `PathGlob`, always. It compiles to
     ///   `LOWER(title) GLOB ?` (#1320-A — the SAME dialect as Search;
@@ -795,7 +795,7 @@ impl FilterPrimitive {
             | FilterPrimitive::Created { .. } => 0,
             // `Priority` is a per-row equality; `LastEdited` is at worst a
             // per-row correlated `MAX()` subquery (served via
-            // `idx_op_log_block_id`) — both rank above a full LIKE scan.
+            // `idx_op_log_block_created`) — both rank above a full LIKE scan.
             // #1280 — `State`/`BlockType` are per-row column membership
             // tests with no dedicated index, ranking with `Priority`.
             FilterPrimitive::Priority { .. }
@@ -2315,7 +2315,7 @@ mod tests {
             1
         );
         // LastEdited — at worst a per-row correlated MAX() subquery (served via
-        // idx_op_log_block_id), ranks with Priority above the true
+        // idx_op_log_block_created), ranks with Priority above the true
         // index anti-joins (1), not at 0.
         assert_eq!(
             FilterPrimitive::LastEdited {

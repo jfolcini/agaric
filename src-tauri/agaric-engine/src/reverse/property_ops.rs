@@ -303,7 +303,7 @@ async fn find_prior_property(
     device_id: &str,
 ) -> Result<Option<PropertyValueFields>, AppError> {
     // Switch the block_id predicate from `json_extract(payload, '$.block_id')`
-    // to the indexed `block_id` column added by migration 0030 (idx_op_log_block_id).
+    // to the indexed `block_id` column added by migration 0030.
     // The key predicate stays on `json_extract` — there is no covering index for
     // (block_id, key), but the block_id filter alone narrows the scan dramatically.
     //

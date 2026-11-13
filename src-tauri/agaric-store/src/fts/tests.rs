@@ -8247,3 +8247,371 @@ async fn every_fts_writer_resolves_a_block_ref_6277() {
         "a soft-deleted target keeps its title"
     );
 }
+
+// ======================================================================
+// #6534 — the deletes find a block's row by rowid, not by scanning
+// ======================================================================
+
+async fn query_plan(pool: &SqlitePool, sql: &str, arg: &str) -> Vec<String> {
+    sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(format!(
+        "EXPLAIN QUERY PLAN {sql}"
+    )))
+    .bind(arg)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(_, _, _, detail)| detail)
+    .collect()
+}
+
+/// Every `(block_id, stripped)` row, duplicates kept, in a stable order.
+async fn fts_rows(pool: &SqlitePool) -> Vec<(String, String)> {
+    sqlx::query_as("SELECT block_id, stripped FROM fts_blocks ORDER BY block_id, stripped")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// SQLite still prints `SCAN fts_blocks VIRTUAL TABLE` for a rowid lookup, so
+/// the scan and the lookup differ only in FTS5's index string: `0:` visits
+/// every row, `0:=` seeks one rowid. The shadow-table half fails when
+/// `idx_fts_blocks_content_block` is gone, which a migration that drops and
+/// recreates `fts_blocks` causes silently.
+#[tokio::test]
+async fn fts_delete_by_block_id_plans_pin_the_rowid_lookup_6534() {
+    use sqlx::Execute as _;
+
+    let (pool, _dir) = test_pool().await;
+    for (statement, sql, arg) in [
+        (
+            "single",
+            super::index::delete_fts_row_query(BLOCK_A).sql(),
+            BLOCK_A,
+        ),
+        (
+            "batch",
+            super::index::delete_fts_rows_query("[]").sql(),
+            "[]",
+        ),
+    ] {
+        let plan = query_plan(&pool, sql.as_str(), arg).await;
+        let on_fts: Vec<&String> = plan
+            .iter()
+            .filter(|detail| detail.contains("fts_blocks VIRTUAL TABLE"))
+            .collect();
+        assert_eq!(
+            on_fts,
+            ["SCAN fts_blocks VIRTUAL TABLE INDEX 0:="],
+            "{statement}: fts_blocks must be read by rowid; plan was {plan:?}"
+        );
+        let on_content: Vec<&String> = plan
+            .iter()
+            .filter(|detail| detail.contains("fts_blocks_content"))
+            .collect();
+        assert_eq!(
+            on_content,
+            ["SEARCH fts_blocks_content USING COVERING INDEX \
+                 idx_fts_blocks_content_block (c0=?)"],
+            "{statement}: the rowid must come from the block-id index; plan was {plan:?}"
+        );
+    }
+}
+
+/// The statements #6534 replaced, kept as the oracle for the rowid deletes.
+async fn delete_fts_row_by_scan(pool: &SqlitePool, block_id: &str) {
+    sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn delete_fts_rows_by_scan(pool: &SqlitePool, ids_json: &str) {
+    sqlx::query("DELETE FROM fts_blocks WHERE block_id IN (SELECT value FROM json_each(?))")
+        .bind(ids_json)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A block id with two rows is the state the single-row invariant forbids and
+/// the schema cannot prevent; the delete must still take both.
+#[tokio::test]
+async fn fts_rowid_deletes_remove_the_rows_the_scan_deletes_removed_6534() {
+    const ROWS: [(&str, &str); 7] = [
+        (BLOCK_A, "alpha one"),
+        (BLOCK_A, "alpha duplicate"),
+        (BLOCK_B, "beta"),
+        (BLOCK_C, ""),
+        (BLOCK_D, "会議 naïve"),
+        ("", "empty id"),
+        ("ïd-ñ", "non-ascii id"),
+    ];
+    let batch = serde_json::to_string(&[BLOCK_B, BLOCK_D, "", UNKNOWN_ULID]).unwrap();
+
+    let (by_rowid, _dir_a) = test_pool().await;
+    let (by_scan, _dir_b) = test_pool().await;
+    for pool in [&by_rowid, &by_scan] {
+        for (id, stripped) in ROWS {
+            sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+                .bind(id)
+                .bind(stripped)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+    }
+
+    for id in [BLOCK_A, UNKNOWN_ULID, "ïd-ñ"] {
+        super::index::delete_fts_row_query(id)
+            .execute(&by_rowid)
+            .await
+            .unwrap();
+        delete_fts_row_by_scan(&by_scan, id).await;
+        assert_eq!(fts_rows(&by_rowid).await, fts_rows(&by_scan).await, "{id}");
+    }
+    assert_eq!(
+        fts_rows(&by_rowid).await.len(),
+        4,
+        "both of BLOCK_A's rows and the non-ascii id's row are gone"
+    );
+
+    super::index::delete_fts_rows_query(&batch)
+        .execute(&by_rowid)
+        .await
+        .unwrap();
+    delete_fts_rows_by_scan(&by_scan, &batch).await;
+    assert_eq!(fts_rows(&by_rowid).await, fts_rows(&by_scan).await);
+    assert_eq!(
+        fts_rows(&by_rowid).await,
+        [(BLOCK_C.to_string(), String::new())]
+    );
+}
+
+/// The full rebuild never runs the by-rowid deletes (it empties the table), so
+/// it is the oracle for every writer that does: after any run of edits,
+/// deletes, restores, purges and tag or page renames, each followed by the
+/// writers production runs for that change, `fts_blocks` holds what a rebuild
+/// from the same `blocks` produces.
+mod incremental_equals_rebuild_6534 {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Content blocks first, then the tag and the page the contents name.
+    const BLOCKS: [&str; 7] = [
+        BLOCK_A,
+        BLOCK_B,
+        BLOCK_C,
+        BLOCK_D,
+        "01HQBLKE00000000000000BKE1",
+        TAG_ULID,
+        PAGE_ULID,
+    ];
+    const CONTENT_BLOCKS: usize = 5;
+
+    const NAMES: [&str; 5] = ["rust", "golang", "Plain café page", "会議室メモ", ""];
+
+    /// Phrases searched after the run; each is three characters or longer,
+    /// the trigram tokenizer's floor.
+    const PROBES: [&str; 6] = ["plain", "café", "会議室", "AND", "rust", "golang"];
+
+    #[derive(Debug, Clone)]
+    enum Step {
+        /// `None` is a content-NULL block.
+        Write {
+            block: usize,
+            content: Option<String>,
+            writer: u8,
+        },
+        /// The tag or the page takes a new name, which every block naming it
+        /// indexes.
+        Rename {
+            named: usize,
+            name: &'static str,
+        },
+        Delete {
+            block: usize,
+            writer: u8,
+        },
+        Restore {
+            block: usize,
+        },
+        Purge {
+            block: usize,
+            writer: u8,
+        },
+    }
+
+    fn content() -> impl Strategy<Value = Option<String>> {
+        prop_oneof![
+            Just(None),
+            Just(Some(String::new())),
+            Just(Some("   ".to_string())),
+            Just(Some("plain words here".to_string())),
+            Just(Some("\"plain\" AND (words) OR NOT x* ^y -z".to_string())),
+            Just(Some(
+                "NEAR(plain words, 2) stripped:plain {a b}".to_string()
+            )),
+            Just(Some("naïve café, 会議室の予約 🍄".to_string())),
+            Just(Some(format!("**bold** #[{TAG_ULID}] and [[{PAGE_ULID}]]"))),
+            Just(Some(format!("tagged #[{TAG_ULID}]"))),
+            Just(Some(format!("see [[{PAGE_ULID}]]"))),
+            "\\PC{0,24}".prop_map(Some),
+        ]
+    }
+
+    fn step() -> impl Strategy<Value = Step> {
+        let content_block = 0..CONTENT_BLOCKS;
+        let any_block = 0..BLOCKS.len();
+        prop_oneof![
+            4 => (content_block.clone(), content(), any::<u8>())
+                .prop_map(|(block, content, writer)| Step::Write { block, content, writer }),
+            2 => (CONTENT_BLOCKS..BLOCKS.len(), proptest::sample::select(&NAMES[..]))
+                .prop_map(|(named, name)| Step::Rename { named, name }),
+            2 => (any_block.clone(), any::<u8>())
+                .prop_map(|(block, writer)| Step::Delete { block, writer }),
+            2 => any_block.prop_map(|block| Step::Restore { block }),
+            1 => (content_block, any::<u8>())
+                .prop_map(|(block, writer)| Step::Purge { block, writer }),
+        ]
+    }
+
+    /// Change `blocks`, then run the incremental writers the materializer
+    /// runs for that change (`materializer::dispatch`, and the cohort fan-outs
+    /// in `materializer::handlers::apply`).
+    async fn apply(pool: &SqlitePool, step: &Step) {
+        match step {
+            Step::Write {
+                block,
+                content,
+                writer,
+            } => {
+                let id = BLOCKS[*block];
+                sqlx::query(
+                    "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                     VALUES (?1, 'content', ?2, ?3, 1, ?3) \
+                     ON CONFLICT (id) DO UPDATE SET content = excluded.content",
+                )
+                .bind(id)
+                .bind(content)
+                .bind(PAGE_ULID)
+                .execute(pool)
+                .await
+                .unwrap();
+                // A rename finds the blocks that link the page through
+                // `block_links`.
+                crate::cache::reindex_block_links(pool, id).await.unwrap();
+                match writer % 3 {
+                    0 => update_fts_for_block(pool, id).await,
+                    1 => update_fts_for_block_split(pool, pool, id).await,
+                    _ => reindex_fts_for_ids(pool, &[id.to_string()]).await,
+                }
+                .unwrap();
+            }
+            Step::Rename { named, name } => {
+                let id = BLOCKS[*named];
+                sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+                    .bind(name)
+                    .bind(id)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+                reindex_fts_references(pool, id).await.unwrap();
+                update_fts_for_block(pool, id).await.unwrap();
+            }
+            Step::Delete { block, writer } => {
+                let id = BLOCKS[*block];
+                soft_delete_block(pool, id).await;
+                remove(pool, id, *writer).await;
+                reindex_fts_for_ids(pool, &page_and_tag_referrers(pool, &[id]).await.unwrap())
+                    .await
+                    .unwrap();
+            }
+            Step::Restore { block } => {
+                let id = BLOCKS[*block];
+                sqlx::query("UPDATE blocks SET deleted_at = NULL WHERE id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+                let mut ids = vec![id.to_string()];
+                ids.extend(page_and_tag_referrers(pool, &[id]).await.unwrap());
+                reindex_fts_for_ids(pool, &ids).await.unwrap();
+            }
+            Step::Purge { block, writer } => {
+                let id = BLOCKS[*block];
+                sqlx::query("DELETE FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+                remove(pool, id, *writer).await;
+            }
+        }
+    }
+
+    async fn remove(pool: &SqlitePool, id: &str, writer: u8) {
+        match writer % 4 {
+            0 => remove_fts_for_block(pool, id).await,
+            1 => remove_fts_for_blocks(pool, &[id]).await,
+            2 => update_fts_for_block(pool, id).await,
+            _ => update_fts_for_block_split(pool, pool, id).await,
+        }
+        .unwrap();
+    }
+
+    async fn search_hits(pool: &SqlitePool) -> Vec<Vec<String>> {
+        let mut hits = Vec::new();
+        for probe in PROBES {
+            hits.push(
+                sqlx::query_scalar(
+                    "SELECT block_id FROM fts_blocks WHERE fts_blocks MATCH ? ORDER BY block_id",
+                )
+                .bind(format!("\"{probe}\""))
+                .fetch_all(pool)
+                .await
+                .unwrap(),
+            );
+        }
+        hits
+    }
+
+    async fn run(steps: Vec<Step>) -> Result<(), TestCaseError> {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, TAG_ULID, "tag", "rust", None, None).await;
+        insert_block(&pool, PAGE_ULID, "page", "Plain café page", None, None).await;
+        rebuild_fts_index(&pool).await.unwrap();
+
+        for step in &steps {
+            apply(&pool, step).await;
+        }
+        // Fails when the trigram index and the stored rows disagree, which a
+        // delete that dropped a row without its tokens would cause.
+        sqlx::query("INSERT INTO fts_blocks (fts_blocks) VALUES ('integrity-check')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let incremental = (fts_rows(&pool).await, search_hits(&pool).await);
+
+        rebuild_fts_index(&pool).await.unwrap();
+        let rebuilt = (fts_rows(&pool).await, search_hits(&pool).await);
+        prop_assert_eq!(incremental, rebuilt);
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+
+        #[test]
+        fn incremental_fts_writers_leave_what_a_rebuild_produces(
+            steps in proptest::collection::vec(step(), 1..24)
+        ) {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(run(steps))?;
+        }
+    }
+}

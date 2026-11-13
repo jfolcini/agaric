@@ -217,10 +217,14 @@ function mockPage(rows: readonly Row[]): MockPage {
               newIndex: index,
             }).op_refs,
         ),
-      edit: (id, markdown) =>
+      edit: (id, markdown, base) =>
         answer(
           () =>
-            command<WithRefs<BlockRow>>('edit_block', { blockId: id, toText: markdown }).op_refs,
+            command<WithRefs<BlockRow>>('edit_block', {
+              blockId: id,
+              toText: markdown,
+              baseText: base ?? null,
+            }).op_refs,
         ),
       remove: (id) =>
         answer(() => {
@@ -1208,14 +1212,14 @@ describe('page mode against the mock backend', () => {
             // Its promises settle before the next macrotask; a timer would sleep the worker as well.
             await new Promise((resolve) => setImmediate(resolve))
 
-            // Not a peer's edit while a change here is held back: the local one wins, and an undo
+            // Not a peer's edit while a change here is held back: the local one can win, and an undo
             // of it back to the text last saved leaves the peer's in the backend alone until the
             // next reload. Holding makes that wait long; it is no part of what a hold does.
             if (peer !== null && (peer.kind !== 'edit' || !(held || refusing))) {
               const textOnly = action.kind === 'type'
               const mark = peerChange(page, ed, save, peer, textOnly, nextPeerId, mintKept)
-              // Where both sides changed a block the local change wins at the next save, so a
-              // peer's change made while writes are held back is not one to keep.
+              // Where both sides changed the same text of a block the local change wins at the
+              // next save, so a peer's change made while writes are held back is not one to keep.
               if (mark !== null && !held && !refusing) {
                 marks.set(`${stepIndex}:${mark.kind}:${mark.id}`, mark)
               }
@@ -1270,6 +1274,9 @@ describe('page mode against the mock backend', () => {
               lists,
             )
 
+            // A save rebased on a peer's edit leaves both edits in the backend, and the
+            // document takes them at the next reload (#6533).
+            if (peer?.kind === 'edit') applyRemote(ed.view, save, page.rows(), mintKept)
             expectBackendHoldsDoc(ed, page.live())
             expectPeersKept(ed, page, marks)
             const live = new Set(page.live().map(([id]) => id))

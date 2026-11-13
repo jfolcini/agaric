@@ -81,7 +81,7 @@ pub(crate) fn sandboxed() -> bool {
 /// straight back at the real vault.
 ///
 /// The error strings are user-facing: they surface in the boot failure dialog
-/// (`lib.rs` `show_fatal_error_dialog`) and in the CI log of a sandboxed run, so
+/// (`lib.rs` `show_boot_failure_dialog`) and in the CI log of a sandboxed run, so
 /// they name the variable, the offending value, and the fix.
 pub(crate) fn decide(
     data_dir_raw: Option<&str>,
