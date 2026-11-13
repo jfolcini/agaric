@@ -4,7 +4,8 @@
 //! A purge deletes one tree node; every block under it dies with it, including
 //! a block created here while the two devices were out of contact. Such a
 //! block is still a node under the deleted one, and Loro lets it be moved out,
-//! so it is kept: moved, with its subtree, under a new page in the Trash.
+//! so it is kept: moved under a new page in the Trash, with the blocks below
+//! it that pass the same test.
 //!
 //! A block is kept only when both hold. This device created its node, and the
 //! delete is causally concurrent with that creation, which is the doc's own
@@ -48,7 +49,7 @@ impl LoroEngine {
         for &node in &unseen {
             let under_kept =
                 matches!(tree.parent(node), Some(TreeParentId::Node(p)) if unseen.contains(&p));
-            if !under_kept && self.first_line_under(node).is_some() {
+            if !under_kept && self.first_line_under(node, &unseen).is_some() {
                 by_origin
                     .entry(self.purged_page_above(node))
                     .or_default()
@@ -59,7 +60,10 @@ impl LoroEngine {
         for (origin, mut roots) in by_origin {
             roots.sort_unstable();
             let page_id = BlockId::new();
-            let title = self.kept_page_title(origin, roots[0])?;
+            let title = self
+                .first_line(origin)
+                .or_else(|| self.first_line_under(roots[0], &unseen))
+                .ok_or_else(|| AppError::validation("loro: a kept block has no text".to_owned()))?;
             self.apply_create_block_at(page_id.as_str(), "page", &title, None, usize::MAX)?;
             let page = TreeParentId::Node(self.node_for(page_id.as_str()).ok_or_else(|| {
                 AppError::validation(format!("loro: kept page {page_id} has no node"))
@@ -68,6 +72,7 @@ impl LoroEngine {
                 tree.mov(root, page).map_err(|e| {
                     AppError::validation(format!("loro: keep block under {page_id}: {e}"))
                 })?;
+                self.drop_seen_blocks_under(root, &unseen)?;
             }
             self.doc.commit();
             self.apply_delete_block(page_id.as_str(), &agaric_store::db::now_ms().to_string())?;
@@ -105,29 +110,46 @@ impl LoroEngine {
         let mut top = node;
         while let Some(TreeParentId::Node(parent)) = tree.parent(top) {
             top = parent;
-            if self.meta_string(top, FIELD_BLOCK_TYPE).as_deref() == Some("page") {
+            let block_type = tree
+                .get_meta(top)
+                .ok()
+                .and_then(|meta| read_string(&meta, FIELD_BLOCK_TYPE).ok());
+            if block_type.as_deref() == Some("page") {
                 break;
             }
         }
         top
     }
 
-    /// `origin`'s first line; the first kept block's when `origin` is blank.
-    fn kept_page_title(&self, origin: TreeID, first_kept: TreeID) -> Result<String, AppError> {
-        let line = self
-            .first_line(origin)
-            .or_else(|| self.first_line_under(first_kept))
-            .ok_or_else(|| AppError::validation("loro: a kept block has no text".to_owned()))?;
-        Ok(line)
+    /// A block the purge had seen was moved under a kept one here: the move
+    /// revived it, without the properties and tags the purge deleted.
+    fn drop_seen_blocks_under(
+        &self,
+        kept: TreeID,
+        unseen: &HashSet<TreeID>,
+    ) -> Result<(), AppError> {
+        let tree = self.tree();
+        for child in tree.children(TreeParentId::Node(kept)).unwrap_or_default() {
+            if unseen.contains(&child) {
+                self.drop_seen_blocks_under(child, unseen)?;
+            } else {
+                tree.delete(child).map_err(|e| {
+                    AppError::validation(format!("loro: drop a purged block under a kept one: {e}"))
+                })?;
+            }
+        }
+        Ok(())
     }
 
-    fn first_line_under(&self, node: TreeID) -> Option<String> {
+    /// The first line of text in `node` or the kept blocks under it.
+    fn first_line_under(&self, node: TreeID, unseen: &HashSet<TreeID>) -> Option<String> {
         self.first_line(node).or_else(|| {
             self.tree()
                 .children(TreeParentId::Node(node))
                 .unwrap_or_default()
                 .into_iter()
-                .find_map(|child| self.first_line_under(child))
+                .filter(|child| unseen.contains(child))
+                .find_map(|child| self.first_line_under(child, unseen))
         })
     }
 
@@ -142,11 +164,6 @@ impl LoroEngine {
     fn node_text(&self, node: TreeID) -> Option<String> {
         let meta = self.tree().get_meta(node).ok()?;
         read_text(&meta, FIELD_CONTENT).ok()
-    }
-
-    fn meta_string(&self, node: TreeID, field: &str) -> Option<String> {
-        let meta = self.tree().get_meta(node).ok()?;
-        read_string(&meta, field).ok()
     }
 }
 
@@ -343,6 +360,67 @@ mod tests {
 
         assert_eq!(delta.kept.len(), 1);
         assert_eq!(delta.kept[0].title, "Inner page");
+    }
+
+    /// B indented a block A had under a new one, and wrote under it. Only what
+    /// A never received is kept: the block A purged stays purged.
+    #[test]
+    fn a_block_the_purge_had_seen_does_not_ride_back_under_a_kept_one_6561() {
+        let (mut a, mut b) = pair();
+        b.apply_create_block("NEW", "content", "written on B", Some("P"), 1)
+            .unwrap();
+        b.apply_move_block("OLD", Some("NEW"), 0).unwrap();
+        b.apply_create_block("DEEP", "content", "deeper, on B", Some("OLD"), 0)
+            .unwrap();
+        a.apply_purge_block("P").unwrap();
+
+        let delta = pull(&a, &mut b);
+
+        assert_eq!(delta.kept.len(), 1);
+        let page = delta.kept[0].page_id.as_str();
+        assert_eq!(ids(&delta.purged), vec!["OLD", "P"]);
+        assert_eq!(b.read_parent("NEW").unwrap().as_deref(), Some(page));
+        assert_eq!(b.read_parent("DEEP").unwrap().as_deref(), Some(page));
+        pull(&b, &mut a);
+        assert!(!a.contains_block("OLD"), "nor does it come back on A");
+        assert_eq!(a.read_parent("DEEP").unwrap().as_deref(), Some(page));
+    }
+
+    #[test]
+    fn a_blank_block_holding_only_text_the_purge_had_seen_is_not_kept_6561() {
+        let (mut a, mut b) = pair();
+        b.apply_create_block("EMPTY", "content", "", Some("P"), 1)
+            .unwrap();
+        b.apply_move_block("OLD", Some("EMPTY"), 0).unwrap();
+        a.apply_purge_block("P").unwrap();
+
+        let delta = pull(&a, &mut b);
+
+        assert_eq!(delta.kept, Vec::new());
+        assert_eq!(ids(&delta.purged), vec!["EMPTY", "OLD", "P"]);
+    }
+
+    #[test]
+    fn each_purged_page_gets_one_trash_page_for_all_its_kept_blocks_6561() {
+        let (mut a, mut b) = pair();
+        a.apply_create_block("Q", "page", "Other page", None, 1)
+            .unwrap();
+        pull(&a, &mut b);
+        for (id, parent) in [("N1", "P"), ("N2", "P"), ("N3", "Q")] {
+            b.apply_create_block(id, "content", "written on B", Some(parent), 5)
+                .unwrap();
+        }
+        a.apply_purge_block("P").unwrap();
+        a.apply_purge_block("Q").unwrap();
+
+        let delta = pull(&a, &mut b);
+
+        let mut titles: Vec<&str> = delta.kept.iter().map(|k| k.title.as_str()).collect();
+        titles.sort_unstable();
+        assert_eq!(titles, vec!["Other page", "Trip notes"]);
+        let under = |id| b.read_parent(id).unwrap();
+        assert_eq!(under("N1"), under("N2"), "one page for P's two blocks");
+        assert_ne!(under("N1"), under("N3"));
     }
 
     /// The rescue reaches A as ordinary ops, A purging the kept page then

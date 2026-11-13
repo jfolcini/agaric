@@ -237,7 +237,7 @@ export const sync: Record<string, string> = {
   'sync.changesAppliedUnknownCount': 'Synced changes from device',
   'sync.failed': 'Sync failed: {{message}}',
   'sync.localTextKept':
-    '“{{title}}” was deleted on another device. What you wrote here that had not synced yet is in the Trash.',
+    'Another device deleted or moved “{{title}}”. The blocks you added under it here that had not synced yet are in the Trash.',
   // #5728 — the peer runs another engine format (`SyncErrorCode`); updating the
   // older device fixes it, and `peer_is_older` says which one that is (#6523).
   // The unnamed form is for a peer this device has no name for.

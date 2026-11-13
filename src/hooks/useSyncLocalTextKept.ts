@@ -1,10 +1,10 @@
 /**
  * useSyncLocalTextKept — says when a synced purge left text in the Trash (#6561).
  *
- * Another device deleted a page and emptied its Trash while this one, out of
- * contact, wrote blocks under it. The backend keeps those blocks in the Trash
- * under a page of the same title and reports the titles once per import. The
- * toast stays until dismissed: sync runs unattended.
+ * Another device purged a page, or moved it to another space, while this one,
+ * out of contact, added blocks under it. The backend keeps those blocks in the
+ * Trash under a page of the same title and reports the titles once per import.
+ * The toast stays until dismissed: sync runs unattended.
  *
  * No-op outside Tauri. Call once at app root (App.tsx).
  */

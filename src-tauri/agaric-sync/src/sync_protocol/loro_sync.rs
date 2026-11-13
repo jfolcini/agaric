@@ -2427,6 +2427,20 @@ pub(crate) async fn import_and_project(
         kept,
     } = import_payload_into_engine(registry, device_id, space_id, payload)?;
 
+    // #6561: the ops that keep a block are in no op log, so the space is saved
+    // before a concurrent session can export them, as for a mirrored tombstone
+    // (`mirror_sql_tombstones_onto_engine`). The inbox row outlives a failure.
+    if !kept.is_empty()
+        && agaric_engine::loro::snapshot::save_all_engines(pool, registry)
+            .await
+            .persisted_through
+            .is_none()
+    {
+        return Err(AppError::Snapshot(
+            "the blocks kept from a purge were not saved".to_owned(),
+        ));
+    }
+
     let clearable_ids = clearable_slot_ids(
         registry,
         device_id,

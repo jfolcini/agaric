@@ -53,11 +53,11 @@ describe('useSyncLocalTextKept', () => {
 
     expect(vi.mocked(notify.warning).mock.calls).toEqual([
       [
-        '“Trip notes” was deleted on another device. What you wrote here that had not synced yet is in the Trash.',
+        'Another device deleted or moved “Trip notes”. The blocks you added under it here that had not synced yet are in the Trash.',
         { duration: Number.POSITIVE_INFINITY },
       ],
       [
-        '“Groceries” was deleted on another device. What you wrote here that had not synced yet is in the Trash.',
+        'Another device deleted or moved “Groceries”. The blocks you added under it here that had not synced yet are in the Trash.',
         { duration: Number.POSITIVE_INFINITY },
       ],
     ])

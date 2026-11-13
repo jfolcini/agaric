@@ -2517,6 +2517,19 @@ async fn a_synced_purge_keeps_the_block_b_wrote_under_the_page_in_bs_trash_6561(
         vec![title.clone()],
         "the import reports the kept page"
     );
+    let saved = agaric_engine::loro::snapshot::load_snapshot(
+        &fx.pool_b,
+        &agaric_store::space::SpaceId::from_trusted(fx.old.as_str()),
+    )
+    .await
+    .unwrap()
+    .expect("B saved the space");
+    let mut reloaded = agaric_engine::loro::engine::LoroEngine::with_peer_id("reader").unwrap();
+    reloaded.import(&saved).unwrap();
+    assert!(
+        reloaded.contains_block(written.as_str()),
+        "the import saved the kept block before anything could export it"
+    );
     assert_eq!(
         trash_row(&fx.pool_b, fx.page.as_str()).await,
         None,
