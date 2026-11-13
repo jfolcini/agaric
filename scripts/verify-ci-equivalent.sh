@@ -21,7 +21,8 @@
 #             has already run those hooks ahead of this one.
 #
 #   Phase B/C/D — vitest + cargo nextest scoped to the **commit range**
-#                 being pushed (`@{upstream}..HEAD`, override with
+#                 being pushed (`@{upstream}...HEAD`, or `origin/main...HEAD`
+#                 after main moved into the branch; override with
 #                 `PRE_PUSH_RANGE`). Uses `scripts/test-related-{ts,rust}.sh
 #                 --range REVSPEC` (same scripts the pre-commit hooks use,
 #                 just with a different diff source).
@@ -124,6 +125,32 @@ sqlx_gate_verdict() {
         echo "$out"
     else
         echo "run: unrecognised output from $*"
+    fi
+}
+
+# ── Default push range ──────────────────────────────────────────────
+# Prints what this push adds as a three-dot revspec: the commits ahead of the
+# tracking upstream, or of origin/main for a branch never pushed; fails when
+# neither exists. After a rebase onto (or a merge of) a newer main the
+# upstream's merge base is the old fork point, so `@{upstream}...HEAD` would
+# carry every main commit since, and a branch with no Rust would compile for
+# main's `.rs`. The branch's own diff, `origin/main...HEAD`, is what it adds then.
+# Defined up here so `--self-test` below can drive it directly.
+default_push_range() {
+    local main_base
+    if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+        if main_base="$(git merge-base origin/main HEAD 2>/dev/null)" \
+            && ! git merge-base --is-ancestor "$main_base" '@{upstream}'; then
+            echo "→ main moved into this branch since its last push; range is the branch's own diff" >&2
+            echo "origin/main...HEAD"
+        else
+            echo "@{upstream}...HEAD"
+        fi
+    elif git rev-parse --verify --quiet origin/main >/dev/null; then
+        echo "→ No tracking upstream; falling back to range 'origin/main...HEAD'" >&2
+        echo "origin/main...HEAD"
+    else
+        return 1
     fi
 }
 
@@ -2057,6 +2084,45 @@ db.close()
     st_sqlx run 'a helper exiting non-zero runs' 0 1 sh -c 'echo skip; exit 1'
     st_sqlx run 'garbage helper output runs' 0 1 printf 'skipped\n'
 
+    # 63. Push range: what the branch adds, never main's commits since its
+    #     last push. One line per state, in order: pushed then committed;
+    #     main advanced without the branch; rebased onto main; main merged in.
+    st_range_root="$(mktemp -d -t pre-push-range.XXXXXX)"
+    st_out="$(
+        # shellcheck source=lib/git-scratch-guard.sh
+        . "$(dirname "${BASH_SOURCE[0]}")/lib/git-scratch-guard.sh"
+        git_scratch_guard "$st_range_root"
+        git_scratch_init "$st_range_root/repo"
+        cd "$st_range_root/repo" || exit 1
+        git config remote.origin.url .
+        git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+        git config branch.feat.remote origin
+        git config branch.feat.merge refs/heads/feat
+        tree="$(git write-tree)"
+        commit() { git commit-tree "$tree" -m "$@"; }
+        m1="$(commit m1)"
+        f1="$(commit f1 -p "$m1")"
+        git update-ref refs/remotes/origin/main "$m1"
+        git update-ref refs/remotes/origin/feat "$f1"
+        git symbolic-ref HEAD refs/heads/feat
+        git update-ref refs/heads/feat "$(commit f2 -p "$f1")"
+        default_push_range 2>/dev/null
+        m2="$(commit m2 -p "$m1")"
+        git update-ref refs/remotes/origin/main "$m2"
+        default_push_range 2>/dev/null
+        git update-ref refs/heads/feat "$(commit f1-rebased -p "$m2")"
+        default_push_range 2>/dev/null
+        git update-ref refs/heads/feat "$(commit merge -p "$f1" -p "$m2")"
+        default_push_range 2>/dev/null
+    )"
+    rm -rf "$st_range_root"
+    st_want=$'@{upstream}...HEAD\n@{upstream}...HEAD\norigin/main...HEAD\norigin/main...HEAD'
+    if [ "$st_out" = "$st_want" ]; then
+        st_ok "push range: the branch's own diff once main moved into it"
+    else
+        st_bad "push range: the branch's own diff once main moved into it" "$(echo "$st_out" | tr '\n' ' ')"
+    fi
+
     if [ "$st_fail" != 0 ]; then
         echo "verify-ci-equivalent self-test FAILED" >&2
         exit 2
@@ -2119,9 +2185,7 @@ bash "$REPO_ROOT/scripts/require-npm.sh" >/dev/null || exit 1
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
 # ── Determine the commit range being pushed ────────────────────────
-# Default: commits ahead of the tracking upstream. Override via
-# PRE_PUSH_RANGE for branches without an upstream (e.g. fresh feature
-# branches that haven't been pushed yet — set PRE_PUSH_RANGE=origin/main...HEAD).
+# Default: `default_push_range` above. Override via PRE_PUSH_RANGE.
 #
 # Three dots, not two. `git diff A..B` compares the two TIPS, so anything
 # present on A but not on B reads as a deletion — a branch cut before a
@@ -2135,17 +2199,10 @@ bash "$REPO_ROOT/scripts/require-npm.sh" >/dev/null || exit 1
 # the merge-base diff, including one introduced by a history rewrite.
 
 RANGE="${PRE_PUSH_RANGE:-}"
-if [ -z "$RANGE" ]; then
-    if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
-        RANGE="@{upstream}...HEAD"
-    elif git rev-parse --verify origin/main >/dev/null 2>&1; then
-        RANGE="origin/main...HEAD"
-        echo "→ No tracking upstream; falling back to range '$RANGE'"
-    else
-        echo "✗ Cannot determine push range (no upstream, no origin/main)."
-        echo "  Set PRE_PUSH_RANGE=<revspec> and retry."
-        exit 1
-    fi
+if [ -z "$RANGE" ] && ! RANGE="$(default_push_range)"; then
+    echo "✗ Cannot determine push range (no upstream, no origin/main)."
+    echo "  Set PRE_PUSH_RANGE=<revspec> and retry."
+    exit 1
 fi
 
 if ! git rev-list --count "$RANGE" >/dev/null 2>&1; then

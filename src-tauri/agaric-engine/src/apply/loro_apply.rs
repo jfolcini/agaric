@@ -916,19 +916,23 @@ async fn read_seed_attachments(
 /// How [`hydrate_page_subtree_into_engine`] places a seeded block among the
 /// siblings its engine already holds.
 #[derive(Clone, Copy)]
-pub(crate) enum SeedRank {
+pub(crate) enum SeedRank<'a> {
     /// By their legacy `position` stamps, as a create op does: the seed at
     /// space assignment. Not by SQL there: a page's seed renumbers its group
     /// without the nested pages it stops at (#5239), so a nested page seeded
     /// later would tie the sibling renumbered into its rank.
     Stamp,
     /// By their SQL `position` (#5670): a repair seeds among siblings whose
-    /// stamps a later move left stale.
-    Sql,
+    /// stamps a later move left stale. It seeds the blocks in `only`, and
+    /// each only under a parent the engine holds (#6525).
+    Sql {
+        only: &'a std::collections::HashSet<String>,
+    },
 }
 
 /// [`hydrate_page_subtree_into_engine`]'s synchronous engine seed, ranking
 /// siblings by `sql_ranks` (keyed by id) when given, else by their stamps.
+/// With `only`, see [`SeedRank::Sql`].
 /// Returns the post-seed sibling order of every parent group actually touched.
 fn seed_nodes_into_engine(
     state: &crate::loro::shared::LoroState,
@@ -936,6 +940,7 @@ fn seed_nodes_into_engine(
     space_id: &agaric_store::space::SpaceId,
     nodes: &[SeedNode],
     sql_ranks: Option<&std::collections::HashMap<String, i64>>,
+    only: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<Vec<String>>, AppError> {
     let mut guard = state
         .registry
@@ -947,6 +952,11 @@ fn seed_nodes_into_engine(
             continue;
         }
         let parent_id = n.parent_id.as_deref();
+        if only.is_some_and(|only| {
+            !only.contains(&n.id) || parent_id.is_some_and(|p| !engine.contains_block(p))
+        }) {
+            continue;
+        }
         match sql_ranks {
             Some(ranks) => engine.apply_seed_block(
                 &n.id,
@@ -1063,11 +1073,12 @@ fn seed_attachments(
 /// is a pure no-op (no SQL writes, no fallback-count change).
 ///
 /// ## No sync duplicate-node hazard
-/// A seeded block either never entered an engine export (#2326, #4775) or left
-/// its doc's live tree through a purge (#5670), which a peer merges as a deleted
-/// node. Either way the seed is the id's one live node, unlike a block seeded
-/// from SQL that peers hold live, unless a peer moves the purged node before it
-/// merges the purge: that revives it beside the seed.
+/// A seeded block either never entered an engine export (#2326, #4775, #6525)
+/// or left its doc's live tree through a purge (#5670), which a peer merges as
+/// a deleted node. Either way the seed is the id's one live node, unless a
+/// peer moves the purged node before it merges the purge: that revives it
+/// beside the seed. A block seeded from SQL that peers hold live would be a
+/// second one, so the repair seeds only blocks this device created (#6525).
 ///
 /// ## Engine rollback
 /// The seed goes through `for_space_recording`, so a caller that armed
@@ -1080,7 +1091,7 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
     device_id: &str,
     page_id: &agaric_core::ulid::BlockId,
     space_id: &agaric_store::space::SpaceId,
-    rank: SeedRank,
+    rank: SeedRank<'_>,
     admit_deleted_since: Option<i64>,
 ) -> Result<(), AppError> {
     use crate::loro::projection;
@@ -1126,9 +1137,9 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
     for row in rows {
         nodes.push(read_seed_node(conn, row).await?);
     }
-    let sql_ranks = match rank {
-        SeedRank::Stamp => None,
-        SeedRank::Sql => Some(sql_sibling_ranks(conn, &nodes).await?),
+    let (sql_ranks, only) = match rank {
+        SeedRank::Stamp => (None, None),
+        SeedRank::Sql { only } => (Some(sql_sibling_ranks(conn, &nodes).await?), Some(only)),
     };
 
     // 3. Seed into the (lazily-created) engine in ONE synchronous scope. The
@@ -1136,7 +1147,7 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
     //    already present (idempotent), and record the post-seed sibling order of
     //    every parent group we actually touched for the dense reprojection.
     let touched_orders: Vec<Vec<String>> =
-        seed_nodes_into_engine(state, device_id, space_id, &nodes, sql_ranks.as_ref())?;
+        seed_nodes_into_engine(state, device_id, space_id, &nodes, sql_ranks.as_ref(), only)?;
 
     // 4. Reproject each touched parent group so the engine's sibling order and
     //    the SQL dense positions agree (mirrors the create path). Empty on a

@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, navigateToView, openPage, test, waitForBoot } from './helpers'
+import { dndClickGuardLifted, expect, navigateToView, openPage, test, waitForBoot } from './helpers'
 
 /**
  * The tab strip (#5691): a middle click on a tab closes it, and a tab moves by
@@ -39,10 +39,7 @@ async function dragAlongStrip(page: Page, source: Locator, target: Locator): Pro
     page.getByRole('status').filter({ hasText: `${dragged} moved over ${over}.` }),
   ).toBeAttached()
   await page.mouse.up()
-  // dnd-kit swallows every click until a 50 ms timer set at the drop runs, to
-  // eat the drop's own; a click sent at machine speed beats that timer. A 50 ms
-  // timer set after the drop runs after it.
-  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 50)))
+  await dndClickGuardLifted(page)
 }
 
 test.describe('Tab strip: middle click and reorder (#5691) @pages', () => {

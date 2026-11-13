@@ -88,6 +88,22 @@ impl Device {
         changed_blocks.len()
     }
 
+    /// Store `from`'s op log as audit rows, as a session does beside the doc.
+    async fn receive_op_log(&self, from: &Device) {
+        let ops = agaric_store::op_log::get_ops_since(
+            &agaric_store::db::ReadPool(from.pool.clone()),
+            from.id,
+            0,
+        )
+        .await
+        .unwrap();
+        for op in &ops {
+            agaric_engine::dag::ingest_replicated_record(&self.pool, op, "user")
+                .await
+                .unwrap();
+        }
+    }
+
     /// The sink the app wires in front of the daemon's events.
     fn sink(&self) -> SpacePlacementSink {
         SpacePlacementSink::new(
@@ -154,6 +170,56 @@ impl Device {
             .fetch_one(&self.pool)
             .await
             .unwrap()
+    }
+
+    /// The boot repairs, on a vault that ran the #5670 hydration in an
+    /// earlier release, as every vault in use has.
+    async fn boot_repairs_after_the_first_hydration(&self) {
+        sqlx::query(
+            "INSERT INTO app_settings (key, value, updated_at) \
+             VALUES ('repair.engine_missing_live_blocks.v1', '0', 0)",
+        )
+        .execute(&self.pool)
+        .await
+        .unwrap();
+        crate::repair::repair_unreachable_content_at_boot(
+            &self.pool, &self.pool, self.id, &self.mat,
+        )
+        .await;
+        self.mat.flush_background().await.unwrap();
+    }
+
+    /// The live nodes carrying `block`'s id in what this device's engine
+    /// exports for `space`.
+    fn live_nodes(&self, space: &SpaceId, block: &BlockId) -> usize {
+        let (_, export) = self
+            .mat
+            .loro_state()
+            .registry
+            .snapshot_all_engines()
+            .into_iter()
+            .find(|(s, _)| s == space)
+            .unwrap();
+        let mut exported = LoroEngine::new();
+        exported.import(&export.unwrap()).unwrap();
+        exported
+            .live_blocks_preorder()
+            .iter()
+            .filter(|b| *b == block)
+            .count()
+    }
+
+    /// The reconciliation oracle's `engine.*` divergences on this device, as
+    /// `(artefact, key)`.
+    async fn engine_divergences(&self) -> Vec<(String, String)> {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 13).unwrap();
+        crate::reconciliation_oracle::reconcile_all(&self.pool, self.mat.loro_state(), None, today)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|d| d.artefact.starts_with("engine."))
+            .map(|d| (d.artefact.to_owned(), d.key))
+            .collect()
     }
 
     fn shutdown(&self) {
@@ -498,6 +564,139 @@ async fn a_session_that_imports_only_a_property_definition_saves_it_6525() {
         def.is_some(),
         "the definition is in B's engine after the kill"
     );
+    a.shutdown();
+    b.shutdown();
+}
+
+/// What a kill before the session-end save left behind: A creates page Y, B
+/// pulls it and is killed with no save, so B boots with Y in SQL and in no
+/// engine, and the child B then creates under Y lands in SQL only. Returns
+/// `(a, b, space, x, y, child)`.
+async fn a_child_stranded_under_a_peers_page()
+-> (Device, Device, SpaceId, BlockId, BlockId, BlockId) {
+    let (a, mut b, space, _page, x) = paired().await;
+    let y = create_page_in_space_inner(
+        &a.pool,
+        DEV_A,
+        &a.mat,
+        None,
+        "Y".into(),
+        space.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    b.pull(&a, &space).await;
+    b.receive_op_log(&a).await;
+    b.kill_and_boot().await;
+    let child = create_block_inner(
+        &b.pool,
+        DEV_B,
+        &b.mat,
+        "content".into(),
+        "under Y".into(),
+        Some(y.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    b.mat.flush_background().await.unwrap();
+    assert_eq!(
+        (
+            b.engine_content(&space, &y),
+            b.engine_content(&space, &child)
+        ),
+        (None, None),
+        "the fixture: neither is in B's engine"
+    );
+    (a, b, space, x, y, child)
+}
+
+/// #6525 — the block this device created under a peer's page while its engine
+/// lacked the page is in SQL only, through later saves, sessions and boots.
+/// The one-time hydration puts it in the engine under that page, with its
+/// task state, and the peer then receives it once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hydration_brings_a_stranded_local_block_to_the_engine_and_the_peer_6525() {
+    let (a, mut b, space, x, y, child) = a_child_stranded_under_a_peers_page().await;
+    set_todo_state_inner(
+        &b.pool,
+        DEV_B,
+        &b.mat,
+        child.as_str().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    // Boot replays the last local op, so the child's ops must not be it.
+    edit_block_inner(&b.pool, DEV_B, &b.mat, x, "abcZ".into())
+        .await
+        .unwrap();
+    b.save().await;
+    let changed = b.pull(&a, &space).await;
+    b.end_session(complete(changed)).await;
+    b.kill_and_boot().await;
+    assert_eq!(
+        (
+            b.engine_content(&space, &y).as_deref(),
+            b.engine_content(&space, &child)
+        ),
+        (Some("Y"), None),
+        "the fixture: A delivered Y again, and nothing brought the child"
+    );
+
+    b.boot_repairs_after_the_first_hydration().await;
+
+    assert_eq!(b.engine_content(&space, &child).as_deref(), Some("under Y"));
+    assert_eq!(b.live_nodes(&space, &child), 1);
+    assert_eq!(
+        b.engine_divergences().await,
+        Vec::<(String, String)>::new(),
+        "B's engine and SQL agree"
+    );
+    a.pull(&b, &space).await;
+    a.mat.flush_background().await.unwrap();
+    let (parent, todo_state): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT parent_id, todo_state FROM blocks WHERE id = ?")
+            .bind(child.as_str())
+            .fetch_one(&a.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (parent.as_deref(), todo_state.as_deref()),
+        (Some(y.as_str()), Some("TODO")),
+        "A has it under Y, as a task"
+    );
+    assert_eq!(a.sql_content(&child).await, "under Y");
+    assert_eq!(a.live_nodes(&space, &child), 1, "once");
+    assert_eq!(
+        a.engine_divergences().await,
+        Vec::<(String, String)>::new(),
+        "A's engine and SQL agree"
+    );
+    a.shutdown();
+    b.shutdown();
+}
+
+/// #6525 — the hydration leaves a peer's block the engine lacks to sync:
+/// seeded from SQL it would be a second node under this device's peer id
+/// beside the one A delivers. The local child under it stays out of the doc
+/// rather than enter it with no parent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hydration_does_not_twin_a_peers_block_the_engine_lacks_6525() {
+    let (a, b, space, _x, y, child) = a_child_stranded_under_a_peers_page().await;
+
+    b.boot_repairs_after_the_first_hydration().await;
+    b.pull(&a, &space).await;
+
+    assert_eq!(b.live_nodes(&space, &y), 1, "B holds Y once");
+    assert_eq!(
+        b.engine_content(&space, &child),
+        None,
+        "the child was not seeded"
+    );
+    a.pull(&b, &space).await;
+    assert_eq!(a.live_nodes(&space, &y), 1, "and so does A");
     a.shutdown();
     b.shutdown();
 }

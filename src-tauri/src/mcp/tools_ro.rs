@@ -1297,8 +1297,9 @@ fn tool_desc_query() -> ToolDescription {
                       sorted, grouped and aggregated; cursor paginated. Rows carry `page_title` \
                       and the properties the query reads; with `group_by` the result is `groups` \
                       of { key, title, count, aggregates } instead. Template pages and their \
-                      blocks are left out unless `where` asks for the `template` property; \
-                      saved views always are. Open TODOs with \
+                      blocks are left out unless a HasProperty leaf on `template` asks for \
+                      blocks that have it; a negated one (NotExists, Ne, or under Not) still \
+                      leaves them out; saved views always are. Open TODOs with \
                       estimate > 3: {\"space_id\": \"<ULID>\", \"where\": {\"type\": \"And\", \
                       \"children\": [{\"type\": \"Leaf\", \"primitive\": {\"type\": \"State\", \
                       \"values\": [\"TODO\"]}}, {\"type\": \"Leaf\", \"primitive\": {\"type\": \

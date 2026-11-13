@@ -9,6 +9,7 @@
  */
 
 import { RotateCcw, X } from 'lucide-react'
+import type { RefObject } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -21,6 +22,7 @@ import { Button } from '@/components/ui/button'
 
 export interface HistorySelectionToolbarProps {
   selectedCount: number
+  listRef: RefObject<HTMLElement | null>
   reverting: boolean
   onRevertClick: () => void
   onClearSelection: () => void
@@ -32,6 +34,7 @@ export interface HistorySelectionToolbarProps {
 
 export function HistorySelectionToolbar({
   selectedCount,
+  listRef,
   reverting,
   onRevertClick,
   onClearSelection,
@@ -41,6 +44,7 @@ export function HistorySelectionToolbar({
   return (
     <BatchActionToolbar
       selectedCount={selectedCount}
+      listRef={listRef}
       className="history-selection-toolbar gap-3 p-3"
       suppressRangeSelectHint
     >
