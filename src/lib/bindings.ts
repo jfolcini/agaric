@@ -50,6 +50,11 @@ export const commands = {
 	 */
 	editBlock: (blockId: BlockId, toText: string, baseText: string | null) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText, baseText })),
 	/**
+	 *  Tauri command: edit many blocks in one transaction. Delegates to
+	 *  [`edit_blocks_batch_inner`]; the response carries the appended op refs.
+	 */
+	editBlocksBatch: (edits: BlockEdit[]) => typedError<WithOps<EditBlocksBatchResponse>, AppError>(__TAURI_INVOKE("edit_blocks_batch", { edits })),
+	/**
 	 *  Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
 	 *  #4523: it also carries `affected_page_ids`, the page ids inside the cascade
@@ -194,7 +199,7 @@ export const commands = {
 	/**  Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`]. */
 	getBacklinks: (blockId: BlockId, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, scope })),
 	/**  Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`]. */
-	getBlockHistory: (blockId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry_Serialize>, AppError>(__TAURI_INVOKE("get_block_history", { blockId, opTypeFilter, cursor, limit })),
+	getBlockHistory: (blockId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppError>(__TAURI_INVOKE("get_block_history", { blockId, opTypeFilter, cursor, limit })),
 	/**  Tauri command: get materializer queue status. Delegates to [`get_status_inner`]. */
 	getStatus: () => typedError<StatusInfo, AppError>(__TAURI_INVOKE("get_status")),
 	/**
@@ -402,7 +407,7 @@ export const commands = {
 	/**  Tauri command: batch-fetch properties. Delegates to [`get_batch_properties_inner`]. */
 	getBatchProperties: (blockIds: BlockId[]) => typedError<{ [key in string]: PropertyRow[] }, AppError>(__TAURI_INVOKE("get_batch_properties", { blockIds })),
 	/**  Tauri command: list page history. Delegates to [`list_page_history_inner`]. */
-	listPageHistory: (pageId: string, opTypeFilter: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry_Serialize>, AppError>(__TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, scope, cursor, limit })),
+	listPageHistory: (pageId: string, opTypeFilter: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppError>(__TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, scope, cursor, limit })),
 	/**  Tauri command: batch revert ops. Delegates to [`revert_ops_inner`]. */
 	revertOps: (ops: OpRef[]) => typedError<UndoResult[], AppError>(__TAURI_INVOKE("revert_ops", { ops })),
 	/**  Tauri command: undo page op. Delegates to [`undo_page_op_inner`]. */
@@ -647,6 +652,16 @@ export const commands = {
 	 *  `sync:internet_facing_bind` event essentially every time.
 	 */
 	getBindExposureStatus: () => typedError<BindExposureStatus, AppError>(__TAURI_INVOKE("get_bind_exposure_status")),
+	/**  Tauri command: the address this device's sync endpoint is bound to (#6526). */
+	getLocalSyncAddress: () => typedError<{
+	/**  The bound socket, `ip:port`. */
+	address: string,
+	/**
+	 *  The endpoint is on the loopback fallback: there is no local network, and
+	 *  no other device can reach `address`.
+	 */
+	loopback: boolean,
+} | null, AppError>(__TAURI_INVOKE("get_local_sync_address")),
 	/**
 	 *  Tauri command: return whether the OS is blocking this app's traffic **right
 	 *  now** (#4035).
@@ -1880,6 +1895,16 @@ export type BindExposureStatus = {
 };
 
 /**
+ *  One edit of [`edit_blocks_batch`]: `to_text` replaces the block's content
+ *  only while that content is still `expected`.
+ */
+export type BlockEdit = {
+	blockId: BlockId,
+	expected: string,
+	toText: string,
+};
+
+/**
  *  Newtype wrapper around ULID for type safety and consistent serialisation.
  *  Stores the canonical uppercase Crockford base32 representation.
  * 
@@ -2348,6 +2373,15 @@ export type Draft = {
 	draft_anchor_device: string | null,
 };
 
+/**  Reply of [`edit_blocks_batch`]. */
+export type EditBlocksBatchResponse = {
+	/**
+	 *  The blocks left alone, in request order: in the Trash, gone, or no
+	 *  longer holding the `expected` content.
+	 */
+	skipped: BlockId[],
+};
+
 /**
  *  A boolean tree over [`FilterPrimitive`] leaves.
  * 
@@ -2635,10 +2669,7 @@ export type GroupedBacklinkResponse = {
 };
 
 /**  Row returned by block history queries (op_log entries for a block). */
-export type HistoryEntry = HistoryEntry_Serialize | HistoryEntry_Deserialize;
-
-/**  Row returned by block history queries (op_log entries for a block). */
-export type HistoryEntry_Deserialize = {
+export type HistoryEntry = {
 	device_id: string,
 	seq: number,
 	op_type: string,
@@ -2655,32 +2686,9 @@ export type HistoryEntry_Deserialize = {
 	is_replicated: boolean,
 	/**
 	 *  The name of the MCP agent that wrote the op (`op_log.origin =
-	 *  'agent:<name>'`), absent for every other origin.
+	 *  'agent:<name>'`), `None` for every other origin.
 	 */
 	agent: string | null,
-};
-
-/**  Row returned by block history queries (op_log entries for a block). */
-export type HistoryEntry_Serialize = {
-	device_id: string,
-	seq: number,
-	op_type: string,
-	payload: string,
-	/**  Epoch-ms (op_log.created_at is INTEGER since migration 0079). */
-	created_at: number,
-	/**
-	 *  #2481 phase 2: `true` for a **foreign** op replicated from a peer as
-	 *  append-only audit metadata (`op_log.is_replicated = 1`) — surfaced in
-	 *  the History view for cross-device attribution and to gate revert
-	 *  (replicated rows are not locally revertible; see
-	 *  `reverse::reject_replicated_targets`). Local-authored ops are `false`.
-	 */
-	is_replicated: boolean,
-	/**
-	 *  The name of the MCP agent that wrote the op (`op_log.origin =
-	 *  'agent:<name>'`), absent for every other origin.
-	 */
-	agent?: string | null,
 };
 
 /**
@@ -2849,10 +2857,7 @@ export type ImportResult = {
 export type InternetFacingBind = {
 	/**  The bound IPv4 address, e.g. `"192.160.160.80"`. */
 	address: string,
-	/**
-	 *  The UDP port of that listener. OS-assigned (the bind requests port 0),
-	 *  so it changes on every daemon start.
-	 */
+	/**  The UDP port of that listener. */
 	port: number,
 };
 
@@ -2993,6 +2998,17 @@ export type ListPagesWithMetadataFilter = {
 	 *  primitives, but the backend must not trust that).
 	 */
 	filters?: FilterPrimitive[],
+};
+
+/**  Where this device's sync endpoint listens, for Settings › Sync & devices (#6526). */
+export type LocalSyncAddress = {
+	/**  The bound socket, `ip:port`. */
+	address: string,
+	/**
+	 *  The endpoint is on the loopback fallback: there is no local network, and
+	 *  no other device can reach `address`.
+	 */
+	loopback: boolean,
 };
 
 /**  One log file's name + contents returned by [`read_logs_for_report`]. */

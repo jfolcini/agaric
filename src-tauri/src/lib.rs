@@ -73,6 +73,8 @@ macro_rules! agaric_commands {
             // #5140: the clipboard's paste, one undo.
             $crate::commands::pages::paste_blocks,
             $crate::commands::blocks::crud::edit_block,
+            // #6608: replace across pages writes every block in one transaction.
+            $crate::commands::blocks::batch_edit::edit_blocks_batch,
             $crate::commands::blocks::crud::delete_block,
             // Multi-select batch delete: collapses
             // the FE per-row IPC loop (50 IPCs for a 50-row delete)
@@ -229,6 +231,7 @@ macro_rules! agaric_commands {
             // `sync:internet_facing_bind` listener, so this query is how the
             // banner gets on screen at all, not a fallback.
             $crate::commands::sync_cmds::get_bind_exposure_status,
+            $crate::commands::sync_cmds::get_local_sync_address,
             // #4035 — the OS network-block status as it stands NOW. Not a race
             // fix like the two above: `sync:network_blocked` fires only on a
             // transition, so a pairing dialog reopened during one continuous

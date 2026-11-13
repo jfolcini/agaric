@@ -162,7 +162,7 @@ site page named in the row or in the Appendix.
 | Comments | `%%hidden%%` | **None.** No handling of `%%` was found under `src/editor/`; an imported comment presumably stays visible text (**unverified**) | Gap |
 | Highlight colours | Six colours (help, *Basic formatting syntax*; roadmap: October 2026) | One highlight (`==`) | Gap |
 | Folding | Headings and lists fold | Blocks collapse; the state is per device, not synced | Partial |
-| Find in note | Find and replace | `Ctrl+F` with case, whole-word and regex; `Ctrl+H` replaces one or all matches in the open page, `$1` groups in regex mode (`docs/SEARCH.md`). No replace across pages | Done |
+| Find in note | Find and replace | `Ctrl+F` with case, whole-word and regex; `Ctrl+H` replaces one or all matches in the open page, `$1` groups in regex mode; the Search view replaces literal text across pages, with a preview and an Undo (`docs/SEARCH.md`) | Done |
 | Multiple cursors | Yes (help, *Multiple cursors*) | Not found | Gap |
 | Slides | Core plugin | None | Gap |
 | Spellcheck | Built in (roadmap: June 2020) | The webview's (`spellcheck: 'true'` in `src/editor/use-roving-editor.ts`) | Done |

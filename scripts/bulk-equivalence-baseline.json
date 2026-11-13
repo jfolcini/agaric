@@ -217,6 +217,18 @@
     "reason": "N-key attachment listing fan-out; appends no op_log rows and mutates nothing"
   },
   {
+    "fn": "src-tauri/src/commands/blocks/batch_edit.rs::edit_blocks_batch",
+    "kind": "mutating",
+    "status": "wrapper",
+    "reason": "IPC shim over edit_blocks_batch_inner"
+  },
+  {
+    "fn": "src-tauri/src/commands/blocks/batch_edit.rs::edit_blocks_batch_inner",
+    "kind": "mutating",
+    "status": "converged",
+    "reason": "ALREADY A FOLD: loops edit_block_in_tx, the helper edit_block_inner calls, inside one tx, so the write cannot fork. What it adds to the fold is deliberate: an edit whose block no longer holds its `expected` content is skipped, not written (batch_edit_tests.rs)"
+  },
+  {
     "fn": "src-tauri/src/commands/blocks/crud.rs::create_blocks_batch",
     "kind": "mutating",
     "status": "wrapper",

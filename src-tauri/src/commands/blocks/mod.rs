@@ -1,11 +1,13 @@
 //! Blocks command handlers.
 
+pub mod batch_edit;
 pub(crate) mod crud;
 pub mod move_ops;
 pub(crate) mod queries;
 pub mod space_move;
 pub mod split_merge;
 
+pub use batch_edit::*;
 pub use crud::*;
 pub use move_ops::*;
 pub use queries::*;

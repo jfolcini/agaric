@@ -2062,7 +2062,9 @@
    touch area; in block text it would take taps and caret placement from the
    lines above and below. Only taller, not wider: chips sit side by side, and a
    tap between two must not land on the farther one. Anchored at the left edge,
-   not centred: a fractional horizontal translate widens the hit box by a pixel. */
+   not centred: a fractional horizontal translate widens the hit box by a pixel.
+   A row whose text wraps gives the chip part of that row's own next line; the
+   rest of the row still opens it, and CSS cannot tell a wrapped row. */
 .tag-chip-row .tag-ref-chip {
   @apply touch-hit-area;
   @media (pointer: coarse) {
