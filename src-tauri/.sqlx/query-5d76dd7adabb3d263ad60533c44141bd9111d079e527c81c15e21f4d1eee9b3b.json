@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM fts_blocks WHERE rowid IN (SELECT id FROM fts_blocks_content WHERE c0 IN (SELECT value FROM json_each(?)))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "5d76dd7adabb3d263ad60533c44141bd9111d079e527c81c15e21f4d1eee9b3b"
+}

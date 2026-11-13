@@ -7695,3 +7695,67 @@ async fn property_definitions_0129_copies_every_row_into_every_space_5841() {
     .await
     .expect_err("(space_id, key) is the key");
 }
+
+/// #6534 — 0130 indexes the block-id column of the search index's shadow
+/// table in place: an upgrading vault keeps every row, a duplicate included
+/// (nothing in the schema forbids one, so the index cannot be unique), and
+/// search still finds them. Removing one block then takes that block's rows
+/// and no other.
+#[tokio::test]
+async fn fts_blocks_0130_block_id_index_keeps_existing_rows_6534() {
+    const ROWS: [(&str, &str); 4] = [
+        ("B0000000000000000000000001", "first block"),
+        ("B0000000000000000000000002", "second block"),
+        ("B0000000000000000000000002", "second block again"),
+        ("B0000000000000000000000003", "会議室の予約"),
+    ];
+    let rows = |pool: SqlitePool| async move {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT block_id, stripped FROM fts_blocks ORDER BY block_id, stripped",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+    };
+    let seeded: Vec<(String, String)> = ROWS
+        .iter()
+        .map(|(id, text)| ((*id).to_owned(), (*text).to_owned()))
+        .collect();
+
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 129).await;
+    for (id, stripped) in ROWS {
+        sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+            .bind(id)
+            .bind(stripped)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    apply_migrations_through(&pool, 129, 130).await;
+
+    assert_eq!(rows(pool.clone()).await, seeded);
+    let indexed_columns: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM pragma_index_info('idx_fts_blocks_content_block')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(indexed_columns, ["c0"]);
+    let hits: Vec<String> = sqlx::query_scalar(
+        "SELECT block_id FROM fts_blocks WHERE fts_blocks MATCH '\"会議室\"'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(hits, ["B0000000000000000000000003"]);
+
+    agaric_store::fts::remove_fts_for_block(&pool, "B0000000000000000000000002")
+        .await
+        .unwrap();
+    assert_eq!(
+        rows(pool.clone()).await,
+        [seeded[0].clone(), seeded[3].clone()]
+    );
+}
