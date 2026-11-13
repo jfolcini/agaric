@@ -235,7 +235,7 @@ fn apply_set_property_op(
     use crate::loro::engine::PropertyValue;
     // #2026 — observability for a malformed multi-value SetProperty
     // that slipped through ingest. The local append path and (since
-    // #2026) `dag::insert_remote_op` both run SetProperty payloads
+    // #2026) `dag::ingest_remote_record` both run SetProperty payloads
     // through `validate_set_property`, which rejects more than one
     // set value field. A payload that reaches this dispatcher with
     // multiple value fields therefore indicates an op that bypassed

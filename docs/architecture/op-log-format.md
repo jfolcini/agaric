@@ -20,12 +20,10 @@ the audit-only replication sub-flow (`SyncMessage::OpLogBatch`, streamed
 after the `LoroSync` deltas) now inserts **foreign** devices' op records
 here as append-only, hash-verified **audit metadata** — stored with
 `is_replicated = 1` and **never applied to state** (the boot-replay walk,
-materializer, and undo path all filter `is_replicated = 0`). This is the
-production caller the ingest machinery below (`insert_replicated_op`,
-the **Audit** profile) was built for. So the op log is now
+materializer, and undo path all filter `is_replicated = 0`). The ingest
+path is `insert_replicated_op`. So the op log is now
 **globally-replicated for audit/History/attribution but device-local for
-state**. The "Validity rules" section below describes that real path (the
-`Strict` profile's `insert_remote_op` remains test-only).
+state**. The "Validity rules" section below describes that path.
 
 For the higher-level narrative (what the op log *is*, the op-type catalog,
 the materializer, drafts) see [data-and-events.md](./data-and-events.md#op-log).
@@ -35,8 +33,8 @@ The canonical source is `src-tauri/agaric-core/src/hash.rs` (`compute_op_hash`,
 `verify_op_record`, `verify_op_hash`), the append path in
 `src-tauri/agaric-store/src/op_log/append.rs` (`append_local_op_in_tx`) and
 `src-tauri/agaric-store/src/op_log/payload.rs` (`serialize_inner_payload`),
-the remote-ingest / merge path in `src-tauri/agaric-engine/src/dag.rs`
-(`insert_remote_op`, `ingest_replicated_record`, `append_merge_op`) with its
+the remote-ingest path in `src-tauri/agaric-engine/src/dag.rs`
+(`ingest_replicated_record`) with its
 wire-typed shim `insert_replicated_op` in
 `src-tauri/agaric-sync/src/sync_protocol/operations.rs`, and the payload types
 in `src-tauri/agaric-store/src/op.rs`. Where any detail here is ambiguous,
@@ -120,7 +118,7 @@ may itself contain a raw `0x00` byte. `compute_op_hash` checks this with a
 the payload; in **release** builds those assertions are compiled out, so the
 function never panics on a raw NUL — it simply hashes the (ambiguous) bytes
 it was given. The graceful runtime rejection lives at the ingest gate: the
-`\0`-rejection check at the top of `insert_remote_op` returns
+`\0`-rejection check at the top of `ingest_replicated_record` returns
 `AppError::InvalidOperation` *before* the bytes reach `compute_op_hash`, so
 untrusted/remote ops carrying a raw NUL are refused gracefully rather than
 panicking.
@@ -204,12 +202,6 @@ not hashes**:
   pointing at the immediately preceding op from the *same* device:
   `[[device_id, seq - 1]]`. It is produced via `serde_json::to_string`,
   giving compact JSON like `[["<device>",4]]`.
-- **Merge op** (multi-parent, `append_merge_op` in `dag.rs`):
-  `parent_seqs` lists one `[device_id, seq]` entry per merged branch
-  (at least two distinct entries). The writer **sorts the entries
-  lexicographically by `(device_id, seq)` and dedups** before serializing,
-  so the JSON byte string — and therefore the hash — is deterministic
-  regardless of input order.
 
 The link is **positional, not Merkle**: `parent_seqs` carries parent
 *positions*, not parent *hashes*, so a child's hash does not transitively
@@ -226,21 +218,12 @@ the rationale.
 
 These are the checks the remote-op ingest core (`agaric_engine::dag`)
 runs on an op record before landing it (mirrored by `verify_op_record`
-for the hash-only check). There are **two ingest profiles** sharing this
-verification recipe (#2481 phase 1):
-
-- **Strict** (`insert_remote_op`) — the dormant Wave 1B remote-merge
-  path; unresolved parents are a hard error. No production caller today;
-  exercised only by tests (`src-tauri/agaric-sync/src/dag_tests/tests.rs`,
-  `src-tauri/agaric-store/src/op_log/tests/origin.rs`).
-- **Audit** (`insert_replicated_op`, the wire shim over
-  `dag::ingest_replicated_record`) — the #2481 audit-only
-  replication ingest; identical hash / NUL / payload / idempotency checks,
-  but the parent-gap relaxation in rule 2 below applies, the row is stamped
-  `is_replicated = 1`, and the transfer-carried `origin` attribution is
-  preserved. Audit rows are **never applied to state** and are kept out of
-  boot replay / the materializer by the `is_replicated = 0` filter
-  (migration 0099).
+for the hash-only check). The one caller is `insert_replicated_op`, the
+wire shim over `dag::ingest_replicated_record` (#2481 audit-only
+replication): the row is stamped `is_replicated = 1`, the transfer-carried
+`origin` attribution is preserved, and audit rows are **never applied to
+state** — the `is_replicated = 0` filter keeps them out of boot replay and
+the materializer (migration 0099).
 
 The rules:
 
@@ -254,19 +237,14 @@ The rules:
    breaks the hash — readers do **not** separately re-validate that
    `parent_seqs` is in canonical sorted order.
 
-2. **Parents resolve — profile-dependent (audit-mode relaxation, #2481).**
-   Every `[device_id, seq]` entry in `parent_seqs` must already exist as a
-   row in `op_log` before this row is landed. The genesis op has no
-   parents.
-   - Under the **Strict** profile (`insert_remote_op`) a dangling pointer
-     is rejected with `"dag.parent_seqs.unresolved"`.
-   - Under the **Audit** profile (`insert_replicated_op`) an unresolved
-     parent caused by the *peer's own* compaction of its early history
-     **lands with a `warn!` breadcrumb instead of being rejected**, since
-     the replicated log is audit-only and never load-bearing for state, and
-     per-device ordered delivery (records are shipped and ingested in `seq`
-     order) makes such a gap attributable to compaction only. This is the
-     implemented audit-mode validity profile as of #2481 phase 1.
+2. **Parents are checked, not required (audit-mode relaxation, #2481).**
+   Every `[device_id, seq]` entry in `parent_seqs` is looked up in
+   `op_log`; the genesis op has no parents. An unresolved parent caused by
+   the *peer's own* compaction of its early history **lands with a `warn!`
+   breadcrumb instead of being rejected**, since the replicated log is
+   audit-only and never load-bearing for state, and per-device ordered
+   delivery (records are shipped and ingested in `seq` order) makes such a
+   gap attributable to compaction only.
 
 3. **Idempotent insert.** Insertion is keyed on the `(device_id, seq)`
    primary key with `INSERT OR IGNORE`, so duplicate delivery of the same

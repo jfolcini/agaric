@@ -26,9 +26,8 @@
 //!
 //! Step 1 used to be `DELETE FROM log_snapshots WHERE status = 'pending'`,
 //! sweeping the half-written blob of a crash mid-snapshot. #4699 deleted the
-//! blob: compaction now writes a single `compaction_watermark` row inside the
-//! purge transaction, so there is no two-phase write and no pending state to
-//! clean up.
+//! blob: compaction is now a single purge transaction, so there is no
+//! two-phase write and no pending state to clean up.
 //!
 //! If recovery of an individual draft fails, the error is captured in
 //! [`RecoveryReport::draft_errors`] and processing continues with the remaining

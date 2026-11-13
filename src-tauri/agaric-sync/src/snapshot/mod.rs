@@ -1,5 +1,4 @@
-//! Op-log compaction: purge ops past the retention window and record the
-//! frontier the purge ran to.
+//! Op-log compaction: purge ops past the retention window.
 //!
 //! # No snapshot blob (#4699)
 //!
@@ -11,10 +10,9 @@
 //! reprojects that view from — and building it buffered the whole vault in
 //! memory, against Android's ~24 MB release heap.
 //!
-//! What is left is the purge, plus the single `compaction_watermark` row
-//! recording the frontier it reached. Only that row's EXISTENCE is read, by
-//! [`agaric_engine::dag::find_lca`], to report a chain broken by compaction as
-//! such instead of as a plain `NotFound`.
+//! What is left is the purge. The `compaction_watermark` table (migration
+//! 0116) is no longer written or read (#6518); it stays because migrations
+//! are append-only.
 //!
 //! The purge is worth its keep: `op_log` costs ~303 B/op against a materially
 //! smaller Loro copy of the same edits, so it is the dominant term in vault

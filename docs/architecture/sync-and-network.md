@@ -107,16 +107,22 @@ When the responder cannot satisfy the initiator's advertised version vectors by 
 
 Since **#2503** the production catch-up is a **Loro-snapshot merge**, not a wipe-and-replace: the responder exports a per-space `LoroDoc` snapshot, the initiator *merges* it into its own engine and reprojects SQL from the merged state. Loro import is monotonic, so it never rolls the receiver back and the initiator's unsynced local content **survives** — the exact inversion of the old CBOR contract.
 
-The legacy CBOR path (`SnapshotOffer` / `SnapshotAccept` / `SnapshotReject` → `apply_snapshot()`, which wiped core tables and re-seeded from the blob) was deleted in #3487: the iroh cutover made it unreachable, since `SYNC_ALPN` is negotiated before any application byte moves and a build predating the port cannot open a session at all. #4699 deleted the restore, the blob and the `SnapshotAccept` / `SnapshotReject` wire variants with it — nothing read the blob once `apply_snapshot()` lost its last caller, and it duplicated the derived SQL view rather than `loro_doc_state`, the merge truth disaster recovery reprojects from. Compaction survives as a bare op-log purge plus a `compaction_watermark` row (see [`crdt-and-recovery.md § Op-log compaction`](crdt-and-recovery.md)); the wire-level detail of the flow that replaced the CBOR one is in [`sync-protocol-spec.md § Snapshot-fallback flow`](sync-protocol-spec.md).
+The legacy CBOR path (`SnapshotOffer` / `SnapshotAccept` / `SnapshotReject` → `apply_snapshot()`, which wiped core tables and re-seeded from the blob) was deleted in #3487: the iroh cutover made it unreachable, since `SYNC_ALPN` is negotiated before any application byte moves and a build predating the port cannot open a session at all. #4699 deleted the restore, the blob and the `SnapshotAccept` / `SnapshotReject` wire variants with it — nothing read the blob once `apply_snapshot()` lost its last caller, and it duplicated the derived SQL view rather than `loro_doc_state`, the merge truth disaster recovery reprojects from. Compaction survives as a bare op-log purge (see [`crdt-and-recovery.md § Op-log compaction`](crdt-and-recovery.md)); the wire-level detail of the flow that replaced the CBOR one is in [`sync-protocol-spec.md § Snapshot-fallback flow`](sync-protocol-spec.md).
 
 ## Daemon
 
 `src-tauri/agaric-sync/src/sync_daemon/` runs a long-lived task with a `tokio::select!` over:
 
 - **mDNS browse stream** — new peer announcements.
-- **`SyncTrigger` channel** — change-triggered sync (debounced by `DEFAULT_DEBOUNCE`).
-- **Periodic resync tick** — coarse retry for missed change-trigger events.
+- **Requested round** (`SyncScheduler::wait_for_debounced_change`) — a round with every paired peer, asked for two ways. `notify_change` (Sync now, pairing, a pull-back) opens it after `DEFAULT_DEBOUNCE`. `notify_local_edit` (a local command committed ops, `CommandTx::commit_and_dispatch`) opens it after `LOCAL_EDIT_DEBOUNCE` of quiet, so a burst of commits is one round.
+- **Periodic resync tick** — pulls from every peer not synced within the resync interval.
 - **Foreground notify** — wakes the loop on app-foreground transition.
+
+### An edit reaches the other device in two sessions
+
+A session is a pull: data flows from the device that answers to the device that dialled. So the round a local edit asks for delivers nothing by itself. It shows the peer this device's version vectors, and a responder that served a peer holding ops it lacks (`SyncOrchestrator::peer_holds_news`) asks its own scheduler for a round once that session has ended, and pulls back. The dialling device has just pulled everything the responder holds, so the second session shows the first device nothing new and the exchange ends there. No wire message was added for this.
+
+A gap a pull cannot close (a refused export, an update parked on a missing dependency) would otherwise prompt a pull-back on every session. The responder compares the advertisement with the one this peer made at its last completed session (`peer_refs.loro_vv_bytes`) and pulls back only for a space whose advertisement has moved since. The placement and repairs a device runs after an inbound session (`db::following_a_sync`) do not count as local edits; what they write reaches the peer on its next pull.
 
 ### Dormant mode
 
@@ -131,7 +137,7 @@ If no paired peers exist, the daemon defers mDNS browse + announce and the endpo
 Two independent schedules, **intentionally not coordinated**:
 
 - **Backend** (`src-tauri/agaric-sync/src/sync_scheduler.rs`): per-peer exponential 2 s → 4 s → 8 s → 16 s → 32 s → `MAX_BACKOFF` (60 s) cap, with ±10 % jitter so two devices don't lock-step on resync ticks. A per-peer mutex prevents concurrent connections to the same peer.
-- **Frontend** (`useSyncTrigger.ts`): coarse 60 s → 600 s cadence for the UI's "wake the scheduler" hint. Backend is authoritative; mid-backoff `startSync()` from the FE resolves as a quick no-op.
+- **Frontend** (`useSyncTrigger.ts`): coarse 60 s → 600 s cadence for the UI's "wake the scheduler" hint. Backend is authoritative: a scheduled `startSync()` for a peer in backoff dials nothing and resolves with state `backoff`, while a press on Sync clears that peer's backoff and dials at once, so the press reports the dial's own result (#6523).
 
 The dual layer is deliberate: backend handles failure recovery; frontend handles "the user clicked Sync".
 

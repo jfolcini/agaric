@@ -58,7 +58,7 @@ fn history_cursor(last: &HistoryEntry) -> Cursor {
 ///
 /// B.2: queries the native `block_id` column (migration 0030)
 /// directly, replacing the old `LIKE` pre-filter + `json_extract`
-/// fallback. The `idx_op_log_block_id` index makes this O(log N) instead
+/// fallback. The `idx_op_log_block_created` index makes this O(log N) instead
 /// of a full op_log scan with per-row JSON parsing.
 ///
 /// Optional `op_type_filter` pushes the FE-side
@@ -122,7 +122,8 @@ pub async fn list_block_history(
     let rows = sqlx::query_as!(
         HistoryEntry,
         "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-                ol.is_replicated AS \"is_replicated!: bool\" \
+                ol.is_replicated AS \"is_replicated!: bool\", \
+                CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS \"agent?: String\" \
          FROM op_log ol \
          WHERE ( \
              ol.block_id = ?1 \
@@ -308,7 +309,8 @@ async fn global_history_first_page(
     Ok(sqlx::query_as!(
         HistoryEntry,
         "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-                ol.is_replicated AS \"is_replicated!: bool\" \
+                ol.is_replicated AS \"is_replicated!: bool\", \
+                CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS \"agent?: String\" \
          FROM op_log ol \
          WHERE (?1 IS NULL OR ol.op_type = ?1) \
            AND (?2 IS NULL OR ( \
@@ -356,7 +358,8 @@ async fn global_history_after(
     Ok(sqlx::query_as!(
         HistoryEntry,
         "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-                ol.is_replicated AS \"is_replicated!: bool\" \
+                ol.is_replicated AS \"is_replicated!: bool\", \
+                CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS \"agent?: String\" \
          FROM op_log ol \
          WHERE (ol.created_at, ol.seq, ol.device_id) < (?4, ?5, ?6) \
            AND (?1 IS NULL OR ol.op_type = ?1) \
@@ -419,6 +422,7 @@ async fn list_single_page_history(
     // Before this attachment-probe OR was added, `ol.block_id IN (SELECT
     // id FROM page_blocks)` was the query's only top-level predicate and
     // planned as `SEARCH ol USING INDEX idx_op_log_block_id (block_id=?)`
+    // (the index migration 0130 dropped for `idx_op_log_block_created`)
     // — an indexed seek, ~0.03–1.6 ms regardless of whether the page had
     // matching rows. With this OR in place it plans as `SCAN ol USING
     // INDEX idx_op_log_created` (the index only avoids the `ORDER BY`
@@ -484,7 +488,8 @@ async fn list_single_page_history(
              WHERE pb.depth < 100 \
          ) \
          SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-                ol.is_replicated AS \"is_replicated!: bool\" \
+                ol.is_replicated AS \"is_replicated!: bool\", \
+                CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS \"agent?: String\" \
          FROM op_log ol \
          WHERE ( \
              ol.block_id IN (SELECT id FROM page_blocks) \

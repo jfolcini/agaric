@@ -504,7 +504,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('re-anchors undo state for each reloaded page when blocks changed (#731)', async () => {
+    it('keeps undo state for each reloaded page: a session brings only the peer’s ops (#6541)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -522,10 +522,10 @@ describe('useSyncEvents', () => {
         },
       })
 
-      // Remote ops shifted the backend op-log indexing that undoDepth
-      // addresses; the page's positional undo anchor must be reset, keyed by
-      // the same pageId the block reload uses (#731).
-      expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_1')
+      // The peer's ops are replicated rows the positional undo does not
+      // number, so the page reloads and keeps its undo and redo.
+      expect(mockLoad).toHaveBeenCalledTimes(1)
+      expect(mockReanchorUndo).not.toHaveBeenCalled()
 
       unmount()
     })
@@ -836,12 +836,10 @@ describe('useSyncEvents', () => {
         },
       })
 
-      // PAGE_1 was touched → reloaded + re-anchored; PAGE_2 was NOT in the
-      // set → skipped entirely (the whole point of #1071: no O(mounted) fan-out).
+      // PAGE_1 was touched → reloaded; PAGE_2 was NOT in the set → skipped
+      // entirely (the whole point of #1071: no O(mounted) fan-out).
       expect(mockLoad).toHaveBeenCalledTimes(1)
       expect(mockLoad2).not.toHaveBeenCalled()
-      expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_1')
-      expect(mockReanchorUndo).not.toHaveBeenCalledWith('PAGE_2')
 
       unmount()
     })
@@ -850,7 +848,7 @@ describe('useSyncEvents', () => {
     // provider stores (its own view plus an `{{embed}}` of it on another
     // page). Only one of them is the registry slot's; before the live-group
     // fan-out the other kept serving the pre-sync snapshot for the rest of
-    // the session. Re-anchoring is still page-scoped, so it fires ONCE.
+    // the session.
     it('reloads EVERY live provider store for a changed page, not just the slot owner', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
@@ -873,8 +871,6 @@ describe('useSyncEvents', () => {
       expect(mockLoad).toHaveBeenCalledTimes(1)
       expect(mockLoad1Embed).toHaveBeenCalledTimes(1)
       expect(mockLoad2).not.toHaveBeenCalled()
-      expect(mockReanchorUndo).toHaveBeenCalledTimes(1)
-      expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_1')
 
       unmount()
     })
@@ -898,11 +894,9 @@ describe('useSyncEvents', () => {
         },
       })
 
-      // Fallback: every mounted store reloads + re-anchors (pre-#1071 behaviour).
+      // Fallback: every mounted store reloads (pre-#1071 behaviour).
       expect(mockLoad).toHaveBeenCalledTimes(1)
       expect(mockLoad2).toHaveBeenCalledTimes(1)
-      expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_1')
-      expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_2')
 
       unmount()
     })

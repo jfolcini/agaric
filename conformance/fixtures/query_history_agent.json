@@ -1,0 +1,208 @@
+{
+  "description": "#6535 — the History view badges an op an MCP agent wrote, from the `agent` field of its `HistoryEntry`: the name in `op_log.origin = 'agent:<name>'`, absent for the user's own op. The agent's op carries `\"agent\"`, so the Rust runner appends it under that agent's actor, as an MCP tool call does, and the TS runner stamps the same `origin` on the mock's op. Each of the four listing statements that select the field (`list_single_page_history`, `list_block_history`, `global_history_first_page`, `global_history_after`) serves an agent row: the agent's two ops are the newest, so the whole-vault listing paged one row at a time reads one through each of its two statements.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha by the agent",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 3,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "status",
+        "value": "open",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "page_history_names_the_agent",
+      "rows": [
+        "edit_block#is_replicated=false#agent=claude-desktop",
+        "set_property#is_replicated=false#agent=claude-desktop",
+        "edit_block#is_replicated=false#agent=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "block_history_names_the_agent",
+      "rows": [
+        "edit_block#is_replicated=false#agent=claude-desktop",
+        "set_property#is_replicated=false#agent=claude-desktop",
+        "edit_block#is_replicated=false#agent=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{deleted_at,id,seq}",
+      "error": null,
+      "has_more": true,
+      "name": "global_history_page_1",
+      "rows": ["edit_block#is_replicated=false#agent=claude-desktop"],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{deleted_at,id,seq}",
+      "error": null,
+      "has_more": true,
+      "name": "global_history_page_2",
+      "rows": ["set_property#is_replicated=false#agent=claude-desktop"],
+      "total_count": null
+    }
+  ],
+  "name": "query_history_agent",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "alpha by the user"
+      },
+      "command": "edit_block"
+    },
+    {
+      "agent": "claude-desktop",
+      "args": {
+        "blockId": "S2",
+        "key": "status",
+        "value": {
+          "value_text": "open"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "agent": "claude-desktop",
+      "args": {
+        "blockId": "S2",
+        "toText": "alpha by the agent"
+      },
+      "command": "edit_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "cursor": null,
+        "limit": 10,
+        "opTypeFilter": null,
+        "pageId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_history",
+      "comment": "The page's listing names the agent on its two ops and nobody on the user's.",
+      "name": "page_history_names_the_agent"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "cursor": null,
+        "limit": 10,
+        "opTypeFilter": null
+      },
+      "command": "get_block_history",
+      "comment": "The per-block sheet reads the same field.",
+      "name": "block_history_names_the_agent"
+    },
+    {
+      "args": {
+        "cursor": null,
+        "limit": 1,
+        "opTypeFilter": null,
+        "pageId": "__all__",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_history",
+      "comment": "The whole-vault listing's first page: the agent's edit, the newest op.",
+      "name": "global_history_page_1"
+    },
+    {
+      "args": {
+        "cursor": null,
+        "limit": 1,
+        "opTypeFilter": null,
+        "pageId": "__all__",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_history",
+      "comment": "Its second page, through the cursor statement: the agent's `set_property`.",
+      "cursor_from": "global_history_page_1",
+      "name": "global_history_page_2"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha placeholder",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
