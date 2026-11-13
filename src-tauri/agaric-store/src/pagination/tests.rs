@@ -5944,7 +5944,8 @@ mod global_history_keyset_5424 {
     /// `?2 IS NULL` switch, and the space as an `IN` list. Kept as the oracle
     /// the rewrite must agree with (AGENTS.md § Performance Conventions).
     const ORACLE_SQL: &str = "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-                ol.is_replicated \
+                ol.is_replicated, \
+                CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS agent \
          FROM op_log ol \
          WHERE (?1 IS NULL OR ol.op_type = ?1) \
            AND (?2 IS NULL OR ( \
@@ -6352,7 +6353,8 @@ mod global_history_keyset_5424 {
     /// Production SQL of `list_global_history`, pinned to `history.rs` by
     /// `pinned_global_history_sql_is_production_5424`.
     const FIRST_PAGE_SQL: &str = "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-            ol.is_replicated AS \"is_replicated!: bool\" \
+            ol.is_replicated AS \"is_replicated!: bool\", \
+            CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS \"agent?: String\" \
      FROM op_log ol \
      WHERE (?1 IS NULL OR ol.op_type = ?1) \
        AND (?2 IS NULL OR ( \
@@ -6383,7 +6385,8 @@ mod global_history_keyset_5424 {
      ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
      LIMIT ?3";
     const CURSOR_PAGE_SQL: &str = "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-            ol.is_replicated AS \"is_replicated!: bool\" \
+            ol.is_replicated AS \"is_replicated!: bool\", \
+            CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS \"agent?: String\" \
      FROM op_log ol \
      WHERE (ol.created_at, ol.seq, ol.device_id) < (?4, ?5, ?6) \
        AND (?1 IS NULL OR ol.op_type = ?1) \

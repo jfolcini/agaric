@@ -206,3 +206,115 @@ test.describe('journal headings and chips on a 360 px touch phone @mobile @journ
     await expectSmallBox(dateChip, 'agenda date chip')
   })
 })
+
+// #6532 — a tag chip on its own row's line (the Tags browser, agenda and task
+// rows) reaches 44 px tall as a hit area, so the row keeps its height; side by
+// side, chips grow only vertically, so a tap between two lands on neither. A
+// chip in block text keeps its drawn size: there the area would take taps and
+// caret placement from the lines above and below.
+test.describe('tag chips on the rows of a 360 px touch phone @mobile @journal @pages', () => {
+  test.use({
+    viewport: { width: 360, height: 780 },
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+    deviceScaleFactor: iPhone13.deviceScaleFactor,
+    userAgent: iPhone13.userAgent,
+  })
+
+  const BUY_GROCERIES = '0000000000000000000BLOCK10'
+  const TRY_TAGGING = '0000000000000000000BLOCK04'
+
+  /** Whether a tap 21 px above and below the centre of `el` reaches it. */
+  async function hitsAboveBelow(el: Locator): Promise<boolean[]> {
+    const [, , top, bottom] = await hits44(el)
+    return [top ?? false, bottom ?? false]
+  }
+
+  async function expectDrawnUnder30(el: Locator, name: string): Promise<void> {
+    expect((await el.boundingBox())?.height, `${name}: drawn height`).toBeLessThan(30)
+  }
+
+  /** `row`'s height, and its height once `el` loses `hook`: the hit area adds none. */
+  async function rowHeights(row: Locator, el: Locator, hook: string): Promise<number[]> {
+    const withHook = (await row.boundingBox())?.height ?? Number.NaN
+    await el.evaluate((node, cls) => node.classList.remove(cls), hook)
+    return [withHook, (await row.boundingBox())?.height ?? Number.NaN]
+  }
+
+  test('the Tags browser chip', async ({ page }) => {
+    await waitForBoot(page)
+    await navigateToView(page, 'Tags')
+    const chip = page.getByTestId('tag-item-work')
+    await expect44(chip, 'Tags browser chip')
+    await expectDrawnUnder30(chip, 'Tags browser chip')
+    const [height, without] = await rowHeights(
+      page.getByRole('listitem').filter({ has: chip }),
+      chip,
+      'touch-hit-area',
+    )
+    expect(height, 'row height').toBe(without)
+  })
+
+  test("an agenda row's chips, and not a block's", async ({ page }) => {
+    await waitForBoot(page)
+    // One-letter names, so both chips are narrower than 44 px. Created in the
+    // Tags view, which tells the chips their names.
+    await navigateToView(page, 'Tags')
+    const nameInput = page.getByRole('textbox', { name: 'New tag name' })
+    for (const name of ['a', 'b']) {
+      await nameInput.fill(name)
+      await nameInput.press('Enter')
+      await expect(page.getByTestId(`tag-item-${name}`)).toBeVisible()
+    }
+    const tags = await ipc<Array<{ tag_id: string; name: string }>>(
+      page,
+      'list_all_tags_in_space',
+      { scope: { kind: 'active', space_id: 'SPACE_PERSONAL' } },
+    )
+    const idOf = (name: string) => tags.find((tag) => tag.name === name)?.tag_id
+    await ipc(page, 'edit_block', {
+      blockId: BUY_GROCERIES,
+      toText: `Buy groceries #[${idOf('a')}] #[${idOf('b')}]`,
+    })
+
+    await navigateToView(page, 'Tasks')
+    const row = page.getByTestId('agenda-results-item').filter({ hasText: 'Buy groceries' })
+    const chipA = row.getByTestId('tag-ref-chip').filter({ hasText: /^a$/ })
+    const chipB = row.getByTestId('tag-ref-chip').filter({ hasText: /^b$/ })
+    for (const [chip, name] of [
+      [chipA, 'chip a'],
+      [chipB, 'chip b'],
+    ] as const) {
+      expect(await hitsAboveBelow(chip), `${name}: top, bottom of a 44 px box`).toEqual([
+        true,
+        true,
+      ])
+      await expectDrawnUnder30(chip, name)
+    }
+    // Just past each chip and midway between them, at their middle.
+    const between = await chipA.evaluate(
+      (a, b) => {
+        const l = a.getBoundingClientRect()
+        const r = (b as Element).getBoundingClientRect()
+        const y = l.top + l.height / 2
+        return [l.right + 1, (l.right + r.left) / 2, r.left - 1].map((x) => {
+          const hit = document.elementFromPoint(x, y)
+          if (a.contains(hit)) return 'chip a'
+          if ((b as Element).contains(hit)) return 'chip b'
+          return a.closest('li')?.contains(hit) ? 'row' : String(hit?.tagName)
+        })
+      },
+      await chipB.elementHandle(),
+    )
+    expect(between, 'taps between the chips').toEqual(['row', 'row', 'row'])
+    const [height, without] = await rowHeights(row, row.locator('.tag-chip-row'), 'tag-chip-row')
+    expect(height, 'row height').toBe(without)
+
+    await openPageMobile(page, 'Getting Started')
+    const inText = page
+      .locator(`[data-block-id="${TRY_TAGGING}"]`)
+      .getByTestId('tag-ref-chip')
+      .filter({ hasText: 'work' })
+    expect(await hitsAboveBelow(inText), 'chip in block text: top, bottom').toEqual([false, false])
+  })
+})
