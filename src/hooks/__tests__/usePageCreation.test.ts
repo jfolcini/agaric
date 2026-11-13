@@ -88,15 +88,6 @@ describe('usePageCreation', () => {
     expect(created).toEqual({ id: 'OLD', title: 'My Page' })
   })
 
-  it('names a blank create past an Untitled page of another spelling', async () => {
-    mockedResolve.mockResolvedValue({ title: 'Untitled 2', page_id: null })
-    mockedCreate.mockResolvedValue('NEW_ID_0000000000000000000')
-
-    await create('')
-
-    expect(mockedCreate).toHaveBeenCalledWith(null, 'Untitled 2', 'SPACE_A')
-  })
-
   // #6278 — another page's alias refuses the create.
   it('maps a name another page holds to the duplicate-name message', async () => {
     mockedCreate.mockRejectedValue({

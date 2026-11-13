@@ -6,9 +6,9 @@
  * (`create_page_in_space` resolves an existing title to that page, #6278),
  * under its own title. A blank name takes the first free `Untitled N`. The
  * backend answers both (`resolve_page_title`, #6527). A failure is mapped to
- * a message in `createError` (a
- * duplicate-name conflict is user-actionable, anything else is not) and
- * `createPage` returns `null`, so the caller can keep its form open.
+ * a message in `createError` (a duplicate-name conflict is user-actionable,
+ * anything else is not) and `createPage` returns `null`, so the caller can
+ * keep its form open.
  *
  * The Pages list is not patched here: every local write marks it stale
  * (`watchLocalWrites` → `invalidatePageBrowserData`), and the caller opens the

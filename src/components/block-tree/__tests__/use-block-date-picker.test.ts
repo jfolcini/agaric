@@ -55,7 +55,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockDatePic
 }
 
 /**
- * The six commands the four mode handlers can reach, each answering what its
+ * The commands the four mode handlers can reach, each answering what its
  * binding declares; a test overrides the one it is about. Anything else the
  * hook fires fails by name instead of resolving `undefined`.
  *

@@ -25,7 +25,7 @@ import {
   foldPropertyKey,
   isInlinePropertyKey,
 } from '@/lib/inline-property-parse'
-import { normalizeTagName } from '@/lib/name-tokens'
+import { nameKey, normalizeTagName } from '@/lib/name-tokens'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { RUST_TRIM } from '@/lib/tauri-mock/coerce'
 import { withoutEvents } from '@/lib/tauri-mock/events'
@@ -83,7 +83,6 @@ import {
   pushOp,
   seedDefaultPropertyDefs,
 } from '@/lib/tauri-mock/seed'
-import { untitledTitle } from '@/lib/untitled-page'
 
 /**
  * The metadata-rich row for every live page in `spaceId`. Its
@@ -1434,12 +1433,20 @@ export const pagesHandlers = {
     const spaceId = readActiveSpaceScope('resolve_page_title', a)
     const title = (a['title'] as string).replace(RUST_TRIM, '')
     if (title === '') {
-      const titles = [...blocks.values()]
-        .filter(
-          (b) => b['block_type'] === 'page' && !b['deleted_at'] && ownerSpaceOf(b) === spaceId,
-        )
-        .map((b) => (b['content'] as string | null) ?? null)
-      return { title: untitledTitle(titles), page_id: null }
+      const taken = new Set(
+        [...blocks.values()]
+          .filter(
+            (b) =>
+              b['block_type'] === 'page' &&
+              !b['deleted_at'] &&
+              typeof b['content'] === 'string' &&
+              ownerSpaceOf(b) === spaceId,
+          )
+          .map((b) => nameKey(b['content'] as string)),
+      )
+      let free = 'Untitled'
+      for (let suffix = 2; taken.has(nameKey(free)); suffix += 1) free = `Untitled ${suffix}`
+      return { title: free, page_id: null }
     }
     const holder = pageNameHolder(title, spaceId)
     if (holder?.by !== 'title') return { title, page_id: null }

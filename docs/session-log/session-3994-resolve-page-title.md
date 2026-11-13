@@ -20,7 +20,16 @@ Decisions and traps:
   so it switched too.
 - Existing tests stubbed or asserted the old listing call. Eight files had their stubs swapped,
   three assertions now name the command the issue asked for, and WelcomeModal's call count went
-  from nine to ten: two title lookups replace one listing. No behavioural assertion changed.
+  from nine to ten: two title lookups replace one listing. The frontend tests that pinned the fold
+  (another spelling, `Untitled N` numbering) now pin that the backend's answer is used as given;
+  the fold itself is pinned by the Rust tests and the fixture. Review deleted the one that became
+  a copy of its neighbour.
+- `src/lib/untitled-page.ts` is gone: after the switch only the mock called it, so the mock numbers
+  `Untitled N` inline, pinned by the fixture.
+- Where the frontend's own find disagreed with the create, the create's rule now wins: a title
+  padded with U+0085 is trimmed, a title two old pages share in spellings `NOCASE` sorts apart
+  (padding, non-ASCII case, NFD) opens the smaller id, and a day that has both an ISO and a
+  `DD/MM/YYYY` page links the ISO one. The old find took whichever sorted first.
 - Each lookup still reads and folds every title in the space on the backend, because SQLite cannot
   apply the name rule. What is gone is the IPC payload and the main-thread parse. Not measured.
 - Opening the New page dialog still lists every page once for its similar-pages list; that is a

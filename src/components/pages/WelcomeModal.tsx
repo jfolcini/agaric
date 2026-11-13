@@ -97,10 +97,10 @@ async function ensureSamplePage(
   } else {
     pageId = unwrap(await commands.createPageInSpace(null, title, spaceId))
     // #4338 — only on the CREATE branch: the reuse branch found an existing
-    // page, so any warm cache filled after that page was created
-    // already has it. Usually there is no warm cache here at all (first
-    // boot), but Settings → "Show the welcome tour again" re-runs this flow
-    // mid-session with `BlockTree`s mounted behind the modal.
+    // page, so any warm cache filled after that page was created already has
+    // it. Usually there is no warm cache here at all (first boot), but
+    // Settings → "Show the welcome tour again" re-runs this flow mid-session
+    // with `BlockTree`s mounted behind the modal.
     notifyPageAdded(pageId, title, spaceId)
   }
 
