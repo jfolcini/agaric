@@ -1,4 +1,4 @@
-# Session 4102 — Android: files land in Downloads, shared text opens Quick Capture, a newer release is announced, the multicast lock sleeps
+# Session 4103 — Android: files land in Downloads, shared text opens Quick Capture, a newer release is announced, the multicast lock sleeps
 
 Four Android items built without a phone, by the maintainer's decision of 2026-11-13: the code merges now, and what only a device can show becomes checklist lines on #6513. Items: #6546 boxes 1 and 3, #6555 box 2, #6526 box 3.
 
@@ -27,7 +27,7 @@ Four Android items built without a phone, by the maintainer's decision of 2026-1
 - `just gen-sqlx` empties `.sqlx` and refills it. `git status` mid-run shows a mass deletion; read it only after the recipe exits.
 - `register_managed_state` sits at the 70-line cap. The suspend arm moved to `on_app_suspended`.
 - Since #6720 a command that takes an `AppHandle` is generic over the runtime and listed as `cmd::<tauri::Wry>` in `agaric_commands!`. A branch cut before it is green alone and does not compile once merged; the second merge of `main` here caught it.
-- Two PRs opened minutes apart both took session-log number 4100; `session-log-pr-collision` cancels the whole run and names the number each should take.
+- Two PRs opened minutes apart both took session-log number 4100; `session-log-pr-collision` cancels the whole run. The orchestrating session renumbered this log to 4103 on the branch while this session was renumbering it too: fetch the branch before a push, another session may have written to it.
 
 ## What ran
 
