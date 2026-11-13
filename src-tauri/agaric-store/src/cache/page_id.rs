@@ -368,8 +368,7 @@ pub struct PageIdWrite {
 /// on it is a guess. Every path that can make NULL the correct answer already
 /// runs a derivation that CAN tell them apart, and does so unconditionally:
 ///
-///   * delete / restore / purge fan out `CONTENT_LIFECYCLE_REBUILD_TASKS` /
-///     `FULL_CACHE_REBUILD_TASKS`, both of which contain `RebuildPageIds`;
+///   * a purge fans out `RebuildPageIds`;
 ///   * a move re-derives the moved subtree in-tx via
 ///     `rederive_page_and_space_ids`, which writes NULL unconditionally and
 ///     covers the WHOLE subtree. Its descendant walk used to filter
@@ -478,50 +477,67 @@ pub async fn set_block_page_id_from_parent_in_tx(
 /// This mirrors the canonical read filter and the 0086 backfill verbatim,
 /// so it is the source-of-truth reconciliation for any drift. It must run
 /// AFTER [`rebuild_page_ids`] — it reads the freshly materialized
-/// `page_id`. Orphan blocks (NULL `page_id`) reset to NULL `space_id`.
+/// `page_id`. Orphan blocks (NULL `page_id`) keep their last `space_id`.
 pub async fn rebuild_space_ids(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("space_id", || rebuild_space_ids_impl(pool)).await
+    rebuild_space_ids_split(pool, pool).await
 }
 
-async fn rebuild_space_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    // #533 Phase 2: `space_id` is the source of truth. A page's own
-    // `space_id` (set by the `space` op via the command/replay paths) is
-    // authoritative; this rebuild only PROPAGATES it to the page's
-    // descendants. Non-page blocks inherit their owning page's column
-    // (`blocks.page_id` → that page's `space_id`); pages are left untouched
-    // (excluding them also avoids any read-during-write ambiguity, since
-    // the correlated subquery only reads page rows, which are never in the
-    // update set). Orphans (NULL `page_id`) reset to NULL `space_id`.
-    // Only PROPAGATE to blocks that have an owning page (`page_id IS NOT
-    // NULL`). Pages are authoritative (excluded). Tags are top-level with
-    // `page_id = NULL` (migration 0027) but carry their OWN authoritative
-    // `space_id` (set directly by the `space` op) — they have no page to
-    // re-derive from, so they must NOT be touched here or the rebuild would
-    // null every tag's space (data loss). Orphan content (page purged →
-    // NULL page_id) likewise keeps its last value rather than being cleared.
-    //
-    // #2668: the trailing null-safe `space_id IS NOT (<owning page's
-    // space_id>)` guard restricts the UPDATE to rows whose value actually
-    // changes, so an up-to-date vault writes zero `blocks` rows. The target
-    // row set (non-page blocks with a page_id) is unchanged — only rows
-    // already carrying the correct `space_id` are skipped — so the final
-    // cache state is byte-identical to the pre-#2668 unconditional UPDATE.
-    // The correlated subquery is evaluated twice per candidate row (SET +
-    // WHERE) but reads only; `IS NOT` is SQLite's null-safe distinct
-    // operator, so a NULL owning-page value correctly matches a NULL current
-    // `space_id` (no spurious write).
-    let result = sqlx::query!(
+/// [`rebuild_space_ids`] with the whole-vault scan on `read_pool`, so the
+/// writer lock is held only to rewrite the rows that scan found stale.
+pub async fn rebuild_space_ids_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<(), AppError> {
+    super::rebuild_with_timing("space_id", || rebuild_space_ids_impl(write_pool, read_pool)).await
+}
+
+// #533 Phase 2: `space_id` is the source of truth. A page's own `space_id`
+// (set by the `space` op via the command/replay paths) is authoritative; the
+// rebuild only PROPAGATES it to the page's descendants, so pages are excluded.
+// Only blocks that have an owning page (`page_id IS NOT NULL`) take part: tags
+// are top-level with `page_id = NULL` (migration 0027) but carry their OWN
+// authoritative `space_id`, and have no page to re-derive from, so touching
+// them would null every tag's space (data loss). Orphan content (page purged →
+// NULL page_id) likewise keeps its last value rather than being cleared.
+// `IS NOT` is SQLite's null-safe distinct operator, so a NULL owning-page
+// value matches a NULL current `space_id` and an up-to-date vault writes zero
+// rows (#2668).
+async fn rebuild_space_ids_impl(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<u64, AppError> {
+    let stale: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT b.id AS "id!" FROM blocks b
+           LEFT JOIN blocks p ON p.id = b.page_id
+           WHERE b.block_type != 'page' AND b.page_id IS NOT NULL
+             AND b.space_id IS NOT p.space_id"#
+    )
+    .fetch_all(read_pool)
+    .await?;
+    if stale.is_empty() {
+        return Ok(0);
+    }
+    let stale_json = serde_json::to_string(&stale)?;
+    let result = sqlx::Executor::execute(write_pool, rederive_space_ids_of(&stale_json)).await?;
+    Ok(result.rows_affected())
+}
+
+/// The write half of [`rebuild_space_ids_split`]: re-derive `space_id` for the
+/// blocks named in `ids_json`, seeking each by id. It reads the owning page
+/// again under the writer lock instead of trusting the read phase's value, so
+/// a write that landed in between is never overwritten with a stale space.
+fn rederive_space_ids_of(ids_json: &str) -> impl sqlx::Execute<'_, sqlx::Sqlite> {
+    sqlx::query!(
         "UPDATE blocks SET space_id = ( \
              SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
          ) \
-         WHERE block_type != 'page' AND page_id IS NOT NULL \
+         WHERE id IN (SELECT value FROM json_each(?)) \
+           AND block_type != 'page' AND page_id IS NOT NULL \
            AND space_id IS NOT ( \
              SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
-           )"
+           )",
+        ids_json
     )
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
 }
 
 /// Set `space_id` for a single newly created block by inheriting from its
@@ -1241,7 +1257,7 @@ mod tests {
         .unwrap();
 
         // Already correct → zero writes.
-        let first = super::rebuild_space_ids_impl(&pool)
+        let first = super::rebuild_space_ids_impl(&pool, &pool)
             .await
             .expect("space rebuild");
         assert_eq!(
@@ -1254,7 +1270,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let second = super::rebuild_space_ids_impl(&pool)
+        let second = super::rebuild_space_ids_impl(&pool, &pool)
             .await
             .expect("space rebuild2");
         assert_eq!(second, 1, "only the corrupted child is rewritten (#2668)");
@@ -1267,6 +1283,115 @@ mod tests {
             sp.as_deref(),
             Some("SP0001"),
             "KID002 must re-derive SP0001"
+        );
+    }
+
+    /// Two spaces and every shape the rebuild must tell apart: stale, NULL
+    /// and already-correct children, a child of a page with no space, a tag
+    /// and an orphan that own their `space_id`, and a nested page.
+    async fn seed_space_drift(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) VALUES \
+             ('SPA', 'page', 'a', NULL, 1, 'SPA'), ('SPB', 'page', 'b', NULL, 2, 'SPB')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO spaces (id) VALUES ('SPA'), ('SPB')")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) VALUES \
+             ('PGA',    'page',    'p', NULL,    3, 'PGA',  'SPA'), \
+             ('STALE',  'content', 'c', 'PGA',   1, 'PGA',  'SPB'), \
+             ('UNSET',  'content', 'c', 'PGA',   2, 'PGA',  NULL), \
+             ('RIGHT',  'content', 'c', 'PGA',   3, 'PGA',  'SPA'), \
+             ('NESTED', 'page',    'n', 'RIGHT', 1, 'NESTED', 'SPB'), \
+             ('UNDERN', 'content', 'c', 'NESTED', 1, 'NESTED', 'SPA'), \
+             ('PGNONE', 'page',    'q', NULL,    4, 'PGNONE', NULL), \
+             ('CLEAR',  'content', 'c', 'PGNONE', 1, 'PGNONE', 'SPA'), \
+             ('TAG',    'tag',     't', NULL,    5, NULL,   'SPB'), \
+             ('ORPHAN', 'content', 'c', NULL,    6, NULL,   'SPA')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// The one-statement rebuild [`super::rebuild_space_ids_split`] replaced, which
+    /// scanned `blocks` under the writer lock: the oracle the split is tested
+    /// against.
+    async fn rebuild_space_ids_in_one_statement(pool: &SqlitePool) -> u64 {
+        let result = sqlx::query!(
+            "UPDATE blocks SET space_id = ( \
+                 SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
+             ) \
+             WHERE block_type != 'page' AND page_id IS NOT NULL \
+               AND space_id IS NOT ( \
+                 SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
+               )"
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        result.rows_affected()
+    }
+
+    async fn space_ids(pool: &SqlitePool) -> Vec<(String, Option<String>)> {
+        sqlx::query_as("SELECT id, space_id FROM blocks ORDER BY id")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    /// #6522: the split rebuild leaves every `space_id` where the
+    /// one-statement rebuild it replaced does, and writes the same rows.
+    #[tokio::test]
+    async fn rebuild_space_ids_split_matches_the_one_statement_rebuild_6522() {
+        let (oracle_pool, _oracle_dir) = test_pool().await;
+        let (pool, _dir) = test_pool().await;
+        seed_space_drift(&oracle_pool).await;
+        seed_space_drift(&pool).await;
+
+        let oracle_written = rebuild_space_ids_in_one_statement(&oracle_pool).await;
+        let written = super::rebuild_space_ids_impl(&pool, &pool).await.unwrap();
+
+        assert_eq!(oracle_written, 4, "STALE, UNSET, UNDERN and CLEAR drifted");
+        assert_eq!(written, oracle_written);
+        let got = space_ids(&pool).await;
+        assert_eq!(got, space_ids(&oracle_pool).await);
+        let space_of = |id: &str| got.iter().find(|(b, _)| b == id).unwrap().1.clone();
+        assert_eq!(space_of("STALE").as_deref(), Some("SPA"));
+        assert_eq!(space_of("UNDERN").as_deref(), Some("SPB"));
+        assert_eq!(space_of("CLEAR"), None);
+        assert_eq!(space_of("TAG").as_deref(), Some("SPB"));
+        assert_eq!(space_of("ORPHAN").as_deref(), Some("SPA"));
+    }
+
+    /// #6522: the statement that runs under the writer lock seeks the stale
+    /// rows by id; it never scans `blocks`.
+    #[tokio::test]
+    async fn rebuild_space_ids_write_never_scans_blocks_6522() {
+        use sqlx::Execute as _;
+        let (pool, _dir) = test_pool().await;
+        let sql = super::rederive_space_ids_of("[]").sql().as_str().to_owned();
+        let plan: Vec<(i64, i64, i64, String)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}")))
+                .bind("[]")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let details: Vec<&str> = plan.iter().map(|row| row.3.as_str()).collect();
+        assert!(
+            details
+                .iter()
+                .any(|d| d.starts_with("SEARCH blocks USING") && d.contains("(id=?)")),
+            "the stale rows must be sought by id: {details:?}"
+        );
+        assert!(
+            !details.iter().any(|d| d.starts_with("SCAN blocks")),
+            "no scan of blocks under the writer lock: {details:?}"
         );
     }
 
@@ -1419,7 +1544,7 @@ mod tests {
             diff.to_null
         );
         drop(conn);
-        let space_writes = super::rebuild_space_ids_impl(&pool)
+        let space_writes = super::rebuild_space_ids_impl(&pool, &pool)
             .await
             .expect("space rebuild must succeed");
         assert_eq!(

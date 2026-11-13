@@ -21,6 +21,14 @@ export function blockRow(page: Page, blockId: string): Locator {
   return page.locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`)
 }
 
+/** The Pages list row for the page titled `title`. */
+export function pageRow(page: Page, title: string): Locator {
+  return page
+    .getByRole('grid')
+    .locator('[data-page-item]')
+    .filter({ has: page.locator(`.page-browser-item-title[title="${title}"]`) })
+}
+
 /** Open the page titled `pageTitle` and put block `blockId` in edit mode; returns its editor. */
 export async function startEditing(page: Page, pageTitle: string, blockId: string) {
   await openPage(page, pageTitle)
