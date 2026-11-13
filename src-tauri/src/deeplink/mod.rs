@@ -752,14 +752,10 @@ mod tests {
 
     // ── parse_deep_link: capture (#6555) ────────────────────────────────
 
-    fn capture(url: &str) -> Result<DeepLinkRoute, DeepLinkError> {
-        parse_deep_link(url)
-    }
-
     #[test]
     fn parses_capture_url_with_percent_encoded_text() {
         assert_eq!(
-            capture("agaric://capture?text=a%20b"),
+            parse_deep_link("agaric://capture?text=a%20b"),
             Ok(DeepLinkRoute::Capture("a b".into())),
         );
     }
@@ -768,7 +764,7 @@ mod tests {
     fn capture_text_keeps_utf8_newlines_links_and_tags_as_typed() {
         let url = "agaric://capture?text=caf%C3%A9%20%23tag%20%5B%5BPage%5D%5D%0Asecond%20line";
         assert_eq!(
-            capture(url),
+            parse_deep_link(url),
             Ok(DeepLinkRoute::Capture(
                 "café #tag [[Page]]\nsecond line".into()
             )),
@@ -779,7 +775,7 @@ mod tests {
     fn capture_text_reads_plus_as_a_space_and_encoded_plus_as_a_plus() {
         // Form encoding, as `URLSearchParams` and Python's `quote_plus` write it.
         assert_eq!(
-            capture("agaric://capture?text=1%2B1+is+2"),
+            parse_deep_link("agaric://capture?text=1%2B1+is+2"),
             Ok(DeepLinkRoute::Capture("1+1 is 2".into())),
         );
     }
@@ -787,7 +783,7 @@ mod tests {
     #[test]
     fn capture_ignores_unknown_parameters_and_reads_the_first_text() {
         assert_eq!(
-            capture("agaric://capture?source=bookmarklet&text=hi&text=again&flag"),
+            parse_deep_link("agaric://capture?source=bookmarklet&text=hi&text=again&flag"),
             Ok(DeepLinkRoute::Capture("hi".into())),
         );
     }
@@ -802,7 +798,7 @@ mod tests {
             "agaric://capture?source=x",
         ] {
             assert_eq!(
-                capture(url),
+                parse_deep_link(url),
                 Ok(DeepLinkRoute::Capture(String::new())),
                 "{url}"
             );
@@ -819,7 +815,7 @@ mod tests {
             "agaric://capture?text=%+F",
         ] {
             assert_eq!(
-                capture(url),
+                parse_deep_link(url),
                 Err(DeepLinkError::MalformedCaptureText),
                 "{url}"
             );
@@ -835,7 +831,7 @@ mod tests {
             "agaric://capture?text=%ED%A0%80",
         ] {
             assert_eq!(
-                capture(url),
+                parse_deep_link(url),
                 Err(DeepLinkError::MalformedCaptureText),
                 "{url}"
             );
@@ -850,7 +846,7 @@ mod tests {
             "agaric://capture?text={}",
             "%C3%A9".repeat(MAX_CONTENT_LENGTH / 2)
         );
-        assert_eq!(capture(&url), Ok(DeepLinkRoute::Capture(text)));
+        assert_eq!(parse_deep_link(&url), Ok(DeepLinkRoute::Capture(text)));
     }
 
     #[test]
@@ -860,7 +856,7 @@ mod tests {
             "%C3%A9".repeat(MAX_CONTENT_LENGTH / 2 + 1),
         );
         assert_eq!(
-            capture(&url),
+            parse_deep_link(&url),
             Err(DeepLinkError::CaptureTextTooLong(MAX_CONTENT_LENGTH + 2)),
         );
     }
