@@ -63,6 +63,13 @@ ignored_unit_patterns = "warn"
 explicit_iter_loop = "warn"
 if_not_else = "warn"
 
+[features]
+# #6529 — the `bridge` bin serves `agaric_lib::headless`, which exists only
+# under the app crate's `test-util`. A feature of its own, so that building
+# this package beside the app (the real-backend lane does) never turns
+# `test-util` on in the app under test.
+bridge = ["agaric/test-util"]
+
 [dependencies]
 # Path dep on the app crate — the lib target is named `agaric_lib`, so the
 # bins keep their `agaric_lib::…` paths verbatim. No default features are
@@ -103,6 +110,11 @@ path = "src/bin/audit_cross_space_refs.rs"
 [[bin]]
 name = "e2e_sync_peer"
 path = "src/bin/e2e_sync_peer.rs"
+
+[[bin]]
+name = "bridge"
+path = "src/bin/bridge.rs"
+required-features = ["bridge"]
 
 # cargo-machete name-matches `use agaric::…`, but the bins reference the lib
 # TARGET name `agaric_lib::…` (the `agaric` package renames its lib), so the
