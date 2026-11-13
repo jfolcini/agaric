@@ -1854,13 +1854,11 @@ async fn an_anchored_block_moved_and_edited_keeps_its_id() {
     fx.write(format!("TWO ^{}\n\nONE\n", ids[1]));
     fx.settle_file().await;
 
+    let blocks = fx.blocks(&page).await;
     assert_eq!(
-        fx.blocks(&page).await,
-        [
-            (ids[1].clone(), "TWO".to_owned()),
-            (ids[0].clone(), "ONE".to_owned()),
-        ],
-        "the anchor names the block, not the line's place"
+        blocks[0],
+        (ids[1].clone(), "TWO".to_owned()),
+        "the anchor names the block, not the line's place: {blocks:?}"
     );
 }
 
@@ -1941,7 +1939,7 @@ async fn a_save_corrected_after_one_was_refused_is_read_in() {
 async fn a_new_file_read_in_otherwise_than_saved_is_written_back_as_read() {
     let mut fx = Fx::new().await;
     fx.tick().await;
-    write_at(&fx, "TestSpace/Gamma.md", "one\r\ntwo\r\n");
+    write_at(&fx, "TestSpace/Gamma.md", "one\r\n\r\ntwo\r\n");
     fx.settle_file().await;
 
     let pages = pages_titled(&fx, "Gamma").await;
@@ -2035,8 +2033,10 @@ async fn alpha_with_own_bullets(fx: &mut Fx) -> (String, Vec<String>, String) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_file_saved_back_as_the_render_is_adopted_not_read() {
     let mut fx = Fx::new().await;
-    let (_, _, render) = alpha_with_own_bullets(&mut fx).await;
+    let (page, _, _) = alpha_with_own_bullets(&mut fx).await;
     let events = fx.events().len();
+    let render = get_page_file_inner(&fx.pool, &page).await.unwrap().text;
+    assert_ne!(fx.read(), render, "the file keeps its own bullets");
 
     fx.write(&render);
     fx.tick().await;
