@@ -344,6 +344,7 @@ macro_rules! agaric_commands {
             // Spaces (Phase 1 + Phase 2 + Phase 6)
             $crate::commands::spaces::list_spaces,
             $crate::commands::spaces::create_page_in_space,
+            $crate::commands::spaces::resolve_page_title,
             $crate::commands::spaces::create_space,
             // Quick capture — desktop global-shortcut entry point
             $crate::commands::journal::quick_capture_block,
