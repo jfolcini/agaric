@@ -16,12 +16,12 @@
 # This hook runs under a hard ~600s provisioning timeout. The fast critical
 # path (Node, npm ci, .env, dev DB) runs synchronously and finishes well inside
 # it, so the clone lands build- and test-ready before this hook returns. The
-# slow prek hook-toolchain install (~10 cargo tools, some compiled from source)
+# prek hook-toolchain install (~10 cargo tools)
 # is launched DETACHED by setup.sh under CLAUDE_CODE_REMOTE — it overran the
 # 600s budget when inline and got SIGKILLed mid-install, leaving the git hooks
 # unwired. Backgrounded, it wires the git hooks as soon as the pre-commit-stage
-# tools are installed (minutes with prebuilt binaries, far longer when binstall
-# has to compile them) and installs the pre-push-only tools
+# tools are installed (prebuilt downloads; a tool with no prebuilt build is
+# compiled, which takes far longer) and installs the pre-push-only tools
 # after that; until the hooks are wired, commits still work and those checks
 # run in CI. See the retro in scripts/setup.sh for details.
 #
