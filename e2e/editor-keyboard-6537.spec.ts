@@ -48,8 +48,14 @@ interface Caret {
   atEnd: boolean
 }
 
+/**
+ * The editor's caret. ProseMirror reads a caret the browser moved (an arrow key) on the next
+ * `selectionchange`, which Chrome can fire after this read; dispatching one makes it read the
+ * caret now, as it always has by a person's next key.
+ */
 async function caret(page: Page): Promise<Caret> {
   return liveEditor(page).evaluate((el) => {
+    document.dispatchEvent(new Event('selectionchange'))
     const { editor } = el as HTMLElement & {
       editor: {
         state: {
