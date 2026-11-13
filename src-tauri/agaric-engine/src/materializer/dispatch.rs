@@ -964,7 +964,8 @@ impl Materializer {
     /// Runs from a spawned loop / a flush with no caller to propagate to, so an
     /// enqueue error (only reachable as a `Channel` closed at shutdown) is warned
     /// rather than returned; every task is argument-less and idempotent, so a
-    /// missed fire self-heals on the next lifecycle op or inbound sync.
+    /// missed fire self-heals on the next lifecycle op or inbound sync
+    /// (`RebuildPageIds` on the next purge, inbound sync or daily backstop).
     fn enqueue_lifecycle_rebuild_set(&self, needs_full: bool, needs_page_ids: bool) {
         for task in lifecycle_rebuild_set(needs_full, needs_page_ids) {
             if let Err(e) = self.try_enqueue_background(task.clone()) {
@@ -1069,7 +1070,8 @@ impl Materializer {
     /// Spawned once from [`Self::build`]. The shutdown / process-death
     /// tradeoff documented on [`Self::inbound_rebuild_debounce_loop`] applies
     /// verbatim; a lifecycle rebuild still pending in the window on process
-    /// death re-converges on the next lifecycle op or inbound sync.
+    /// death re-converges on the next lifecycle op or inbound sync
+    /// (`RebuildPageIds` on the next purge, inbound sync or daily backstop).
     pub(super) async fn lifecycle_rebuild_debounce_loop(mat: Materializer) {
         let debounce = Arc::clone(&mat.lifecycle_rebuild_debounce);
         Self::rebuild_debounce_loop(mat, debounce, Materializer::fire_lifecycle_rebuild_fanout)

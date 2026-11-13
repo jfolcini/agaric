@@ -232,7 +232,7 @@ async fn restore_block_synchronously_refreshes_page_id() {
          re-derived by the move's own tx (page_b), not left stale at \
          page_a — MoveBlock enqueues no RebuildPageIds (#2200), so \
          anything the in-tx walk skips stays wrong until an unrelated \
-         delete/restore/purge fans a rebuild out, and is user-visible \
+         purge fans a rebuild out, and is user-visible \
          the moment the block is restored"
     );
 
@@ -1348,4 +1348,225 @@ async fn only_a_purge_runs_the_vault_wide_page_id_rebuild_6522() {
     );
 
     mat.shutdown();
+}
+
+// ======================================================================
+// #6522 — the premise under random command sequences
+// ======================================================================
+
+/// xorshift64*: a seeded op sequence, so a failure names the seed that made it.
+struct SeqRng(u64);
+
+impl SeqRng {
+    fn below(&mut self, n: usize) -> usize {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        usize::try_from(self.0.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33).unwrap() % n
+    }
+
+    fn pick<'a>(&mut self, from: &'a [String]) -> Option<&'a String> {
+        (!from.is_empty()).then(|| &from[self.below(from.len())])
+    }
+}
+
+async fn ids_6522(pool: &SqlitePool, sql: &'static str) -> Vec<String> {
+    sqlx::query_scalar(sql).fetch_all(pool).await.unwrap()
+}
+
+const LIVE_6522: &str = "SELECT id FROM blocks WHERE deleted_at IS NULL \
+     AND id NOT IN (SELECT id FROM spaces) ORDER BY id";
+const LIVE_PAGES_6522: &str = "SELECT id FROM blocks WHERE deleted_at IS NULL \
+     AND block_type = 'page' AND id NOT IN (SELECT id FROM spaces) ORDER BY id";
+const DELETED_6522: &str = "SELECT id FROM blocks WHERE deleted_at IS NOT NULL ORDER BY id";
+const TRASH_ROOTS_6522: &str = "SELECT b.id FROM blocks b \
+     LEFT JOIN blocks p ON p.id = b.parent_id \
+     WHERE b.deleted_at IS NOT NULL AND (p.id IS NULL OR p.deleted_at IS NOT b.deleted_at) \
+     ORDER BY b.id";
+
+/// Ops that moved a page or a subtree while part of it sat in the trash, and
+/// restores that succeeded: the shapes the premise is about, counted so the
+/// test cannot pass on sequences that never reach them.
+#[derive(Default, Debug)]
+struct Coverage6522 {
+    moves_over_trash: usize,
+    space_moves_over_trash: usize,
+    restores: usize,
+    batch_restores: usize,
+    whole_trash_restores: usize,
+    purges: usize,
+    undos: usize,
+}
+
+async fn trashed_under_6522(pool: &SqlitePool, root: &str) -> i64 {
+    sqlx::query_scalar(
+        "WITH RECURSIVE d(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ?1 \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b JOIN d ON b.parent_id = d.id \
+             WHERE d.depth < 100 \
+         ) \
+         SELECT COUNT(*) FROM blocks WHERE id IN (SELECT id FROM d) AND deleted_at IS NOT NULL",
+    )
+    .bind(root)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// One random command; returns what it did, for the failure message.
+async fn random_command_6522(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    rng: &mut SeqRng,
+    spaces: &[String],
+    n: usize,
+    cov: &mut Coverage6522,
+) -> String {
+    use agaric_core::ulid::BlockId;
+    let live = ids_6522(pool, LIVE_6522).await;
+    let bid = |id: &String| BlockId::from_trusted(id);
+    let outcome =
+        |r: Result<(), AppError>| r.map_or_else(|e| format!("err: {e}"), |()| "ok".into());
+    match rng.below(20) {
+        0..=4 => {
+            let block_type = if rng.below(4) == 0 { "page" } else { "content" };
+            let parent = rng.pick(&live).filter(|_| rng.below(5) != 0).cloned();
+            let r = create_block_inner(
+                pool,
+                DEV,
+                mat,
+                block_type.into(),
+                format!("b{n}"),
+                parent.as_ref().map(bid),
+                None,
+            )
+            .await;
+            format!(
+                "create {block_type} under {parent:?}: {}",
+                outcome(r.map(|_| ()))
+            )
+        }
+        5..=7 => {
+            let (Some(block), parent) = (rng.pick(&live).cloned(), rng.pick(&live).cloned()) else {
+                return "move: nothing live".into();
+            };
+            let parent = parent.filter(|_| rng.below(4) != 0);
+            let over_trash = trashed_under_6522(pool, &block).await > 0;
+            let r =
+                move_block_inner(pool, DEV, mat, bid(&block), parent.as_ref().map(bid), 1).await;
+            cov.moves_over_trash += usize::from(over_trash && r.is_ok());
+            format!("move {block} under {parent:?}: {}", outcome(r.map(|_| ())))
+        }
+        8..=10 => {
+            let Some(block) = rng.pick(&live).cloned() else {
+                return "delete: nothing live".into();
+            };
+            let r = delete_block_inner(pool, DEV, mat, bid(&block)).await;
+            format!("delete {block}: {}", outcome(r.map(|_| ())))
+        }
+        11..=12 => {
+            let Some(block) = rng.pick(&ids_6522(pool, DELETED_6522).await).cloned() else {
+                return "restore: trash empty".into();
+            };
+            let deleted_at: i64 = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(&block)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            let r = restore_block_inner(pool, DEV, mat, bid(&block), deleted_at).await;
+            cov.restores += usize::from(r.is_ok());
+            format!("restore {block}: {}", outcome(r.map(|_| ())))
+        }
+        13 => {
+            let roots = ids_6522(pool, TRASH_ROOTS_6522).await;
+            let picked: Vec<String> = (0..3).filter_map(|_| rng.pick(&roots).cloned()).collect();
+            if picked.is_empty() {
+                return "batch restore: trash empty".into();
+            }
+            let r =
+                restore_blocks_by_ids_inner(pool, DEV, mat, picked.iter().map(bid).collect()).await;
+            cov.batch_restores += usize::from(r.is_ok());
+            format!("batch restore {picked:?}: {}", outcome(r.map(|_| ())))
+        }
+        14 => {
+            let r = restore_all_deleted_inner(pool, DEV, mat).await;
+            cov.whole_trash_restores += usize::from(r.is_ok());
+            format!("restore all: {}", outcome(r.map(|_| ())))
+        }
+        15 => {
+            let Some(root) = rng.pick(&ids_6522(pool, TRASH_ROOTS_6522).await).cloned() else {
+                return "purge: trash empty".into();
+            };
+            let r = purge_block_inner(pool, DEV, mat, bid(&root)).await;
+            cov.purges += usize::from(r.is_ok());
+            format!("purge {root}: {}", outcome(r.map(|_| ())))
+        }
+        16..=17 => {
+            let Some(page) = rng.pick(&ids_6522(pool, LIVE_PAGES_6522).await).cloned() else {
+                return "space move: no page".into();
+            };
+            let space = spaces[rng.below(spaces.len())].clone();
+            let over_trash = trashed_under_6522(pool, &page).await > 0;
+            let r =
+                move_blocks_to_space_inner(pool, DEV, mat, vec![bid(&page)], space.clone(), &[])
+                    .await;
+            cov.space_moves_over_trash += usize::from(over_trash && matches!(r, Ok(1)));
+            format!("move {page} to space {space}: {}", outcome(r.map(|_| ())))
+        }
+        _ => {
+            let Some(page) = rng.pick(&ids_6522(pool, LIVE_PAGES_6522).await).cloned() else {
+                return "undo: no page".into();
+            };
+            let r = undo_page_op_inner(pool, DEV, mat, page.clone(), 0).await;
+            cov.undos += usize::from(r.is_ok());
+            format!("undo on {page}: {}", outcome(r.map(|_| ())))
+        }
+    }
+}
+
+/// #6522's premise as a property of the command layer: after any sequence of
+/// creates, moves, space moves, deletes, single / batch / all restores,
+/// purges and undos, settled, the vault-wide `page_id` + `space_id` rebuild
+/// finds nothing to change. Delete and restore no longer run that rebuild, so
+/// a path that leaves a trashed row's ids stale, and a restore that brings
+/// such a row back, shows here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn random_command_sequences_leave_nothing_for_the_page_id_rebuild_6522() {
+    const SEEDS: u64 = 12;
+    const STEPS: usize = 40;
+    let mut cov = Coverage6522::default();
+    for seed in 1..=SEEDS {
+        let (pool, _dir) = test_pool().await;
+        let mat = test_materializer(&pool);
+        let spaces = vec![
+            test_space(&pool, "One").await,
+            test_space(&pool, "Two").await,
+        ];
+        let mut rng = SeqRng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let mut trail = Vec::with_capacity(STEPS);
+        for n in 0..STEPS {
+            let did = random_command_6522(&pool, &mat, &mut rng, &spaces, n, &mut cov).await;
+            settle(&mat).await;
+            trail.push(did);
+            let settled = page_and_space_ids_6522(&pool).await;
+            rebuild_page_and_space_ids_6522(&pool).await;
+            assert_eq!(
+                page_and_space_ids_6522(&pool).await,
+                settled,
+                "seed {seed}: the full rebuild changed ids after {trail:#?}"
+            );
+        }
+        mat.shutdown();
+    }
+    assert!(
+        cov.moves_over_trash > 0
+            && cov.space_moves_over_trash > 0
+            && cov.restores > 0
+            && cov.batch_restores > 0
+            && cov.whole_trash_restores > 0
+            && cov.purges > 0
+            && cov.undos > 0,
+        "every shape must be reached: {cov:?}"
+    );
 }

@@ -377,7 +377,7 @@ async fn pages_with_stale_counts(read_pool: &SqlitePool) -> Result<Vec<String>, 
 /// which counted every page under the writer lock: the oracle the split is
 /// tested against.
 #[cfg(test)]
-pub(crate) async fn recompute_all_pages_cache_counts(
+async fn recompute_all_pages_cache_counts(
     write_conn: &mut sqlx::SqliteConnection,
 ) -> Result<u64, AppError> {
     let counts = sqlx::query!(

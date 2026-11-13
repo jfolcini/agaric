@@ -191,15 +191,6 @@ pub use pages::{
     rebuild_pages_cache_counts, rebuild_pages_cache_counts_split, rebuild_pages_cache_split,
     rekey_title_sort_keys, sync_pages_cache_space_ids,
 };
-// #417: the production RESET path recomputes the two `pages_cache` count
-// columns full-table via the dedicated `rebuild_pages_cache_counts` entry
-// point above; the per-op title/orphan rebuild no longer carries the count
-// UPDATE. The lower-level `recompute_all_pages_cache_counts` (which runs the
-// UPDATE on a caller-supplied connection) is only needed by the test-only
-// `rebuild_all_caches` convenience wrapper and the parity test, so its
-// re-export is gated behind `#[cfg(test)]`.
-#[cfg(test)]
-pub(crate) use pages::recompute_all_pages_cache_counts;
 pub use projected_agenda::{
     rebuild_projected_agenda_cache, rebuild_projected_agenda_cache_split,
     update_projected_agenda_block,
@@ -268,16 +259,9 @@ pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
     rebuild_block_tag_refs_cache(pool).await?;
     rebuild_tags_cache(pool).await?;
     rebuild_pages_cache(pool).await?;
-    // #417: the title/orphan rebuild above no longer carries the count
-    // UPDATE (it was gated out of the per-op path). Production enqueues
-    // `RebuildPagesCacheCounts` separately after `RebuildPagesCache`; this
-    // convenience wrapper mirrors that ordering by recomputing the two
-    // count columns in its own tx right after.
-    {
-        let mut tx = crate::db::begin_immediate_logged(pool, "rebuild_all_pages_counts").await?;
-        recompute_all_pages_cache_counts(&mut tx).await?;
-        tx.commit().await?;
-    }
+    // #417: production enqueues `RebuildPagesCacheCounts` separately after
+    // `RebuildPagesCache`; this wrapper keeps that order.
+    rebuild_pages_cache_counts(pool).await?;
     rebuild_agenda_cache(pool).await?;
     rebuild_projected_agenda_cache(pool).await?;
     rebuild_page_link_cache(pool).await?;
