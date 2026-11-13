@@ -3248,6 +3248,7 @@ describe('BlockTree heading slash command execution', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: '# My heading text',
+        baseText: null,
       })
     })
 
@@ -3287,6 +3288,7 @@ describe('BlockTree heading slash command execution', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: '### Small heading',
+        baseText: null,
       })
     })
 
@@ -3325,6 +3327,7 @@ describe('BlockTree heading slash command execution', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: '## Medium',
+        baseText: null,
       })
     })
   })
@@ -3784,6 +3787,7 @@ describe('BlockTree handleMergeWithPrev', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'Hello World',
+        baseText: null,
       })
     })
 
@@ -3843,6 +3847,7 @@ describe('BlockTree handleMergeWithPrev', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'AlphaBeta',
+        baseText: null,
       })
     })
     // B1 moved under A (slot 0 — A had no children) BEFORE B was deleted.
@@ -3900,10 +3905,15 @@ describe('BlockTree handleMergeWithPrev', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'AlphaBeta',
+        baseText: null,
       })
     })
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'A', toText: 'Alpha' })
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: 'Alpha',
+        baseText: null,
+      })
     })
     // CRITICAL: the source is NOT deleted — the child subtree is not lost.
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
@@ -3934,12 +3944,17 @@ describe('BlockTree handleMergeWithPrev', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'AlphaBeta',
+        baseText: null,
       })
     })
     // …then the failed remove was detected (block still in the store) and the
     // hook's revert-edit path fired.
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'A', toText: 'Alpha' })
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: 'Alpha',
+        baseText: null,
+      })
     })
     // The source block was never dropped from the store.
     expect(pageStore.getState().blocksById.has('B')).toBe(true)
@@ -4015,6 +4030,7 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'b1',
         toText: '# hello world',
+        baseText: null,
       })
     })
     // The editor is remounted with the converted content so the conversion is
@@ -4040,7 +4056,11 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
     })
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'b1', toText: '# hello' })
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'b1',
+        toText: '# hello',
+        baseText: null,
+      })
     })
     // The mounted editor (on b2) is untouched.
     expect(mockUnmount).not.toHaveBeenCalled()
@@ -4066,7 +4086,11 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
     })
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'b1', toText: 'hello' })
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'b1',
+        toText: 'hello',
+        baseText: null,
+      })
     })
     expect(vi.mocked(setListStyle)).toHaveBeenCalledWith('b1', 'ordered')
   })
@@ -4201,6 +4225,7 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'b1',
         toText: '# hello world',
+        baseText: null,
       })
     })
     // No remount with the (unsaved) converted content on failure.
@@ -4546,11 +4571,11 @@ describe('BlockTree handleDatePick date format', () => {
       expect(mockCalendarOnSelect).toBeDefined()
     })
 
-    // limit-clamp-followup — `handleDateMode` now looks up the date
-    // page via `list_all_pages_in_space`, which returns a flat
-    // `PageHeading[]` (no `.items` wrapper).
+    // #6527 — `handleDateMode` looks the day up by its journal date, then by
+    // its legacy title; neither finds a page here.
     stubBlockTree({
-      list_all_pages_in_space: () => [],
+      get_journal_page_by_date: () => null,
+      resolve_page_title: (args) => ({ title: args['title'] as string, page_id: null }),
       // H-3b: date pages route through `createPageInSpace` so they own a
       // `space` property and surface in PageBrowser.
       create_page_in_space: () => 'DATE_PAGE_1',
@@ -4610,26 +4635,23 @@ describe('BlockTree handleDatePick date format', () => {
       expect(mockCalendarOnSelect).toBeDefined()
     })
 
-    // limit-clamp-followup — `handleDateMode` now awaits
-    // `list_all_pages_in_space`, which returns a flat `PageHeading[]`
-    // (no `.items` wrapper, no pagination).
+    // #6527 — `handleDateMode` looks the day up by its journal date.
     stubBlockTree({
-      list_all_pages_in_space: () => [
-        makePageHeading({ id: 'EXISTING_DATE_PAGE', content: '2025-03-15' }),
-      ],
+      get_journal_page_by_date: () =>
+        makeBlockRow({ id: 'EXISTING_DATE_PAGE', block_type: 'page', content: '2025-03-15' }),
     })
 
     await act(async () => {
       mockCalendarOnSelect?.(new Date(2025, 2, 15))
     })
 
-    // Positive signal: handleDateMode awaits `list_all_pages_in_space`
+    // Positive signal: handleDateMode awaits `get_journal_page_by_date`
     // (page lookup) before deciding whether to create. Wait for it,
     // then assert the create_block path was NOT taken because the page
     // already exists (TEST-FE-1).
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_all_pages_in_space',
+        'get_journal_page_by_date',
         expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_TEST' } }),
       )
     })
@@ -5570,7 +5592,11 @@ describe('BlockTree leaked-empty-block cleanup', () => {
         answered.resolve(undefined)
       })
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'NEW', toText: '' })
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+          blockId: 'NEW',
+          toText: '',
+          baseText: null,
+        })
       })
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('get_properties', { blockId: 'NEW' })
@@ -5596,6 +5622,7 @@ describe('BlockTree leaked-empty-block cleanup', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
           blockId: 'NEW',
           toText: 'context:: home',
+          baseText: null,
         })
       })
       await act(async () => {})
@@ -7338,6 +7365,7 @@ describe('B-7: whitespace click saves edits when DOM-unfocused', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'edited content',
+        baseText: null,
       })
     })
 
@@ -7378,6 +7406,7 @@ describe('B-8: unfocused Escape saves edits', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'A',
         toText: 'unsaved edits',
+        baseText: null,
       })
     })
 
@@ -7427,6 +7456,7 @@ describe('B-14: zoom clears focus on invisible block', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'C',
         toText: 'pending C edits',
+        baseText: null,
       })
     })
   })

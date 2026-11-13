@@ -20,9 +20,9 @@
  *      no `+` `/` `=` padding) contains none of those, so the payload survives
  *      verbatim — unlike raw JSON, whose `[` `]` would be escaped.
  *   2. **Back-compat.** {@link decodeInlineQueryPayload} returns `null` for any
- *      non-`v2:` payload, so a legacy text block is left to the existing
- *      `parseQueryExpression` + legacy execution path UNCHANGED. New blocks use
- *      the structured form; old blocks keep rendering exactly as before.
+ *      non-`v2:` payload, so a text block is left to the text readers
+ *      (`query-text.ts` tells the older text from the search syntax), and old
+ *      blocks keep rendering exactly as before.
  */
 
 import { base64UrlToUtf8, utf8ToBase64Url } from '@/lib/base64url'
@@ -83,9 +83,9 @@ export function isFilterExpr(value: unknown): value is FilterExpr {
 
 /**
  * Parse the inner payload of a `{{query …}}` block. Returns the structured spec
- * for a well-formed `v2:` payload, or `null` for anything else — a legacy text
- * query, or a corrupt/garbled `v2:` payload — so the caller falls back to the
- * legacy `parseQueryExpression` path. Never throws.
+ * for a well-formed `v2:` payload, or `null` for anything else — a text query,
+ * or a corrupt/garbled `v2:` payload — so the caller reads it as text. Never
+ * throws.
  */
 export function decodeInlineQueryPayload(payload: string): InlineQuerySpec | null {
   const trimmed = payload.trim()

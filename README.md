@@ -125,6 +125,8 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Every operation is
 | **Linux** | glibc 2.31+ (Ubuntu 20.04+ / Debian 11+ / Fedora 33+); `libwebkit2gtk-4.1` runtime. The AppImage bundles GTK; the `.deb` declares the WebKit dep. |
 | **Android** | Android 11 (API 30) and above, **64-bit ARM (`arm64-v8a`) only** — x86 / x86-64 (most emulators, some Chromebooks) and 32-bit-only devices are not supported. |
 
+There is no iOS build, and none is planned for now.
+
 ## Install
 
 Download the latest installer for your OS from the [**GitHub Releases**](https://github.com/jfolcini/agaric/releases) page (`.AppImage` / `.deb` / `.rpm` for Linux, `.dmg` for macOS, `.msi` for Windows, `.apk` for Android).

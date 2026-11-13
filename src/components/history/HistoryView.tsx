@@ -317,6 +317,7 @@ export function HistoryView(): React.ReactElement {
           {selectedIds.size > 0 && (
             <HistorySelectionToolbar
               selectedCount={selectedIds.size}
+              listRef={listRef}
               reverting={false}
               onRevertClick={() => setConfirmRevert(true)}
               onClearSelection={clearSelection}

@@ -19,7 +19,7 @@ References, loaded only when needed:
 
 - Track loop state in the Task tools: one task per in-flight issue, one per pending-CI PR. It survives `/compact` (run it between batches, not mid-batch).
 - Run builders, reviewers, and discovery in subagents so the orchestrator keeps only the plan, the task list, and the merge decisions.
-- One heavy Rust build or gate at a time; fill the idle window with light work (frontend, docs, research). The orchestrator owns every long build, bench, and full-suite run as a tracked background task: a subagent's background job dies when its turn ends.
+- One heavy Rust build or gate per lock; fill the idle window with light work (frontend, docs, research). On a small box that is one lock for everything. Builders run their own builds in the foreground under a named lock per lane (`flock /tmp/agaric-cargo-<lane>.lock cargo …`), one lane per two or three Rust builders and no more lanes than concurrent builds fit in memory: `flock` is not fair, so one lock shared by many builders starves some of them. A builder takes its lane's lock once for its gen-sqlx, tests, falsifications and clippy, not once per command. Benches and full-suite runs stay with the orchestrator as tracked background tasks: a subagent's background job dies when its turn ends.
 - One worktree per agent. `git stash` and a push, falsification, or prek run in flight in a shared tree silently change what the other agent tests. Each worktree compiles its own `src-tauri/target`: check `df -h` before a build and reclaim with `rm -rf src-tauri/target/debug/incremental`. Never share a target dir between worktrees, not one build at a time and not through a symlinked `target` (`docs/BUILD.md` § Cloud container). `prepare-external-bins.mjs` ignores `CARGO_TARGET_DIR` and looks for the sidecar under the worktree's own `src-tauri/target`.
 
 ## 1. Plan
@@ -32,7 +32,7 @@ A `plan` issue needs its open questions answered in comments; a non-`plan` issue
 
 **Premise check before building.** Issues, review notes, and briefs are hypotheses, and a stale one costs a whole build.
 
-- Read the issue with its comments: `gh issue view N --comments` (`--json title,body` drops them).
+- Read the issue with its comments: `gh issue view N --comments` (`--json title,body` drops them). The latest status comment outranks the body's checkboxes: an item it calls done, narrowed, or waiting on the maintainer is not open work, so choose and scope the item from it.
 - Look for the fix already on `main`: grep the code, and `git log origin/main --grep '#N'`.
 - Re-derive the issue's named symbols, counts, and prescribed fix against the code. A false premise becomes a comment on the issue, not a build.
 
@@ -60,9 +60,9 @@ Unsure: one row up. A builder that keeps failing is relaunched one row up (`haik
 
 ## 2. Build
 
-Split by domain or file boundary, up to 6 subagents owning at most 6 files each, launched together, each in its own worktree; Rust builders compile one at a time. Never hand "refactor X across the codebase" to one subagent.
+Split by domain or file boundary, up to 6 subagents owning at most 6 files each, launched together, each in its own worktree; Rust builders compile one at a time per lock (§ State and capacity). Never hand "refactor X across the codebase" to one subagent.
 
-Worktree: `git worktree add ../wt-x -b <branch> origin/main && bash scripts/seed-worktree.sh` from inside it (a fresh worktree lacks `node_modules`, `src-tauri/.env`, and `dev.db`). Cut it from the branch that holds the code you build on, which is not `origin/main` when that code is still in an open PR. While builders run, do a second independent issue rather than waiting. Each item gets its own `claude/<issue>-<slug>` branch and PR, and up to 10 PRs may be open at once; a cloud session's designated branch is one of those branches, not a cap on how many the session opens.
+Worktree: `git fetch origin && git worktree add ../wt-x -b <branch> origin/main`, then `bash scripts/seed-worktree.sh` from inside it (a fresh worktree lacks `node_modules`, `src-tauri/.env`, and `dev.db`). Cut it from the branch that holds the code you build on, which is not `origin/main` when that code is still in an open PR. While builders run, do a second independent issue rather than waiting. Each item gets its own `claude/<issue>-<slug>` branch and PR, and up to 10 PRs may be open at once; a cloud session's designated branch is one of those branches, not a cap on how many the session opens.
 
 Builders run targeted tests, plus `npm run typecheck` for TS (vitest does not type-check). The reviewer runs the real gates once per item over the whole worktree: the full suite, `npm run typecheck`, `npm run lint`, `prek run --hook-stage manual --all-files`, the e2e specs `just e2e-related --range origin/main...HEAD` selects (Playwright on the worktree's own `PW_PORT`, WebdriverIO with `just e2e-real` when it selects a few specs; where it says "the whole lane", CI's run is the check and the PR does not merge while that lane is red), and for Rust `cargo clippy --workspace --all-targets -- -D warnings`, which otherwise runs only at pre-push and in CI.
 
@@ -71,7 +71,7 @@ Prompt skeleton; keep the git and background lines verbatim:
 ```text
 **Task:** [one line]
 **Working directory:** <this agent's worktree>
-**Setup:** . "$HOME/.cargo/env"   (Rust only)
+**Setup:** . "$HOME/.cargo/env"; prefix every cargo command with `flock /tmp/agaric-cargo-<lane>.lock`, held once for a whole chain   (Rust only)
 **Files to create/modify:** path — what
 **Premise check:** before editing, confirm the issue's claims (named symbols, call sites, the prescribed fix) against the current code, and list every caller or writer you will touch. If a claim is false, stop and report instead of building.
 **Red first:** for a behaviour change, write the failing spec before the fix in the change's lane (e2e spec, vitest or Rust test, or conformance fixture), run it and see the assertion you predicted fail, then implement. Report the command and that red; the reviewer re-runs it.
@@ -124,11 +124,12 @@ The orchestrator writes one session log per PR (`references/session-log.md`).
 - Skip the pre-push verify (`SKIP_CI_VERIFY`, `AGENTS.md` § Build Commands) also when the box is already running a heavy build.
 - A push is confirmed by comparing SHAs, never by exit code or by eye: `[ "$(git ls-remote origin <branch> | cut -f1)" = "$(git rev-parse HEAD)" ]`. A dropped connection or a killed hook can exit 0 with nothing landed, and an empty `ls-remote` beside `git log` output reads as success.
 - Rebase onto the current `origin/main` before the verify that ships; a green run on a stale base proves nothing about the merge. A clean merge can still bring new callers of what you removed or changed: `git diff <old-base> origin/main -S<symbol>`.
+- Push a rebased branch with `scripts/push.sh --force-with-lease`: its verify reads the branch's own diff. A raw `git push`, or `SKIP_CI_VERIFY`, leaves prek's pre-push hooks reading every `main` commit since your last push, so a branch with no Rust compiles `main`'s; to skip the verify on such a branch, push with `--no-verify` and say so.
 - Keep refactors and features in separate commits.
 
 ## 7. Open the PR, then move on
 
-`gh pr create --base main --head <branch>`, ready for review rather than a draft, with `Closes #NN` only when the PR finishes the issue; partial work says `Refs #NN` and leaves a status comment on the issue. GitHub ignores negation: "not `Closes #NN`" in a body still closes it. Write the body to `file=$(scripts/scratch-file.sh new pr-body)`, never a generic name: the scratchpad is per session, not per agent, so a shared `msg.txt` ships one PR's body on another.
+`gh pr create --base main --head <branch>`, ready for review rather than a draft, with `Closes #NN` only when the PR finishes the issue; partial work says `Refs #NN` and leaves a status comment on the issue. GitHub ignores negation: "not `Closes #NN`" in a body still closes it. Write the body to the path `scripts/scratch-file.sh new pr-body` prints and pass that literal path to `--body-file`, never a generic name or a path found again with `ls -t`: the scratchpad is per session, not per agent, and a shell variable does not outlive its tool call, so either ships another PR's body. Replace a wrong body at once: `gh api -X PATCH repos/jfolcini/agaric/pulls/<n> -F body=@<path>`.
 
 Do not wait for CI. Record the PR as a task and start the next batch from the latest `origin/main`. Reconcile at the next batch boundary (or when the 10-PR cap blocks you):
 

@@ -12,6 +12,8 @@
 //!   Emits a `CreateBlock` op plus a `SetProperty(key = "space",
 //!   value_ref = <space_id>)` op inside a single `BEGIN IMMEDIATE`
 //!   transaction so a page never exists without a space property.
+//! * [`resolve_page_title`] — read-only — what a create of one title comes
+//!   to: the page that already holds it, or the title a new page takes.
 //! * [`create_space`] — atomic create-new-space. Emits a `CreateBlock`
 //!   (block_type = "page", content = name) op plus a
 //!   `SetProperty(is_space = "true")` op (and an optional
@@ -31,7 +33,7 @@ use crate::materializer::Materializer;
 use agaric_core::error::{AppError, ValidationCode};
 use agaric_core::ulid::BlockId;
 use agaric_engine::apply::loro_apply::hydrate_space_block_into_own_engine;
-use agaric_store::space::SpaceId;
+use agaric_store::space::{SpaceId, SpaceScope};
 
 use super::sanitize_internal_error;
 
@@ -445,16 +447,32 @@ impl SpacePageNames {
     /// renames, so it may respell its own title (#4723).
     pub(crate) fn holder(&self, name: &str, exclude_id: Option<&str>) -> Option<PageNameHolder> {
         let key = agaric_core::tag_norm::name_key(name);
-        let holder = |names: &[PageName]| {
-            names
-                .iter()
-                .filter(|held| held.key == key && Some(held.page_id.as_str()) != exclude_id)
-                .map(|held| held.page_id.clone())
-                .min()
-        };
-        holder(&self.titles)
-            .map(PageNameHolder::Title)
-            .or_else(|| holder(&self.aliases).map(PageNameHolder::Alias))
+        held_by(&self.titles, &key, exclude_id)
+            .map(|held| PageNameHolder::Title(held.page_id.clone()))
+            .or_else(|| {
+                held_by(&self.aliases, &key, exclude_id)
+                    .map(|held| PageNameHolder::Alias(held.page_id.clone()))
+            })
+    }
+
+    /// The first of `Untitled`, `Untitled 2`, `Untitled 3`, … that no page
+    /// holds as its title: a blank create would otherwise reopen the Untitled
+    /// page the user left un-renamed (#4723).
+    fn free_untitled_title(&self) -> String {
+        let taken: std::collections::HashSet<&str> =
+            self.titles.iter().map(|held| held.key.as_str()).collect();
+        let mut suffix = 1_u32;
+        loop {
+            let candidate = if suffix == 1 {
+                UNTITLED_TITLE.to_owned()
+            } else {
+                format!("{UNTITLED_TITLE} {suffix}")
+            };
+            if !taken.contains(agaric_core::tag_norm::name_key(&candidate).as_str()) {
+                return candidate;
+            }
+            suffix += 1;
+        }
     }
 
     /// The aliases `page_id` holds, as written.
@@ -486,6 +504,77 @@ impl SpacePageNames {
             })
             .collect()
     }
+}
+
+/// The entry of `names` other than `exclude_id` whose key is `key`; of
+/// several, the one with the smallest page id.
+fn held_by<'a>(names: &'a [PageName], key: &str, exclude_id: Option<&str>) -> Option<&'a PageName> {
+    names
+        .iter()
+        .filter(|held| held.key == key && Some(held.page_id.as_str()) != exclude_id)
+        .min_by(|a, b| a.page_id.cmp(&b.page_id))
+}
+
+/// The title a page created with a blank name takes, suffixed while taken.
+const UNTITLED_TITLE: &str = "Untitled";
+
+/// What [`resolve_page_title_inner`] answers.
+#[derive(Serialize, Type, Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedPageTitle {
+    /// The holder's title as written, else the name a new page takes.
+    pub title: String,
+    /// The live page already titled so, which `create_page_in_space` opens
+    /// instead of creating one.
+    pub page_id: Option<String>,
+}
+
+/// What creating a page titled `title` in `space_id` comes to, so a caller
+/// need not list every page of the space to find out (#6527): the live page
+/// that already holds `title` as its title, under the rule
+/// [`create_page_in_space_inner`] resolves a title by, or the trimmed title a
+/// new page takes. A blank `title` takes the first free `Untitled N`.
+///
+/// Titles only, as the create resolves: a name another page holds as an alias
+/// answers no page, and the create refuses it.
+#[instrument(skip(pool, title), err)]
+pub async fn resolve_page_title_inner(
+    pool: &SqlitePool,
+    space_id: &str,
+    title: &str,
+) -> Result<ResolvedPageTitle, AppError> {
+    let mut conn = pool.acquire().await?;
+    let names = SpacePageNames::read(&mut conn, space_id).await?;
+    let title = title.trim();
+    if title.is_empty() {
+        return Ok(ResolvedPageTitle {
+            title: names.free_untitled_title(),
+            page_id: None,
+        });
+    }
+    let key = agaric_core::tag_norm::name_key(title);
+    Ok(match held_by(&names.titles, &key, None) {
+        Some(held) => ResolvedPageTitle {
+            title: held.name.clone(),
+            page_id: Some(held.page_id.clone()),
+        },
+        None => ResolvedPageTitle {
+            title: title.to_owned(),
+            page_id: None,
+        },
+    })
+}
+
+/// Tauri command wrapper around [`resolve_page_title_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn resolve_page_title(
+    pool: State<'_, ReadPool>,
+    title: String,
+    scope: SpaceScope,
+) -> Result<ResolvedPageTitle, AppError> {
+    resolve_page_title_inner(&pool.0, scope.space_id().as_str(), &title)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// The live page of `space_id` other than `exclude_id` that holds `name`

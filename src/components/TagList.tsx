@@ -255,7 +255,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // `handleDeleteTag`'s capture above.
       const spaceId = useSpaceStore.getState().currentSpaceId
       try {
-        unwrap(await commands.editBlock(renameTarget.id, trimmed))
+        unwrap(await commands.editBlock(renameTarget.id, trimmed, null))
         setTags((prev) =>
           prev.map((tag) => (tag.tag_id === renameTarget.id ? { ...tag, name: trimmed } : tag)),
         )

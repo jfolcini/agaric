@@ -394,7 +394,9 @@ describe('EditableBlock', () => {
 
       // Should unmount previous first, then mount new
       expect(mockUnmount).toHaveBeenCalledOnce()
-      expect(mockEdit).toHaveBeenCalledWith('PREV_BLOCK', 'changed text')
+      expect(mockEdit).toHaveBeenCalledWith('PREV_BLOCK', 'changed text', {
+        baseText: 'existing content',
+      })
       expect(mockSetFocused).toHaveBeenCalledWith('B2')
       expect(mockMount).toHaveBeenCalledWith('B2', 'New block')
     })
@@ -587,7 +589,7 @@ describe('EditableBlock', () => {
       fireEvent.blur(wrapper as Element)
 
       expect(mockUnmount).toHaveBeenCalledOnce()
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text', { baseText: 'existing content' })
       expect(mockSetFocused).toHaveBeenCalledWith(null)
     })
 
@@ -666,7 +668,7 @@ describe('EditableBlock', () => {
       fireEvent.blur(wrapper as Element)
 
       expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(codeBlock, 'existing content')
-      expect(mockEdit).toHaveBeenCalledWith('B1', codeBlock)
+      expect(mockEdit).toHaveBeenCalledWith('B1', codeBlock, { baseText: 'existing content' })
       expect(mockSplitBlock).not.toHaveBeenCalled()
     })
 
@@ -767,7 +769,7 @@ describe('EditableBlock', () => {
 
       // Should unmount because the portal is not visible
       expect(mockUnmount).toHaveBeenCalledOnce()
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed', { baseText: 'existing content' })
       expect(mockSetFocused).toHaveBeenCalledWith(null)
 
       document.body.removeChild(portal)
@@ -793,7 +795,7 @@ describe('EditableBlock', () => {
       fireEvent.blur(getBlockEditorWrapper(), { relatedTarget: null })
 
       expect(mockUnmount).toHaveBeenCalledOnce()
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed', { baseText: 'existing content' })
       expect(mockSetFocused).toHaveBeenCalledWith(null)
 
       document.body.removeChild(slot)
@@ -965,7 +967,9 @@ describe('EditableBlock', () => {
 
       // Auto-mount effect should unmount old block and save changes
       expect(mockUnmount).toHaveBeenCalledOnce()
-      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes', {
+        baseText: 'existing content',
+      })
       expect(mockMount).toHaveBeenCalledWith('B1', 'New block')
     })
 
@@ -989,7 +993,9 @@ describe('EditableBlock', () => {
       )
       rerender(<EditableBlock blockId="B1" content="x" isFocused rovingEditor={roving as never} />)
 
-      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes', {
+        baseText: 'existing content',
+      })
       // #2409 — the orphan draft row for the block we moved AWAY from is dropped
       // only AFTER the appended edit op commits (deferred behind the outcome
       // promise), not concurrently with the in-flight IPC.
@@ -1041,7 +1047,9 @@ describe('EditableBlock', () => {
       )
       rerender(<EditableBlock blockId="B1" content="x" isFocused rovingEditor={roving as never} />)
 
-      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes', {
+        baseText: 'existing content',
+      })
       await act(async () => {
         await Promise.resolve()
       })
@@ -1071,7 +1079,9 @@ describe('EditableBlock', () => {
       )
       rerender(<EditableBlock blockId="B1" content="x" isFocused rovingEditor={roving as never} />)
 
-      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes', {
+        baseText: 'existing content',
+      })
       await act(async () => {
         await Promise.resolve()
       })
@@ -1096,7 +1106,9 @@ describe('EditableBlock', () => {
       )
       rerender(<EditableBlock blockId="B1" content="x" isFocused rovingEditor={roving as never} />)
 
-      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes', {
+        baseText: 'existing content',
+      })
       await act(async () => {
         await Promise.resolve()
       })
@@ -1216,7 +1228,9 @@ describe('EditableBlock', () => {
       rerender(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
 
       expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(codeBlock, 'existing content')
-      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', codeBlock)
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', codeBlock, {
+        baseText: 'existing content',
+      })
       expect(mockSplitBlock).not.toHaveBeenCalled()
     })
   })
@@ -1440,7 +1454,7 @@ describe('EditableBlock', () => {
       const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text', { baseText: 'existing content' })
       expect(mockSetFocused).toHaveBeenCalledWith(null)
       // edit must be called before setFocused so the store is updated
       // before React transitions to the StaticBlock
@@ -1496,7 +1510,9 @@ describe('EditableBlock', () => {
       fireEvent.blur(wrapper as Element)
 
       // The store update must happen (not be skipped or deferred)
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'ArrowRight content')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'ArrowRight content', {
+        baseText: 'existing content',
+      })
       expect(mockSetFocused).toHaveBeenCalledWith(null)
     })
   })
@@ -1550,7 +1566,7 @@ describe('EditableBlock', () => {
       fireEvent.blur(wrapper as Element)
 
       // edit was called (and will reject), and blur still completes...
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text', { baseText: 'existing content' })
       expect(mockSetFocused).toHaveBeenCalledWith(null)
       // ...but the crash-recovery draft is only discarded AFTER a
       // successful save — a failed save keeps it so the typed text
@@ -1639,7 +1655,9 @@ describe('EditableBlock', () => {
       await userEvent.click(screen.getByTestId('static-block-B2'))
 
       // edit was called for previous block (and rejects)
-      expect(mockEdit).toHaveBeenCalledWith('PREV_BLOCK', 'unsaved changes')
+      expect(mockEdit).toHaveBeenCalledWith('PREV_BLOCK', 'unsaved changes', {
+        baseText: 'existing content',
+      })
       // Focus transition still completes
       expect(mockSetFocused).toHaveBeenCalledWith('B2')
       expect(mockMount).toHaveBeenCalledWith('B2', 'New block')

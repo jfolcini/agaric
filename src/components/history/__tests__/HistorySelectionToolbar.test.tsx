@@ -20,6 +20,8 @@ import { axe } from 'vitest-axe'
 
 import { HistorySelectionToolbar } from '@/components/history/HistorySelectionToolbar'
 
+const NO_LIST = { current: null }
+
 beforeEach(() => {
   vi.clearAllMocks()
 })
@@ -28,6 +30,7 @@ describe('HistorySelectionToolbar', () => {
   it('renders selection count badge', () => {
     render(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={3}
         reverting={false}
         onRevertClick={vi.fn()}
@@ -41,6 +44,7 @@ describe('HistorySelectionToolbar', () => {
   it('renders "Revert selected" button', () => {
     render(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={1}
         reverting={false}
         onRevertClick={vi.fn()}
@@ -54,6 +58,7 @@ describe('HistorySelectionToolbar', () => {
   it('renders "Clear selection" button', () => {
     render(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={1}
         reverting={false}
         onRevertClick={vi.fn()}
@@ -67,6 +72,7 @@ describe('HistorySelectionToolbar', () => {
   it('renders keyboard hint', () => {
     render(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={1}
         reverting={false}
         onRevertClick={vi.fn()}
@@ -82,6 +88,7 @@ describe('HistorySelectionToolbar', () => {
     const onRevertClick = vi.fn()
     render(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={2}
         reverting={false}
         onRevertClick={onRevertClick}
@@ -98,6 +105,7 @@ describe('HistorySelectionToolbar', () => {
     const onClearSelection = vi.fn()
     render(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={2}
         reverting={false}
         onRevertClick={vi.fn()}
@@ -112,6 +120,7 @@ describe('HistorySelectionToolbar', () => {
   it('disables buttons when reverting', () => {
     render(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={1}
         reverting
         onRevertClick={vi.fn()}
@@ -126,6 +135,7 @@ describe('HistorySelectionToolbar', () => {
   it('shows "Reverting..." text when reverting', () => {
     render(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={1}
         reverting
         onRevertClick={vi.fn()}
@@ -139,6 +149,7 @@ describe('HistorySelectionToolbar', () => {
   it('updates selection count when prop changes', () => {
     const { rerender } = render(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={1}
         reverting={false}
         onRevertClick={vi.fn()}
@@ -150,6 +161,7 @@ describe('HistorySelectionToolbar', () => {
 
     rerender(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={5}
         reverting={false}
         onRevertClick={vi.fn()}
@@ -163,6 +175,7 @@ describe('HistorySelectionToolbar', () => {
   it('has no a11y violations', async () => {
     const { container } = render(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={2}
         reverting={false}
         onRevertClick={vi.fn()}
@@ -177,6 +190,7 @@ describe('HistorySelectionToolbar', () => {
   it('has no a11y violations when reverting', async () => {
     const { container } = render(
       <HistorySelectionToolbar
+        listRef={NO_LIST}
         selectedCount={2}
         reverting
         onRevertClick={vi.fn()}
