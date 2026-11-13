@@ -588,7 +588,7 @@ pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
 ///    `block_tag_refs`, and the cache, both sorted by tag id, and walks them
 ///    in lockstep, keeping the ids of the tags they disagree on.
 /// 2. Takes the writer lock only when there are any, and under it re-derives
-///    those tags' rows ([`rederive_tags_of`]).
+///    those tags' rows (`rederive_tags_of`).
 ///
 /// Unchanged rows are not touched — their `updated_at` is preserved. Tags
 /// with zero usage are included via the LEFT JOIN + COALESCE.

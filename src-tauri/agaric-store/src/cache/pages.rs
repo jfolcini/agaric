@@ -431,7 +431,7 @@ pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
 ///    migration 0123 (`stale_page_rows`), and the cache rows whose source
 ///    block is no longer a live titled page (`orphaned_page_rows`).
 /// 2. Takes the writer lock only when there are any, and under it UPSERTs
-///    and deletes those rows ([`rederive_page_rows_of`]). Unchanged hits are
+///    and deletes those rows (`rederive_page_rows_of`). Unchanged hits are
 ///    no-ops, so their `updated_at` is preserved.
 ///
 /// A page that goes stale after step 1 read it is left to the rebuild its

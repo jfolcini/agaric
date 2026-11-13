@@ -560,7 +560,7 @@ pub async fn rebuild_block_tag_refs_cache(pool: &SqlitePool) -> Result<(), AppEr
 ///    tag of the block's space, compares the pairs with the cache, and keeps
 ///    the ids of the source blocks they disagree on.
 /// 2. Takes the writer lock only when there are any, and under it re-derives
-///    those sources' rows ([`rederive_tag_refs_of`]).
+///    those sources' rows (`rederive_tag_refs_of`).
 ///
 /// A source that goes stale after step 1 read it is left to the reindex or
 /// rebuild its own write enqueues, which runs after this one.

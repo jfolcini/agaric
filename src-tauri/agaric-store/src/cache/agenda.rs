@@ -443,7 +443,7 @@ pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
 ///    (sorted by `(date, block_id)`) and walks them in lockstep, keeping the
 ///    ids of the blocks they disagree on.
 /// 2. Takes the writer lock only when there are any, and under it re-derives
-///    those blocks' rows ([`rederive_agenda_of`]).
+///    those blocks' rows (`rederive_agenda_of`).
 ///
 /// A block that goes stale after step 1 read it is left to the rebuild its
 /// own write enqueues, which runs after this one.
