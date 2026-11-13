@@ -1,4 +1,13 @@
-import { activeDialog, expect, ipc, openPage, reopenPage, test, waitForBoot } from './helpers'
+import {
+  activeDialog,
+  expect,
+  ipc,
+  openPage,
+  pinPdfComment,
+  reopenPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E for PDF annotation via pdf.js's prebuilt viewer (#1452).
@@ -131,12 +140,7 @@ async function annotateAndSave(page: import('@playwright/test').Page): Promise<s
   const reader = activeDialog(page)
   await expect(reader.getByTestId('pdf-page-indicator')).toContainText('1 / 1', { timeout: 15000 })
   await reader.getByTestId('pdf-tool-comment').click()
-  await reader
-    .locator('.pdfViewer .page')
-    .first()
-    .click({ position: { x: 30, y: 30 } })
-  await expect(reader.getByRole('textbox')).toBeFocused()
-  await page.keyboard.type('Note')
+  await pinPdfComment(page, 1, 'Note')
   // Leaving the comment commits it, which enables Save.
   await reader.getByTestId('pdf-tool-comment').click()
   await expect(reader.getByTestId('pdf-save')).toBeEnabled()

@@ -1,6 +1,15 @@
 import type { Page } from '@playwright/test'
 
-import { activeDialog, expect, ipc, openPage, reopenPage, test, waitForBoot } from './helpers'
+import {
+  activeDialog,
+  expect,
+  ipc,
+  openPage,
+  pinPdfComment,
+  reopenPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * A highlight or a pinned comment made in the PDF reader becomes a block
@@ -159,11 +168,7 @@ async function commentOnPageTwoAndSave(page: Page, words: string): Promise<void>
   const reader = activeDialog(page)
   await expect(reader.getByTestId('pdf-page-indicator')).toContainText('2 / 2', { timeout: 15000 })
   await reader.getByTestId('pdf-tool-comment').click()
-  await reader
-    .locator('.pdfViewer .page[data-page-number="2"]')
-    .click({ position: { x: 30, y: 30 } })
-  await expect(reader.getByRole('textbox')).toBeFocused()
-  await page.keyboard.type(words)
+  await pinPdfComment(page, 2, words)
   await reader.getByTestId('pdf-tool-comment').click()
   await expect(reader.getByTestId('pdf-save')).toBeEnabled()
   await reader.getByTestId('pdf-save').click()
