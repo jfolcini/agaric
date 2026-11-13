@@ -60,7 +60,9 @@ const APP_VALUE = runScopedMarker('wdio-sync-app-prop')
 const PEER_VALUE = runScopedMarker('wdio-sync-remote-prop')
 const APP_TAIL = runScopedMarker('wdio-sync-app-tail')
 const PEER_HEAD = runScopedMarker('wdio-sync-remote-head')
+const PEER_FRONT = runScopedMarker('wdio-sync-remote-front')
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
+const SYNC_BUTTON = '[data-slot="sidebar"] button[aria-label="Sync"]'
 const BEFORE_PAUSE = runScopedMarker('wdio-sync-before-pause')
 const AFTER_CANCEL = runScopedMarker('wdio-sync-after-cancel')
 const APP_IMAGE = runScopedMarker('wdio-sync-app-image')
@@ -515,9 +517,9 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
       const appText = `${PEER_EDIT} ${APP_TAIL}`
       const merged = `${PEER_HEAD} ${appText}`
 
-      // The app appends first. It can pull at any moment (useSyncTrigger runs
-      // every 60 s), so its editor must close before the peer writes: a pull
-      // under an open editor would save the stale text over the peer's edit.
+      // The app appends first and closes its editor, so its edit is an op of
+      // its own before the peer writes and the two meet in the merge. An edit
+      // still in the editor when the pull lands is the next test's.
       await reopenSharedPage()
       await editBlock(peerBlockId)
       await browser.keys(['Control', 'End'])
@@ -551,6 +553,84 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
       await peer.waitPulled()
       await reopenSharedPage()
       await waitForStaticText(peerBlockId, merged, 'the app did not converge')
+    })
+
+    // #6533 — the editor never shows the peer's edit, so its save sends text
+    // without it; `edit_block` replays the typed change on the pulled text.
+    it("a peer's edit pulled under an editor being typed in survives the editor's save", async () => {
+      if (peer === undefined || paired === undefined) throw new Error('the pairing test failed')
+      const { peerBlockId } = paired
+      const stored = async () =>
+        (await invoke<{ content: string }>('get_block', { blockId: peerBlockId })).content
+      const before = `${PEER_HEAD} ${PEER_EDIT} ${APP_TAIL}`
+      const peerText = `${PEER_FRONT} ${before}`
+
+      await reopenSharedPage()
+      await waitForStaticText(peerBlockId, before, 'the block is not as the last test left it')
+      await editBlock(peerBlockId)
+      await browser.keys(['Control', 'End'])
+      await peer.editBlock(peerBlockId, peerText)
+      if ((await stored()) !== before) {
+        throw new Error("the app pulled the peer's edit before a key was typed")
+      }
+
+      // Keys closer together than the idle commit's debounce keep the editor
+      // unsaved until the pull has landed. The pull is the sidebar button's,
+      // pressed from script: a pointer press would blur the editor and save it
+      // first. A pull already running can end without the peer's edit, so the
+      // button is pressed again whenever it is idle.
+      let typed = ''
+      let pulled = ''
+      for (let i = 0; i < 240 && pulled === ''; i++) {
+        const key = 'abcdefghij'.charAt(i % 10)
+        await browser.keys([key])
+        typed += key
+        if (i % 3 === 0) {
+          await browser.execute((selector: string) => {
+            const button = document.querySelector<HTMLElement>(selector)
+            if (button?.getAttribute('aria-disabled') === 'false') button.click()
+          }, SYNC_BUTTON)
+          const held = await stored()
+          if (held.startsWith(PEER_FRONT)) pulled = held
+          else if (held !== before) {
+            throw new Error(`the editor saved before the pull landed: ${JSON.stringify(held)}`)
+          }
+        }
+        await browser.pause(60)
+      }
+      if (pulled !== peerText) {
+        throw new Error(
+          `the peer's edit did not land alone under the open editor: ${JSON.stringify(pulled)}`,
+        )
+      }
+      // The editor keeps its own text: it was not given the peer's.
+      await browser.waitUntil(async () => (await $(EDITOR).getText()) === `${before}${typed}`, {
+        timeout: ACTION_TIMEOUT,
+        timeoutMsg: `the editor does not hold what was typed; expected ${before}${typed}`,
+      })
+
+      // The idle commit saves what was typed onto the peer's text.
+      const both = `${peerText}${typed}`
+      let saved = ''
+      await browser
+        .waitUntil(
+          async () => {
+            saved = await stored()
+            return saved === both
+          },
+          { timeout: ACTION_TIMEOUT },
+        )
+        .catch(() => {
+          throw new Error(
+            `the editor's save did not keep both edits: expected ${JSON.stringify(both)}, stored ${JSON.stringify(saved)}`,
+          )
+        })
+      await browser.keys(['Escape'])
+
+      await peer.sync()
+      await waitForPeerText(peer, peerBlockId, both)
+      await reopenSharedPage()
+      await waitForStaticText(peerBlockId, both, 'the app does not show both edits')
     })
 
     it('an image pasted in the app reaches the peer, bytes included', async () => {

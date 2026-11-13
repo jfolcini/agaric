@@ -713,9 +713,8 @@ fn restore_outcome(count: Result<u64, AppError>) -> String {
 ///
 /// **Why it was not caught before.** No committed scenario fed a live id to the
 /// restore pair, so `batch ≡ fold` held over what was actually exercised, and
-/// the baseline's `restore_blocks_by_ids_inner` entry listed only the
-/// `rederive_page_and_space_ids` gap under "STILL UNCOVERED" — the record
-/// overstated the coverage. That entry now names this asymmetry too.
+/// the baseline's `restore_blocks_by_ids_inner` entry did not list it — the
+/// record overstated the coverage. That entry now names this asymmetry too.
 ///
 /// **Why the LIVE id goes FIRST.** Same reason as the purge scenario: the batch
 /// is ONE transaction and refusing rolls the whole call back, while the fold is
@@ -812,12 +811,6 @@ async fn restore_blocks_by_ids_skips_a_live_block_the_single_path_refuses() {
 /// This test drives the shape that separates them: delete the CHILD first,
 /// then delete the PARENT (whose cascade skips the already-tombstoned child,
 /// making the child its own trash root), then restore the CHILD.
-///
-/// Still uncovered here, and NOT what this test asserts: the batch path also
-/// skips the `rederive_page_and_space_ids` refresh the single path runs in-tx.
-/// This fixture cannot see it (the seeded `page_id` / `space_id` are already
-/// correct on both arms) — a scenario that moves a block while it is
-/// soft-deleted would be needed.
 ///
 /// Run with: `cargo nextest run -E 'test(restore_blocks_by_ids_omits)'`
 #[tokio::test]

@@ -271,16 +271,21 @@ export function useListKeyboardNavigation(
 }
 
 /**
- * Enter and Space press the focused control: a button, a checkbox, a dialog's
- * Cancel. A list that hears keys at the document acts on them only when they
- * are pressed with nothing in particular focused (<body>, or an element holding
- * the list such as `#main-content`), on the list itself, or on the row holding
- * its Tab stop. A row a click merely focused (a Pages row) is not that row: the
- * cursor is elsewhere, and the key would act on the cursor's row.
+ * Whether a key a list hears at the document belongs to something else. Every
+ * key pressed inside an open overlay (a dialog, or a Radix popper such as a
+ * select's listbox) is the overlay's: Escape closes it, the arrows move in it.
+ * Enter and Space press the focused control: a button, a checkbox. A list acts
+ * on them only when they are pressed with nothing in particular focused
+ * (<body>, or an element holding the list such as `#main-content`), on the list
+ * itself, or on the row holding its Tab stop. A row a click merely focused (a
+ * Pages row) is not that row: the cursor is elsewhere, and the key would act on
+ * the cursor's row.
  */
 export function pressesFocusedControl(e: KeyboardEvent, list: Element | null): boolean {
-  if (e.key !== 'Enter' && e.key !== ' ') return false
   const target = e.target as Element
+  const overlay = '[role="dialog"], [role="alertdialog"], [data-radix-popper-content-wrapper]'
+  if (target instanceof Element && target.closest(overlay) != null) return true
+  if (e.key !== 'Enter' && e.key !== ' ') return false
   const onList =
     target === document.body ||
     (list != null &&

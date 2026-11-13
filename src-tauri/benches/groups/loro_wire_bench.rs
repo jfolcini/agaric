@@ -37,12 +37,13 @@ const SAMPLE_SIZE: usize = 10;
 
 /// The binary's one global allocator. It forwards to `System` and, while
 /// `TRACKING` is set, keeps the live and peak byte counts; every other group
-/// in the binary pays one relaxed load per allocation.
+/// in the binary pays one relaxed load per allocation; `loro_snapshot_bench`
+/// reads the same counters.
 struct CountingAlloc;
 
-static TRACKING: AtomicBool = AtomicBool::new(false);
-static LIVE: AtomicIsize = AtomicIsize::new(0);
-static PEAK: AtomicIsize = AtomicIsize::new(0);
+pub(crate) static TRACKING: AtomicBool = AtomicBool::new(false);
+pub(crate) static LIVE: AtomicIsize = AtomicIsize::new(0);
+pub(crate) static PEAK: AtomicIsize = AtomicIsize::new(0);
 
 fn grew(bytes: usize) {
     if TRACKING.load(Ordering::Relaxed) {
