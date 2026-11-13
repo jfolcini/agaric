@@ -1,4 +1,4 @@
-# Session 4066 — real-backend checks: stale reads after a write, a released vault, the Enter and merge wait
+# Session 4071 — real-backend checks: stale reads after a write, a released vault, the Enter and merge wait
 
 One PR for three items that all test or measure the real backend: #6567's stale-cache experiment and its upgrade-path test, and #6559's measurement of what Enter and a merge wait for. No product change.
 
