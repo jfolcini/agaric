@@ -1,4 +1,4 @@
-# Session 3970 — `agaric-mcp call <tool> <json>` runs one tool and exits
+# Session 3989 — `agaric-mcp call <tool> <json>` runs one tool and exits
 
 `Refs #6555` (the one-shot MCP call item).
 
