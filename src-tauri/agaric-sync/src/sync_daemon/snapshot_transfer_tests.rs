@@ -888,13 +888,14 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
 
 /// #5712: a catch-up whose snapshot no longer holds a block, which no other
 /// engine holds either. `inbound` is the claim the session handed it, if any.
-/// Returns the initiator's block ids, how many ids wait to be swept, and how
-/// many inbound syncs are in flight, once the catch-up has ended.
+/// Returns the initiator's block ids, how many ids wait to be swept, how
+/// many inbound syncs are in flight, and the page titles of each
+/// `LocalTextKept` the initiator emitted, once the catch-up has ended.
 async fn catchup_that_drops_a_block(
     inbound: impl FnOnce(
         &agaric_engine::loro::registry::LoroEngineRegistry,
     ) -> Option<agaric_engine::loro::registry::InboundSync>,
-) -> (Vec<String>, i64, usize) {
+) -> (Vec<String>, i64, usize, Vec<Vec<String>>) {
     use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
     use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
     use agaric_engine::loro::registry::LoroEngineRegistry;
@@ -941,7 +942,8 @@ async fn catchup_that_drops_a_block(
     let mut pair = quic_pair().await;
     let (client, server) = (&mut pair.client, &mut pair.server);
     let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let init_events = Arc::new(RecordingEventSink::new());
+    let init_sink: Arc<dyn SyncEventSink> = init_events.clone();
     let inbound = inbound(&init_registry);
     let (offer_res, recv_res) = tokio::join!(
         try_offer_loro_snapshot_catchup(
@@ -980,7 +982,52 @@ async fn catchup_that_drops_a_block(
         .await
         .unwrap();
     init_mat.shutdown();
-    (rows, deferred, init_registry.inbound_syncs_in_flight())
+    let kept = init_events
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            SyncEvent::LocalTextKept { page_titles } => Some(page_titles),
+            _ => None,
+        })
+        .collect();
+    (
+        rows,
+        deferred,
+        init_registry.inbound_syncs_in_flight(),
+        kept,
+    )
+}
+
+/// #6561: a catch-up whose snapshot purged the parent of a block written
+/// here keeps the block and says so, as a pull session does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_catchup_that_keeps_local_text_says_so_6561() {
+    let written = "01HZ000000000000000WRITE57";
+    let (rows, _, _, kept) = catchup_that_drops_a_block(|registry| {
+        registry
+            .for_space(
+                &agaric_store::space::SpaceId::from_trusted("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+                LOCAL_DEV,
+            )
+            .unwrap()
+            .engine_mut()
+            .apply_create_block(
+                written,
+                "content",
+                "written here",
+                Some("01HZ00000000000000000GONE57"),
+                0,
+            )
+            .unwrap();
+        None
+    })
+    .await;
+
+    assert_eq!(kept, vec![vec!["doomed".to_owned()]]);
+    assert!(
+        rows.iter().any(|id| id == written),
+        "the block written here keeps its row, got {rows:?}"
+    );
 }
 
 /// #5712: a catch-up carries every space's snapshot, so it ends the pull the
@@ -988,7 +1035,7 @@ async fn catchup_that_drops_a_block(
 /// other engine does, is purged from SQL once the last snapshot has merged.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn loro_snapshot_catchup_purges_what_its_snapshots_dropped_5712() {
-    let (rows, deferred, in_flight) = catchup_that_drops_a_block(|_| None).await;
+    let (rows, deferred, in_flight, _) = catchup_that_drops_a_block(|_| None).await;
     assert_eq!(
         rows,
         vec!["01HZ0000000000000000PAGE57".to_owned()],
@@ -1006,7 +1053,7 @@ async fn loro_snapshot_catchup_purges_what_its_snapshots_dropped_5712() {
 /// claim beside it would never be the last to end, and sweep nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_catchup_ends_the_claim_its_session_handed_it_5712() {
-    let (rows, deferred, in_flight) =
+    let (rows, deferred, in_flight, _) =
         catchup_that_drops_a_block(|registry| Some(registry.begin_inbound_sync())).await;
     assert_eq!(
         (rows, deferred, in_flight),

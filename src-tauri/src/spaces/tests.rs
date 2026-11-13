@@ -2268,9 +2268,11 @@ async fn move_fixture() -> MoveFixture {
 
 impl MoveFixture {
     /// B pulls `spaces`' docs from A in that order, with the cache fan-out
-    /// the session runs after each import, then ends the session.
-    async fn pull(&self, spaces: &[&BlockId], end: SessionEnd) {
+    /// the session runs after each import, then ends the session. Returns the
+    /// titles of the Trash pages the imports kept local text under (#6561).
+    async fn pull(&self, spaces: &[&BlockId], end: SessionEnd) -> Vec<String> {
         use agaric_sync::sync_protocol::loro_sync::{ApplyOutcome, apply_remote};
+        let mut kept_titles = Vec::new();
         for space in spaces {
             let msg = agaric_sync::sync_protocol::loro_sync::prepare_outgoing_for_pool(
                 &self.pool_a,
@@ -2290,9 +2292,15 @@ impl MoveFixture {
             )
             .await
             .unwrap();
-            let ApplyOutcome::Imported { changed_blocks, .. } = outcome else {
+            let ApplyOutcome::Imported {
+                changed_blocks,
+                kept,
+                ..
+            } = outcome
+            else {
                 panic!("a snapshot imports, got {outcome:?}");
             };
+            kept_titles.extend(kept.into_iter().map(|page| page.title));
             self.mat_b
                 .enqueue_inbound_sync_rebuilds(&changed_blocks, &[])
                 .await
@@ -2311,6 +2319,50 @@ impl MoveFixture {
                 .unwrap();
         }
         self.mat_b.flush_inbound_rebuilds().await.unwrap();
+        kept_titles
+    }
+
+    /// [`Self::pull`] the other way: A pulls `space`'s doc from B and ends the
+    /// session. Returns the titles A's import kept local text under.
+    async fn push(&self, space: &BlockId) -> Vec<String> {
+        use agaric_sync::sync_protocol::loro_sync::{
+            ApplyOutcome, apply_remote, prepare_outgoing_for_pool, sweep_deferred_purges,
+        };
+        let registry_a = &self.mat_a.loro_state().registry;
+        let msg = prepare_outgoing_for_pool(
+            &self.pool_b,
+            &self.mat_b.loro_state().registry,
+            &agaric_store::space::SpaceId::from_trusted(space.as_str()),
+            "device-B",
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("#1257 freshness gate must not refuse a consistent engine");
+        let outcome = apply_remote(&self.pool_a, registry_a, "device-A", msg)
+            .await
+            .unwrap();
+        let ApplyOutcome::Imported {
+            changed_blocks,
+            kept,
+            ..
+        } = outcome
+        else {
+            panic!("a snapshot imports, got {outcome:?}");
+        };
+        self.mat_a
+            .enqueue_inbound_sync_rebuilds(&changed_blocks, &[])
+            .await
+            .unwrap();
+        let swept = sweep_deferred_purges(&self.pool_a, registry_a)
+            .await
+            .unwrap();
+        self.mat_a
+            .enqueue_inbound_sync_rebuilds(&[], &swept)
+            .await
+            .unwrap();
+        self.mat_a.flush_inbound_rebuilds().await.unwrap();
+        kept.into_iter().map(|page| page.title).collect()
     }
 
     /// A moves `blocks` to `space`.
@@ -2402,6 +2454,188 @@ async fn a_moved_page_survives_on_its_peer_when_the_new_space_arrives_first_5712
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_moved_page_survives_on_its_peer_when_the_old_space_arrives_first_5712() {
     a_move_reaches_b_whole(true).await;
+}
+
+/// B writes a block under the fixture's page, unseen by A.
+async fn write_on_b(fx: &MoveFixture, text: &str) -> BlockId {
+    let id = crate::commands::create_block_inner(
+        &fx.pool_b,
+        "device-B",
+        &fx.mat_b,
+        "content".into(),
+        text.into(),
+        Some(fx.page.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    fx.mat_b.flush_background().await.unwrap();
+    id
+}
+
+/// The Trash of the fixture's old space on `pool`: `(id, type, content)`.
+async fn trash_of_old_space(fx: &MoveFixture, pool: &SqlitePool) -> Vec<(String, String, String)> {
+    crate::commands::list_trash_inner(pool, None, None, fx.old.as_str().to_owned())
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|row| {
+            (
+                row.id.into_string(),
+                row.block_type,
+                row.content.unwrap_or_default(),
+            )
+        })
+        .collect()
+}
+
+async fn title_of(pool: &SqlitePool, page: &BlockId) -> String {
+    sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(page.as_str())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// #6561: A deletes the page and empties its Trash while B, out of contact,
+/// writes a block under that page. After B pulls, the page is gone on B and
+/// the block B wrote is in B's Trash under a page of the same title, from
+/// which *Restore* brings it back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_synced_purge_keeps_the_block_b_wrote_under_the_page_in_bs_trash_6561() {
+    let fx = move_fixture().await;
+    let title = title_of(&fx.pool_a, &fx.page).await;
+    let written = write_on_b(&fx, "written on B, never synced").await;
+
+    fx.purge_on_a(&fx.page).await;
+    let kept = fx.pull(&[&fx.old], SessionEnd::Completed).await;
+
+    assert_eq!(
+        kept,
+        vec![title.clone()],
+        "the import reports the kept page"
+    );
+    assert_eq!(
+        trash_row(&fx.pool_b, fx.page.as_str()).await,
+        None,
+        "the purged page is gone on B"
+    );
+    assert_eq!(deferred_purges(&fx.pool_b).await, Vec::<String>::new());
+    let trash = trash_of_old_space(&fx, &fx.pool_b).await;
+    let [(kept_page, kind, kept_title)] = trash.as_slice() else {
+        panic!("B's Trash holds exactly the kept page, got {trash:?}");
+    };
+    assert_eq!((kind.as_str(), kept_title), ("page", &title));
+    let (parent, space, deleted_at) = trash_row(&fx.pool_b, written.as_str())
+        .await
+        .expect("the block B wrote still has a row on B");
+    assert_eq!(parent.as_deref(), Some(kept_page.as_str()));
+    assert_eq!(space.as_deref(), Some(fx.old.as_str()));
+    let deleted_at = deleted_at.expect("the block is in the Trash with its page");
+    let (text, page_id): (String, String) =
+        sqlx::query_as("SELECT content, page_id FROM blocks WHERE id = ?")
+            .bind(written.as_str())
+            .fetch_one(&fx.pool_b)
+            .await
+            .unwrap();
+    assert_eq!(
+        (text.as_str(), &page_id),
+        ("written on B, never synced", kept_page)
+    );
+
+    crate::commands::restore_block_inner(
+        &fx.pool_b,
+        "device-B",
+        &fx.mat_b,
+        BlockId::from_trusted(kept_page),
+        deleted_at,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        trash_row(&fx.pool_b, written.as_str()).await,
+        Some((
+            Some(kept_page.clone()),
+            Some(fx.old.as_str().to_owned()),
+            None
+        )),
+        "restoring the page brings the block back"
+    );
+    fx.shutdown();
+}
+
+/// #6561: the kept page reaches A as ordinary changes. A's Trash shows it,
+/// both devices hold the same rows and docs, and further rounds in either
+/// direction keep nothing more. A purging it then purges it on B for good.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_kept_block_converges_on_both_devices_and_a_later_purge_is_final_6561() {
+    let fx = move_fixture().await;
+    let title = title_of(&fx.pool_a, &fx.page).await;
+    let written = write_on_b(&fx, "written on B, never synced").await;
+    fx.purge_on_a(&fx.page).await;
+    fx.pull(&[&fx.old], SessionEnd::Completed).await;
+    let trash_b = trash_of_old_space(&fx, &fx.pool_b).await;
+
+    assert_eq!(
+        fx.push(&fx.old).await,
+        Vec::<String>::new(),
+        "A keeps nothing"
+    );
+    assert_eq!(
+        trash_of_old_space(&fx, &fx.pool_a).await,
+        trash_b,
+        "A's Trash shows the page B kept"
+    );
+    assert_eq!(trash_b[0].2, title);
+    assert_eq!(
+        trash_row(&fx.pool_a, written.as_str()).await,
+        trash_row(&fx.pool_b, written.as_str()).await,
+        "the block B wrote is in A's Trash as in B's"
+    );
+    for round in ["second", "third"] {
+        assert_eq!(
+            fx.pull(&[&fx.old], SessionEnd::Completed).await,
+            Vec::<String>::new(),
+            "{round} pull keeps nothing"
+        );
+        assert_eq!(fx.push(&fx.old).await, Vec::<String>::new());
+        assert_eq!(trash_of_old_space(&fx, &fx.pool_b).await, trash_b);
+        fx.assert_b_matches_a(round).await;
+    }
+
+    let kept_page = BlockId::from_trusted(&trash_b[0].0);
+    crate::commands::purge_block_inner(&fx.pool_a, "device-A", &fx.mat_a, kept_page)
+        .await
+        .unwrap();
+    fx.mat_a.flush_background().await.unwrap();
+    assert_eq!(
+        fx.pull(&[&fx.old], SessionEnd::Completed).await,
+        Vec::<String>::new(),
+        "A had received the block: its purge is final"
+    );
+    assert_eq!(trash_row(&fx.pool_b, written.as_str()).await, None);
+    assert_eq!(trash_of_old_space(&fx, &fx.pool_b).await, Vec::new());
+    fx.shutdown();
+}
+
+/// #6561, the unchanged case: a block A had received before it purged the
+/// page is purged on B, and nothing is kept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_synced_purge_still_takes_a_block_the_purging_device_had_received_6561() {
+    let fx = move_fixture().await;
+    let written = write_on_b(&fx, "written on B, then synced").await;
+    fx.push(&fx.old).await;
+
+    fx.purge_on_a(&fx.page).await;
+    let kept = fx.pull(&[&fx.old], SessionEnd::Completed).await;
+
+    assert_eq!(kept, Vec::<String>::new());
+    assert_eq!(trash_row(&fx.pool_b, written.as_str()).await, None);
+    assert_eq!(trash_of_old_space(&fx, &fx.pool_b).await, Vec::new());
+    fx.assert_b_matches_a("after the purge").await;
+    fx.shutdown();
 }
 
 /// `(parent_id, space_id, deleted_at)` of `id`'s row, `None` when it is gone.
@@ -2855,15 +3089,31 @@ async fn a_session_without_the_new_doc_sweeps_the_moved_page_5712() {
     fx.shutdown();
 }
 
-/// One real QUIC session in which B pulls from A, each side running the
-/// production session code: `run_sync_session` against `handle_incoming_sync`.
-/// Returns B's terminal state.
+/// [`pull_over_quic_recording`], for a caller that reads only B's terminal
+/// state.
 async fn pull_over_quic(
     pool_a: &SqlitePool,
     mat_a: &crate::materializer::Materializer,
     pool_b: &SqlitePool,
     mat_b: &crate::materializer::Materializer,
 ) -> agaric_sync::sync_protocol::SyncState {
+    pull_over_quic_recording(pool_a, mat_a, pool_b, mat_b)
+        .await
+        .0
+}
+
+/// One real QUIC session in which B pulls from A, each side running the
+/// production session code: `run_sync_session` against `handle_incoming_sync`.
+/// Returns B's terminal state and the events B's session emitted.
+async fn pull_over_quic_recording(
+    pool_a: &SqlitePool,
+    mat_a: &crate::materializer::Materializer,
+    pool_b: &SqlitePool,
+    mat_b: &crate::materializer::Materializer,
+) -> (
+    agaric_sync::sync_protocol::SyncState,
+    Vec<agaric_sync::sync_events::SyncEvent>,
+) {
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
 
@@ -2906,14 +3156,16 @@ async fn pull_over_quic(
     });
 
     let mut client = harness.dial().await;
-    let mut orch = agaric_sync::sync_protocol::SyncOrchestrator::new(
+    let orch = agaric_sync::sync_protocol::SyncOrchestrator::new(
         pool_b.clone(),
         "device-B".into(),
         Arc::new(mat_b.clone()),
     )
     .with_expected_remote_id("device-A".into());
+    let recorded = Arc::new(RecordingEventSink::new());
+    let mut orch = orch.with_event_sink(Box::new(Arc::clone(&recorded)));
     let host: Arc<dyn agaric_sync::apply_host::ApplyHost> = Arc::new(mat_b.clone());
-    let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let sink: Arc<dyn SyncEventSink> = recorded.clone();
     tokio::time::timeout(
         timeout,
         agaric_sync::sync_daemon::run_sync_session(
@@ -2935,7 +3187,33 @@ async fn pull_over_quic(
         .expect("A's session timed out")
         .expect("A's session panicked")
         .expect("A's session");
-    orch.session().state.clone()
+    (orch.session().state.clone(), recorded.events())
+}
+
+/// #6561 over a real QUIC session: B's session reports the page it kept
+/// B's unsynced text under, once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pull_that_keeps_local_text_says_so_over_quic_6561() {
+    use agaric_sync::sync_events::SyncEvent;
+
+    let fx = move_fixture().await;
+    let title = title_of(&fx.pool_a, &fx.page).await;
+    write_on_b(&fx, "written on B, never synced").await;
+    fx.purge_on_a(&fx.page).await;
+
+    let (state, events) =
+        pull_over_quic_recording(&fx.pool_a, &fx.mat_a, &fx.pool_b, &fx.mat_b).await;
+
+    assert_eq!(state, agaric_sync::sync_protocol::SyncState::Complete);
+    let kept: Vec<Vec<String>> = events
+        .into_iter()
+        .filter_map(|event| match event {
+            SyncEvent::LocalTextKept { page_titles } => Some(page_titles),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kept, vec![vec![title]]);
+    fx.shutdown();
 }
 
 /// #5712 over a real QUIC session: A moves `page` from `old` to `new` and

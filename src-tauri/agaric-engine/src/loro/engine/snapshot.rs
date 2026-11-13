@@ -377,6 +377,7 @@ impl LoroEngine {
                 tag_scope: TagScope::Subtrees(Vec::new()),
                 def_keys: Vec::new(),
                 pending,
+                kept: Vec::new(),
             });
         }
         let after_import_frontiers = self.doc.oplog_frontiers();
@@ -406,20 +407,27 @@ impl LoroEngine {
                 tag_scope,
                 def_keys: sorted(cap.def_keys),
                 pending,
+                kept: Vec::new(),
             });
         }
 
         // Structural / fallback path: rebuild the index and compute the purged
         // delta (#2128: ids live before the import but gone after the rebuild).
-        let before: std::collections::HashSet<String> = self.index.keys().cloned().collect();
+        let before = self.index.clone();
         self.rebuild_index();
-        let after: std::collections::HashSet<String> = self.index.keys().cloned().collect();
+        // #6561: the kept blocks are moved by ops this import's diff does not
+        // hold, so a rescue takes the brute-force path below, as `migrated` does.
+        let kept = self.keep_unseen_local_blocks(&before)?;
+        if !kept.is_empty() {
+            self.rebuild_index();
+        }
         let purged: Vec<agaric_core::ulid::BlockId> = before
-            .difference(&after)
+            .keys()
+            .filter(|id| !self.index.contains_key(*id))
             .map(|s| agaric_core::ulid::BlockId::from_trusted(s))
             .collect();
 
-        if cap.fallback || migrated {
+        if cap.fallback || migrated || !kept.is_empty() {
             // Brute-force: reproject the whole live tree + globally rebuild the
             // inherited-tag cache. Identical to the pre-#2036 behaviour. No
             // rank-only hint here — the fallback exists precisely because we
@@ -433,6 +441,7 @@ impl LoroEngine {
                 tag_scope: TagScope::Global,
                 def_keys: sorted(cap.def_keys),
                 pending,
+                kept,
             });
         }
 
@@ -448,6 +457,7 @@ impl LoroEngine {
             tag_scope,
             def_keys: sorted(cap.def_keys),
             pending,
+            kept: Vec::new(),
         })
     }
 
@@ -892,6 +902,9 @@ pub struct ImportDelta {
     /// whole payload committed" and delete the durable record that was its only
     /// copy — the #535 invariant, inverted. Surfaced so callers can refuse.
     pub pending: Vec<(PeerID, Counter, Counter)>,
+    /// #6561: the Trash pages this import created for blocks its purge would
+    /// have taken (`keep.rs`). Their blocks are in `changed`, not in `purged`.
+    pub kept: Vec<super::KeptLocalText>,
 }
 
 /// How the caller must refresh the derived `block_tag_inherited` cache after an

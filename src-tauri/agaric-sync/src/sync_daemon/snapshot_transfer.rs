@@ -411,6 +411,7 @@ async fn merge_one_snapshot(
     materializer: &dyn ApplyHost,
     remote_device_id: &str,
     loro_msg: LoroSyncMessage,
+    event_sink: &Arc<dyn SyncEventSink>,
 ) -> Result<Vec<String>, AppError> {
     // Merge semantics: `apply_remote` imports the snapshot into our engine
     // (preserving unsynced local content) and reprojects the changed blocks into
@@ -419,8 +420,12 @@ async fn merge_one_snapshot(
         ApplyOutcome::Imported {
             changed_blocks,
             changed_page_ids,
+            kept,
             ..
         } => {
+            if let Some(report) = loro_sync::local_text_kept_report(&kept) {
+                event_sink.on_sync_event(report);
+            }
             // Non-fatal: the projection already committed inside apply_remote; a
             // queue-closed error must not unwind the catch-up (mirrors the
             // orchestrator's LoroSync arm).
@@ -577,8 +582,15 @@ async fn receive_loro_snapshot_catchup(
     let mut is_last = first_is_last;
     loop {
         bytes_received += loro_msg_payload_len(&loro_msg);
-        for pid in
-            merge_one_snapshot(pool, &engine, materializer, remote_device_id, loro_msg).await?
+        for pid in merge_one_snapshot(
+            pool,
+            &engine,
+            materializer,
+            remote_device_id,
+            loro_msg,
+            event_sink,
+        )
+        .await?
         {
             if !changed_page_ids.contains(&pid) {
                 changed_page_ids.push(pid);

@@ -51,7 +51,7 @@ Pages may nest. Title sort order is a frontend preference (recent / alphabetical
 
 ## Soft delete & trash
 
-A block is soft-deleted via `deleted_at`. The Trash view lists root-only soft-deleted blocks; restore brings the whole subtree back. Hard purge cascades via foreign-key `ON DELETE CASCADE` across every dependent table (`block_properties`, `block_tags`, `block_links`, `block_tag_refs`, `page_link_cache`, …) — no enumerated DELETE list to maintain.
+A block is soft-deleted via `deleted_at`. The Trash view lists root-only soft-deleted blocks; restore brings the whole subtree back. Hard purge cascades via foreign-key `ON DELETE CASCADE` across every dependent table (`block_properties`, `block_tags`, `block_links`, `block_tag_refs`, `page_link_cache`, …) — no enumerated DELETE list to maintain. A purge that arrives by sync deletes one tree node, and every block under it dies with it; the import first moves out the blocks this device created that the delete is causally concurrent with, under a new soft-deleted page in the same doc (`agaric-engine/src/loro/engine/keep.rs`, #6561). Those are engine operations with no op-log records, so History and undo do not see them.
 
 Soft-pointer columns (`block_properties.value_ref`) `CASCADE` on hard delete to keep the exactly-one-value-column CHECK valid.
 

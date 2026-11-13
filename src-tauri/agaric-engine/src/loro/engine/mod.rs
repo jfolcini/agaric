@@ -613,11 +613,13 @@ pub use attachments::{AttachmentFields, EngineAttachment};
 /// `count_alive_blocks`).
 mod reads;
 
-/// Snapshot import/export I/O and the legacy-v1 rejection (#332).
-mod snapshot;
 /// #2036: how the caller should refresh the inherited-tag cache after an import.
 /// `pub` (not `pub(crate)`) so the app-crate sync/materializer callers reach it
 /// as `crate::loro::engine::TagScope` across the crate boundary (#2621, E1).
+mod keep;
+/// Snapshot import/export I/O and the legacy-v1 rejection (#332).
+mod snapshot;
+pub use keep::KeptLocalText;
 pub use snapshot::{ImportDelta, ImportPayload, TagScope};
 
 /// Sync-update generation + inbound-blob inspection (#792 / #1054).

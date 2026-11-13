@@ -1072,8 +1072,12 @@ impl SyncOrchestrator {
             ApplyOutcome::Imported {
                 changed_blocks,
                 changed_page_ids,
+                kept,
                 ..
             } => {
+                if let Some(report) = loro_sync::local_text_kept_report(&kept) {
+                    self.emit(report);
+                }
                 self.absorb_imported_loro(&changed_blocks, changed_page_ids)
                     .await;
             }
