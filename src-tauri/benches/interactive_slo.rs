@@ -5889,6 +5889,401 @@ mod mcp_reads {
 // Harness
 // ===========================================================================
 
+// ===========================================================================
+// #6527 — the page-heavy vault: many pages, few blocks each
+// ===========================================================================
+
+/// The second vault shape (`docs/architecture/operations.md` § Product SLO): a
+/// vault imported from Obsidian, where the 100K fixtures above are an
+/// outliner's. Only the probes whose cost grows with the number of pages run
+/// on it. No budgets until `bench-slo` has measured them.
+mod page_heavy {
+    use super::*;
+    use agaric_lib::commands::{
+        create_page_in_space_inner, create_space_inner, import_markdown_inner,
+        list_all_pages_in_space_inner, resolve_page_title_inner,
+    };
+
+    const PAGES: usize = 33_000;
+    const BLOCKS_PER_PAGE: usize = 2;
+    const PAGE_SIZE: usize = 50;
+    const DEVICE: &str = "dev-bench";
+
+    fn page_id(i: usize) -> String {
+        format!("01PGHV{i:020}")
+    }
+
+    fn block_id(i: usize, c: usize) -> String {
+        format!("01PGHB{i:018}{c:02}")
+    }
+
+    fn title(i: usize) -> String {
+        format!("Note {i:05}")
+    }
+
+    /// `cmd`'s report label, naming the fixture's size.
+    fn at_scale(cmd: &str) -> String {
+        format!("{cmd} @ {}K pages", PAGES / 1000)
+    }
+
+    /// A seeded `blocks` row.
+    struct Row {
+        id: String,
+        block_type: &'static str,
+        content: String,
+        parent: Option<String>,
+        position: i64,
+        page: String,
+    }
+
+    /// Page `i` and its blocks.
+    fn page_rows(i: usize) -> Vec<Row> {
+        let page = page_id(i);
+        let mut rows = vec![Row {
+            id: page.clone(),
+            block_type: "page",
+            content: title(i),
+            parent: None,
+            // Rank 1 is the space's own block, there before any page.
+            position: i as i64 + 2,
+            page: page.clone(),
+        }];
+        for c in 0..BLOCKS_PER_PAGE {
+            rows.push(Row {
+                id: block_id(i, c),
+                block_type: "content",
+                content: format!("Line {c} of note {i} with some placeholder content."),
+                parent: Some(page.clone()),
+                position: c as i64 + 1,
+                page: page.clone(),
+            });
+        }
+        rows
+    }
+
+    /// [`PAGES`] root pages of [`BLOCKS_PER_PAGE`] blocks in one space, in SQL
+    /// and in the space's Loro engine, as that many page creates leave them:
+    /// dense ranks after the space's own block, each engine node stamped with
+    /// its rank. One `create_block` op per block, then the
+    /// production rebuilds of `pages_cache` and the FTS index. Returns the
+    /// space.
+    async fn seed(pool: &SqlitePool, materializer: &Materializer) -> String {
+        let space = create_space_inner(pool, DEVICE, materializer, "Page-heavy".into(), None)
+            .await
+            .unwrap()
+            .into_string();
+        const PAGES_PER_STATEMENT: usize = 100;
+        let mut tx = pool.begin().await.unwrap();
+        let mut seq = 0_i64;
+        for start in (0..PAGES).step_by(PAGES_PER_STATEMENT) {
+            let rows: Vec<_> = (start..(start + PAGES_PER_STATEMENT).min(PAGES))
+                .flat_map(page_rows)
+                .collect();
+            let blocks_sql = format!(
+                "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, page_id, space_id) VALUES {}",
+                vec!["(?, ?, ?, ?, ?, ?, ?)"; rows.len()].join(", ")
+            );
+            let ops_sql = format!(
+                "INSERT INTO op_log \
+                 (device_id, seq, hash, op_type, payload, created_at, block_id) VALUES {}",
+                vec!["('dev-seed', ?, 'fakehash', 'create_block', ?, ?, ?)"; rows.len()].join(", ")
+            );
+            let mut blocks = sqlx::query(sqlx::AssertSqlSafe(blocks_sql.as_str()));
+            let mut ops = sqlx::query(sqlx::AssertSqlSafe(ops_sql.as_str()));
+            for row in rows {
+                let Row {
+                    id,
+                    block_type,
+                    content,
+                    parent,
+                    position,
+                    page,
+                } = row;
+                seq += 1;
+                ops = ops
+                    .bind(seq)
+                    .bind(format!(
+                        r#"{{"block_id":"{id}","block_type":"{block_type}","content":"{content}"}}"#
+                    ))
+                    .bind(SLO_BASE_TS_MS + seq)
+                    .bind(id.clone());
+                blocks = blocks
+                    .bind(id)
+                    .bind(block_type)
+                    .bind(content)
+                    .bind(parent)
+                    .bind(position)
+                    .bind(page)
+                    .bind(&space);
+            }
+            blocks.execute(&mut *tx).await.unwrap();
+            ops.execute(&mut *tx).await.unwrap();
+        }
+        tx.commit().await.unwrap();
+        {
+            let state = materializer.loro_state();
+            let mut guard = state
+                .registry
+                .for_space(&SpaceId::from_trusted(&space), DEVICE)
+                .unwrap();
+            let engine = guard.engine_mut();
+            for i in 0..PAGES {
+                for (slot, row) in page_rows(i).into_iter().enumerate() {
+                    // The page takes the root slot after the space's block and
+                    // the pages before it; its blocks slots `0..`.
+                    let slot = if row.parent.is_none() {
+                        i + 1
+                    } else {
+                        slot - 1
+                    };
+                    engine
+                        .seed_block_at_slot(
+                            &row.id,
+                            row.block_type,
+                            &row.content,
+                            row.parent.as_deref(),
+                            slot,
+                            row.position,
+                        )
+                        .unwrap();
+                }
+            }
+        }
+        agaric_store::cache::rebuild_pages_cache(pool)
+            .await
+            .unwrap();
+        agaric_store::cache::rebuild_pages_cache_counts(pool)
+            .await
+            .unwrap();
+        rebuild_fts_index(pool).await.unwrap();
+        materializer.flush_background().await.unwrap();
+        space
+    }
+
+    /// The fixture is the vault it claims to be (#3304): every page in
+    /// `pages_cache` and its blocks in the FTS index, and the engine's root
+    /// order the SQL one, so a create takes the engine path and finds its
+    /// siblings at their ranks.
+    async fn assert_shape(pool: &SqlitePool, materializer: &Materializer, space: &str) {
+        let cached: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM pages_cache WHERE child_block_count = ?")
+                .bind(BLOCKS_PER_PAGE as i64)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            cached, PAGES as i64,
+            "page-heavy fixture: a pages_cache row counting its blocks for every page (#6527)"
+        );
+        let indexed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            indexed,
+            (PAGES * (BLOCKS_PER_PAGE + 1)) as i64 + 1,
+            "page-heavy fixture: the FTS index holds every seeded block and the space's (#6527)"
+        );
+        let sql_roots: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE parent_id IS NULL AND (space_id = ?1 OR id = ?1) \
+             ORDER BY position",
+        )
+        .bind(space)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        let engine_roots = materializer
+            .loro_state()
+            .registry
+            .for_space(&SpaceId::from_trusted(space), DEVICE)
+            .unwrap()
+            .engine_mut()
+            .children_ordered_block_ids(None)
+            .unwrap();
+        assert_eq!(engine_roots.len(), PAGES + 1);
+        assert_eq!(
+            engine_roots, sql_roots,
+            "page-heavy fixture: the engine ranks the space's roots as SQL does (#6527)"
+        );
+    }
+
+    fn time_read<F, Fut>(c: &mut Criterion, rt: &Runtime, id: &str, op: F) -> Acc
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let acc = Acc::new();
+        let (op, acc_ref) = (&op, &acc);
+        let mut group = c.benchmark_group("interactive_slo");
+        group.sample_size(SAMPLE_SIZE);
+        group.bench_function(id, |b| {
+            b.to_async(rt).iter_custom(|iters| async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    op().await;
+                }
+                let elapsed = start.elapsed();
+                acc_ref.record(elapsed, iters);
+                elapsed
+            });
+        });
+        group.finish();
+        acc
+    }
+
+    async fn live_pages(pool: &SqlitePool, space: &str) -> u64 {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks \
+             WHERE block_type = 'page' AND space_id = ? AND deleted_at IS NULL",
+        )
+        .bind(space)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        u64::try_from(count).unwrap()
+    }
+
+    /// The three reads, each observed once untimed before its loop.
+    fn bench_reads(c: &mut Criterion, rt: &Runtime, pool: &SqlitePool, space: &str) {
+        let all = rt
+            .block_on(list_all_pages_in_space_inner(pool, space, None))
+            .unwrap();
+        assert_eq!(
+            all.len(),
+            PAGES,
+            "list_all_pages_in_space on the page-heavy fixture"
+        );
+        let acc = time_read(c, rt, "page_heavy_list_all_pages_in_space", || async {
+            let _ = list_all_pages_in_space_inner(pool, space, None)
+                .await
+                .unwrap();
+        });
+        report_measurement_only(&at_scale("list_all_pages_in_space"), &acc);
+
+        let filter = ListPagesWithMetadataFilter {
+            sort: PageSort::Alphabetical,
+            space_id: space.to_owned(),
+            filters: vec![],
+        };
+        let first = rt
+            .block_on(list_pages_with_metadata_inner(
+                pool,
+                filter.clone(),
+                None,
+                Some(PAGE_SIZE as i64),
+            ))
+            .unwrap();
+        let first_ids: Vec<String> = first.items.iter().map(|row| row.id.to_string()).collect();
+        let expected: Vec<String> = (0..PAGE_SIZE).map(page_id).collect();
+        assert_eq!(
+            first_ids, expected,
+            "the first page is the first titles in key order"
+        );
+        assert_eq!(first.total_count, Some(PAGES as i64));
+        let acc = time_read(c, rt, "page_heavy_list_pages_with_metadata", || async {
+            let _ =
+                list_pages_with_metadata_inner(pool, filter.clone(), None, Some(PAGE_SIZE as i64))
+                    .await
+                    .unwrap();
+        });
+        report_measurement_only(&at_scale("list_pages_with_metadata (first page)"), &acc);
+
+        let wanted = title(PAGES / 2).to_lowercase();
+        let held = rt
+            .block_on(resolve_page_title_inner(pool, space, &wanted))
+            .unwrap();
+        assert_eq!(held.page_id, Some(page_id(PAGES / 2)));
+        let acc = time_read(c, rt, "page_heavy_resolve_page_title", || async {
+            let _ = resolve_page_title_inner(pool, space, &wanted)
+                .await
+                .unwrap();
+        });
+        report_measurement_only(&at_scale("resolve_page_title"), &acc);
+    }
+
+    /// `create_page_in_space` and a one-block file import, the unit of a folder
+    /// import. Each call adds one page; the growth is asserted after the loops.
+    fn bench_writes(
+        c: &mut Criterion,
+        rt: &Runtime,
+        pool: &SqlitePool,
+        materializer: &Materializer,
+        dir: &TempDir,
+        space: &str,
+    ) {
+        let before = rt.block_on(live_pages(pool, space));
+        let (create, create_settled) = time_write_probe(
+            c,
+            rt,
+            materializer,
+            "page_heavy_create_page_in_space",
+            |n| async move {
+                create_page_in_space_inner(
+                    pool,
+                    DEVICE,
+                    materializer,
+                    None,
+                    format!("Created {n}"),
+                    space.to_owned(),
+                )
+                .await
+                .unwrap();
+            },
+        );
+        let (import, import_settled) = time_write_probe(
+            c,
+            rt,
+            materializer,
+            "page_heavy_import_markdown_file",
+            |n| async move {
+                let imported = import_markdown_inner(
+                    pool,
+                    DEVICE,
+                    materializer,
+                    dir.path(),
+                    "- one line\n".into(),
+                    Some(format!("Imported {n}.md")),
+                    space.to_owned(),
+                    None,
+                )
+                .await
+                .unwrap();
+                assert_eq!(imported.blocks_created, 1);
+            },
+        );
+        rt.block_on(materializer.flush_background()).unwrap();
+        let calls =
+            create.iters() + create_settled.iters() + import.iters() + import_settled.iters();
+        assert_eq!(
+            rt.block_on(live_pages(pool, space)),
+            before + calls,
+            "page-heavy writes: every timed call must add exactly one page (#3304)"
+        );
+        report_measurement_only(&at_scale("create_page_in_space"), &create);
+        report_settled(&at_scale("create_page_in_space"), &create_settled);
+        report_measurement_only(&at_scale("import_markdown (one-block file)"), &import);
+        report_settled(
+            &at_scale("import_markdown (one-block file)"),
+            &import_settled,
+        );
+    }
+
+    pub(super) fn bench_page_heavy_vault(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, "slo_page_heavy"));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+        let space = rt.block_on(seed(&pool, &materializer));
+        rt.block_on(assert_shape(&pool, &materializer, &space));
+
+        bench_reads(c, &rt, &pool, &space);
+        bench_writes(c, &rt, &pool, &materializer, &dir, &space);
+
+        rt.block_on(async { materializer.shutdown() });
+    }
+}
+
 criterion_group!(
     slo_green,
     bench_get_block,
@@ -5944,6 +6339,8 @@ criterion_group!(
     mcp_reads::bench_mcp_resolve,
     mcp_reads::bench_mcp_query,
     mcp_reads::bench_mcp_search,
+    // #6527 — the page-heavy vault's page-sensitive probes; no budget yet.
+    page_heavy::bench_page_heavy_vault,
 );
 
 criterion_group!(

@@ -1000,6 +1000,43 @@ describe('PropertyRowEditor ref picker', () => {
     })
   })
 
+  it('a second ref picker of the space lists no pages again (#6527)', async () => {
+    const user = userEvent.setup()
+    let listings = 0
+    stubInvoke({
+      list_all_pages_in_space: () => {
+        listings += 1
+        return [heading('P1', 'Page One')]
+      },
+    })
+
+    render(
+      <>
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('linked_page', { value_ref: null })}
+          def={makeDef('linked_page', 'ref')}
+          onSave={vi.fn()}
+        />
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('other_page', { value_ref: null })}
+          def={makeDef('other_page', 'ref')}
+          onSave={vi.fn()}
+        />
+      </>,
+    )
+
+    await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
+    expect(await screen.findByText('Page One')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByText('Page One')).not.toBeInTheDocument())
+    await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'other_page' })))
+    expect(await screen.findByText('Page One')).toBeInTheDocument()
+
+    expect(listings).toBe(1)
+  })
+
   it('filters pages by search text', async () => {
     const user = userEvent.setup()
     stubInvoke({
