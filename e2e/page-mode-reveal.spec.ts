@@ -353,7 +353,7 @@ test.describe('Markdown syntax revealed around the cursor in page mode (#5974) @
 
     // `first **bold**`, on the `d`: the first click draws the markers, which shift the word
     // right, and its last letter is still under the pointer for the second press. Nearer
-    // the word's start the pointer ends up on the marker (#6694).
+    // the word's start the pointer ends up on the marker: the next test.
     await caret(page, 3, 0)
     const d = await charBox(page, 0, 'd')
     await page.mouse.click(d.x + 2, d.y + d.height / 2)
@@ -361,6 +361,29 @@ test.describe('Markdown syntax revealed around the cursor in page mode (#5974) @
     await page.mouse.down({ clickCount: 2 })
     await page.mouse.up({ clickCount: 2 })
     await expect.poll(() => selectedText(page)).toBe('bold')
+  })
+
+  test('a double click selects the word its first press was on, though the markers drawn since moved it from under the pointer (#6694)', async ({
+    page,
+  }) => {
+    // The first letters of a marked word end up under `**`, a heading's under `## `, a link's under `[`.
+    const cases = [
+      { index: 0, char: 'b', word: 'bold' },
+      { index: 0, char: 'o', word: 'bold' },
+      { index: 2, char: 'T', word: 'Title' },
+      { index: 3, char: 'l', word: 'label' },
+    ]
+    for (const { index, char, word } of cases) {
+      // `bold e|nd`: another block, and no markers.
+      await caret(page, 1, 6)
+      await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
+      const box = await charBox(page, index, char)
+      await page.mouse.click(box.x + 2, box.y + box.height / 2)
+      await expect(page.getByTestId('md-reveal-marker')).not.toHaveCount(0)
+      await page.mouse.down({ clickCount: 2 })
+      await page.mouse.up({ clickCount: 2 })
+      await expect.poll(() => selectedText(page), `double click on ${char}`).toBe(word)
+    }
   })
 
   test('draws nothing once focus leaves the page, and the caret’s markers again once it is back', async ({

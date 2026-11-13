@@ -46,15 +46,17 @@ describe('boardColumns', () => {
         id: 'value:later',
         kind: 'value',
         value: 'later',
+        propertyKey: 'stage',
         filter: has({ type: 'Eq', value: text('later') }),
       },
       {
         id: 'value:now',
         kind: 'value',
         value: 'now',
+        propertyKey: 'stage',
         filter: has({ type: 'Eq', value: text('now') }),
       },
-      { id: 'none', kind: 'none', filter: has({ type: 'NotExists' }) },
+      { id: 'none', kind: 'none', propertyKey: 'stage', filter: has({ type: 'NotExists' }) },
       {
         id: 'other',
         kind: 'other',

@@ -10,15 +10,9 @@
 //! - `…capture?text=<text>` → [`EVENT_CAPTURE`], which opens Quick Capture
 //!   holding the text; the user still presses Capture, so a link never writes
 //!
-//! Two URL shapes map onto the same four routes:
-//!
-//! - the `agaric://<host>/<id>` **custom scheme**, registered desktop-only via
-//!   `plugins.deep-link.desktop.schemes` in `tauri.conf.json`; and
-//! - the `https://agaric.app/o/<host>/<id>` Android **App Link**, registered
-//!   via `plugins.deep-link.mobile` (host [`APP_LINK_HOST`] + path prefix
-//!   `/o/`).  Android does not register the custom scheme, so App Links are
-//!   the only deep-link transport on mobile — without the `https` arm every
-//!   Android deep link silently no-ops (#741).
+//! The routes arrive on the `agaric://<host>/<id>` custom scheme, registered
+//! desktop-only via `plugins.deep-link.desktop.schemes` in `tauri.conf.json`.
+//! Android registers no link handler (#6555).
 //!
 //! The plugin emits the raw `deep-link://new-url` Tauri event with a JSON
 //! payload of URL strings (`Vec<String>`).  Routing happens here so the
@@ -26,7 +20,7 @@
 //! typed events above.
 //!
 //! Cross-platform — the plugin is required on desktop AND Android.  No
-//! `#[cfg(desktop)]` gate; the parser accepts both shapes on every platform.
+//! `#[cfg(desktop)]` gate.
 
 use serde::Serialize;
 use tauri::{AppHandle, Listener, Runtime};
@@ -58,17 +52,6 @@ pub const EVENT_CAPTURE: &str = "deeplink:capture";
 /// The custom-scheme Agaric registers via `tauri.conf.json` (must match the
 /// `plugins.deep-link.desktop.schemes` entry in `tauri.conf.json`).
 pub const AGARIC_SCHEME: &str = "agaric";
-
-/// The HTTPS authority Agaric registers for Android **App Links** (must match
-/// the `plugins.deep-link.mobile[].host` entry in `tauri.conf.json`).  An
-/// `https` URL is only treated as a deep link when its host is exactly this,
-/// so the router never hijacks ordinary web URLs.
-pub const APP_LINK_HOST: &str = "agaric.app";
-
-/// The first path segment of an Android App Link (`https://agaric.app/o/…`),
-/// matching the `plugins.deep-link.mobile[].pathPrefix` `"/o/"` entry.  The
-/// route host (`block` / `page` / `settings`) and identifier follow it.
-pub const APP_LINK_PREFIX: &str = "o";
 
 /// Upper bound on the length (in bytes) of the `settings/<tab>` segment.
 ///
@@ -103,10 +86,9 @@ pub enum DeepLinkRoute {
 pub enum DeepLinkError {
     /// URL did not parse as a `url::Url`.
     Malformed(String),
-    /// Scheme was neither `agaric` (custom scheme) nor `https` (App Link).
+    /// Scheme was not `agaric`.
     WrongScheme(String),
-    /// Authority/host was missing, the `https` authority was not
-    /// [`APP_LINK_HOST`], or the route host did not match
+    /// Host was missing or did not match
     /// `block` / `page` / `settings` / `capture`.
     UnknownHost(String),
     /// Path did not contain the required identifier (ULID for block/page,
@@ -162,7 +144,6 @@ pub enum CapturePayload {
 /// Parse an inbound URL string into a [`DeepLinkRoute`].
 ///
 /// Strict by design: anything outside the documented `agaric://<host>/<id>`
-/// custom-scheme shape or the `https://agaric.app/o/<host>/<id>` App-Link
 /// shape is rejected; `capture` takes no identifier, only its `text` query
 /// parameter.  ULIDs are validated via [`BlockId::from_string`]
 /// (the canonical parser used everywhere else in the codebase) — never a
@@ -172,61 +153,22 @@ pub enum CapturePayload {
 pub fn parse_deep_link(raw: &str) -> Result<DeepLinkRoute, DeepLinkError> {
     let parsed = url::Url::parse(raw).map_err(|e| DeepLinkError::Malformed(e.to_string()))?;
 
-    // Normalize the two accepted shapes into (route host, identifier):
-    //   agaric://<host>/<identifier>              custom scheme (desktop)
-    //   https://agaric.app/o/<host>/<identifier>  App Link (Android)
-    let (host, identifier) = match parsed.scheme() {
-        AGARIC_SCHEME => {
-            // Custom (non-special) schemes preserve host case; normalize.
-            let host = parsed
-                .host_str()
-                .ok_or_else(|| DeepLinkError::UnknownHost(String::new()))?
-                .to_ascii_lowercase();
+    if parsed.scheme() != AGARIC_SCHEME {
+        return Err(DeepLinkError::WrongScheme(parsed.scheme().to_string()));
+    }
+    // Custom (non-special) schemes preserve host case; normalize.
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| DeepLinkError::UnknownHost(String::new()))?
+        .to_ascii_lowercase();
 
-            // First non-empty path segment is the identifier (ULID or tab).
-            // `agaric://block/X` parses with path `/X` → segments [`"X"`].
-            // Empty path (`agaric://block`, `agaric://block/`) yields none,
-            // which the hosts that need one reject as missing.
-            let identifier = parsed
-                .path_segments()
-                .and_then(|mut segs| segs.find(|s| !s.is_empty()));
-
-            (host, identifier)
-        }
-        "https" => {
-            // Only `https://agaric.app/o/<host>/<id>` is a deep link; any
-            // other https authority is rejected so the router never hijacks
-            // ordinary web URLs the OS happens to hand us.
-            let authority = parsed
-                .host_str()
-                .ok_or_else(|| DeepLinkError::UnknownHost(String::new()))?
-                .to_ascii_lowercase();
-            if authority != APP_LINK_HOST {
-                return Err(DeepLinkError::UnknownHost(authority));
-            }
-
-            // Path is `/o/<host>/<identifier>`.  Skip empty segments so a
-            // trailing slash or doubled `//` doesn't shift the mapping.
-            let mut segs = parsed
-                .path_segments()
-                .ok_or(DeepLinkError::MissingIdentifier)?
-                .filter(|s| !s.is_empty());
-            match segs.next() {
-                Some(APP_LINK_PREFIX) => {}
-                // Wrong/missing path prefix → not one of our App Links.
-                Some(other) => return Err(DeepLinkError::UnknownHost(other.to_string())),
-                None => return Err(DeepLinkError::MissingIdentifier),
-            }
-            let host = segs
-                .next()
-                .ok_or(DeepLinkError::MissingIdentifier)?
-                .to_ascii_lowercase();
-            let identifier = segs.next();
-
-            (host, identifier)
-        }
-        other => return Err(DeepLinkError::WrongScheme(other.to_string())),
-    };
+    // First non-empty path segment is the identifier (ULID or tab).
+    // `agaric://block/X` parses with path `/X` → segments [`"X"`].
+    // Empty path (`agaric://block`, `agaric://block/`) yields none,
+    // which the hosts that need one reject as missing.
+    let identifier = parsed
+        .path_segments()
+        .and_then(|mut segs| segs.find(|s| !s.is_empty()));
 
     match host.as_str() {
         "capture" => capture_text(parsed.query()).map(DeepLinkRoute::Capture),
@@ -477,124 +419,10 @@ mod tests {
         }
     }
 
-    // ── parse_deep_link: Android App Links (https://agaric.app/o/…) ─────
-
-    #[test]
-    fn parses_applink_block_url() {
-        let url = format!("https://agaric.app/o/block/{VALID_ULID}");
-        let route = parse_deep_link(&url).expect("valid App Link block URL");
-        match route {
-            DeepLinkRoute::Block(id) => assert_eq!(id.as_str(), VALID_ULID),
-            other => panic!("expected Block, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_applink_page_url() {
-        let url = format!("https://agaric.app/o/page/{VALID_ULID}");
-        let route = parse_deep_link(&url).expect("valid App Link page URL");
-        match route {
-            DeepLinkRoute::Page(id) => assert_eq!(id.as_str(), VALID_ULID),
-            other => panic!("expected Page, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_applink_settings_url() {
-        let route =
-            parse_deep_link("https://agaric.app/o/settings/keyboard").expect("valid App Link");
-        assert_eq!(route, DeepLinkRoute::Settings("keyboard".into()));
-    }
-
-    #[test]
-    fn applink_uppercases_lowercase_ulid() {
-        let url = format!("https://agaric.app/o/block/{VALID_ULID_LOWER}");
-        let route = parse_deep_link(&url).expect("lowercase ULID still valid");
-        match route {
-            DeepLinkRoute::Block(id) => assert_eq!(id.as_str(), VALID_ULID),
-            other => panic!("expected Block, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn applink_route_host_is_case_insensitive() {
-        let url = format!("https://agaric.app/o/BLOCK/{VALID_ULID}");
-        let route = parse_deep_link(&url).expect("uppercase route host accepted");
-        assert!(matches!(route, DeepLinkRoute::Block(_)));
-    }
-
-    #[test]
-    fn applink_host_is_case_insensitive() {
-        // `https` is a special scheme so `url` already lowercases the host;
-        // an uppercased authority must still match `agaric.app`.
-        let url = format!("https://AGARIC.APP/o/block/{VALID_ULID}");
-        let route = parse_deep_link(&url).expect("uppercase authority accepted");
-        assert!(matches!(route, DeepLinkRoute::Block(_)));
-    }
-
-    #[test]
-    fn applink_tolerates_trailing_and_doubled_slashes() {
-        // Empty path segments (trailing `/`, doubled `//`) are skipped so
-        // they don't shift the `/o/<host>/<id>` mapping.
-        let url = format!("https://agaric.app/o//block//{VALID_ULID}/");
-        let route = parse_deep_link(&url).expect("empty segments skipped");
-        assert!(matches!(route, DeepLinkRoute::Block(_)));
-    }
-
-    #[test]
-    fn applink_query_string_is_ignored() {
-        let route =
-            parse_deep_link("https://agaric.app/o/settings/sync?force=1").expect("query ignored");
-        assert_eq!(route, DeepLinkRoute::Settings("sync".into()));
-    }
-
-    #[test]
-    fn rejects_applink_with_wrong_path_prefix() {
-        // Only the `/o/` prefix (matching the registered pathPrefix) routes;
-        // any other first segment is rejected.
-        let url = format!("https://agaric.app/x/block/{VALID_ULID}");
-        let err = parse_deep_link(&url).expect_err("wrong path prefix");
-        match err {
-            DeepLinkError::UnknownHost(s) => assert_eq!(s, "x"),
-            other => panic!("expected UnknownHost, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rejects_applink_with_unknown_route_host() {
-        let url = format!("https://agaric.app/o/attack/{VALID_ULID}");
-        let err = parse_deep_link(&url).expect_err("unknown route host");
-        match err {
-            DeepLinkError::UnknownHost(s) => assert_eq!(s, "attack"),
-            other => panic!("expected UnknownHost, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rejects_applink_with_missing_identifier() {
-        let err = parse_deep_link("https://agaric.app/o/block").expect_err("no identifier");
-        assert!(matches!(err, DeepLinkError::MissingIdentifier));
-    }
-
-    #[test]
-    fn rejects_applink_with_empty_path() {
-        // Bare `/o/` with no route host/identifier.
-        let err = parse_deep_link("https://agaric.app/o/").expect_err("empty App Link path");
-        assert!(matches!(err, DeepLinkError::MissingIdentifier));
-    }
-
-    #[test]
-    fn rejects_applink_with_invalid_ulid() {
-        let err =
-            parse_deep_link("https://agaric.app/o/page/not-a-ulid").expect_err("invalid ULID");
-        assert!(matches!(err, DeepLinkError::InvalidUlid(_)));
-    }
-
     // ── parse_deep_link: rejections ────────────────────────────────────
 
     #[test]
     fn rejects_wrong_scheme() {
-        // Neither the `agaric` custom scheme nor `https` → WrongScheme.
         let err = parse_deep_link("ftp://block/X").expect_err("wrong scheme");
         match err {
             DeepLinkError::WrongScheme(s) => assert_eq!(s, "ftp"),
@@ -603,14 +431,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_https_with_foreign_authority() {
-        // An `https` URL whose host is not `agaric.app` must NOT be routed —
-        // the OS can hand us arbitrary web URLs and we must ignore them.
-        let url = format!("https://example.com/o/block/{VALID_ULID}");
-        let err = parse_deep_link(&url).expect_err("foreign https host");
+    fn rejects_the_dropped_app_link_shape_6555() {
+        let url = format!("https://agaric.app/o/block/{VALID_ULID}");
+        let err = parse_deep_link(&url).expect_err("no https link is a deep link");
         match err {
-            DeepLinkError::UnknownHost(s) => assert_eq!(s, "example.com"),
-            other => panic!("expected UnknownHost, got {other:?}"),
+            DeepLinkError::WrongScheme(s) => assert_eq!(s, "https"),
+            other => panic!("expected WrongScheme, got {other:?}"),
         }
     }
 
@@ -696,15 +522,6 @@ mod tests {
             }
             other => panic!("expected SettingsTabTooLong, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn rejects_applink_settings_url_with_overlong_tab() {
-        // Same bound applies on the Android App Link shape.
-        let tab = "b".repeat(MAX_SETTINGS_TAB_LEN + 50);
-        let url = format!("https://agaric.app/o/settings/{tab}");
-        let err = parse_deep_link(&url).expect_err("over-long App Link tab rejected");
-        assert!(matches!(err, DeepLinkError::SettingsTabTooLong(_)));
     }
 
     #[test]
