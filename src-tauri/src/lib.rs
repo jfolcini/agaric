@@ -2271,17 +2271,16 @@ fn register_managed_state<R: tauri::Runtime>(
                     lifecycle_for_listener.apply_state(state);
                 }
                 #[cfg(mobile)]
-                tauri::WindowEvent::Suspended => {
-                    tracing::info!("app suspended by OS — backgrounding");
-                    lifecycle_for_listener.mark_backgrounded();
-                    drop(spawn_save_on_suspend(
-                        pool_for_suspend.clone(),
-                        materializer_for_suspend.clone(),
-                    ));
-                }
+                tauri::WindowEvent::Suspended => on_app_suspended(
+                    &lifecycle_for_listener,
+                    pool_for_suspend.clone(),
+                    materializer_for_suspend.clone(),
+                ),
                 #[cfg(mobile)]
                 tauri::WindowEvent::Resumed => {
                     tracing::info!("app resumed by OS — foregrounding");
+                    #[cfg(target_os = "android")]
+                    agaric_sync::sync_daemon::app_resumed();
                     lifecycle_for_listener.mark_foreground();
                 }
                 _ => {}
@@ -2295,6 +2294,23 @@ fn register_managed_state<R: tauri::Runtime>(
     }
 
     cancel_flag
+}
+
+/// A mobile OS moved the app to the background, and may freeze or kill it
+/// without another word.
+#[cfg(mobile)]
+fn on_app_suspended(
+    lifecycle: &agaric_sync::foreground::LifecycleHooks,
+    pool: sqlx::SqlitePool,
+    materializer: materializer::Materializer,
+) {
+    tracing::info!("app suspended by OS — backgrounding");
+    lifecycle.mark_backgrounded();
+    // Here and not on the daemon's tick: Android freezes a suspended process
+    // before the tick comes round (#6526).
+    #[cfg(target_os = "android")]
+    agaric_sync::sync_daemon::app_suspended();
+    drop(spawn_save_on_suspend(pool, materializer));
 }
 
 /// #6525: a mobile OS kills a suspended app without warning, and the engines
