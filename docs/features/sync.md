@@ -44,7 +44,7 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 
 ## How sync runs
 
-- **Discovery**: mDNS announces and discovers peers on the local network. On Android, Agaric holds a multicast lock so mDNS keeps working when the screen is off.
+- **Discovery**: mDNS announces and discovers peers on the local network. On Android, Agaric holds a multicast lock, without which the phone receives no mDNS replies; with the screen off or the app in the background Android drops the app's traffic, so discovery and sync resume when Agaric is back in front.
 - **Automatic triggers**: an edit starts a sync about two seconds after the typing stops, and the other device, if it is running, then pulls the edit; the daemon also runs a periodic resync tick. Both back off exponentially on failure, per peer, with jitter so two devices don't lock-step.
 - **Network changes**: when the device moves to another network, its network comes up after Agaric started, or its connection drops and comes back, sync picks the new connection up without a restart, at the next periodic check: about half a minute at most (#6526).
 - **Offline / foreground awareness**: a device that goes offline stops trying immediately; a device that backgrounds skips its resync ticks until foreground. Coming back online retries immediately.
