@@ -352,7 +352,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                     <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <button
                       type="button"
-                      className="cursor-pointer border-none bg-transparent p-0"
+                      className="touch-hit-area cursor-pointer border-none bg-transparent p-0"
                       onClick={() => onTagClick?.(tag.tag_id, tag.name || 'Unnamed')}
                       data-testid={`tag-item-${tag.name || 'Unnamed'}`}
                     >
