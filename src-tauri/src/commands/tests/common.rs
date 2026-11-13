@@ -125,6 +125,7 @@ pub async fn mark_block_as_space(pool: &SqlitePool, space_id: &str) {
 /// `create_space` gives a new space (#5841). Definitions are ops, applied
 /// through a materializer of the helper's own.
 pub async fn ensure_test_space_with_defs(pool: &SqlitePool) {
+    let saved = delta_head(pool).await;
     let mat = Materializer::new(pool.clone());
     let mut tx = crate::db::CommandTx::begin_immediate(pool, "ensure_test_space_with_defs")
         .await
@@ -140,6 +141,26 @@ pub async fn ensure_test_space_with_defs(pool: &SqlitePool) {
     .unwrap();
     tx.commit_and_dispatch(&mat).await.unwrap();
     mat.shutdown();
+    discard_deltas_after(pool, saved).await;
+}
+
+/// The newest `loro_doc_delta` id, for [`discard_deltas_after`].
+async fn delta_head(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM loro_doc_delta")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Delete the deltas saved after `head`: a helper that writes through a
+/// materializer of its own writes engines the caller's materializer does not
+/// hold, so its deltas describe none of the caller's (#6521).
+async fn discard_deltas_after(pool: &SqlitePool, head: i64) {
+    sqlx::query("DELETE FROM loro_doc_delta WHERE id > ?")
+        .bind(head)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 /// `create_property_def_inner` in [`TEST_SPACE_ID`]. Definitions are per
@@ -152,6 +173,7 @@ pub async fn create_test_property_def(
     value_type: String,
     options: Option<String>,
 ) -> Result<crate::commands::PropertyDefinition, agaric_core::error::AppError> {
+    let saved = delta_head(pool).await;
     let mat = Materializer::new(pool.clone());
     let created = crate::commands::create_property_def_inner(
         pool,
@@ -164,6 +186,7 @@ pub async fn create_test_property_def(
     )
     .await;
     mat.shutdown();
+    discard_deltas_after(pool, saved).await;
     created
 }
 

@@ -180,6 +180,9 @@ pub struct LoroEngineRegistry {
     /// Engine locks handed out, read by [`Self::guard_acquisitions`].
     #[cfg(any(test, feature = "test-util"))]
     acquisitions: AtomicU64,
+    /// What test fixtures wrote through [`Self::seed`], by space.
+    #[cfg(any(test, feature = "test-util"))]
+    seeded: Mutex<Vec<(SpaceId, Vec<u8>)>>,
 }
 
 impl LoroEngineRegistry {
@@ -195,7 +198,41 @@ impl LoroEngineRegistry {
             inbound_syncs: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-util"))]
             acquisitions: AtomicU64::new(0),
+            #[cfg(any(test, feature = "test-util"))]
+            seeded: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Run `write` on `space_id`'s engine for a test fixture that seeds state
+    /// no production path wrote, and keep the Loro update it added: the
+    /// `loro_doc_delta` oracle
+    /// ([`crate::loro::delta::saved_engine_divergences`]) counts it as saved,
+    /// so a fixture's seed does not read as a production write that saved no
+    /// delta.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn seed<T>(
+        &self,
+        space_id: &SpaceId,
+        device_id: &str,
+        write: impl FnOnce(&mut LoroEngine) -> T,
+    ) -> T {
+        let shared = self
+            .shared_for_space(space_id, device_id)
+            .expect("the fixture's engine");
+        let (out, delta) = shared
+            .lock()
+            .capturing_delta(write)
+            .expect("export the fixture's seed");
+        if let Some(delta) = delta {
+            self.seeded.lock().push((space_id.clone(), delta));
+        }
+        out
+    }
+
+    /// The updates [`Self::seed`] kept.
+    #[cfg(any(test, feature = "test-util"))]
+    pub(crate) fn seeded(&self) -> Vec<(SpaceId, Vec<u8>)> {
+        self.seeded.lock().clone()
     }
 
     /// #5712: an inbound sync session starts importing docs, and so may hold

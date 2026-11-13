@@ -47,12 +47,13 @@
 //! concurrent writer never observes an armed log that isn't its own. The log
 //! records only through
 //! [`for_space_recording`](crate::loro::registry::LoroEngineRegistry::for_space_recording),
-//! whose callers are write handlers; the sync session goes through
+//! whose callers are write handlers; a sync import goes through
 //! [`with_engine`](crate::loro::registry::LoroEngineRegistry::with_engine) and
 //! other readers through plain
 //! [`for_space`](crate::loro::registry::LoroEngineRegistry::for_space), neither
 //! of which records, so an armed log never records a concurrent reader
-//! either. Arming a log that is already armed is a bug (nested write tx)
+//! either. The engine writes that follow a commit record into a log of their
+//! own ([`write_engines`](crate::loro::delta::write_engines)), never this one. Arming a log that is already armed is a bug (nested write tx)
 //! and panics in every build: the un-keyed log would silently merge two txs'
 //! checkpoints and rewind the wrong one on abort.
 //!

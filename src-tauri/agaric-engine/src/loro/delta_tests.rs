@@ -3,7 +3,8 @@
 
 use sqlx::SqlitePool;
 
-use super::delta::{insert_delta, saved_engine_divergences, write_engines};
+use super::delta::{commit_with_deltas, insert_delta, saved_engine_divergences, write_engines};
+use super::revert::{RevertLog, RevertScope};
 use super::shared::LoroState;
 use agaric_core::error::AppError;
 use agaric_store::space::SpaceId;
@@ -25,19 +26,25 @@ async fn delta_rows(pool: &SqlitePool, space_id: &str) -> i64 {
 }
 
 /// Create `block` in `space_id`'s engine the way a post-commit fan-out does:
-/// under the write lock, with its delta.
-async fn create_saved(pool: &SqlitePool, state: &LoroState, space_id: &str, block: &str) {
-    write_engines(pool, &state.registry, &state.revert, "test_write", async {
+/// under the write lock, with its delta. Returns whether the delta was saved.
+async fn create_saved(
+    pool: &SqlitePool,
+    state: &LoroState,
+    space_id: &str,
+    block: &str,
+) -> Result<(), AppError> {
+    let log = RevertLog::new();
+    write_engines(pool, &state.registry, &log, "test_write", || {
         state
             .registry
-            .for_space_recording(&space(space_id), DEVICE, &state.revert)
+            .for_space_recording(&space(space_id), DEVICE, &log)
             .expect("engine")
             .engine_mut()
             .apply_create_block(block, "content", block, None, 0)
             .expect("create");
     })
     .await
-    .expect("save the write");
+    .1
 }
 
 /// Create `block` in `space_id`'s engine and save nothing.
@@ -67,17 +74,23 @@ async fn an_engine_write_is_saved_as_one_delta_per_space_it_wrote_6521() {
     let (pool, _dir) = agaric_store::test_support::test_pool().await;
     let state = LoroState::new();
 
-    create_saved(&pool, &state, SPACE_A, "BLOCK1").await;
-    create_saved(&pool, &state, SPACE_A, "BLOCK2").await;
-    write_engines(&pool, &state.registry, &state.revert, "test_read", async {
+    create_saved(&pool, &state, SPACE_A, "BLOCK1")
+        .await
+        .unwrap();
+    create_saved(&pool, &state, SPACE_A, "BLOCK2")
+        .await
+        .unwrap();
+    let log = RevertLog::new();
+    write_engines(&pool, &state.registry, &log, "test_read", || {
         // A space the transaction reads and does not write saves nothing.
         let mut guard = state
             .registry
-            .for_space_recording(&space(SPACE_B), DEVICE, &state.revert)
+            .for_space_recording(&space(SPACE_B), DEVICE, &log)
             .expect("engine");
         assert!(guard.engine_mut().read_block("BLOCK1").unwrap().is_none());
     })
     .await
+    .1
     .expect("a read commits");
 
     assert_eq!(delta_rows(&pool, SPACE_A).await, 2, "one row per write");
@@ -95,8 +108,12 @@ async fn an_engine_write_is_saved_as_one_delta_per_space_it_wrote_6521() {
 async fn the_oracle_names_the_space_whose_engine_write_saved_no_delta_6521() {
     let (pool, _dir) = agaric_store::test_support::test_pool().await;
     let state = LoroState::new();
-    create_saved(&pool, &state, SPACE_A, "BLOCK1").await;
-    create_saved(&pool, &state, SPACE_B, "BLOCK1").await;
+    create_saved(&pool, &state, SPACE_A, "BLOCK1")
+        .await
+        .unwrap();
+    create_saved(&pool, &state, SPACE_B, "BLOCK1")
+        .await
+        .unwrap();
 
     create_unsaved(&state, SPACE_A, "BLOCK2");
 
@@ -115,7 +132,9 @@ async fn the_oracle_names_the_space_whose_engine_write_saved_no_delta_6521() {
 
     // A later write that is saved does not close the gap: its row depends on
     // the op no row holds.
-    create_saved(&pool, &state, SPACE_A, "BLOCK3").await;
+    create_saved(&pool, &state, SPACE_A, "BLOCK3")
+        .await
+        .unwrap();
     let divergences = saved_engine_divergences(&pool, &state.registry)
         .await
         .unwrap();
@@ -126,32 +145,47 @@ async fn the_oracle_names_the_space_whose_engine_write_saved_no_delta_6521() {
     );
 }
 
-#[tokio::test]
-async fn a_delta_that_cannot_be_saved_rewinds_the_engine_write_6521() {
-    let (pool, _dir) = agaric_store::test_support::test_pool().await;
-    let state = LoroState::new();
-    create_saved(&pool, &state, SPACE_A, "KEPT").await;
+async fn refuse_deltas(pool: &SqlitePool) {
     sqlx::query(
         "CREATE TRIGGER refuse_deltas BEFORE INSERT ON loro_doc_delta \
          BEGIN SELECT RAISE(ABORT, 'no deltas today'); END",
     )
-    .execute(&pool)
+    .execute(pool)
     .await
     .unwrap();
+}
 
-    let saved: Result<(), AppError> =
-        write_engines(&pool, &state.registry, &state.revert, "test_write", async {
-            state
-                .registry
-                .for_space_recording(&space(SPACE_A), DEVICE, &state.revert)
-                .expect("engine")
-                .engine_mut()
-                .apply_create_block("LOST", "content", "lost", None, 1)
-                .expect("create");
-        })
-        .await;
+#[tokio::test]
+async fn a_transaction_whose_delta_cannot_be_saved_rolls_back_and_rewinds_6521() {
+    let (pool, _dir) = agaric_store::test_support::test_pool().await;
+    let state = LoroState::new();
+    create_saved(&pool, &state, SPACE_A, "KEPT").await.unwrap();
+    refuse_deltas(&pool).await;
 
-    assert!(saved.is_err(), "the refused row fails the write");
+    let mut tx = pool.begin().await.unwrap();
+    let scope = RevertScope::arm(&state);
+    sqlx::query(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES ('written_with_the_op', '1', 0)",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    state
+        .registry
+        .for_space_recording(&space(SPACE_A), DEVICE, &state.revert)
+        .expect("engine")
+        .engine_mut()
+        .apply_create_block("LOST", "content", "lost", None, 1)
+        .expect("create");
+    let committed = commit_with_deltas(tx, &state.registry, scope.detach()).await;
+
+    assert!(committed.is_err(), "the refused row fails the commit");
+    let written: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM app_settings WHERE key = 'written_with_the_op'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(written, 0, "the transaction's SQL write is rolled back");
     assert!(
         holds(&state, SPACE_A, "KEPT"),
         "the earlier write stays in the engine"
@@ -167,6 +201,24 @@ async fn a_delta_that_cannot_be_saved_rewinds_the_engine_write_6521() {
         Vec::<String>::new(),
         "the engine still equals its saved rows"
     );
+}
+
+/// A post-commit engine write is the engine half of work SQL already holds, so
+/// it stands when its delta cannot be saved, and says so.
+#[tokio::test]
+async fn a_post_commit_write_whose_delta_cannot_be_saved_stays_and_reports_it_6521() {
+    let (pool, _dir) = agaric_store::test_support::test_pool().await;
+    let state = LoroState::new();
+    refuse_deltas(&pool).await;
+
+    let saved = create_saved(&pool, &state, SPACE_A, "CASCADE").await;
+
+    assert!(saved.is_err(), "the caller learns no row holds the write");
+    assert!(
+        holds(&state, SPACE_A, "CASCADE"),
+        "the write stays in the engine"
+    );
+    assert_eq!(delta_rows(&pool, SPACE_A).await, 0);
 }
 
 #[tokio::test]
@@ -191,13 +243,14 @@ async fn the_oracle_counts_an_inbound_blob_its_projection_has_not_cleared_6521()
         .execute(&pool)
         .await
         .unwrap();
-    let (_, delta) = state
+    let (imported, delta) = state
         .registry
         .with_engine(&space(SPACE_A), DEVICE, |engine| {
             engine.capturing_delta(|engine| engine.import(&blob))
         })
         .unwrap()
         .unwrap();
+    imported.expect("the blob imports");
     assert_eq!(
         saved_engine_divergences(&pool, &state.registry)
             .await

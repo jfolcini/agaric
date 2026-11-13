@@ -48,14 +48,15 @@ impl LoroEngine {
     }
     /// Run `write` and return, with its output, the Loro update it added to
     /// the op log: the `loro_doc_delta` row for an engine write made outside a
-    /// rollback-armed transaction (#6521). `None` when it added nothing.
+    /// rollback-armed transaction (#6521). `None` when it added nothing. A
+    /// `write` that fails partway still yields what it added before it failed.
     pub fn capturing_delta<T>(
         &mut self,
-        write: impl FnOnce(&mut Self) -> Result<T, AppError>,
+        write: impl FnOnce(&mut Self) -> T,
     ) -> Result<(T, Option<Vec<u8>>), AppError> {
         let since = self.doc.oplog_vv();
         let before = self.doc.oplog_frontiers();
-        let out = write(self)?;
+        let out = write(self);
         if self.doc.oplog_frontiers() == before {
             return Ok((out, None));
         }

@@ -27,8 +27,13 @@ pub(super) async fn peer_set(
     let record = op_log::append_local_op_at(pool, DEV, payload, agaric_lib::db::now_ms())
         .await
         .unwrap();
-    let mut conn = pool.acquire().await.unwrap();
-    agaric_engine::apply::kernel::apply_op_projected(&mut conn, &record, mat.loro_state(), false)
+    let state = mat.loro_state();
+    let mut tx = pool.begin().await.unwrap();
+    let scope = agaric_engine::loro::revert::RevertScope::arm(state);
+    agaric_engine::apply::kernel::apply_op_projected(&mut tx, &record, state, false)
+        .await
+        .unwrap();
+    agaric_engine::loro::delta::commit_with_deltas(tx, &state.registry, scope.detach())
         .await
         .unwrap();
 }

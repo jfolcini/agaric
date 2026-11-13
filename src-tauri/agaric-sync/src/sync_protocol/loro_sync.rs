@@ -329,6 +329,7 @@ pub async fn prepare_outgoing(
                 let mut conn = pool.acquire().await?;
                 agaric_engine::loro::delta::insert_delta(&mut conn, space_id, stamp).await?;
             }
+            let bytes = bytes?;
             Ok(Some(LoroSyncMessage::Snapshot {
                 protocol_version: LORO_SYNC_PROTOCOL_VERSION,
                 space_id: space_id.clone(),
@@ -413,26 +414,26 @@ pub(super) async fn mirror_sql_tombstones_onto_engine(
     )
     .fetch_all(&mut *tx)
     .await?;
-    let delta = registry
-        .with_engine(space_id, device_id, |engine| {
-            engine.capturing_delta(|engine| {
-                // `stale_ids` predates the wait for the lock: an import that finished
-                // meanwhile can have purged or tombstoned one.
-                let live: std::collections::HashSet<String> =
-                    engine.live_block_ids()?.into_iter().collect();
-                for tombstone in tombstones.iter().filter(|t| live.contains(&t.id)) {
-                    engine.apply_delete_block(&tombstone.id, &tombstone.deleted_at.to_string())?;
-                }
-                Ok(())
-            })
-        })??
-        .1;
-    // The tombstones' delta is the one SQL write (#6521); without one the
-    // commit only releases the lock.
+    let (mirrored, delta) = registry.with_engine(space_id, device_id, |engine| {
+        engine.capturing_delta(|engine| {
+            // `stale_ids` predates the wait for the lock: an import that finished
+            // meanwhile can have purged or tombstoned one.
+            let live: std::collections::HashSet<String> =
+                engine.live_block_ids()?.into_iter().collect();
+            for tombstone in tombstones.iter().filter(|t| live.contains(&t.id)) {
+                engine.apply_delete_block(&tombstone.id, &tombstone.deleted_at.to_string())?;
+            }
+            Ok::<(), AppError>(())
+        })
+    })??;
+    // The tombstones' delta is the one SQL write (#6521), saved for what was
+    // written even when a later tombstone failed; without one the commit only
+    // releases the lock.
     if let Some(delta) = &delta {
         agaric_engine::loro::delta::insert_delta(&mut tx, space_id, delta).await?;
     }
     tx.commit().await?;
+    mirrored?;
     if delta.is_some()
         && agaric_engine::loro::snapshot::save_all_engines(pool, registry)
             .await
@@ -1581,12 +1582,12 @@ async fn fan_out_swept_tombstones(
     if !swept_tombstones.is_empty() {
         // Under the write lock, with the delta of what it writes (#6521).
         let log = agaric_engine::loro::revert::RevertLog::new();
-        let fanout_result: Result<(), AppError> = agaric_engine::loro::delta::write_engines(
+        let (fanout_result, saved) = agaric_engine::loro::delta::write_engines(
             pool,
             registry,
             &log,
             "sync_swept_tombstones",
-            async {
+            || {
                 let mut guard = registry.for_space_recording(space_id, device_id, &log)?;
                 let engine = guard.engine_mut();
                 for (id, ts) in swept_tombstones {
@@ -1594,11 +1595,17 @@ async fn fan_out_swept_tombstones(
                         engine.apply_delete_block(id, &ts.to_string())?;
                     }
                 }
-                Ok(())
+                Ok::<(), AppError>(())
             },
         )
-        .await
-        .and_then(|fanned_out| fanned_out);
+        .await;
+        if let Err(err) = saved {
+            tracing::warn!(
+                error = %err,
+                "engine tombstone fan-out applied without its loro_doc_delta row; \
+                 the next snapshot pass saves its space"
+            );
+        }
         if let Err(err) = fanout_result {
             tracing::warn!(
                 error = %err,
@@ -2211,7 +2218,13 @@ fn import_payload_into_engine(
     device_id: &str,
     space_id: &SpaceId,
     payload: agaric_engine::loro::engine::ImportPayload<'_>,
-) -> Result<(agaric_engine::loro::engine::ImportDelta, Option<Vec<u8>>), AppError> {
+) -> Result<
+    (
+        Result<agaric_engine::loro::engine::ImportDelta, AppError>,
+        Option<Vec<u8>>,
+    ),
+    AppError,
+> {
     cpu_block_in_place(|| {
         registry.with_engine(space_id, device_id, |engine| {
             engine.capturing_delta(|engine| match payload {
@@ -2375,6 +2388,56 @@ pub(crate) async fn import_and_project(
     registry: &LoroEngineRegistry,
     device_id: &str,
     space_id: &SpaceId,
+    payload: agaric_engine::loro::engine::ImportPayload<'_>,
+    inbox_ids: &[i64],
+    tombstone_purged: &[agaric_core::ulid::BlockId],
+    require_covered: &[(i64, Vec<(PeerID, Counter)>)],
+    delivery: InboundDeliveryKind,
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    let mut unsaved_delta = None;
+    let projected = import_and_project_saving(
+        pool,
+        registry,
+        device_id,
+        space_id,
+        payload,
+        inbox_ids,
+        tombstone_purged,
+        require_covered,
+        delivery,
+        &mut unsaved_delta,
+    )
+    .await;
+    // #6521: the engine keeps what the import added whatever became of its
+    // projection, and a retry of the same bytes adds nothing, so the delta
+    // the projection did not commit is saved on its own.
+    if let Some(delta) = unsaved_delta {
+        let saved = match pool.acquire().await {
+            Ok(mut conn) => {
+                agaric_engine::loro::delta::insert_delta(&mut conn, space_id, &delta).await
+            }
+            Err(e) => Err(e),
+        };
+        if let Err(error) = saved {
+            tracing::warn!(
+                space_id = space_id.as_str(),
+                %error,
+                "loro_sync: an import's loro_doc_delta row was not saved; the next \
+                 snapshot pass saves its space"
+            );
+        }
+    }
+    projected
+}
+
+/// [`import_and_project`]'s body. `unsaved_delta` holds what the import added
+/// to the engine from the import until a transaction has saved it.
+#[allow(clippy::too_many_arguments)]
+async fn import_and_project_saving(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space_id: &SpaceId,
     // #3164: ONE inbound blob (the live `apply_remote` shape) or a whole boot-
     // replay batch imported as a single diff-producing unit. Everything after
     // the import is payload-agnostic — the passes below project the UNION the
@@ -2409,6 +2472,7 @@ pub(crate) async fn import_and_project(
     // nothing or whose metadata would not decode.
     require_covered: &[(i64, Vec<(PeerID, Counter)>)],
     delivery: InboundDeliveryKind,
+    unsaved_delta: &mut Option<Vec<u8>>,
 ) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
     // Phase 1 — import bytes into the engine, capture changed AND purged
     // blocks. #2128: a remote `PurgeBlock` removes the seed + its whole
@@ -2419,8 +2483,9 @@ pub(crate) async fn import_and_project(
     // (live) blocks, the purged set, and a `TagScope` describing how to refresh
     // the inherited-tag cache — falling back to a whole-tree enumeration +
     // global rebuild on any diff shape it cannot resolve.
-    let (import_delta, engine_delta) =
+    let (imported, engine_delta) =
         import_payload_into_engine(registry, device_id, space_id, payload)?;
+    *unsaved_delta = engine_delta;
     let agaric_engine::loro::engine::ImportDelta {
         changed: changed_blocks,
         // #3162: the subset of `changed_blocks` whose ONLY altered projected
@@ -2437,7 +2502,7 @@ pub(crate) async fn import_and_project(
         // enforced against `oplog_vv()` below, which is the stronger statement
         // (a pending change is exactly one the op-log did not advance over).
         pending: pending_changes,
-    } = import_delta;
+    } = imported?;
 
     let clearable_ids = clearable_slot_ids(
         registry,
@@ -2470,10 +2535,11 @@ pub(crate) async fn import_and_project(
         if trusted {
             // #6521: an import that changed nothing projected can still have
             // added ops, and they are saved before their slot goes.
-            if let Some(delta) = &engine_delta {
+            if let Some(delta) = unsaved_delta.as_deref() {
                 let mut conn = pool.acquire().await?;
                 agaric_engine::loro::delta::insert_delta(&mut conn, space_id, delta).await?;
             }
+            *unsaved_delta = None;
             // #3213: `clearable_ids`, not `inbox_ids`. Since the live path also
             // supplies a delete condition this is no longer trivially the same
             // set: the #2264 trust rule proves only that the ENGINE already held
@@ -2549,13 +2615,14 @@ pub(crate) async fn import_and_project(
     let (healed, tagged) = project_pass_dropped(&mut tx, registry, new_rows).await?;
 
     // #6521: what the import added to the engine is saved with its projection.
-    if let Some(delta) = &engine_delta {
+    if let Some(delta) = unsaved_delta.as_deref() {
         agaric_engine::loro::delta::insert_delta(&mut tx, space_id, delta).await?;
     }
 
     clear_inbox_slots(&mut tx, &clearable_ids).await?;
 
     commit_projection(tx, pool, space_id, &block_states).await?;
+    *unsaved_delta = None;
 
     fan_out_swept_tombstones(pool, registry, device_id, space_id, &swept_tombstones).await;
 

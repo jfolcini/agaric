@@ -2091,7 +2091,7 @@ async fn dispatch_purge_engine_fanout(
         return;
     };
     let state = materializer.loro_state();
-    crate::materializer::saving_fan_out(pool, first_record, state, || {
+    crate::materializer::saving_fan_out(pool, first_record, state, |log| {
         for (op_record, cohort, purge_space_id) in fanout {
             let Some(space_id) = purge_space_id else {
                 continue;
@@ -2111,6 +2111,7 @@ async fn dispatch_purge_engine_fanout(
                     space_id,
                     &op_record.created_at.to_string(),
                     state,
+                    log,
                 );
             }
         }

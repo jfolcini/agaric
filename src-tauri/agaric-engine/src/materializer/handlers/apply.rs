@@ -630,7 +630,7 @@ async fn fan_out_restore(
         }
     };
 
-    saving_fan_out(pool, root_record, state, || {
+    saving_fan_out(pool, root_record, state, |log| {
         for id in ids {
             // Build the typed payload directly (no JSON round-trip). The engine's
             // `apply_restore_block` is per-block-id; `deleted_at_ref` is unused by
@@ -655,6 +655,7 @@ async fn fan_out_restore(
                 &space_id,
                 &root_record.created_at.to_string(),
                 state,
+                log,
             );
         }
     })
@@ -662,32 +663,31 @@ async fn fan_out_restore(
 }
 
 /// Run `fan_out`, the engine writes that follow an op's commit, under the write
-/// lock, and save what they add in `loro_doc_delta` (#6521).
+/// lock, and save what they add in `loro_doc_delta` (#6521). `fan_out` passes
+/// the log it is handed to [`engine_apply`](crate::merge::engine_apply).
 ///
 /// The fan-outs write the engine after their op's transaction has committed,
-/// so the op's own delta does not hold them. A fan-out whose delta cannot be
-/// saved is rewound and counted as dropped: the engine lacks the cascade, as
-/// it does when the fan-out cannot run at all.
+/// so the op's own delta does not hold them. A cascade always reaches the
+/// engine: when its delta cannot be saved it stays, and no row holds it until
+/// the next snapshot pass saves its space.
 pub async fn saving_fan_out(
     pool: &SqlitePool,
     root_record: &OpRecord,
     state: &crate::loro::shared::LoroState,
-    fan_out: impl FnOnce(),
+    fan_out: impl FnOnce(&crate::loro::revert::RevertLog),
 ) {
-    let saved = crate::loro::delta::write_engines(
-        pool,
-        &state.registry,
-        &state.revert,
-        "engine_fan_out",
-        async { fan_out() },
-    )
-    .await;
+    let log = crate::loro::revert::RevertLog::new();
+    let ((), saved) =
+        crate::loro::delta::write_engines(pool, &state.registry, &log, "engine_fan_out", || {
+            fan_out(&log);
+        })
+        .await;
     if let Err(e) = saved {
-        super::descendant_fanout_dropped::record();
         tracing::warn!(
             seq = root_record.seq,
             error = %e,
-            "engine fan-out was not saved; the engine is left without this op's cascade",
+            "engine fan-out applied without its loro_doc_delta row; the next snapshot pass \
+             saves its space",
         );
     }
 }
@@ -930,7 +930,7 @@ pub async fn dispatch_delete_descendants(
     // `EngineMissingTarget` SQL-only fallback — the same reason, off the same
     // probe, that `apply_delete_block_via_loro` records in-tx for the seed.
     // See this function's "Cohort members absent from this engine".
-    saving_fan_out(pool, root_record, state, || {
+    saving_fan_out(pool, root_record, state, |log| {
         let absent = known_absent_from_engine(
             state,
             space_id,
@@ -964,6 +964,7 @@ pub async fn dispatch_delete_descendants(
                 space_id,
                 &root_record.created_at.to_string(),
                 state,
+                log,
             );
         }
     })
@@ -1087,7 +1088,7 @@ pub(crate) async fn dispatch_unswept_cohort(
     // `engine_apply` takes its own, so this adds no new class — the whole
     // post-commit fan-out is already non-atomic w.r.t. the engine, and the
     // integrity check reports what it leaves. Noted, not fixed. See #4473's analysis.
-    saving_fan_out(pool, root_record, state, || {
+    saving_fan_out(pool, root_record, state, |log| {
         let absent = known_absent_from_engine(
             state,
             space_id,
@@ -1141,6 +1142,7 @@ pub(crate) async fn dispatch_unswept_cohort(
                 space_id,
                 &marker,
                 state,
+                log,
             );
         }
     })

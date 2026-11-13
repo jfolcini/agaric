@@ -337,15 +337,12 @@ fn seed_block_into_engine(state: &agaric_engine::loro::shared::LoroState, b: &Va
     let parent_id = b["parent_id"].as_str().map(seed_label_to_id);
     let position = b["position"].as_i64().unwrap_or(0);
     let space = SpaceId::from_trusted(TEST_SPACE_ID);
-    let mut guard = state
+    state
         .registry
-        .for_space(&space, DEV)
-        .expect("for_space (seed)");
-    guard
-        .engine_mut()
-        .apply_create_block(&id, block_type, content, parent_id.as_deref(), position)
+        .seed(&space, DEV, |engine| {
+            engine.apply_create_block(&id, block_type, content, parent_id.as_deref(), position)
+        })
         .expect("seed apply_create_block into engine");
-    drop(guard);
 }
 
 /// Dispatch one fixture op through the durable-op test path (#891).

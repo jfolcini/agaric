@@ -247,10 +247,7 @@ pub async fn rehydrate_registry(
     for (space_id, mut engine, needs_index) in imported {
         if needs_index {
             // The rebuild can append the one-time sibling-order migration.
-            let ((), migration) = engine.capturing_delta(|engine| {
-                engine.rebuild_index_after_import();
-                Ok(())
-            })?;
+            let ((), migration) = engine.capturing_delta(LoroEngine::rebuild_index_after_import)?;
             if let Some(migration) = &migration {
                 let mut conn = pool.acquire().await?;
                 crate::loro::delta::insert_delta(&mut conn, &space_id, migration).await?;
@@ -1942,26 +1939,18 @@ mod tests {
             (SPACE_B, "BLOCK1"),
             (SPACE_A, "BLOCK2"),
         ] {
-            crate::loro::delta::write_engines(
-                &pool,
-                &state.registry,
-                &state.revert,
-                "test_write",
-                async {
-                    state
-                        .registry
-                        .for_space_recording(
-                            &SpaceId::from_trusted(space),
-                            "device-1",
-                            &state.revert,
-                        )
-                        .expect("engine")
-                        .engine_mut()
-                        .apply_create_block(block, "content", block, None, 0)
-                        .expect("create");
-                },
-            )
+            let log = crate::loro::revert::RevertLog::new();
+            crate::loro::delta::write_engines(&pool, &state.registry, &log, "test_write", || {
+                state
+                    .registry
+                    .for_space_recording(&SpaceId::from_trusted(space), "device-1", &log)
+                    .expect("engine")
+                    .engine_mut()
+                    .apply_create_block(block, "content", block, None, 0)
+                    .expect("create");
+            })
             .await
+            .1
             .expect("save the write");
         }
         assert_eq!(delta_spaces(&pool).await, [SPACE_A, SPACE_B, SPACE_A]);

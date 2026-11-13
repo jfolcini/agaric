@@ -3,10 +3,9 @@
 --
 -- `loro_doc_state` holds one whole-space snapshot per space, written by a
 -- periodic pass, so a write is in SQL and the op log before it is in the saved
--- engine. A row here is the Loro update one transaction's engine writes
--- produced (or the blob a sync import brought), committed with them. A
--- snapshot pass deletes the rows its `loro_doc_state` row covers, in the
--- transaction that writes that row.
+-- engine. A row here is the Loro update one write added to the engine,
+-- committed in the write's transaction. A snapshot pass deletes the rows its
+-- `loro_doc_state` row covers, in the transaction that writes that row.
 --
 -- A space's saved engine is its snapshot with these rows imported in `id`
 -- order. `id` is AUTOINCREMENT so a deleted id is never handed out again and a

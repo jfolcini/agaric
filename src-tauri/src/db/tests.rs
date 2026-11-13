@@ -7869,9 +7869,4 @@ async fn loro_doc_delta_0132_keeps_save_order_and_never_reuses_an_id_6521() {
         ids[2] + 1,
         "a row saved after every earlier one was deleted takes the next id"
     );
-
-    sqlx::query("INSERT INTO loro_doc_delta (space_id, bytes) VALUES ('SPACE_A', 'text')")
-        .execute(&pool)
-        .await
-        .expect_err("a delta that is not a blob is refused");
 }

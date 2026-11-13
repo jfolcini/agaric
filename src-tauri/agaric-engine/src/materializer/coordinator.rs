@@ -630,12 +630,20 @@ impl Materializer {
         &self.loro
     }
 
-    /// The `loro_doc_delta` test oracle over this materializer's engines
-    /// ([`crate::loro::delta::assert_saved_engines_match_live`]).
+    /// Panic unless every engine of this materializer equals what its saved
+    /// rows rebuild: the `loro_doc_delta` test oracle
+    /// ([`crate::loro::delta::saved_engine_divergences`]).
     #[cfg(any(test, feature = "test-util"))]
     pub async fn assert_saved_engines_match_live(&self) {
-        crate::loro::delta::assert_saved_engines_match_live(&self.write_pool, &self.loro.registry)
-            .await;
+        let divergences =
+            crate::loro::delta::saved_engine_divergences(&self.write_pool, &self.loro.registry)
+                .await
+                .expect("read the saved engine rows");
+        assert!(
+            divergences.is_empty(),
+            "an engine write saved no loro_doc_delta row (#6521):\n{}",
+            divergences.join("\n")
+        );
     }
 
     /// C-3c — register the OS-correct app data directory

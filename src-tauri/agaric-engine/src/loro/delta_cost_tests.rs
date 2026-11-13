@@ -184,9 +184,10 @@ async fn one_import(pool: &SqlitePool, snapshot: &[u8], ids: &[String], scale: &
 
         let mut engine = rehydrate(snapshot);
         let start = Instant::now();
-        let (_, delta) = engine
+        let (imported, delta) = engine
             .capturing_delta(|engine| engine.import_with_changed_purged_tagscope(&update))
-            .expect("import");
+            .expect("export the delta");
+        imported.expect("import");
         let delta = delta.expect("the import added ops");
         let mut tx = agaric_store::db::begin_immediate_logged(pool, "delta_cost")
             .await

@@ -49,6 +49,10 @@ pub(crate) mod divergence;
 /// `created_at` / `deleted_at` the attachment arms store. Other arms ignore it
 /// (their ops carry no timestamp the engine stores).
 ///
+/// `revert` is the fan-out's own log, which
+/// [`write_engines`](crate::loro::delta::write_engines) arms to save what this
+/// writes (#6521).
+///
 /// Returns nothing.  Errors `tracing::warn!` and never propagate —
 /// the engine dispatch must not break the materializer hot path.
 pub fn engine_apply(
@@ -58,14 +62,13 @@ pub fn engine_apply(
     space_id: &agaric_store::space::SpaceId,
     op_created_at: &str,
     state: &crate::loro::shared::LoroState,
+    revert: &crate::loro::revert::RevertLog,
 ) {
     // #2295: `LoroState` gained private replay-suppression fields, so bind the
     // registry by field access rather than an exhaustive destructure.
     let registry = &state.registry;
 
-    // Recording, so a fan-out run under `loro::delta::write_engines` saves
-    // what it writes (#6521).
-    let mut guard = match registry.for_space_recording(space_id, device_id, &state.revert) {
+    let mut guard = match registry.for_space_recording(space_id, device_id, revert) {
         Ok(g) => g,
         Err(e) => {
             tracing::warn!(
