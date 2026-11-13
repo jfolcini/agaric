@@ -108,7 +108,7 @@ describe('Agaric real-backend attachments in page mode (#5743) @editor @pages @a
       blockId: noteId,
       filename: 'notes.txt',
       mimeType: 'text/plain',
-      bytes: [...new TextEncoder().encode(PREVIEW)],
+      bytes: btoa(PREVIEW),
     })
     await reopenInPageMode()
     await waitForShown(taskId, noteId, 'TODO', 'on opening')

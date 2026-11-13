@@ -364,7 +364,7 @@ describe('importMarkdown', () => {
       }),
     )
 
-    const vaultFiles = [{ path: 'assets/a.png', bytes: [1, 2, 3] }]
+    const vaultFiles = [{ path: 'assets/a.png', bytes: 'AQID' }]
     await importMarkdown('![](assets/a.png)', 'p.md', 'SPACE_A', 'Markdown', undefined, vaultFiles)
     await importMarkdown('[[n]]', 'V/p.md', 'SPACE_A', 'Markdown', undefined, null, ['V/n.md'])
 

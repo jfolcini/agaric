@@ -148,11 +148,11 @@ async fn a_restore_keeps_the_template_flag_the_done_date_and_where_each_file_han
     let files = vec![
         VaultFile {
             path: format!("assets/{REPORT}/report.pdf"),
-            bytes: b"pdf".to_vec(),
+            bytes: b"pdf".to_vec().into(),
         },
         VaultFile {
             path: format!("assets/{COVER}/cover.pdf"),
-            bytes: b"pdf".to_vec(),
+            bytes: b"pdf".to_vec().into(),
         },
     ];
     let result = import_markdown_with_progress(
@@ -221,7 +221,7 @@ async fn an_attachments_line_naming_no_imported_file_is_left_out_with_a_warning(
         ImportDialect::Markdown,
         Some(vec![VaultFile {
             path: "assets/Y/other.pdf".into(),
-            bytes: b"pdf".to_vec(),
+            bytes: b"pdf".to_vec().into(),
         }]),
         Some(vec!["Lonely.md".into()]),
         None,

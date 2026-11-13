@@ -1625,7 +1625,7 @@ describe('PageModeEditor tasks (#5743)', () => {
       blockId: ids[1],
       filename: 'notes.txt',
       mimeType: 'text/plain',
-      bytes: [104, 105],
+      bytes: 'aGk=',
     })
     dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
     dispatch('set_todo_state', { blockId: ids[1], state: 'DONE' })
@@ -2805,7 +2805,7 @@ describe('PageModeEditor attachments (#5743)', () => {
       blockId: id,
       filename,
       mimeType: 'text/plain',
-      bytes: [...new TextEncoder().encode(text)],
+      bytes: btoa(text),
     }) as { id: string }
     return row.id
   }
@@ -3229,7 +3229,7 @@ describe('PageModeEditor attachments (#5743)', () => {
       blockId: photo,
       filename: 'photo.png',
       mimeType: 'image/png',
-      bytes: [137, 80, 78, 71],
+      bytes: 'iVBORw==',
     })
     const blob = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:photo')
     onTestFinished(() => blob.mockRestore())
@@ -3544,7 +3544,7 @@ describe('PageModeEditor mounts a block’s controls as it nears the viewport (#
         blockId: id,
         filename: 'notes.txt',
         mimeType: 'text/plain',
-        bytes: [104, 105],
+        bytes: 'aGk=',
       })
     }
     const { container } = renderPageMode(pageId)

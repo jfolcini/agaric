@@ -109,7 +109,12 @@ describe('a block’s attachments in its view', () => {
   })
 
   function attach(id: string, filename: string, mimeType: string, bytes: number[]): void {
-    dispatch('add_attachment_with_bytes', { blockId: id, filename, mimeType, bytes })
+    dispatch('add_attachment_with_bytes', {
+      blockId: id,
+      filename,
+      mimeType,
+      bytes: btoa(String.fromCharCode(...bytes)),
+    })
   }
 
   /** A page of `texts` in the backend, drawn in page mode's view with what the backend holds. */

@@ -140,13 +140,13 @@ describe('tauri-mock history handlers are all-or-nothing (#6051)', () => {
         blockId: CHILD,
         filename: 'a.txt',
         mimeType: 'text/plain',
-        bytes: [1, 2, 3],
+        bytes: 'AQID',
       }) as { id: string }
       const second = dispatch('add_attachment_with_bytes', {
         blockId: CHILD,
         filename: 'b.txt',
         mimeType: 'text/plain',
-        bytes: [4],
+        bytes: 'BA==',
       }) as { id: string }
       dispatch('rename_attachment', { attachmentId: first.id, newFilename: 'c.txt' })
       dispatch('delete_attachment', { attachmentId: second.id })

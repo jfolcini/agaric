@@ -618,7 +618,7 @@ describe('useSlashCommandProperty — attach', () => {
       blockId: 'BLOCK_1',
       filename: 'photo.png',
       mimeType: 'image/png',
-      bytes: [1, 2, 3, 4],
+      bytes: 'AQIDBA==',
     })
     expect(getAttachmentInvalidationKey()).toBe(before + 1)
   })
@@ -639,6 +639,7 @@ describe('useSlashCommandProperty — attach', () => {
 
   it('rejects a disallowed file type: no add IPC, surfaces an error toast', async () => {
     const input = interceptFileInput()
+    const fileRead = vi.spyOn(FileReader.prototype, 'readAsDataURL')
     try {
       const { result } = renderHook(() => useSlashCommandProperty())
       const { ctx } = makeSyntheticCtx()
@@ -658,8 +659,10 @@ describe('useSlashCommandProperty — attach', () => {
           'blockTree.attachmentTypeNotAllowed:{"type":"application/x-msdownload"}',
         )
       })
-      expect(mockedInvoke).not.toHaveBeenCalledWith('add_attachment_with_bytes', expect.anything())
+      // The upload itself runs past this point; the refusal shows in the file never being read.
+      expect(fileRead).not.toHaveBeenCalled()
     } finally {
+      fileRead.mockRestore()
       input.restore()
     }
   })

@@ -23,6 +23,13 @@
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { announce } from '@/lib/announcer'
+import {
+  type BlocksChangedEvent,
+  EVENT_BLOCKS_CHANGED,
+  EVENT_SYNC_COMPLETE,
+  EVENT_SYNC_ERROR,
+  type SyncEvent_Serialize,
+} from '@/lib/bindings'
 import { RELEASES_URL } from '@/lib/config'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -37,74 +44,13 @@ import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
 import { useUndoStore } from '@/stores/undo'
 
-/** Payload shapes from the Rust backend sync_events.rs */
-export interface SyncCompletePayload {
-  type: 'complete'
-  remote_device_id: string
-  ops_received: number
-  ops_sent: number
-  /**
-   * #1071 — deduped set of owning *page* ids (page-root block ids) touched by
-   * the ops applied during this sync session. When present and non-empty, the
-   * handler reloads ONLY the mounted page stores whose id is in this set and
-   * runs the resolve preload (a changed page's / tag's title may have moved).
-   *
-   * Optional for backward compatibility: a peer on the old protocol (or the
-   * snapshot-catch-up path, which reimports a whole space) omits it / sends an
-   * empty array, and the handler falls back to reloading EVERY mounted store
-   * plus a full preload. The field is NOT specta-exported — it rides on the
-   * `sync:complete` Tauri event (`SyncEvent::Complete`), which is serialize-
-   * only, so this hand-written shape is the single source of truth for it.
-   */
-  changed_page_ids?: string[]
-  /**
-   * #4305 — how many blocks this sync session actually changed or purged.
-   * The ONLY honest "did anything happen" signal on this event, and the only
-   * field a "N changes" string may be built from.
-   *
-   * `ops_received` / `ops_sent` are protocol *message* counts — one per
-   * registered space, sent whether or not that space had a delta. On a
-   * converged pair with two spaces they are `2` on every 60 s resync tick,
-   * forever, which is how "Synced 2 changes from device" came to fire once a
-   * minute on an idle, fully-converged pair with no edits on either side.
-   *
-   * - `0` — the session completed and moved nothing. Stay silent AND skip the
-   *   reload: there is nothing to say and nothing to reload.
-   * - `> 0` — exactly that many blocks changed. Safe to count.
-   * - `null` / absent — content changed but the count is not enumerable (the
-   *   whole-space snapshot catch-up, which reimports an entire space). Falls
-   *   back to a countless message plus a full reload. Deliberately NOT
-   *   silence: a producer that forgets this field must be loud, not mute.
-   */
-  changed_blocks?: number | null
-}
-
-/**
- * #5728 — a sync error the backend codes so this side can word it in the
- * user's language (Rust `SyncErrorCode`, `sync_events.rs`). Hand-written like
- * the payload: `SyncEvent` rides a Tauri event, not specta. `cancelled` is a
- * user cancel (#5739), which reads as idle, and `peer_away` a device that is
- * simply away (#6523), which reads as waiting: neither is a failure.
- */
-export type SyncErrorCode =
-  | 'engine_format_mismatch'
-  | 'cancelled'
-  | 'own_history_fork'
-  | 'peer_away'
-  | 'handshake_unanswered'
-
-export interface SyncErrorPayload {
-  type: 'error'
-  /** English, for logs; shown as is only when `code` is absent. */
-  message: string
-  remote_device_id: string
-  code?: SyncErrorCode
-  /** #6523 — always set with `engine_format_mismatch`: whether the peer is the older device. */
-  peer_is_older?: boolean
-}
+// The payloads and event names are generated from Rust (`SyncEvent`,
+// `BlocksChangedEvent`, `sync_events.rs`), where each field is documented.
+type SyncComplete = Extract<SyncEvent_Serialize, { type: 'complete' }>
+type SyncError = Extract<SyncEvent_Serialize, { type: 'error' }>
 
 /** i18n keys for a coded failure's sentence: with the peer's name, and without. */
-function codedSyncErrorKeys(payload: SyncErrorPayload): [named: string, unnamed: string] | null {
+function codedSyncErrorKeys(payload: SyncError): [named: string, unnamed: string] | null {
   if (payload.code === 'handshake_unanswered') {
     return ['sync.handshakeUnanswered', 'sync.handshakeUnansweredUnnamed']
   }
@@ -121,36 +67,11 @@ function codedSyncErrorKeys(payload: SyncErrorPayload): [named: string, unnamed:
  * #5728 — the sentence for a coded sync error, naming the peer when this
  * device knows its name; `null` for an uncoded error, which shows `message`.
  */
-export function codedSyncErrorMessage(payload: SyncErrorPayload): string | null {
+export function codedSyncErrorMessage(payload: SyncError): string | null {
   const keys = codedSyncErrorKeys(payload)
   if (keys === null) return null
   const peer = useSyncStore.getState().peers.find((p) => p.peerId === payload.remote_device_id)
   return peer?.name ? i18n.t(keys[0], { peer: peer.name }) : i18n.t(keys[1])
-}
-
-/**
- * #2505 — payload of the `blocks:changed` event (Rust `BlocksChangedEvent`,
- * `src-tauri/agaric-sync/src/sync_events.rs`). Emitted after an MCP
- * read-write tool commits, after the Markdown mirror reads a file into its
- * page, and after a sync session's post-sync cache rebuild drains, so open
- * views reload the touched pages. `changed_page_ids` carries
- * the IDENTICAL semantics as `SyncCompletePayload.changed_page_ids` (#1071),
- * which is what lets this handler reuse the exact same
- * `reloadChangedPageStores` targeted-reload path. MCP `create_tag` names the
- * tag, which no page owns: no page store reloads, and the derived caches drop.
- * Serialize-only on the Rust side (rides the Tauri event, not specta), so this
- * hand-written shape is the single source of truth.
- */
-export interface BlocksChangedPayload {
-  changed_page_ids?: string[]
-  /**
-   * #6541 — whether the write appended this device's own ops, which shift the
-   * numbering a page's positional undo addresses: an MCP write, a mirror
-   * ingest, a post-sync placement or repair. `false` is a sync session's own
-   * changes, a peer's replicated ops that numbering leaves out. Absent reads
-   * as `true`: a writer that does not say re-anchors, as before the field.
-   */
-  local_ops_appended?: boolean
 }
 
 /**
@@ -272,8 +193,8 @@ export function useSyncEvents(): void {
   // Channel<SyncProgressUpdate> opened by `startSync` is now the
   // canonical source for per-state-transition progress; see
   // `useSyncTrigger` for the consumer.
-  useTauriEventListener<SyncCompletePayload>(
-    'sync:complete',
+  useTauriEventListener<SyncComplete>(
+    EVENT_SYNC_COMPLETE,
     (event) => {
       try {
         const { ops_received, ops_sent, changed_page_ids, changed_blocks } = event.payload
@@ -338,8 +259,8 @@ export function useSyncEvents(): void {
     },
   )
 
-  useTauriEventListener<SyncErrorPayload>(
-    'sync:error',
+  useTauriEventListener<SyncError>(
+    EVENT_SYNC_ERROR,
     (event) => {
       try {
         // #5739 — the user asked for this: the session ends, nothing failed.
@@ -415,8 +336,8 @@ export function useSyncEvents(): void {
   // once its post-sync cache rebuild has drained, so the graph and the Pages
   // list refetch with `page_id` / `page_link_cache` current. #6541: undo
   // re-anchors unless the event says no local ops were appended.
-  useTauriEventListener<BlocksChangedPayload>(
-    'blocks:changed',
+  useTauriEventListener<BlocksChangedEvent>(
+    EVENT_BLOCKS_CHANGED,
     (event) => {
       try {
         const { changed_page_ids, local_ops_appended } = event.payload

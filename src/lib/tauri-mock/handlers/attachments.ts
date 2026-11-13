@@ -131,7 +131,7 @@ export const attachmentsHandlers = {
   // The op is what `reverse_add_attachment` rebuilds an undo from.
   add_attachment_with_bytes: (args) => {
     const a = args as Record<string, unknown>
-    const bytes = (a['bytes'] as number[]) ?? []
+    const bytes = Array.from(atob(a['bytes'] as string), (c) => c.charCodeAt(0))
     const mimeType = a['mimeType'] as string
     if (!isMimeAllowed(mimeType)) {
       throw validationRejection(`MIME type '${mimeType}' is not allowed`)

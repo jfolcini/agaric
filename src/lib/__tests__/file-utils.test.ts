@@ -1,11 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
+  blobToBase64,
   extractFileInfo,
   guessMimeType,
   isAttachmentAllowed,
   MAX_ATTACHMENT_BYTES,
-  readFileBytes,
 } from '@/lib/file-utils'
 
 describe('guessMimeType', () => {
@@ -160,17 +160,35 @@ describe('isAttachmentAllowed', () => {
   })
 })
 
-describe('readFileBytes', () => {
-  it('reads a File into a Uint8Array of its bytes', async () => {
-    const file = new File([new Uint8Array([1, 2, 3, 4])], 'data.bin')
-    const bytes = await readFileBytes(file)
-    expect(bytes).toBeInstanceOf(Uint8Array)
-    expect(Array.from(bytes)).toEqual([1, 2, 3, 4])
+describe('blobToBase64', () => {
+  it('encodes every byte value, padding included', async () => {
+    const bytes = Uint8Array.from({ length: 256 }, (_, i) => i)
+    const text = await blobToBase64(new Blob([bytes, new Uint8Array([7])]))
+    const decoded = Uint8Array.from(atob(text), (c) => c.charCodeAt(0))
+    expect(Array.from(decoded)).toEqual([...bytes, 7])
+    expect(text.endsWith('=')).toBe(true)
   })
 
-  it('reads text content as UTF-8 bytes', async () => {
-    const file = new File(['AB'], 'note.txt', { type: 'text/plain' })
-    const bytes = await readFileBytes(file)
-    expect(Array.from(bytes)).toEqual([65, 66])
+  it('encodes a File without its MIME type leaking into the text', async () => {
+    const file = new File(['hi\n'], 'note.txt', { type: 'text/plain' })
+    expect(await blobToBase64(file)).toBe('aGkK')
+  })
+
+  it('encodes an empty blob as the empty string, without the reader', async () => {
+    const read = vi.spyOn(FileReader.prototype, 'readAsDataURL')
+    expect(await blobToBase64(new Blob([]))).toBe('')
+    expect(read).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+  })
+
+  it('rejects when the blob cannot be read', async () => {
+    const unreadable = new Blob(['x'])
+    const failure = new Error('gone')
+    vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(function (this: FileReader) {
+      Object.defineProperty(this, 'error', { value: failure })
+      this.dispatchEvent(new ProgressEvent('error'))
+    })
+    await expect(blobToBase64(unreadable)).rejects.toBe(failure)
+    vi.restoreAllMocks()
   })
 })
