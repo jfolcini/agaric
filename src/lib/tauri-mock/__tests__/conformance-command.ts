@@ -34,6 +34,8 @@ export interface CommandOpStep {
   expect_error?: string
   /** The `ValidationCode` the refusal carries; `expect_error: "validation"` only. */
   expect_code?: string
+  /** A payload-replayed op the MCP agent of this name wrote (`origin = 'agent:<name>'`). */
+  agent?: string
   comment?: string
 }
 
