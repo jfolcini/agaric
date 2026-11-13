@@ -2699,7 +2699,8 @@ async fn find_positional_undo_target(
              WHERE pb.depth < 100 \
          ) \
          SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-                ol.is_replicated AS \"is_replicated!: bool\" \
+                ol.is_replicated AS \"is_replicated!: bool\", \
+                CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS \"agent?: String\" \
          FROM op_log ol \
          WHERE ( \
              ol.block_id IN (SELECT id FROM page_blocks) \

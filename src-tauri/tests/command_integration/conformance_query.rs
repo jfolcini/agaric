@@ -338,12 +338,13 @@ fn list_segments(mut token: String, row: &Value, key: &str) -> String {
 /// which no stack could match. What is left is `op_type`, which the #763 op-log digest ALREADY
 /// compares across the stacks (`{ count, ops }` in `conformance_snapshot.rs`),
 /// plus `is_replicated` — the other per-entry column both stacks fill
-/// (migration 0099) and the one `undoDeleteOf` filters on.
+/// (migration 0099) and the one `undoDeleteOf` filters on — and `agent`, which
+/// the History row badges.
 ///
 /// So these steps pin WHICH ops each query selects, in WHICH order, and how it
 /// pages them; they do not pin the entries' contents. A fixture using them must
 /// therefore choose ops whose TYPES discriminate.
-const HISTORY_ATTRS: &[&str] = &["is_replicated"];
+const HISTORY_ATTRS: &[&str] = &["is_replicated", "agent"];
 
 /// Project a bare `Vec<TagCacheRow>` response.
 fn tag_rows(rows: &[agaric_store::tag_query::TagCacheRow]) -> RawResult {
