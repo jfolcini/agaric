@@ -28,7 +28,9 @@ import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { pageIndexQuery } from '@/lib/page-index'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
+import { queryClient } from '@/lib/query-client'
 import { useSpaceStore } from '@/stores/space'
 
 export interface UsePropertyRowEditorArgs {
@@ -247,19 +249,18 @@ export function usePropertyRowEditor({
     // empty page-picker list with no indication that the load failed.
     // The toast + `logger.error` on the catch path remains the only
     // failure surface the user sees.
-    // b1 — `listAllPagesInSpace` is required-active. With no active space
+    // b1 — the page listing is required-active. With no active space
     // there are no pages to pick, so short-circuit locally to an empty
     // picker instead of dispatching (a Global scope is rejected by the
-    // backend).  `listAllPagesInSpace` has no clamp (the ref picker filters
+    // backend). The page index has no clamp (the ref picker filters
     // client-side), so any workspace size shows up correctly here.
     if (currentSpaceId == null) {
       setRefPages([])
       setRefPickerOpen(true)
       return
     }
-    commands
-      .listAllPagesInSpace({ kind: 'active', space_id: currentSpaceId }, null)
-      .then(unwrap)
+    queryClient
+      .fetchQuery(pageIndexQuery(currentSpaceId))
       .then((pages) => {
         setRefPages(pages)
         setRefPickerOpen(true)

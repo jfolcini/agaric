@@ -351,10 +351,15 @@ test.describe('Markdown syntax revealed around the cursor in page mode (#5974) @
     await expect(page.getByTestId('md-reveal-marker')).toHaveText(['**', '**'])
     expect(await cursor(page)).toEqual({ index: 1, offset: 2 })
 
-    // `first **bold**`, on the `o`: the first click's markers shift the word, which stays under the pointer.
+    // `first **bold**`, on the `d`: the first click draws the markers, which shift the word
+    // right, and its last letter is still under the pointer for the second press. Nearer
+    // the word's start the pointer ends up on the marker (#6694).
     await caret(page, 3, 0)
-    const o = await charBox(page, 0, 'o')
-    await page.mouse.dblclick(o.x + 2, o.y + o.height / 2)
+    const d = await charBox(page, 0, 'd')
+    await page.mouse.click(d.x + 2, d.y + d.height / 2)
+    await expect(page.getByTestId('md-reveal-marker')).toHaveText(['**', '**'])
+    await page.mouse.down({ clickCount: 2 })
+    await page.mouse.up({ clickCount: 2 })
     await expect.poll(() => selectedText(page)).toBe('bold')
   })
 

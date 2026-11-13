@@ -6,6 +6,7 @@
  *  - TooltipContent forwards ref (via open tooltip)
  *  - Render output and a11y compliance
  *  - A tooltip on a Select trigger is closed while that Select is open
+ *  - A press on the trigger ends the hover before it
  */
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -299,6 +300,68 @@ describe('Tooltip on a Select trigger (#5908)', () => {
 
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
+  })
+})
+
+// A toolbar button acts on `pointerdown` and prevents its default, which also
+// skips Radix's own handler. When the press opens a dialog over the button, no
+// `click` follows to cancel the pending hover, and the tooltip opened above the
+// dialog and took its Escape.
+describe('Tooltip on a trigger that acts on pointerdown', () => {
+  function renderPressButton() {
+    render(
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <button type="button" aria-label="Open image" onPointerDown={(e) => e.preventDefault()} />
+        </TooltipTrigger>
+        <TooltipContent>Open image</TooltipContent>
+      </Tooltip>,
+    )
+    return screen.getByRole('button', { name: 'Open image' })
+  }
+  const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms))
+
+  it.each([
+    ['is still pending', 100],
+    ['has opened the tooltip', 400],
+  ])('a press ends a hover that %s', async (_state, hovered) => {
+    vi.useFakeTimers()
+    try {
+      const button = renderPressButton()
+      fireEvent.pointerMove(button)
+      await wait(hovered)
+      expect(tooltipContent() !== null).toBe(hovered > 300)
+
+      fireEvent.pointerDown(button)
+      await wait(600)
+      expect(tooltipContent()).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    [
+      'a new hover',
+      (button: HTMLElement) => {
+        fireEvent.pointerLeave(button)
+        fireEvent.pointerMove(button)
+      },
+    ],
+    ['focus', (button: HTMLElement) => fireEvent.focusIn(button)],
+  ])('%s after the press opens it again', async (_name, arrive) => {
+    vi.useFakeTimers()
+    try {
+      const button = renderPressButton()
+      fireEvent.pointerMove(button)
+      fireEvent.pointerDown(button)
+
+      arrive(button)
+      await wait(600)
+      expect(tooltipContent()).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
