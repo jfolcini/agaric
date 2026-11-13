@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.28.0.schema.json
+
+PackageIdentifier: jfolcini.Agaric
+PackageVersion: 0.23.0
+InstallerType: nullsoft
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+UpgradeBehavior: install
+# The installer registers itself under its product name and the publisher Tauri
+# derives from the bundle identifier, not under the names in the locale file.
+ProductCode: Agaric
+AppsAndFeaturesEntries:
+  - Publisher: agaric
+    ProductCode: Agaric
+ReleaseDate: 2026-11-06
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/jfolcini/agaric/releases/download/0.23.0/Agaric_0.23.0_x64-setup.exe
+    InstallerSha256: 2CF5E84B559E2EFC6A8295F5F9A2147C52B5FAECB91166C7A26481CB00B64FB7
+ManifestType: installer
+ManifestVersion: 1.28.0

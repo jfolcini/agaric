@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.28.0.schema.json
+
+PackageIdentifier: jfolcini.Agaric
+PackageVersion: 0.23.0
+PackageLocale: en-US
+Publisher: jfolcini
+PublisherUrl: https://github.com/jfolcini
+PublisherSupportUrl: https://github.com/jfolcini/agaric/issues
+PackageName: Agaric
+PackageUrl: https://github.com/jfolcini/agaric
+License: GPL-3.0-or-later
+LicenseUrl: https://github.com/jfolcini/agaric/blob/main/LICENSE
+ShortDescription: Local-first outliner and personal knowledge base
+Description: |-
+  Agaric is a block-based outliner and personal knowledge base inspired by Org-mode and Logseq.
+  Notes live in a local SQLite database, with full-text search, backlinks, a journal and an agenda.
+  Sync runs over the local network between devices you pair yourself; there is no cloud and no telemetry.
+Moniker: agaric
+Tags:
+  - journal
+  - knowledge-base
+  - local-first
+  - markdown
+  - notes
+  - outliner
+ReleaseNotesUrl: https://github.com/jfolcini/agaric/releases/tag/0.23.0
+ManifestType: defaultLocale
+ManifestVersion: 1.28.0
