@@ -278,21 +278,18 @@ function pageSubtreeIds(pageId: string): Set<string> {
 /** The `HistoryEntry` projection both queries `SELECT`, newest-first ordering
  *  left to {@link paginateKeyset}. */
 function historyEntries(keep: (entry: MockOpLogEntry) => boolean): Record<string, unknown>[] {
-  return opLog.filter(keep).map((o) => {
-    const entry: Record<string, unknown> = {
-      device_id: o.device_id,
-      seq: o.seq,
-      op_type: o.op_type,
-      payload: o.payload,
-      created_at: o.created_at,
-      // #2481 phase 2: foreign audit ops carry is_replicated=1; the mock
-      // op log is local-authored unless a row seeds it otherwise.
-      is_replicated: (o as { is_replicated?: boolean }).is_replicated ?? false,
-    }
-    // The backend's `CASE WHEN origin LIKE 'agent:%'`: the agent's name, or no key.
-    if (o.origin?.startsWith('agent:')) entry['agent'] = o.origin.slice('agent:'.length)
-    return entry
-  })
+  return opLog.filter(keep).map((o) => ({
+    device_id: o.device_id,
+    seq: o.seq,
+    op_type: o.op_type,
+    payload: o.payload,
+    created_at: o.created_at,
+    // #2481 phase 2: foreign audit ops carry is_replicated=1; the mock
+    // op log is local-authored unless a row seeds it otherwise.
+    is_replicated: (o as { is_replicated?: boolean }).is_replicated ?? false,
+    // The backend's `CASE WHEN origin LIKE 'agent:%'`.
+    agent: o.origin?.startsWith('agent:') ? o.origin.slice('agent:'.length) : null,
+  }))
 }
 
 /** `(created_at, seq, device_id)` — the `ORDER BY` BOTH history listings

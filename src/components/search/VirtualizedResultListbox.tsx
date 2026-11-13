@@ -45,6 +45,8 @@ export interface VirtualizedResultListboxProps {
   ariaLabel: string | undefined
   tabIndex: number | undefined
   dataTestId: string | undefined
+  /** Rows are ticked, not opened: `aria-selected` is each row's tick. */
+  multiselectable?: boolean
   onKeyDown: (e: React.KeyboardEvent<HTMLUListElement>) => void
   /** Render a single row, positioned via `style`, measured via `ref`.
    *  `index` is the row's index within `blocks` (== the virtual index),
@@ -64,6 +66,7 @@ export function VirtualizedResultListbox({
   ariaLabel,
   tabIndex,
   dataTestId,
+  multiselectable,
   onKeyDown,
   renderRow,
 }: VirtualizedResultListboxProps): React.ReactElement {
@@ -173,6 +176,7 @@ export function VirtualizedResultListbox({
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role, jsx-a11y/prefer-tag-over-role -- `<ul role="listbox">` is the canonical WAI-ARIA listbox container; the search a11y model requires per-group listboxes. Keyboard activation flows through `aria-activedescendant`, so the `<ul>` itself is the right host. A virtualized custom listbox can't be a <datalist>/<select> (those can't host the absolutely-positioned virtual rows).
       role="listbox"
       aria-activedescendant={activeRowId}
+      aria-multiselectable={multiselectable ? true : undefined}
       tabIndex={tabIndex}
       data-testid={dataTestId}
       onKeyDown={onKeyDown}

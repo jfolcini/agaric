@@ -77,6 +77,7 @@ export function makeHistoryEntry(
     created_at: createdAt,
     // #2481 phase 2: foreign audit rows carry is_replicated=1.
     is_replicated: isReplicated,
+    agent: null,
   }
 }
 

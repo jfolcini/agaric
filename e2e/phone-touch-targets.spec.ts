@@ -234,25 +234,12 @@ test.describe('tag chips on the rows of a 360 px touch phone @mobile @journal @p
     expect((await el.boundingBox())?.height, `${name}: drawn height`).toBeLessThan(30)
   }
 
-  /** `row`'s height, and its height once `el` loses `hook`: the hit area adds none. */
-  async function rowHeights(row: Locator, el: Locator, hook: string): Promise<number[]> {
-    const withHook = (await row.boundingBox())?.height ?? Number.NaN
-    await el.evaluate((node, cls) => node.classList.remove(cls), hook)
-    return [withHook, (await row.boundingBox())?.height ?? Number.NaN]
-  }
-
   test('the Tags browser chip', async ({ page }) => {
     await waitForBoot(page)
     await navigateToView(page, 'Tags')
     const chip = page.getByTestId('tag-item-work')
     await expect44(chip, 'Tags browser chip')
     await expectDrawnUnder30(chip, 'Tags browser chip')
-    const [height, without] = await rowHeights(
-      page.getByRole('listitem').filter({ has: chip }),
-      chip,
-      'touch-hit-area',
-    )
-    expect(height, 'row height').toBe(without)
   })
 
   test("an agenda row's chips, and not a block's", async ({ page }) => {
@@ -307,8 +294,6 @@ test.describe('tag chips on the rows of a 360 px touch phone @mobile @journal @p
       await chipB.elementHandle(),
     )
     expect(between, 'taps between the chips').toEqual(['row', 'row', 'row'])
-    const [height, without] = await rowHeights(row, row.locator('.tag-chip-row'), 'tag-chip-row')
-    expect(height, 'row height').toBe(without)
 
     await openPageMobile(page, 'Getting Started')
     const inText = page

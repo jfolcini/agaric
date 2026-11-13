@@ -540,8 +540,7 @@ pub struct HistoryEntry {
     /// `reverse::reject_replicated_targets`). Local-authored ops are `false`.
     pub is_replicated: bool,
     /// The name of the MCP agent that wrote the op (`op_log.origin =
-    /// 'agent:<name>'`), absent for every other origin.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// 'agent:<name>'`), `None` for every other origin.
     pub agent: Option<String>,
 }
 

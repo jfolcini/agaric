@@ -1,0 +1,241 @@
+{
+  "description": "#6608 — `edit_blocks_batch` writes each edit whose block still holds the content the caller read, and answers with the blocks it left alone: one edited since (S3) and one in the Trash (S4). An empty list is refused. An edit the single command refuses (a tag renamed to a name holding a space) fails the whole batch, and the edit before it is not written.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha pin",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "beta needle, edited",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "gamma needle",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 3,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_block_edited_since",
+      "returns": ["B3#content=beta needle, edited"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_block_deleted_since",
+      "returns": ["B4#deleted_at=DELETED#descendants_affected=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "one_written_two_left_alone",
+      "returns": ["edit_blocks_batch", "skipped->B3", "skipped->B4"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "an_empty_list_is_refused",
+      "returns": []
+    },
+    {
+      "code": "TagNameWhitespace",
+      "error": "validation",
+      "name": "a_refused_edit_rolls_back_the_batch",
+      "returns": []
+    }
+  ],
+  "name": "edit_blocks_batch",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "beta needle, edited"
+      },
+      "command": "edit_block",
+      "comment": "S3 changes after the caller read `beta needle`.",
+      "name": "a_block_edited_since",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "delete_block",
+      "comment": "S4 goes to the Trash after the caller read it.",
+      "name": "a_block_deleted_since",
+      "via": "command"
+    },
+    {
+      "args": {
+        "edits": [
+          {
+            "blockId": "S2",
+            "expected": "alpha needle",
+            "toText": "alpha pin"
+          },
+          {
+            "blockId": "S3",
+            "expected": "beta needle",
+            "toText": "beta pin"
+          },
+          {
+            "blockId": "S4",
+            "expected": "gamma needle",
+            "toText": "gamma pin"
+          }
+        ]
+      },
+      "command": "edit_blocks_batch",
+      "comment": "S2 is written. S3 keeps its newer text and S4 stays as it was in the Trash; both are named in `skipped`, in request order.",
+      "name": "one_written_two_left_alone",
+      "via": "command"
+    },
+    {
+      "args": {
+        "edits": []
+      },
+      "command": "edit_blocks_batch",
+      "comment": "Nothing to write is a caller bug.",
+      "expect_error": "validation",
+      "name": "an_empty_list_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "edits": [
+          {
+            "blockId": "S2",
+            "expected": "alpha pin",
+            "toText": "alpha again"
+          },
+          {
+            "blockId": "S5",
+            "expected": "work",
+            "toText": "two words"
+          }
+        ]
+      },
+      "command": "edit_blocks_batch",
+      "comment": "The tag rename is refused, so S2 keeps `alpha pin`: no op for either.",
+      "expect_code": "TagNameWhitespace",
+      "expect_error": "validation",
+      "name": "a_refused_edit_rolls_back_the_batch",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha needle",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "beta needle",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "gamma needle",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "tag",
+        "content": "work",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
