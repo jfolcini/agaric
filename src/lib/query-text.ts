@@ -34,6 +34,7 @@ import { t } from '@/lib/i18n'
 import { type FilterToken, parse, type SearchQueryAST, tokenize } from '@/lib/search-query'
 import type { DateFilterValue } from '@/lib/search-query'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
+import { quoteValueIfNeeded } from '@/lib/search-query/serialize'
 
 /** The keys only the older query text reads (`parseQueryExpression` and its resolver). */
 const LEGACY_ONLY_KEYS: ReadonlySet<string> = new Set([
@@ -221,13 +222,13 @@ function leaves(filters: FilterToken[], tagIds: string[]): FilterPrimitive[] {
 /**
  * Compile a block's search-syntax query text to the filter the engine runs, a
  * root `And` over the leaves as the builder writes it; or the tokens it cannot
- * run, each with its column. A tag is looked up by name in the space as the
+ * run, each with its column. A tag is looked up by name in `tags` as the
  * search box looks it up (exact, any case), or is a chip's own id.
  */
-export async function compileQueryText(
+export function compileQueryTextWithTags(
   expression: string,
-  deps: QueryTextDeps,
-): Promise<CompiledQueryText> {
+  tags: ReadonlyArray<{ tag_id: string; name: string }>,
+): CompiledQueryText {
   const { ast, source } = readQueryText(expression)
   const problems: QueryTextProblem[] = []
   const at = (token: FilterToken) => ({
@@ -247,13 +248,9 @@ export async function compileQueryText(
   }
 
   const tagIds: string[] = []
-  const tagTokens = ast.filters.filter((f) => f.kind === 'tag')
-  const named = tagTokens.filter((f) => chipTagId(f.value) === null)
-  const tags = named.length > 0 ? await deps.listTags() : []
-  for (const token of tagTokens) {
-    const chip = chipTagId(token.value)
+  for (const token of ast.filters.filter((f) => f.kind === 'tag')) {
     const name = token.value.normalize('NFC').toLowerCase()
-    const id = chip ?? tags.find((tag) => tag.name.toLowerCase() === name)?.tag_id
+    const id = chipTagId(token.value) ?? tags.find((tag) => tag.name.toLowerCase() === name)?.tag_id
     if (id === undefined) {
       problems.push({ ...at(token), message: t('query.text.unknownTag', { name: token.value }) })
     } else {
@@ -271,4 +268,85 @@ export async function compileQueryText(
   // An empty `And` is every block in the space, never what a block with no filter asked for.
   if (children.length === 0) return { ok: false, problems: [] }
   return { ok: true, filter: { type: 'And', children } }
+}
+
+/** {@link compileQueryTextWithTags} over the space's tags, listed only when the text names one. */
+export async function compileQueryText(
+  expression: string,
+  deps: QueryTextDeps,
+): Promise<CompiledQueryText> {
+  const namesATag = readQueryText(expression).ast.filters.some(
+    (f) => f.kind === 'tag' && chipTagId(f.value) === null,
+  )
+  return compileQueryTextWithTags(expression, namesATag ? await deps.listTags() : [])
+}
+
+const DATE_OPS = { Before: '<', OnOrBefore: '<=', On: '', OnOrAfter: '>=', After: '>' } as const
+
+/** The words a leaf would be in the search syntax; none for a leaf the syntax has no token for. */
+function leafWords(leaf: FilterPrimitive): string[] {
+  switch (leaf.type) {
+    case 'Tag': {
+      return [`#[${leaf.tag}]`]
+    }
+    case 'State':
+    case 'Priority': {
+      const prefix = `${leaf.exclude ? 'not-' : ''}${leaf.type.toLowerCase()}:`
+      return [...leaf.values, ...(leaf.is_null ? ['none'] : [])].map((value) => prefix + value)
+    }
+    case 'HasProperty': {
+      const { predicate } = leaf
+      const exclude = predicate.type === 'Ne' || predicate.type === 'NotExists'
+      const prefix = `${exclude ? 'not-prop' : 'prop'}:${leaf.key}=`
+      if (predicate.type === 'Exists' || predicate.type === 'NotExists') return [prefix]
+      if (predicate.type !== 'Eq' && predicate.type !== 'Ne') return []
+      return [prefix + quoteValueIfNeeded(String(predicate.value.value), prefix)]
+    }
+    case 'DueDate':
+    case 'Scheduled': {
+      const { predicate } = leaf
+      const prefix = leaf.type === 'DueDate' ? 'due:' : 'scheduled:'
+      if (predicate.type === 'IsNull') return [`${prefix}none`]
+      return predicate.type === 'Between'
+        ? []
+        : [prefix + DATE_OPS[predicate.type] + predicate.date]
+    }
+    default: {
+      return []
+    }
+  }
+}
+
+/** A value with its object keys in one order, so two leaves compare whatever built them. */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    typeof v === 'object' && v !== null && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).toSorted(([a], [b]) => a.localeCompare(b)))
+      : v,
+  )
+}
+
+const leafSet = (children: FilterExpr[]): string[] => children.map(canonical).toSorted()
+
+/**
+ * The search-syntax text the builder saves for `filter`, or `null` when only a
+ * `v2:` payload holds it. The words are written leaf by leaf and kept only when
+ * the block would read them back as the same `And` of the same leaves, so a
+ * filter the syntax cannot say (an `Or`, a value the reader would retype, text
+ * the older reader would claim) is never saved as a text that means something
+ * else. A tag is its chip, which follows a rename as the payload's id does.
+ */
+export function filterToQueryText(filter: FilterExpr): string | null {
+  if (filter.type !== 'And') return null
+  const words = filter.children.flatMap((child) =>
+    child.type === 'Leaf' ? leafWords(child.primitive) : [],
+  )
+  const text = words.join(' ')
+  if (isLegacyQueryText(text)) return null
+  const read = compileQueryTextWithTags(text, [])
+  const same =
+    read.ok &&
+    read.filter.type === 'And' &&
+    canonical(leafSet(read.filter.children)) === canonical(leafSet(filter.children))
+  return same ? text : null
 }
