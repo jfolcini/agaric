@@ -333,7 +333,15 @@
     {
       "args": {
         "filter": {
-          "filters": [{ "spec": { "days": 7, "type": "Rolling" }, "type": "LastEdited" }],
+          "filters": [
+            {
+              "spec": {
+                "days": 7,
+                "type": "Rolling"
+              },
+              "type": "LastEdited"
+            }
+          ],
           "sort": "recently-modified",
           "spaceId": "$SPACE"
         },
@@ -346,7 +354,15 @@
     {
       "args": {
         "filter": {
-          "filters": [{ "spec": { "days": 7, "type": "OlderThan" }, "type": "LastEdited" }],
+          "filters": [
+            {
+              "spec": {
+                "days": 7,
+                "type": "OlderThan"
+              },
+              "type": "LastEdited"
+            }
+          ],
           "sort": "recently-modified",
           "spaceId": "$SPACE"
         },

@@ -39,6 +39,7 @@ function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
     payload: JSON.stringify({ to_text: 'hello' }),
     created_at: 1704067200000,
     is_replicated: false,
+    agent: null,
     ...overrides,
   }
 }

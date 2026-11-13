@@ -7,6 +7,7 @@
  *  - List of paired peers (with last-synced time, reset count),
  *    `t('device.syncNowButton')` and `t('device.unpairButton')` per peer
  *  - The internet-fallback switch
+ *  - This device's sync address
  *  - Local device ID
  *
  * Follows StatusPanel.tsx layout patterns.
@@ -23,6 +24,7 @@ import { PairingDialog } from '@/components/dialogs/PairingDialog'
 import { RenameDialog } from '@/components/dialogs/RenameDialog'
 import { UnpairConfirmDialog } from '@/components/dialogs/UnpairConfirmDialog'
 import { InternetRelaySetting } from '@/components/peers/InternetRelaySetting'
+import { LocalSyncAddress } from '@/components/peers/LocalSyncAddress'
 import { PeerListItem } from '@/components/peers/PeerListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
@@ -387,6 +389,8 @@ export function DeviceManagement(): React.ReactElement {
 
               {/* #4549 — the opt-in internet fallback. */}
               <InternetRelaySetting />
+
+              <LocalSyncAddress />
 
               {/* The copy icon is small enough to stay beside the ID on phones too. */}
               <SettingRow

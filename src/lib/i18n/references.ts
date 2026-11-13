@@ -466,6 +466,36 @@ export const references: Record<string, string> = {
   'search.toggle.wholeWord': 'Whole word',
   'search.toggle.regex': 'Regex',
   'search.toggle.toolbarLabel': 'Search modes',
+  'search.replace.toggle': 'Replace across pages (Ctrl+H)',
+  'search.replace.blocks_one': '{{count}} block',
+  'search.replace.blocks_other': '{{count}} blocks',
+  'search.replace.pages_one': '{{count}} page',
+  'search.replace.pages_other': '{{count}} pages',
+  'search.replace.run': 'Replace in {{blocks}} across {{pages}}',
+  'search.replace.runIdle': 'Replace',
+  'search.replace.confirmTitle': 'Replace in {{blocks}} across {{pages}}?',
+  'search.replace.confirmBody':
+    'Every ticked match of \u201C{{find}}\u201D becomes \u201C{{replacement}}\u201D.',
+  'search.replace.confirmDelete': 'Every ticked match of \u201C{{find}}\u201D is deleted.',
+  'search.replace.confirm': 'Replace',
+  'search.replace.tickPage': 'Replace in {{pageTitle}}',
+  'search.replace.loading': 'Finding every match\u2026',
+  'search.replace.none': 'Nothing to replace',
+  'search.replace.noRegex': 'Replace across pages does not take a regex. Turn regex mode off.',
+  'search.replace.tooShort': 'Type at least 3 characters to replace across pages.',
+  'search.replace.tooMany':
+    'Too many blocks match to replace them at once. Narrow the search with a filter or a longer text.',
+  'search.replace.namesSkipped_one':
+    '{{count}} page title or tag name matches and will be left as it is',
+  'search.replace.namesSkipped_other':
+    '{{count}} page titles or tag names match and will be left as they are',
+  'search.replace.done': 'Replaced in {{blocks}} across {{pages}}',
+  'search.replace.changedSince_one':
+    '{{count}} block changed since the search and was left as it was',
+  'search.replace.changedSince_other':
+    '{{count}} blocks changed since the search and were left as they were',
+  'search.replace.failed': 'Replace failed. Nothing was changed.',
+  'search.replace.undoFailed': 'Could not undo the replace',
   'search.history.title': 'Recent searches',
   'search.history.empty': 'No recent searches',
   'search.history.clear': 'Clear history',

@@ -21,6 +21,7 @@ function makeEntry(payload: string, opType = 'edit_block'): HistoryEntry {
     payload,
     created_at: 1704067200000,
     is_replicated: false,
+    agent: null,
   }
 }
 

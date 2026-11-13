@@ -26,8 +26,8 @@ use agaric_sync::sync_protocol::loro_sync::{
 
 use super::SpacePlacementSink;
 use crate::commands::{
-    create_block_inner, create_page_in_space_inner, create_space_inner, edit_block_inner,
-    edit_block_inner_with_base, set_todo_state_inner,
+    BlockEdit, create_block_inner, create_page_in_space_inner, create_space_inner,
+    edit_block_inner, edit_block_inner_with_base, edit_blocks_batch_inner, set_todo_state_inner,
 };
 use crate::materializer::Materializer;
 use crate::mcp::view_notify::RecordingViewChangeEmitter;
@@ -86,6 +86,25 @@ impl Device {
             .await
             .unwrap();
         changed_blocks.len()
+    }
+
+    /// What `from`'s engine holds of `space` reaches this device's engine and
+    /// not its rows: a sync import before it takes the writer lock to project.
+    fn import_without_projecting(&self, from: &Device, space: &SpaceId) {
+        let (_, export) = from
+            .mat
+            .loro_state()
+            .registry
+            .snapshot_all_engines()
+            .into_iter()
+            .find(|(s, _)| s == space)
+            .unwrap();
+        self.mat
+            .loro_state()
+            .registry
+            .with_engine(space, self.id, |engine| engine.import(&export.unwrap()))
+            .unwrap()
+            .unwrap();
     }
 
     /// Store `from`'s op log as audit rows, as a session does beside the doc.
@@ -831,20 +850,7 @@ async fn a_save_between_a_sync_import_and_its_projection_keeps_the_peers_edit_65
     edit_block_inner(&a.pool, DEV_A, &a.mat, x.clone(), "Xabc".into())
         .await
         .unwrap();
-    let (_, export) = a
-        .mat
-        .loro_state()
-        .registry
-        .snapshot_all_engines()
-        .into_iter()
-        .find(|(s, _)| *s == space)
-        .unwrap();
-    b.mat
-        .loro_state()
-        .registry
-        .with_engine(&space, DEV_B, |engine| engine.import(&export.unwrap()))
-        .unwrap()
-        .unwrap();
+    b.import_without_projecting(&a, &space);
     assert_eq!(
         (
             b.engine_content(&space, &x).as_deref(),
@@ -872,6 +878,38 @@ async fn a_save_between_a_sync_import_and_its_projection_keeps_the_peers_edit_65
             b.sql_content(&x).await.as_str()
         ),
         (Some("XabcY"), "XabcY")
+    );
+    a.shutdown();
+    b.shutdown();
+}
+
+/// #6608 — the same gap under `edit_blocks_batch`: the row still holds what
+/// the search returned, the engine holds a peer's edit the write would be
+/// diffed over, so the block is left alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_edit_between_a_sync_import_and_its_projection_leaves_the_block_alone_6608() {
+    let (a, b, space, _page, x) = paired().await;
+    edit_block_inner(&a.pool, DEV_A, &a.mat, x.clone(), "Xabc".into())
+        .await
+        .unwrap();
+    b.import_without_projecting(&a, &space);
+
+    let edit = BlockEdit {
+        block_id: x.clone(),
+        expected: "abc".into(),
+        to_text: "abZ".into(),
+    };
+    let reply = edit_blocks_batch_inner(&b.pool, DEV_B, &b.mat, vec![edit])
+        .await
+        .unwrap();
+
+    assert_eq!(reply.skipped, vec![x.clone()]);
+    assert_eq!(
+        (
+            b.engine_content(&space, &x).as_deref(),
+            b.sql_content(&x).await.as_str()
+        ),
+        (Some("Xabc"), "abc")
     );
     a.shutdown();
     b.shutdown();

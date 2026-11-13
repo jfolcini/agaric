@@ -230,8 +230,7 @@ pub fn lan_only(
 ///
 /// It narrows the race rather than closing it: an address lost between the sweep and
 /// the `bind(2)` still yields `EADDRNOTAVAIL` → [`ServiceBindError::Socket`], which
-/// `daemon_loop` propagates with `?`. There is no loopback fallback on that path, and
-/// no wording here should imply one.
+/// fails that bring-up; `daemon_loop` retries it from a fresh sweep.
 ///
 /// Crate-visible, not `pub`: an external caller has no such list and wants
 /// [`lan_only`], which reads the real host.

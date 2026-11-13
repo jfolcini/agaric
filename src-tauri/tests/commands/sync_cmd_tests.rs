@@ -78,6 +78,47 @@ async fn sync_delete_peer_ref_removes_existing_peer() {
 }
 
 // ======================================================================
+// Sync — get_local_sync_address (#6526)
+// ======================================================================
+
+fn scheduler_bound_at(address: &str) -> SyncScheduler {
+    let scheduler = SyncScheduler::new();
+    scheduler.publish_local_endpoint(agaric_sync::sync_scheduler::LocalEndpointAdvert {
+        device_id: "DEV6526".into(),
+        endpoint_id: "unused".into(),
+        addrs: vec![address.parse().unwrap()],
+    });
+    scheduler
+}
+
+#[test]
+fn the_local_sync_address_is_the_bound_socket_6526() {
+    assert_eq!(
+        get_local_sync_address_inner(&scheduler_bound_at("192.168.1.20:41234")),
+        Some(LocalSyncAddress {
+            address: "192.168.1.20:41234".into(),
+            loopback: false,
+        })
+    );
+}
+
+#[test]
+fn a_loopback_bind_says_no_device_can_reach_it_6526() {
+    assert_eq!(
+        get_local_sync_address_inner(&scheduler_bound_at("127.0.0.1:41234")),
+        Some(LocalSyncAddress {
+            address: "127.0.0.1:41234".into(),
+            loopback: true,
+        })
+    );
+}
+
+#[test]
+fn a_daemon_that_bound_nothing_has_no_local_sync_address_6526() {
+    assert_eq!(get_local_sync_address_inner(&SyncScheduler::new()), None);
+}
+
+// ======================================================================
 // Sync — get_device_id
 // ======================================================================
 

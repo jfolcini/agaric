@@ -197,8 +197,8 @@ impl SyncEventSink for SharedEventSink {
 /// Not "is inside `daemon_loop`", and the difference is load-bearing for every
 /// caller: on the paired-at-startup path `SyncDaemon::start_seeded` flips the
 /// flag synchronously, *before* `tokio::spawn`, so `true` can be read before
-/// the daemon task has been polled at all — and it stays `true` if
-/// `daemon_loop` then returns `Err` at the QUIC bind without ever reaching its
+/// the daemon task has been polled at all — and it stays `true` while
+/// `daemon_loop` retries a QUIC bind that fails, without ever reaching its
 /// `select!`. The flag states which BRANCH was taken; nothing here observes
 /// the loop itself. There is deliberately no observable for that: the claim
 /// worth testing is the branch, and a caller that needs the loop to be running
@@ -539,16 +539,17 @@ impl SyncDaemon {
             );
             // Publish the transition before the loop runs, not after: the claim
             // under test is that the waiter *left* the dormant select!, and
-            // `daemon_loop` only returns at shutdown (or on a bind error), so a
+            // `daemon_loop` only returns at shutdown, so a
             // flag set on the far side of the call would never be observed.
             activation_task.mark_active();
 
-            if let Err(e) =
-                session_supervisor::daemon_loop(ctx, shutdown_notify_task, DiscoveredPeers::new())
-                    .await
-            {
-                tracing::error!(error = %e, "SyncDaemon (post-dormant) exited with error");
-            }
+            session_supervisor::daemon_loop(
+                ctx,
+                shutdown_notify_task,
+                DiscoveredPeers::new(),
+                Arc::new(session_supervisor::HostBindPolicy),
+            )
+            .await;
         });
 
         Ok(Self {
@@ -597,7 +598,12 @@ impl SyncDaemon {
     /// `lifecycle.is_foreground` is `false`, and wakes immediately when
     /// `lifecycle.wake` is notified.
     pub async fn start_with_lifecycle(ctx: SyncDaemonContext) -> Result<Self, AppError> {
-        Self::start_seeded(ctx, DiscoveredPeers::new()).await
+        Self::start_seeded(
+            ctx,
+            DiscoveredPeers::new(),
+            Arc::new(session_supervisor::HostBindPolicy),
+        )
+        .await
     }
 
     /// [`Self::start_with_lifecycle`] with `daemon_loop`'s discovered-peer map
@@ -623,13 +629,28 @@ impl SyncDaemon {
         ctx: SyncDaemonContext,
         discovered: DiscoveredPeers,
     ) -> Result<Self, AppError> {
-        Self::start_seeded(ctx, discovered).await
+        Self::start_seeded(
+            ctx,
+            discovered,
+            Arc::new(session_supervisor::HostBindPolicy),
+        )
+        .await
+    }
+
+    /// [`Self::start_with_lifecycle`] with the bind policy supplied.
+    #[cfg(test)]
+    pub(crate) async fn start_with_bind_policy(
+        ctx: SyncDaemonContext,
+        bind_policy: Arc<dyn session_supervisor::BindPolicy>,
+    ) -> Result<Self, AppError> {
+        Self::start_seeded(ctx, DiscoveredPeers::new(), bind_policy).await
     }
 
     /// Shared body of [`Self::start_with_lifecycle`] and its seeded variant.
     async fn start_seeded(
         ctx: SyncDaemonContext,
         discovered: DiscoveredPeers,
+        bind_policy: Arc<dyn session_supervisor::BindPolicy>,
     ) -> Result<Self, AppError> {
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_flag = shutdown_notify.clone();
@@ -643,11 +664,8 @@ impl SyncDaemon {
         activation.mark_active();
 
         let handle = tokio::spawn(async move {
-            if let Err(e) =
-                session_supervisor::daemon_loop(ctx, shutdown_notify_flag, discovered).await
-            {
-                tracing::error!(error = %e, "SyncDaemon exited with error");
-            }
+            session_supervisor::daemon_loop(ctx, shutdown_notify_flag, discovered, bind_policy)
+                .await;
         });
 
         Ok(Self {

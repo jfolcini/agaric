@@ -14772,3 +14772,6 @@ async fn the_resync_round_redials_a_pairing_peer_that_was_not_listening_yet_6451
     host_mat.shutdown();
     joiner_mat.shutdown();
 }
+
+// #6526
+mod endpoint_follows_network;

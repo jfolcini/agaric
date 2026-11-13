@@ -64,7 +64,7 @@ use iroh_mdns_address_lookup::{DiscoveryEvent, MdnsAddressLookup};
 use n0_future::StreamExt;
 
 use crate::sync_protocol::{SyncOrchestrator, SyncState};
-use crate::sync_scheduler::{PeerMembership, SyncScheduler};
+use crate::sync_scheduler::{MAX_BACKOFF, MIN_BACKOFF, PeerMembership, SyncScheduler};
 use crate::transport::driver::{
     Role, SessionLimits, finish_session, run_session, unless_cancelled,
 };
@@ -239,10 +239,12 @@ fn spawn_accept_loop(
     })
 }
 
-/// What the endpoint bring-up leaves for [`run_daemon`]: the two values the select
-/// loop reads, and the three shutdown has to release.
+/// What the endpoint bring-up leaves for [`run_daemon`]: what the select loop reads,
+/// and what closing the endpoint has to release.
 struct BoundEndpoint {
     service: Arc<SyncService>,
+    /// The address the bind decision named, which a later decision is compared with.
+    bound_ip: std::net::IpAddr,
     /// `lan_interface::BindDecision::prefix_len`, as [`SyncSessionContext::bind_prefix_len`]
     /// carries it.
     prefix_len: u8,
@@ -251,19 +253,13 @@ struct BoundEndpoint {
     mdns_events: n0_future::boxed::BoxStream<DiscoveryEvent>,
 }
 
-/// Bind the LAN-only QUIC endpoint, start accepting on it, and attach mDNS discovery.
-async fn bring_up_endpoint(ctx: &SyncDaemonContext) -> Result<BoundEndpoint, AppError> {
-    // 1. Bind the LAN-only QUIC endpoint (responder mode — #615, #78).
-    //
-    // One endpoint serves both roles: it accepts here and `try_sync_with_peer` dials
-    // from it. Two endpoints would mean two identities, and `peer_refs.endpoint_id`
-    // pins exactly one.
-    let bind_decision = lan_bind_target();
-    let (bind_addr, prefix_len, lan_ip) = (
-        bind_decision.bind,
-        bind_decision.prefix_len,
-        bind_decision.lan_ip,
-    );
+/// Bind the endpoint `decision` names on the port the last bind got, so a peer's cached
+/// address and a firewall rule stay good across launches (#6526); when that port cannot
+/// be had, on the one the OS picks. The port bound is stored for the next bind.
+async fn bind_keeping_port(
+    ctx: &SyncDaemonContext,
+    decision: &BindDecision,
+) -> Result<SyncService, AppError> {
     // The addresses that decision was made from, handed to the bind's locality gate
     // rather than letting it enumerate the host a second time (#3869). The second sweep
     // could disagree with the first — an address lost to a DHCP renewal or a Wi-Fi roam
@@ -275,11 +271,10 @@ async fn bring_up_endpoint(ctx: &SyncDaemonContext) -> Result<BoundEndpoint, App
     // `BindAddressNotPrivate` is unreachable from here. The address can still go away
     // between the sweep and the `bind` below, and when it does the kernel refuses with
     // EADDRNOTAVAIL, `SyncService::bind` returns `ServiceBindError::Socket`, and the `?`
-    // on the next statement still fails the whole daemon. There is no loopback fallback
-    // on this path — `lan_bind_target` already committed to an address, and the fallback
-    // it owns is chosen before this point or not at all. The gain is that the failure is
-    // now the operating system reporting a fact rather than our own configuration layer
-    // rejecting an address it had itself selected a moment earlier.
+    // on the next statement fails this bring-up, which `daemon_loop` retries from a
+    // fresh sweep. The gain is that the failure is now the operating system reporting a
+    // fact rather than our own configuration layer rejecting an address it had itself
+    // selected a moment earlier.
     //
     // #4116: the list is **not** read on every start. `bind_locality_ok` short-circuits
     // on `!is_publicly_routable(bind)`, so an RFC 1918 bind — and the loopback fallback,
@@ -288,30 +283,79 @@ async fn bring_up_endpoint(ctx: &SyncDaemonContext) -> Result<BoundEndpoint, App
     // gate's short-circuit from out here, and a later widening of the gate would then be
     // handed an empty list and refuse a bind this code had already chosen. That is the
     // #3869 failure again, traded for one allocation per daemon start.
-    let host_addrs = bind_decision.host_addrs();
-    let service = Arc::new(
+    let host_addrs = decision.host_addrs();
+    let bind_port = |port: u16| {
         SyncService::bind(
-            bind_addr,
-            prefix_len,
+            std::net::SocketAddr::new(decision.bind.ip(), port),
+            decision.prefix_len,
             &host_addrs,
             DnsResolver::default(),
             ctx.endpoint_secret.clone(),
             ctx.internet_relay
                 .then(crate::transport::endpoint::internet_relay_url),
         )
+    };
+    let kept_port = peer_refs::get_sync_port(&ctx.pool)
         .await
-        .map_err(|e| AppError::InvalidOperation(format!("[sync_daemon] sync endpoint: {e}")))?,
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "could not read the kept sync port");
+            None
+        });
+    let kept = match kept_port {
+        Some(port) => bind_port(port)
+            .await
+            .inspect_err(|e| tracing::info!(port, error = %e, "the kept sync port did not bind"))
+            .ok(),
+        None => None,
+    };
+    let service = match kept {
+        Some(service) => service,
+        None => bind_port(0)
+            .await
+            .map_err(|e| AppError::InvalidOperation(format!("[sync_daemon] sync endpoint: {e}")))?,
+    };
+    let port = service
+        .addr()
+        .ip_addrs()
+        .next()
+        .map_or(0, std::net::SocketAddr::port);
+    if kept_port != Some(port)
+        && let Err(e) = peer_refs::set_sync_port(&ctx.pool, port).await
+    {
+        tracing::warn!(error = %e, port, "could not keep the sync port for the next launch");
+    }
+    Ok(service)
+}
+
+/// Bind the LAN-only QUIC endpoint, start accepting on it, and attach mDNS discovery.
+async fn bring_up_endpoint(
+    ctx: &SyncDaemonContext,
+    bind_policy: &dyn BindPolicy,
+) -> Result<BoundEndpoint, AppError> {
+    // 1. Bind the LAN-only QUIC endpoint (responder mode — #615, #78).
+    //
+    // One endpoint serves both roles: it accepts here and `try_sync_with_peer` dials
+    // from it. Two endpoints would mean two identities, and `peer_refs.endpoint_id`
+    // pins exactly one.
+    let bind_decision = bind_policy.target();
+    bind_decision.log();
+    let (bind_addr, prefix_len, lan_ip) = (
+        bind_decision.bind,
+        bind_decision.prefix_len,
+        bind_decision.lan_ip,
     );
+    let service = Arc::new(bind_keeping_port(ctx, &bind_decision).await?);
+    #[cfg(test)]
+    bind_policy.bound(&service);
     let endpoint_id = service.endpoint_id();
     let port = service
         .addr()
         .ip_addrs()
         .next()
         .map_or(0, std::net::SocketAddr::port);
-
     // 1b. Tell the user, not just the log, when that bind is internet-facing
     //     (#3864). Emitted here rather than beside the decision because the port
-    //     only exists once the endpoint is up — the bind requests port 0.
+    //     is only known once the endpoint is up.
     handle_internet_facing_bind(&bind_decision, port, &ctx.event_sink);
 
     // 1c. Publish where a peer can dial us, so the pairing QR can carry it and a
@@ -361,7 +405,7 @@ async fn bring_up_endpoint(ctx: &SyncDaemonContext) -> Result<BoundEndpoint, App
     //
     // #3852 — nothing here claims "announced". `swarm-discovery` has no send-side
     // event, so the only signals are its own `tracing` output and Android's
-    // `onBlockedStatusChanged` monitor `run_daemon` installs before this call.
+    // `onBlockedStatusChanged` monitor `daemon_loop` installs before this call.
     let mdns = handle_mdns_init_result(
         crate::mdns::attach(service.endpoint(), &ctx.device_id),
         &ctx.event_sink,
@@ -382,6 +426,7 @@ async fn bring_up_endpoint(ctx: &SyncDaemonContext) -> Result<BoundEndpoint, App
 
     Ok(BoundEndpoint {
         service,
+        bound_ip: bind_addr.ip(),
         prefix_len,
         accept_task,
         mdns,
@@ -556,16 +601,49 @@ pub(super) async fn run_resync_round(
     }
 }
 
-/// The daemon's `tokio::select!` loop, driven until the shutdown branch breaks it.
+/// How [`run_select_loop`] ended.
+enum LoopExit {
+    Shutdown,
+    /// The endpoint stopped, or the bind decision names another address than its own.
+    Rebind,
+}
+
+/// What [`run_select_loop`] watches of the endpoint it runs on.
+struct EndpointWatch<'a> {
+    /// Ends when the endpoint stops accepting.
+    accept_task: &'a mut tokio::task::JoinHandle<()>,
+    bound_ip: std::net::IpAddr,
+    bind_policy: &'a dyn BindPolicy,
+}
+
+impl EndpointWatch<'_> {
+    /// The bind policy picks a LAN address other than the bound one: Wi-Fi came up
+    /// after a launch on the loopback fallback, or a better interface appeared.
+    ///
+    /// A decision with no LAN moves nothing. An endpoint whose address is gone stops by
+    /// itself, and an interface that reads as down for a moment (Wi-Fi re-authenticating)
+    /// must not take a working endpoint to loopback.
+    fn bind_moved(&self) -> bool {
+        let target = self.bind_policy.target();
+        target.lan_ip.is_some() && target.bind.ip() != self.bound_ip
+    }
+}
+
+/// The daemon's `tokio::select!` loop on one bound endpoint.
 async fn run_select_loop(
     ctx: &SyncSessionContext<'_>,
-    scheduler: &Arc<SyncScheduler>,
-    cancel: &Arc<AtomicBool>,
-    lifecycle: &LifecycleHooks,
+    daemon: &SyncDaemonContext,
     shutdown_notify: &Notify,
+    endpoint: EndpointWatch<'_>,
     mdns_events: &mut n0_future::boxed::BoxStream<DiscoveryEvent>,
     discovered: &mut DiscoveredPeers,
-) {
+) -> LoopExit {
+    let SyncDaemonContext {
+        scheduler,
+        cancel,
+        lifecycle,
+        ..
+    } = daemon;
     // 3. Discovered peers (device_id → (DiscoveredPeer, last_seen)) arrive as a
     //    parameter; see [`daemon_loop`]'s docs for why. Branch A still owns every
     //    write to it.
@@ -648,6 +726,14 @@ async fn run_select_loop(
             // We still drain the tick so the interval timer's internal
             // cursor doesn't fall behind, but skip the expensive parts.
             _ = resync_interval.tick() => {
+                // #6526: asked before the foreground gate, since a minimized app has
+                // to follow the network too. A session in flight keeps its endpoint,
+                // and the next tick asks again. A connection not yet counted as a
+                // session (in its handshake, or awaiting its first frame) closes with
+                // the endpoint, and its dialler retries.
+                if endpoint.bind_moved() && !scheduler.has_active_session() {
+                    return LoopExit::Rebind;
+                }
                 if lifecycle.is_backgrounded() {
                     continue;
                 }
@@ -669,84 +755,77 @@ async fn run_select_loop(
 
             // Branch E: shutdown signal
             () = shutdown_notify.notified() => {
-                break;
+                return LoopExit::Shutdown;
+            }
+
+            // Branch F: the endpoint stopped (#6526)
+            //
+            // iroh stops an endpoint whose bound address leaves the host: `accept`
+            // returns `None`, every dial fails, and the address coming back revives
+            // nothing. Its sessions are already lost, so there is none to wait for.
+            _ = &mut *endpoint.accept_task => {
+                return LoopExit::Rebind;
             }
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// daemon_loop — the core async select! loop
+// run_daemon and daemon_loop — one endpoint, and the loop that keeps one bound
 // ---------------------------------------------------------------------------
 
-/// Everything [`daemon_loop`] does once the Android multicast lock is held.
+/// One endpoint's life: bring it up, run the select loop on it, release it.
 async fn run_daemon(
-    ctx: SyncDaemonContext,
-    shutdown_notify: Arc<Notify>,
-    mut discovered: DiscoveredPeers,
-) -> Result<(), AppError> {
-    // #3852: register for the OS's own statement about this uid's firewall
-    // status before anything tries to use the network, so a block that is
-    // already in force is reported rather than inferred from the silence that
-    // follows. Off Android `start_monitor` is a no-op; the sink installation is
-    // unconditional so the reporting path is identical on every platform.
-    super::android_network_block::install_event_sink(ctx.event_sink.clone());
-    super::android_network_block::start_monitor();
-
+    daemon: &SyncDaemonContext,
+    shutdown_notify: &Notify,
+    discovered: &mut DiscoveredPeers,
+    bind_policy: &dyn BindPolicy,
+) -> Result<LoopExit, AppError> {
     let BoundEndpoint {
         service,
+        bound_ip,
         prefix_len,
-        accept_task,
+        mut accept_task,
         mdns,
         mut mdns_events,
-    } = bring_up_endpoint(&ctx).await?;
-
-    let SyncDaemonContext {
-        pool,
-        device_id,
-        materializer,
-        scheduler,
-        endpoint_secret: _,
-        event_sink,
-        cancel,
-        lifecycle,
-        internet_relay: _,
-    } = ctx;
+    } = bring_up_endpoint(daemon, bind_policy).await?;
 
     let ctx = SyncSessionContext {
-        pool: &pool,
-        device_id: &device_id,
-        materializer: &materializer,
-        scheduler: &scheduler,
-        event_sink: &event_sink,
-        cancel: &cancel,
+        pool: &daemon.pool,
+        device_id: &daemon.device_id,
+        materializer: &daemon.materializer,
+        scheduler: &daemon.scheduler,
+        event_sink: &daemon.event_sink,
+        cancel: &daemon.cancel,
         endpoint: service.endpoint(),
         bind_prefix_len: Some(prefix_len),
         relay_url: service.relay_url(),
     };
-    run_select_loop(
+    let exit = run_select_loop(
         &ctx,
-        &scheduler,
-        &cancel,
-        &lifecycle,
-        &shutdown_notify,
+        daemon,
+        shutdown_notify,
+        EndpointWatch {
+            accept_task: &mut accept_task,
+            bound_ip,
+            bind_policy,
+        },
         &mut mdns_events,
-        &mut discovered,
+        discovered,
     )
     .await;
 
-    // Cleanup. Dropping the lookup (here and with the closed endpoint's services)
-    // stops the discoverer; there is no shutdown call.
+    // Dropping the lookup (here and with the closed endpoint's services) stops the
+    // discoverer; there is no shutdown call.
     accept_task.abort();
     service.close().await;
     drop(mdns);
-    tracing::info!("SyncDaemon shut down cleanly");
-    Ok(())
+    Ok(exit)
 }
 
-/// Main event-driven loop for the sync daemon.
+/// The sync daemon.
 ///
-/// Uses `tokio::select!` to react to mDNS peer-discovery events,
+/// [`run_select_loop`] uses `tokio::select!` to react to mDNS peer-discovery events,
 /// debounced local-change notifications, periodic resync checks, and
 /// shutdown signals — without polling. The shutdown branch is reached
 /// only by tests today: production never calls `SyncDaemon::shutdown`.
@@ -766,14 +845,17 @@ async fn run_daemon(
 /// only caller that passes a non-empty one is `SyncDaemon::start_with_lifecycle_seeded`,
 /// which is gated behind the `test-util` feature.
 ///
-/// Split in two: the Android multicast lock below is released by its `Drop`, so it
-/// has to be a local of the function that outlives the whole daemon, while
-/// [`run_daemon`] carries the bring-up, the loop and the teardown.
+/// The endpoint is not bound for the daemon's life (#6526). [`run_daemon`] is one
+/// endpoint: when it stops, or the bind policy picks another address (a laptop that
+/// changed network, Wi-Fi that came up after launch), this loop closes it and binds
+/// again, with the same identity and, when the internet fallback is on, the same relay.
+/// A bring-up that fails is retried within the scheduler's backoff bounds.
 pub(crate) async fn daemon_loop(
     ctx: SyncDaemonContext,
     shutdown_notify: Arc<Notify>,
-    discovered: DiscoveredPeers,
-) -> Result<(), AppError> {
+    mut discovered: DiscoveredPeers,
+    bind_policy: Arc<dyn BindPolicy>,
+) {
     // #3847: the first thing the daemon does on Android is state whether
     // `JNI_OnLoad` recorded the JavaVM + Application context that the
     // multicast lock and network-block monitor need
@@ -785,8 +867,8 @@ pub(crate) async fn daemon_loop(
     );
     // Acquire WifiManager.MulticastLock on Android so the
     // discovery crate's UDP multicast sockets receive packets. Held in
-    // a local binding so `Drop` releases it on function exit (graceful
-    // shutdown or error return). On non-Android targets this is a no-op.
+    // a local binding so `Drop` releases it on function exit. On non-Android
+    // targets this is a no-op.
     // A missing context degrades to `Err` here, and the daemon carries on
     // without peer discovery (#3847).
     #[cfg(target_os = "android")]
@@ -801,7 +883,46 @@ pub(crate) async fn daemon_loop(
         }
     };
 
-    run_daemon(ctx, shutdown_notify, discovered).await
+    // #3852: register for the OS's own statement about this uid's firewall
+    // status before anything tries to use the network, so a block that is
+    // already in force is reported rather than inferred from the silence that
+    // follows. Off Android `start_monitor` is a no-op; the sink installation is
+    // unconditional so the reporting path is identical on every platform.
+    super::android_network_block::install_event_sink(ctx.event_sink.clone());
+    super::android_network_block::start_monitor();
+
+    let mut retry_in = MIN_BACKOFF;
+    loop {
+        let pause = match run_daemon(
+            &ctx,
+            &shutdown_notify,
+            &mut discovered,
+            bind_policy.as_ref(),
+        )
+        .await
+        {
+            Ok(LoopExit::Shutdown) => break,
+            Ok(LoopExit::Rebind) => {
+                tracing::info!("binding the sync endpoint again");
+                // Failures booked on the old network say nothing about this one.
+                ctx.scheduler.clear_backoff();
+                retry_in = MIN_BACKOFF;
+                MIN_BACKOFF
+            }
+            Err(e) => {
+                tracing::error!(error = %e, ?retry_in, "the sync endpoint did not come up");
+                let pause = retry_in;
+                retry_in = (retry_in * 2).min(MAX_BACKOFF);
+                pause
+            }
+        };
+        // Endpoints that stop as soon as they are bound must not spin this loop.
+        tokio::select! {
+            () = tokio::time::sleep(pause) => {}
+            () = shutdown_notify.notified() => break,
+        }
+    }
+    tracing::info!("SyncDaemon shut down cleanly");
 }
 
 // ---------------------------------------------------------------------------
@@ -869,6 +990,25 @@ fn lan_bind_target() -> BindDecision {
     super::lan_interface::select_bind_target()
 }
 
+/// Where the endpoint binds. A parameter of [`daemon_loop`] so a test can move the
+/// answer under a running daemon, and stop an endpoint as a lost address does.
+pub(crate) trait BindPolicy: Send + Sync {
+    fn target(&self) -> BindDecision;
+
+    /// Each endpoint the daemon brings up.
+    #[cfg(test)]
+    fn bound(&self, _service: &Arc<SyncService>) {}
+}
+
+/// [`lan_bind_target`], the production policy.
+pub(super) struct HostBindPolicy;
+
+impl BindPolicy for HostBindPolicy {
+    fn target(&self) -> BindDecision {
+        lan_bind_target()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // handle_internet_facing_bind — emit SyncEvent on an off-LAN-reachable bind
 // ---------------------------------------------------------------------------
@@ -876,7 +1016,7 @@ fn lan_bind_target() -> BindDecision {
 /// Emit [`SyncEvent::InternetFacingBind`] when the endpoint bound a
 /// globally-routable address (#3864); do nothing otherwise.
 ///
-/// `select_bind_target` already logs a dedicated WARN for this case, which is where the
+/// `BindDecision::log` already logs a dedicated WARN for this case, which is where the
 /// mitigation stopped in #3853. A log line is not a signal a user receives: the file it
 /// lands in is opened by developers, after the fact, and never by the VPS operator who
 /// is the person this concerns. This turns the same fact into an event the frontend can
@@ -944,8 +1084,9 @@ fn maybe_gc_peer_locks(scheduler: &SyncScheduler, ticks_since_gc: &mut u64) {
 ///
 /// `MdnsDisabled` is a **latching** claim: `TauriEventSink` writes
 /// `MdnsStatus { disabled: true }` and nothing writes it back, so only a failure that
-/// proves discovery is dead for the whole session may emit it. `attach` failing is such
-/// a proof — there is no discoverer at all.
+/// proves discovery is dead may emit it. `attach` failing proves it for this endpoint:
+/// there is no discoverer at all. A later bind (#6526) attaches again, and nothing
+/// clears the status when that one succeeds.
 ///
 /// Extracted so a unit test can exercise the failure path without opening multicast
 /// sockets.
@@ -1550,8 +1691,8 @@ fn dial_timeout_text(peer_id: &str, diagnosis: Option<EgressReport>) -> String {
 /// [`SyncScheduler::record_failure_and_take_report`]), so alternating causes
 /// stay suppressed. It rides on the scheduler's backoff entry, which
 /// [`SyncScheduler::clear_peer_backoff`] drops on the next successful pull and
-/// [`SyncScheduler::clear_backoff`] drops on a pairing act, so the next failure
-/// after either is reported again.
+/// [`SyncScheduler::clear_backoff`] drops on a pairing act and when the daemon binds
+/// its endpoint again, so the next failure after any of them is reported again.
 ///
 /// The identity refusal routes here too: its text is the constant
 /// [`IDENTITY_MISMATCH_MESSAGE`], and `streamed_at` is stamped only for the row

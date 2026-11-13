@@ -1,5 +1,4 @@
 {
-  "name": "tag_create_unique_per_space",
   "description": "#5236 / #5237 — a tag NAME is unique per space at creation, and the tags cache keeps one row per space. The harness space seeds a `todo` tag (`S2`); a seed id is zero-padded, so it sorts below every minted ULID and is the row the old vault-wide `UNIQUE (name)` kept. The ops create a second space (`C1`) and run `create_block` with `blockType: tag` into it, as the IPC runs it (`via: command`, so the RETURN is the record): `todo` is a NEW tag (`C2`) because uniqueness is per space, and before 0121 it was exactly the tag the cache could not hold — the smaller-id `todo` in the harness space owned the slot, so `Work`'s Tags view, its filters and its `tag:#` search never saw it (#5237). Then `Todo` into the same space: a case variant, the identity `normalize_tag_name` folds, answers the SAME label and no second block (#5236: the header's \"Create\" and the `#name` input rule each trust their own picker cache, and only the backend sees both). The reads: the harness space's prefix scan, its own tag listing and its `list_blocks` by type each name only ITS `todo`. A query step cannot name an op-created space (`expand_query_args` knows `$SPACE` and `S<n>`), so `Work`'s cache row is not read back here.",
   "expected": {
     "block_tags": [],
@@ -147,6 +146,7 @@
       "total_count": 1
     }
   ],
+  "name": "tag_create_unique_per_space",
   "ops": [
     {
       "args": {
