@@ -103,8 +103,8 @@ pub struct ReplayReport {
 /// same PR and neither side said it: this clamp can WALK BACK the
 /// `loro_doc_state.applied_through_seq` watermarks that #3309 exists to keep
 /// fresh. If compaction purges this device's op_log to zero surviving rows,
-/// `max_seq` is 0, so the clamp lands the cursor at 0; `snapshot_watermark`
-/// is one below the op-log head, floored at 0, so any `save_all_engines`
+/// `max_seq` is 0, so the clamp lands the cursor at 0; a row is stamped with
+/// the op-log head, so any `save_all_engines`
 /// pass firing in that window writes `applied_through_seq = 0` over a
 /// previously-high watermark for every DIRTY space (the `INSERT OR REPLACE`
 /// in that pass is unconditional — unlike `advance_clean_space_watermarks`, which re-asserts
@@ -256,11 +256,12 @@ pub(super) async fn compacted_floor_above(
 ///    Reset the cursor down to `MIN(applied_through_seq)` so replay
 ///    re-applies the unmaterialized tail onto the behind engines.
 ///
-/// In both cases the op_log is the append-only source of truth and every
-/// apply handler is idempotent (`MAX(materialized_through_seq, ?)` +
-/// `INSERT OR IGNORE/REPLACE` / keyed `UPDATE` projections + in-order
-/// engine re-apply), so re-applying over already-materialized SQL and
-/// already-caught-up engines is safe.
+/// In both cases the op log holds the local ops the behind engine lacks, and
+/// re-applying them over already-materialized SQL is safe (`INSERT OR
+/// IGNORE/REPLACE`, keyed `UPDATE`s, a `MAX` cursor). Re-applying an op to an
+/// engine that already holds it is not: it lands as a new write, over whatever
+/// a peer wrote to the same block since (#6521). So a pass stamps the head it
+/// read and a healthy boot rewinds nothing.
 ///
 /// # Rewind target (#3309)
 ///
@@ -280,18 +281,6 @@ pub(super) async fn compacted_floor_above(
 /// found" wedge this heal exists to fix. If clean-space watermarks ever
 /// stop being refreshed, the frozen-`MIN` boot stall of #3309 comes back;
 /// fix that at the source (the persist path), not by narrowing this bound.
-///
-/// # Logging trade-off (#4018)
-///
-/// A gap of exactly one op (`cursor - reset_to == 1`, snapshot present) logs
-/// at `debug` rather than `warn` (see `routine_one_op_rewind` below) because
-/// that is the routine healthy-boot signature. But the same gap is also what
-/// a crash that loses exactly one materialised op produces — the two cases
-/// are indistinguishable from this function's inputs, so the downgrade
-/// silently covers both. The rewind still runs and the state is still fully
-/// repaired either way; this is an accepted logging trade-off (a genuinely
-/// one-op-stale snapshot goes unremarked at boot), not a defect. Anything
-/// wider than one op is still a loud `warn`.
 ///
 /// MUST be called at boot only (after snapshot rehydrate, before the
 /// replay walk).
@@ -335,43 +324,15 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
         );
     }
 
-    // #4018 — level, not behaviour. `snapshot_watermark` is deliberately
-    // `cursor - 1` (a conservative lower bound on what every engine reflects;
-    // see that function), so a PERFECTLY healthy vault always exits with
-    // `MIN(applied_through_seq) == cursor - 1` and every subsequent boot
-    // observes `cursor == MIN + 1` and rewinds by exactly one op. The rewind
-    // itself is right and costs one idempotent re-apply — but announcing it at
-    // `warn` on every healthy boot is the "permanent alarm poisoning" #3309
-    // filed, and it trains the reader to ignore the line that matters. The `1`
-    // here is not a tuning knob: it is the same `- 1` `snapshot_watermark`
-    // subtracts, so a gap of exactly one op is the structural floor, not a
-    // symptom. Anything wider is a genuinely stale snapshot and still warns,
-    // as does the `snapshot_count == 0` full-rebuild path (`reset_to` is 0
-    // there, so the gap is `cursor`, and a cursor of 1 with NO snapshot at all
-    // is a real missing-snapshot rebuild — hence the explicit branch rather
-    // than a bare gap comparison).
-    let routine_one_op_rewind = snapshot_count > 0 && cursor - reset_to == 1;
-    if routine_one_op_rewind {
-        tracing::debug!(
-            cursor,
-            max_seq,
-            reset_to,
-            snapshot_count,
-            "recovery: rewinding the apply cursor by the one op the snapshot \
-             watermark conservatively withholds (`cursor - 1`) — the routine \
-             healthy-boot case, not a stale snapshot (#4018/#3309)"
-        );
-    } else {
-        tracing::warn!(
-            cursor,
-            max_seq,
-            reset_to,
-            snapshot_count,
-            "recovery: apply cursor is ahead of the Loro snapshot watermark \
-             (missing or stale snapshot) — rewinding the cursor so replay \
-             rebuilds the behind engines from the op-log"
-        );
-    }
+    tracing::warn!(
+        cursor,
+        max_seq,
+        reset_to,
+        snapshot_count,
+        "recovery: apply cursor is ahead of the Loro snapshot watermark \
+         (missing or stale snapshot) — rewinding the cursor so replay \
+         rebuilds the behind engines from the op-log"
+    );
     let updated_at = agaric_store::db::now_ms();
     sqlx::query!(
         "UPDATE materializer_apply_cursor \
@@ -476,8 +437,8 @@ async fn plan_cursor_rewind(pool: &SqlitePool) -> Result<Option<RewindPlan>, App
 /// `dispatch_background_or_warn` because the ops are already durably applied:
 /// a saturated queue must not fail the boot, and a shed task persists itself to
 /// `materializer_retry_queue` (#423). NOT `enqueue_full_cache_rebuild`: replay
-/// has ops on essentially every launch (at least the one the snapshot watermark
-/// withholds), and that one-liner would run nine O(vault) rebuilds per start.
+/// has ops after every kill, a phone's usual exit, and that one-liner would
+/// run nine O(vault) rebuilds for them.
 ///
 /// # What this still does not close
 ///
@@ -1008,9 +969,7 @@ mod tests {
     }
 
     /// Run the heal with a WARN-and-above subscriber installed and return
-    /// what it emitted. The filter is the point: a line the heal logs at
-    /// `debug!` is invisible here, which is exactly the distinction under
-    /// test.
+    /// what it emitted.
     async fn heal_capturing_warns(pool: &SqlitePool) -> (bool, String) {
         use tracing_subscriber::layer::SubscriberExt;
         let buf = LogBuf::default();
@@ -1069,87 +1028,29 @@ mod tests {
         .unwrap();
     }
 
-    /// #4018 item 2 / #3309 "permanent alarm poisoning" — the one-op rewind
-    /// every HEALTHY boot performs must not be announced as a stale snapshot.
-    ///
-    /// `snapshot_watermark` is deliberately `cursor - 1`, so a vault that
-    /// exited cleanly always boots with `MIN(applied_through_seq) == cursor - 1`
-    /// and this heal always rewinds by exactly one op. The rewind is correct;
-    /// warning about it on every single boot is what trains an operator to
-    /// ignore the line. Level only — the cursor is still reset either way,
-    /// which is asserted here so the downgrade cannot be mistaken for a skip.
+    /// #6521 — a snapshot one op behind the cursor is stale like any other:
+    /// the heal rewinds to it and says so. A pass stamps the head it read, so
+    /// a healthy boot never shows this gap.
     #[tokio::test]
-    async fn routine_one_op_rewind_does_not_warn_4018() {
+    async fn a_snapshot_one_op_behind_is_rewound_and_announced_6521() {
         let (pool, _dir) = test_pool().await;
         seed_local_ops(&pool, 5).await;
-        // The clean-exit shape: watermark is exactly `cursor - 1`.
         seed_watermark_row(&pool, "test-space", 4).await;
         park_cursor(&pool, 5).await;
 
         let (healed, out) = heal_capturing_warns(&pool).await;
 
-        assert!(healed, "the rewind itself must still happen");
+        assert!(healed);
         let row_seq: i64 = sqlx::query_scalar(
             "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(
-            row_seq, 4,
-            "…and must still land on MIN(applied_through_seq)"
-        );
-        assert!(
-            !out.contains("apply cursor is ahead of the Loro snapshot watermark"),
-            "a gap of exactly the one op `snapshot_watermark` withholds is the healthy \
-             steady state, not a stale snapshot — it must not warn on every boot \
-             (#4018/#3309). Captured logs:\n{out}"
-        );
-        assert!(
-            out.is_empty(),
-            "nothing at warn-or-above belongs on a healthy boot. Captured logs:\n{out}"
-        );
-    }
-
-    /// The other side of the split: a gap WIDER than the structural one op is
-    /// a genuinely stale snapshot and must still warn. Without this the
-    /// downgrade above could be "never warn", which is the same alarm
-    /// poisoning in the opposite direction.
-    #[tokio::test]
-    async fn a_stale_snapshot_still_warns_4018() {
-        let (pool, _dir) = test_pool().await;
-        seed_local_ops(&pool, 5).await;
-        // Two ops behind: a crash let the cursor run past the last snapshot.
-        seed_watermark_row(&pool, "test-space", 3).await;
-        park_cursor(&pool, 5).await;
-
-        let (healed, out) = heal_capturing_warns(&pool).await;
-
-        assert!(healed);
+        assert_eq!(row_seq, 4, "the cursor lands on MIN(applied_through_seq)");
         assert!(
             out.contains("apply cursor is ahead of the Loro snapshot watermark"),
-            "a two-op gap is a real stale snapshot and must be announced. \
-             Captured logs:\n{out}"
-        );
-    }
-
-    /// …and the boundary the `snapshot_count > 0` conjunct exists for: a
-    /// cursor of 1 with NO snapshot at all is a gap of exactly 1 by
-    /// arithmetic, but it is a genuine missing-snapshot full rebuild, not the
-    /// routine withheld op. A bare gap comparison would silence it.
-    #[tokio::test]
-    async fn a_missing_snapshot_warns_even_at_a_gap_of_one_4018() {
-        let (pool, _dir) = test_pool().await;
-        seed_local_ops(&pool, 1).await;
-        park_cursor(&pool, 1).await;
-
-        let (healed, out) = heal_capturing_warns(&pool).await;
-
-        assert!(healed);
-        assert!(
-            out.contains("apply cursor is ahead of the Loro snapshot watermark"),
-            "no snapshot at all is a full rebuild, whatever the arithmetic gap. \
-             Captured logs:\n{out}"
+            "Captured logs:\n{out}"
         );
     }
 
@@ -1402,8 +1303,8 @@ mod tests {
     /// broken was the persist side — since #2201 `save_all_engines` re-encodes
     /// only DIRTY spaces, so the quiescent row's `applied_through_seq` stayed
     /// frozen at 1 forever and `MIN` with it. This test runs a real snapshot
-    /// pass (one dirty space, one quiescent row) and then the heal, and pins
-    /// the rewind target to ~one snapshot interval instead of the whole log.
+    /// pass (one dirty space, one quiescent row) and then the heal, which must
+    /// find nothing to rewind.
     #[tokio::test]
     async fn heal_rewind_target_is_not_pinned_by_a_quiescent_space_3309() {
         use agaric_engine::loro::registry::LoroEngineRegistry;
@@ -1473,9 +1374,9 @@ mod tests {
 
         let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
         assert!(
-            healed,
-            "the cursor (20) is one op ahead of the pass watermark (19), so the \
-             heal still rewinds by that one op"
+            !healed,
+            "the pass stamped both rows with the head the cursor sits on (20), so \
+             nothing rewinds"
         );
 
         let row_seq: i64 = sqlx::query_scalar(
@@ -1485,10 +1386,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            row_seq, 19,
-            "the rewind target must track the snapshot pass watermark, NOT the \
-             quiescent space's frozen watermark of 1 — otherwise every boot replays \
-             the whole op-log tail (#3309)"
+            row_seq, 20,
+            "the quiescent space's frozen watermark of 1 must not pull the cursor \
+             back — otherwise every boot replays the whole op-log tail (#3309)"
         );
     }
 

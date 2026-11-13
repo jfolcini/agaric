@@ -3737,7 +3737,7 @@ fn engine_blocks(
 /// and dies without the exit save. Boot rehydrates the engine from the pass's
 /// snapshot and replays from the cursor that pass left. The tail must come
 /// back whole — engine and SQL equal to the session's — while the ops the
-/// snapshot holds are not replayed again, bar the one its watermark withholds.
+/// snapshot holds are not replayed again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn crash_after_a_snapshot_pass_replays_only_the_tail_5418() {
     const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
@@ -3807,9 +3807,8 @@ async fn crash_after_a_snapshot_pass_replays_only_the_tail_5418() {
     );
     assert_eq!(
         report.ops_replayed,
-        u64::try_from(tail_len + 1).unwrap(),
-        "boot replays what the pass did not persist plus the one op its watermark \
-         withholds, not the session"
+        u64::try_from(tail_len).unwrap(),
+        "boot replays what the pass did not persist, not the session"
     );
     assert_eq!(
         read_cursor(&pool).await,
@@ -4367,8 +4366,7 @@ async fn crash_tail_delete_then_purge_reaches_the_engine_5647() {
     let (pool, _dir) = test_pool().await;
     let session = Materializer::new(pool.clone());
     seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
-    // Z is the op the pass's watermark withholds, so boot replays it again.
-    // It sits before X, so the purge leaves no gap in the page's positions
+    // Z sits before X, so the purge leaves no gap in the page's positions
     // for the end-of-replay reproject to close.
     for op in [
         create_under(X, PAGE_ID, 0),
@@ -4447,8 +4445,6 @@ async fn crash_tail_restore(delete_again: bool) {
         .await
         .created_at;
     apply_like_a_command(&pool, &session, device_id, delete(P)).await;
-    // The op the pass's watermark withholds, so boot replays it again; were
-    // it a delete, its replay would put the restore's cohort back in SQL.
     apply_like_a_command(&pool, &session, device_id, create_under(Z, PAGE_ID, 1)).await;
     let saved = agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session)
         .await
@@ -4664,8 +4660,7 @@ async fn crash_tail_attachment_ops_reach_the_engine_5608() {
     let (pool, _dir) = test_pool().await;
     let session = Materializer::new(pool.clone());
     seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
-    // A1 is the op the pass's watermark withholds, so boot replays it again;
-    // A2's add is not replayed, so its row is gone when its delete replays.
+    // Neither add is replayed, so A2's row is gone when its delete replays.
     for op in [create_under(X, PAGE_ID, 0), add("T5608A2"), add("T5608A1")] {
         apply_like_a_command(&pool, &session, device_id, op).await;
     }
@@ -6068,26 +6063,14 @@ async fn rewind_boot_then_create_lands_in_projection_with_intact_content() {
     );
 }
 
-/// #4018 item 2 — a HEALTHY boot must be silent at warn level about the apply
-/// cursor.
+/// #4018, #6521 — a healthy boot replays nothing and says nothing at warn
+/// level about the apply cursor. A pass stamps its rows with the head it moves
+/// the cursor to, so a vault that exited cleanly boots with nothing to heal.
 ///
-/// `snapshot_watermark` is deliberately `cursor - 1`, so a vault that exited
-/// cleanly always boots with `MIN(applied_through_seq) == cursor - 1` and
-/// `heal_orphaned_apply_cursor` always rewinds by exactly one op. Two lines
-/// used to announce that on every single boot: the heal's own
-/// "apply cursor is ahead of the Loro snapshot watermark", and a second,
-/// FIELDLESS "reset orphaned apply cursor — full op-log rebuild follows" here
-/// at the call site — which was doubly wrong, because "full op-log rebuild" is
-/// only true when the rewind target is 0 and the `bool` return cannot tell.
-/// #3309 filed exactly this as "permanent alarm poisoning".
-///
-/// Boot-level on purpose: the heal's own level is pinned in `replay.rs`
-/// (`routine_one_op_rewind_does_not_warn_4018`), but the call-site line was
-/// emitted regardless of what the heal decided, so only a boot can prove both
-/// are gone. The rewind must still HAPPEN — asserted here so "quieter" cannot
-/// be satisfied by "skipped".
+/// Boot-level on purpose: the call site once announced a rewind whatever the
+/// heal decided, so only a boot shows both lines are gone.
 #[tokio::test]
-async fn healthy_boot_does_not_warn_about_the_routine_cursor_rewind_4018() {
+async fn a_healthy_boot_replays_nothing_and_is_silent_about_the_cursor_4018() {
     #[derive(Clone, Default)]
     struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
     impl std::io::Write for LogBuf {
@@ -6109,8 +6092,7 @@ async fn healthy_boot_does_not_warn_about_the_routine_cursor_rewind_4018() {
     let (pool, _dir) = test_pool().await;
     let dev = "healthy-boot-device";
 
-    // Build a real vault through the local-op path. Both blocks are ROOTS so
-    // the post-rewind replay of the tail op needs no parent in the engine.
+    // Build a real vault through the local-op path.
     let mat = Materializer::new(pool.clone());
     for (id, content) in [
         ("PAGEONE00000000000000000000", "page one"),
@@ -6143,20 +6125,20 @@ async fn healthy_boot_does_not_warn_about_the_routine_cursor_rewind_4018() {
     .unwrap();
     assert!(cursor > 0, "the session must have advanced the cursor");
 
-    // The clean-exit shape: `save_all_engines` persisted every space at
-    // `snapshot_watermark` == `cursor - 1`.
+    // The clean-exit shape: the pass stamped every space with the head it
+    // moved the cursor to.
     sqlx::query(
         "INSERT INTO loro_doc_state \
          (space_id, snapshot, updated_at, op_count, applied_through_seq) \
          VALUES ('test-space', X'00', 0, 0, ?)",
     )
-    .bind(cursor - 1)
+    .bind(cursor)
     .execute(&pool)
     .await
     .unwrap();
 
     let buf = LogBuf::default();
-    let out = {
+    let (out, report) = {
         use tracing_subscriber::layer::SubscriberExt;
         let subscriber = tracing_subscriber::registry()
             .with(tracing_subscriber::EnvFilter::new("warn"))
@@ -6169,35 +6151,39 @@ async fn healthy_boot_does_not_warn_about_the_routine_cursor_rewind_4018() {
         super::boot::reset_recovery_guard();
         let mat = Materializer::new(pool.clone());
         let registry = agaric_engine::loro::registry::LoroEngineRegistry::new();
-        recover_at_boot(&pool, dev, &mat, &registry)
+        let report = recover_at_boot(&pool, dev, &mat, &registry)
             .await
             .expect("recover_at_boot");
         mat.shutdown();
-        String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned()
+        (
+            String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned(),
+            report,
+        )
     };
 
+    assert_eq!(
+        report.ops_replayed, 0,
+        "every op is in the snapshot the boot started from"
+    );
     assert!(
         !out.contains("reset orphaned apply cursor"),
-        "the call-site announcement is gone: it fired on every healthy boot and \
-         claimed a full op-log rebuild it could not know about (#4018). \
-         Captured logs:\n{out}"
+        "the call-site announcement is gone: it claimed a full op-log rebuild it \
+         could not know about (#4018). Captured logs:\n{out}"
     );
     assert!(
         !out.contains("apply cursor is ahead of the Loro snapshot watermark"),
-        "and the heal's own line stays at debug for the routine one-op rewind. \
-         Captured logs:\n{out}"
+        "and the heal has nothing to rewind. Captured logs:\n{out}"
     );
 
-    let healed_to: i64 = sqlx::query_scalar::<_, i64>(
+    let cursor_after: i64 = sqlx::query_scalar::<_, i64>(
         "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(
-        healed_to >= cursor - 1,
-        "the rewind must still have happened and replay must have caught the cursor \
-         back up; cursor was {cursor}, is now {healed_to}"
+    assert_eq!(
+        cursor_after, cursor,
+        "the cursor stays where the pass put it"
     );
 }
 

@@ -89,7 +89,13 @@ export const Image = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: 'img[src]' }]
+    return [
+      {
+        tag: 'img[src]',
+        // An HTML paste reads `<img>` here, not through the input rule below.
+        getAttrs: (el) => (isValidImageSrc(el.getAttribute('src') ?? '') ? null : false),
+      },
+    ]
   },
 
   renderHTML({ HTMLAttributes }) {

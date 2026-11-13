@@ -48,6 +48,10 @@ pub mod snapshot;
 #[cfg(test)]
 mod tests;
 
+// What each way of making engine state durable costs (#6521); `#[ignore]`d.
+#[cfg(test)]
+mod durability_cost_tests;
+
 // Randomised LoroEngine regression streams. Assert direct convergence
 // invariants (single-author replay, two-device snapshot exchange) on
 // bare `LoroEngine` instances.
