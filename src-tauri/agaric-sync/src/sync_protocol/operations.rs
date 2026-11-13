@@ -529,6 +529,50 @@ pub fn check_reset_required(
     Ok(false)
 }
 
+/// Whether the peer advertised, for some space, state we do not hold and have
+/// not already answered: what makes a responder pull back (#6551).
+///
+/// `answered` is what this peer advertised at its last completed session with
+/// us (`peer_refs.loro_vv_bytes`). A space whose advertisement has not moved
+/// since then is skipped: we were shown it once, and the pull it prompted either
+/// closed the gap or could not (a blob parked on a missing dependency, a reset),
+/// in which case pulling again on every session would bounce the two devices
+/// off each other. The periodic pull retries that gap at its own pace.
+pub fn peer_advertises_news(
+    local_loro_vvs: &[SpaceVersionVector],
+    peer_loro_vvs: &[SpaceVersionVector],
+    answered: &[SpaceVersionVector],
+) -> Result<bool, AppError> {
+    let decode = |svv: &SpaceVersionVector| {
+        loro::VersionVector::decode(&svv.vv).map_err(|e| {
+            AppError::validation(format!(
+                "peer_advertises_news: decode loro_vv for space {}: {e}",
+                svv.space_id.as_str()
+            ))
+        })
+    };
+    for peer_svv in peer_loro_vvs {
+        if answered.contains(peer_svv) {
+            continue;
+        }
+        let peer_vv = decode(peer_svv)?;
+        let local_vv = match local_loro_vvs
+            .iter()
+            .find(|local| local.space_id == peer_svv.space_id)
+        {
+            Some(local) => decode(local)?,
+            None => loro::VersionVector::default(),
+        };
+        let ahead = peer_vv
+            .iter()
+            .any(|(peer, counter)| *counter > local_vv.get(peer).copied().unwrap_or(0));
+        if ahead {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// #2481 phase 1 — collect the op records to replicate to a peer as
 /// append-only **audit metadata** (`SyncMessage::OpLogBatch`).
 ///

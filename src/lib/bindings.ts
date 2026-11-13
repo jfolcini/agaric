@@ -604,9 +604,12 @@ export const commands = {
 	cancelPairing: () => typedError<null, AppError>(__TAURI_INVOKE("cancel_pairing")),
 	/**
 	 *  Tauri command: start sync with a remote peer.
-	 *  Checks backoff (#278), acquires the per-peer lock, and returns session info.
+	 * 
+	 *  `user_initiated` is `true` for a press on Sync, which dials a peer in
+	 *  backoff at once; a scheduled call passes `false` and gets state `"backoff"`
+	 *  for such a peer.
 	 */
-	startSync: (peerId: string, progress: Channel<SyncProgressUpdate>) => typedError<SyncSessionInfo, AppError>(__TAURI_INVOKE("start_sync", { peerId, progress })),
+	startSync: (peerId: string, userInitiated: boolean, progress: Channel<SyncProgressUpdate>) => typedError<SyncSessionInfo, AppError>(__TAURI_INVOKE("start_sync", { peerId, userInitiated, progress })),
 	/**  Tauri command: cancel an active sync session. */
 	cancelSync: () => typedError<null, AppError>(__TAURI_INVOKE("cancel_sync")),
 	/**

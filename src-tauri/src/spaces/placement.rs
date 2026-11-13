@@ -153,7 +153,7 @@ impl SpacePlacementSink {
         let device_id = self.device_id.clone();
         let materializer = self.materializer.clone();
         let view = self.view.clone();
-        tokio::spawn(async move {
+        tokio::spawn(crate::db::following_a_sync(async move {
             save_engines_after_session(&pool, &materializer).await;
             let placed =
                 match place_space_less_blocks(&pool, &read_pool, &device_id, &materializer).await {
@@ -197,7 +197,7 @@ impl SpacePlacementSink {
             if !repaired.renamed.is_empty() {
                 view.emit_pages_renamed(repaired.renamed);
             }
-        })
+        }))
     }
 }
 

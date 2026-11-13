@@ -347,11 +347,16 @@ pub async fn cancel_pairing_inner(
 
 /// Start a sync session with a remote peer.
 ///
-/// Checks the backoff schedule, probes the daemon's per-peer lock, and wakes
-/// the SyncDaemon to sync now. Actual network sync happens in the daemon; this
-/// returns immediately with a "queued" status, because no session has run yet.
-/// The session's outcome arrives later as the terminal update on the progress
-/// channel `start_sync` registered.
+/// Probes the daemon's per-peer lock and wakes the SyncDaemon to sync now.
+/// Actual network sync happens in the daemon; this returns immediately with a
+/// "queued" status, because no session has run yet. The session's outcome
+/// arrives later as the terminal update on the progress channel `start_sync`
+/// registered.
+///
+/// A peer in backoff is dialled only when `user_initiated`: a press clears the
+/// backoff, so it reports that dial's result (#6523). A scheduled call leaves
+/// the backoff alone and returns "backoff", which is the peer waiting, not a
+/// failure.
 ///
 /// It takes a pool because the daemon keys its per-peer lock on the peer's
 /// bound `endpoint_id`, which only `peer_refs` knows; the key comes from
@@ -363,13 +368,21 @@ pub async fn start_sync_inner(
     scheduler: &SyncScheduler,
     device_id: &str,
     peer_id: String,
+    user_initiated: bool,
 ) -> Result<SyncSessionInfo, AppError> {
+    let info = |state: &str, peer_id: String| SyncSessionInfo {
+        state: state.into(),
+        local_device_id: device_id.to_string(),
+        remote_device_id: peer_id,
+        ops_received: 0,
+        ops_sent: 0,
+    };
     // Backoff, events and `peer_refs` are device-keyed; only the lock is keyed
     // on the endpoint id.
-    if !scheduler.may_retry(&peer_id) {
-        return Err(AppError::InvalidOperation(
-            "Peer is in backoff, try again later".into(),
-        ));
+    if user_initiated {
+        scheduler.clear_peer_backoff(&peer_id);
+    } else if !scheduler.may_retry(&peer_id) {
+        return Ok(info("backoff", peer_id));
     }
 
     // A probe, not an exclusion lock: it turns "the daemon is mid-session with
@@ -397,13 +410,7 @@ pub async fn start_sync_inner(
     // would wipe the peer's backoff. The daemon's success path credits it.
     scheduler.notify_change();
 
-    Ok(SyncSessionInfo {
-        state: "queued".into(),
-        local_device_id: device_id.to_string(),
-        remote_device_id: peer_id,
-        ops_received: 0,
-        ops_sent: 0,
-    })
+    Ok(info("queued", peer_id))
 }
 
 /// Cancel an active sync session.
@@ -545,12 +552,16 @@ pub async fn cancel_pairing(
 }
 
 /// Tauri command: start sync with a remote peer.
-/// Checks backoff (#278), acquires the per-peer lock, and returns session info.
+///
+/// `user_initiated` is `true` for a press on Sync, which dials a peer in
+/// backoff at once; a scheduled call passes `false` and gets state `"backoff"`
+/// for such a peer.
 #[tauri::command]
 #[specta::specta]
 pub async fn start_sync(
     app: tauri::AppHandle,
     peer_id: String,
+    user_initiated: bool,
     pool: State<'_, ReadPool>,
     device_id: State<'_, DeviceId>,
     scheduler: State<'_, Arc<SyncScheduler>>,
@@ -573,8 +584,14 @@ pub async fn start_sync(
     // #3550: the read pool is here so the busy probe can resolve the peer's bound
     // `endpoint_id` and take the S-5 key the daemon actually locks under. Read
     // rather than write — this only ever `SELECT`s a `peer_refs` row.
-    start_sync_inner(&pool.0, &scheduler, device_id.as_str(), peer_id)
-        .await
+    start_sync_inner(
+        &pool.0,
+        &scheduler,
+        device_id.as_str(),
+        peer_id,
+        user_initiated,
+    )
+    .await
         .map_err(sanitize_internal_error)
 }
 

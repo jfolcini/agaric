@@ -124,12 +124,20 @@ pub struct SyncScheduler {
     /// completion for. Changes above it are still owed a sync round.
     debounced_through: AtomicU64,
 
-    /// The debounce window is measured from here, not from the call: a `sleep`
-    /// owned by a dropped future starts over, scheduler state does not.
-    last_change_at: std::sync::Mutex<tokio::time::Instant>,
+    /// When the debounce window closes. Scheduler state rather than a `sleep`,
+    /// because a `sleep` owned by a dropped future starts over.
+    quiet_at: std::sync::Mutex<tokio::time::Instant>,
 
-    /// Debounce window for change-triggered sync.
+    /// The [`Self::change_count`] of the latest [`Self::notify_change`]. While
+    /// it is ahead of `debounced_through` a prompt round is owed, and a local
+    /// edit must not push that round out to its own longer window.
+    prompt_through: AtomicU64,
+
+    /// Debounce window for a requested round: "Sync now", pairing, a pull-back.
     pub debounce_window: Duration,
+
+    /// Debounce window for a round a local edit asks for.
+    pub local_edit_debounce: Duration,
 
     /// Interval for periodic resync.
     pub resync_interval: Duration,
@@ -609,6 +617,10 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// exactly what this code did before #4231.
 const MAX_BACKOFF_PEERS: usize = 64;
 const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(250);
+/// Longer than the editor's idle commit, so the commits of someone typing keep
+/// extending one window and a pause sends one round; short enough that the other
+/// device shows the edit while the user is still looking (#6551).
+const LOCAL_EDIT_DEBOUNCE: Duration = Duration::from_secs(2);
 const DEFAULT_RESYNC: Duration = Duration::from_secs(60);
 
 impl SyncScheduler {
@@ -621,8 +633,10 @@ impl SyncScheduler {
             active_sessions: AtomicUsize::new(0),
             change_count: watch::Sender::new(0),
             debounced_through: AtomicU64::new(0),
-            last_change_at: std::sync::Mutex::new(tokio::time::Instant::now()),
+            quiet_at: std::sync::Mutex::new(tokio::time::Instant::now()),
+            prompt_through: AtomicU64::new(0),
             debounce_window: DEFAULT_DEBOUNCE,
+            local_edit_debounce: LOCAL_EDIT_DEBOUNCE,
             resync_interval: DEFAULT_RESYNC,
             connect_timeout: crate::sync_constants::CONNECT_TIMEOUT,
             local_endpoint: watch::Sender::new(None),
@@ -1022,11 +1036,18 @@ impl SyncScheduler {
 
     /// Record a successful sync, resetting the backoff for `peer_id`.
     pub fn record_success(&self, peer_id: &str) {
-        let mut backoff = self
-            .backoff
+        self.clear_peer_backoff(peer_id);
+    }
+
+    /// Forget `peer_id`'s backoff and what was reported in its streak, for a
+    /// press on Sync: the user asked, so the dial runs now and its failure is
+    /// reported even when it repeats an earlier one (#6523). Only a press may
+    /// call this; a timer or an edit that did would dial an away peer forever.
+    pub fn clear_peer_backoff(&self, peer_id: &str) {
+        self.backoff
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        backoff.remove(peer_id);
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(peer_id);
     }
 
     /// Return the current consecutive failure count for a peer (0 if none).
@@ -1070,14 +1091,38 @@ impl SyncScheduler {
 
     // -- Change-triggered debounce (#384) ------------------------------------
 
-    /// Ask for a sync round: "Sync now" and the two pairing commands call
-    /// this.
+    /// Ask for a sync round now: "Sync now", the two pairing commands, and a
+    /// responder that served a peer holding something it lacks.
     pub fn notify_change(&self) {
-        // Stamp before counting, so a waiter that sees the count sees the stamp.
-        *self
-            .last_change_at
+        // The window moves before the count, under one lock, so a waiter that
+        // sees the count sees the window.
+        let mut quiet_at = self
+            .quiet_at
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = tokio::time::Instant::now();
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *quiet_at = tokio::time::Instant::now() + self.debounce_window;
+        self.change_count.send_modify(|count| {
+            *count += 1;
+            self.prompt_through.store(*count, Ordering::Release);
+        });
+    }
+
+    /// Ask for a sync round because a local edit committed (#6551).
+    ///
+    /// The round waits out [`Self::local_edit_debounce`] of quiet, so a burst
+    /// of commits is one round. A session is a pull, so this round delivers
+    /// nothing by itself: it shows the peer our version vectors, and the peer
+    /// pulls back (`SyncOrchestrator::peer_holds_news`).
+    pub fn notify_local_edit(&self) {
+        let mut quiet_at = self
+            .quiet_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let prompt_round_owed = self.prompt_through.load(Ordering::Acquire)
+            > self.debounced_through.load(Ordering::Acquire);
+        if !prompt_round_owed {
+            *quiet_at = tokio::time::Instant::now() + self.local_edit_debounce;
+        }
         self.change_count.send_modify(|count| *count += 1);
     }
 
@@ -1187,8 +1232,8 @@ impl SyncScheduler {
         count
     }
 
-    /// Wait for a debounced change signal.  Returns after `debounce_window`
-    /// of inactivity following at least one `notify_change()` call.
+    /// Wait for a debounced change signal. Returns once the window of the
+    /// latest [`Self::notify_change`] or [`Self::notify_local_edit`] closes.
     ///
     /// Cancelling this future — which `daemon_loop` does on every round a
     /// sibling `select!` arm wins, including Branch C's first resync tick at
@@ -1211,13 +1256,12 @@ impl SyncScheduler {
         // Keep waiting while changes keep arriving within the window.
         loop {
             let quiet_at = *self
-                .last_change_at
+                .quiet_at
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                + self.debounce_window;
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             tokio::select! {
                 _ = changes.changed() => {
-                    // Another change arrived; its stamp moves `quiet_at`.
+                    // Another change arrived, and may have moved `quiet_at`.
                     count = *changes.borrow_and_update();
                 }
                 () = tokio::time::sleep_until(quiet_at) => {

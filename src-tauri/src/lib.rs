@@ -2968,6 +2968,12 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // Create scheduler wrapped in Arc for sharing with the SyncDaemon
     let scheduler = std::sync::Arc::new(agaric_sync::sync_scheduler::SyncScheduler::new());
+    // #6551: a local edit asks for a sync round, so it reaches the other
+    // device without waiting for the periodic one.
+    materializer.on_local_commit({
+        let scheduler = std::sync::Arc::clone(&scheduler);
+        move || scheduler.notify_local_edit()
+    });
 
     // #1058: gather the cheap `Arc` clones each downstream consumer
     // needs BEFORE the originals are moved into managed state by

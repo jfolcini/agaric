@@ -108,6 +108,21 @@ pub(crate) struct SpaceGuard {
 }
 
 tokio::task_local! {
+    static FOLLOWS_A_SYNC: ();
+}
+
+/// Run `work`, the placement and repairs that follow an inbound sync session,
+/// with its commits not counted as local edits.
+///
+/// A local edit asks the sync scheduler for a round (#6551). Work a session
+/// itself set off must not: if a repair on one device ever undid the other's,
+/// each round would start the next and the pair would never go quiet. What it
+/// writes still reaches the peer on the next pull.
+pub(crate) async fn following_a_sync<F: std::future::Future>(work: F) -> F::Output {
+    FOLLOWS_A_SYNC.scope((), work).await
+}
+
+tokio::task_local! {
     /// Set by the MCP layer's `with_space_guard`; read by [`check_space_guard`].
     pub(crate) static SPACE_GUARD: SpaceGuard;
 }
@@ -483,6 +498,10 @@ impl CommandTx {
     /// command back. When the queued ops remove an alias or purge a block, it
     /// also hands each alias no row holds to its next claimant (#6229).
     ///
+    /// A commit that wrote ops is a local edit, and runs the materializer's
+    /// [`on_local_commit`](crate::materializer::Materializer::on_local_commit)
+    /// hook, unless it runs inside [`following_a_sync`].
+    ///
     /// Returns the number of dispatches that fired. Dispatch failures
     /// are logged at warn level and do not surface here.
     pub async fn commit_and_dispatch(
@@ -518,6 +537,10 @@ impl CommandTx {
         self.committed = true;
         let drained = std::mem::take(&mut self.pending);
         let count = drained.len();
+        let wrote_ops = count > 0 || !self.undispatched.is_empty();
+        if wrote_ops && FOLLOWS_A_SYNC.try_with(|()| ()).is_err() {
+            materializer.note_local_commit();
+        }
         for entry in drained {
             match entry {
                 PendingDispatch::Background(record) => {

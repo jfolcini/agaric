@@ -242,11 +242,12 @@ export const sync: Record<string, string> = {
   'sync.versionMismatchUpdateThisDeviceUnnamed':
     'The other device runs a newer version of Agaric. Update Agaric on this device, then sync again.',
   // #6523 — a peer that synced before ended the session without answering;
-  // an older build ends a version mismatch that way.
+  // an older build ends a version mismatch that way, and so does a peer on the
+  // same version that drops out, so the sentence only suggests the check.
   'sync.handshakeUnanswered':
-    'Sync with {{peer}} could not start. Check that both devices run the same version of Agaric.',
+    'Sync with {{peer}} could not start. If this repeats, check that both devices run the same version of Agaric.',
   'sync.handshakeUnansweredUnnamed':
-    'Sync could not start. Check that both devices run the same version of Agaric.',
+    'Sync could not start. If this repeats, check that both devices run the same version of Agaric.',
   // #6523 — a paired device that is away: no announcement, no answer.
   'sync.waitingForPeer': 'Waiting for {{peer}}, last synced {{time}}',
   'sync.waitingForPeerNeverSynced': 'Waiting for {{peer}}',
