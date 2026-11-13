@@ -78,7 +78,11 @@ export interface PageSaveApi {
   create: (id: string, parentId: string, index: number, markdown: string) => Promise<OpRef[]>
   restore: (id: string, deletedAt: number) => Promise<OpRef[]>
   move: (id: string, parentId: string, index: number) => Promise<OpRef[]>
-  edit: (id: string, markdown: string) => Promise<OpRef[]>
+  /**
+   * `base` is the text page mode last knew the block held: when the backend
+   * holds another by then, it replays the change on that one (#6533).
+   */
+  edit: (id: string, markdown: string, base?: string) => Promise<OpRef[]>
   remove: (id: string) => Promise<{ deletedAt: number; refs: OpRef[] }>
   /** The page's live blocks, read again after a restore. */
   tree: () => Promise<TreeRow[]>
@@ -447,7 +451,7 @@ async function run(op: SaveOp, state: PageSaveState, api: PageSaveApi): Promise<
       return refs
     }
     case 'edit': {
-      const refs = await api.edit(op.id, op.markdown)
+      const refs = await api.edit(op.id, op.markdown, state.saved.get(op.id)?.markdown)
       state.saved.set(op.id, { node: op.node, markdown: op.markdown })
       return refs
     }
