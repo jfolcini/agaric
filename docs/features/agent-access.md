@@ -37,7 +37,7 @@ Settings → Agent access makes that entry for you: add an agent, then use its r
 
 Each agent has:
 
-- **A name**, which its edits carry as their origin (`agent:<name>`): the activity feed and the `page_history` / `block_history` tools show it, the History view does not. What the client calls itself is not used.
+- **A name**, which its edits carry as their origin (`agent:<name>`): the activity feed, the History view and the `page_history` / `block_history` tools show it. What the client calls itself is not used.
 - **Read-only or read-write.** A read-only agent gets only the read tools; a write tool is an unknown tool to it.
 - **Spaces**: every space, including ones created later, or a list. The agent sees and uses only those (see [Space scoping](#space-scoping)).
 - **A token** (`agt_` and 32 hex digits) that works only against this device's socket. Agents are not synced.
@@ -181,5 +181,5 @@ On **Android** the custom scheme isn't available, so the same three routes are s
 - **An agent's spaces are a guard against mistakes, not isolation.** A link or a move can show it a title or an id from another space; see [What a limited agent can still see](#what-a-limited-agent-can-still-see).
 - **Reverting a session is coarse, and bounded by the feed.** It reverts every agent op still in the 100-entry activity window — not a surgical subset, and not ops that have already scrolled out. Use the History view for either of those.
 - **Reverting a session can be too large to run.** It sends every op of every action in one revert, which is capped at `MAX_REVERT_OPS` (`src-tauri/src/commands/history.rs`), so a session holding large `append_markdown` calls can exceed it. Undo those entries one by one instead.
-- **The activity feed is bounded and in-memory.** It holds 100 entries and doesn't survive a restart. For a long-term record, the History view is the source of truth — though it doesn't distinguish agent ops from your own, so match them up by time. An agent's `page_history` / `block_history` does show each op's origin.
+- **The activity feed is bounded and in-memory.** It holds 100 entries and doesn't survive a restart. For a long-term record, the History view is the source of truth; it badges each agent op with the agent's name.
 - **Quick Capture goes to the active space.** If you switch spaces and capture, it lands in the new space.

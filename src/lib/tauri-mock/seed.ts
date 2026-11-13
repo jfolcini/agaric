@@ -177,6 +177,8 @@ export interface MockOpLogEntry {
    * filter got backwards.
    */
   is_undo: boolean
+  /** `op_log.origin` (migration 0033); absent is the column default, `'user'`. */
+  origin?: string
 }
 
 export const opLog: MockOpLogEntry[] = []
