@@ -21,7 +21,12 @@ import {
   treeRows,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
-import { createSaveState, type PageSaveState, savePage } from '@/editor/page-mode/page-save'
+import {
+  createSaveState,
+  type PageSaveState,
+  type SaveResult,
+  savePage,
+} from '@/editor/page-mode/page-save'
 
 vi.mock('@/editor/content-delta', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/editor/content-delta')>()
@@ -671,5 +676,171 @@ describe('structure', () => {
       [B, 0, 'bar'],
       [C, 1, 'child'],
     ])
+  })
+})
+
+describe('batches', () => {
+  /** What a save left: the state, less the nodes, and its result. */
+  function outcome(state: PageSaveState, result: SaveResult) {
+    return {
+      saved: [...state.saved].map(([id, saved]) => [id, saved.markdown]),
+      children: [...state.tree.children].filter(([, ids]) => ids.length > 0),
+      parentOf: [...state.tree.parentOf],
+      deleted: [...state.deletedAt.keys()],
+      writes: state.writes,
+      refs: result.refs,
+      structural: result.structural,
+      edited: [...result.edited],
+      error: result.error,
+    }
+  }
+
+  /** The same edit on two copies of `rows`: one saved in batches, one a write at a time. */
+  async function bothWays(rows: Row[], edit: (ed: Editor) => void) {
+    const batched = open(rows)
+    const single = open(rows)
+    single.backend.createBatch = () => Promise.reject(new Error('no batch here'))
+    single.backend.removeBatch = () => Promise.reject(new Error('no batch here'))
+    edit(batched.ed)
+    edit(single.ed)
+    const results = [
+      await savePage(batched.ed.state.doc, batched.state, batched.backend),
+      await savePage(single.ed.state.doc, single.state, single.backend),
+    ] as const
+    editor = null
+    batched.ed.destroy()
+    single.ed.destroy()
+    return { batched, single, results }
+  }
+
+  it('sends the creates of a save as one batch, a child under a block it creates too, and leaves the state the creates one at a time leave', async () => {
+    const { batched, single, results } = await bothWays([[A, 0, 'foo']], (ed) => {
+      caret(ed, 0, 3)
+      press(ed, 'Enter')
+      type(ed, 'parent')
+      press(ed, 'Enter')
+      type(ed, 'child')
+      press(ed, 'Tab')
+      press(ed, 'Enter')
+      press(ed, 'Tab', { shiftKey: true })
+      type(ed, 'next')
+    })
+
+    expect(batched.backend.batches).toEqual([`create ${NEW_1} ${NEW_2} ${NEW_3}`])
+    expect(batched.backend.live()).toEqual([
+      [A, 0, 'foo'],
+      [NEW_1, 0, 'parent'],
+      [NEW_2, 1, 'child'],
+      [NEW_3, 0, 'next'],
+    ])
+    expect(single.backend.live()).toEqual(batched.backend.live())
+    expect(outcome(batched.state, results[0])).toEqual(outcome(single.state, results[1]))
+    expect(batched.state.writes).toBe(3)
+  })
+
+  it('sends the deletes of a save as one batch, with one `deleted_at` an undo restores each by', async () => {
+    const rows: Row[] = [
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+      [C, 1, 'c'],
+      [D, 0, 'd'],
+    ]
+    const { batched, single, results } = await bothWays(rows, (ed) => {
+      ed.view.dispatch(ed.state.tr.delete(posIn(ed, 1, 0) - 2, ed.state.doc.content.size))
+    })
+
+    expect(batched.backend.batches).toEqual([`delete ${B} ${D}`])
+    expect(batched.backend.live()).toEqual([[A, 0, 'a']])
+    expect(outcome(batched.state, results[0])).toEqual(outcome(single.state, results[1]))
+    const [deletedAt] = batched.state.deletedAt.values()
+    expect([...batched.state.deletedAt]).toEqual([
+      [B, deletedAt],
+      [C, deletedAt],
+      [D, deletedAt],
+    ])
+  })
+
+  it('restores each block of a batch delete by its id when an undo brings them back', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+      [C, 1, 'c'],
+      [D, 0, 'd'],
+    ])
+    ed.view.dispatch(ed.state.tr.delete(posIn(ed, 1, 0) - 2, ed.state.doc.content.size))
+    await save()
+    backend.reset()
+
+    ed.commands.undo()
+    expect(await save()).toBeUndefined()
+
+    expect(backend.calls).toEqual([`restore ${B}`, 'tree', `restore ${D}`, 'tree'])
+    expect(backend.live()).toEqual([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+      [C, 1, 'c'],
+      [D, 0, 'd'],
+    ])
+  })
+
+  it('sends a refused create batch a write at a time, which holds back only the create refused', async () => {
+    const { ed, backend, save } = open([[A, 0, 'foo']])
+    caret(ed, 0, 3)
+    press(ed, 'Enter')
+    type(ed, 'one')
+    press(ed, 'Enter')
+    type(ed, 'REFUSED')
+    press(ed, 'Enter')
+    type(ed, 'three')
+    backend.failing = (kind, id) => kind === 'create' && id === NEW_2
+
+    const error = await save()
+
+    expect(error).toEqual(new Error(`refused: create ${NEW_2}`))
+    expect(backend.batches).toEqual([`create ${NEW_1} ${NEW_2} ${NEW_3}`])
+    expect(backend.calls).toEqual([`create ${NEW_1}`, `create ${NEW_2}`, `create ${NEW_3}`])
+    expect(backend.live()).toEqual([
+      [A, 0, 'foo'],
+      [NEW_1, 0, 'one'],
+      [NEW_3, 0, 'three'],
+    ])
+  })
+
+  it('sends a refused delete batch a write at a time, which keeps only the block refused', async () => {
+    const { ed, backend, state, save } = open([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+      [C, 0, 'c'],
+      [D, 0, 'd'],
+    ])
+    ed.view.dispatch(ed.state.tr.delete(posIn(ed, 1, 0) - 2, ed.state.doc.content.size))
+    backend.failing = (kind, id) => kind === 'delete' && id === C
+
+    const error = await save()
+
+    expect(error).toEqual(new Error(`refused: delete ${C}`))
+    expect(backend.batches).toEqual([`delete ${B} ${C} ${D}`])
+    expect(backend.calls).toEqual([`delete ${B}`, `delete ${C}`, `delete ${D}`])
+    expect(backend.live()).toEqual([
+      [A, 0, 'a'],
+      [C, 0, 'c'],
+    ])
+    expect([...state.saved.keys()]).toEqual([A, C])
+  })
+
+  it('sends a lone create or delete by its own command', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 'foo'],
+      [B, 0, 'bar'],
+    ])
+    caret(ed, 0, 3)
+    press(ed, 'Enter')
+    type(ed, 'new')
+    await save()
+    ed.view.dispatch(ed.state.tr.delete(posIn(ed, 2, 0) - 2, ed.state.doc.content.size))
+    await save()
+
+    expect(backend.batches).toEqual([])
+    expect(backend.calls).toEqual([`create ${NEW_1}`, `delete ${B}`])
   })
 })

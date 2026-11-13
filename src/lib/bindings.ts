@@ -71,9 +71,10 @@ export const commands = {
 	 *  one writer-lock window. Returns a [`BatchDeleteResponse`]: the number of
 	 *  blocks soft-deleted (roots + descendants combined) plus the page ids inside
 	 *  that cascade (#4480 — the frontend cannot see the cascade, so it cannot
-	 *  evict the nested pages the cascade swept out of the `[[` picker's cache).
+	 *  evict the nested pages the cascade swept out of the `[[` picker's cache),
+	 *  and the op refs, one per root in the order given, for the undo stack.
 	 */
-	deleteBlocksByIds: (blockIds: BlockId[]) => typedError<BatchDeleteResponse, AppError>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
+	deleteBlocksByIds: (blockIds: BlockId[]) => typedError<WithOps<BatchDeleteResponse>, AppError>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
 	/**
 	 *  Tauri command: move N blocks to a target space (#81).
 	 *  Delegates to [`move_blocks_to_space_inner`]. Returns the number of
@@ -1860,6 +1861,12 @@ export type BatchDeleteResponse = {
 	 *  its own input list; `handleTrash` does exactly that.
 	 */
 	affected_page_ids: string[],
+	/**
+	 *  The `deleted_at` every root and descendant was stamped with, which
+	 *  `restore_block` takes to bring back one root's cohort; `None` when no
+	 *  id was live to delete.
+	 */
+	deleted_at: number | null,
 };
 
 /**
@@ -1879,7 +1886,7 @@ export type BatchDeleteResponse = {
  *  nothing to warn about.
  */
 export type BindExposureStatus = {
-	/**  `Some` once the daemon has bound a globally-routable address. */
+	/**  `Some` while the current endpoint is bound to a globally-routable address. */
 	internet_facing: InternetFacingBind | null,
 };
 
@@ -2103,6 +2110,12 @@ export type CreateBlockSpec = {
 	 *  batch runs. Exclusive with `parent_id`.
 	 */
 	parentIndex?: number | null,
+	/**
+	 *  A client-generated id for the block, refused as [`create_block`]'s is
+	 *  when malformed or already held: page mode creates blocks under the ids
+	 *  its document gave them. `None` mints a server id.
+	 */
+	blockId?: BlockId | null,
 	/**
 	 *  Optional 1-based sibling position (stable wire field). `None` appends
 	 *  after the last sibling. #400: converted to the engine's 0-based sibling
@@ -3069,7 +3082,7 @@ export type McpStatus = {
  *  initialize it yet (e.g. still dormant, waiting for the first pairing).
  */
 export type MdnsStatus = {
-	/**  `true` once mDNS initialization has failed at least once. */
+	/**  `true` when mDNS failed to attach to the current endpoint. */
 	disabled: boolean,
 	/**
 	 *  The failure reason from the most recent init attempt (the same
@@ -5207,6 +5220,12 @@ address: string;
 /**  The UDP port the listener is bound to. */
 port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
+ *  The daemon is about to bind a sync endpoint, so what it reported about the
+ *  previous one ([`Self::MdnsDisabled`], [`Self::InternetFacingBind`]) no longer
+ *  holds. Those that still apply are emitted again once the new endpoint is up.
+ */
+({ type: "endpoint_binding" }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+/**
  *  #3852: the operating system says it is blocking (or has stopped
  *  blocking) **this application's** network traffic.
  * 
@@ -5352,6 +5371,12 @@ peer_is_older?: boolean | null }) & { address?: never; blocked?: never; bytes_do
 address: string; 
 /**  The UDP port the listener is bound to. */
 port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+/**
+ *  The daemon is about to bind a sync endpoint, so what it reported about the
+ *  previous one ([`Self::MdnsDisabled`], [`Self::InternetFacingBind`]) no longer
+ *  holds. Those that still apply are emitted again once the new endpoint is up.
+ */
+({ type: "endpoint_binding" }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
  *  #3852: the operating system says it is blocking (or has stopped
  *  blocking) **this application's** network traffic.

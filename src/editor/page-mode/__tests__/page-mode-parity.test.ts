@@ -139,6 +139,23 @@ const api: PageSaveApi = {
     }
     return { deletedAt: deleted.deleted_at, refs: deleted.op_refs }
   },
+  createBatch: async (creates) =>
+    refsOf('create_blocks_batch', {
+      specs: creates.map(({ id, parentId, index, markdown }) => ({
+        blockType: 'content',
+        content: markdown,
+        parentId,
+        blockId: id,
+        position: index + 1,
+      })),
+    }),
+  removeBatch: async (ids) => {
+    const deleted = dispatch('delete_blocks_by_ids', { blockIds: ids }) as {
+      deleted_at: number
+      op_refs: OpRef[]
+    }
+    return { deletedAt: deleted.deleted_at, refs: deleted.op_refs }
+  },
   tree: () => Promise.reject(new Error('no restore in these edits')),
 }
 

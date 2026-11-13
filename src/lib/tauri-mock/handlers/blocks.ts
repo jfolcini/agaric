@@ -1319,10 +1319,24 @@ export const blocksHandlers = {
       throw validationRejection('specs list cannot be empty')
     }
     specs.forEach(assertBatchSpec)
+    // `resolve_block_id_in_tx`, per spec: a client id a block holds, live or
+    // not, or an earlier spec took, rolls the whole batch back.
+    const taken = new Set<string>()
+    for (const spec of specs) {
+      const clientId = (spec['blockId'] as string | null | undefined) ?? null
+      if (clientId === null) continue
+      if (blocks.has(clientId) || taken.has(clientId)) {
+        throw appErrorRejection({
+          kind: 'conflict',
+          message: `block id '${clientId}' already exists`,
+        })
+      }
+      taken.add(clientId)
+    }
     const out: Record<string, unknown>[] = []
     const opRefs: Array<{ device_id: string; seq: number }> = []
     for (const spec of specs) {
-      const id = fakeId()
+      const id = (spec['blockId'] as string | null | undefined) ?? fakeId()
       const parentId = batchParentId(spec, out)
       const specPosition = spec['position'] as number | undefined
       const blockType = spec['blockType'] as string
@@ -1684,11 +1698,17 @@ export const blocksHandlers = {
     }
     // Append one delete_block op per resolved root (NOT per descendant)
     // — mirrors the backend's op_log shape.
-    for (const root of liveRoots) {
-      pushOp('delete_block', { block_id: root })
+    const opRefs = liveRoots.map((root) => {
+      const { device_id, seq } = pushOp('delete_block', { block_id: root })
+      return { device_id, seq }
+    })
+    // #4480 — `WithOps<BatchDeleteResponse>`, not a bare count.
+    return {
+      deleted_count: count,
+      affected_page_ids: affectedPageIds,
+      deleted_at: liveRoots.length === 0 ? null : now,
+      op_refs: opRefs,
     }
-    // #4480 — `BatchDeleteResponse`, not a bare count.
-    return { deleted_count: count, affected_page_ids: affectedPageIds }
   },
 
   // #1775 — single-op cohort restore, mirroring the backend's

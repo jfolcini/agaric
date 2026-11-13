@@ -467,14 +467,14 @@ export function expandOpArgs(
   // and every batch op silently degenerates into a no-op that still "passes"
   // its own guards.
   // #5057 — `create_blocks_batch` carries its labels inside a list of SPECS
-  // rather than a list of ids, so `parentId` there expands exactly as the
-  // scalar key of the same name does.
+  // rather than a list of ids, so `parentId` and `blockId` there expand exactly
+  // as the scalar keys of the same names do.
   if (Array.isArray(out['specs'])) {
     out['specs'] = out['specs'].map((spec) => {
       if (spec == null || typeof spec !== 'object') return spec
       const copy = { ...(spec as Record<string, unknown>) }
-      if (typeof copy['parentId'] === 'string') {
-        copy['parentId'] = resolveOpArgId(copy['parentId'], createdIds)
+      for (const key of ['parentId', 'blockId']) {
+        if (typeof copy[key] === 'string') copy[key] = resolveOpArgId(copy[key], createdIds)
       }
       return copy
     })

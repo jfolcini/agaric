@@ -192,7 +192,7 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     (
         "delete_blocks_by_ids",
         HEADED_ID_KEY,
-        &["deleted_count"],
+        &["deleted_at", "deleted_count"],
         &["affected_page_ids"],
     ),
     (
@@ -470,8 +470,8 @@ pub(super) async fn apply_op_via_command(
     // takes, each expanded through `resolve_op_arg_id`, so a fixture names
     // seed rows and op-created blocks in a batch exactly as it does singly.
     // `create_blocks_batch` is the one batch command whose list is not ids but
-    // SPECS. Only `parentId` inside a spec is a label — everything else is the
-    // caller's own text or value, as for the scalar args above.
+    // SPECS. Only `parentId` and `blockId` inside a spec are labels — everything
+    // else is the caller's own text or value, as for the scalar args above.
     let block_specs = || {
         arg("specs")
             .and_then(Value::as_array)
@@ -490,6 +490,9 @@ pub(super) async fn apply_op_via_command(
                 parent_index: spec["parentIndex"]
                     .as_u64()
                     .map(|i| u32::try_from(i).expect("spec parentIndex fits u32")),
+                block_id: spec["blockId"]
+                    .as_str()
+                    .map(|l| BlockId::from(resolve_op_arg_id(l, created_ids).as_str())),
                 typed_properties: spec["typedProperties"]
                     .as_object()
                     .map(|map| {

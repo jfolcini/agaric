@@ -483,6 +483,8 @@ const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
   delete_blocks_by_ids: (args) => ({
     deleted_count: (args['blockIds'] as string[] | undefined)?.length ?? 0,
     affected_page_ids: [],
+    deleted_at: 1,
+    op_refs: [],
   }),
   delete_draft: () => null,
   move_block: (args) =>
@@ -6837,7 +6839,14 @@ describe('BlockTree batch toolbar (#657)', () => {
       focusedBlockId: null,
       selectedBlockIds: ['OTHER_DAY_1', 'A', 'OTHER_DAY_2', 'B'],
     })
-    stubBlockTree({ delete_blocks_by_ids: () => ({ deleted_count: 2, affected_page_ids: [] }) })
+    stubBlockTree({
+      delete_blocks_by_ids: () => ({
+        deleted_count: 2,
+        affected_page_ids: [],
+        deleted_at: 1,
+        op_refs: [],
+      }),
+    })
 
     renderBlockTree()
     await screen.findByTestId('sortable-block-A')
@@ -6898,7 +6907,14 @@ describe('BlockTree batch toolbar (#657)', () => {
     })
 
     // #4480 — `BatchDeleteResponse`, not a bare count.
-    stubBlockTree({ delete_blocks_by_ids: () => ({ deleted_count: 2, affected_page_ids: [] }) })
+    stubBlockTree({
+      delete_blocks_by_ids: () => ({
+        deleted_count: 2,
+        affected_page_ids: [],
+        deleted_at: 1,
+        op_refs: [],
+      }),
+    })
 
     renderBlockTree()
     await screen.findByTestId('sortable-block-A')
