@@ -225,6 +225,26 @@ pub async fn set_sync_relay_settings_inner(
     Ok(())
 }
 
+/// Where this device's sync endpoint listens, for Settings › Sync & devices (#6526).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+pub struct LocalSyncAddress {
+    /// The bound socket, `ip:port`.
+    pub address: String,
+    /// The endpoint is on the loopback fallback: there is no local network, and
+    /// no other device can reach `address`.
+    pub loopback: bool,
+}
+
+/// The address the daemon's endpoint is bound to; `None` while it has bound none.
+#[instrument(skip(scheduler))]
+pub fn get_local_sync_address_inner(scheduler: &SyncScheduler) -> Option<LocalSyncAddress> {
+    let bound = *scheduler.local_endpoint()?.addrs.first()?;
+    Some(LocalSyncAddress {
+        address: bound.to_string(),
+        loopback: bound.ip().is_loopback(),
+    })
+}
+
 /// Return the local device's persistent UUID.
 #[instrument(skip(device_id))]
 pub fn get_device_id_inner(device_id: &DeviceId) -> String {
@@ -640,6 +660,15 @@ pub async fn get_bind_exposure_status(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     Ok(guard.clone())
+}
+
+/// Tauri command: the address this device's sync endpoint is bound to (#6526).
+#[tauri::command]
+#[specta::specta]
+pub async fn get_local_sync_address(
+    scheduler: State<'_, Arc<SyncScheduler>>,
+) -> Result<Option<LocalSyncAddress>, AppError> {
+    Ok(get_local_sync_address_inner(&scheduler))
 }
 
 /// Tauri command: read the device-local sync relay preference (#4549).

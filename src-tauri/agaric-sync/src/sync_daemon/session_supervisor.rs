@@ -253,23 +253,13 @@ struct BoundEndpoint {
     mdns_events: n0_future::boxed::BoxStream<DiscoveryEvent>,
 }
 
-/// Bind the LAN-only QUIC endpoint, start accepting on it, and attach mDNS discovery.
-async fn bring_up_endpoint(
+/// Bind the endpoint `decision` names on the port the last bind got, so a peer's cached
+/// address and a firewall rule stay good across launches (#6526); when that port cannot
+/// be had, on the one the OS picks. The port bound is stored for the next bind.
+async fn bind_keeping_port(
     ctx: &SyncDaemonContext,
-    bind_policy: &dyn BindPolicy,
-) -> Result<BoundEndpoint, AppError> {
-    // 1. Bind the LAN-only QUIC endpoint (responder mode — #615, #78).
-    //
-    // One endpoint serves both roles: it accepts here and `try_sync_with_peer` dials
-    // from it. Two endpoints would mean two identities, and `peer_refs.endpoint_id`
-    // pins exactly one.
-    let bind_decision = bind_policy.target();
-    bind_decision.log();
-    let (bind_addr, prefix_len, lan_ip) = (
-        bind_decision.bind,
-        bind_decision.prefix_len,
-        bind_decision.lan_ip,
-    );
+    decision: &BindDecision,
+) -> Result<SyncService, AppError> {
     // The addresses that decision was made from, handed to the bind's locality gate
     // rather than letting it enumerate the host a second time (#3869). The second sweep
     // could disagree with the first — an address lost to a DHCP renewal or a Wi-Fi roam
@@ -293,20 +283,68 @@ async fn bring_up_endpoint(
     // gate's short-circuit from out here, and a later widening of the gate would then be
     // handed an empty list and refuse a bind this code had already chosen. That is the
     // #3869 failure again, traded for one allocation per daemon start.
-    let host_addrs = bind_decision.host_addrs();
-    let service = Arc::new(
+    let host_addrs = decision.host_addrs();
+    let bind_port = |port: u16| {
         SyncService::bind(
-            bind_addr,
-            prefix_len,
+            std::net::SocketAddr::new(decision.bind.ip(), port),
+            decision.prefix_len,
             &host_addrs,
             DnsResolver::default(),
             ctx.endpoint_secret.clone(),
             ctx.internet_relay
                 .then(crate::transport::endpoint::internet_relay_url),
         )
+    };
+    let kept_port = peer_refs::get_sync_port(&ctx.pool)
         .await
-        .map_err(|e| AppError::InvalidOperation(format!("[sync_daemon] sync endpoint: {e}")))?,
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "could not read the kept sync port");
+            None
+        });
+    let kept = match kept_port {
+        Some(port) => bind_port(port)
+            .await
+            .inspect_err(|e| tracing::info!(port, error = %e, "the kept sync port did not bind"))
+            .ok(),
+        None => None,
+    };
+    let service = match kept {
+        Some(service) => service,
+        None => bind_port(0)
+            .await
+            .map_err(|e| AppError::InvalidOperation(format!("[sync_daemon] sync endpoint: {e}")))?,
+    };
+    let port = service
+        .addr()
+        .ip_addrs()
+        .next()
+        .map_or(0, std::net::SocketAddr::port);
+    if kept_port != Some(port)
+        && let Err(e) = peer_refs::set_sync_port(&ctx.pool, port).await
+    {
+        tracing::warn!(error = %e, port, "could not keep the sync port for the next launch");
+    }
+    Ok(service)
+}
+
+/// Bind the LAN-only QUIC endpoint, start accepting on it, and attach mDNS discovery.
+async fn bring_up_endpoint(
+    ctx: &SyncDaemonContext,
+    bind_policy: &dyn BindPolicy,
+) -> Result<BoundEndpoint, AppError> {
+    // 1. Bind the LAN-only QUIC endpoint (responder mode — #615, #78).
+    //
+    // One endpoint serves both roles: it accepts here and `try_sync_with_peer` dials
+    // from it. Two endpoints would mean two identities, and `peer_refs.endpoint_id`
+    // pins exactly one.
+    let bind_decision = bind_policy.target();
+    bind_decision.log();
+    let (bind_addr, prefix_len, lan_ip) = (
+        bind_decision.bind,
+        bind_decision.prefix_len,
+        bind_decision.lan_ip,
     );
+    let service = Arc::new(bind_keeping_port(ctx, &bind_decision).await?);
     #[cfg(test)]
     bind_policy.bound(&service);
     let endpoint_id = service.endpoint_id();
@@ -315,10 +353,9 @@ async fn bring_up_endpoint(
         .ip_addrs()
         .next()
         .map_or(0, std::net::SocketAddr::port);
-
     // 1b. Tell the user, not just the log, when that bind is internet-facing
     //     (#3864). Emitted here rather than beside the decision because the port
-    //     only exists once the endpoint is up — the bind requests port 0.
+    //     is only known once the endpoint is up.
     handle_internet_facing_bind(&bind_decision, port, &ctx.event_sink);
 
     // 1c. Publish where a peer can dial us, so the pairing QR can carry it and a

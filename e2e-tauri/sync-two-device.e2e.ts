@@ -811,6 +811,15 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
         })
     })
 
+    // #6526 — what the other device's manual address field takes. The mock has no
+    // endpoint, so only this lane can show the row.
+    it("Settings shows this device's sync address", async () => {
+      await openSyncSettings()
+      const address = await $('[data-testid="local-sync-address"]')
+      await address.waitForDisplayed({ timeout: NAV_TIMEOUT })
+      expect(await address.getText()).toMatch(/^\d+\.\d+\.\d+\.\d+:[1-9]\d*$/)
+    })
+
     // #5739 — the peer freezes, so the app's dial gets no answer. Cancel must end
     // it at once and as idle: without the cancel the dial runs out its budget into
     // an uncoded failure, which sets the state card to Error and raises a "Sync

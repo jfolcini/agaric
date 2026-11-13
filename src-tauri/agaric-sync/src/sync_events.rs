@@ -159,9 +159,7 @@ pub enum SyncEvent {
     InternetFacingBind {
         /// The bound IPv4 address, e.g. `"192.160.160.80"`.
         address: String,
-        /// The UDP port the listener actually got. The bind requests port 0,
-        /// so this is assigned by the OS **and differs on every start** — it
-        /// identifies the current listener, it is not a stable firewall rule.
+        /// The UDP port the listener is bound to.
         port: u16,
     },
     /// #3852: the operating system says it is blocking (or has stopped
@@ -291,8 +289,7 @@ pub struct MdnsStatusState(pub std::sync::Mutex<MdnsStatus>);
 pub struct InternetFacingBind {
     /// The bound IPv4 address, e.g. `"192.160.160.80"`.
     pub address: String,
-    /// The UDP port of that listener. OS-assigned (the bind requests port 0),
-    /// so it changes on every daemon start.
+    /// The UDP port of that listener.
     pub port: u16,
 }
 

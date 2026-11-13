@@ -636,6 +636,16 @@ export const commands = {
 	 *  `sync:internet_facing_bind` event essentially every time.
 	 */
 	getBindExposureStatus: () => typedError<BindExposureStatus, AppError>(__TAURI_INVOKE("get_bind_exposure_status")),
+	/**  Tauri command: the address this device's sync endpoint is bound to (#6526). */
+	getLocalSyncAddress: () => typedError<{
+	/**  The bound socket, `ip:port`. */
+	address: string,
+	/**
+	 *  The endpoint is on the loopback fallback: there is no local network, and
+	 *  no other device can reach `address`.
+	 */
+	loopback: boolean,
+} | null, AppError>(__TAURI_INVOKE("get_local_sync_address")),
 	/**
 	 *  Tauri command: return whether the OS is blocking this app's traffic **right
 	 *  now** (#4035).
@@ -2780,10 +2790,7 @@ export type ImportResult = {
 export type InternetFacingBind = {
 	/**  The bound IPv4 address, e.g. `"192.160.160.80"`. */
 	address: string,
-	/**
-	 *  The UDP port of that listener. OS-assigned (the bind requests port 0),
-	 *  so it changes on every daemon start.
-	 */
+	/**  The UDP port of that listener. */
 	port: number,
 };
 
@@ -2924,6 +2931,17 @@ export type ListPagesWithMetadataFilter = {
 	 *  primitives, but the backend must not trust that).
 	 */
 	filters?: FilterPrimitive[],
+};
+
+/**  Where this device's sync endpoint listens, for Settings › Sync & devices (#6526). */
+export type LocalSyncAddress = {
+	/**  The bound socket, `ip:port`. */
+	address: string,
+	/**
+	 *  The endpoint is on the loopback fallback: there is no local network, and
+	 *  no other device can reach `address`.
+	 */
+	loopback: boolean,
 };
 
 /**  One log file's name + contents returned by [`read_logs_for_report`]. */

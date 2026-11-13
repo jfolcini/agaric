@@ -1126,10 +1126,16 @@ impl SyncScheduler {
         self.change_count.send_modify(|count| *count += 1);
     }
 
-    /// Publish this device's dialable coordinates (#4037). Called by
-    /// `daemon_loop` once — and only once — the QUIC endpoint is bound.
+    /// Publish this device's dialable coordinates (#4037). Called by the daemon
+    /// each time it binds its QUIC endpoint.
     pub fn publish_local_endpoint(&self, advert: LocalEndpointAdvert) {
         self.local_endpoint.send_replace(Some(advert));
+    }
+
+    /// This device's dialable coordinates as last published; `None` while the
+    /// daemon has bound no endpoint.
+    pub fn local_endpoint(&self) -> Option<LocalEndpointAdvert> {
+        self.local_endpoint.borrow().clone()
     }
 
     /// This device's dialable coordinates, waiting up to `budget` for the

@@ -484,3 +484,57 @@ async fn a_failed_first_bind_is_retried_and_then_serves_a_session_6526() {
     a.flush_and_shutdown().await;
     b.flush_and_shutdown().await;
 }
+
+/// A launch: a daemon started on `device`, its bound address read, then stopped.
+async fn launch_and_stop(device: &Device2141, secret: &SecretKey) -> SocketAddr {
+    let scheduler = impatient_scheduler();
+    let daemon = start_daemon(
+        device,
+        secret,
+        &scheduler,
+        &LifecycleHooks::new(),
+        MovableBind::at(bind_on(OLD_NETWORK)),
+    )
+    .await;
+    let bound = scheduler
+        .await_local_endpoint(BRANCH_DISPATCH_DEADLINE)
+        .await
+        .expect("the daemon binds");
+    stop(&[&daemon]).await;
+    bound.addrs[0]
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_next_launch_binds_the_port_the_last_one_bound_6526() {
+    let (device, ..) = lone_device().await;
+    let secret = SecretKey::generate();
+
+    let first = launch_and_stop(&device, &secret).await;
+    assert_eq!(
+        peer_refs::get_sync_port(&device.pool).await.unwrap(),
+        Some(first.port())
+    );
+    let second = launch_and_stop(&device, &secret).await;
+    assert_eq!(second, first);
+
+    device.flush_and_shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_taken_port_falls_back_and_the_new_one_is_kept_6526() {
+    let (device, ..) = lone_device().await;
+    let secret = SecretKey::generate();
+    let first = launch_and_stop(&device, &secret).await;
+
+    let taken = std::net::UdpSocket::bind(first).expect("the test takes the kept port");
+    let second = launch_and_stop(&device, &secret).await;
+    assert_eq!(second.ip(), first.ip());
+    assert_ne!(second.port(), first.port());
+    assert_eq!(
+        peer_refs::get_sync_port(&device.pool).await.unwrap(),
+        Some(second.port())
+    );
+    drop(taken);
+
+    device.flush_and_shutdown().await;
+}
