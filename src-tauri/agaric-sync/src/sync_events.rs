@@ -219,6 +219,11 @@ pub enum SyncErrorCode {
     /// The user cancelled the session (`cancel_sync`, #5739): the frontend
     /// reads it as idle, not as a failure.
     Cancelled,
+    /// The peer holds more of this device's own operations than this device
+    /// does, as after an older database was restored here, and the snapshot
+    /// catch-up cannot merge that (#792, #6523). The frontend gives the cause
+    /// and the recovery.
+    OwnHistoryFork,
     /// The dial to a paired peer timed out, mDNS is not announcing it, and it
     /// has not pulled from us lately (#6523): the device is away, and the frontend
     /// shows a neutral waiting state rather than a failure.
@@ -643,6 +648,7 @@ mod tests {
         for (code, spelled) in [
             (SyncErrorCode::PeerAway, "peer_away"),
             (SyncErrorCode::HandshakeUnanswered, "handshake_unanswered"),
+            (SyncErrorCode::OwnHistoryFork, "own_history_fork"),
         ] {
             let json = serde_json::to_value(&SyncEvent::Error {
                 message: String::new(),

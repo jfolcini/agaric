@@ -371,7 +371,10 @@ state-reset decisions are made from Loro VVs:
   looping.
 
 Both funnel into the single `ResetRequired` → snapshot-catch-up recovery
-path. #2502 retired the previous op-log-`(device_id, seq)` reset lookup
+path. The catch-up does not heal own-lineage loss on a device whose engine
+still holds ops of its own: the snapshot then forks its `(peer, counter)` space,
+`apply_remote`'s guard turns it away (#792), and the session fails with
+`code: "own_history_fork"` (#6523). #2502 retired the previous op-log-`(device_id, seq)` reset lookup
 entirely (it conflated the audit cursor with state causality and produced
 the #602 forever-backoff bug); `heads` retains one surviving,
 non-decision job — remote-device identification. The defensive

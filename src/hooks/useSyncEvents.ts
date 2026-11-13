@@ -89,6 +89,7 @@ export interface SyncCompletePayload {
 export type SyncErrorCode =
   | 'engine_format_mismatch'
   | 'cancelled'
+  | 'own_history_fork'
   | 'peer_away'
   | 'handshake_unanswered'
 
@@ -106,6 +107,9 @@ export interface SyncErrorPayload {
 function codedSyncErrorKeys(payload: SyncErrorPayload): [named: string, unnamed: string] | null {
   if (payload.code === 'handshake_unanswered') {
     return ['sync.handshakeUnanswered', 'sync.handshakeUnansweredUnnamed']
+  }
+  if (payload.code === 'own_history_fork') {
+    return ['sync.ownHistoryFork', 'sync.ownHistoryForkUnnamed']
   }
   if (payload.code !== 'engine_format_mismatch') return null
   return payload.peer_is_older === true

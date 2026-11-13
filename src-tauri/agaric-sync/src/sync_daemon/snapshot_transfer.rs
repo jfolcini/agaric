@@ -438,13 +438,25 @@ async fn merge_one_snapshot(
         }
         ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
             Err(AppError::InvalidOperation(format!(
-                "loro-snapshot catch-up: peer snapshot for space {space} could not be merged \
-                 ({reason}); local engine likely forked its own (peer,counter) space (#792) — \
+                "{OWN_HISTORY_FORK}: space {space} could not be merged ({reason}); \
                  engine-only reset is not yet implemented (#2503 open q1)",
                 space = space_id.as_str(),
             )))
         }
     }
+}
+
+/// How the catch-up's error opens when a peer's snapshot would fork this
+/// device's own `(peer, counter)` space (#792). A snapshot passes every other
+/// gate of `apply_remote`, so the fork guard is the only way one is turned
+/// away.
+const OWN_HISTORY_FORK: &str =
+    "loro-snapshot catch-up: the peer's snapshot forks this device's own history";
+
+/// Whether `error` is the catch-up turning away a snapshot that forks this
+/// device's own history, which no retry heals (#6523).
+pub(super) fn is_own_history_fork(error: &AppError) -> bool {
+    matches!(error, AppError::InvalidOperation(message) if message.starts_with(OWN_HISTORY_FORK))
 }
 
 /// #5712: the catch-up carried every space's snapshot, so it ends the pull the
@@ -512,8 +524,8 @@ async fn next_snapshot_frame(recv: &mut RecvStream) -> Result<(LoroSyncMessage, 
 /// `(peer, counter)` space (a corrupt / pre-epoch-reset local doc — #792),
 /// `apply_remote` returns `SnapshotFallbackRequested`. A pure merge cannot heal
 /// that without an engine-only reset (not yet implemented); it surfaces as an
-/// error so the session records a failure and retries, rather than silently
-/// corrupting state.
+/// error ([`is_own_history_fork`]) so the session records a failure and tells
+/// the user why, rather than silently corrupting state.
 ///
 /// `_send` is unused — this phase only reads; every message it consumes is
 /// pushed by the responder and none is acknowledged. It is taken so every
