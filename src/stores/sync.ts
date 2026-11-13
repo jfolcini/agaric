@@ -1,14 +1,15 @@
 /**
- * Sync store: the sync lifecycle (idle, syncing, error, offline), connected
- * peers, op counters, and each peer's in-flight session progress. Add a
- * `state` member only together with something that writes it (#1076).
+ * Sync store: the sync lifecycle (idle, syncing, waiting, error, offline),
+ * connected peers, op counters, and each peer's in-flight session progress.
+ * Add a `state` member only together with something that writes it (#1076).
  */
 
 import { create } from 'zustand'
 
 import type { SyncProgressUpdate } from '@/lib/bindings'
 
-export type SyncState = 'idle' | 'syncing' | 'error' | 'offline'
+/** `waiting`: a paired device is away, which is no failure (#6523). */
+export type SyncState = 'idle' | 'syncing' | 'waiting' | 'error' | 'offline'
 
 export interface PeerInfo {
   peerId: string
@@ -55,6 +56,8 @@ function toPeerProgress(update: SyncProgressUpdate): PeerSyncProgress | null {
 interface SyncStore {
   state: SyncState
   error: string | null
+  /** The peer the `waiting` state waits for; `null` in every other state. */
+  waitingFor: string | null
   peers: PeerInfo[]
   lastSyncedAt: string | null
   opsReceived: number
@@ -62,6 +65,7 @@ interface SyncStore {
   peerProgress: Record<string, PeerSyncProgress>
 
   setState: (state: SyncState, error?: string | null) => void
+  setWaiting: (peerId: string) => void
   setPeers: (peers: PeerInfo[]) => void
   updateLastSynced: (timestamp: string) => void
   setOpsReceived: (count: number) => void
@@ -73,6 +77,7 @@ interface SyncStore {
 const INITIAL_STATE = {
   state: 'idle' as SyncState,
   error: null as string | null,
+  waitingFor: null as string | null,
   peers: [] as PeerInfo[],
   lastSyncedAt: null as string | null,
   opsReceived: 0,
@@ -84,7 +89,11 @@ export const useSyncStore = create<SyncStore>((set) => ({
   ...INITIAL_STATE,
 
   setState: (state: SyncState, error?: string | null) => {
-    set({ state, error: error ?? null })
+    set({ state, error: error ?? null, waitingFor: null })
+  },
+
+  setWaiting: (peerId: string) => {
+    set({ state: 'waiting', error: null, waitingFor: peerId })
   },
 
   setPeers: (peers: PeerInfo[]) => {

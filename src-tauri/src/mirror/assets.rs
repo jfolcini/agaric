@@ -78,11 +78,9 @@ pub fn asset_name(filename: &str) -> String {
             }
         })
         .collect();
-    let cleaned = cleaned.trim_matches(js_whitespace);
-    if cleaned.is_empty() || cleaned.chars().all(|c| c == '.') {
-        return "Untitled".to_owned();
-    }
-    let cleaned = cleaned.trim_end_matches(['.', ' ']);
+    let cleaned = cleaned
+        .trim_matches(js_whitespace)
+        .trim_end_matches(['.', ' ']);
     if cleaned.is_empty() {
         return "Untitled".to_owned();
     }
