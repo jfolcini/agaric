@@ -521,6 +521,11 @@ function captureLinkPayload(search: string): CapturePayload | null {
   } catch {
     return null
   }
+  return capturePayloadForText(text)
+}
+
+/** The payload that opens Quick Capture holding `text`, or refuses a text over the block cap. */
+export function capturePayloadForText(text: string): CapturePayload {
   if (new TextEncoder().encode(text).length > MAX_CAPTURE_TEXT_BYTES) return { kind: 'tooLong' }
   return { kind: 'prefill', text }
 }

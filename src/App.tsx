@@ -25,6 +25,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { useAndroidBackButton } from '@/hooks/useAndroidBackButton'
+import { useAndroidShareTarget } from '@/hooks/useAndroidShareTarget'
 import { useAppBootRecovery } from '@/hooks/useAppBootRecovery'
 import { useAppDialogs } from '@/hooks/useAppDialogs'
 import { useAppKeyboardShortcuts } from '@/hooks/useAppKeyboardShortcuts'
@@ -447,6 +448,9 @@ function App() {
   // CLI argument BEFORE the React listener registers).  No-op outside
   // Tauri.
   useDeepLinkRouter()
+  // Text shared from another Android app (#6555); after `useAppDialogs`, whose
+  // listener opens Quick Capture.
+  useAndroidShareTarget()
 
   // ── App-level keyboard shortcuts ────────────────
   // All five in-app keydown listeners (journal, global, space,

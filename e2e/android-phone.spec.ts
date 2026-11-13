@@ -34,7 +34,7 @@ function savedFiles(page: Page): Promise<SavedFile[]> {
   )
 }
 
-test.describe('Android phone @mobile @settings @markdown', () => {
+test.describe('Android phone @mobile @settings @markdown @journal', () => {
   test('Export this space saves the ZIP to Downloads and says so (#6546)', async ({ page }) => {
     await waitForBoot(page)
     await navigateMobile(page, 'Settings')
@@ -50,5 +50,51 @@ test.describe('Android phone @mobile @settings @markdown', () => {
     expect(file?.bytes.startsWith('UEsDB')).toBe(true)
     await expect(page.getByText(`Saved ${file?.fileName} to Downloads`)).toBeVisible()
     await expect(page.getByText('Export complete')).toBeVisible()
+  })
+
+  // The app as Android shows it: `MainActivity` binds `AgaricShareBridge` to the
+  // webview, and taking the pending text clears it.
+  test('text shared from another app opens Quick Capture; only Capture saves it (#6555)', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const scope = window as unknown as {
+        __sharedText: string | null
+        AgaricShareBridge: { takePendingText: () => string | null }
+      }
+      scope.__sharedText = 'Shared on launch'
+      scope.AgaricShareBridge = {
+        takePendingText: () => {
+          const text = scope.__sharedText
+          scope.__sharedText = null
+          return text
+        },
+      }
+    })
+    const field = page.getByRole('textbox', { name: 'Quick capture content' })
+    const dialog = page.getByTestId('quick-capture-dialog')
+    const reopenJournal = async (): Promise<void> => {
+      await navigateMobile(page, 'Pages')
+      await navigateMobile(page, 'Journal')
+    }
+
+    // A share that started the app.
+    await waitForBoot(page)
+    await expect(field).toHaveValue('Shared on launch')
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+    await reopenJournal()
+    await expect(page.getByText('Shared on launch', { exact: true })).toHaveCount(0)
+
+    // A share into the running app: Android resumes the activity after the intent.
+    await page.evaluate(() => {
+      ;(window as unknown as { __sharedText: string | null }).__sharedText = 'Shared while open'
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await expect(field).toHaveValue('Shared while open')
+    await dialog.getByRole('button', { name: 'Capture', exact: true }).click()
+    await expect(page.getByText("Captured to today's journal")).toBeVisible()
+    await reopenJournal()
+    await expect(page.getByText('Shared while open', { exact: true })).toBeVisible()
   })
 })
