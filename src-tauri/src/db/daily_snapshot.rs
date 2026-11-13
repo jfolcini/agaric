@@ -2,7 +2,8 @@
 //!
 //! Once per local calendar day the maintenance daemon copies the database to
 //! `<db>.daily-<YYYY-MM-DD>` beside it and keeps the newest
-//! `MAX_KEPT_DAILY_SNAPSHOTS`. The copy is `snapshot_vault`'s `VACUUM INTO`
+//! `MAX_KEPT_DAILY_SNAPSHOTS`; a day when the disk has less free space than
+//! the database takes none. The copy is `snapshot_vault`'s `VACUUM INTO`
 //! on a read-only connection: a consistent image of every committed
 //! transaction, the ones still in the `-wal` included, taken under a read
 //! transaction, so it never holds the write lock. The pre-migration backups
@@ -17,8 +18,9 @@ use chrono::{Datelike, NaiveDate};
 
 use super::pool::snapshot_vault;
 
-/// Daily snapshots kept beside the vault.
-const MAX_KEPT_DAILY_SNAPSHOTS: usize = 7;
+/// Daily snapshots kept beside the vault; fewer on a phone's storage. The
+/// Android value runs in no test: the suite does not build for Android.
+const MAX_KEPT_DAILY_SNAPSHOTS: usize = if cfg!(target_os = "android") { 3 } else { 7 };
 
 const DATE_FORMAT: &str = "%Y-%m-%d";
 
@@ -48,18 +50,40 @@ fn daily_snapshots(db_path: &Path) -> std::io::Result<Vec<(NaiveDate, PathBuf)>>
     Ok(snapshots)
 }
 
-/// Take `day`'s snapshot of the vault at `db_path` unless it exists, then
-/// delete all but the newest `MAX_KEPT_DAILY_SNAPSHOTS`. Answers whether a
-/// snapshot was taken.
+/// Take `day`'s snapshot of the vault at `db_path` unless it exists or the
+/// disk has less free space than the vault, then delete all but the newest
+/// `MAX_KEPT_DAILY_SNAPSHOTS`. Answers whether a snapshot was taken.
 ///
 /// # Errors
 ///
 /// The snapshot could not be written, and then no file is left for it and
 /// nothing is pruned; or the snapshots could not be listed for pruning.
 pub async fn take_daily_snapshot(db_path: &Path, day: NaiveDate) -> Result<bool, AppError> {
+    let folder = db_path.parent().unwrap_or(Path::new(""));
+    // A free-space figure that cannot be read does not cost the day its snapshot.
+    let free_bytes = fs4::available_space(folder).unwrap_or(u64::MAX);
+    snapshot_given_free_space(db_path, day, free_bytes).await
+}
+
+async fn snapshot_given_free_space(
+    db_path: &Path,
+    day: NaiveDate,
+    free_bytes: u64,
+) -> Result<bool, AppError> {
     let name = format!("{}{}", name_prefix(db_path), day.format(DATE_FORMAT));
     let snapshot = db_path.with_file_name(name);
     if snapshot.try_exists()? {
+        return Ok(false);
+    }
+    // The copy is at most the vault's size, and `VACUUM INTO` writes most of
+    // it before it fails for lack of room.
+    let vault_bytes = std::fs::metadata(db_path)?.len();
+    if free_bytes < vault_bytes {
+        tracing::warn!(
+            free_bytes,
+            vault_bytes,
+            "daily vault snapshot skipped: the disk has less free space than the vault"
+        );
         return Ok(false);
     }
     // `VACUUM INTO` refuses an existing file, and a crash part way must not
@@ -97,9 +121,8 @@ pub async fn take_daily_snapshot(db_path: &Path, day: NaiveDate) -> Result<bool,
 
 /// The maintenance job's body: today's snapshot, if the day has none yet,
 /// tried once per local day per run of the app (`last_attempt_day`, a
-/// `num_days_from_ce`). A copy that fails for lack of room has filled the disk
-/// while it ran, so it is not tried again every tick; the failure is logged
-/// and the next day or the next launch tries again.
+/// `num_days_from_ce`). A copy that fails is not tried again every tick; the
+/// failure is logged and the next day or the next launch tries again.
 pub async fn daily_snapshot_tick(db_path: &Path, last_attempt_day: &AtomicI32) {
     let today = chrono::Local::now().date_naive();
     let day_number = today.num_days_from_ce();
@@ -251,6 +274,23 @@ mod tests {
         assert_eq!(
             marker_in(&dir.path().join("notes.db.daily-2026-03-01")).await,
             "marker"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_disk_with_less_room_than_the_vault_takes_no_snapshot() {
+        let (_dir, db_path) = vault().await;
+        let vault_bytes = std::fs::metadata(&db_path).unwrap().len();
+
+        let taken = snapshot_given_free_space(&db_path, day(1), vault_bytes - 1).await;
+        assert!(!taken.unwrap());
+        assert_eq!(sibling_names(&db_path, ".daily-"), [""; 0]);
+
+        let taken = snapshot_given_free_space(&db_path, day(1), vault_bytes).await;
+        assert!(taken.unwrap());
+        assert_eq!(
+            sibling_names(&db_path, ".daily-"),
+            ["notes.db.daily-2026-03-01"]
         );
     }
 

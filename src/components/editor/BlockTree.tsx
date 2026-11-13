@@ -286,6 +286,8 @@ export function BlockTree({
     moveUp,
     moveDown,
     createBelow,
+    splitOff,
+    mergeInto,
   } = pageStore.getState()
   // Global focus/selection actions
   const { setFocused, setSelected, toggleSelected, clearSelected } = useBlockStore.getState()
@@ -1062,8 +1064,8 @@ export function BlockTree({
     // subtree that BlockListRenderer never rendered. `zoomedVisible` falls
     // back to `collapsedVisible` verbatim when not zoomed, so this is a
     // no-op outside zoom. `blocks` (below) stays the FULL flat tree — the
-    // merge handlers' `planChildReparent` needs it to see a collapsed
-    // source's hidden children.
+    // blank-block delete's `planChildReparent` needs it to see a collapsed
+    // block's hidden children.
     collapsedVisible: zoomedVisible,
     blocks,
     // #4959 — `zoomedVisible` stops at the mount cap, so focus-next needs this
@@ -1084,11 +1086,8 @@ export function BlockTree({
     handleFlush,
     pageStore,
     // The store's `remove` swallows its own errors (it logs + toasts and
-    // resolves void, never rejects), so a failed delete_block would let the
-    // merge handlers report success and leave the merged text duplicated in
-    // both blocks — their remove-failure revert path could never fire. Same
-    // seam as the `moveBlocks` wrapper below: verify the block actually left
-    // the store and THROW if not, so the hook's failure paths are live.
+    // resolves void, never rejects). Verify the block actually left the store
+    // and THROW if not, so the hook's failure paths are live.
     remove: useCallback(
       async (id: string, options?: DeleteBlockOptions) => {
         await remove(id, options)
@@ -1098,15 +1097,13 @@ export function BlockTree({
       },
       [remove, pageStore],
     ),
-    // #1342 — the merge handlers reparent a merged-away block's children onto
-    // the merge target BEFORE removing the source, so the backend delete
-    // cascade can't soft-delete the subtree. But `moveBlocks` swallows its own
-    // errors (it logs + reloads, never rejects), so a partial/total move
-    // failure would resolve "ok" and let `remove` cascade-delete the children
-    // that DIDN'T move — re-introducing the very data loss this fixes. Wrap it
-    // to verify against the freshly-reloaded tree that every requested child
-    // now sits under the new parent, and THROW if not — so the hook's
-    // reparent-failure path (revert edit, skip remove) actually fires.
+    // #4958 — the delete of a blank block reparents its children onto the row
+    // above BEFORE removing it, so the backend delete cascade can't soft-delete
+    // the subtree. But `moveBlocks` swallows its own errors (it logs + reloads,
+    // never rejects), so a partial/total move failure would resolve "ok" and
+    // let `remove` cascade-delete the children that DIDN'T move. Wrap it to
+    // verify against the freshly-reloaded tree that every requested child now
+    // sits under the new parent, and THROW if not, so the delete is skipped.
     moveBlocks: useCallback(
       async (ids: string[], newParentId: string | null, newIndex: number) => {
         await moveBlocks(ids, newParentId, newIndex)
@@ -1115,7 +1112,7 @@ export function BlockTree({
         const stranded = ids.filter((id) => {
           const b = byId.get(id)
           // A child that vanished or whose parent is still NOT the target was
-          // not (fully) reparented — treat as a failed move so the merge aborts.
+          // not (fully) reparented — treat as a failed move so the delete aborts.
           return !b || (b.parent_id ?? null) !== newParentId
         })
         if (stranded.length > 0) {
@@ -1124,7 +1121,8 @@ export function BlockTree({
       },
       [moveBlocks, pageStore],
     ),
-    edit,
+    splitOff,
+    mergeInto,
     indent,
     dedent,
     moveUp,

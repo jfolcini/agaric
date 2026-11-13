@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import type { MoveResponse } from '@/lib/bindings'
-import { reconcileBatchMove, wouldCreateMoveCycle } from '@/stores/page-blocks-move'
+import { mergedTree, reconcileBatchMove, wouldCreateMoveCycle } from '@/stores/page-blocks-move'
 import type { PageBlockState } from '@/stores/page-blocks-types'
 
 const loggerMock = vi.hoisted(() => ({
@@ -146,5 +146,72 @@ describe('reconcileBatchMove — cycle guard (#3799)', () => {
     expect(result?.map((b) => b.id)).toEqual(['A', 'B', 'A1'])
     expect(result?.find((b) => b.id === 'A1')?.parent_id).toBe('B')
     expect(loggerMock.warn).not.toHaveBeenCalled()
+  })
+})
+
+describe('mergedTree (#6531)', () => {
+  const stateOf = (blocks: ReturnType<typeof makeBlock>[]): PageBlockState =>
+    ({
+      blocks,
+      blocksById: new Map(blocks.map((b) => [b.id, b])),
+      rootParentId: 'PAGE',
+    }) as unknown as PageBlockState
+  const row = (id: string, parent_id: string, position: number, depth: number) =>
+    makeBlock({ id, parent_id, position, depth, content: id })
+  const shape = (blocks: { id: string; parent_id: string | null; depth: number }[]) =>
+    blocks.map((b) => [b.id, b.parent_id, b.depth])
+
+  it('gives the target the text and the block’s children after its own, and drops the block', () => {
+    const state = stateOf([
+      row('A', 'PAGE', 1, 0),
+      row('A1', 'A', 1, 1),
+      row('B', 'PAGE', 2, 0),
+      row('B1', 'B', 1, 1),
+      row('B2', 'B', 2, 1),
+      row('B2a', 'B2', 1, 2),
+      row('C', 'PAGE', 3, 0),
+    ])
+
+    const merged = mergedTree(state, 'B', 'A', 'AB')
+
+    expect(merged?.childIds).toEqual(['B1', 'B2'])
+    expect(shape(merged?.blocks ?? [])).toEqual([
+      ['A', 'PAGE', 0],
+      ['A1', 'A', 1],
+      ['B1', 'A', 1],
+      ['B2', 'A', 1],
+      ['B2a', 'B2', 2],
+      ['C', 'PAGE', 0],
+    ])
+    expect(merged?.blocks.map((b) => b.content)).toEqual(['AB', 'A1', 'B1', 'B2', 'B2a', 'C'])
+  })
+
+  it('lands a first child’s children after its parent’s other children', () => {
+    const state = stateOf([
+      row('P', 'PAGE', 1, 0),
+      row('F', 'P', 1, 1),
+      row('F1', 'F', 1, 2),
+      row('S', 'P', 2, 1),
+    ])
+
+    const merged = mergedTree(state, 'F', 'P', 'PF')
+
+    expect(shape(merged?.blocks ?? [])).toEqual([
+      ['P', 'PAGE', 0],
+      ['S', 'P', 1],
+      ['F1', 'P', 1],
+    ])
+  })
+
+  it('refuses a block the page does not hold', () => {
+    const state = stateOf([row('A', 'PAGE', 1, 0)])
+
+    expect(mergedTree(state, 'GONE', 'A', 'AB')).toBeNull()
+  })
+
+  it('refuses a target that sits under the block', () => {
+    const state = stateOf([row('B', 'PAGE', 1, 0), row('B1', 'B', 1, 1)])
+
+    expect(mergedTree(state, 'B', 'B1', 'B1B')).toBeNull()
   })
 })

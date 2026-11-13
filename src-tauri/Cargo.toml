@@ -129,7 +129,8 @@ ci-smoke = []
 # the moved suites and the two remaining in-lib test modules both use) to that
 # set, which is why the feature now pulls `tempfile` — the same shape as
 # `agaric-store`'s `test-util = ["dep:tempfile"]` for its `test_support`.
-test-util = ["dep:tempfile", "agaric-store/test-util"]
+# `tauri/test` is for `headless`, the app on `tauri::test::MockRuntime` (#6529).
+test-util = ["dep:tempfile", "agaric-store/test-util", "tauri/test"]
 # #645 — the `diagnostics` feature (formerly built the
 # `audit_cross_space_refs` / `op_log_histogram` bins) is retired: those
 # bins moved to the `agaric-diagnostics` workspace member, so the feature
@@ -210,6 +211,8 @@ ulid = "3.0.0"
 # longer uses it directly.
 blake3 = "1.8.5"
 chrono = { version = "0.4.44", features = ["serde"] }
+# Free space on the vault's disk, read before the daily snapshot copy (#6554).
+fs4 = { version = "1.1.0", default-features = false }
 tokio = { version = "1", features = ["sync", "macros", "rt", "time", "net", "io-util", "io-std"] }
 regex = "1"
 aho-corasick = "1"

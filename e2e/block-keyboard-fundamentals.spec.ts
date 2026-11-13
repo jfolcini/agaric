@@ -21,7 +21,7 @@ import {
  *     navigating to the adjacent block and dropping it.
  *
  * As with block-keyboard-move.spec.ts, assertions are made primarily on the
- * recorded IPC payloads (`create_block` / `edit_block` / `move_block`) rather
+ * recorded IPC payloads (`split_block` / `create_block` / `move_block`) rather
  * than the mock backend's reconciled visual order — the slot/content the UI
  * *sends* is the deterministic signal.
  */
@@ -93,13 +93,15 @@ test.describe('Keyboard fundamentals @editor', () => {
       })
       .toBe(5)
 
+    const [sourceId] = await blockIds(page)
     await clearInvokeCalls(page)
     await editor.press('Enter')
 
-    // The current block is edited down to the before-caret text…
-    await expect.poll(async () => (await lastCall(page, 'edit_block'))?.toText).toBe('hello')
-    // …and a new block is created WITH the after-caret text.
-    await expect.poll(async () => (await lastCall(page, 'create_block'))?.content).toBe('world')
+    // One `split_block` (#6531): the current block keeps the before-caret text
+    // and a new block below takes the after-caret text.
+    await expect
+      .poll(async () => (await lastCall(page, 'split_block'))?.['request'])
+      .toMatchObject({ blockId: sourceId, before: 'hello', after: 'world' })
   })
 
   test('Enter at the end of a block creates an EMPTY block below', async ({ page }) => {

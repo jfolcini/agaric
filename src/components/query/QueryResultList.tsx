@@ -1,4 +1,3 @@
-import { cva } from 'class-variance-authority'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -13,19 +12,6 @@ import { displayPageTitle } from '@/lib/date-utils'
 import { handleBlockNavigation, resolveBlockDisplay } from '@/lib/query-result-utils'
 import { cn } from '@/lib/utils'
 
-const rowVariants = cva(
-  'flex w-full gap-2 text-left hover:bg-muted/40 transition-colors cursor-pointer',
-  {
-    variants: {
-      layout: {
-        rows: 'items-center px-3 py-1.5 text-xs [@media(pointer:coarse)]:py-3',
-        cards:
-          'flex-wrap items-start gap-y-1 overflow-hidden rounded-lg border bg-card p-3 text-sm',
-      },
-    },
-  },
-)
-
 export interface QueryResultListProps {
   /** The block results to render as a list. */
   results: BlockRow[]
@@ -37,10 +23,6 @@ export interface QueryResultListProps {
   resolveBlockTitle?: ((id: string) => string) | undefined
   /** Called when an item is selected via keyboard. */
   onItemSelect?: ((index: number) => void) | undefined
-  /** `cards` gives each result a bordered card that wraps its text, for a board column. */
-  layout?: 'rows' | 'cards' | undefined
-  /** Names the listbox; defaults to the generic results label. */
-  ariaLabel?: string | undefined
 }
 
 export function QueryResultList({
@@ -49,8 +31,6 @@ export function QueryResultList({
   onNavigate,
   resolveBlockTitle,
   onItemSelect,
-  layout = 'rows',
-  ariaLabel,
 }: QueryResultListProps): React.ReactElement {
   const { t } = useTranslation()
   // #4719 — the CHIP's resolver, not the optional `resolveBlockTitle` prop:
@@ -70,14 +50,11 @@ export function QueryResultList({
 
   return (
     <div
-      // A card column always has a cursor card, which carries the focus ring.
-      className={
-        layout === 'cards' ? 'flex flex-col gap-2 outline-hidden' : 'divide-y divide-border'
-      }
+      className="divide-y divide-border"
       tabIndex={0}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom listbox driven by aria-activedescendant + roving focus; <datalist>/<select> can't host the clickable result-row divs
       role="listbox"
-      aria-label={ariaLabel ?? t('query.resultsListLabel')}
+      aria-label={t('query.resultsListLabel')}
       aria-activedescendant={
         results[focusedIndex] ? `query-result-${results[focusedIndex].id}` : undefined
       }
@@ -129,14 +106,17 @@ export function QueryResultList({
               }
             }}
           >
-            <div className={cn(rowVariants({ layout }), index === focusedIndex && 'list-cursor')}>
+            <div
+              className={cn(
+                'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted/40 transition-colors cursor-pointer [@media(pointer:coarse)]:py-3',
+                index === focusedIndex && 'list-cursor',
+              )}
+            >
               {/* The block's checkbox, drawn but not a control: a button may
                   not sit inside a listbox option (#6544). The row's name
                   carries the state. */}
               {block.todo_state && <TaskCheckbox state={block.todo_state} />}
-              <span
-                className={layout === 'cards' ? 'min-w-0 flex-1 line-clamp-3' : 'flex-1 truncate'}
-              >
+              <span className="flex-1 truncate">
                 {displayMarkdown !== null ? (
                   <QueryResultRowContent content={displayMarkdown} />
                 ) : (
@@ -150,12 +130,7 @@ export function QueryResultList({
                 // listbox's roving `tabIndex={-1}` rows anyway. The row's own
                 // click/Enter handler already opens this same page via
                 // `handleBlockNavigation`, so the target stays reachable.
-                <span
-                  className={cn(
-                    'text-xs text-muted-foreground truncate',
-                    layout === 'cards' ? 'basis-full' : 'shrink-0 max-w-[120px]',
-                  )}
-                >
+                <span className="shrink-0 text-xs text-muted-foreground truncate max-w-[120px]">
                   {pageTitle}
                 </span>
               )}

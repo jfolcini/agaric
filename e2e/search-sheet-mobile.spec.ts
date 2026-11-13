@@ -112,6 +112,33 @@ test.describe('Search sheet (mobile viewport) @search @mobile', () => {
     await expect(page.getByTestId('in-page-find-toolbar')).toBeVisible()
   })
 
+  test('a tap on All pages lands when the page-find toolbar loads late', async ({ page }) => {
+    // The toolbar's chunk arrives a second after the sheet is asked for, as on
+    // a phone that opens the sheet before the idle preload has run.
+    let sheetAsked = () => {}
+    const chunkArrives = new Promise<void>((resolve) => {
+      sheetAsked = () => setTimeout(resolve, 1000)
+    })
+    await page.route('**/assets/InPageFind-*.js', async (route) => {
+      await chunkArrives
+      await route.continue()
+    })
+    await waitForBoot(page)
+
+    await page.getByTestId('search-sheet-trigger').click()
+    sheetAsked()
+
+    // Press where the segment first rests and release once the toolbar is in:
+    // a sheet that grew for the toolbar moves the segment out from under the release.
+    const allPages = page.getByTestId('search-sheet-segment-all-pages')
+    await allPages.hover()
+    await page.mouse.down()
+    await expect(page.getByRole('toolbar', { name: 'Find in page' })).toBeVisible()
+    await page.mouse.up()
+
+    await expect(allPages).toHaveAttribute('data-state', 'on')
+  })
+
   test('closes via the overlay and tears down both embedded stores', async ({ page }) => {
     await waitForBoot(page)
     await page.getByTestId('search-sheet-trigger').click()

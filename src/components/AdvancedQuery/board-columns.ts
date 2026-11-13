@@ -22,6 +22,8 @@ export interface BoardColumn {
   kind: 'value' | 'none' | 'other'
   /** The group value, for a `value` column. */
   value?: string
+  /** The select property the board groups by; absent on a task-state board. */
+  propertyKey?: string
   /** Selects this column's blocks; AND-ed with the query's own filter. */
   filter: FilterExpr
 }
@@ -48,9 +50,10 @@ function selectColumns(key: string, options: string[]): BoardColumn[] {
       id: `value:${option}`,
       kind: 'value',
       value: option,
+      propertyKey: key,
       filter: has({ type: 'Eq', value: { type: 'Text', value: option } }),
     })),
-    { id: 'none', kind: 'none', filter: has({ type: 'NotExists' }) },
+    { id: 'none', kind: 'none', propertyKey: key, filter: has({ type: 'NotExists' }) },
     {
       id: 'other',
       kind: 'other',

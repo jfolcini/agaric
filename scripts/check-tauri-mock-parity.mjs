@@ -102,7 +102,7 @@ const mocked = new Set()
 for (const file of domainFiles) {
   const src = fs.readFileSync(path.join(HANDLERS_DOMAIN_DIR, file), 'utf8')
   const blockMatch = src.match(
-    /export const \w+Handlers\s*=\s*\{([\s\S]*?)\n\}\s*satisfies\s+Pick<\s*\n\s*TypedHandlers/,
+    /export const \w+Handlers\s*=\s*\{([\s\S]*?)\n\}\s*satisfies\s+Pick<\s*TypedHandlers/,
   )
   if (!blockMatch) {
     console.error(
