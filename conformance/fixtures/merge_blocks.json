@@ -1,0 +1,518 @@
+{
+  "description": "#6531: `merge_blocks` writes the joined text into the target, moves the merged-away block's children under the target after its own, and deletes the block, in one transaction. A refusal at any step leaves nothing of the earlier ones. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "AlphaBeta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "a1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Beta",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "b1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B2",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "b2",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B2",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "GammaDelta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Delta",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "HELLO worldTail",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Tail",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "ParentFirst",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "First",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B12",
+        "page_id": "B1",
+        "parent_id": "B11",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "c1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B1",
+        "parent_id": "B11",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Second",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B1",
+        "parent_id": "B11",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 12,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_merge_moves_the_children_after_the_targets_own",
+      "returns": ["B2#content=AlphaBeta"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_childless_merge",
+      "returns": ["B7#content=GammaDelta"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_peer_edits_the_target",
+      "returns": ["B9#content=HELLO world"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_stale_merge_appends_to_the_peers_edit",
+      "returns": ["B9#content=HELLO worldTail"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_merge_into_the_parent_appends_the_children",
+      "returns": ["B11#content=ParentFirst"]
+    },
+    {
+      "code": null,
+      "error": "invalid_operation",
+      "name": "a_block_is_not_merged_into_itself",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "invalid_operation",
+      "name": "a_merge_into_a_child_takes_the_edit_back",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "invalid_operation",
+      "name": "a_merge_of_a_deleted_block_takes_the_edit_back",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "a_missing_block_is_refused",
+      "returns": []
+    }
+  ],
+  "name": "merge_blocks",
+  "ops": [
+    {
+      "args": {
+        "request": {
+          "baseText": "Alpha",
+          "blockId": "S4",
+          "intoId": "S2",
+          "mergedText": "AlphaBeta"
+        }
+      },
+      "command": "merge_blocks",
+      "comment": "S2 holds `AlphaBeta` and the children a1, b1, b2; S4 is deleted alone.",
+      "name": "a_merge_moves_the_children_after_the_targets_own",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "baseText": "Gamma",
+          "blockId": "S8",
+          "intoId": "S7",
+          "mergedText": "GammaDelta"
+        }
+      },
+      "command": "merge_blocks",
+      "name": "a_childless_merge",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "toText": "HELLO world"
+      },
+      "command": "edit_block",
+      "comment": "S9 becomes `HELLO world` under a caller still holding `Hello world`.",
+      "name": "a_peer_edits_the_target",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "baseText": "Hello world",
+          "blockId": "S10",
+          "intoId": "S9",
+          "mergedText": "Hello worldTail"
+        }
+      },
+      "command": "merge_blocks",
+      "name": "a_stale_merge_appends_to_the_peers_edit",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "baseText": "Parent",
+          "blockId": "S12",
+          "intoId": "S11",
+          "mergedText": "ParentFirst"
+        }
+      },
+      "command": "merge_blocks",
+      "comment": "The row above a first child is its parent: c1 lands after Second.",
+      "name": "a_merge_into_the_parent_appends_the_children",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "baseText": null,
+          "blockId": "S7",
+          "intoId": "S7",
+          "mergedText": "GammaDeltaGammaDelta"
+        }
+      },
+      "command": "merge_blocks",
+      "expect_error": "invalid_operation",
+      "name": "a_block_is_not_merged_into_itself",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "baseText": null,
+          "blockId": "S2",
+          "intoId": "S3",
+          "mergedText": "a1AlphaBeta"
+        }
+      },
+      "command": "merge_blocks",
+      "comment": "The move of S3 under itself is refused after the edit ran: S3 keeps `a1`.",
+      "expect_error": "invalid_operation",
+      "name": "a_merge_into_a_child_takes_the_edit_back",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "baseText": null,
+          "blockId": "S8",
+          "intoId": "S7",
+          "mergedText": "GammaDeltaDelta"
+        }
+      },
+      "command": "merge_blocks",
+      "comment": "S8 was merged away above; its delete is refused after the edit ran: S7 keeps `GammaDelta`.",
+      "expect_error": "invalid_operation",
+      "name": "a_merge_of_a_deleted_block_takes_the_edit_back",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "baseText": null,
+          "blockId": "S99",
+          "intoId": "S7",
+          "mergedText": "GammaDeltaX"
+        }
+      },
+      "command": "merge_blocks",
+      "expect_error": "not_found",
+      "name": "a_missing_block_is_refused",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Alpha",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "a1",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Beta",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "b1",
+        "id": "S5",
+        "parent_id": "S4",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "b2",
+        "id": "S6",
+        "parent_id": "S4",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Gamma",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "Delta",
+        "id": "S8",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "Hello world",
+        "id": "S9",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "Tail",
+        "id": "S10",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "content",
+        "content": "Parent",
+        "id": "S11",
+        "parent_id": "S1",
+        "position": 7
+      },
+      {
+        "block_type": "content",
+        "content": "First",
+        "id": "S12",
+        "parent_id": "S11",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "c1",
+        "id": "S13",
+        "parent_id": "S12",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Second",
+        "id": "S14",
+        "parent_id": "S11",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

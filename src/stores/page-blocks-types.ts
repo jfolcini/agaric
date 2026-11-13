@@ -92,6 +92,35 @@ export interface PageBlockState {
   splitBlock: (blockId: string, markdown: string) => Promise<boolean>
 
   /**
+   * Enter inside a block's text, as one `split_block` command and one undo
+   * entry: `blockId` keeps `before` and `newId` is created below it holding
+   * `after`. Both are in the store when the call returns, and a write naming
+   * either waits for the command. `baseText` as for `edit`. `false` when the
+   * command failed: the store is as it was and the failure is toasted.
+   */
+  splitOff: (
+    blockId: string,
+    before: string,
+    after: string,
+    newId: string,
+    options?: { baseText?: string },
+  ) => Promise<boolean>
+
+  /**
+   * Merge `blockId` into `intoId`, as one `merge_blocks` command and one undo
+   * entry: `intoId` takes `mergedText` and the children of `blockId`, which is
+   * deleted. The store shows it when the call returns, and an edit of `intoId`
+   * waits for the command. `baseText` is `intoId`'s text as the caller knew
+   * it, as for `edit`. `false` when the command failed, as for `splitOff`.
+   */
+  mergeInto: (
+    blockId: string,
+    intoId: string,
+    mergedText: string,
+    options?: { baseText?: string },
+  ) => Promise<boolean>
+
+  /**
    * Move a block to sibling slot `newIndex` (0 = first) under the same parent,
    * splicing locally without a `load()` (#404).
    */

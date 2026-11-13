@@ -461,6 +461,19 @@ export function expandOpArgs(
     }
     out['input'] = copy
   }
+  // #6531 — `split_block` and `merge_blocks` take one `request` object, whose
+  // block ids are labels. Mirror of the Rust runner's `request()`.
+  const request = out['request']
+  if (request != null && typeof request === 'object' && !Array.isArray(request)) {
+    const copy = { ...(request as Record<string, unknown>) }
+    for (const key of ['blockId', 'intoId', 'newBlockId']) {
+      if (typeof copy[key] === 'string') copy[key] = resolveOpArgId(copy[key], createdIds)
+    }
+    for (const key of ['before', 'after', 'mergedText']) {
+      if (typeof copy[key] === 'string') copy[key] = expandContentLabels(copy[key], createdIds)
+    }
+    out['request'] = copy
+  }
   // #5057 — a batch command takes the SAME labels as a list, so each entry
   // expands exactly as the scalar keys above do. Mirror of the Rust runner's
   // `block_ids()`; without it the mock is handed raw labels, matches no block,
