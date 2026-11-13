@@ -735,7 +735,7 @@ const PAGES_METADATA_COLUMNS: &str = r"SELECT
 /// The join to `blocks` is inner: a page lists only once its cache row
 /// exists, and `b.deleted_at` hides a page the rebuild has not yet swept.
 /// Why the count columns stay materialised: the KEEP rationale on
-/// `cache::pages::recompute_all_pages_cache_counts`.
+/// `cache::pages::recompute_pages_cache_counts_of`.
 const PAGES_METADATA_FROM: &str = r"
            FROM pages_cache pc
            CROSS JOIN blocks b ON b.id = pc.page_id

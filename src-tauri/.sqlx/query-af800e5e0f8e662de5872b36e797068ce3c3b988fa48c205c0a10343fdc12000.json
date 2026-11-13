@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET space_id = ( SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id ) WHERE id IN (SELECT value FROM json_each(?)) AND block_type != 'page' AND page_id IS NOT NULL AND space_id IS NOT ( SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "af800e5e0f8e662de5872b36e797068ce3c3b988fa48c205c0a10343fdc12000"
+}
