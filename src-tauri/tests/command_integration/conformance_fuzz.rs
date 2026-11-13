@@ -372,7 +372,7 @@ fn chain_to_fixture(
                     "blockId": label(&label_of, a.block_id.as_str()),
                     "filename": a.filename,
                     "mimeType": a.mime_type,
-                    "bytes": [1],
+                    "bytes": "AQ==",
                 }})
             }
             OpPayload::DeleteAttachment(d) => json!({ "command": "delete_attachment", "args": {
