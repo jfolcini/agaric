@@ -42,3 +42,9 @@ Gaps, raised with the maintainer:
 Ran: the `agaric-sync` package and the app's sync tests, clippy over the workspace, the hooks,
 stores, layout, agenda and peers vitest suites, typecheck, and the fourteen sync Playwright specs.
 Both whole e2e lanes were left to CI.
+
+Review ran clippy over the workspace, the full vitest, typecheck, lint, both prek stages, the
+`@sync` spec files in `e2e/`, and the workspace nextest in two partitions on the first commit and
+the first partition again after the review fix, whose own tests ran alone; timeouts under a load
+average near 60, in tests the change does not touch, passed alone or on retry. The real-backend
+two-device spec was left to CI: both of its devices run one build, so it cannot reach the mismatch.
