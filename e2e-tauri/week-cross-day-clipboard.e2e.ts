@@ -107,26 +107,31 @@ describe('Agaric real-backend week-view clipboard across two days @editor @journ
     await waitForAppReady()
     await navigateTo('Journal')
     await addBlockWithMarker(TODAY)
+    // The day the block landed in, read here from the one day the daily view
+    // shows: in the week a day below the fold has not mounted its tree yet
+    // (DaySection), and the clock names the next day once midnight has passed.
+    const today = await browser.execute(
+      (marker: string) =>
+        Array.from(document.querySelectorAll('section[id^="journal-2"]')).find((s) =>
+          (s.textContent ?? '').includes(marker),
+        )?.id ?? '',
+      TODAY,
+    )
+    expect(today).not.toBe('')
 
     const weekly = $('button[role="tab"][aria-label="Weekly view"]')
     await weekly.waitForClickable({ timeout: NAV_TIMEOUT })
     await weekly.click()
     await $('section[id^="journal-2"]').waitForExist({ timeout: NAV_TIMEOUT })
 
-    // The week's days in document order, today's, and an empty one. Today is
-    // found by date, not by its marker: a day below the fold has not mounted
-    // its tree yet (DaySection), so its text holds no block.
-    const { days, today, empty } = await browser.execute(() => {
-      const d = new Date()
-      const todayId = `journal-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    // The week's days in document order, and an empty one.
+    const { days, empty } = await browser.execute(() => {
       const sections = Array.from(document.querySelectorAll('section[id^="journal-2"]'))
       return {
         days: sections.map((s) => s.id),
-        today: sections.find((s) => s.id === todayId)?.id ?? '',
         empty: sections.find((s) => (s.textContent ?? '').includes('No blocks for'))?.id ?? '',
       }
     })
-    expect(today).not.toBe('')
     expect(empty).not.toBe('')
     await scrollToDay(today)
     await rowIn(today, TODAY).waitForDisplayed({ timeout: ACTION_TIMEOUT })

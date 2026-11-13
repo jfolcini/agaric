@@ -2,7 +2,7 @@
 //!
 //! A derived cache stores the OUTPUT of a rule: the FTS strip, the link and
 //! tag-ref token regexes, the agenda projection, the Pages title sort key, the
-//! page-link roll-up. A change to the rule changes what the next write
+//! page-link roll-up, the tag count. A change to the rule changes what the next write
 //! produces, but the rows already in the cache keep the old output until
 //! something rewrites them, and the integrity check, which folds with the new
 //! rule, reports every one of them.
@@ -33,16 +33,20 @@ pub enum Derivation {
     TitleSortKey,
     /// `page_link_cache`: the roll-up in `rebuild_page_link_cache`.
     PageLink,
+    /// `tags_cache.usage_count`: `cache::tags::DESIRED_TAGS_SQL` and the
+    /// one-tag `DESIRED_TAG_USAGE_SQL`.
+    TagUsage,
 }
 
 impl Derivation {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::FtsStrip,
         Self::LinkTokens,
         Self::TagRefTokens,
         Self::Agenda,
         Self::TitleSortKey,
         Self::PageLink,
+        Self::TagUsage,
     ];
 
     /// The `app_settings` key a completed rebuild records the version under.
@@ -54,6 +58,7 @@ impl Derivation {
             Self::Agenda => "derivation.agenda",
             Self::TitleSortKey => "derivation.title_sort_key",
             Self::PageLink => "derivation.page_link",
+            Self::TagUsage => "derivation.tag_usage",
         }
     }
 
@@ -66,7 +71,8 @@ impl Derivation {
             | Self::TagRefTokens
             | Self::Agenda
             | Self::TitleSortKey
-            | Self::PageLink => 1,
+            | Self::PageLink
+            | Self::TagUsage => 1,
         }
     }
 }
@@ -96,6 +102,28 @@ where
     .execute(executor)
     .await?;
     Ok(())
+}
+
+/// [`record`] for a rebuild that runs on every delete and restore: it reads
+/// the recorded version on `read_pool` and writes only when that is not the
+/// current one, so a rebuild that found nothing stale takes no writer lock.
+///
+/// # Errors
+/// Returns [`AppError`] if the read or the write fails.
+pub async fn record_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    derivation: Derivation,
+) -> Result<(), AppError> {
+    let key = derivation.key();
+    let recorded: Option<String> =
+        sqlx::query_scalar!("SELECT value FROM app_settings WHERE key = ?", key)
+            .fetch_optional(read_pool)
+            .await?;
+    if recorded.as_deref() == Some(derivation.version().to_string().as_str()) {
+        return Ok(());
+    }
+    record(write_pool, derivation).await
 }
 
 /// The derivations whose cache was last rebuilt by another version of the
@@ -129,13 +157,14 @@ mod tests {
     /// its output over the conformance vectors at that version. The test
     /// fails on any change to the output, and its message gives both new
     /// values, so a change lands with a bump and every vault rebuilds once.
-    const GOLDEN: [(Derivation, i64, u64); 6] = [
+    const GOLDEN: [(Derivation, i64, u64); 7] = [
         (Derivation::FtsStrip, 1, 9_581_885_676_308_416_399),
         (Derivation::LinkTokens, 1, 6_396_512_025_153_374_395),
         (Derivation::TagRefTokens, 1, 15_668_115_924_102_391_061),
         (Derivation::Agenda, 1, 12_540_476_427_942_296_593),
         (Derivation::TitleSortKey, 1, 5_063_557_284_513_772_505),
         (Derivation::PageLink, 1, 7_934_981_724_046_892_647),
+        (Derivation::TagUsage, 1, 4_696_616_430_259_714_054),
     ];
 
     const VECTOR_FILES: [&str; 4] = [
@@ -250,6 +279,10 @@ mod tests {
                 })
                 .collect(),
             Derivation::Agenda => vec![crate::cache::DESIRED_AGENDA_SQL.to_owned()],
+            Derivation::TagUsage => crate::cache::TAG_USAGE_RULE
+                .iter()
+                .map(|sql| (*sql).to_owned())
+                .collect(),
             Derivation::TitleSortKey => corpus
                 .iter()
                 .map(|text| agaric_core::title_sort::title_sort_key(text))
@@ -331,6 +364,18 @@ mod tests {
             "another version: behind"
         );
         assert_eq!(behind.len(), Derivation::ALL.len() - 1);
+    }
+
+    /// #6659: the whole-vault tags rebuild records the count rule's version,
+    /// so boot runs it once for a vault whose counts an older rule wrote.
+    #[tokio::test]
+    async fn the_tags_rebuild_records_the_tag_count_rule() {
+        let (pool, _dir) = crate::test_support::test_pool().await;
+        assert!(stale(&pool).await.unwrap().contains(&Derivation::TagUsage));
+
+        crate::cache::rebuild_tags_cache(&pool).await.unwrap();
+
+        assert!(!stale(&pool).await.unwrap().contains(&Derivation::TagUsage));
     }
 
     /// A title key an older rule wrote is rewritten from the title, and the

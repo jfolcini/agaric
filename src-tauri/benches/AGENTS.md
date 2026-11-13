@@ -44,6 +44,12 @@ Put the same probe on any non-SLO bench whose fixture can degrade into a cheaper
 
 **Placement:** in the outer bench function's body, after the seeder and outside every `bench_function` / `bench_with_input` / `iter_custom` closure, because only that body runs under both `--test` and a name filter.
 
+## Two vault shapes
+
+The `FIXTURE_SIZE` fixtures are an outliner's vault: many blocks under few pages. `interactive_slo`'s `page_heavy` module seeds the other shape once, `PAGES` root pages of `BLOCKS_PER_PAGE` blocks in one space, and runs only the probes whose cost grows with the number of pages on it. Do not run the rest of the SLO list there.
+
+Its space is engine-backed: `create_space_inner` makes it, the pages go into SQL by multi-row inserts and into the space's Loro engine through `LoroEngine::seed_block_at_slot`, a `test-util` seam that places a node at a known slot. Seeding the engine through the production create is quadratic, because that create reads every sibling to find its slot. The seed must leave what that many page creates leave (dense SQL ranks after the space's own block, each engine node stamped with its rank), or a timed create renumbers the whole group and the probe times a path no real vault takes; `assert_shape` checks the two orders agree.
+
 ## Seeding fixtures: the schema-drift checklist
 
 Seeders use raw `sqlx::query(...)` and must match the live schema:
