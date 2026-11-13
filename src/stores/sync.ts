@@ -59,6 +59,7 @@ interface SyncStore {
   /** The peer the `waiting` state waits for; `null` in every other state. */
   waitingFor: string | null
   peers: PeerInfo[]
+  /** The latest sync known: this session's, or one a paired device's row stored. */
   lastSyncedAt: string | null
   opsReceived: number
   opsSent: number
@@ -109,7 +110,19 @@ export const useSyncStore = create<SyncStore>((set) => ({
   },
 
   setPeers: (peers: PeerInfo[]) => {
-    set({ peers })
+    // #6523 — a peer's stored sync time outlives a restart; this session's
+    // `lastSyncedAt` starts empty.
+    set((s) => ({
+      peers,
+      lastSyncedAt: peers.reduce(
+        (latest, { lastSyncedAt }) =>
+          lastSyncedAt !== null &&
+          (latest === null || Date.parse(lastSyncedAt) > Date.parse(latest))
+            ? lastSyncedAt
+            : latest,
+        s.lastSyncedAt,
+      ),
+    }))
   },
 
   updateLastSynced: (timestamp: string) => {

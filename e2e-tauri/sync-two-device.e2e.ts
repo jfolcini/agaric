@@ -37,6 +37,7 @@ import {
   openNewPage,
   pasteFileIntoFocusedBlock,
   reopenPageByTitle,
+  restartApp,
   runScopedMarker,
   typeMarkerVerified,
   waitForAppReady,
@@ -895,6 +896,33 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
         .catch(() => {
           throw new Error(`the edit never reached the peer: ${held}`)
         })
+    })
+
+    // #6523 — the peer is frozen across the restart, so no session of the new
+    // launch can end: the time shown is the one the pairing's row stored.
+    it('after a restart the state card shows the last sync before any new one', async () => {
+      if (peer === undefined) throw new Error('the pairing test failed')
+      peer.pause()
+      try {
+        await restartApp()
+        await openSyncSettings()
+        const lastSynced = () =>
+          browser.execute(() => document.querySelector('.sync-last-synced')?.textContent ?? '')
+        let seen = await lastSynced()
+        await browser
+          .waitUntil(
+            async () => {
+              seen = await lastSynced()
+              return /^just now$|ago$/.test(seen)
+            },
+            { timeout: NAV_TIMEOUT },
+          )
+          .catch(() => {
+            throw new Error(`the state card shows no last sync after the restart: "${seen}"`)
+          })
+      } finally {
+        peer.resume()
+      }
     })
 
     it("unpairing refuses the peer's next sync and drops only this device's row", async () => {
