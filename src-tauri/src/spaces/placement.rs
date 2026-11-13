@@ -37,6 +37,11 @@
 //! anything takes the full-reload form too, and the pages this device renamed
 //! go out as `pages:renamed`, its notice.
 //!
+//! #6541: the signal says whether this device appended ops of its own. Only a
+//! placement or a repair does; a session alone brings the peer's replicated
+//! ops, which no page's positional undo numbers, so the open pages keep their
+//! undo and redo.
+//!
 //! #6525: before any of that the task saves the engines. A session's imports
 //! are committed to SQL at once but reach `loro_doc_state` only through a
 //! snapshot pass, and boot replay restores local ops only, so a process killed
@@ -189,11 +194,13 @@ impl SpacePlacementSink {
             // takes the full-reload form. The wait fails only on shutdown,
             // when the signal has no listener either.
             let _ = materializer.flush_inbound_rebuilds().await;
-            view.emit_blocks_changed(if placed || repaired.changed {
-                Vec::new()
+            // #6541: a placement or a repair appended ops of this device's
+            // own; the session alone appended only the peer's.
+            if placed || repaired.changed {
+                view.emit_blocks_changed(Vec::new());
             } else {
-                changed_page_ids
-            });
+                view.emit_blocks_changed_by_peer(changed_page_ids);
+            }
             if !repaired.renamed.is_empty() {
                 view.emit_pages_renamed(repaired.renamed);
             }
@@ -336,6 +343,8 @@ mod tests {
         // placement landed: the placed tag is referenced from pages the
         // session never named, so the session's own page set is not enough.
         assert_eq!(view.blocks_changed(), vec![Vec::<String>::new()]);
+        // #6541 — the placement's `space` op is this device's own.
+        assert_eq!(view.local_ops_appended(), vec![true]);
         materializer.shutdown();
     }
 
@@ -352,6 +361,8 @@ mod tests {
         task.await.unwrap();
 
         assert_eq!(view.blocks_changed(), vec![vec!["PAGE_A".to_string()]]);
+        // #6541 — only the peer's ops: the open pages keep their undo and redo.
+        assert_eq!(view.local_ops_appended(), vec![false]);
         materializer.shutdown();
     }
 
