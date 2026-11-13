@@ -533,7 +533,7 @@ fn remember(state: &mut BackoffState, entry: ReportedFailure) {
 /// the jittered wall-clock retry is also `MIN_BACKOFF` (1s), which keeps
 /// the very first jittered retry from dipping below the seed under
 /// adverse jitter.
-const MIN_BACKOFF: Duration = Duration::from_secs(1);
+pub(crate) const MIN_BACKOFF: Duration = Duration::from_secs(1);
 /// How many distinct *reported* failure texts one peer's streak remembers
 /// (#4201).
 ///
@@ -566,7 +566,7 @@ pub const MAX_REMEMBERED_REPORTS: usize = 8;
 /// Cap on the per-peer backoff. Once `state.backoff` reaches `60s` it
 /// stays there — every further failure schedules another retry roughly
 /// 60s out (±10% jitter).
-const MAX_BACKOFF: Duration = Duration::from_secs(60);
+pub(crate) const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// Cap on how many peers the backoff map retains at once (#4231).
 ///
 /// The map's key set is not chosen by the user: entries are created from
@@ -1027,6 +1027,9 @@ impl SyncScheduler {
     /// about is whichever unpaired endpoint answers. The blast radius is one
     /// extra dial round for any peer that happened to be in backoff, bounded to
     /// the moment a user pressed a button in the pairing dialog.
+    ///
+    /// The daemon also calls it when it binds its endpoint again (#6526): what
+    /// failed on the old network says nothing about the new one.
     pub fn clear_backoff(&self) {
         self.backoff
             .lock()
@@ -1126,10 +1129,16 @@ impl SyncScheduler {
         self.change_count.send_modify(|count| *count += 1);
     }
 
-    /// Publish this device's dialable coordinates (#4037). Called by
-    /// `daemon_loop` once — and only once — the QUIC endpoint is bound.
+    /// Publish this device's dialable coordinates (#4037). Called by the daemon
+    /// each time it binds its QUIC endpoint.
     pub fn publish_local_endpoint(&self, advert: LocalEndpointAdvert) {
         self.local_endpoint.send_replace(Some(advert));
+    }
+
+    /// This device's dialable coordinates as last published; `None` while the
+    /// daemon has bound no endpoint.
+    pub fn local_endpoint(&self) -> Option<LocalEndpointAdvert> {
+        self.local_endpoint.borrow().clone()
     }
 
     /// This device's dialable coordinates, waiting up to `budget` for the

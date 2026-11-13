@@ -273,6 +273,10 @@ export const syncHandlers = {
   // ordinary private LAN does: nothing to warn about.
   get_bind_exposure_status: () => ({ internet_facing: null }),
 
+  // #6526 — the mock has no QUIC endpoint, which reads as a daemon that has
+  // bound nothing: no address row.
+  get_local_sync_address: () => null,
+
   // #4035 — the OS network-block status the pairing UI reads once it is
   // subscribed to `sync:network_blocked`.
   // Android's per-uid background firewall has no analogue in the mock (or on
@@ -457,6 +461,7 @@ export const syncHandlers = {
   | 'cancel_sync'
   | 'get_mdns_status'
   | 'get_bind_exposure_status'
+  | 'get_local_sync_address'
   | 'get_os_network_block_status'
   | 'get_sync_relay_settings'
   | 'set_sync_relay_settings'
