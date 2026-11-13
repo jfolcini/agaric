@@ -801,6 +801,90 @@ describe('QueryBuilderModal', () => {
     })
   })
 
+  describe('search-syntax text (#6628)', () => {
+    const TAG = '01HZY3V9Q8K2M4N6P7R8S9T0VW'
+    const todo = {
+      type: 'Leaf' as const,
+      primitive: { type: 'State' as const, values: ['TODO'], is_null: false, exclude: false },
+    }
+    const tagged = { type: 'Leaf' as const, primitive: { type: 'Tag' as const, tag: TAG } }
+
+    it('saves an And of search tokens as text, and previews it', async () => {
+      const user = userEvent.setup()
+      const onSave = vi.fn()
+      const payload = encodeInlineQueryPayload({
+        filter: { type: 'And', children: [todo, tagged] },
+        table: true,
+        columns: ['owner'],
+      })
+      render(<QueryBuilderModal {...defaultProps} onSave={onSave} initialExpression={payload} />)
+
+      const text = `state:TODO #[${TAG}] table:true columns:owner`
+      expect(screen.getByTestId('expression-preview')).toHaveTextContent(text)
+      await user.click(screen.getByRole('button', { name: /update query/i }))
+      expect(onSave).toHaveBeenCalledWith(text)
+    })
+
+    it('saves an Or as a v2 payload, and says it is not text', async () => {
+      const user = userEvent.setup()
+      const onSave = vi.fn()
+      const filter = { type: 'Or' as const, children: [todo, tagged] }
+      const payload = encodeInlineQueryPayload({ filter, table: false })
+      render(<QueryBuilderModal {...defaultProps} onSave={onSave} initialExpression={payload} />)
+
+      expect(screen.getByText(/can't be written as text/i)).toBeInTheDocument()
+      expect(screen.queryByTestId('expression-preview')).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /update query/i }))
+      const saved = onSave.mock.calls[0]?.[0] as string
+      expect(decodeInlineQueryPayload(saved)?.filter).toEqual(filter)
+    })
+
+    it('opens a text query in the builder with the same filter, a named tag as its id', async () => {
+      const user = userEvent.setup()
+      const onSave = vi.fn()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_all_tags_in_space') return [{ tag_id: TAG, name: 'work' }]
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+      render(
+        <QueryBuilderModal
+          {...defaultProps}
+          onSave={onSave}
+          // The stored text carries the block's Markdown escape for `=`.
+          initialExpression={'tag:#work state:TODO prop:k\\=v table:true'}
+        />,
+      )
+
+      expect(await screen.findByTestId('advanced-filter-count')).toHaveTextContent(/3 filters/i)
+      expect(screen.getByRole('tab', { name: /^advanced$/i })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      )
+      expect(screen.getByRole('checkbox', { name: /show results as table/i })).toBeChecked()
+      await user.click(screen.getByRole('button', { name: /update query/i }))
+      expect(onSave).toHaveBeenCalledWith(`#[${TAG}] state:TODO prop:k=v table:true`)
+    })
+
+    it('does not open a text query whose tag it could not look up', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_all_tags_in_space') throw new Error('backend down')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+      render(<QueryBuilderModal {...defaultProps} initialExpression="tag:#work" />)
+
+      expect(await screen.findByText(/can only be edited as text/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /update query/i })).toBeDisabled()
+    })
+
+    it('does not open a text query it cannot hold, and cannot overwrite it', async () => {
+      render(<QueryBuilderModal {...defaultProps} initialExpression="state:TODO due:today" />)
+
+      expect(await screen.findByText(/can only be edited as text/i)).toBeInTheDocument()
+      expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /update query/i })).toBeDisabled()
+    })
+  })
+
   describe('the column list a table query names (#6544)', () => {
     it('keeps it when a text query is saved', async () => {
       const user = userEvent.setup()
