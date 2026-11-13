@@ -18,6 +18,7 @@ import { nameKey } from '@/lib/name-tokens'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import type { TodoState } from '@/lib/task-states'
 import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
+import { rebasedOnto } from '@/lib/tauri-mock/edit-rebase'
 import {
   type TypedHandlers,
   appErrorRejection,
@@ -50,7 +51,12 @@ import {
   taskLineOf,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveInboundNames } from '@/lib/tauri-mock/names'
-import { pageNameHolder, pageNameRefusal, rejectTakenPageNames } from '@/lib/tauri-mock/page-names'
+import {
+  isSavedViewPage,
+  pageNameHolder,
+  pageNameRefusal,
+  rejectTakenPageNames,
+} from '@/lib/tauri-mock/page-names'
 import {
   allOrNothing,
   attachmentBytes,
@@ -970,6 +976,25 @@ function writeBatchTypedProperties(
   })
 }
 
+/**
+ * #6544 — the live saved views of the space `spaceId` (none when it is no
+ * space), in id order: a delete of the space takes them with it
+ * (`saved_views_of_space_in_tx`).
+ */
+function savedViewsOfSpace(spaceId: string): string[] {
+  if (properties.get(spaceId)?.get('is_space')?.['value_text'] !== 'true') return []
+  return [...blocks.values()]
+    .filter(
+      (b) =>
+        b['block_type'] === 'page' &&
+        !b['deleted_at'] &&
+        b['space_id'] === spaceId &&
+        isSavedViewPage(b),
+    )
+    .map((b) => b['id'] as string)
+    .toSorted()
+}
+
 export const blocksHandlers = {
   // #3870 — mirrors `list_blocks_inner`'s DISPATCH CHAIN, not a conjunction of
   // filters: exactly one branch runs, and each brings its own `ORDER BY` and
@@ -1074,15 +1099,10 @@ export const blocksHandlers = {
       // `None` with `count_blocks_by_type`, which counts every match under the
       // SAME predicates as the row fetch, independent of the page.
       //
-      // KNOWN GAP (pre-existing): `list_by_type` and `count_blocks_by_type` also
-      // carry a `NOT EXISTS (… bp.key = 'view_type' AND bp.value_text =
-      // 'query-view')` clause (#1460) excluding saved-view marker blocks from
-      // both the rows and the count. The mock does not model it, so a mock
-      // saved-view page would show up here where the backend hides it. Not
-      // covered by a fixture step either — filed as #3878 rather than fixed
-      // silently.
+      // `list_by_type` and `count_blocks_by_type` leave a saved view out of
+      // both the rows and the count (#6544).
       const items = active.filter(
-        (b) => b['block_type'] === blockType && ownerSpaceOf(b) === spaceId,
+        (b) => b['block_type'] === blockType && ownerSpaceOf(b) === spaceId && !isSavedViewPage(b),
       )
       // `list_by_type` mints `Cursor::for_id`.
       return paginateKeyset(items, idKey, limit, cursor, items.length, [])
@@ -1531,19 +1551,24 @@ export const blocksHandlers = {
     if (!b || b['deleted_at'] != null) {
       throw notFoundRejection(`block '${blockId}' (not found or deleted)`)
     }
-    if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, a['toText'] as string)
-    if (b['block_type'] === 'tag') {
-      rejectSpacedTagName(a['toText'] as string)
-      rejectDuplicateTagName(blockId, a['toText'] as string)
-    }
-    rejectCrossSpaceTokens(definitionSpaceOf(blockId), a['toText'] as string, blockId)
     const oldContent = b['content'] as string | null
+    const toText = rebasedOnto(
+      oldContent ?? '',
+      a['baseText'] as string | null | undefined,
+      a['toText'] as string,
+    )
+    if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, toText)
+    if (b['block_type'] === 'tag') {
+      rejectSpacedTagName(toText)
+      rejectDuplicateTagName(blockId, toText)
+    }
+    rejectCrossSpaceTokens(definitionSpaceOf(blockId), toText, blockId)
     const linked = linkedTargets(b)
-    b['content'] = a['toText'] as string
+    b['content'] = toText
     indexLinks(b, linked)
     const op = pushOp('edit_block', {
       block_id: a['blockId'],
-      to_text: a['toText'],
+      to_text: toText,
       from_text: oldContent,
     })
     // #2468 — `WithOps<BlockRow>` (spread copy — see create_block).
@@ -1577,8 +1602,14 @@ export const blocksHandlers = {
     if (target['deleted_at'] != null) {
       throw invalidOperationRejection(`block '${blockId}' is already deleted`)
     }
+    // #6544 — a space's saved views go first, each its own delete.
+    const swept = savedViewsOfSpace(blockId).map((viewId) => {
+      const viewCohort = deleteCohort(blocks, viewId, nextCohortMarker())
+      return { cohort: viewCohort, op: pushOp('delete_block', { block_id: viewId }) }
+    })
     const now = nextCohortMarker()
-    const cohort = deleteCohort(blocks, blockId, now)
+    // The response lists the seed's own cohort, then each swept view's.
+    const cohort = [...deleteCohort(blocks, blockId, now), ...swept.flatMap((view) => view.cohort)]
     const op = pushOp('delete_block', { block_id: blockId })
     // #4523 — the PAGE members of the cohort the walk just tombstoned. The
     // walk does NOT stop at a nested page, exactly as the backend cascade does
@@ -1594,7 +1625,10 @@ export const blocksHandlers = {
       deleted_at: now,
       descendants_affected: cohort.length,
       affected_page_ids: affectedPageIds,
-      op_refs: [{ device_id: op.device_id, seq: op.seq }],
+      op_refs: [...swept.map((view) => view.op), op].map(({ device_id, seq }) => ({
+        device_id,
+        seq,
+      })),
     }
   },
 

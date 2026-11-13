@@ -344,6 +344,7 @@ macro_rules! agaric_commands {
             // Spaces (Phase 1 + Phase 2 + Phase 6)
             $crate::commands::spaces::list_spaces,
             $crate::commands::spaces::create_page_in_space,
+            $crate::commands::spaces::resolve_page_title,
             $crate::commands::spaces::create_space,
             // Quick capture — desktop global-shortcut entry point
             $crate::commands::journal::quick_capture_block,
@@ -1896,11 +1897,11 @@ fn loro_snapshot_if_dirty_job(
 
 /// The vault-wide `page_id` / `space_id` re-derivation (`RebuildPageIds`):
 /// the daemon's first tick, about a minute after boot, then daily (#5420).
-/// Local writes derive both in their own transaction, and every delete /
-/// restore / purge and every non-empty inbound sync enqueues this task
-/// itself, so what is left for a backstop is a fan-out lost to process death
-/// (an inbound sync's is debounced in memory): it need not run in the boot
-/// burst, but it must run every session.
+/// Local writes derive both in their own transaction, and every purge and
+/// every non-empty inbound sync enqueues this task itself, so what is left
+/// for a backstop is a fan-out lost to process death (an inbound sync's is
+/// debounced in memory): it need not run in the boot burst, but it must run
+/// every session.
 fn page_ids_backstop_job(materializer: &materializer::Materializer) -> maintenance::MaintenanceJob {
     let materializer = materializer.clone();
     maintenance::MaintenanceJob {
@@ -4204,6 +4205,7 @@ mod log_dir_tests {
                 None,
                 &[],
                 None,
+                None,
             )
             .expect("bug-report metadata collection must succeed")
             .recent_errors
@@ -4236,6 +4238,7 @@ mod log_dir_tests {
             device_id.to_owned(),
             None,
             &[],
+            None,
             None,
         )
         .expect("bug-report metadata collection must succeed")

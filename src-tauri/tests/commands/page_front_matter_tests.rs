@@ -180,6 +180,41 @@ async fn page_buffer_hides_the_bookmark_and_a_save_keeps_it() {
     assert_eq!(kept, Some(2.0));
 }
 
+/// A saved view's payload (#6544) is the app's: the buffer does not show it,
+/// so a save keeps it, and the export writes it so a restore makes the view
+/// again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_buffer_hides_the_saved_view_and_a_save_keeps_it() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, body) = front_matter_page(&pool, &mat).await;
+    set_text(&pool, &mat, &page, "saved_view", "v1:e30").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    assert_eq!(
+        base,
+        format!("---\naliases: [Home base]\ntags: [work]\nstage: open\n---\n\nbody ^{body}\n")
+    );
+
+    let source = with(&base, "stage: open\n", "stage: done\n");
+    save_source(&pool, &mat, &page, &source, &base)
+        .await
+        .unwrap();
+
+    let kept = sqlx::query_scalar::<_, String>(
+        "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'saved_view'",
+    )
+    .bind(page.as_str())
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept.as_deref(), Some("v1:e30"));
+    let md = export_page_markdown_inner(&pool, page.as_str())
+        .await
+        .unwrap();
+    assert!(md.contains("saved_view: v1:e30\n"), "{md}");
+}
+
 /// `aliases:` and `tags:` are the page's aliases and tags: an item added is
 /// added, a tag no page of the space names is created, and an item left out is
 /// removed.

@@ -40,9 +40,11 @@ A few specifics for that environment:
 
 ### Cloud container: disk, memory, tools
 
-- **Disk.** Every worktree builds its own large `target/`; check `df -h` before a full run, and reclaim with `rm -rf src-tauri/target/debug/incremental` or by deleting finished worktrees' `target/`. The dev profile's `split-debuginfo = "unpacked"` (`src-tauri/Cargo.toml`) leaves debug info in per-object `*.o` / `*.dwo` files under `src-tauri/target/debug/deps`, and stale ones pile up across builds until they fill most of the disk allowance; between cargo runs, `find src-tauri/target/debug/deps -maxdepth 1 -type f \( -name '*.o' -o -name '*.dwo' \) -mmin +30 -delete` reclaims them safely (binaries read them only for debug symbols). `CARGO_PROFILE_DEV_DEBUG=0` (test builds inherit it) shrinks the tree; set it for the whole session, because toggling it rebuilds everything. "linking with `cc` failed" mid-build usually means ENOSPC, not a broken toolchain.
+- **Disk.** Every worktree builds its own large `target/`; check `df -h` before a full run, and reclaim with `rm -rf src-tauri/target/debug/incremental` or by deleting finished worktrees' `target/`. The dev profile's `split-debuginfo = "unpacked"` (`src-tauri/Cargo.toml`) leaves debug info in per-object `*.o` / `*.dwo` files under `src-tauri/target/debug/deps`, and stale ones pile up across builds until they fill most of the disk allowance; between cargo runs, `find src-tauri/target/debug/deps -maxdepth 1 -type f \( -name '*.o' -o -name '*.dwo' \) -mmin +30 -delete` reclaims them safely (binaries read them only for debug symbols). `CARGO_PROFILE_DEV_DEBUG=0` (test builds inherit it) shrinks the tree; set it for the whole session, because toggling it rebuilds everything. "linking with `cc` failed" mid-build usually means ENOSPC, not a broken toolchain. Set `CARGO_INCREMENTAL=0` for whole-workspace builds, clippy and `cargo mutants`: incremental state is the bulk of the tree, and a disk-full mutants run counts its mutants as unviable, not caught.
 - **Never share a target dir between worktrees**, through `CARGO_TARGET_DIR` or a symlinked `target`, not even one build at a time. Workspace crates get the same artifact names in every checkout, so one tree takes another's artifacts as fresh and builds or tests the wrong source. Recovery: `cargo clean -p` every workspace member in the shared dir, and re-run every gate that went through it.
 - **Memory.** One cargo process at a time ([AGENTS.md § Pre-commit & CI](../AGENTS.md#pre-commit--ci)). A killed `just gen-sqlx` can leave `.sqlx/` entries deleted: `git checkout -- src-tauri/.sqlx`, then re-run it.
+
+- **Playwright's browser.** The container's `/opt/pw-browsers` can hold an older revision than the pinned Playwright wants (`node_modules/playwright-core/browsers.json`), and the mock lane then refuses to launch. Point `PLAYWRIGHT_BROWSERS_PATH` at a scratch directory symlinking the installed revisions under the wanted names, rather than skip the spec. Pixel-measuring specs (`diagram-legibility`, `block-line-break`) can fail on that older build on clean `main` too: compare against `main` before chasing one.
 
 ### Hook toolchain
 
@@ -329,6 +331,8 @@ Useful flags (see `scripts/release.sh --help`):
 - `--dry-run` — bump + commit + tag locally but don't push (review with `git show <tag>`).
 - `--skip-verify-build` — skip the ~5-10 min local bundle build (rely on CI).
 - `-y` / `--yes` — skip the confirmation prompt.
+
+**An engine-format bump** (`ENGINE_FORMAT_VERSION`) stops sync with every older build, so desktop and Android must ship it in the same release: never publish by hand a draft whose Android job failed.
 
 > **Why local, and why there's no CI "release" button.** Cutting a release means pushing a bump commit to `main`, which requires bypassing the branch ruleset. The in-workflow `GITHUB_TOKEN` is not a ruleset bypass actor (and its pushes don't trigger workflows anyway), so a CI bump can't land without a long-lived PAT — rejected on security grounds. The maintainer is an admin bypass actor, so the bump is cut locally and only the resulting tag triggers CI. This keeps branch protection intact (1 review + admin bypass) with no PAT. `scripts/bump-version.sh <version> --commit --tag --push` is still available if you want to drive the steps yourself.
 

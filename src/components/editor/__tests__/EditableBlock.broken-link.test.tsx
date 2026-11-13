@@ -99,6 +99,7 @@ describe('EditableBlock — removing a broken link from a static block', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: BLOCK_ID,
       toText: `see  and [[${LIVE_ID}]]`,
+      baseText: null,
     })
     expect(onNavigate).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'grip' })).toHaveFocus()

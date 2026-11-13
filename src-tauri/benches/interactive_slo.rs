@@ -798,7 +798,7 @@ async fn seed_pages_cache_fixture(
 /// assigns every block to `SLO_SPACE_ID` so the production `pc.space_id = ?1`
 /// filter selects the whole set, and populates `pages_cache` for the
 /// cache-backed probe. The `pages_cache` counts are computed with the exact
-/// subqueries the columns denormalize (`recompute_all_pages_cache_counts` /
+/// subqueries the columns denormalize (`recompute_pages_cache_counts_of` /
 /// migration 0069), so the materialised sort key equals what production would
 /// store — the `_LIVE` probe recomputes the same values on the fly. The
 /// space-owner page (`SLO_SPACE_ID`, `space_id IS NULL`) is excluded from both
@@ -3151,8 +3151,10 @@ fn bench_move_block(c: &mut Criterion) {
 /// and `restore`), on one leaf of the 2K-block page (#5691). Each iteration
 /// deletes the leaf and restores it, so every iteration deletes and restores
 /// the same shape. One probe times the delete and the other the restore; the
-/// other call of the pair, the `flush_background` after each call and the
-/// shape check run untimed. The shape check runs per call, not once before
+/// other call of the pair and the shape check run untimed. Each probe also
+/// reports its call with the `flush_background` after it (`settled`): the
+/// write-lock work the call's whole-vault rebuilds do once it has returned
+/// (#6522). The shape check runs per call, not once before
 /// the loop, because a mutator must not preflight the measured fixture.
 /// Measurement only: no budget until `bench-slo` has measured them.
 fn bench_delete_restore_block(c: &mut Criterion) {
@@ -3168,15 +3170,27 @@ fn bench_delete_restore_block(c: &mut Criterion) {
 
     let (pool_ref, materializer_ref, target_ref) = (&pool, &materializer, &target);
     let (delete_acc, restore_acc) = (Acc::new(), Acc::new());
+    let (delete_settled, restore_settled) = (Acc::new(), Acc::new());
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);
-    for (name, acc, times_delete) in [
-        ("delete_block_2k_page_in_100k", &delete_acc, true),
-        ("restore_block_2k_page_in_100k", &restore_acc, false),
+    for (name, acc, settled_acc, times_delete) in [
+        (
+            "delete_block_2k_page_in_100k",
+            &delete_acc,
+            &delete_settled,
+            true,
+        ),
+        (
+            "restore_block_2k_page_in_100k",
+            &restore_acc,
+            &restore_settled,
+            false,
+        ),
     ] {
         group.bench_function(name, |b| {
             b.to_async(&rt).iter_custom(|iters| async move {
                 let mut elapsed = Duration::ZERO;
+                let mut settled = Duration::ZERO;
                 for _ in 0..iters {
                     let start = Instant::now();
                     let deleted = delete_block_inner(
@@ -3189,6 +3203,7 @@ fn bench_delete_restore_block(c: &mut Criterion) {
                     .unwrap();
                     let delete_time = start.elapsed();
                     materializer_ref.flush_background().await.unwrap();
+                    let delete_settled_time = start.elapsed();
                     let start = Instant::now();
                     let restored = restore_block_inner(
                         pool_ref,
@@ -3201,6 +3216,7 @@ fn bench_delete_restore_block(c: &mut Criterion) {
                     .unwrap();
                     let restore_time = start.elapsed();
                     materializer_ref.flush_background().await.unwrap();
+                    let restore_settled_time = start.elapsed();
                     assert_eq!(
                         (
                             deleted.block_id.as_str(),
@@ -3215,13 +3231,16 @@ fn bench_delete_restore_block(c: &mut Criterion) {
                         (target_ref.as_str(), 1),
                         "restore_block @ 100K: a leaf restore revives the leaf alone (#5691)"
                     );
-                    elapsed += if times_delete {
-                        delete_time
+                    let (command_time, settled_time) = if times_delete {
+                        (delete_time, delete_settled_time)
                     } else {
-                        restore_time
+                        (restore_time, restore_settled_time)
                     };
+                    elapsed += command_time;
+                    settled += settled_time;
                 }
                 acc.record(elapsed, iters);
+                settled_acc.record(settled, iters);
                 elapsed
             });
         });
@@ -3280,6 +3299,14 @@ fn bench_delete_restore_block(c: &mut Criterion) {
 
     report_measurement_only(DELETE, &delete_acc);
     report_measurement_only(RESTORE, &restore_acc);
+    report_settled(
+        "delete_block (leaf of 2K-block page) settled @ 100K",
+        &delete_settled,
+    );
+    report_settled(
+        "restore_block (leaf of 2K-block page) settled @ 100K",
+        &restore_settled,
+    );
 }
 
 /// `preview_space_move` — the cross-space move's confirmation read: one page

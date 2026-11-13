@@ -15,6 +15,7 @@
  */
 
 import type React from 'react'
+import { type RefObject, useLayoutEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -26,6 +27,8 @@ import { cn } from '@/lib/utils'
 
 export interface BatchActionToolbarProps {
   selectedCount: number
+  /** The list whose selection this acts on; focus returns to it (see below). */
+  listRef: RefObject<HTMLElement | null>
   children: React.ReactNode
   className?: string
   /**
@@ -43,24 +46,35 @@ export interface BatchActionToolbarProps {
 
 export function BatchActionToolbar({
   selectedCount,
+  listRef,
   children,
   className,
   suppressRangeSelectHint,
 }: BatchActionToolbarProps): React.ReactElement {
   const { t } = useTranslation()
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  // The toolbar unmounts when the selection empties. When one of its own
+  // buttons emptied it, focus would fall to <body> with the toolbar; it goes to
+  // the list's Tab stop instead (the list, or its cursor row), so the next key
+  // still reaches the list. A layout cleanup runs before the node is removed.
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current
+    return () => {
+      // Read at unmount, not at mount: the list renders after the toolbar, so
+      // its ref is still empty when this effect runs.
+      // oxlint-disable-next-line react-hooks/exhaustive-deps -- the list's node, not one this component renders
+      const list = listRef.current
+      if (toolbar == null || list == null || !toolbar.contains(document.activeElement)) return
+      const tabStop = list.tabIndex === 0 ? list : list.querySelector<HTMLElement>('[tabindex="0"]')
+      tabStop?.focus({ preventScroll: true })
+    }
+  }, [listRef])
   return (
     <div
+      ref={toolbarRef}
       role="toolbar"
       aria-label={t('batch.selectedCount', { count: selectedCount })}
       aria-describedby={!suppressRangeSelectHint ? 'batch-range-select-hint' : undefined}
-      // A button here acts on its own Enter or Space. The list behind the
-      // toolbar hears keys at the document and would act on the same press
-      // (Pages opened its focused page). A toolbar that handles keys must be
-      // focusable, but it is no Tab stop: its buttons are.
-      tabIndex={-1}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
-      }}
       // Wraps: a phone cannot fit the actions on one line, and the clipped
       // ones (Pages' Bookmark and Delete) were unreachable.
       className={cn(

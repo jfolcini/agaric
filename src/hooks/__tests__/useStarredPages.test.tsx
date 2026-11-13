@@ -9,10 +9,12 @@
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { useStarredPages } from '@/hooks/useStarredPages'
+import { t } from '@/lib/i18n'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { queryClient } from '@/lib/query-client'
 import { dispatch } from '@/lib/tauri-mock/handlers'
@@ -240,5 +242,23 @@ describe('useStarredPages', () => {
 
     await waitFor(() => expect(reads()).toHaveLength(2))
     await waitFor(() => expect(result.current.isStarred(QN)).toBe(false))
+  })
+
+  it('a failed write shows one error toast, even when it fails a whole batch', async () => {
+    const { result } = renderHook(() => useStarredPages())
+    await waitFor(() => expect(result.current.loaded).toBe(true))
+    vi.mocked(invoke).mockImplementation((cmd: string, args?: InvokeArgs) =>
+      cmd === 'set_property'
+        ? Promise.reject({ kind: 'database', message: 'disk I/O error' })
+        : Promise.resolve(dispatch(cmd, args)),
+    )
+
+    act(() => result.current.setMany([QN, PROJ, MEET], true))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1))
+    expect(toast.error).toHaveBeenCalledWith(t('bookmarks.writeFailed'))
+    await waitFor(() => expect(result.current.starredIds.size).toBe(0))
+    expect(storedOrder(QN)).toBeUndefined()
+    expect(toast.error).toHaveBeenCalledTimes(1)
   })
 })

@@ -24,6 +24,14 @@ export const properties: Record<string, string> = {
   'query.unknownType': 'Unknown query type: {{type}}',
   'query.expressionEmpty': 'Query expression is empty',
   'query.failed': 'Query failed',
+  // #6628 — a query block in the search syntax (`query-text.ts`): each token it
+  // cannot run, joined into the block's error state.
+  'query.text.problem': '{{token}} (column {{column}}): {{message}}',
+  'query.text.cannotRun': "a query block can't run this filter; the search box can",
+  'query.text.relativeDate':
+    "a query block can't run a relative date yet; write a date as YYYY-MM-DD",
+  'query.text.freeText': "a query block can't search for text yet",
+  'query.text.unknownTag': "no tag named '{{name}}' in this space",
   // #1743 — inline query result count. When more pages remain unloaded
   // (`hasMore`), the loaded-so-far count is NOT the true total, so it is
   // labelled as partial ("first N loaded…") rather than presented as the
@@ -152,6 +160,11 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.namePrompt': 'Name this view:',
   'advancedQuery.savedViews.saved': 'Saved view "{{name}}"',
   'advancedQuery.savedViews.saveError': 'Could not save the view',
+  'advancedQuery.savedViews.nameTaken':
+    'A page or view named "{{name}}" already exists in this space',
+  'advancedQuery.savedViews.nameIsDate': 'A view cannot be named like a date: "{{name}}"',
+  'advancedQuery.savedViews.renameError': 'Could not rename the view',
+  'advancedQuery.savedViews.deleteError': 'Could not delete the view',
   'advancedQuery.savedViews.empty': 'No saved views yet',
   'advancedQuery.savedViews.load': 'Load',
   'advancedQuery.savedViews.loadTitle': 'Load "{{name}}"',
@@ -163,7 +176,8 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.renamed': 'Renamed view to "{{name}}"',
   'advancedQuery.savedViews.delete': 'Delete',
   'advancedQuery.savedViews.deleteTitle': 'Delete "{{name}}"',
-  'advancedQuery.savedViews.deleteConfirm': 'Delete saved view "{{name}}"? This cannot be undone.',
+  'advancedQuery.savedViews.deleteConfirm':
+    'Delete saved view "{{name}}"? You can restore it from the Trash.',
   'advancedQuery.savedViews.deleted': 'Deleted view "{{name}}"',
   'query.operator.eqDesc': 'equals',
   'query.operator.neqDesc': 'not equal',

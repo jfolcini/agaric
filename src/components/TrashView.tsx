@@ -374,6 +374,7 @@ export function TrashView(): React.ReactElement {
   // array references it and a forward reference would hit the TDZ.
   const requestBatchPurge = useCallback(() => setConfirmBatchPurge(true), [])
   useTrashListShortcuts({
+    listRef,
     filteredBlocks,
     focusedIndex,
     selectedSize: selected.size,
@@ -617,6 +618,7 @@ export function TrashView(): React.ReactElement {
       {selected.size > 0 && (
         <BatchActionToolbar
           selectedCount={selected.size}
+          listRef={listRef}
           className="trash-selection-toolbar gap-3 p-3"
           suppressRangeSelectHint
         >

@@ -789,3 +789,55 @@ async fn local_lifecycle_rebuild_debounce_coalesces_delete_burst() {
         "every deleted block's inline RemoveFtsBlock must have removed its fts_blocks row"
     );
 }
+
+/// The `page_id` of `id`, for the #6522 debounce test below.
+async fn page_id_of(pool: &SqlitePool, id: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// #6522: a burst keeps `RebuildPageIds` when any op in it is a purge, even
+/// when a delete lands after the purge in the same window, and the next burst
+/// starts without it. The witness is a `page_id` planted on a block no op
+/// touches, which only that rebuild rewrites.
+#[tokio::test]
+async fn lifecycle_debounce_keeps_page_ids_for_a_purge_anywhere_in_the_burst_6522() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES \
+         ('PG_A', 'page', 'a', NULL, 'PG_A'), ('PG_B', 'page', 'b', NULL, 'PG_B'), \
+         ('BYSTANDER', 'content', 'x', 'PG_B', 'PG_A')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let purge = fake_op_record("purge_block", r#"{"block_id":"GONE"}"#);
+    let delete = fake_op_record("delete_block", r#"{"block_id":"OTHER"}"#);
+
+    mat.dispatch_background(&purge).unwrap();
+    mat.dispatch_background(&delete).unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        page_id_of(&pool, "BYSTANDER").await.as_deref(),
+        Some("PG_B"),
+        "a delete after a purge in one burst must not drop the purge's RebuildPageIds"
+    );
+
+    sqlx::query("UPDATE blocks SET page_id = 'PG_A' WHERE id = 'BYSTANDER'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    mat.dispatch_background(&delete).unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        page_id_of(&pool, "BYSTANDER").await.as_deref(),
+        Some("PG_A"),
+        "the purge's flag must not carry over into the next, delete-only burst"
+    );
+
+    mat.shutdown();
+}

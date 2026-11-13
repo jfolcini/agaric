@@ -10,12 +10,15 @@
  *.
  */
 
-import { useEffect } from 'react'
+import { type RefObject, useEffect } from 'react'
 
+import { pressesFocusedControl } from '@/hooks/useListKeyboardNavigation'
 import type { BlockRow } from '@/lib/bindings'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 
 export interface UseTrashListShortcutsOptions {
+  /** The list container, which gates Space and overlay keys (`pressesFocusedControl`). */
+  listRef: RefObject<HTMLElement | null>
   filteredBlocks: BlockRow[]
   focusedIndex: number
   selectedSize: number
@@ -28,6 +31,7 @@ export interface UseTrashListShortcutsOptions {
 }
 
 export function useTrashListShortcuts({
+  listRef,
   filteredBlocks,
   focusedIndex,
   selectedSize,
@@ -47,6 +51,7 @@ export function useTrashListShortcuts({
         target.tagName === 'TEXTAREA'
       )
         return
+      if (pressesFocusedControl(e, listRef.current)) return
 
       // Delegate to list keyboard navigation (ArrowUp/Down, Home/End, PageUp/Down)
       if (navHandleKeyDown(e)) {
@@ -106,6 +111,7 @@ export function useTrashListShortcuts({
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [
+    listRef,
     navHandleKeyDown,
     focusedIndex,
     filteredBlocks,

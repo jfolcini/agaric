@@ -332,7 +332,11 @@ describe('useBlockTreeEventListeners', () => {
       dispatchBlockCommand(event)
 
       await vi.waitFor(() =>
-        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'BLOCK_1', toText }),
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+          blockId: 'BLOCK_1',
+          toText,
+          baseText: null,
+        }),
       )
       // The block is re-mounted with the new content (matches the slash path).
       await vi.waitFor(() => expect(mount).toHaveBeenCalledWith('BLOCK_1', toText))
@@ -350,6 +354,7 @@ describe('useBlockTreeEventListeners', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
           blockId: 'BLOCK_1',
           toText: 'hello',
+          baseText: null,
         }),
       )
       await vi.waitFor(() =>
@@ -368,7 +373,11 @@ describe('useBlockTreeEventListeners', () => {
       dispatchBlockCommand('INSERT_CALLOUT', { type })
 
       await vi.waitFor(() =>
-        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'BLOCK_1', toText }),
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+          blockId: 'BLOCK_1',
+          toText,
+          baseText: null,
+        }),
       )
     })
 
@@ -444,6 +453,7 @@ describe('useBlockTreeEventListeners', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'BLOCK_1',
         toText: '> [!INFO] hello',
+        baseText: null,
       })
     })
 
@@ -600,7 +610,7 @@ describe('useBlockTreeEventListeners', () => {
       await vi.waitFor(() => {
         const calls = mockedInvoke.mock.calls.filter((c: unknown[]) => c[0] === 'edit_block')
         expect(calls).toHaveLength(1)
-        expect(calls[0]?.[1]).toEqual({ blockId: 'BLOCK_A', toText: '---' })
+        expect(calls[0]?.[1]).toEqual({ blockId: 'BLOCK_A', toText: '---', baseText: null })
       })
     })
 

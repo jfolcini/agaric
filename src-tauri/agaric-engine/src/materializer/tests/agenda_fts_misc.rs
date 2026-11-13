@@ -763,7 +763,7 @@ async fn enqueue_full_cache_rebuild_dispatches_all_six_tasks() {
 }
 
 /// `dispatch_op` on a `DeleteBlock` op must produce the full cache fan-out
-/// + a `RemoveFtsBlock` for the target — 8 background tasks in total plus
+/// less `RebuildPageIds` (#6522) + a `RemoveFtsBlock` for the target, plus
 /// the flush barrier. This guards against the delete arm drifting away
 /// from `enqueue_full_cache_rebuild`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -785,18 +785,18 @@ async fn dispatch_delete_block_enqueues_full_cache_rebuild_plus_fts_removal() {
     mat.flush_background().await.unwrap();
     let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
 
-    // 9 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 11
-    // (#2042 added RebuildPagesCacheCounts to the fan-out).
+    // 8 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 10: the full set
+    // without `RebuildPageIds`, which a delete cannot need (#6522).
     assert_eq!(
         after_bg - before_bg,
-        11,
-        "delete_block must enqueue 9 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
+        10,
+        "delete_block must enqueue 8 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
     );
 }
 
 /// `dispatch_op` on a `RestoreBlock` op must produce the full cache fan-out
-/// + a per-block `ReindexBlockLinks` (#4209) + an `UpdateFtsBlock` for the
-/// target — 11 background tasks in total plus the flush barrier.
+/// less `RebuildPageIds` (#6522) + a per-block `ReindexBlockLinks` (#4209) +
+/// an `UpdateFtsBlock` for the target, plus the flush barrier.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_restore_block_enqueues_full_cache_rebuild_plus_fts_update() {
     let (pool, _dir) = test_pool().await;
@@ -818,22 +818,23 @@ async fn dispatch_restore_block_enqueues_full_cache_rebuild_plus_fts_update() {
     mat.flush_background().await.unwrap();
     let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
 
-    // 9 rebuild tasks + 1 ReindexBlockLinks + 1 UpdateFtsBlock + 1 flush
-    // Barrier = 12 (#2042 added RebuildPagesCacheCounts to the fan-out;
-    // #4209 added the per-block link reindex — the restore is the third way
-    // a block becomes linkable, and it is the only member of this set that
-    // re-derives `block_links` from content rather than folding it).
+    // 8 rebuild tasks + 1 ReindexBlockLinks + 1 UpdateFtsBlock + 1 flush
+    // Barrier = 11: the full set without `RebuildPageIds`, which a restore
+    // cannot need (#6522). #4209 added the per-block link reindex — the
+    // restore is the third way a block becomes linkable, and it is the only
+    // member of this set that re-derives `block_links` from content rather
+    // than folding it.
     assert_eq!(
         after_bg - before_bg,
-        12,
-        "restore_block must enqueue 9 cache rebuilds + 1 ReindexBlockLinks + \
+        11,
+        "restore_block must enqueue 8 cache rebuilds + 1 ReindexBlockLinks + \
          1 UpdateFtsBlock (+ 1 flush barrier)"
     );
 }
 
-/// `dispatch_op` on a `PurgeBlock` op must produce the full cache fan-out
-/// + a `RemoveFtsBlock` for the target — 8 background tasks in total plus
-/// the flush barrier.
+/// `dispatch_op` on a `PurgeBlock` op must produce the full cache fan-out,
+/// `RebuildPageIds` included (#6522), + a `RemoveFtsBlock` for the target,
+/// plus the flush barrier.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_purge_block_enqueues_full_cache_rebuild_plus_fts_removal() {
     let (pool, _dir) = test_pool().await;

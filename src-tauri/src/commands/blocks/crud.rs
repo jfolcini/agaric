@@ -429,13 +429,28 @@ pub(crate) async fn create_tag_in_space_in_tx(
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
-#[instrument(skip(pool, device_id, materializer, to_text), err)]
 pub async fn edit_block_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
     block_id: BlockId,
     to_text: String,
+) -> Result<BlockRow, AppError> {
+    edit_block_inner_with_base(pool, device_id, materializer, block_id, to_text, None).await
+}
+
+/// [`edit_block_inner`] for an editor: `base_text` is the text it started
+/// from. When the block no longer holds it, the editor's change is replayed
+/// on the current text (`rebase_edit`), so a peer's edit the editor has not
+/// seen survives unless the two changed the same text.
+#[instrument(skip(pool, device_id, materializer, to_text, base_text), err)]
+pub async fn edit_block_inner_with_base(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: BlockId,
+    to_text: String,
+    base_text: Option<String>,
 ) -> Result<BlockRow, AppError> {
     // #107: BlockId newtype already normalises to canonical uppercase on
     // construction (AGENTS.md invariant #8 — ULID uppercase for blake3 hash
@@ -460,6 +475,7 @@ pub async fn edit_block_inner(
         device_id,
         block_id,
         to_text,
+        base_text.as_deref(),
     )
     .await?;
     tx.commit_and_dispatch(materializer).await?;
@@ -474,24 +490,20 @@ pub async fn edit_block_inner(
 /// lifecycle (BEGIN / arm / COMMIT); this helper only enqueues the op via
 /// `enqueue_edit_background` so the caller's single `commit_and_dispatch`
 /// drains every enqueued op in FIFO order.
-#[instrument(skip(tx, state, device_id, to_text), err)]
+#[instrument(skip(tx, state, device_id, to_text, base_text), err)]
 pub(crate) async fn edit_block_in_tx(
     tx: &mut CommandTx,
     state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     block_id: String,
     to_text: String,
+    base_text: Option<&str>,
 ) -> Result<BlockRow, AppError> {
     // Validate content length BEFORE fetching any row. Content length is a
     // pure function of the input needing no DB state, so an over-length
     // payload is rejected without the wasted existence fetch (fail fast on
     // the input).
-    if to_text.len() > MAX_CONTENT_LENGTH {
-        return Err(AppError::validation(format!(
-            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
-            to_text.len()
-        )));
-    }
+    reject_overlong_content(&to_text)?;
 
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
@@ -504,6 +516,8 @@ pub(crate) async fn edit_block_in_tx(
 
     let existing = existing
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
+    // Before every check on the text, so they see what is written.
+    let to_text = rebased_onto(existing.content.as_deref(), base_text, to_text)?;
     if existing.block_type == "tag" {
         reject_spaced_tag_name(&to_text)?;
     }
@@ -600,6 +614,34 @@ pub(crate) async fn edit_block_in_tx(
         scheduled_date: existing.scheduled_date,
         page_id: existing.page_id,
     })
+}
+
+/// `to_text` with the editor's change replayed on `current` when the editor
+/// started from another text and the two changes do not overlap.
+fn rebased_onto(
+    current: Option<&str>,
+    base_text: Option<&str>,
+    to_text: String,
+) -> Result<String, AppError> {
+    let current = current.unwrap_or_default();
+    let Some(base) = base_text.filter(|base| *base != current) else {
+        return Ok(to_text);
+    };
+    let Some(rebased) = agaric_engine::edit_rebase::rebase_edit(base, &to_text, current) else {
+        return Ok(to_text);
+    };
+    reject_overlong_content(&rebased)?;
+    Ok(rebased)
+}
+
+fn reject_overlong_content(text: &str) -> Result<(), AppError> {
+    if text.len() > MAX_CONTENT_LENGTH {
+        return Err(AppError::validation(format!(
+            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
+            text.len()
+        )));
+    }
+    Ok(())
 }
 
 /// #4723 — page titles are unique per space under `name_key` (trim, case,
@@ -725,7 +767,7 @@ pub(crate) async fn reject_duplicate_name(
 /// each alias such a page brings (#6278), run after the writes of a restore,
 /// an undo or a move into a space, so two names one batch brings into a space
 /// see each other (#5281, #6051, #6099). Each space's names are read once for
-/// the batch.
+/// the batch. A saved view (#6544) holds no name, so it clashes with none.
 pub(crate) async fn reject_taken_names(
     conn: &mut sqlx::SqliteConnection,
     blocks: &[impl serde::Serialize],
@@ -736,7 +778,8 @@ pub(crate) async fn reject_taken_names(
         r#"SELECT b.id AS "id!", b.block_type, b.content AS "content!", b.space_id
            FROM json_each(?1) je
            JOIN blocks b ON b.id = je.value
-           WHERE b.block_type IN ('page', 'tag') AND b.content IS NOT NULL"#,
+           WHERE b.block_type IN ('page', 'tag') AND b.content IS NOT NULL
+             AND b.id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')"#,
         blocks_json
     )
     .fetch_all(&mut *conn)
@@ -777,8 +820,11 @@ pub(crate) async fn reject_taken_names(
 
 /// [`delete_block_inner`]'s validation phase, inside its IMMEDIATE tx
 /// (TOCTOU-safe): the block exists, is live, and is not a non-empty space.
-/// Returns its `block_type`.
-async fn verify_deletable_in_tx(tx: &mut CommandTx, block_id: &str) -> Result<String, AppError> {
+/// Returns its `block_type` and, for a space, the saved views it takes along.
+async fn verify_deletable_in_tx(
+    tx: &mut CommandTx,
+    block_id: &str,
+) -> Result<(String, Vec<String>), AppError> {
     // #2037 pt2: also read `block_type` so the post-commit dispatch can
     // narrow the cache-rebuild fan-out for a CONTENT block (skip
     // `RebuildTagsCache`/`RebuildPagesCache`).
@@ -812,25 +858,42 @@ async fn verify_deletable_in_tx(tx: &mut CommandTx, block_id: &str) -> Result<St
     .fetch_optional(&mut ***tx)
     .await?
     .is_some();
-    if is_space_block {
-        // #533 Phase 2: pages in this space carry `blocks.space_id = ?`
-        // (the old `block_properties(key='space')` rows are gone).
-        let child_count: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
-             WHERE b.deleted_at IS NULL \
-             AND b.block_type = 'page' \
-             AND b.space_id = ?",
-            block_id,
-        )
-        .fetch_one(&mut ***tx)
-        .await?;
-        if child_count > 0 {
-            return Err(AppError::InvalidOperation(format!(
-                "cannot delete space '{block_id}': it contains {child_count} pages"
-            )));
-        }
+    let views = if is_space_block {
+        saved_views_of_space_in_tx(tx, block_id).await?
+    } else {
+        Vec::new()
+    };
+    Ok((row.block_type, views))
+}
+
+/// The saved views (#6544) of the space `space_id`, which a delete of the
+/// space takes with it: the Spaces tab, like every page list, does not show
+/// them, so a space holding nothing else reads as empty. Any other live page
+/// refuses the delete, counted as the Spaces tab counts. Pages in a space
+/// carry `blocks.space_id` (#533).
+async fn saved_views_of_space_in_tx(
+    tx: &mut CommandTx,
+    space_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let pages = sqlx::query!(
+        r#"SELECT b.id AS "id!: String",
+                  b.id IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')
+                      AS "saved_view!: bool"
+           FROM blocks b
+           WHERE b.deleted_at IS NULL AND b.block_type = 'page' AND b.space_id = ?1
+           ORDER BY b.id"#,
+        space_id,
+    )
+    .fetch_all(&mut ***tx)
+    .await?;
+    let (views, others): (Vec<_>, Vec<_>) = pages.into_iter().partition(|page| page.saved_view);
+    if !others.is_empty() {
+        return Err(AppError::InvalidOperation(format!(
+            "cannot delete space '{space_id}': it contains {} pages",
+            others.len()
+        )));
     }
-    Ok(row.block_type)
+    Ok(views.into_iter().map(|page| page.id).collect())
 }
 
 /// Soft-delete a block and all its descendants (cascade).
@@ -885,15 +948,22 @@ pub async fn delete_block_inner(
     tx.commit_and_dispatch(materializer).await?;
     dispatch_deletes(pool, materializer, std::slice::from_ref(&deleted)).await;
 
+    // A deleted space's saved views count with it, as in the batch delete.
+    let all = std::iter::once(&deleted).chain(&deleted.swept);
     Ok(DeleteResponse {
         block_id,
         deleted_at: deleted.deleted_at,
         // The cohort INCLUDES the seed (depth-0 anchor of `collect_delete_cohort`'s
         // active CTE), so its length equals the old cascade UPDATE's
         // `rows_affected()` exactly — the same set of rows the UPDATE touched.
-        descendants_affected: deleted.effects.deleted_cohort.len() as u64,
+        descendants_affected: all
+            .clone()
+            .map(|d| d.effects.deleted_cohort.len() as u64)
+            .sum(),
         // #4523 — the PAGE subset of that same cohort; see above.
-        affected_page_ids: deleted.affected_page_ids,
+        affected_page_ids: all
+            .flat_map(|d| d.affected_page_ids.iter().cloned())
+            .collect(),
     })
 }
 
@@ -904,6 +974,8 @@ pub(crate) struct DeleteInTx {
     pub(crate) effects: agaric_engine::apply::kernel::ApplyEffects,
     pub(crate) affected_page_ids: Vec<String>,
     pub(crate) deleted_at: i64,
+    /// The saved views (#6544) a deleted space took with it, one delete each.
+    pub(crate) swept: Vec<DeleteInTx>,
 }
 
 /// Soft-delete ONE block (cascade) inside an already-open [`CommandTx`],
@@ -926,7 +998,11 @@ pub(crate) async fn delete_block_in_tx(
         block_id: BlockId::from_trusted(&block_id),
     });
 
-    let block_type = verify_deletable_in_tx(tx, &block_id).await?;
+    let (block_type, views) = verify_deletable_in_tx(tx, &block_id).await?;
+    let mut swept = Vec::with_capacity(views.len());
+    for view in views {
+        swept.push(Box::pin(delete_block_in_tx(tx, state, device_id, view)).await?);
+    }
 
     // Single timestamp for both op_log and blocks — reverse_delete_block uses
     // record.created_at as deleted_at_ref, so they must match exactly.
@@ -1023,6 +1099,7 @@ pub(crate) async fn delete_block_in_tx(
         effects,
         affected_page_ids,
         deleted_at: now,
+        swept,
     })
 }
 
@@ -1035,6 +1112,7 @@ pub(crate) async fn dispatch_deletes(
     deletes: &[DeleteInTx],
 ) {
     for deleted in deletes {
+        Box::pin(dispatch_deletes(pool, materializer, &deleted.swept)).await;
         // #2344 NEW post-commit engine cohort fan-out — the LOCAL counterpart of
         // the `dispatch_delete_descendants` call `apply_op` runs after ITS commit.
         // The in-tx engine apply of `delete_block_in_tx`
@@ -1064,7 +1142,8 @@ pub(crate) async fn dispatch_deletes(
 
 /// [`delete_blocks_by_ids_inner`]'s validation phase, inside its IMMEDIATE
 /// tx: resolve the live root set and refuse the batch if any root is a
-/// non-empty space. Returns `(id, block_type)` per live root.
+/// non-empty space. Returns `(id, block_type)` per live root, the saved views
+/// of any space among them first.
 async fn load_deletable_roots_in_tx(
     tx: &mut CommandTx,
     ids_json: &str,
@@ -1094,7 +1173,9 @@ async fn load_deletable_roots_in_tx(
     // space. Same reasoning as `delete_block_inner`: a partial delete
     // would silently leak orphan pages whose `space` ref dangles. We
     // surface the FIRST offending space + its child count so the
-    // operator sees actionable detail.
+    // operator sees actionable detail. The saved views of any space among the
+    // roots go first, as the single delete takes a space's views before it.
+    let mut roots = Vec::with_capacity(live_roots.len());
     for (root, _root_block_type) in &live_roots {
         // #708: registry-backed "is a space" check — see the single-row
         // path above.
@@ -1104,24 +1185,12 @@ async fn load_deletable_roots_in_tx(
                 .await?
                 .is_some();
         if is_space_block {
-            // #533 Phase 2: pages in this space carry `blocks.space_id`.
-            let child_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
-                 WHERE b.deleted_at IS NULL \
-                 AND b.block_type = 'page' \
-                 AND b.space_id = ?",
-                root,
-            )
-            .fetch_one(&mut ***tx)
-            .await?;
-            if child_count > 0 {
-                return Err(AppError::InvalidOperation(format!(
-                    "cannot delete space '{root}': it contains {child_count} pages"
-                )));
-            }
+            let views = saved_views_of_space_in_tx(tx, root).await?;
+            roots.extend(views.into_iter().map(|view| (view, "page".to_owned())));
         }
     }
-    Ok(live_roots)
+    roots.extend(live_roots);
+    Ok(roots)
 }
 
 /// One delete root's post-commit engine fan-out inputs: the appended
@@ -1868,11 +1937,9 @@ pub async fn restore_block_inner(
 
     // Refresh `page_id` for the restored subtree synchronously,
     // mirroring the recursive-CTE UPDATE in `move_block_inner` (see
-    // `move_ops.rs:177-234`). The async `RebuildPageIds` task dispatched
-    // via `commit_and_dispatch` below stays in place (idempotent — running
-    // it again is safe), but without this sync update there's a window
-    // where callers reading right after commit see a stale `page_id` — the
-    // restore's own re-derivation is what closes it, and it has to hold
+    // `move_ops.rs:177-234`). No vault-wide `RebuildPageIds` follows a
+    // restore (#6522), so the restore's own re-derivation is what keeps
+    // callers from reading a stale `page_id`, and it has to hold
     // against drift from ANY source (a replayed remote move, a crash between
     // two writes, a repaired-but-not-yet-swept row). This comment used to
     // name ONE such source — "`move_block_inner`'s recursive UPDATE skips
@@ -2341,10 +2408,9 @@ pub async fn restore_all_deleted_inner(
     let count = agaric_engine::block_ops::clear_all_deleted_at(&mut tx).await?;
 
     // (a) + P7 (#346): refresh `page_id` for every restored block
-    // synchronously. The async `RebuildPageIds` materializer task dispatched
-    // via `commit_and_dispatch` below stays in place (idempotent), but
-    // without this sync update callers reading right after commit can see a
-    // stale `page_id`. (This used to cite the move as the source — "a
+    // synchronously. No vault-wide `RebuildPageIds` follows a restore
+    // (#6522), so without this sync update callers would read a stale
+    // `page_id`. (This used to cite the move as the source — "a
     // soft-deleted block keeps its pre-move `page_id` because
     // `move_block_inner`'s recursive UPDATE skips deleted descendants".
     // #3919 dropped that filter, so the move is no longer a source of the
@@ -2379,6 +2445,9 @@ pub async fn restore_all_deleted_inner(
     // #5371: as in `restore_block_inner`. The roots' cohorts are every
     // tombstone the UPDATE cleared.
     let restored: Vec<&String> = restore_fanout.iter().flat_map(|(_, c)| c).collect();
+    // After the `page_id` backfill above, which it reads. As in
+    // `restore_block_inner`, nothing vault-wide follows to do it (#6522).
+    agaric_store::cache::rederive_space_ids_in_tx(&mut tx, &restored).await?;
     agaric_store::cache::insert_missing_pages_cache_rows(&mut tx, &restored).await?;
 
     // Commit + drain enqueued background dispatches in FIFO order.
@@ -2560,6 +2629,91 @@ async fn load_restore_roots_in_tx(
     )
     .fetch_all(&mut ***tx)
     .await?)
+}
+
+/// [`restore_blocks_by_ids_inner`]'s upward walk, inside its IMMEDIATE tx:
+/// restore each root's tombstoned ancestor chain onto its fan-out entry and
+/// re-derive the ids of what came back. Returns each root's inheritance root.
+async fn restore_ancestor_chains_in_tx(
+    tx: &mut CommandTx,
+    roots: &[TrashCascadeRoot],
+    restore_fanout: &mut [(Arc<op_log::OpRecord>, Vec<String>, Vec<String>)],
+) -> Result<Vec<String>, AppError> {
+    // #1884 / #3818: also restore UPWARD, exactly as
+    // `restore_block_inner` does. The caller's cohort UPDATE only clears
+    // `deleted_at` DOWNWARD, so a root whose PARENT was tombstoned in a
+    // SEPARATE delete event (delete child, then delete parent — the parent's
+    // cascade skips the already-deleted child, making the child its own trash
+    // root) comes back LIVE under a still-tombstoned, invisible parent:
+    // absent from the tree render AND from `list_trash`. Mirroring
+    // `restore_all_deleted_inner` is what hid this — the "all" variant
+    // restores everything, so an upward walk is vacuous THERE and load-bearing
+    // here.
+    //
+    // Resolved per root rather than once for the batch, which is both correct
+    // and cheap: the helper is a bounded (`depth < 100`) upward CTE that emits
+    // NO ops and is idempotent, so two roots under the SAME tombstoned parent
+    // do not double-restore or double-emit — the second walk finds the chain
+    // already live and returns an empty result.
+    //
+    // #3834: the returned `chain` is KEPT (it used to be dropped on the floor
+    // in favour of the `apply_op` → `dispatch_restore_ancestors` replay arm,
+    // which runs for a locally authored op only if boot replays it — the
+    // snapshot pass moves the cursor past LOCAL ops (#5418) — and by then the
+    // chain is already live in SQL and the projection returns an EMPTY chain).
+    // It is stashed on this root's `restore_fanout` entry and driven onto the
+    // engine post-commit alongside the descendant cohort, which
+    // `dispatch_restore_batch_fanout` hand-rolls for exactly this reason.
+    //
+    // `topmost` becomes the inheritance root, mirroring the single path: when
+    // a chain came back with the root, the whole RECONNECTED subtree needs its
+    // inherited tags recomputed, not just the root's own. With no chain it
+    // resolves to the root itself (unchanged behaviour).
+    let mut inheritance_roots: Vec<String> = Vec::with_capacity(roots.len());
+    // The two collections are index-aligned by construction:
+    // `append_restore_ops_in_tx` pushes exactly one entry per root, and every
+    // early exit in it is a `?` return rather than a `continue`. That is an
+    // UNENFORCED invariant, and `zip` fails SILENTLY by truncating — a future
+    // `continue` would mis-pair root i's op record with root j's ancestor
+    // chain. `fan_out_restore` resolves the target space from the OP RECORD, so
+    // a mis-pair applies one root's ancestors against another root's engine:
+    // they stay CRDT-tombstoned in their own space (silently reintroducing the
+    // #3834 bug this fixes) while the last root's chain is dropped entirely.
+    // Cross-space batches are reachable — `restore_blocks_by_ids` is an IPC
+    // entry point with no space scoping. Fail loudly instead, aborting the tx.
+    if roots.len() != restore_fanout.len() {
+        // `Internal`, not `InvalidOperation`: nothing the caller passed can
+        // cause this. It is a violated internal invariant, and classifying it
+        // as a user-facing rejection would send the wrong kind over IPC.
+        return Err(AppError::Internal(format!(
+            "restore: fan-out/root misalignment ({} roots, {} fan-out entries)",
+            roots.len(),
+            restore_fanout.len()
+        )));
+    }
+    for (root, fanout) in roots.iter().zip(restore_fanout.iter_mut()) {
+        let restored_chain =
+            agaric_store::block_descendants::restore_deleted_ancestor_chain(&mut *tx, &root.id)
+                .await?;
+        let inheritance_root = restored_chain
+            .topmost
+            .clone()
+            .unwrap_or_else(|| root.id.clone());
+        // As in `restore_block_inner`: no vault-wide `RebuildPageIds` follows
+        // a restore (#6522), so this is what repairs ids that drifted in the
+        // trash.
+        agaric_store::block_descendants::rederive_page_and_space_ids(&mut *tx, &root.id).await?;
+        if inheritance_root != root.id {
+            agaric_store::block_descendants::rederive_page_and_space_ids(
+                &mut *tx,
+                &inheritance_root,
+            )
+            .await?;
+        }
+        inheritance_roots.push(inheritance_root);
+        fanout.2 = restored_chain.chain;
+    }
+    Ok(inheritance_roots)
 }
 
 /// [`restore_blocks_by_ids_inner`]'s op-append phase, inside its IMMEDIATE
@@ -2764,70 +2918,8 @@ pub async fn restore_blocks_by_ids_inner(
     )
     .await?;
 
-    // #1884 / #3818: also restore UPWARD, exactly as
-    // `restore_block_inner` does. The cohort UPDATE above only clears
-    // `deleted_at` DOWNWARD, so a root whose PARENT was tombstoned in a
-    // SEPARATE delete event (delete child, then delete parent — the parent's
-    // cascade skips the already-deleted child, making the child its own trash
-    // root) comes back LIVE under a still-tombstoned, invisible parent:
-    // absent from the tree render AND from `list_trash`. Mirroring
-    // `restore_all_deleted_inner` is what hid this — the "all" variant
-    // restores everything, so an upward walk is vacuous THERE and load-bearing
-    // here.
-    //
-    // Resolved per root rather than once for the batch, which is both correct
-    // and cheap: the helper is a bounded (`depth < 100`) upward CTE that emits
-    // NO ops and is idempotent, so two roots under the SAME tombstoned parent
-    // do not double-restore or double-emit — the second walk finds the chain
-    // already live and returns an empty result.
-    //
-    // #3834: the returned `chain` is KEPT (it used to be dropped on the floor
-    // in favour of the `apply_op` → `dispatch_restore_ancestors` replay arm,
-    // which runs for a locally authored op only if boot replays it — the
-    // snapshot pass moves the cursor past LOCAL ops (#5418) — and by then the
-    // chain is already live in SQL and the projection returns an EMPTY chain).
-    // It is stashed on this root's `restore_fanout` entry and driven onto the
-    // engine post-commit alongside the descendant cohort, which
-    // `dispatch_restore_batch_fanout` hand-rolls for exactly this reason.
-    //
-    // `topmost` becomes the inheritance root, mirroring the single path: when
-    // a chain came back with the root, the whole RECONNECTED subtree needs its
-    // inherited tags recomputed, not just the root's own. With no chain it
-    // resolves to the root itself (unchanged behaviour).
-    let mut inheritance_roots: Vec<String> = Vec::with_capacity(roots.len());
-    // The two collections are index-aligned by construction:
-    // `append_restore_ops_in_tx` pushes exactly one entry per root, and every
-    // early exit in it is a `?` return rather than a `continue`. That is an
-    // UNENFORCED invariant, and `zip` fails SILENTLY by truncating — a future
-    // `continue` would mis-pair root i's op record with root j's ancestor
-    // chain. `fan_out_restore` resolves the target space from the OP RECORD, so
-    // a mis-pair applies one root's ancestors against another root's engine:
-    // they stay CRDT-tombstoned in their own space (silently reintroducing the
-    // #3834 bug this fixes) while the last root's chain is dropped entirely.
-    // Cross-space batches are reachable — `restore_blocks_by_ids` is an IPC
-    // entry point with no space scoping. Fail loudly instead, aborting the tx.
-    if roots.len() != restore_fanout.len() {
-        // `Internal`, not `InvalidOperation`: nothing the caller passed can
-        // cause this. It is a violated internal invariant, and classifying it
-        // as a user-facing rejection would send the wrong kind over IPC.
-        return Err(AppError::Internal(format!(
-            "restore: fan-out/root misalignment ({} roots, {} fan-out entries)",
-            roots.len(),
-            restore_fanout.len()
-        )));
-    }
-    for (root, fanout) in roots.iter().zip(restore_fanout.iter_mut()) {
-        let restored_chain =
-            agaric_store::block_descendants::restore_deleted_ancestor_chain(&mut tx, &root.id)
-                .await?;
-        inheritance_roots.push(
-            restored_chain
-                .topmost
-                .clone()
-                .unwrap_or_else(|| root.id.clone()),
-        );
-        fanout.2 = restored_chain.chain;
-    }
+    let inheritance_roots =
+        restore_ancestor_chains_in_tx(&mut tx, &roots, &mut restore_fanout).await?;
 
     // Recompute tag inheritance for each restored root subtree (from the
     // topmost restored ancestor where the #1884 walk above reconnected one).
@@ -3265,7 +3357,10 @@ pub async fn create_block(
     .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
+/// Tauri command: edit a block's content. Delegates to
+/// [`edit_block_inner_with_base`]; `base_text` is the text an editor started
+/// from, and the returned row carries the text written, which differs from
+/// `to_text` when the edit was rebased.
 /// #2468: the response carries the produced op ref(s) — see [`create_block`].
 #[tauri::command]
 #[specta::specta]
@@ -3273,13 +3368,15 @@ pub async fn edit_block(
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     to_text: String,
+    base_text: Option<String>,
 ) -> Result<WithOps<BlockRow>, AppError> {
-    capture_op_refs(edit_block_inner(
+    capture_op_refs(edit_block_inner_with_base(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         block_id,
         to_text,
+        base_text,
     ))
     .await
     .map_err(sanitize_internal_error)
