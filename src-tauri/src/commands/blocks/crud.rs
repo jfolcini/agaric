@@ -630,9 +630,6 @@ pub(crate) async fn edit_block_in_tx(
 /// `to_text` with the editor's change replayed on `current` when the editor
 /// started from another text and the two changes do not overlap.
 fn rebased_onto(current: &str, base: &str, to_text: String) -> Result<String, AppError> {
-    if base == current {
-        return Ok(to_text);
-    }
     let Some(rebased) = agaric_engine::edit_rebase::rebase_edit(base, &to_text, current) else {
         return Ok(to_text);
     };

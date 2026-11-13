@@ -17,6 +17,9 @@ Decisions and traps:
   projected. It lives in `session_save_tests.rs` for its two-device harness.
 - The fallback arm is held by the rebase tests in `block_cmd_tests.rs`, whose blocks have no space
   and so no doc.
+- The reviewer's note on the rebase PR (#6677) is taken here: `rebased_onto` and the mock's
+  `rebasedOnto` no longer compare the base with the current text first, since `rebase_edit` gives
+  the text sent when they are equal (`a_base_the_block_still_holds_gives_the_text_sent`).
 
 Ran: the new test red first (`abcY` for `XabcY`), then clippy over the workspace with all targets,
 the `SQLX_OFFLINE` check, the workspace nextest and the doc-tests. No SQL changed. `just
