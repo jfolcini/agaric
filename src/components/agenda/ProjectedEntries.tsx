@@ -65,10 +65,10 @@ function ProjectedEntryContentInner({
         // this stays `true`, unlike the Due panel's `AlertSection` rows, whose
         // whole row is the only click target.
         interactive: true,
-        // #4719 — the output lands in `<span className="min-w-0 flex-1
-        // truncate">` below, a single clamped line. Without `inline` a
-        // projected entry whose content starts `# ` or `- ` puts an <h1> /
-        // <ul> block box inside that span and breaks the row layout (#1533).
+        // #4719 — the output lands in the row's text span below, a single
+        // clamped line. Without `inline` a projected entry whose content
+        // starts `# ` or `- ` puts an <h1> / <ul> block box inside that span
+        // and breaks the row layout (#1533).
         // The Due panel's `AlertSection` rows pass it too.
         inline: true,
         onTagClick: (id) => onTagClickRef.current(id),
@@ -167,7 +167,12 @@ function ProjectedEntryRowInner({
         <Repeat className="h-3 w-3 mr-1" />
         {projectedBadgeLabel}
       </Badge>
-      <span className="min-w-0 flex-1 truncate" title={entry.block.content ?? ''}>
+      {/* `truncate` would clip the chips' touch area (`tag-chip-row`) to the
+          line; clipped sideways only, the text still ends in an ellipsis. */}
+      <span
+        className="tag-chip-row min-w-0 flex-1 overflow-x-clip text-ellipsis whitespace-nowrap"
+        title={entry.block.content ?? ''}
+      >
         {entry.block.content ? (
           <ProjectedEntryContent
             content={entry.block.content}
