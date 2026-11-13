@@ -205,13 +205,20 @@ mod tests {
 
     use super::*;
 
-    /// Records what it was handed, and the staged file's bytes as they were
-    /// when it ran.
+    /// One call to the saver, with the staged file's bytes as they were when
+    /// it ran.
+    struct Saved {
+        staged: PathBuf,
+        file_name: String,
+        mime_type: String,
+        bytes: Vec<u8>,
+    }
+
     #[derive(Default)]
     struct FakeSaver {
         /// `None` saves under the name it was given.
         result: Option<Result<String, SaveError>>,
-        saved: Mutex<Vec<(PathBuf, String, String, Vec<u8>)>>,
+        saved: Mutex<Vec<Saved>>,
     }
 
     impl FileSaver for FakeSaver {
@@ -221,12 +228,12 @@ mod tests {
             file_name: &'a str,
             mime_type: &'a str,
         ) -> SaverFuture<'a> {
-            self.saved.lock().unwrap().push((
-                staged.to_owned(),
-                file_name.to_owned(),
-                mime_type.to_owned(),
-                std::fs::read(staged).unwrap(),
-            ));
+            self.saved.lock().unwrap().push(Saved {
+                staged: staged.to_owned(),
+                file_name: file_name.to_owned(),
+                mime_type: mime_type.to_owned(),
+                bytes: std::fs::read(staged).unwrap(),
+            });
             let result = self
                 .result
                 .clone()
@@ -260,11 +267,10 @@ mod tests {
         assert_eq!(name, "export (1).zip");
         let saved = saver.saved.lock().unwrap();
         assert_eq!(saved.len(), 1);
-        let (staged, file_name, mime_type, bytes) = &saved[0];
-        assert_eq!(staged.parent(), Some(dir.path()));
-        assert_eq!(file_name, "export.zip");
-        assert_eq!(mime_type, "application/zip");
-        assert_eq!(bytes, b"PK\x03\x04");
+        assert_eq!(saved[0].staged.parent(), Some(dir.path()));
+        assert_eq!(saved[0].file_name, "export.zip");
+        assert_eq!(saved[0].mime_type, "application/zip");
+        assert_eq!(saved[0].bytes, b"PK\x03\x04");
     }
 
     #[tokio::test]
