@@ -1,4 +1,4 @@
-# Session 4067 — Projected rows' tag chips take the touch area; a mirror write re-checks its file before the rename
+# Session 4070 — Projected rows' tag chips take the touch area; a mirror write re-checks its file before the rename
 
 Two items the maintainer decided on 2026-11-13, in one PR because CI was the bottleneck that day (#6667): the variant #6678 left out of #6532, and the window #6686 left in #5363.
 
