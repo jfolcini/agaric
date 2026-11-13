@@ -1,4 +1,4 @@
-# Session 4098 — a synced purge keeps the blocks this device added, in the Trash (#6561)
+# Session 4113 — a synced purge keeps the blocks this device added, in the Trash (#6561)
 
 When device A deleted a page and emptied its Trash while device B, out of contact, added blocks under it, B's next pull hard-deleted B's blocks. The maintainer decided on 2026-11-13 that B keeps that text in its Trash and says so. The design note is on the issue; this is what the build found.
 
