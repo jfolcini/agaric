@@ -401,7 +401,7 @@ pub async fn append_local_op_at(
 
 /// Ingest a hash-verified **remote** op into `op_log` within an existing
 /// transaction (#2895 slice 5; moved verbatim from `agaric-engine`'s
-/// `dag::ingest_remote_record`).
+/// `dag::ingest_replicated_record`).
 ///
 /// Uses `INSERT OR IGNORE`: a duplicate delivery at the same
 /// `(device_id, seq)` composite PK is a benign no-op. Returns `true` when a

@@ -436,6 +436,90 @@ async fn a_write_leaves_its_file_unchanged_to_the_next_tick() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_landing_between_the_read_and_the_write_is_kept_and_read_in() {
+    let mut fx = Fx::new().await;
+    let (page, blocks) = fx.page("Alpha", &["one", "two"]).await;
+    fx.tick().await;
+    fx.edit(&blocks[0], "uno").await;
+    fx.mirror.races.after_read = save_outside("two", "outside");
+    fx.tick().await;
+    fx.mirror.races.after_read = None;
+    let saved = fx.read();
+    assert!(
+        saved.contains("one") && saved.contains("outside"),
+        "{saved}"
+    );
+    // Dirty by its file alone, and listed until it is read.
+    assert_eq!(
+        fx.mirror.changed_files(&fx.root),
+        std::slice::from_ref(&page)
+    );
+    assert_eq!(fx.status().await.diverged.len(), 1);
+    let left: Vec<_> = std::fs::read_dir(fx.root.join("TestSpace"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["Alpha.md"], "the text not written leaves no file");
+
+    fx.settle_file().await;
+    assert_eq!(fx.contents(&page).await, ["uno", "outside"]);
+    assert_eq!(fx.read(), saved.replace("one", "uno"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_landing_as_an_empty_pages_blank_file_is_written_back_is_kept_and_read_in() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &[]).await;
+    fx.tick().await;
+    fx.write("\n");
+    fx.mirror.races.after_read = save_outside("\n", "typed\n");
+    fx.tick().await;
+    fx.mirror.races.after_read = None;
+    assert_eq!(fx.read(), "typed\n");
+    assert_eq!(fx.status().await.diverged.len(), 1);
+
+    fx.settle_file().await;
+    assert_eq!(fx.contents(&page).await, ["typed"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_landing_as_an_ingest_writes_back_is_kept_and_read_in() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one", "two"]).await;
+    fx.tick().await;
+    // CRLF, so the ingest has a write-back to make.
+    fx.write(fx.read().replace("one", "uno").replace('\n', "\r\n"));
+    fx.tick().await;
+    fx.mirror.races.before_write = save_outside("two", "newer");
+    fx.tick().await;
+    fx.mirror.races.before_write = None;
+    let saved = fx.read();
+    assert!(saved.contains("newer") && saved.contains('\r'), "{saved:?}");
+    assert_eq!(fx.status().await.diverged.len(), 1);
+
+    fx.settle_file().await;
+    assert_eq!(fx.contents(&page).await, ["uno", "newer"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_landing_as_a_new_file_is_written_back_is_kept_and_read_in() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    // CRLF, so the read has a write-back to make.
+    write_at(&fx, "TestSpace/Delta.md", "one\r\n\r\ntwo\r\n");
+    fx.tick().await;
+    fx.mirror.races.before_write = save_outside("two", "newer");
+    fx.tick().await;
+    fx.mirror.races.before_write = None;
+    let saved = std::fs::read_to_string(fx.root.join("TestSpace/Delta.md")).unwrap();
+    assert_eq!(saved, "one\r\n\r\nnewer\r\n");
+
+    fx.settle_file().await;
+    let pages = pages_titled(&fx, "Delta").await;
+    assert_eq!(fx.contents(&pages[0]).await, ["one", "newer"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_emptied_or_undecodable_file_is_refused_and_left_alone() {
     for bytes in [&b""[..], b"\n  \n", b"caf\xe9\n"] {
         let mut fx = Fx::new().await;

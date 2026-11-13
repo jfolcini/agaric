@@ -1126,7 +1126,7 @@ describe('DuePanel', () => {
       render(<DuePanel date="2026-04-13" />)
 
       const li = await screen.findByTestId('projected-entry')
-      const truncatedSpan = li.querySelector('span.truncate') as HTMLElement | null
+      const truncatedSpan = li.querySelector('span[title]') as HTMLElement | null
       expect(truncatedSpan).not.toBeNull()
       expect(truncatedSpan?.getAttribute('title')).toBe(longContent)
     })

@@ -44,7 +44,7 @@ The legacy three-way merge / conflict-copy model is gone (sessions 697-700):
 
 ## Loro state persistence
 
-Per-space Loro state is persisted in `loro_doc_state` (migration 0052) as the encoded `LoroDoc` snapshot. The engine is updated **eagerly on every apply path**: since the apply-path collapse (#2250 / #2325, which closed #1257), the live local command path routes each op through `apply_op_projected` (`src-tauri/agaric-engine/src/apply/kernel.rs`) inside its own `CommandTx` — the same function boot replay and remote-sync apply run — applying the op to the per-space engine *and* the SQL projection in one transaction (the paths differ only in whether they advance the apply cursor; see [data-and-events.md](data-and-events.md) "Apply-cursor semantics"). Engine freshness therefore tracks local writes live; boot replay is not the convergence mechanism, and re-applies only the ops committed after the last snapshot pass. Post-commit, `commit_and_dispatch` enqueues background SQL cache-rebuild work, and the delete, restore and purge commands make some or all of their engine writes after the commit (the list is on `loro::snapshot::op_log_head`). The engine serialises its state via `LoroEngine::export_snapshot` (the periodic snapshot task, the backgrounded job, shutdown, a sync session's end and a mobile suspend call `loro::snapshot::save_engines_and_advance_cursor`).
+Per-space Loro state is persisted in `loro_doc_state` (migration 0052) as the encoded `LoroDoc` snapshot. The engine is updated **eagerly on every apply path**: since the apply-path collapse (#2250 / #2325, which closed #1257), the live local command path routes each op through `apply_op_projected` (`src-tauri/agaric-engine/src/apply/kernel.rs`) inside its own `CommandTx` — the same function boot replay and remote-sync apply run — applying the op to the per-space engine *and* the SQL projection in one transaction (the paths differ only in whether they advance the apply cursor; see [data-and-events.md](data-and-events.md) "Apply-cursor semantics"). Engine freshness therefore tracks local writes live; boot replay is not the convergence mechanism, and re-applies only the ops committed after the last snapshot pass. Post-commit, `commit_and_dispatch` enqueues background SQL cache-rebuild work, and the delete, restore and purge commands make some or all of their engine writes after the commit (the list is on `loro::snapshot::op_log_head`). The engine serialises its state via `LoroEngine::export_snapshot` (the periodic snapshot task, the backgrounded job, shutdown, a sync session's end, a mobile suspend and op-log compaction call `loro::snapshot::save_engines_and_advance_cursor`).
 
 There are two co-equal materialization targets now: the SQL primary state (`blocks`, `block_properties`, `block_tags`, …) and the Loro engine state. Both derive from the same op log; sync envelopes carry the Loro state, not the SQL projection.
 
@@ -62,6 +62,13 @@ its own `DEFERRED` read transaction. The purge commits in one
 `BEGIN IMMEDIATE` transaction together with the `materializer_apply_cursor`
 clamp (#3310) that keeps a purged-to-empty log from reading as the H-4
 impossible state at the next boot.
+
+The purge also deletes ops above the apply cursor, the ones boot replay
+restores an engine from, so both triggers (the job and the History card's
+`compact_op_log_cmd`) run a snapshot pass first through
+`save_engines_then_compact`. A pass that left a dirty engine unwritten purges
+nothing and reports the failure: those ops are then all that boot can restore
+that engine from (#6518).
 
 The purge earns its keep: `op_log` costs ~303 B/op — JSON payload, blake3 hash,
 per-row timestamps — against a materially smaller Loro copy of the same edits,

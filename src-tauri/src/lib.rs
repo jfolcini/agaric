@@ -460,6 +460,8 @@ mod materializer_app_tests;
 /// a real vault. Its test-only half (settles, coverage, panicking asserts)
 /// stays under `cfg(test)` in `reconciliation_oracle/harness.rs`.
 mod reconciliation_oracle;
+#[cfg(test)]
+mod upgrade_vault_tests;
 // LoroSync end-to-end integration tests live in
 // `agaric_sync::sync_protocol::tests` (`loro_sync_e2e_*`).
 // #4499 phase 0d: the command suites, the command-integration suites and the
@@ -2303,7 +2305,8 @@ fn spawn_save_on_suspend(
     tauri::async_runtime::spawn(async move {
         let saved =
             agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &materializer)
-                .await;
+                .await
+                .saved;
         tracing::info!(saved, "loro: persisted snapshots on suspend");
     })
 }
@@ -3437,7 +3440,8 @@ pub fn run() {
                             &pool.0,
                             &materializer,
                         ),
-                    );
+                    )
+                    .saved;
                     tracing::info!(saved, "loro: persisted snapshots on exit");
                 }
             }

@@ -47,15 +47,6 @@ pub async fn ingest_replicated_record(
     record: &OpRecord,
     origin: &str,
 ) -> Result<bool, AppError> {
-    ingest_remote_record(pool, record, origin).await
-}
-
-/// Verification + insert core behind [`ingest_replicated_record`].
-async fn ingest_remote_record(
-    pool: &SqlitePool,
-    record: &OpRecord,
-    origin: &str,
-) -> Result<bool, AppError> {
     verify_remote_record_integrity(record)?;
 
     // #2275 — run the parent-existence check, the #1572 divergence probe, and
@@ -73,7 +64,7 @@ async fn ingest_remote_record(
     // INSERT must be one atomic unit; sync-ingestion-only (no materializer
     // dispatch), so a raw immediate tx is the correct scope.
     // allow-raw-tx: atomic parent-check + insert for sync ingestion (#2275)
-    let mut tx = agaric_store::db::begin_immediate_logged(pool, "ingest_remote_record").await?;
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "ingest_replicated_record").await?;
 
     verify_parent_seqs_exist(&mut tx, record).await?;
     reject_hash_divergence(&mut tx, record).await?;

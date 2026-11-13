@@ -302,4 +302,41 @@ test.describe('tag chips on the rows of a 360 px touch phone @mobile @journal @p
       .filter({ hasText: 'work' })
     expect(await hitsAboveBelow(inText), 'chip in block text: top, bottom').toEqual([false, false])
   })
+
+  // Where a row's text wraps, a chip sits right above another, and each one's
+  // area reaches over the other's line: a tap on a chip must still be its own.
+  test("a wrapped agenda row's chips keep their own taps", async ({ page }) => {
+    await waitForBoot(page)
+    const tags = await ipc<Array<{ tag_id: string; name: string }>>(
+      page,
+      'list_all_tags_in_space',
+      { scope: { kind: 'active', space_id: 'SPACE_PERSONAL' } },
+    )
+    const work = tags.find((tag) => tag.name === 'work')?.tag_id
+    await ipc(page, 'edit_block', {
+      blockId: BUY_GROCERIES,
+      toText: `Buy ${Array.from({ length: 12 }, () => `#[${work}]`).join(' ')}`,
+    })
+
+    await navigateToView(page, 'Tasks')
+    const row = page.getByTestId('agenda-results-item').filter({ hasText: 'Buy' })
+    await expect(row.getByTestId('tag-ref-chip')).toHaveCount(12)
+    // Which chip a tap 2 px inside each chip's top and bottom edge reaches.
+    // The bottom edges of the last line are left out: the due-date chip's own
+    // area, on the line below, reaches them.
+    const taps = await row.evaluate((li) => {
+      const chips = [...li.querySelectorAll('[data-testid="tag-ref-chip"]')]
+      const boxes = chips.map((chip) => chip.getBoundingClientRect())
+      const lastLine = Math.max(...boxes.map((box) => box.top))
+      const chipAt = (x: number, y: number) =>
+        chips.findIndex((chip) => chip.contains(document.elementFromPoint(x, y)))
+      return boxes.map((box, i) => {
+        const x = box.left + box.width / 2
+        const bottom = box.top === lastLine ? i : chipAt(x, box.bottom - 2)
+        return { line: box.top, top: chipAt(x, box.top + 2), bottom }
+      })
+    })
+    expect(new Set(taps.map((tap) => tap.line)).size, 'lines of chips').not.toBe(1)
+    expect(taps.map(({ top, bottom }) => [top, bottom])).toEqual(taps.map((_, i) => [i, i]))
+  })
 })

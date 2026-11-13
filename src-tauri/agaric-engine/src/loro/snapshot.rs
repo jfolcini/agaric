@@ -25,7 +25,7 @@
 //!   Catches and logs per-space errors so one bad space never blocks the
 //!   others.
 //! - [`save_engines_and_advance_cursor`] — the pass the periodic, background,
-//!   exit, session-end and mobile-suspend triggers run: [`save_all_engines`],
+//!   exit, session-end, mobile-suspend and compaction triggers run: [`save_all_engines`],
 //!   then the apply cursor moves to what it persisted, so boot replays only the
 //!   ops after it (#5418).
 //!
@@ -553,22 +553,25 @@ async fn advance_clean_space_watermarks(
 /// the next pass would advance that row's watermark past ops its blob lacks.
 /// No test pins this: the race needs two passes' collects and writes to
 /// interleave, which nothing outside the pass can schedule.
+///
+/// Returns `save_all_engines`' [`SavePass`]: compaction reads its
+/// `persisted_through` before it deletes any op (#6518).
 pub async fn save_engines_and_advance_cursor(
     pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
-) -> usize {
+) -> SavePass {
     static ONE_PASS_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _pass = ONE_PASS_AT_A_TIME.lock().await;
     let pass = save_all_engines(pool, &materializer.loro_state().registry).await;
     let Some(head) = pass.persisted_through else {
-        return pass.saved;
+        return pass;
     };
     if let Err(e) = materializer.flush_background().await {
         tracing::warn!(
             error = %e,
             "loro: background queue did not drain; apply cursor left in place (#5418)",
         );
-        return pass.saved;
+        return pass;
     }
     let advanced = match pool.acquire().await {
         Ok(mut conn) => crate::apply::kernel::advance_apply_cursor(&mut conn, head).await,
@@ -581,7 +584,7 @@ pub async fn save_engines_and_advance_cursor(
             "loro: apply cursor advance failed; the next boot replays from the old cursor (#5418)",
         );
     }
-    pass.saved
+    pass
 }
 
 /// Default cadence for the periodic snapshot task (5 minutes).
@@ -629,7 +632,9 @@ pub fn spawn_periodic_snapshot(
             if shutdown.load(Ordering::Relaxed) {
                 break;
             }
-            let saved = save_engines_and_advance_cursor(&pool, &materializer).await;
+            let saved = save_engines_and_advance_cursor(&pool, &materializer)
+                .await
+                .saved;
             if saved > 0 {
                 tracing::debug!(spaces = saved, "loro: periodic snapshot persisted");
             }
@@ -1346,7 +1351,9 @@ mod tests {
         seed_op_log_head(&pool, 7).await;
         dirty_engine(&materializer, SPACE_A);
 
-        let saved = save_engines_and_advance_cursor(&pool, &materializer).await;
+        let saved = save_engines_and_advance_cursor(&pool, &materializer)
+            .await
+            .saved;
         materializer.shutdown();
 
         assert_eq!(saved, 1, "the dirty space is written");
@@ -1371,7 +1378,9 @@ mod tests {
         let materializer = crate::materializer::Materializer::new(pool.clone());
         seed_op_log_head(&pool, 7).await;
 
-        let saved = save_engines_and_advance_cursor(&pool, &materializer).await;
+        let saved = save_engines_and_advance_cursor(&pool, &materializer)
+            .await
+            .saved;
         materializer.shutdown();
 
         assert_eq!(saved, 0, "no engine is dirty");
@@ -1401,7 +1410,9 @@ mod tests {
         .await
         .expect("create poison trigger");
 
-        let saved = save_engines_and_advance_cursor(&pool, &materializer).await;
+        let saved = save_engines_and_advance_cursor(&pool, &materializer)
+            .await
+            .saved;
         materializer.shutdown();
 
         assert_eq!(saved, 0, "the write failed");
@@ -1432,7 +1443,9 @@ mod tests {
         dirty_engine(&materializer, SPACE_A);
         materializer.shutdown();
 
-        let saved = save_engines_and_advance_cursor(&pool, &materializer).await;
+        let saved = save_engines_and_advance_cursor(&pool, &materializer)
+            .await
+            .saved;
 
         assert_eq!(saved, 1, "the rows do not wait for the queue");
         assert_eq!(

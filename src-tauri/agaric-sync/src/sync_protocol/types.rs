@@ -401,7 +401,7 @@ impl From<OpTransfer> for OpRecord {
         // The wire transfer carries no `block_id` sidecar, and this leaves it
         // `None` rather than parse `payload` per conversion: whatever needs a
         // sync'd record's block reads it from `payload`, as the audit ingest
-        // does (`dag::ingest_remote_record`, #6048). Fixtures that build an
+        // does (`dag::ingest_replicated_record`, #6048). Fixtures that build an
         // `OpRecord` directly populate `block_id` themselves (see
         // `dag_tests::tests::make_remote_record`).
         Self {

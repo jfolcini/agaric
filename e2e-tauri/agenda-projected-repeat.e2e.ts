@@ -39,6 +39,7 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   cycleTaskTo,
+  dismissToasts,
   distinctKeyChunks,
   editAtEnd,
   navigateTo,
@@ -88,6 +89,8 @@ interface SeededTask {
   task: string
   /** Its property lines, `key:: value`. */
   props: string[]
+  /** Tags named at the start of its line, each a chip before the text. */
+  tags?: string[]
 }
 
 /**
@@ -107,8 +110,9 @@ async function seedTasks(title: string, tasks: SeededTask[]): Promise<string[]> 
   const firstId = (await pageSourceLines()).find(({ text }) => text.includes(first.task))?.id
   if (firstId === undefined) throw new Error(`the source holds no line for ${first.task}`)
   const lines: SourceLine[] = []
-  for (const [i, { task, props }] of tasks.entries()) {
-    lines.push({ text: `- [ ] ${task}`, id: i === 0 ? firstId : null })
+  for (const [i, { task, props, tags = [] }] of tasks.entries()) {
+    const chips = tags.map((tag) => `#${tag} `).join('')
+    lines.push({ text: `- [ ] ${chips}${task}`, id: i === 0 ? firstId : null })
     for (const prop of props) lines.push({ text: `  ${prop}`, id: null })
   }
   lines.push({ text: '', id: null })
@@ -197,6 +201,32 @@ async function agendaProjectedRows(task: string): Promise<Array<{ text: string; 
         })),
     task,
   )
+}
+
+/**
+ * Apply every `(pointer: coarse)` rule of the app's stylesheets, as a touch
+ * screen does: the lane's webview may report a fine pointer, and nothing
+ * WebDriver offers changes that. What `useIsTouch` answers stays as it was.
+ */
+async function applyCoarsePointerRules(): Promise<void> {
+  const rewritten = await browser.execute(() => {
+    let count = 0
+    const visit = (rules: CSSRuleList): void => {
+      for (const rule of rules) {
+        if (rule instanceof CSSMediaRule && /\(pointer:\s*coarse\)/.test(rule.media.mediaText)) {
+          rule.media.mediaText = rule.media.mediaText.replace(
+            /\(pointer:\s*coarse\)/g,
+            '(min-width: 0px)',
+          )
+          count += 1
+        }
+        if ('cssRules' in rule) visit(rule.cssRules as CSSRuleList)
+      }
+    }
+    for (const sheet of document.styleSheets) visit(sheet.cssRules)
+    return count
+  })
+  if (rewritten === 0) throw new Error('the stylesheets hold no (pointer: coarse) rule')
 }
 
 /** Open the Daily journal on today, `today`. */
@@ -501,6 +531,83 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736) @jour
       // Tomorrow is past the date: completing it made no next occurrence.
       boundedRows: 1,
     })
+  })
+
+  // #6532: the row's text is one truncated line, and what clips it must not
+  // clip the chips' touch area.
+  it("a projected row's tag chips take a 44 px touch area in a 360 px window, on one truncated line", async () => {
+    const page = runScopedMarker('wdio-chips-page')
+    const task = runScopedMarker('wdio-chips-on-a-projected-row-that-truncates')
+    // Past the days the tests above stepped through, whose panels may still
+    // hold an answer from before this task existed.
+    const days = await localDays(0, 10)
+    const [today] = days
+    const day = days.at(-1)
+    if (today === undefined || day === undefined) throw new Error('no dates to step through')
+    await seedTasks(page, [
+      { task, tags: ['pa', 'pb'], props: [`due_date:: ${today}`, 'repeat:: daily'] },
+    ])
+    await showJournalToday(today)
+    for (const next of days.slice(1)) await nextJournalDay(next)
+    await projectedOnceHolding(day, [task])
+
+    const size = await browser.getWindowSize()
+    await browser.setWindowSize(360, 780)
+    try {
+      await browser.waitUntil(
+        async () => (await browser.execute(() => window.innerWidth)) === 360,
+        {
+          timeout: ACTION_TIMEOUT,
+          timeoutMsg: 'the window never became 360 px wide',
+        },
+      )
+      await applyCoarsePointerRules()
+      // The save's Undo toast lies over the foot of a narrow window.
+      await dismissToasts()
+      const row = $(`section[id="journal-${day}"]`).$(`[data-testid="projected-entry"]*=${task}`)
+      await row.waitForDisplayed({ timeout: NAV_TIMEOUT })
+      const measured = await browser.execute(
+        (li: HTMLElement) => {
+          // A point outside the viewport hits nothing.
+          li.scrollIntoView({ block: 'center' })
+          const chips = [...li.querySelectorAll<HTMLElement>('.tag-ref-chip')]
+          const text = li.querySelector<HTMLElement>('.tag-chip-row')
+          const [a, b] = chips.map((chip) => chip.getBoundingClientRect())
+          if (a === undefined || b === undefined || text === null) return null
+          const hit = (x: number, y: number) => {
+            const at = document.elementFromPoint(x, y)
+            const chip = chips.findIndex((el) => el.contains(at))
+            if (chip !== -1) return `chip ${chip}`
+            return li.contains(at) ? 'row' : 'outside the row'
+          }
+          const middle = (r: DOMRect) => [r.left + r.width / 2, r.top + r.height / 2] as const
+          return {
+            rowHeight: li.getBoundingClientRect().height,
+            truncated: text.scrollWidth > text.clientWidth,
+            drawnUnder30: chips.every((chip) => chip.getBoundingClientRect().height < 30),
+            // 21 px above and below each chip's middle: a 44 px box less a pixel.
+            aboveBelow: [a, b].flatMap((r) => {
+              const [x, y] = middle(r)
+              return [hit(x, y - 21), hit(x, y + 21)]
+            }),
+            // Just past each chip and midway between them, at their middle.
+            between: [a.right + 1, (a.right + b.left) / 2, b.left - 1].map((x) =>
+              hit(x, middle(a)[1]),
+            ),
+          }
+        },
+        await row,
+      )
+      expect(measured).toEqual({
+        rowHeight: 44,
+        truncated: true,
+        drawnUnder30: true,
+        aboveBelow: ['chip 0', 'chip 0', 'chip 1', 'chip 1'],
+        between: ['row', 'row', 'row'],
+      })
+    } finally {
+      await browser.setWindowSize(size.width, size.height)
+    }
   })
 
   // Last: it leaves the journal in Agenda mode, which the Daily-mode tests above step through.

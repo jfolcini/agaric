@@ -1690,7 +1690,7 @@ fn dial_timeout_text(peer_id: &str, diagnosis: Option<EgressReport>) -> String {
 /// The memory is a bounded set of the streak's reported texts (see
 /// [`SyncScheduler::record_failure_and_take_report`]), so alternating causes
 /// stay suppressed. It rides on the scheduler's backoff entry, which
-/// [`SyncScheduler::record_success`] drops on the next successful pull and
+/// [`SyncScheduler::clear_peer_backoff`] drops on the next successful pull and
 /// [`SyncScheduler::clear_backoff`] drops on a pairing act and when the daemon binds
 /// its endpoint again, so the next failure after any of them is reported again.
 ///
@@ -2123,7 +2123,7 @@ async fn record_session_success(
     announced_key: &str,
 ) {
     let peer_id = &peer.device_id;
-    ctx.scheduler.record_success(peer_id);
+    ctx.scheduler.clear_peer_backoff(peer_id);
     cache_peer_address(ctx, peer).await;
     //
     // `bind_endpoint_id` touches only its own column, so re-binding preserves
@@ -3560,7 +3560,7 @@ mod tests {
 
         fail(&scheduler, &sink); // reported (1)
         fail(&scheduler, &sink); // suppressed
-        scheduler.record_success(RESPONDER_ONLY_PEER);
+        scheduler.clear_peer_backoff(RESPONDER_ONLY_PEER);
         fail(&scheduler, &sink); // reported again (2)
         fail(&scheduler, &sink); // suppressed
         scheduler.clear_backoff();
