@@ -99,7 +99,7 @@ use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_sync::sync_protocol::loro_sync::sweep_deferred_purges;
 
 use sqlx::SqlitePool;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -3378,6 +3378,181 @@ async fn worst_write_during_settle(
     tokio::join!(settle, writes).1
 }
 
+/// One call's wait at the median and the 95th percentile, for a probe whose
+/// question is how long a person waits rather than a budget (#6559).
+fn report_percentiles(cmd: &str, samples: &RefCell<Vec<Duration>>) {
+    let mut samples = samples.borrow_mut();
+    if samples.is_empty() {
+        return;
+    }
+    samples.sort_unstable();
+    let at = |percent: usize| {
+        let rank = (samples.len() * percent).div_ceil(100).max(1);
+        samples[rank - 1].as_secs_f64() * 1000.0
+    };
+    println!(
+        "interactive_slo: {cmd} p50 = {:.2} ms, p95 = {:.2} ms, max = {:.2} ms over {} calls",
+        at(50),
+        at(95),
+        at(100),
+        samples.len()
+    );
+}
+
+/// Enter in the middle of a block and the Backspace-merge that undoes it, as
+/// the block editor sends them (#6559): a split is `create_block` (the text
+/// after the caret, in the next sibling slot) then `edit_block` (the text
+/// before it); a merge is `edit_block` (the joined text) then `delete_block`
+/// (the emptied block). Each iteration splits one child of the 2K-block page
+/// and merges the pair back, settling the background work after each half as
+/// an idle app would have, so every split and every merge meets the same page.
+/// One probe times the split and the other the merge; the percentiles are over
+/// every pair either probe ran. Measurement only: these are the numbers behind
+/// the decision on one backend command for each.
+fn bench_enter_split_and_merge(c: &mut Criterion) {
+    const SPLIT: &str = "Enter split: create_block + edit_block (2K-block page) @ 100K";
+    const MERGE: &str = "Backspace merge: edit_block + delete_block (2K-block page) @ 100K";
+    const JOINED: &str = "Write path joined text";
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_enter_split_and_merge"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    let children = rt.block_on(seed_write_path_fixture(&pool, &materializer));
+    let target_slot = WRITE_PATH_PAGE_CHILDREN / 2;
+    let target = children[target_slot].clone();
+    let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
+    let fallbacks = agaric_lib::materializer::sql_only_fallback_count();
+
+    let (pool_ref, materializer_ref, target_ref, scope_ref) =
+        (&pool, &materializer, &target, &scope);
+    let (split_acc, merge_acc) = (Acc::new(), Acc::new());
+    let (split_samples, merge_samples) = (&RefCell::new(Vec::new()), &RefCell::new(Vec::new()));
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    for (name, acc, times_split) in [
+        ("enter_split_2k_page_in_100k", &split_acc, true),
+        ("backspace_merge_2k_page_in_100k", &merge_acc, false),
+    ] {
+        group.bench_function(name, |b| {
+            b.to_async(&rt).iter_custom(|iters| async move {
+                let mut elapsed = Duration::ZERO;
+                for _ in 0..iters {
+                    let start = Instant::now();
+                    let created = agaric_lib::commands::create_block_inner_with_space(
+                        pool_ref,
+                        "dev-bench",
+                        materializer_ref,
+                        "content".into(),
+                        " joined text".into(),
+                        Some(WRITE_PATH_PAGE_ID.into()),
+                        Some(target_slot as i64 + 1),
+                        scope_ref,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                    agaric_lib::commands::edit_block_inner(
+                        pool_ref,
+                        "dev-bench",
+                        materializer_ref,
+                        target_ref.clone().into(),
+                        "Write path".into(),
+                    )
+                    .await
+                    .unwrap();
+                    let split_time = start.elapsed();
+                    materializer_ref.flush_background().await.unwrap();
+
+                    let start = Instant::now();
+                    agaric_lib::commands::edit_block_inner(
+                        pool_ref,
+                        "dev-bench",
+                        materializer_ref,
+                        target_ref.clone().into(),
+                        JOINED.into(),
+                    )
+                    .await
+                    .unwrap();
+                    let deleted =
+                        delete_block_inner(pool_ref, "dev-bench", materializer_ref, created.id)
+                            .await
+                            .unwrap();
+                    let merge_time = start.elapsed();
+                    materializer_ref.flush_background().await.unwrap();
+                    assert_eq!(
+                        deleted.descendants_affected, 1,
+                        "merge @ 100K: the delete tombstones the split-off block alone (#6559)"
+                    );
+
+                    split_samples.borrow_mut().push(split_time);
+                    merge_samples.borrow_mut().push(merge_time);
+                    elapsed += if times_split { split_time } else { merge_time };
+                }
+                acc.record(elapsed, iters);
+                elapsed
+            });
+        });
+    }
+    group.finish();
+
+    // Both probes run the whole pair per iteration.
+    let calls = split_acc.iters() + merge_acc.iters();
+    let (creates, deletes, edits, content, child_count) = rt.block_on(async {
+        let ops = |op_type: &'static str| {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM op_log WHERE device_id = 'dev-bench' AND op_type = ?",
+            )
+            .bind(op_type)
+            .fetch_one(&pool)
+        };
+        let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(&target)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let child_count: i64 =
+            sqlx::query_scalar("SELECT child_block_count FROM pages_cache WHERE page_id = ?")
+                .bind(WRITE_PATH_PAGE_ID)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        (
+            ops("create_block").await.unwrap(),
+            ops("delete_block").await.unwrap(),
+            ops("edit_block").await.unwrap(),
+            content,
+            child_count,
+        )
+    });
+    assert_eq!(
+        [creates - FIXTURE_SIZE as i64, deletes, edits].map(|n| u64::try_from(n).unwrap()),
+        [calls, calls, 2 * calls],
+        "split / merge @ 100K: each pair appends one create, one delete and two edits, \
+         beside the seeded creates (#6559)"
+    );
+    if calls > 0 {
+        assert_eq!(
+            content.as_deref(),
+            Some(JOINED),
+            "split / merge @ 100K: the block ends holding the joined text (#6559)"
+        );
+    }
+    assert_eq!(
+        child_count, WRITE_PATH_PAGE_CHILDREN as i64,
+        "split / merge @ 100K: every split-off block is merged away again (#6559)"
+    );
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count(),
+        fallbacks,
+        "split / merge @ 100K: the calls must take the engine path, not the SQL-only fallback"
+    );
+
+    report_measurement_only(SPLIT, &split_acc);
+    report_percentiles(SPLIT, split_samples);
+    report_measurement_only(MERGE, &merge_acc);
+    report_percentiles(MERGE, merge_samples);
+}
+
 /// `preview_space_move` — the cross-space move's confirmation read: one page
 /// whose 2K children each hold a property the target space does not define the
 /// same way, so the preview counts every row of the page group (#5691). Its
@@ -6368,6 +6543,8 @@ criterion_group!(
     bench_move_block,
     // #5691 — the other save-path commands; no budget yet.
     bench_delete_restore_block,
+    // #6559 — what Enter and a merge wait for; no budget.
+    bench_enter_split_and_merge,
     // #5691 — page mode's batch reads at its cap and at twice it; no budget yet.
     bench_page_mode_reads_at_cap,
     bench_page_mode_reads_at_twice_cap,
