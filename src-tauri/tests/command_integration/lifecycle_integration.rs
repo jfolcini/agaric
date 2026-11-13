@@ -1165,3 +1165,187 @@ async fn local_command_path_does_not_advance_apply_cursor_1248() {
 
     mat.shutdown();
 }
+
+// ======================================================================
+// #6522 — delete and restore leave `page_id` / `space_id` alone
+// ======================================================================
+
+async fn page_and_space_ids_6522(
+    pool: &SqlitePool,
+) -> Vec<(String, Option<String>, Option<String>)> {
+    sqlx::query_as("SELECT id, page_id, space_id FROM blocks ORDER BY id")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// What `RebuildPageIds` runs, on the whole vault.
+async fn rebuild_page_and_space_ids_6522(pool: &SqlitePool) {
+    agaric_store::cache::rebuild_page_ids(pool).await.unwrap();
+    agaric_store::cache::rebuild_space_ids(pool).await.unwrap();
+}
+
+async fn create_6522(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    block_type: &str,
+    parent: Option<&agaric_core::ulid::BlockId>,
+) -> agaric_core::ulid::BlockId {
+    create_block_inner(
+        pool,
+        DEV,
+        mat,
+        block_type.into(),
+        format!("{block_type} block"),
+        parent.cloned(),
+        None,
+    )
+    .await
+    .unwrap()
+    .id
+}
+
+/// Neither a delete nor a restore enqueues `RebuildPageIds` (#6522), on the
+/// premise that neither can move a block's `page_id` or `space_id` away from
+/// what that rebuild derives. Deleting and restoring a subtree that holds a
+/// nested page in another space, the full rebuild run after each must find
+/// nothing to change.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_then_restore_leaves_page_and_space_ids_at_the_full_rebuild_6522() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let other_space = test_space(&pool, "Other").await;
+
+    let page = create_6522(&pool, &mat, "page", None).await;
+    let top = create_6522(&pool, &mat, "content", Some(&page)).await;
+    let mid = create_6522(&pool, &mat, "content", Some(&top)).await;
+    let nested_page = create_6522(&pool, &mat, "page", Some(&mid)).await;
+    let under_nested = create_6522(&pool, &mat, "content", Some(&nested_page)).await;
+    let sibling = create_6522(&pool, &mat, "content", Some(&page)).await;
+    settle(&mat).await;
+    assign_to_test_space(&pool, page.as_str()).await;
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")
+        .bind(&other_space)
+        .bind(nested_page.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let seeded = page_and_space_ids_6522(&pool).await;
+    let ids_of = |rows: &[(String, Option<String>, Option<String>)],
+                  id: &agaric_core::ulid::BlockId| {
+        let row = rows.iter().find(|r| r.0 == id.as_str()).unwrap();
+        (row.1.clone(), row.2.clone())
+    };
+    assert_eq!(
+        ids_of(&seeded, &mid),
+        (Some(page.to_string()), Some(TEST_SPACE_ID.to_owned())),
+    );
+    assert_eq!(
+        ids_of(&seeded, &under_nested),
+        (Some(nested_page.to_string()), Some(other_space.clone())),
+    );
+    rebuild_page_and_space_ids_6522(&pool).await;
+    assert_eq!(
+        page_and_space_ids_6522(&pool).await,
+        seeded,
+        "fixture: the seeded ids are the ones the full rebuild derives"
+    );
+
+    let deleted = delete_block_inner(&pool, DEV, &mat, top.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        deleted.descendants_affected, 4,
+        "top, mid, the nested page and its block"
+    );
+    let after_delete = page_and_space_ids_6522(&pool).await;
+    rebuild_page_and_space_ids_6522(&pool).await;
+    assert_eq!(
+        page_and_space_ids_6522(&pool).await,
+        after_delete,
+        "a delete leaves nothing for the full rebuild to change"
+    );
+    assert_eq!(after_delete, seeded);
+
+    restore_block_inner(&pool, DEV, &mat, top.clone(), deleted.deleted_at)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let after_restore = page_and_space_ids_6522(&pool).await;
+    rebuild_page_and_space_ids_6522(&pool).await;
+    assert_eq!(
+        page_and_space_ids_6522(&pool).await,
+        after_restore,
+        "a restore leaves nothing for the full rebuild to change"
+    );
+    assert_eq!(after_restore, seeded);
+    assert_eq!(ids_of(&after_restore, &sibling), ids_of(&seeded, &sibling));
+
+    mat.shutdown();
+}
+
+/// The narrowing itself (#6522): a stale `page_id` planted on a block no op
+/// touches survives a delete and a restore, because neither runs the
+/// vault-wide rebuild, and is repaired by a purge, which still does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn only_a_purge_runs_the_vault_wide_page_id_rebuild_6522() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let page_a = create_6522(&pool, &mat, "page", None).await;
+    let page_b = create_6522(&pool, &mat, "page", None).await;
+    let subject = create_6522(&pool, &mat, "content", Some(&page_a)).await;
+    let bystander = create_6522(&pool, &mat, "content", Some(&page_b)).await;
+    settle(&mat).await;
+    sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+        .bind(page_a.as_str())
+        .bind(bystander.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let bystander_page = || async {
+        sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(bystander.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+
+    let deleted = delete_block_inner(&pool, DEV, &mat, subject.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        bystander_page().await.as_deref(),
+        Some(page_a.as_str()),
+        "a delete must not run the vault-wide page_id rebuild"
+    );
+
+    restore_block_inner(&pool, DEV, &mat, subject.clone(), deleted.deleted_at)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        bystander_page().await.as_deref(),
+        Some(page_a.as_str()),
+        "a restore must not run the vault-wide page_id rebuild"
+    );
+
+    delete_block_inner(&pool, DEV, &mat, subject.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    purge_block_inner(&pool, DEV, &mat, subject.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        bystander_page().await.as_deref(),
+        Some(page_b.as_str()),
+        "a purge still runs the vault-wide page_id rebuild"
+    );
+
+    mat.shutdown();
+}

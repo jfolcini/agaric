@@ -76,7 +76,7 @@ async fn apply_sort_merge_rebuild(
     // pass was pure redundant work. It is only genuinely required after
     // a snapshot/sync RESET that wiped `pages_cache` (counts default to
     // 0), which now enqueues the dedicated `RebuildPagesCacheCounts`
-    // task (-> [`recompute_all_pages_cache_counts`]) separately.
+    // task (-> [`rebuild_pages_cache_counts`]) separately.
     Ok(upserted + delete.rows_affected())
 }
 
@@ -247,24 +247,20 @@ pub async fn sync_pages_cache_space_ids(
     Ok(())
 }
 
-/// #417: full-table recompute of both `pages_cache` count columns.
+/// Recompute both `pages_cache` count columns for the pages named in
+/// `page_ids_json`: the write half of [`rebuild_pages_cache_counts_split`].
 ///
-/// Extracted verbatim (#432-guarded form) from the former tail of
-/// [`apply_sort_merge_rebuild`]. The correlated-subquery shape is the
-/// exact one used by the per-op
+/// The correlated-subquery shape is the exact one used by the per-op
 /// `crate::materializer::recompute_pages_cache_counts_for_pages`
-/// (the single source of truth for the two columns) with its
-/// `WHERE page_id IN (...)` clause dropped so every page is touched —
+/// (the single source of truth for the two columns) —
 /// the `rebuild_pages_cache_recomputes_counts_c2` parity test in
 /// `cache/tests.rs` asserts these values equal the per-op recompute.
 ///
 /// After a snapshot/sync RESET (which wipes `pages_cache` then
 /// re-inserts), every page would read count = 0 until an unrelated
 /// per-op edit happened to touch it, breaking MostLinked / MostContent
-/// sorts, Orphan / HasNoInboundLinks filters, and the ↗N badge. This
-/// recompute is the RESET-path repair, enqueued as the dedicated
-/// `RebuildPagesCacheCounts` task (and called by the test-only
-/// `rebuild_all_caches`).
+/// sorts, Orphan / HasNoInboundLinks filters, and the ↗N badge. The
+/// `RebuildPagesCacheCounts` task is that RESET-path repair.
 ///
 /// # Why these two columns exist — KEEP (#2508, measured; drop rejected)
 ///
@@ -295,12 +291,95 @@ pub async fn sync_pages_cache_space_ids(
 /// `updated_at` stable: the count UPDATE never writes `updated_at`, so
 /// The recency semantic is owned solely by the title UPSERT's
 /// `WHERE title != excluded.title`.
-pub(crate) async fn recompute_all_pages_cache_counts(
+async fn recompute_pages_cache_counts_of(
     write_conn: &mut sqlx::SqliteConnection,
+    page_ids_json: &str,
 ) -> Result<u64, AppError> {
     // `+src.space_id`: the unary `+` keeps the planner from driving the inbound
     // count off `idx_blocks_space_type`, a scan of the whole space per page
     // (quadratic in the vault) instead of a walk of the page's own links.
+    let counts = sqlx::query!(
+        "WITH computed(page_id, new_inbound, new_child) AS ( \
+             SELECT p.page_id, \
+                 ( \
+                     SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                         JOIN blocks descendant ON bl.target_id = descendant.id \
+                         JOIN blocks src ON src.id = bl.source_id \
+                         JOIN blocks page ON page.id = p.page_id \
+                         WHERE descendant.page_id = p.page_id \
+                           AND descendant.deleted_at IS NULL \
+                           AND src.deleted_at IS NULL \
+                           AND src.page_id IS NOT NULL \
+                           AND src.page_id != p.page_id \
+                           AND +src.space_id IS page.space_id \
+                 ), \
+                 ( \
+                     SELECT COUNT(*) FROM blocks descendant \
+                         WHERE descendant.page_id = p.page_id \
+                           AND descendant.deleted_at IS NULL \
+                           AND descendant.id != p.page_id \
+                 ) \
+             FROM pages_cache p \
+             WHERE p.page_id IN (SELECT value FROM json_each(?)) \
+         ) \
+         UPDATE pages_cache SET \
+             inbound_link_count = c.new_inbound, \
+             child_block_count  = c.new_child \
+         FROM computed c \
+         WHERE pages_cache.page_id = c.page_id \
+           AND ( \
+               pages_cache.inbound_link_count != c.new_inbound \
+            OR pages_cache.child_block_count  != c.new_child \
+           )",
+        page_ids_json,
+    )
+    .execute(&mut *write_conn)
+    .await?;
+
+    Ok(counts.rows_affected())
+}
+
+/// The pages whose cached counts differ from the counts their blocks and
+/// links give now: the read half of [`rebuild_pages_cache_counts_split`].
+/// Same count expressions as [`recompute_pages_cache_counts_of`].
+async fn pages_with_stale_counts(read_pool: &SqlitePool) -> Result<Vec<String>, AppError> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT c.page_id AS "page_id!" FROM (
+             SELECT p.page_id, p.inbound_link_count, p.child_block_count,
+                 (
+                     SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl
+                         JOIN blocks descendant ON bl.target_id = descendant.id
+                         JOIN blocks src ON src.id = bl.source_id
+                         JOIN blocks page ON page.id = p.page_id
+                         WHERE descendant.page_id = p.page_id
+                           AND descendant.deleted_at IS NULL
+                           AND src.deleted_at IS NULL
+                           AND src.page_id IS NOT NULL
+                           AND src.page_id != p.page_id
+                           AND +src.space_id IS page.space_id
+                 ) AS new_inbound,
+                 (
+                     SELECT COUNT(*) FROM blocks descendant
+                         WHERE descendant.page_id = p.page_id
+                           AND descendant.deleted_at IS NULL
+                           AND descendant.id != p.page_id
+                 ) AS new_child
+             FROM pages_cache p
+         ) c
+         WHERE c.inbound_link_count != c.new_inbound
+            OR c.child_block_count  != c.new_child"#,
+    )
+    .fetch_all(read_pool)
+    .await?)
+}
+
+/// The whole-vault recompute [`rebuild_pages_cache_counts_split`] replaced,
+/// which counted every page under the writer lock: the oracle the split is
+/// tested against.
+#[cfg(test)]
+pub(crate) async fn recompute_all_pages_cache_counts(
+    write_conn: &mut sqlx::SqliteConnection,
+) -> Result<u64, AppError> {
     let counts = sqlx::query!(
         "WITH computed(page_id, new_inbound, new_child) AS ( \
              SELECT p.page_id, \
@@ -418,8 +497,8 @@ pub async fn rekey_title_sort_keys(pool: &SqlitePool) -> Result<u64, AppError> {
 // ---------------------------------------------------------------------------
 
 /// #417: full-table recompute of `pages_cache.{inbound_link_count,
-/// child_block_count}` in its own write transaction. Background entry
-/// point for the dedicated `MaterializeTask::RebuildPagesCacheCounts`.
+/// child_block_count}`. Background entry point for the dedicated
+/// `MaterializeTask::RebuildPagesCacheCounts`.
 ///
 /// Enqueue sites (as of #2042; the dispatch matrix in
 /// `src-tauri/agaric-engine/src/materializer/dispatch.rs` is the single source of truth):
@@ -437,21 +516,37 @@ pub async fn rekey_title_sort_keys(pool: &SqlitePool) -> Result<u64, AppError> {
 /// #2042 made it the background replacement for the former synchronous
 /// foreground count recompute, which is why it now runs per lifecycle op and
 /// not only on RESET.
-///
-/// Mirrors [`rebuild_pages_cache`]'s `begin_immediate_logged` +
-/// `rebuild_with_timing` shape but runs the count-only
-/// `recompute_all_pages_cache_counts`.
 pub async fn rebuild_pages_cache_counts(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("pages_counts", || rebuild_pages_cache_counts_impl(pool)).await
+    rebuild_pages_cache_counts_split(pool, pool).await
 }
 
-async fn rebuild_pages_cache_counts_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    let mut tx = crate::db::begin_immediate_logged(pool, "cache_pages_counts_rebuild").await?;
-    let changed = recompute_all_pages_cache_counts(&mut tx).await?;
-    if changed == 0 {
-        // No count drift — transaction is rolled back on drop.
+/// [`rebuild_pages_cache_counts`] with the whole-vault count on `read_pool`.
+/// The writer lock is taken only when a page's counts are stale, and held
+/// only to recount those pages: counting them again under the lock, instead
+/// of writing the read phase's numbers, keeps a count a foreground write
+/// maintained in between from being overwritten with an older one.
+pub async fn rebuild_pages_cache_counts_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<(), AppError> {
+    super::rebuild_with_timing("pages_counts", || {
+        rebuild_pages_cache_counts_impl(write_pool, read_pool)
+    })
+    .await
+}
+
+async fn rebuild_pages_cache_counts_impl(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<u64, AppError> {
+    let stale = pages_with_stale_counts(read_pool).await?;
+    if stale.is_empty() {
         return Ok(0);
     }
+    let stale_json = serde_json::to_string(&stale)?;
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_pages_counts_rebuild").await?;
+    let changed = recompute_pages_cache_counts_of(&mut tx, &stale_json).await?;
     tx.commit().await?;
     Ok(changed)
 }
@@ -563,6 +658,112 @@ mod tests {
         .fetch_all(pool)
         .await
         .unwrap()
+    }
+
+    /// Three pages with children, links across and within pages, a deleted
+    /// child and a deleted link source, then page rows whose counts are
+    /// unset (A), wrong in one column (B) and right (C).
+    async fn seed_count_drift(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id, deleted_at) VALUES \
+             ('PGA', 'page', 'A', NULL, 'PGA', NULL), \
+             ('PGB', 'page', 'B', NULL, 'PGB', NULL), \
+             ('PGC', 'page', 'C', NULL, 'PGC', NULL), \
+             ('A1', 'content', 'a', 'PGA', 'PGA', NULL), \
+             ('A2', 'content', 'a', 'A1',  'PGA', NULL), \
+             ('A3', 'content', 'a', 'PGA', 'PGA', 1767139200000), \
+             ('B1', 'content', 'b', 'PGB', 'PGB', NULL), \
+             ('B2', 'content', 'b', 'PGB', 'PGB', 1767139200000), \
+             ('C1', 'content', 'c', 'PGC', 'PGC', NULL)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        // Into A: B1 and C1 count, the deleted B2 and the same-page A2 do
+        // not. Into B: A1 and C1 (C1's two links are one source).
+        sqlx::query(
+            "INSERT INTO block_links (source_id, target_id) VALUES \
+             ('B1', 'PGA'), ('C1', 'A2'), ('B2', 'A1'), ('A2', 'PGA'), \
+             ('A1', 'B1'), ('C1', 'PGB'), ('C1', 'B1')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO pages_cache \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count) VALUES \
+             ('PGA', 'A', 1, 0, 0), ('PGB', 'B', 1, 2, 9), ('PGC', 'C', 1, 0, 1)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn counts(pool: &SqlitePool) -> Vec<(String, i64, i64)> {
+        sqlx::query_as(
+            "SELECT page_id, inbound_link_count, child_block_count \
+             FROM pages_cache ORDER BY page_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    /// #6522: the split rebuild leaves `pages_cache` where the whole-vault
+    /// recompute it replaced does, and changes the same rows.
+    #[tokio::test]
+    async fn rebuild_pages_cache_counts_split_matches_the_whole_vault_recompute_6522() {
+        let (oracle_pool, _oracle_dir) = test_pool().await;
+        let (pool, _dir) = test_pool().await;
+        seed_count_drift(&oracle_pool).await;
+        seed_count_drift(&pool).await;
+
+        let mut tx = oracle_pool.begin().await.unwrap();
+        let oracle_changed = recompute_all_pages_cache_counts(&mut tx).await.unwrap();
+        tx.commit().await.unwrap();
+        let changed = rebuild_pages_cache_counts_impl(&pool, &pool).await.unwrap();
+
+        assert_eq!(oracle_changed, 2, "A and B drifted, C did not");
+        assert_eq!(changed, oracle_changed);
+        assert_eq!(counts(&pool).await, counts(&oracle_pool).await);
+        assert_eq!(
+            counts(&pool).await,
+            vec![
+                ("PGA".to_owned(), 2, 2),
+                ("PGB".to_owned(), 2, 1),
+                ("PGC".to_owned(), 0, 1),
+            ],
+        );
+        assert_eq!(
+            rebuild_pages_cache_counts_impl(&pool, &pool).await.unwrap(),
+            0,
+            "a second run finds nothing stale"
+        );
+    }
+
+    /// #6522: the write half recounts only the pages it is handed, so the
+    /// writer lock is not held for the rest of the vault.
+    #[tokio::test]
+    async fn recompute_pages_cache_counts_of_leaves_other_pages_alone_6522() {
+        let (pool, _dir) = test_pool().await;
+        seed_count_drift(&pool).await;
+
+        let mut tx = pool.begin().await.unwrap();
+        let changed = recompute_pages_cache_counts_of(&mut tx, r#"["PGA"]"#)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(changed, 1);
+        assert_eq!(
+            counts(&pool).await,
+            vec![
+                ("PGA".to_owned(), 2, 2),
+                ("PGB".to_owned(), 2, 9),
+                ("PGC".to_owned(), 0, 1),
+            ],
+            "B keeps its planted counts"
+        );
     }
 
     /// 100 pages → rebuild → some add, some remove, some update →

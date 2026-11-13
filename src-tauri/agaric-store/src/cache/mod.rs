@@ -181,15 +181,15 @@ pub use block_tag_refs::{
 };
 pub use page_id::{
     PageIdWrite, rebuild_page_ids, rebuild_page_ids_split, rebuild_space_ids,
-    set_block_page_id_from_parent_in_tx, set_block_space_id_from_parent,
+    rebuild_space_ids_split, set_block_page_id_from_parent_in_tx, set_block_space_id_from_parent,
 };
 pub use page_links::{
     rebuild_page_link_cache, rebuild_page_link_cache_split, reindex_page_link_cache_for_block,
 };
 pub use pages::{
     insert_missing_pages_cache_rows, raise_pages_last_edited_ms, rebuild_pages_cache,
-    rebuild_pages_cache_counts, rebuild_pages_cache_split, rekey_title_sort_keys,
-    sync_pages_cache_space_ids,
+    rebuild_pages_cache_counts, rebuild_pages_cache_counts_split, rebuild_pages_cache_split,
+    rekey_title_sort_keys, sync_pages_cache_space_ids,
 };
 // #417: the production RESET path recomputes the two `pages_cache` count
 // columns full-table via the dedicated `rebuild_pages_cache_counts` entry

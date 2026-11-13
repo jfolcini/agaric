@@ -1868,11 +1868,9 @@ pub async fn restore_block_inner(
 
     // Refresh `page_id` for the restored subtree synchronously,
     // mirroring the recursive-CTE UPDATE in `move_block_inner` (see
-    // `move_ops.rs:177-234`). The async `RebuildPageIds` task dispatched
-    // via `commit_and_dispatch` below stays in place (idempotent — running
-    // it again is safe), but without this sync update there's a window
-    // where callers reading right after commit see a stale `page_id` — the
-    // restore's own re-derivation is what closes it, and it has to hold
+    // `move_ops.rs:177-234`). No vault-wide `RebuildPageIds` follows a
+    // restore (#6522), so the restore's own re-derivation is what keeps
+    // callers from reading a stale `page_id`, and it has to hold
     // against drift from ANY source (a replayed remote move, a crash between
     // two writes, a repaired-but-not-yet-swept row). This comment used to
     // name ONE such source — "`move_block_inner`'s recursive UPDATE skips
@@ -2341,10 +2339,9 @@ pub async fn restore_all_deleted_inner(
     let count = agaric_engine::block_ops::clear_all_deleted_at(&mut tx).await?;
 
     // (a) + P7 (#346): refresh `page_id` for every restored block
-    // synchronously. The async `RebuildPageIds` materializer task dispatched
-    // via `commit_and_dispatch` below stays in place (idempotent), but
-    // without this sync update callers reading right after commit can see a
-    // stale `page_id`. (This used to cite the move as the source — "a
+    // synchronously. No vault-wide `RebuildPageIds` follows a restore
+    // (#6522), so without this sync update callers would read a stale
+    // `page_id`. (This used to cite the move as the source — "a
     // soft-deleted block keeps its pre-move `page_id` because
     // `move_block_inner`'s recursive UPDATE skips deleted descendants".
     // #3919 dropped that filter, so the move is no longer a source of the

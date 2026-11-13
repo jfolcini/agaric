@@ -70,8 +70,7 @@ fn sender_or_closed(
 /// function is the canonical reference for which rebuild reads which
 /// upstream column/table.
 ///
-/// One pair cannot lean on that: a lifecycle op does not change
-/// `page_id` or `space_id`, but a restore does re-add `block_tag_refs`
+/// One pair cannot lean on that: a restore re-adds `block_tag_refs`
 /// rows that only the same set's `RebuildTagsCache` would count. The set
 /// is enqueued one task at a time and the consumer drains what has
 /// arrived, so it can split across drains, where `dedup_tasks` cannot
@@ -156,7 +155,7 @@ pub const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
 ///   * `RebuildAgendaCache` / `RebuildProjectedAgendaCache` — a content
 ///     block can carry `due`/`scheduled`/`repeat` and appear in either
 ///     agenda projection.
-///   * `RebuildPageIds` — the block's `page_id` membership changes.
+///   * `RebuildPageIds` — for a purge only; see [`lifecycle_rebuild_tasks`].
 ///   * `RebuildBlockTagRefsCache` — inline `#[ULID]` refs in the (sub)tree
 ///     disappear / reappear.
 ///   * `RebuildPageLinkCache` — the page-level link roll-up changes when a
@@ -280,19 +279,49 @@ const INBOUND_SYNC_CACHE_REBUILD_TASKS: [MaterializeTask; 7] = [
 /// bring back a trashed ancestor page (#5295). Every other hint —
 /// `Some("page")`, `Some("tag")`, `Some(<unknown>)`, or `None` — keeps the full
 /// [`FULL_CACHE_REBUILD_TASKS`], the correctness-preserving default.
+///
+/// Either set then loses `RebuildPageIds` unless the op
+/// [`keeps_page_ids_rebuild`].
 fn lifecycle_rebuild_tasks(
     op_type: &OpType,
     block_type_hint: Option<&str>,
-) -> &'static [MaterializeTask] {
-    if narrows_to_content_lifecycle(op_type, block_type_hint) {
-        &CONTENT_LIFECYCLE_REBUILD_TASKS
-    } else {
-        &FULL_CACHE_REBUILD_TASKS
-    }
+) -> impl Iterator<Item = &'static MaterializeTask> {
+    lifecycle_rebuild_set(
+        !narrows_to_content_lifecycle(op_type, block_type_hint),
+        keeps_page_ids_rebuild(op_type),
+    )
 }
 
-/// Whether a lifecycle op may take [`CONTENT_LIFECYCLE_REBUILD_TASKS`]; shared
-/// by the inline set and the debounced burst so the two cannot disagree.
+/// The lifecycle rebuild set a burst fires: [`FULL_CACHE_REBUILD_TASKS`] when
+/// it `needs_full`, else [`CONTENT_LIFECYCLE_REBUILD_TASKS`], and
+/// `RebuildPageIds` only when it `needs_page_ids`. Shared by the inline set
+/// and the debounced burst so the two cannot disagree.
+fn lifecycle_rebuild_set(
+    needs_full: bool,
+    needs_page_ids: bool,
+) -> impl Iterator<Item = &'static MaterializeTask> {
+    let tasks: &'static [MaterializeTask] = if needs_full {
+        &FULL_CACHE_REBUILD_TASKS
+    } else {
+        &CONTENT_LIFECYCLE_REBUILD_TASKS
+    };
+    tasks
+        .iter()
+        .filter(move |task| needs_page_ids || !matches!(task, MaterializeTask::RebuildPageIds))
+}
+
+/// Whether a lifecycle op keeps the vault-wide `RebuildPageIds`. `page_id` is
+/// derived from `parent_id` and `block_type`, and `space_id` from the owning
+/// page's; a soft delete or a restore writes none of the three and the
+/// derivation has no `deleted_at` term, so the rebuild could only rewrite what
+/// is already there (#6522, pinned by
+/// `delete_then_restore_leaves_page_and_space_ids_at_the_full_rebuild_6522`).
+/// A purge removes rows, which is not proven a no-op, so it keeps the rebuild.
+fn keeps_page_ids_rebuild(op_type: &OpType) -> bool {
+    matches!(op_type, OpType::PurgeBlock)
+}
+
+/// Whether a lifecycle op may take [`CONTENT_LIFECYCLE_REBUILD_TASKS`].
 fn narrows_to_content_lifecycle(op_type: &OpType, block_type_hint: Option<&str>) -> bool {
     block_type_hint == Some("content") && !matches!(op_type, OpType::RestoreBlock)
 }
@@ -903,8 +932,10 @@ impl Materializer {
     /// ANY op in the burst needs the full set (a restore, or a page / tag /
     /// unknown / absent hint) the single fire escalates to
     /// `FULL_CACHE_REBUILD_TASKS` — the union is always correctness-safe.
+    /// `needs_page_ids` accumulates the same way: one purge in the burst keeps
+    /// `RebuildPageIds` in the fire.
     /// The lock is held only for the field writes — never across an `.await`.
-    fn arm_lifecycle_rebuild_debounce(&self, needs_full: bool) {
+    fn arm_lifecycle_rebuild_debounce(&self, needs_full: bool, needs_page_ids: bool) {
         let now = Instant::now();
         {
             let mut st = self
@@ -915,6 +946,7 @@ impl Materializer {
             st.last_request = Some(now);
             st.seq = st.seq.wrapping_add(1);
             st.needs_full |= needs_full;
+            st.needs_page_ids |= needs_page_ids;
             if !st.armed {
                 st.armed = true;
                 st.first_request = Some(now);
@@ -926,19 +958,15 @@ impl Materializer {
     /// #2935 / #2934: enqueue the local-lifecycle global cache-rebuild set the
     /// pre-debounce inline `enqueue_background_tasks` path used:
     /// `FULL_CACHE_REBUILD_TASKS` when the burst `needs_full`, else
-    /// `CONTENT_LIFECYCLE_REBUILD_TASKS` (a pure content delete / purge burst).
+    /// `CONTENT_LIFECYCLE_REBUILD_TASKS` (a pure content delete / purge burst),
+    /// with `RebuildPageIds` only when the burst `needs_page_ids`.
     ///
     /// Runs from a spawned loop / a flush with no caller to propagate to, so an
     /// enqueue error (only reachable as a `Channel` closed at shutdown) is warned
     /// rather than returned; every task is argument-less and idempotent, so a
     /// missed fire self-heals on the next lifecycle op or inbound sync.
-    fn enqueue_lifecycle_rebuild_set(&self, needs_full: bool) {
-        let tasks: &[MaterializeTask] = if needs_full {
-            &FULL_CACHE_REBUILD_TASKS
-        } else {
-            &CONTENT_LIFECYCLE_REBUILD_TASKS
-        };
-        for task in tasks {
+    fn enqueue_lifecycle_rebuild_set(&self, needs_full: bool, needs_page_ids: bool) {
+        for task in lifecycle_rebuild_set(needs_full, needs_page_ids) {
             if let Err(e) = self.try_enqueue_background(task.clone()) {
                 tracing::warn!(
                     error = %e,
@@ -950,18 +978,18 @@ impl Materializer {
 
     /// #2935: fan-out fired once per settled burst by
     /// [`Self::lifecycle_rebuild_debounce_loop`]. Reads the accumulated
-    /// `needs_full` (the loop disarms + resets it afterwards) and enqueues the
-    /// matching set.
+    /// `needs_full` / `needs_page_ids` (the loop disarms + resets them
+    /// afterwards) and enqueues the matching set.
     fn fire_lifecycle_rebuild_fanout(&self) {
-        let needs_full = {
+        let (needs_full, needs_page_ids) = {
             let st = self
                 .lifecycle_rebuild_debounce
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            st.needs_full
+            (st.needs_full, st.needs_page_ids)
         };
-        self.enqueue_lifecycle_rebuild_set(needs_full);
+        self.enqueue_lifecycle_rebuild_set(needs_full, needs_page_ids);
     }
 
     /// #2935: synchronously fire any pending LOCAL-lifecycle rebuild fan-out
@@ -969,28 +997,28 @@ impl Materializer {
     /// materialized by the time an explicit [`Self::flush_background`] drain
     /// returns — preserving the inline pre-#2935 semantics that
     /// cache-assertion call sites (and the existing lifecycle cache /
-    /// fan-out-count tests) rely on. Disarms + captures `needs_full` under the
+    /// fan-out-count tests) rely on. Disarms + captures the set flags under the
     /// lock first, then enqueues; a no-op when nothing is armed. A redundant
     /// later loop-fire is harmless (idempotent + batch-deduped). Called from
     /// [`Self::flush_background`], which awaits the drain barrier immediately
     /// after.
     pub(super) fn fire_pending_lifecycle_rebuild(&self) {
-        let (was_armed, needs_full) = {
+        let (was_armed, needs_full, needs_page_ids) = {
             let mut st = self
                 .lifecycle_rebuild_debounce
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let was_armed = st.armed;
-            let needs_full = st.needs_full;
+            let flags = (st.armed, st.needs_full, st.needs_page_ids);
             st.armed = false;
             st.first_request = None;
             st.last_request = None;
             st.needs_full = false;
-            (was_armed, needs_full)
+            st.needs_page_ids = false;
+            flags
         };
         if was_armed {
-            self.enqueue_lifecycle_rebuild_set(needs_full);
+            self.enqueue_lifecycle_rebuild_set(needs_full, needs_page_ids);
         }
     }
 
@@ -1114,10 +1142,11 @@ impl Materializer {
                     st.first_request = None;
                     st.last_request = None;
                     // #2935: reset the local-lifecycle set-selection
-                    // accumulator on disarm (always `false` / unused for the
+                    // accumulators on disarm (always `false` / unused for the
                     // inbound instance, whose fire set is fixed). A newer arm
-                    // (seq changed) keeps its own accumulated value.
+                    // (seq changed) keeps its own accumulated values.
                     st.needs_full = false;
+                    st.needs_page_ids = false;
                 } else {
                     st.first_request = st.last_request;
                 }
@@ -1246,7 +1275,8 @@ impl Materializer {
             let needs_full = !parsed_op
                 .as_ref()
                 .is_ok_and(|op| narrows_to_content_lifecycle(op, block_type_hint));
-            self.arm_lifecycle_rebuild_debounce(needs_full);
+            let needs_page_ids = parsed_op.as_ref().is_ok_and(keeps_page_ids_rebuild);
+            self.arm_lifecycle_rebuild_debounce(needs_full, needs_page_ids);
         }
         if record.op_type == "edit_block" {
             self.maybe_enqueue_fts_optimize()?;
@@ -1719,11 +1749,7 @@ fn push_block_removal_invalidations(
     // content-block tag refs — #2172). `Some("page")`/`Some("tag")`/
     // `None` keep the full set.
     let block_id = record.block_id.as_deref().unwrap_or_default();
-    tasks.extend(
-        lifecycle_rebuild_tasks(op_type, block_type_hint)
-            .iter()
-            .cloned(),
-    );
+    tasks.extend(lifecycle_rebuild_tasks(op_type, block_type_hint).cloned());
     if !block_id.is_empty() {
         tasks.push(MaterializeTask::RemoveFtsBlock {
             block_id: Arc::from(block_id),
@@ -1740,11 +1766,7 @@ fn push_restore_block_invalidations(
     // Cached sidecar — no JSON re-parse.
     // #2037 pt2: same content-block narrowing as `DeleteBlock`.
     let block_id = record.block_id.as_deref().unwrap_or_default();
-    tasks.extend(
-        lifecycle_rebuild_tasks(&OpType::RestoreBlock, block_type_hint)
-            .iter()
-            .cloned(),
-    );
+    tasks.extend(lifecycle_rebuild_tasks(&OpType::RestoreBlock, block_type_hint).cloned());
     if !block_id.is_empty() {
         // #4209: a RESTORE is the third way a block becomes LINKABLE,
         // and it was the one #4118 did not observe.
@@ -2648,11 +2670,49 @@ mod tests {
         FULL_CACHE_REBUILD_TASKS.iter().map(task_label).collect()
     }
 
+    /// The set a delete or a restore takes from `set` (#6522).
+    fn without_page_ids(set: &[String]) -> Vec<String> {
+        let kept: Vec<String> = set
+            .iter()
+            .filter(|l| l.as_str() != "RebuildPageIds")
+            .cloned()
+            .collect();
+        assert_eq!(
+            kept.len() + 1,
+            set.len(),
+            "the set must hold RebuildPageIds once"
+        );
+        kept
+    }
+
+    /// #6522: a delete or a restore changes no input of `page_id` /
+    /// `space_id`, so neither enqueues the vault-wide `RebuildPageIds`,
+    /// whatever the hint; a purge keeps it.
+    #[test]
+    fn only_a_purge_enqueues_rebuild_page_ids_among_lifecycle_ops_6522() {
+        for hint in [None, Some("content"), Some("page"), Some("tag")] {
+            for (op_type, keeps) in [
+                ("delete_block", false),
+                ("restore_block", false),
+                ("purge_block", true),
+            ] {
+                let r = make_record(op_type, r#"{"block_id":"L1"}"#, Some("L1"));
+                let tasks = invalidations_for_op(&r, hint, None).unwrap();
+                assert_eq!(
+                    contains_kind(&tasks, &MaterializeTask::RebuildPageIds),
+                    keeps,
+                    "{op_type} (hint {hint:?}); got {:?}",
+                    labels(&tasks),
+                );
+            }
+        }
+    }
+
     #[test]
     fn invalidations_for_op_delete_block_includes_full_cache_rebuild() {
         let r = make_record("delete_block", r#"{"block_id":"D1"}"#, Some("D1"));
         let tasks = invalidations_for_op(&r, None, None).unwrap();
-        let mut want = full_rebuild_labels();
+        let mut want = without_page_ids(&full_rebuild_labels());
         want.push("RemoveFtsBlock(D1)".into());
         assert_eq!(labels(&tasks), want);
     }
@@ -2661,7 +2721,7 @@ mod tests {
     fn invalidations_for_op_restore_block_includes_full_cache_rebuild() {
         let r = make_record("restore_block", r#"{"block_id":"R1"}"#, Some("R1"));
         let tasks = invalidations_for_op(&r, None, None).unwrap();
-        let mut want = full_rebuild_labels();
+        let mut want = without_page_ids(&full_rebuild_labels());
         // #4209: the per-block link reindex that re-links the referrers which
         // were declined while this block was tombstoned (and re-derives the
         // block's own outbound edges). Ordered before the FTS task, matching
@@ -2702,7 +2762,7 @@ mod tests {
     fn invalidations_for_op_delete_content_block_skips_pages_cache() {
         let r = make_record("delete_block", r#"{"block_id":"D1"}"#, Some("D1"));
         let tasks = invalidations_for_op(&r, Some("content"), None).unwrap();
-        let mut want = content_rebuild_labels();
+        let mut want = without_page_ids(&content_rebuild_labels());
         want.push("RemoveFtsBlock(D1)".into());
         assert_eq!(
             labels(&tasks),
@@ -2740,7 +2800,7 @@ mod tests {
     fn invalidations_for_op_restore_content_block_keeps_the_full_set_5295() {
         let r = make_record("restore_block", r#"{"block_id":"R1"}"#, Some("R1"));
         let tasks = invalidations_for_op(&r, Some("content"), None).unwrap();
-        let mut want = full_rebuild_labels();
+        let mut want = without_page_ids(&full_rebuild_labels());
         // #4209: see `invalidations_for_op_restore_block_includes_full_cache_rebuild`.
         want.push("ReindexBlockLinks(R1)".into());
         want.push("UpdateFtsBlock(R1)".into());
@@ -2773,7 +2833,7 @@ mod tests {
     fn invalidations_for_op_delete_page_block_keeps_full_cache_rebuild() {
         let r = make_record("delete_block", r#"{"block_id":"PG1"}"#, Some("PG1"));
         let tasks = invalidations_for_op(&r, Some("page"), None).unwrap();
-        let mut want = full_rebuild_labels();
+        let mut want = without_page_ids(&full_rebuild_labels());
         want.push("RemoveFtsBlock(PG1)".into());
         assert_eq!(labels(&tasks), want, "page delete must keep the full set");
         assert!(contains_kind(&tasks, &MaterializeTask::RebuildPagesCache));
@@ -2788,7 +2848,7 @@ mod tests {
     fn invalidations_for_op_delete_tag_block_keeps_full_cache_rebuild() {
         let r = make_record("delete_block", r#"{"block_id":"TG1"}"#, Some("TG1"));
         let tasks = invalidations_for_op(&r, Some("tag"), None).unwrap();
-        let mut want = full_rebuild_labels();
+        let mut want = without_page_ids(&full_rebuild_labels());
         want.push("RemoveFtsBlock(TG1)".into());
         assert_eq!(labels(&tasks), want, "tag delete must keep the full set");
         assert!(contains_kind(&tasks, &MaterializeTask::RebuildTagsCache));
@@ -2803,7 +2863,7 @@ mod tests {
     fn invalidations_for_op_delete_unknown_hint_keeps_full_cache_rebuild() {
         let r = make_record("delete_block", r#"{"block_id":"U1"}"#, Some("U1"));
         let tasks = invalidations_for_op(&r, None, None).unwrap();
-        let mut want = full_rebuild_labels();
+        let mut want = without_page_ids(&full_rebuild_labels());
         want.push("RemoveFtsBlock(U1)".into());
         assert_eq!(labels(&tasks), want);
         // Also a genuinely-unknown string hint stays full (defensive).
