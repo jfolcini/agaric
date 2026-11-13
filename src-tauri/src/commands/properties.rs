@@ -46,7 +46,9 @@ pub fn property_changed_events(
 /// The events go out twice: at once, and again when the background queue has
 /// drained. The agenda's views read `agenda_cache` on this event, and the
 /// write's rebuild of it runs after the command has answered, so a read that
-/// came before the rebuild is followed by one that comes after (#6567).
+/// came before the rebuild is followed by one that comes after (#6567). The
+/// second sending says `after_rebuild`, which the conformance harness reads
+/// to leave it out of an op's events: it lands whenever the queue drains.
 fn emit_property_changed_events<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     materializer: &Materializer,
@@ -61,7 +63,12 @@ fn emit_property_changed_events<R: tauri::Runtime>(
         // Fails only at shutdown, when nothing listens either.
         if materializer.flush_background().await.is_ok() {
             for event in events {
-                crate::main_thread::emit(&app, EVENT_PROPERTY_CHANGED, event);
+                let again = serde_json::json!({
+                    "block_id": event.block_id,
+                    "changed_keys": event.changed_keys,
+                    "after_rebuild": true,
+                });
+                crate::main_thread::emit(&app, EVENT_PROPERTY_CHANGED, again);
             }
         }
     });
@@ -3173,15 +3180,28 @@ mod property_changed_events_tests {
             property_changed_events([block.id.clone()], &["due_date".to_owned()]),
         );
 
-        let payload = format!(
-            r#"{{"block_id":"{}","changed_keys":["due_date"]}}"#,
-            block.id.as_str()
-        );
-        for when in ["at once", "again after the rebuild"] {
+        let id = block.id.as_str();
+        for (when, payload) in [
+            (
+                "at once",
+                serde_json::json!({ "block_id": id, "changed_keys": ["due_date"] }),
+            ),
+            (
+                "again after the rebuild",
+                serde_json::json!({
+                    "block_id": id,
+                    "changed_keys": ["due_date"],
+                    "after_rebuild": true,
+                }),
+            ),
+        ] {
+            let sent = rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| panic!("the event was not sent {when}"));
             assert_eq!(
-                rx.recv_timeout(Duration::from_secs(10))
-                    .unwrap_or_else(|_| panic!("the event was not sent {when}")),
-                payload
+                serde_json::from_str::<serde_json::Value>(&sent).unwrap(),
+                payload,
+                "the event sent {when}"
             );
         }
         let cached: i64 =
