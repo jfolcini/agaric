@@ -337,7 +337,7 @@ Local ops move the cursor at snapshot time instead (#5418). The engine lives in 
 
 `heal_orphaned_apply_cursor` still rewinds the cursor to `MIN(applied_through_seq)` when a row lags it, so a crash between a row's write and the cursor advance costs replay, never correctness. An engine apply lost during a session is re-converged at the next boot only if no snapshot pass ran after it.
 
-Replay restores local ops only, so a sync import is durable in the engine only once a pass has saved it. The pass at the end of the session leaves one window: a crash between an import's projection commit and the end of that pass boots with SQL ahead of the engine for that import (#6525).
+Replay restores local ops only, so a sync import is durable in the engine only once a pass has saved it. The pass at the end of the session leaves one window: a crash between an import's projection commit and the end of that pass boots with SQL ahead of the engine for that import (#6525). A block this device created under such an import went to SQL only; a one-time boot repair (`agaric_engine::repair::engine_missing_blocks`) hydrates those into the engine, and leaves a peer's block the engine lacks to the next sync, since seeding it from SQL would make a second node beside the peer's.
 
 ## Markdown mirror (#5363)
 
