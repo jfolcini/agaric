@@ -777,6 +777,12 @@ export const commands = {
 	 */
 	saveFileToDownloads: (fileName: string, mimeType: string, bytes: Base64Bytes) => typedError<string, AppError>(__TAURI_INVOKE("save_file_to_downloads", { fileName, mimeType, bytes })),
 	/**
+	 *  The version of the newest release when it is newer than this build, else
+	 *  `None`. Android only: every other build refuses, and updates through the
+	 *  Tauri updater.
+	 */
+	checkLatestRelease: () => typedError<string | null, AppError>(__TAURI_INVOKE("check_latest_release")),
+	/**
 	 *  Tauri command: import a Markdown, Logseq or Org file, in the `dialect` its
 	 *  front end read it as, as a page with block hierarchy. Delegates to
 	 *  [`import_markdown_with_progress`].

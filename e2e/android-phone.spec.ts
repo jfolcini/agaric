@@ -97,4 +97,19 @@ test.describe('Android phone @mobile @settings @markdown @journal', () => {
     await reopenJournal()
     await expect(page.getByText('Shared while open', { exact: true })).toBeVisible()
   })
+
+  test('a newer release is announced at launch and named in Settings › About (#6546)', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => localStorage.setItem('__mockNewerRelease', '99.0.0'))
+    await waitForBoot(page)
+
+    const toast = page.locator('[data-sonner-toast]', { hasText: 'Agaric 99.0.0 is available' })
+    await expect(toast).toBeVisible()
+    await expect(toast.getByRole('button', { name: 'Open releases page' })).toBeVisible()
+
+    await navigateMobile(page, 'Settings')
+    await openSettingsTab(page, 'About')
+    await expect(page.getByText('Update available: v99.0.0')).toBeVisible()
+  })
 })

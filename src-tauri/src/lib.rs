@@ -282,6 +282,8 @@ macro_rules! agaric_commands {
             $crate::commands::speech::stop_speaking,
             // Android's file save (#6546)
             $crate::commands::file_save::save_file_to_downloads,
+            // Android's check for a newer release (#6546)
+            $crate::commands::release_check::check_latest_release,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown,
             // The pages an import merges its files into (#6277 G5).
@@ -2956,7 +2958,10 @@ fn build_tauri_builder() -> tauri::Builder<tauri::Wry> {
         .plugin(commands::speech::plugin())
         // Android's file save (#6546): the `MediaStore` plugin, and the state
         // the save command reads on every build.
-        .plugin(commands::file_save::plugin());
+        .plugin(commands::file_save::plugin())
+        // Android's check for a newer release (#6546): the HTTPS plugin, and
+        // the state the check command reads on every build.
+        .plugin(commands::release_check::plugin());
 
     // Remember window size / position / monitor / maximized
     // state across launches.  Operates entirely Rust-side (no frontend

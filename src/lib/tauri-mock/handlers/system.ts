@@ -93,6 +93,10 @@ export const systemHandlers = {
   // sandbox, so the boot-time update check should proceed unimpeded.
   is_flatpak: () => false,
 
+  // Android's check for a newer release (#6546): none, unless a spec with an Android user
+  // agent names one in `localStorage['__mockNewerRelease']`.
+  check_latest_release: () => globalThis.localStorage?.getItem('__mockNewerRelease') ?? null,
+
   // ---------------------------------------------------------------------------
   // Properties & tags queries
   // ---------------------------------------------------------------------------
@@ -217,6 +221,7 @@ export const systemHandlers = {
   | 'set_trace_sampling'
   | 'get_status'
   | 'is_flatpak'
+  | 'check_latest_release'
   | 'get_recovery_status'
   | 'log_frontend'
   | 'get_speech_status'

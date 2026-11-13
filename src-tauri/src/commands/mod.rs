@@ -70,6 +70,7 @@ pub mod property_unfit;
 pub mod queries;
 pub mod reconciliation;
 pub mod recovery;
+pub mod release_check;
 pub mod spaces;
 pub mod speech;
 pub mod sync_cmds;

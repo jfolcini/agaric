@@ -141,7 +141,7 @@ Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed 
   - **Sync & devices** — the sync state once a device is paired, then pair / unpair / rename peers, *Sync all* and per-device *Sync now* (the way to retry), manual addresses, the internet fallback, and this device's ID (see [sync.md](sync.md)).
   - **Data** — import / export (see [import-export.md](import-export.md)), and *Open edit history*, which opens the History view.
 - **Help**
-  - **Help** — *Report a bug*, debug mode, show the welcome tour again, update check.
+  - **Help** — *Report a bug*, debug mode, show the welcome tour again, update check. On Android, which does not update itself, Agaric looks once a day for a newer release, announces one with a toast whose button opens the releases page, and names it in this row.
   - **App health** — the integrity check: *Run check* rebuilds every derived table from your notes, compares your notes with the sync engine's copy, and lists the rows that disagree. A bug report filed from Help afterwards carries the result, until you leave Settings. Materializer metrics follow it (see Status above). The tab's id is still `status`.
 
 Tabs are deep-linkable via `?settings=<tab>` (parsed inside the Settings view itself, no router involved) and via `agaric://settings/<tab>`. The retired `history` id opens Data. The last-used tab persists in `localStorage`.
