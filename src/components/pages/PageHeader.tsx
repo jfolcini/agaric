@@ -37,7 +37,7 @@ import { announce } from '@/lib/announcer'
 import { unwrap, validationCode } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
-import { downloadBlob, pageMarkdownForCopy, sanitizeSegment } from '@/lib/export-graph'
+import { downloadBlob, nameToFlatSegment, pageMarkdownForCopy } from '@/lib/export-graph'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
@@ -238,9 +238,8 @@ export function PageHeader({
   // the mirror cuts a name (`MAX_SEGMENT_BYTES`): WebKitGTK writes no file past 255.
   const handleSaveMarkdownFile = useCallback(async () => {
     setKebabOpen(false)
-    const flatTitle = title.replaceAll('/', '_')
-    const { read } = new TextEncoder().encodeInto(flatTitle, new Uint8Array(200))
-    const fileName = `${sanitizeSegment(flatTitle.slice(0, read))}.md`
+    const { read } = new TextEncoder().encodeInto(title, new Uint8Array(200))
+    const fileName = `${nameToFlatSegment(title.slice(0, read))}.md`
     try {
       const markdown = await pageMarkdownForCopy(pageId)
       downloadBlob(new Blob([markdown], { type: 'text/markdown' }), fileName)
