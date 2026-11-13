@@ -306,16 +306,23 @@ pub async fn handle_incoming_sync(
     // embedding the large `_inner` future inline, so the delegation does not push the
     // already-large responder future over the `clippy::large_futures` threshold at the
     // spawn sites.
-    Box::pin(handle_incoming_sync_inner(
+    let peer_holds_news = Box::pin(handle_incoming_sync_inner(
         session,
         pool,
         device_id,
         materializer,
-        scheduler,
+        Arc::clone(&scheduler),
         event_sink,
         cancel,
     ))
-    .await
+    .await?;
+    // #6551: a session is a pull, so serving one brought nothing in. Asked for
+    // here, with the session's per-peer lock released, so the round this wakes
+    // can take it.
+    if peer_holds_news {
+        scheduler.notify_change();
+    }
+    Ok(())
 }
 
 /// Tell the peer why it was turned away — and, when the reason is one its own user
@@ -1212,6 +1219,8 @@ async fn lock_peer_or_reject(
     Ok(Some(guard))
 }
 
+/// `Ok(true)` when the session completed for a peer that
+/// [holds news](SyncOrchestrator::peer_holds_news).
 async fn handle_incoming_sync_inner(
     mut session: InboundSession,
     pool: sqlx::SqlitePool,
@@ -1220,7 +1229,7 @@ async fn handle_incoming_sync_inner(
     scheduler: Arc<SyncScheduler>,
     event_sink: Arc<dyn SyncEventSink>,
     cancel: Arc<AtomicBool>,
-) -> Result<(), AppError> {
+) -> Result<bool, AppError> {
     let endpoint_id = session.remote;
     let pool_ref = pool.clone();
     let ctx = ResponderCtx::new(&pool_ref, &device_id, endpoint_id, &event_sink);
@@ -1249,7 +1258,7 @@ async fn handle_incoming_sync_inner(
         Box::new(super::SharedEventSink(Arc::clone(&event_sink)));
 
     let Some((opening, parts)) = recv_opening(&ctx, &mut session).await? else {
-        return Ok(());
+        return Ok(false);
     };
 
     // Computed from THIS frame, and read at the bind after the session — which is why
@@ -1258,12 +1267,12 @@ async fn handle_incoming_sync_inner(
         heads_are_ambiguous(&parts.heads, &device_id, parts.stated_device_id.as_deref());
 
     let Some((remote_id, pairing_pending)) = admit_peer(&ctx, &mut session, &parts).await? else {
-        return Ok(());
+        return Ok(false);
     };
 
     let Some(_peer_guard) = lock_peer_or_reject(&ctx, &mut session, &scheduler, &remote_id).await?
     else {
-        return Ok(());
+        return Ok(false);
     };
 
     // #2537: identity checks passed and the per-peer lock is held — this session is now
@@ -1285,9 +1294,10 @@ async fn handle_incoming_sync_inner(
 
     let end = drive_responder_session(&ctx, &mut session, &mut orch, opening, &cancel).await?;
 
-    // A session the orchestrator refused (the engine-format gate, #6523) ends
-    // here: its refusal frame is sent, and a session that moved nothing binds
-    // and records nothing.
+    // Any session that ended `Failed` stops here, whether this side refused it
+    // (the engine-format gate, #6523, whose refusal frame is already sent) or
+    // the initiator sent an error frame: a session that moved nothing binds and
+    // records nothing.
     if let SyncState::Failed(reason) = &end.state {
         let reason = reason.clone();
         finish_responder(&ctx, &mut session, &orch, end.spoke_last).await;
@@ -1329,7 +1339,7 @@ async fn handle_incoming_sync_inner(
 
     finish_responder(&ctx, &mut session, &orch, spoke_last).await;
 
-    Ok(())
+    Ok(orch.is_succeeded() && orch.peer_holds_news())
 }
 
 #[cfg(test)]

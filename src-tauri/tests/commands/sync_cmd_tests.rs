@@ -794,7 +794,7 @@ async fn sync_pairing_commands_clear_the_backoff_that_would_swallow_their_wake_3
 async fn sync_start_sync_returns_queued_info() {
     let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
-    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into(), true).await;
     assert!(result.is_ok(), "start_sync must succeed for a fresh peer");
 
     let info = result.unwrap();
@@ -814,22 +814,57 @@ async fn sync_start_sync_returns_queued_info() {
     assert_eq!(info.ops_sent, 0, "fresh sync should send zero ops");
 }
 
+/// #6523: the scheduled tick leaves a backoff alone and is told the peer is
+/// waiting, which is not an error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sync_start_sync_respects_backoff() {
+async fn a_scheduled_start_sync_leaves_a_backoff_alone_and_reports_it_6523() {
     let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
     scheduler.record_failure("peer-1");
+    let rounds_asked = scheduler.change_count();
 
-    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
+    let info = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into(), false)
+        .await
+        .expect("a peer in backoff is waiting, not failing");
+
+    assert_eq!(info.state, "backoff");
     assert!(
-        result.is_err(),
-        "start_sync must fail when peer is in backoff"
+        !scheduler.may_retry("peer-1"),
+        "the tick must not clear the backoff"
     );
-    let err = result.unwrap_err();
+    assert_eq!(scheduler.failure_count("peer-1"), 1);
+    assert_eq!(
+        scheduler.change_count(),
+        rounds_asked,
+        "a tick refused for backoff asks the daemon for nothing"
+    );
+}
+
+/// #6523: a press clears the peer's backoff and asks for a round, so the
+/// press reports that dial's result.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pressed_start_sync_clears_that_peers_backoff_and_dials_6523() {
+    let (pool, _dir) = test_pool().await;
+    let scheduler = SyncScheduler::new();
+    scheduler.record_failure("peer-1");
+    scheduler.record_failure("peer-2");
+    let rounds_asked = scheduler.change_count();
+
+    let info = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into(), true)
+        .await
+        .expect("a press dials a peer in backoff");
+
+    assert_eq!(info.state, "queued");
     assert!(
-        err.to_string().contains("backoff"),
-        "error should mention backoff, got: {err}"
+        scheduler.may_retry("peer-1"),
+        "the press clears the backoff"
     );
+    assert_eq!(scheduler.failure_count("peer-1"), 0);
+    assert!(
+        !scheduler.may_retry("peer-2"),
+        "only the pressed peer's backoff is cleared"
+    );
+    assert_eq!(scheduler.change_count(), rounds_asked + 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -839,33 +874,10 @@ async fn sync_start_sync_after_backoff_reset_succeeds() {
     scheduler.record_failure("peer-1");
     scheduler.record_success("peer-1"); // reset backoff
 
-    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into(), true).await;
     assert!(
         result.is_ok(),
         "start_sync must succeed after backoff is reset"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sync_start_sync_does_not_record_success_preemptively() {
-    // Regression: `start_sync_inner` used to call
-    // `scheduler.record_success(peer_id)` immediately after
-    // `notify_change`, wiping per-peer backoff state before the
-    // SyncDaemon had attempted (let alone succeeded at) a real sync.
-    // The wrapper now only *triggers* a sync; the daemon's own
-    // success path records the result after a real network round-trip.
-    let (pool, _dir) = test_pool().await;
-    let scheduler = SyncScheduler::new();
-    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
-    assert!(result.is_ok(), "start_sync must succeed for a fresh peer");
-
-    // No backoff entries should exist for peer-1 — `start_sync_inner`
-    // does not add one (the daemon does), and post-M-32 it must not
-    // touch the backoff map at all.
-    assert!(
-        scheduler.failure_counts().is_empty(),
-        "start_sync_inner must not touch backoff state; found: {:?}",
-        scheduler.failure_counts()
     );
 }
 
@@ -933,7 +945,7 @@ async fn sync_start_sync_reports_busy_while_the_daemon_holds_the_peer_lock() {
         .try_lock_peer(&lock_key)
         .expect("the daemon's S-5 lock must be free before the test takes it");
 
-    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into(), true).await;
 
     let err = result.expect_err(
         "start_sync must refuse while the daemon holds the S-5 lock for this peer's endpoint id",
@@ -963,7 +975,7 @@ async fn sync_start_sync_probes_the_key_the_daemon_locks_under() {
         .try_lock_peer("peer-1")
         .expect("device-id-keyed lock must be free");
 
-    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into(), true).await;
     assert!(
         result.is_ok(),
         "a lock held under the device id is not the daemon's lock; \
@@ -988,7 +1000,8 @@ async fn sync_start_sync_succeeds_when_a_different_peer_is_syncing() {
 
     let _daemon_session = scheduler.try_lock_peer(&busy_key).unwrap();
 
-    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-idle".into()).await;
+    let result =
+        start_sync_inner(&pool, &scheduler, "device-local", "peer-idle".into(), true).await;
     assert!(
         result.is_ok(),
         "the busy probe is per-peer, not a global sync mutex; got: {:?}",
@@ -1013,7 +1026,14 @@ async fn sync_start_sync_succeeds_for_a_peer_with_no_bound_endpoint_id() {
         .await
         .unwrap();
 
-    let result = start_sync_inner(&pool, &scheduler, "device-local", "legacy-peer".into()).await;
+    let result = start_sync_inner(
+        &pool,
+        &scheduler,
+        "device-local",
+        "legacy-peer".into(),
+        true,
+    )
+    .await;
     assert!(
         result.is_ok(),
         "an unbound peer must still be triggerable, got: {:?}",
@@ -1049,9 +1069,15 @@ async fn sync_start_sync_rejects_a_corrupt_stored_endpoint_id() {
         .await
         .expect("the column CHECK admits this value — that is the point");
 
-    let err = start_sync_inner(&pool, &scheduler, "device-local", "corrupt-peer".into())
-        .await
-        .expect_err("an unparseable stored endpoint id must not be silently skipped");
+    let err = start_sync_inner(
+        &pool,
+        &scheduler,
+        "device-local",
+        "corrupt-peer".into(),
+        true,
+    )
+    .await
+    .expect_err("an unparseable stored endpoint id must not be silently skipped");
     assert!(
         matches!(err, AppError::Validation { .. }),
         "a corrupt row must surface as a Validation error, not a lock result or a \

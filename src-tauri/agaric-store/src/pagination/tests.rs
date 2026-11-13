@@ -5944,7 +5944,8 @@ mod global_history_keyset_5424 {
     /// `?2 IS NULL` switch, and the space as an `IN` list. Kept as the oracle
     /// the rewrite must agree with (AGENTS.md § Performance Conventions).
     const ORACLE_SQL: &str = "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-                ol.is_replicated \
+                ol.is_replicated, \
+                CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS agent \
          FROM op_log ol \
          WHERE (?1 IS NULL OR ol.op_type = ?1) \
            AND (?2 IS NULL OR ( \
@@ -6352,7 +6353,8 @@ mod global_history_keyset_5424 {
     /// Production SQL of `list_global_history`, pinned to `history.rs` by
     /// `pinned_global_history_sql_is_production_5424`.
     const FIRST_PAGE_SQL: &str = "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-            ol.is_replicated AS \"is_replicated!: bool\" \
+            ol.is_replicated AS \"is_replicated!: bool\", \
+            CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS \"agent?: String\" \
      FROM op_log ol \
      WHERE (?1 IS NULL OR ol.op_type = ?1) \
        AND (?2 IS NULL OR ( \
@@ -6383,7 +6385,8 @@ mod global_history_keyset_5424 {
      ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
      LIMIT ?3";
     const CURSOR_PAGE_SQL: &str = "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-            ol.is_replicated AS \"is_replicated!: bool\" \
+            ol.is_replicated AS \"is_replicated!: bool\", \
+            CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS \"agent?: String\" \
      FROM op_log ol \
      WHERE (ol.created_at, ol.seq, ol.device_id) < (?4, ?5, ?6) \
        AND (?1 IS NULL OR ol.op_type = ?1) \
@@ -6511,6 +6514,101 @@ mod global_history_keyset_5424 {
                         );
                     }
                 }
+            }
+        }
+    }
+}
+
+// ====================================================================
+// #6522 — per-block History seeks `idx_op_log_block_created`
+// ====================================================================
+
+mod block_history_plan_6522 {
+    use super::test_pool;
+
+    /// `list_block_history`'s production SQL from its `FROM` on, pinned to
+    /// `history.rs` below. The select list is left out: it does not decide the
+    /// plan.
+    const BLOCK_HISTORY_FROM: &str = "FROM op_log ol \
+         WHERE ( \
+             ol.block_id = ?1 \
+             OR ( \
+                 ol.op_type IN ('delete_attachment', 'rename_attachment') \
+                 AND ol.attachment_id IN ( \
+                     SELECT a.id FROM attachments a WHERE a.block_id = ?1 \
+                     UNION ALL \
+                     SELECT src_add.attachment_id FROM op_log src_add \
+                     WHERE src_add.op_type = 'add_attachment' \
+                     AND src_add.block_id = ?1 \
+                 ) \
+             ) \
+         ) \
+           AND (?6 IS NULL OR ol.op_type = ?6) \
+           AND (?2 IS NULL OR ( \
+                ol.created_at < ?7 \
+                OR (ol.created_at = ?7 AND ol.seq < ?3) \
+                OR (ol.created_at = ?7 AND ol.seq = ?3 AND ol.device_id < ?5))) \
+         ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
+         LIMIT ?4";
+
+    /// With `idx_op_log_block_id` dropped (migration 0130), both `block_id`
+    /// lookups, the block's own ops and the paired-`add_attachment` probe, seek
+    /// the composite index that replaced it, with planner statistics and
+    /// without.
+    #[tokio::test]
+    async fn block_history_plan_seeks_block_created_index_6522() {
+        let squash = |s: &str| -> String {
+            s.chars()
+                .filter(|c| !c.is_whitespace() && *c != '\\' && *c != '"')
+                .collect()
+        };
+        assert!(
+            squash(include_str!("history.rs")).contains(&squash(BLOCK_HISTORY_FROM)),
+            "the SQL pinned here is not list_block_history's; copy it over and \
+             re-check the plan assertions"
+        );
+
+        let (pool, _dir) = test_pool().await;
+        // One connection: SQLite reloads `sqlite_stat1` only on the connection
+        // that ran ANALYZE.
+        let mut conn = pool.acquire().await.unwrap();
+        for analyzed in [false, true] {
+            if analyzed {
+                sqlx::query(
+                    "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 19999) \
+                     INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+                     SELECT 'dev-' || (i % 3), i + 1, 'h', 'edit_block', '{}', 1000 + i / 2, 'B' || (i % 500) \
+                     FROM n",
+                )
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+                sqlx::query("ANALYZE").execute(&mut *conn).await.unwrap();
+            }
+            let lines: Vec<String> =
+                sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(format!(
+                    "EXPLAIN QUERY PLAN SELECT ol.seq {BLOCK_HISTORY_FROM}"
+                )))
+                .bind("B1")
+                .bind(None::<i64>)
+                .bind(0_i64)
+                .bind(51_i64)
+                .bind("")
+                .bind(None::<&str>)
+                .bind(0_i64)
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|(_, _, _, detail)| detail)
+                .collect();
+            for alias in ["ol", "src_add"] {
+                let seek =
+                    format!("SEARCH {alias} USING INDEX idx_op_log_block_created (block_id=?)");
+                assert!(
+                    lines.contains(&seek),
+                    "analyzed={analyzed}: expected `{seek}` in {lines:#?}"
+                );
             }
         }
     }

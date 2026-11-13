@@ -65,6 +65,8 @@ const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 const SYNC_BUTTON = '[data-slot="sidebar"] button[aria-label="Sync"]'
 const BEFORE_PAUSE = runScopedMarker('wdio-sync-before-pause')
 const AFTER_CANCEL = runScopedMarker('wdio-sync-after-cancel')
+const UNPRESSED_PAGE = runScopedMarker('wdio-sync-unpressed-page')
+const UNPRESSED_EDIT = runScopedMarker('wdio-sync-unpressed-edit')
 const APP_IMAGE = runScopedMarker('wdio-sync-app-image')
 const PEER_IMAGE = runScopedMarker('wdio-sync-remote-image')
 const FILENAME = 'wdio-sync-image.png'
@@ -854,6 +856,36 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
       await peer.waitPulled()
       await reopenSharedPage()
       await blockStaticByMarker(AFTER_CANCEL).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    })
+
+    it('an edit here reaches the other device with no Sync press (#6551)', async () => {
+      if (peer === undefined || paired === undefined) throw new Error('the pairing test failed')
+      const device = peer
+      await openNewPage(UNPRESSED_PAGE)
+      await typeMarkerVerified(UNPRESSED_EDIT)
+      await browser.keys(['Escape'])
+      const row = blockStaticByMarker(UNPRESSED_EDIT)
+      await row.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+      const blockId = await row.getAttribute('data-block-id')
+      if (blockId === null) throw new Error('the block row carries no data-block-id')
+
+      // Neither `peer.sync()` nor a press: the commit asks this device's daemon
+      // for a round, the peer serves it, sees this device is ahead, and pulls.
+      let held = 'the peer does not hold the block'
+      await browser
+        .waitUntil(
+          async () => {
+            held = await device.getBlock(blockId).then(
+              (block) => block.content,
+              (error: unknown) => String(error),
+            )
+            return held === UNPRESSED_EDIT
+          },
+          { timeout: NAV_TIMEOUT, interval: 500 },
+        )
+        .catch(() => {
+          throw new Error(`the edit never reached the peer: ${held}`)
+        })
     })
 
     it("unpairing refuses the peer's next sync and drops only this device's row", async () => {
