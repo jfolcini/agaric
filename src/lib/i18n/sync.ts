@@ -252,6 +252,12 @@ export const sync: Record<string, string> = {
   // #6523 — a paired device that is away: no announcement, no answer.
   'sync.waitingForPeer': 'Waiting for {{peer}}, last synced {{time}}',
   'sync.waitingForPeerNeverSynced': 'Waiting for {{peer}}',
+  // #6523 — the peer holds more of this device's own changes than this device
+  // does (an older database was restored here), which no sync can merge.
+  'sync.ownHistoryFork':
+    '{{peer}} holds changes this device made and no longer has, as after restoring an older backup here, so the two cannot merge. Export the notes from this device, set Agaric up fresh on it, pair it again, then import them.',
+  'sync.ownHistoryForkUnnamed':
+    'The other device holds changes this device made and no longer has, as after restoring an older backup here, so the two cannot merge. Export the notes from this device, set Agaric up fresh on it, pair it again, then import them.',
   'sync.retryAction': 'Retry sync',
   'sync.backOnline': 'Back online. Syncing\u2026',
   'sync.noPeersTitle': 'No devices paired',

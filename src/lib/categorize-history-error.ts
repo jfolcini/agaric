@@ -32,6 +32,9 @@ const appErrorCategories = {
   validation: 'unknown',
   non_reversible: 'unknown',
   cancelled: null,
+  storage_full: 'server',
+  storage_read_only: 'server',
+  storage_corrupt: 'server',
 } satisfies Record<AppErrorKind, HistoryErrorCategory | null>
 
 export function categorizeHistoryError(err: unknown): HistoryErrorCategory | null {

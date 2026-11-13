@@ -1332,6 +1332,52 @@ describe('useSyncEvents', () => {
       })
     })
 
+    // #6523 — the other device holds changes this device made and no longer
+    // has (an older backup was restored here). The sentence gives the cause
+    // and the recovery; the raw text is for the log.
+    describe('#6523 a device that forked its own history is told why and what to do', () => {
+      const forked = {
+        payload: {
+          type: 'error',
+          message:
+            'Sync failed: Invalid operation: loro-snapshot catch-up: peer snapshot for space S could not be merged',
+          remote_device_id: 'device-42',
+          code: 'own_history_fork',
+        },
+      }
+
+      it('names a peer the store knows, in the store and the toast', async () => {
+        mockSyncPeers.push({ peerId: 'device-42', name: 'Pixel 8' })
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(forked)
+
+        const sentence = t('sync.ownHistoryFork', { peer: 'Pixel 8' })
+        expect(sentence).toContain('Pixel 8')
+        expect(mockSetState).toHaveBeenCalledExactlyOnceWith('error', sentence)
+        expect(mockedToastError).toHaveBeenCalledWith(
+          t('sync.failed', { message: sentence }),
+          expect.objectContaining({ id: 'sync-error' }),
+        )
+        unmount()
+      })
+
+      it('words it without a name for a peer with none', async () => {
+        mockSyncPeers.push({ peerId: 'device-42', name: null })
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(forked)
+
+        expect(mockSetState).toHaveBeenCalledExactlyOnceWith(
+          'error',
+          t('sync.ownHistoryForkUnnamed'),
+        )
+        unmount()
+      })
+    })
+
     // #6523 — a paired device that neither answers nor announces itself is
     // away. The status says so; nothing failed, so nothing is toasted.
     describe('#6523 an away peer reads as waiting, not as a failure', () => {

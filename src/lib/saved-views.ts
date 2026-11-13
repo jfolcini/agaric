@@ -141,6 +141,12 @@ async function nameRefused(spaceId: string, exceptId: string | null, name: strin
   )
 }
 
+/**
+ * Callers check that `name` is free first: `create_page_in_space` resolves a
+ * title a page already holds to that page (#4723), and stamping it would hide
+ * it from every list. A page that lands by sync between that check and this
+ * call is not caught; closing that needs the command to say whether it created.
+ */
 async function createViewPage(
   spaceId: string,
   name: string,

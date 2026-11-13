@@ -32,7 +32,7 @@ describe('advancedQuery store — controls', () => {
     const b = selectAdvancedQueryControlsForSpace(useAdvancedQueryStore.getState(), 'SPACE_B')
     // Same frozen default reference for any absent slice (referential idempotency).
     expect(a).toBe(b)
-    expect(a).toEqual({ fulltext: '', sort: [], groupBy: null, aggregates: [] })
+    expect(a).toEqual({ fulltext: '', sort: [], groupBy: null, aggregates: [], view: 'list' })
   })
 
   it('sets the full-text term per space and is a no-op when unchanged', () => {
@@ -422,6 +422,7 @@ describe('serializeQuerySpec / parseQuerySpec', () => {
       sort,
       groupBy,
       aggregates,
+      view: 'list',
     })
     expect(spec).toEqual({
       filter: { type: 'And', children: [{ type: 'Leaf', primitive: TAG('a') }] },
@@ -457,6 +458,46 @@ describe('serializeQuerySpec / parseQuerySpec', () => {
       group_by: null,
       aggregates: [],
     })
+  })
+
+  it('keeps the board layout through a save and a load (#6542)', () => {
+    const builder: BuilderGroupNode = {
+      kind: 'group',
+      id: 0,
+      op: 'And',
+      negated: false,
+      children: [],
+    }
+    const stateBoard: GroupSpec = { key: { type: 'State' } }
+    const saved = JSON.parse(
+      JSON.stringify(
+        serializeQuerySpec(builder, {
+          fulltext: '',
+          sort: [],
+          groupBy: stateBoard,
+          aggregates: [],
+          view: 'board',
+        }),
+      ),
+    )
+    useAdvancedQueryStore.getState().loadView('S1', parseQuerySpec(saved))
+    expect(useAdvancedQueryStore.getState().controlsBySpace['S1']).toEqual({
+      fulltext: '',
+      sort: [],
+      groupBy: stateBoard,
+      aggregates: [],
+      view: 'board',
+    })
+  })
+
+  it('loads a view saved without a layout as a list, and ignores an unknown one', () => {
+    const store = useAdvancedQueryStore.getState()
+    store.setView('S1', 'board')
+    store.loadView('S1', parseQuerySpec({ filter: { type: 'And', children: [] } }))
+    expect(useAdvancedQueryStore.getState().controlsBySpace['S1']?.view).toBe('list')
+    expect(
+      parseQuerySpec({ filter: { type: 'And', children: [] }, view: 'calendar' }),
+    ).not.toHaveProperty('view')
   })
 
   it('throws on a spec missing its filter', () => {

@@ -123,6 +123,29 @@ impl LoroEngine {
             Some(position),
         )
     }
+    /// Fixture seam (#6527): the node [`Self::apply_create_block`] leaves, at a
+    /// tree `slot` the caller already knows. That create finds its slot by
+    /// reading every sibling, so seeding the tens of thousands of root pages
+    /// of a page-heavy vault through it is quadratic.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn seed_block_at_slot(
+        &mut self,
+        block_id: &str,
+        block_type: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        slot: usize,
+        position: i64,
+    ) -> Result<(), AppError> {
+        self.create_block_impl(
+            block_id,
+            block_type,
+            content,
+            parent_id,
+            slot,
+            Some(position),
+        )
+    }
     /// Shared create implementation. `slot` is the 0-based target index among
     /// the resolved parent's children (clamped to the valid range). When
     /// `legacy_position` is `Some`, the legacy `position` meta is stamped for

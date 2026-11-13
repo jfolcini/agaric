@@ -874,6 +874,92 @@ async fn rebuild_all_split_matches_rebuild_all() {
     assert!(rows.contains(&("GRANDCHILD".into(), "TAG".into(), "PAGE".into())));
 }
 
+/// #6522: each kind of drift the comparison can meet — a row missing, a row
+/// that should not be there, a row inherited from the wrong ancestor — makes
+/// the split rebuild rewrite the table to what `rebuild_all` gives.
+#[tokio::test]
+async fn rebuild_all_split_repairs_every_kind_of_drift_6522() {
+    for (drift, sql) in [
+        (
+            "missing",
+            "DELETE FROM block_tag_inherited WHERE block_id = 'GRANDCHILD'",
+        ),
+        (
+            "extra",
+            "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) \
+             VALUES ('PAGE', 'TAG', 'CHILD')",
+        ),
+        (
+            "wrong ancestor",
+            "UPDATE block_tag_inherited SET inherited_from = 'CHILD' WHERE block_id = 'GRANDCHILD'",
+        ),
+    ] {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TAG", "tag", "tag-name", None).await;
+        insert_block(&pool, "PAGE", "page", "page", None).await;
+        insert_block(&pool, "CHILD", "content", "child", Some("PAGE")).await;
+        insert_block(&pool, "GRANDCHILD", "content", "grandchild", Some("CHILD")).await;
+        insert_tag_assoc(&pool, "PAGE", "TAG").await;
+        rebuild_all(&pool).await.unwrap();
+        let rebuilt = get_inherited(&pool).await;
+        assert_eq!(rebuilt.len(), 2, "CHILD and GRANDCHILD inherit TAG");
+
+        sqlx::query(sql).execute(&pool).await.unwrap();
+        assert_ne!(get_inherited(&pool).await, rebuilt, "{drift}: planted");
+        rebuild_all_split(&pool, &pool).await.unwrap();
+
+        assert_eq!(get_inherited(&pool).await, rebuilt, "{drift}: repaired");
+    }
+}
+
+/// #6522: `rebuild_all_split` leaves the table where `rebuild_all` does after
+/// every round of random writes to `blocks`, `block_tags` and the table
+/// itself.
+#[tokio::test]
+async fn rebuild_all_split_matches_rebuild_all_on_random_vaults_6522() {
+    use crate::cache::random_vault_tests::{assert_rebuild_matches_oracle, rows};
+    const COLUMNS: &str = "block_id, tag_id, inherited_from";
+    // Neither rebuild counts its changes, so each reports whether it made any.
+    assert_rebuild_matches_oracle(
+        "block_tag_inherited",
+        COLUMNS,
+        async |pool| {
+            let before = rows(pool, "block_tag_inherited", COLUMNS).await;
+            rebuild_all(pool).await.unwrap();
+            u64::from(rows(pool, "block_tag_inherited", COLUMNS).await != before)
+        },
+        async |pool| {
+            let before = rows(pool, "block_tag_inherited", COLUMNS).await;
+            rebuild_all_split(pool, pool).await.unwrap();
+            u64::from(rows(pool, "block_tag_inherited", COLUMNS).await != before)
+        },
+    )
+    .await;
+}
+
+/// #6522: with the table already right, the split rebuild never asks for the
+/// writer lock, so it finishes while another connection holds it.
+#[tokio::test]
+async fn rebuild_all_split_takes_no_writer_lock_when_nothing_is_stale_6522() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG", "tag", "tag-name", None).await;
+    insert_block(&pool, "PAGE", "page", "page", None).await;
+    insert_block(&pool, "CHILD", "content", "child", Some("PAGE")).await;
+    insert_tag_assoc(&pool, "PAGE", "TAG").await;
+    rebuild_all(&pool).await.unwrap();
+
+    let _writer = crate::db::begin_immediate_logged(&pool, "test_holds_the_lock")
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        rebuild_all_split(&pool, &pool),
+    )
+    .await
+    .expect("the rebuild must not wait for the writer lock")
+    .unwrap();
+}
+
 #[tokio::test]
 async fn rebuild_all_split_idempotent() {
     let (pool, _dir) = test_pool().await;

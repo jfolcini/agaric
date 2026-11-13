@@ -269,6 +269,9 @@ macro_rules! agaric_commands {
             $crate::commands::mirror::set_mirror_copy_files,
             $crate::commands::mirror::set_mirror_space,
             $crate::commands::mirror::get_mirror_status,
+            // The daily snapshot row (#6554)
+            $crate::commands::daily_snapshot::get_last_snapshot_ms,
+            $crate::commands::daily_snapshot::open_data_folder,
             // Read aloud (#5745)
             $crate::commands::speech::get_speech_status,
             $crate::commands::speech::get_speech_engine_available,
@@ -1532,6 +1535,7 @@ async fn rebuild_stale_derivations(
                 MaterializeTask::RebuildTagsCache,
             ],
             Derivation::Agenda => vec![MaterializeTask::RebuildAgendaCache],
+            Derivation::TagUsage => vec![MaterializeTask::RebuildTagsCache],
             Derivation::PageLink => vec![MaterializeTask::RebuildPageLinkCache],
             Derivation::LinkTokens => {
                 match agaric_store::cache::rederive_block_links(write_pool).await {
@@ -1800,6 +1804,31 @@ fn pragma_optimize_tick_job(pools: &db::DbPools) -> maintenance::MaintenanceJob 
     }
 }
 
+/// The daily vault snapshot (#6554): each hour, a snapshot if the local day
+/// has none yet and none was tried, so the first one is taken a tick after the
+/// day's first launch and a session left open over midnight still gets the
+/// next day's.
+fn daily_snapshot_job(db_path: &std::path::Path) -> maintenance::MaintenanceJob {
+    let db_path = db_path.to_path_buf();
+    let last_attempt_day = Arc::new(std::sync::atomic::AtomicI32::new(0));
+    maintenance::MaintenanceJob {
+        name: "daily_snapshot",
+        interval: std::time::Duration::from_secs(3600),
+        last_run: None,
+        predicate_grace: None,
+        skipped_since: None,
+        predicate: Box::new(|| true),
+        run: Box::new(move || {
+            let db_path = db_path.clone();
+            let last_attempt_day = last_attempt_day.clone();
+            Box::pin(async move {
+                db::daily_snapshot::daily_snapshot_tick(&db_path, &last_attempt_day).await;
+                Ok(())
+            })
+        }),
+    }
+}
+
 /// Issue #157 sub-item F — enqueue
 /// `CleanupOrphanedAttachments` every 24 h.
 fn cleanup_orphaned_attachments_tick_job(
@@ -2006,6 +2035,7 @@ fn reminders_tick_job(pools: &db::DbPools, app: tauri::AppHandle) -> maintenance
 /// the daemon ticks them.
 fn build_maintenance_jobs(
     app: tauri::AppHandle,
+    db_path: &std::path::Path,
     pools: &db::DbPools,
     device_id: &str,
     materializer: &materializer::Materializer,
@@ -2022,6 +2052,7 @@ fn build_maintenance_jobs(
         page_ids_backstop_job(materializer),
         projected_agenda_midnight_job(materializer),
         reminders_tick_job(pools, app),
+        daily_snapshot_job(db_path),
     ]
 }
 
@@ -2033,6 +2064,7 @@ fn build_maintenance_jobs(
 /// (#703) — the flags exist only to keep the spawn signatures stable.
 fn spawn_background_tasks(
     app: tauri::AppHandle,
+    db_path: &std::path::Path,
     pools: &db::DbPools,
     device_id: &str,
     materializer: &materializer::Materializer,
@@ -2079,8 +2111,8 @@ fn spawn_background_tasks(
     // vector (wal_checkpoint_truncate, op_log_compact,
     // pragma_optimize_tick, cleanup_orphaned_attachments_tick,
     // fts_idle_optimize, tombstone_purge, loro_snapshot_if_dirty,
-    // page_ids_backstop, projected_agenda_midnight, reminders_tick). New jobs
-    // are added by extending
+    // page_ids_backstop, projected_agenda_midnight, reminders_tick,
+    // daily_snapshot). New jobs are added by extending
     // this vector without re-wiring the daemon.
     //
     // `wal_checkpoint_truncate_job` illustrates the
@@ -2095,7 +2127,7 @@ fn spawn_background_tasks(
     // PRAGMA itself also returns `busy != 0` when a concurrent
     // writer holds the WAL, so the gating is double-belted.)
     let maintenance_shutdown = Arc::new(AtomicBool::new(false));
-    let jobs = build_maintenance_jobs(app, pools, device_id, materializer, lifecycle);
+    let jobs = build_maintenance_jobs(app, db_path, pools, device_id, materializer, lifecycle);
     // #703: flag never set; daemon observes constant `false`.
     maintenance::spawn_daemon(jobs, maintenance_shutdown);
 
@@ -3052,7 +3084,7 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // quietly opening the user's real vault.
     let app_data_dir = crate::app_paths::resolve_app_data_dir(app)?;
     std::fs::create_dir_all(&app_data_dir)?;
-    let db_path = app_data_dir.join("notes.db");
+    let db_path = app_data_dir.join(db::VAULT_DB_FILE);
 
     // Tracing-appender setup using the OS-correct
     // `app_data_dir`; keeps the worker guard alive in managed state.
@@ -3121,6 +3153,7 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // periodic Loro snapshot.
     spawn_background_tasks(
         app.handle().clone(),
+        &db_path,
         &pools,
         &device_id,
         &materializer,
@@ -4751,6 +4784,69 @@ mod boot_cache_gating_tests {
             1,
             "an empty block_tag_refs with no inline tag token must schedule no \
              rebuild: only the flush barrier runs"
+        );
+        mat.shutdown();
+    }
+
+    /// #6659 — a tag count written before template blocks were left out is
+    /// recounted at boot. Every other rule is recorded as current, so the
+    /// count rule's version alone schedules the rebuild.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_tag_count_an_older_rule_wrote_is_recounted_at_boot_6659() {
+        use agaric_store::derivations::{Derivation, record};
+        const TEMPLATE: &str = "01J000000000000000TMPL6659";
+        let dir = tempfile::TempDir::new().unwrap();
+        let pools = db::init_pools(&dir.path().join("test.db")).await.unwrap();
+        seed_tag_and_source(&pools.write, "note".to_owned()).await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'Tpl', ?)",
+        )
+        .bind(TEMPLATE)
+        .bind(TEMPLATE)
+        .execute(&pools.write)
+        .await
+        .unwrap();
+        for sql in [
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?1, 'template', 'true')",
+            "UPDATE blocks SET parent_id = ?1, page_id = ?1 WHERE block_type = 'content'",
+        ] {
+            sqlx::query(sql)
+                .bind(TEMPLATE)
+                .execute(&pools.write)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(SOURCE)
+            .bind(TAG)
+            .execute(&pools.write)
+            .await
+            .unwrap();
+        // The row the older rule left: the template's block counted.
+        sqlx::query(
+            "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) VALUES (?, 'tag-name', 1, '')",
+        )
+        .bind(TAG)
+        .execute(&pools.write)
+        .await
+        .unwrap();
+        for derivation in Derivation::ALL {
+            if derivation != Derivation::TagUsage {
+                record(&pools.write, derivation).await.unwrap();
+            }
+        }
+        let mat =
+            materializer::Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background()
+            .await
+            .expect("drain the boot rebuilds");
+
+        assert_eq!(
+            count(&pools.read, "SELECT usage_count FROM tags_cache").await,
+            0,
+            "the block on the template page no longer counts"
         );
         mat.shutdown();
     }

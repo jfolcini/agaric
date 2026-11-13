@@ -5,6 +5,7 @@
  */
 
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import type { MergeQuestion } from '@/components/settings/useImportRunner'
@@ -14,6 +15,7 @@ export function ImportMergeDialog({
 }: {
   question: MergeQuestion | null
 }): React.ReactElement {
+  const { t } = useTranslation()
   return (
     <ConfirmDialog
       open={question !== null}
@@ -30,6 +32,9 @@ export function ImportMergeDialog({
       actionTestId="import-merge-confirm"
       cancelTestId="import-merge-cancel"
     >
+      {question?.spaceName !== undefined && (
+        <p className="text-sm">{t('data.importMergeSpace', { name: question.spaceName })}</p>
+      )}
       <ul className="list-disc pl-5 text-sm" data-testid="import-merge-pages">
         {question?.pages.map((page) => (
           <li key={page.page_id}>{page.title}</li>

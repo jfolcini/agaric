@@ -3,11 +3,12 @@ import type { Page } from '@playwright/test'
 import { activeDialog, expect, ipc, openPage, reopenPage, test, waitForBoot } from './helpers'
 
 /**
- * A highlight made in the PDF reader becomes a block (#6629). Save writes the
- * highlight into the annotated copy and adds a child of the block that owns the
- * PDF: its text the passage, its properties the copy's attachment id, the page
- * and the boxes. The block's source chip opens the reader on that page, and a
- * later Save moves the block to the newer copy. Block mode and page mode.
+ * A highlight or a pinned comment made in the PDF reader becomes a block
+ * (#6629). Save writes it into the annotated copy and adds a child of the block
+ * that owns the PDF: its text the passage or the comment, its properties the
+ * copy's attachment id, the page and the boxes. The block's source chip opens
+ * the reader on that page, and a later Save moves the block to the newer copy.
+ * Block mode and page mode.
  *
  * Seed data (tauri-mock): BLOCK_GS_1, first child of "Getting Started".
  */
@@ -137,18 +138,24 @@ async function highlightBlocksOf(page: Page, attachmentId: string): Promise<High
   }))
 }
 
-/** The highlight block is GS_1's child holding the passage, page 2 and one box. */
-function expectPageTwoHighlight(blocks: HighlightBlock[]): void {
-  expect(blocks.map((b) => [b.content, b.parent_id, b.page])).toEqual([
-    ['Page two', BLOCK_GS_1, '2'],
-  ])
-  expect(blocks[0]?.boxes).toHaveLength(1)
-  expect(blocks[0]?.boxes[0]).toHaveLength(4)
+/** The blocks are GS_1's children on page 2 holding `texts`, in the order made, one box each. */
+function expectPageTwoBlocks(blocks: HighlightBlock[], texts: string[]): void {
+  expect(blocks.map((b) => [b.content, b.parent_id, b.page])).toEqual(
+    texts.map((text) => [text, BLOCK_GS_1, '2']),
+  )
+  for (const block of blocks) {
+    expect(block.boxes).toHaveLength(1)
+    expect(block.boxes[0]).toHaveLength(4)
+  }
 }
 
-/** Reopen the reader from the source chip: it lands on page 2. Comment, Save; resolves the newer copy's id. */
-async function reopenFromChipAndSave(page: Page): Promise<string> {
-  await page.getByRole('button', { name: 'Open report (annotated).pdf at page 2' }).click()
+/** The highlight block is GS_1's child holding the passage, page 2 and one box. */
+function expectPageTwoHighlight(blocks: HighlightBlock[]): void {
+  expectPageTwoBlocks(blocks, ['Page two'])
+}
+
+/** Pin a comment saying `words` on page 2 of the open reader, and Save. */
+async function commentOnPageTwoAndSave(page: Page, words: string): Promise<void> {
   const reader = activeDialog(page)
   await expect(reader.getByTestId('pdf-page-indicator')).toContainText('2 / 2', { timeout: 15000 })
   await reader.getByTestId('pdf-tool-comment').click()
@@ -156,25 +163,34 @@ async function reopenFromChipAndSave(page: Page): Promise<string> {
     .locator('.pdfViewer .page[data-page-number="2"]')
     .click({ position: { x: 30, y: 30 } })
   await expect(reader.getByRole('textbox')).toBeFocused()
-  await page.keyboard.type('Note')
+  await page.keyboard.type(words)
   await reader.getByTestId('pdf-tool-comment').click()
   await expect(reader.getByTestId('pdf-save')).toBeEnabled()
   await reader.getByTestId('pdf-save').click()
   await expect(reader).toBeHidden()
+}
+
+/** Reopen the reader from the source chip: it lands on page 2. Comment, Save; resolves the newer copy's id. */
+async function reopenFromChipAndSave(page: Page): Promise<string> {
+  await page.getByRole('button', { name: 'Open report (annotated).pdf at page 2' }).click()
+  await commentOnPageTwoAndSave(page, 'Note')
   const rows = await ipc<AttachmentRow[]>(page, 'list_attachments', { blockId: BLOCK_GS_1 })
   expect(rows.map((r) => r.filename)).toEqual(['report (annotated) (annotated).pdf'])
   return rows[0]?.id ?? ''
 }
 
-/** The second Save moved the highlight block to the newest copy, which the backend still has. */
+/**
+ * The second Save moved the highlight block to the newest copy, which the
+ * backend still has, and added a block for the comment it wrote.
+ */
 async function expectOnLiveCopy(page: Page, newest: string, first: string): Promise<void> {
-  expectPageTwoHighlight(await highlightBlocksOf(page, newest))
+  expectPageTwoBlocks(await highlightBlocksOf(page, newest), ['Page two', 'Note'])
   expect(await highlightBlocksOf(page, first)).toEqual([])
   const meta = await ipc<AttachmentRow>(page, 'read_attachment_meta', { attachmentId: newest })
   expect(meta.filename).toBe('report (annotated) (annotated).pdf')
 }
 
-test.describe('A PDF highlight becomes a block that links back to its page (#6629) @attachments', () => {
+test.describe('A PDF highlight or comment becomes a block that links back to its page (#6629) @attachments', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await seedPdf(page)
@@ -195,6 +211,76 @@ test.describe('A PDF highlight becomes a block that links back to its page (#662
     await reopenPage(page, 'Getting Started')
     await expect(row).toHaveText('Page two')
     await expectOnLiveCopy(page, await reopenFromChipAndSave(page), first)
+  })
+
+  test('a pinned comment becomes a block too, and its chip reopens the reader there', async ({
+    page,
+  }) => {
+    await openPage(page, 'Getting Started')
+    await page.getByRole('button', { name: 'Open file report.pdf' }).click()
+    const reader = activeDialog(page)
+    await expect(reader.getByTestId('pdf-page-indicator')).toContainText('1 / 2', {
+      timeout: 15000,
+    })
+    await reader.getByRole('button', { name: 'Next page' }).click()
+    await commentOnPageTwoAndSave(page, 'Check this')
+    const [copy] = await ipc<AttachmentRow[]>(page, 'list_attachments', { blockId: BLOCK_GS_1 })
+    expect(copy?.filename).toBe('report (annotated).pdf')
+    const blocks = await highlightBlocksOf(page, copy?.id ?? '')
+    expectPageTwoBlocks(blocks, ['Check this'])
+    const row = page
+      .getByTestId('block-static')
+      .and(page.locator(`[data-block-id="${blocks[0]?.id}"]`))
+    await expect(row).toHaveText('Check this')
+
+    await reopenPage(page, 'Getting Started')
+    await expect(row).toHaveText('Check this')
+    await page.getByRole('button', { name: 'Open report (annotated).pdf at page 2' }).click()
+    await expect(activeDialog(page).getByTestId('pdf-page-indicator')).toContainText('2 / 2', {
+      timeout: 15000,
+    })
+  })
+
+  test('a block moved to another space still follows its file to the newer copy', async ({
+    page,
+  }) => {
+    // The mock's second space, "Work"; a reload re-seeds the mock, so the PDF too.
+    await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
+    await page.reload()
+    await waitForBoot(page)
+    await seedPdf(page)
+
+    await openPage(page, 'Getting Started')
+    const first = await highlightPageTwoAndSave(page)
+    const [block] = await highlightBlocksOf(page, first)
+    // The highlight block goes to a page of its own, and that page to Work.
+    const notesId = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: 'Reading notes',
+      spaceId: 'SPACE_PERSONAL',
+    })
+    await ipc(page, 'move_block', { blockId: block?.id, newParentId: notesId, newIndex: 0 })
+    await ipc(page, 'move_blocks_to_space', {
+      blockIds: [notesId],
+      spaceId: 'SPACE_WORK',
+      acknowledgedLoss: null,
+    })
+    expect(await highlightBlocksOf(page, first)).toEqual([])
+
+    await reopenPage(page, 'Getting Started')
+    await page.getByRole('button', { name: 'Open file report (annotated).pdf' }).click()
+    await activeDialog(page).getByRole('button', { name: 'Next page' }).click()
+    await commentOnPageTwoAndSave(page, 'Note')
+    const [newest] = await ipc<AttachmentRow[]>(page, 'list_attachments', { blockId: BLOCK_GS_1 })
+    expect(newest?.filename).toBe('report (annotated) (annotated).pdf')
+    const props = await ipc<Record<string, Array<{ key: string; value_text: string | null }>>>(
+      page,
+      'get_batch_properties',
+      { blockIds: [block?.id] },
+    )
+    expect(props[block?.id ?? '']?.find((p) => p.key === 'pdf_attachment')?.value_text).toBe(
+      newest?.id,
+    )
   })
 
   test('undo takes the block back and leaves the PDF', async ({ page }) => {
