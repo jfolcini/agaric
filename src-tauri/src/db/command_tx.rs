@@ -507,7 +507,7 @@ impl CommandTx {
     pub async fn commit_and_dispatch(
         mut self,
         materializer: &crate::materializer::Materializer,
-    ) -> Result<usize, sqlx::Error> {
+    ) -> Result<usize, AppError> {
         let touched: Vec<(&str, i64)> = self
             .pending
             .iter()
@@ -519,18 +519,7 @@ impl CommandTx {
             agaric_store::cache::raise_pages_last_edited_ms(tx, &touched).await?;
         }
         self.hand_off_unheld_page_aliases(materializer).await?;
-        // #2604 — detach the engine-rollback checkpoints WHILE the write lock is
-        // still held (before the commit below releases it). On a commit failure
-        // we rewind the in-place engine apply so it never stays ahead of the
-        // rolled-back SQL; on success we drop the checkpoints and keep the ops.
-        let pending_revert = self.revert.take().map(|state| state.revert.detach());
-        if let Err(e) = self.take_inner().commit().await {
-            if let Some(pending) = pending_revert {
-                pending.revert();
-            }
-            return Err(e);
-        }
-        drop(pending_revert); // commit succeeded — keep the applied ops
+        self.commit_with_engine_deltas().await?;
         // Commit succeeded: from here the Drop assert (below) is armed.
         // We must drain `pending` before this method returns, or the
         // assert will fire — which is exactly its job.
@@ -629,19 +618,29 @@ impl CommandTx {
     /// don't participate in the materializer pipeline (e.g., direct
     /// SQLite PRAGMA writes, migration markers). Pending records are
     /// discarded silently.
-    pub async fn commit_without_dispatch(mut self) -> Result<(), sqlx::Error> {
-        // #2604 — same detach-under-lock + revert-on-abort as `commit_and_dispatch`.
-        let pending_revert = self.revert.take().map(|state| state.revert.detach());
-        if let Err(e) = self.take_inner().commit().await {
-            if let Some(pending) = pending_revert {
-                pending.revert();
-            }
-            return Err(e);
-        }
-        drop(pending_revert); // commit succeeded — keep the applied ops
+    pub async fn commit_without_dispatch(mut self) -> Result<(), AppError> {
+        self.commit_with_engine_deltas().await?;
         self.committed = true;
         self.pending.clear();
         Ok(())
+    }
+
+    /// Commit the transaction with the deltas of its engine writes (#6521).
+    ///
+    /// The engine-rollback checkpoints are detached WHILE the write lock is
+    /// still held (#2604), and each engine's update since its checkpoint is
+    /// saved in `loro_doc_delta` on this transaction. A failed save or commit
+    /// rolls the transaction back and rewinds the in-place engine apply, so the
+    /// engine never stays ahead of SQL; on success the ops stay.
+    async fn commit_with_engine_deltas(&mut self) -> Result<(), AppError> {
+        let tx = self.take_inner();
+        match self.revert.take() {
+            Some(state) => {
+                let pending = state.revert.detach();
+                agaric_engine::loro::delta::commit_with_deltas(tx, &state.registry, pending).await
+            }
+            None => Ok(tx.commit().await?),
+        }
     }
 
     /// Explicitly roll back the transaction and discard pending
@@ -993,7 +992,7 @@ mod tests {
         // forbidden delete. The `?` operator bubbles the delete error out of
         // the async block, dropping the CommandTx uncommitted — exactly what
         // a real command does when a projected-state write fails.
-        let result: Result<(), sqlx::Error> = async {
+        let result: Result<(), AppError> = async {
             let mut tx = CommandTx::begin_immediate(&pool, "test_delete_rollback")
                 .await
                 .expect("begin");

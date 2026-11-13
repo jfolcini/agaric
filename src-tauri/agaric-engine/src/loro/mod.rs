@@ -17,6 +17,10 @@
 
 pub mod engine;
 
+// `loro_doc_delta`: what each transaction added to an engine, saved in that
+// transaction (#6521).
+pub mod delta;
+
 // What a property value becomes under another type (#5841).
 pub mod coerce;
 
@@ -47,6 +51,13 @@ pub mod snapshot;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod delta_tests;
+
+// What saving a delta adds to a write (#6521); `#[ignore]`d.
+#[cfg(test)]
+mod delta_cost_tests;
 
 // Randomised LoroEngine regression streams. Assert direct convergence
 // invariants (single-author replay, two-device snapshot exchange) on

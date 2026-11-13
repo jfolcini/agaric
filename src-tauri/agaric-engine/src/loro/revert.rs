@@ -73,6 +73,17 @@ struct RevertEntry {
     /// replaced/removed (a detached engine; see registry "Detached engines").
     engine: SharedEngine,
     frontier: Frontiers,
+    /// The engine's encoded version vector at `frontier`: what
+    /// [`DetachedRevert::deltas`] exports the transaction's update from (#6521).
+    since: Vec<u8>,
+}
+
+/// An engine's position before a transaction's first write to it, captured
+/// under the engine lock by
+/// [`for_space_recording`](crate::loro::registry::LoroEngineRegistry::for_space_recording).
+pub(crate) struct Checkpoint {
+    pub(crate) frontier: Frontiers,
+    pub(crate) since: Vec<u8>,
 }
 
 /// Per-tx engine-rollback log (#2604). `Some` == a [`RevertScope`] is armed;
@@ -95,7 +106,7 @@ impl RevertLog {
 
     /// Record the FIRST-touch checkpoint for `space_id` iff the log is armed.
     ///
-    /// `frontier` is a closure so the `oplog_frontiers()` capture is skipped
+    /// `checkpoint` is a closure so the capture is skipped
     /// entirely when the log is not armed (the LOCAL / replay / rebuild paths)
     /// or when this space was already recorded earlier in the same tx — the
     /// rewind discards ALL ops since the first touch, so a later op must not
@@ -104,7 +115,7 @@ impl RevertLog {
         &self,
         space_id: &SpaceId,
         engine: &SharedEngine,
-        frontier: impl FnOnce() -> Frontiers,
+        checkpoint: impl FnOnce() -> Checkpoint,
     ) {
         let mut slot = self.inner.lock();
         let Some(entries) = slot.as_mut() else {
@@ -113,10 +124,12 @@ impl RevertLog {
         if entries.iter().any(|e| &e.space_id == space_id) {
             return; // already captured this space's pre-tx frontier
         }
+        let Checkpoint { frontier, since } = checkpoint();
         entries.push(RevertEntry {
             space_id: space_id.clone(),
             engine: SharedEngine::clone(engine),
-            frontier: frontier(),
+            frontier,
+            since,
         });
     }
 
@@ -199,8 +212,16 @@ pub struct RevertScope<'a> {
 impl<'a> RevertScope<'a> {
     /// Arm the state's [`RevertLog`] for a new in-flight tx.
     pub fn arm(state: &'a crate::loro::shared::LoroState) -> Self {
-        state.revert.arm();
-        Self { log: &state.revert }
+        Self::arm_log(&state.revert)
+    }
+
+    /// Arm `log` for a new in-flight tx: the state's shared log, or a log of
+    /// the caller's own for engine writes that reach
+    /// [`for_space_recording`](crate::loro::registry::LoroEngineRegistry::for_space_recording)
+    /// with it directly.
+    pub fn arm_log(log: &'a RevertLog) -> Self {
+        log.arm();
+        Self { log }
     }
 
     /// Lift the recorded checkpoints out of the shared log, disarming it, and
@@ -246,6 +267,33 @@ impl DetachedRevert {
     /// it never stays ahead of the rolled-back SQL.
     pub fn revert(self) {
         revert_entries(self.entries);
+    }
+
+    /// The Loro update each recorded engine gained since its checkpoint: what
+    /// the transaction saves in `loro_doc_delta` before it commits (#6521).
+    ///
+    /// An engine the transaction read and did not write yields nothing. Nor
+    /// does one `registry` no longer holds: the purge of a space evicts its
+    /// engine and deletes its saved rows in the same transaction.
+    pub(crate) fn deltas(
+        &self,
+        registry: &crate::loro::registry::LoroEngineRegistry,
+    ) -> Result<Vec<(SpaceId, Vec<u8>)>, agaric_core::error::AppError> {
+        let mut deltas = Vec::with_capacity(self.entries.len());
+        for entry in &self.entries {
+            if !registry.holds(&entry.space_id, &entry.engine) {
+                continue;
+            }
+            let engine = entry.engine.lock();
+            if engine.checkpoint_frontiers() == entry.frontier {
+                continue;
+            }
+            deltas.push((
+                entry.space_id.clone(),
+                engine.export_update_since(&entry.since)?,
+            ));
+        }
+        Ok(deltas)
     }
 }
 

@@ -62,6 +62,7 @@ async fn run(
     tx.commit_and_dispatch(materializer).await?;
     for (record, effects) in &swept {
         crate::materializer::dispatch_delete_descendants(
+            pool,
             record,
             &effects.deleted_cohort,
             effects.delete_space_id.as_ref(),

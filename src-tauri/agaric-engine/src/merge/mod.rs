@@ -63,7 +63,9 @@ pub fn engine_apply(
     // registry by field access rather than an exhaustive destructure.
     let registry = &state.registry;
 
-    let mut guard = match registry.for_space(space_id, device_id) {
+    // Recording, so a fan-out run under `loro::delta::write_engines` saves
+    // what it writes (#6521).
+    let mut guard = match registry.for_space_recording(space_id, device_id, &state.revert) {
         Ok(g) => g,
         Err(e) => {
             tracing::warn!(

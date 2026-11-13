@@ -538,6 +538,7 @@ impl ChainDriver {
         dispatch_restore_descendants(pool, &record, &effects.restored_cohort, state).await;
         dispatch_restore_ancestors(pool, &record, &effects.restored_ancestors, state).await;
         dispatch_delete_descendants(
+            pool,
             &record,
             &effects.deleted_cohort,
             effects.delete_space_id.as_ref(),
@@ -2152,6 +2153,7 @@ async fn run_delete_restore(
     tx.commit().await.expect("commit delete");
     // Cohort fan-out onto the engine (mirrors `apply_op`'s post-commit step).
     dispatch_delete_descendants(
+        &pool,
         &del_record,
         &del_effects.deleted_cohort,
         del_effects.delete_space_id.as_ref(),

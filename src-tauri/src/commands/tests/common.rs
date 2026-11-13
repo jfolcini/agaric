@@ -33,6 +33,7 @@ pub const TEST_SPACE_B_ID: &str = "01TESTSPACE000000000000002";
 /// fully-consistent state.
 pub async fn settle(mat: &Materializer) {
     mat.flush_background().await.unwrap();
+    mat.assert_saved_engines_match_live().await;
 }
 
 /// Creates a temporary SQLite database with all migrations applied.

@@ -1128,6 +1128,7 @@ pub(crate) async fn dispatch_deletes(
         // for the now-tombstoned rows). Infallible / log-only, mirroring
         // `apply_op`'s call shape exactly (args, await, no `?`).
         crate::materializer::dispatch_delete_descendants(
+            pool,
             &deleted.op_record,
             &deleted.effects.deleted_cohort,
             deleted.effects.delete_space_id.as_ref(),
@@ -1456,6 +1457,7 @@ pub async fn delete_blocks_by_ids_inner(
     // above stands as the durable outcome.
     for (op_record, cohort, delete_space_id) in &delete_fanout {
         crate::materializer::dispatch_delete_descendants(
+            pool,
             op_record,
             cohort,
             delete_space_id.as_ref(),
@@ -2080,29 +2082,40 @@ async fn capture_purge_engine_fanout(
 /// the LoroDoc; it is per-block-id, so the whole captured cohort is
 /// driven. Mirrors the delete/restore fan-out. A no-space root is a no-op;
 /// the SQL cascade stands as the durable outcome.
-fn dispatch_purge_engine_fanout(materializer: &Materializer, fanout: &[PurgeEngineFanout]) {
-    for (op_record, cohort, purge_space_id) in fanout {
-        let Some(space_id) = purge_space_id else {
-            continue;
-        };
-        for cohort_id in cohort {
-            let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
-                block_id: BlockId::from_trusted(cohort_id),
-            });
-            let op_id = format!(
-                "{}/{}#cohort/{}",
-                op_record.device_id, op_record.seq, cohort_id,
-            );
-            agaric_engine::merge::engine_apply(
-                &op_id,
-                &payload,
-                &op_record.device_id,
-                space_id,
-                &op_record.created_at.to_string(),
-                materializer.loro_state(),
-            );
+async fn dispatch_purge_engine_fanout(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    fanout: &[PurgeEngineFanout],
+) {
+    let Some((first_record, _, _)) = fanout.first() else {
+        return;
+    };
+    let state = materializer.loro_state();
+    crate::materializer::saving_fan_out(pool, first_record, state, || {
+        for (op_record, cohort, purge_space_id) in fanout {
+            let Some(space_id) = purge_space_id else {
+                continue;
+            };
+            for cohort_id in cohort {
+                let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+                    block_id: BlockId::from_trusted(cohort_id),
+                });
+                let op_id = format!(
+                    "{}/{}#cohort/{}",
+                    op_record.device_id, op_record.seq, cohort_id,
+                );
+                agaric_engine::merge::engine_apply(
+                    &op_id,
+                    &payload,
+                    &op_record.device_id,
+                    space_id,
+                    &op_record.created_at.to_string(),
+                    state,
+                );
+            }
         }
-    }
+    })
+    .await;
 }
 
 /// Permanently purge a soft-deleted block and all its descendants.
@@ -2237,7 +2250,12 @@ pub async fn purge_block_inner(
 
     // #1257 POST-COMMIT engine fan-out: drop the purged subtree from the
     // per-space Loro engine (see `dispatch_purge_engine_fanout`).
-    dispatch_purge_engine_fanout(materializer, &[(op_record, purge_cohort, purge_space_id)]);
+    dispatch_purge_engine_fanout(
+        pool,
+        materializer,
+        &[(op_record, purge_cohort, purge_space_id)],
+    )
+    .await;
 
     // #85 F2 / #3259: reclaim any bytes this purge orphaned via the
     // refcount-aware GC pass — never by unlinking the purged rows' own
@@ -2560,7 +2578,7 @@ pub async fn purge_all_deleted_inner(
 
     // #1257 POST-COMMIT engine fan-out: drop every purged subtree from the
     // per-space Loro engine (see `dispatch_purge_engine_fanout`).
-    dispatch_purge_engine_fanout(materializer, &purge_fanout);
+    dispatch_purge_engine_fanout(pool, materializer, &purge_fanout).await;
 
     // + #85 F2 / #3259: post-commit byte reclamation is delegated to the
     // refcount-aware `CleanupOrphanedAttachments` GC pass. "Empty trash"
@@ -3239,7 +3257,7 @@ pub async fn purge_blocks_by_ids_inner(
     // per-space Loro engine using the PRE-CASCADE-captured cohort + space
     // (see `dispatch_purge_engine_fanout` — shared by all three purge
     // variants).
-    dispatch_purge_engine_fanout(materializer, &purge_fanout);
+    dispatch_purge_engine_fanout(pool, materializer, &purge_fanout).await;
 
     // + #85 F2 / #3259: post-commit byte reclamation via the refcount-aware
     // GC pass (mirrors `purge_all_deleted_inner`).

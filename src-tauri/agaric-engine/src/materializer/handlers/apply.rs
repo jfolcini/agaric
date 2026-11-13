@@ -111,15 +111,13 @@ pub(super) async fn apply_op_with_mode(
     let pending = revert.detach();
     // BOTH failure modes rewind the engine: a `?` out of `apply_op_projected`
     // (engine already mutated, SQL projection failed → tx rolls back on drop)
-    // and a failing `commit()`. On success `pending` is dropped, keeping the op.
+    // and a failing save or commit. On success the op stays, and its delta is
+    // committed with it (#6521).
     let effects = match apply_result {
-        Ok(effects) => match tx.commit().await {
-            Ok(()) => effects,
-            Err(e) => {
-                pending.revert();
-                return Err(e.into());
-            }
-        },
+        Ok(effects) => {
+            crate::loro::delta::commit_with_deltas(tx, &state.registry, pending).await?;
+            effects
+        }
         Err(e) => {
             drop(tx); // roll back the SQL projection before rewinding the engine
             pending.revert();
@@ -157,6 +155,7 @@ pub(super) async fn apply_op_with_mode(
     // as the descendant fan-out.
     dispatch_restore_effects(pool, record, &effects, state).await;
     dispatch_delete_descendants(
+        pool,
         record,
         &effects.deleted_cohort,
         effects.delete_space_id.as_ref(),
@@ -167,6 +166,7 @@ pub(super) async fn apply_op_with_mode(
     // carried an INHERITED tombstone re-derives it from the new position, in
     // SQL only, on the arm that has no engine — see `dispatch_unswept_cohort`.
     dispatch_unswept_cohort(
+        pool,
         record,
         &effects.unswept_cohort,
         effects.unswept_space_id.as_ref(),
@@ -630,30 +630,64 @@ async fn fan_out_restore(
         }
     };
 
-    for id in ids {
-        // Build the typed payload directly (no JSON round-trip). The engine's
-        // `apply_restore_block` is per-block-id; `deleted_at_ref` is unused by
-        // it (it only clears the deleted marker), so reusing the root's is safe
-        // for both the descendant cohort and the ancestor chain.
-        let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
-            block_id: BlockId::from_trusted(id),
-            deleted_at_ref: root_payload.deleted_at_ref,
-        });
+    saving_fan_out(pool, root_record, state, || {
+        for id in ids {
+            // Build the typed payload directly (no JSON round-trip). The engine's
+            // `apply_restore_block` is per-block-id; `deleted_at_ref` is unused by
+            // it (it only clears the deleted marker), so reusing the root's is safe
+            // for both the descendant cohort and the ancestor chain.
+            let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
+                block_id: BlockId::from_trusted(id),
+                deleted_at_ref: root_payload.deleted_at_ref,
+            });
 
-        let op_id = format!(
-            "{}/{}#{}/{}",
-            root_record.device_id,
-            root_record.seq,
-            kind.op_id_infix(),
-            id,
-        );
-        crate::merge::engine_apply(
-            &op_id,
-            &payload,
-            &root_record.device_id,
-            &space_id,
-            &root_record.created_at.to_string(),
-            state,
+            let op_id = format!(
+                "{}/{}#{}/{}",
+                root_record.device_id,
+                root_record.seq,
+                kind.op_id_infix(),
+                id,
+            );
+            crate::merge::engine_apply(
+                &op_id,
+                &payload,
+                &root_record.device_id,
+                &space_id,
+                &root_record.created_at.to_string(),
+                state,
+            );
+        }
+    })
+    .await;
+}
+
+/// Run `fan_out`, the engine writes that follow an op's commit, under the write
+/// lock, and save what they add in `loro_doc_delta` (#6521).
+///
+/// The fan-outs write the engine after their op's transaction has committed,
+/// so the op's own delta does not hold them. A fan-out whose delta cannot be
+/// saved is rewound and counted as dropped: the engine lacks the cascade, as
+/// it does when the fan-out cannot run at all.
+pub async fn saving_fan_out(
+    pool: &SqlitePool,
+    root_record: &OpRecord,
+    state: &crate::loro::shared::LoroState,
+    fan_out: impl FnOnce(),
+) {
+    let saved = crate::loro::delta::write_engines(
+        pool,
+        &state.registry,
+        &state.revert,
+        "engine_fan_out",
+        async { fan_out() },
+    )
+    .await;
+    if let Err(e) = saved {
+        super::descendant_fanout_dropped::record();
+        tracing::warn!(
+            seq = root_record.seq,
+            error = %e,
+            "engine fan-out was not saved; the engine is left without this op's cascade",
         );
     }
 }
@@ -859,6 +893,7 @@ fn record_absent_from_engine_skip(root_record: &OpRecord, op: &'static str, bloc
 /// that the fan-out was reading SQL-cascade membership as engine membership.
 /// Per-member is the only granularity at which that is corrected.
 pub async fn dispatch_delete_descendants(
+    pool: &SqlitePool,
     root_record: &OpRecord,
     cohort: &[String],
     space_id: Option<&agaric_store::space::SpaceId>,
@@ -895,41 +930,44 @@ pub async fn dispatch_delete_descendants(
     // `EngineMissingTarget` SQL-only fallback — the same reason, off the same
     // probe, that `apply_delete_block_via_loro` records in-tx for the seed.
     // See this function's "Cohort members absent from this engine".
-    let absent = known_absent_from_engine(
-        state,
-        space_id,
-        root_record,
-        cohort.iter().map(String::as_str),
-    );
-
-    for cohort_id in cohort {
-        if absent.contains(cohort_id.as_str()) {
-            // Never entered this engine (SQL-only projection during a no-space
-            // window). `apply_delete_block` would raise `block not found` here,
-            // and `engine_apply` would record that as drift — for the very
-            // state the in-tx apply already classified as a legitimate soft
-            // fallback.
-            record_absent_from_engine_skip(root_record, "delete_block_cohort", cohort_id);
-            continue;
-        }
-        // Build the typed payload directly (no JSON round-trip).
-        let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: BlockId::from_trusted(cohort_id),
-        });
-
-        let op_id = format!(
-            "{}/{}#cohort/{}",
-            root_record.device_id, root_record.seq, cohort_id,
-        );
-        crate::merge::engine_apply(
-            &op_id,
-            &payload,
-            &root_record.device_id,
-            space_id,
-            &root_record.created_at.to_string(),
+    saving_fan_out(pool, root_record, state, || {
+        let absent = known_absent_from_engine(
             state,
+            space_id,
+            root_record,
+            cohort.iter().map(String::as_str),
         );
-    }
+
+        for cohort_id in cohort {
+            if absent.contains(cohort_id.as_str()) {
+                // Never entered this engine (SQL-only projection during a no-space
+                // window). `apply_delete_block` would raise `block not found` here,
+                // and `engine_apply` would record that as drift — for the very
+                // state the in-tx apply already classified as a legitimate soft
+                // fallback.
+                record_absent_from_engine_skip(root_record, "delete_block_cohort", cohort_id);
+                continue;
+            }
+            // Build the typed payload directly (no JSON round-trip).
+            let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: BlockId::from_trusted(cohort_id),
+            });
+
+            let op_id = format!(
+                "{}/{}#cohort/{}",
+                root_record.device_id, root_record.seq, cohort_id,
+            );
+            crate::merge::engine_apply(
+                &op_id,
+                &payload,
+                &root_record.device_id,
+                space_id,
+                &root_record.created_at.to_string(),
+                state,
+            );
+        }
+    })
+    .await;
 }
 
 /// #4390 — the THIRD `deleted_at` fan-out, and the one that closes #4204's
@@ -1000,6 +1038,7 @@ pub async fn dispatch_delete_descendants(
 /// nothing to propagate — the same contract as
 /// [`dispatch_delete_descendants`].
 pub(crate) async fn dispatch_unswept_cohort(
+    pool: &SqlitePool,
     root_record: &OpRecord,
     unswept: &[UnsweptBlock],
     space_id: Option<&agaric_store::space::SpaceId>,
@@ -1048,59 +1087,62 @@ pub(crate) async fn dispatch_unswept_cohort(
     // `engine_apply` takes its own, so this adds no new class — the whole
     // post-commit fan-out is already non-atomic w.r.t. the engine, and the
     // integrity check reports what it leaves. Noted, not fixed. See #4473's analysis.
-    let absent = known_absent_from_engine(
-        state,
-        space_id,
-        root_record,
-        unswept.iter().map(|b| b.block_id.as_str()),
-    );
-
-    for block in unswept {
-        if absent.contains(block.block_id.as_str()) {
-            // Never entered this engine (SQL-only projection during a
-            // no-space window). Skipping is what `apply_restore_block`
-            // already does for the `None` arm; without this the `Some(_)`
-            // arm would instead raise a divergence signal for a legitimate
-            // state. See this function's "Blocks absent from this engine".
-            record_absent_from_engine_skip(root_record, "move_block_unswept", &block.block_id);
-            continue;
-        }
-        let payload = match block.deleted_at {
-            // #4204: the new position implies no cohort — the block is live in
-            // SQL, so the engine must agree or the next import undoes it.
-            None => OpPayload::RestoreBlock(RestoreBlockPayload {
-                block_id: BlockId::from_trusted(&block.block_id),
-                // Per-block-id on the engine; `apply_restore_block` clears the
-                // marker regardless of the SQL timestamp, exactly as
-                // `fan_out_restore` documents for its own synthesised value.
-                deleted_at_ref: root_record.created_at,
-            }),
-            // #4188: the sweep re-stamped it at the new ancestor's cohort.
-            // Mirror THAT timestamp, not the op's `created_at` — the engine
-            // marker is the cohort identity a later import reads back.
-            Some(_) => OpPayload::DeleteBlock(DeleteBlockPayload {
-                block_id: BlockId::from_trusted(&block.block_id),
-            }),
-        };
-
-        let op_id = format!(
-            "{}/{}#unswept/{}",
-            root_record.device_id, root_record.seq, block.block_id,
-        );
-        // `engine_apply`'s `DeleteBlock` arm writes `op_created_at` as the
-        // engine's `deleted_at` marker, so the settled cohort ts is threaded
-        // through that parameter. The `RestoreBlock` arm ignores it.
-        let marker = block
-            .deleted_at
-            .unwrap_or(root_record.created_at)
-            .to_string();
-        crate::merge::engine_apply(
-            &op_id,
-            &payload,
-            &root_record.device_id,
-            space_id,
-            &marker,
+    saving_fan_out(pool, root_record, state, || {
+        let absent = known_absent_from_engine(
             state,
+            space_id,
+            root_record,
+            unswept.iter().map(|b| b.block_id.as_str()),
         );
-    }
+
+        for block in unswept {
+            if absent.contains(block.block_id.as_str()) {
+                // Never entered this engine (SQL-only projection during a
+                // no-space window). Skipping is what `apply_restore_block`
+                // already does for the `None` arm; without this the `Some(_)`
+                // arm would instead raise a divergence signal for a legitimate
+                // state. See this function's "Blocks absent from this engine".
+                record_absent_from_engine_skip(root_record, "move_block_unswept", &block.block_id);
+                continue;
+            }
+            let payload = match block.deleted_at {
+                // #4204: the new position implies no cohort — the block is live in
+                // SQL, so the engine must agree or the next import undoes it.
+                None => OpPayload::RestoreBlock(RestoreBlockPayload {
+                    block_id: BlockId::from_trusted(&block.block_id),
+                    // Per-block-id on the engine; `apply_restore_block` clears the
+                    // marker regardless of the SQL timestamp, exactly as
+                    // `fan_out_restore` documents for its own synthesised value.
+                    deleted_at_ref: root_record.created_at,
+                }),
+                // #4188: the sweep re-stamped it at the new ancestor's cohort.
+                // Mirror THAT timestamp, not the op's `created_at` — the engine
+                // marker is the cohort identity a later import reads back.
+                Some(_) => OpPayload::DeleteBlock(DeleteBlockPayload {
+                    block_id: BlockId::from_trusted(&block.block_id),
+                }),
+            };
+
+            let op_id = format!(
+                "{}/{}#unswept/{}",
+                root_record.device_id, root_record.seq, block.block_id,
+            );
+            // `engine_apply`'s `DeleteBlock` arm writes `op_created_at` as the
+            // engine's `deleted_at` marker, so the settled cohort ts is threaded
+            // through that parameter. The `RestoreBlock` arm ignores it.
+            let marker = block
+                .deleted_at
+                .unwrap_or(root_record.created_at)
+                .to_string();
+            crate::merge::engine_apply(
+                &op_id,
+                &payload,
+                &root_record.device_id,
+                space_id,
+                &marker,
+                state,
+            );
+        }
+    })
+    .await;
 }

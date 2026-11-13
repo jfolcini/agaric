@@ -2033,6 +2033,11 @@ pub async fn purge_block_sql_cascade(
     delete_purge_relation_rows(conn).await?;
     delete_purge_derived_rows(conn).await?;
     delete_purge_link_refs_and_doc_state(conn).await?;
+    // #6521: a purged space's saved deltas go with its snapshot row. Keyed on
+    // the seed, the only block of the subtree that can be a space.
+    sqlx::query!("DELETE FROM loro_doc_delta WHERE space_id = ?", block_id)
+        .execute(&mut *conn)
+        .await?;
     sqlx::query(
         "DELETE FROM blocks \
          WHERE id IN (SELECT id FROM _purge_descendants)",

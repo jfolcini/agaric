@@ -85,6 +85,8 @@ impl Device {
             .enqueue_inbound_sync_rebuilds(&changed_blocks, &[])
             .await
             .unwrap();
+        from.mat.assert_saved_engines_match_live().await;
+        self.mat.assert_saved_engines_match_live().await;
         changed_blocks.len()
     }
 
@@ -146,11 +148,13 @@ impl Device {
             .take()
             .expect("the session's end spawns its task");
         task.await.unwrap();
+        self.mat.assert_saved_engines_match_live().await;
     }
 
     /// The periodic snapshot pass.
     async fn save(&self) {
         agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&self.pool, &self.mat).await;
+        self.mat.assert_saved_engines_match_live().await;
     }
 
     /// The OS kills the process, and the app boots again over its database.
@@ -167,6 +171,7 @@ impl Device {
             .await
             .unwrap();
         self.mat.flush_background().await.unwrap();
+        self.mat.assert_saved_engines_match_live().await;
     }
 
     fn engine_content(&self, space: &SpaceId, block: &BlockId) -> Option<String> {

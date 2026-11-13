@@ -318,10 +318,17 @@ pub async fn prepare_outgoing(
             // so a `!Send` guard inside it is fine. See `cpu_block_in_place`
             // for the current-thread-runtime fallback. `export_snapshot` may
             // stamp the format version, an op the peer then holds; `with_engine`
-            // sees the op log move and marks the space, so the stamp is saved.
-            let bytes = cpu_block_in_place(|| {
-                registry.with_engine(space_id, device_id, |engine| engine.export_snapshot())
+            // sees the op log move and marks the space, so the stamp is saved,
+            // and its delta is saved here (#6521).
+            let (bytes, stamp) = cpu_block_in_place(|| {
+                registry.with_engine(space_id, device_id, |engine| {
+                    engine.capturing_delta(|engine| engine.export_snapshot())
+                })
             })??;
+            if let Some(stamp) = &stamp {
+                let mut conn = pool.acquire().await?;
+                agaric_engine::loro::delta::insert_delta(&mut conn, space_id, stamp).await?;
+            }
             Ok(Some(LoroSyncMessage::Snapshot {
                 protocol_version: LORO_SYNC_PROTOCOL_VERSION,
                 space_id: space_id.clone(),
@@ -406,21 +413,27 @@ pub(super) async fn mirror_sql_tombstones_onto_engine(
     )
     .fetch_all(&mut *tx)
     .await?;
-    let wrote = registry.with_engine(space_id, device_id, |engine| {
-        // `stale_ids` predates the wait for the lock: an import that finished
-        // meanwhile can have purged or tombstoned one.
-        let live: std::collections::HashSet<String> =
-            engine.live_block_ids()?.into_iter().collect();
-        let mut wrote = false;
-        for tombstone in tombstones.iter().filter(|t| live.contains(&t.id)) {
-            engine.apply_delete_block(&tombstone.id, &tombstone.deleted_at.to_string())?;
-            wrote = true;
-        }
-        Ok::<bool, AppError>(wrote)
-    })??;
-    // Nothing was written to SQL; the commit only releases the lock.
+    let delta = registry
+        .with_engine(space_id, device_id, |engine| {
+            engine.capturing_delta(|engine| {
+                // `stale_ids` predates the wait for the lock: an import that finished
+                // meanwhile can have purged or tombstoned one.
+                let live: std::collections::HashSet<String> =
+                    engine.live_block_ids()?.into_iter().collect();
+                for tombstone in tombstones.iter().filter(|t| live.contains(&t.id)) {
+                    engine.apply_delete_block(&tombstone.id, &tombstone.deleted_at.to_string())?;
+                }
+                Ok(())
+            })
+        })??
+        .1;
+    // The tombstones' delta is the one SQL write (#6521); without one the
+    // commit only releases the lock.
+    if let Some(delta) = &delta {
+        agaric_engine::loro::delta::insert_delta(&mut tx, space_id, delta).await?;
+    }
     tx.commit().await?;
-    if wrote
+    if delta.is_some()
         && agaric_engine::loro::snapshot::save_all_engines(pool, registry)
             .await
             .persisted_through
@@ -1558,23 +1571,34 @@ async fn commit_projection(
 /// an `Err` (same policy as the tag rebuild below); the next export
 /// mirrors the tombstones it missed ([`mirror_sql_tombstones_onto_engine`]),
 /// and the integrity check reports any block left live in the engine.
-fn fan_out_swept_tombstones(
+async fn fan_out_swept_tombstones(
+    pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     device_id: &str,
     space_id: &SpaceId,
     swept_tombstones: &[(String, i64)],
 ) {
     if !swept_tombstones.is_empty() {
-        let fanout_result: Result<(), AppError> = registry
-            .with_engine(space_id, device_id, |engine| {
+        // Under the write lock, with the delta of what it writes (#6521).
+        let log = agaric_engine::loro::revert::RevertLog::new();
+        let fanout_result: Result<(), AppError> = agaric_engine::loro::delta::write_engines(
+            pool,
+            registry,
+            &log,
+            "sync_swept_tombstones",
+            async {
+                let mut guard = registry.for_space_recording(space_id, device_id, &log)?;
+                let engine = guard.engine_mut();
                 for (id, ts) in swept_tombstones {
                     if engine.read_deleted_at(id)?.is_none() {
                         engine.apply_delete_block(id, &ts.to_string())?;
                     }
                 }
                 Ok(())
-            })
-            .and_then(|fanned_out| fanned_out);
+            },
+        )
+        .await
+        .and_then(|fanned_out| fanned_out);
         if let Err(err) = fanout_result {
             tracing::warn!(
                 error = %err,
@@ -2176,27 +2200,35 @@ fn clearable_slot_ids(
 ///
 /// #6525: the space is marked dirty only when the import added something to
 /// its op log, so a redelivered or empty update leaves it clean.
+///
+/// #6521: also returns the Loro update the import added to the op log, for
+/// the caller to save in `loro_doc_delta` with the projection. It is exported
+/// here, under the engine lock, and not taken from the inbound bytes: an
+/// import can append ops of this device's own (the one-time sibling-order
+/// migration), and can leave part of a blob pending.
 fn import_payload_into_engine(
     registry: &LoroEngineRegistry,
     device_id: &str,
     space_id: &SpaceId,
     payload: agaric_engine::loro::engine::ImportPayload<'_>,
-) -> Result<agaric_engine::loro::engine::ImportDelta, AppError> {
+) -> Result<(agaric_engine::loro::engine::ImportDelta, Option<Vec<u8>>), AppError> {
     cpu_block_in_place(|| {
-        registry.with_engine(space_id, device_id, |engine| match payload {
-            agaric_engine::loro::engine::ImportPayload::Single(bytes) => {
-                engine.import_with_changed_purged_tagscope(bytes)
-            }
-            // #3164: N blobs, ONE diff event, ONE resolved delta — see
-            // `import_batch_with_changed_purged_tagscope` for the loro
-            // citation. An `Err` here means an UNKNOWN subset landed in
-            // the engine, so the caller must return before any slot is
-            // deleted; its `?` does exactly that, leaving every slot for the
-            // caller's per-row retry (#535 unharmed: nothing projected,
-            // nothing deleted).
-            agaric_engine::loro::engine::ImportPayload::Batch(blobs) => {
-                engine.import_batch_with_changed_purged_tagscope(blobs)
-            }
+        registry.with_engine(space_id, device_id, |engine| {
+            engine.capturing_delta(|engine| match payload {
+                agaric_engine::loro::engine::ImportPayload::Single(bytes) => {
+                    engine.import_with_changed_purged_tagscope(bytes)
+                }
+                // #3164: N blobs, ONE diff event, ONE resolved delta — see
+                // `import_batch_with_changed_purged_tagscope` for the loro
+                // citation. An `Err` here means an UNKNOWN subset landed in
+                // the engine, so the caller must return before any slot is
+                // deleted; its `?` does exactly that, leaving every slot for the
+                // caller's per-row retry (#535 unharmed: nothing projected,
+                // nothing deleted).
+                agaric_engine::loro::engine::ImportPayload::Batch(blobs) => {
+                    engine.import_batch_with_changed_purged_tagscope(blobs)
+                }
+            })
         })
     })?
 }
@@ -2387,6 +2419,8 @@ pub(crate) async fn import_and_project(
     // (live) blocks, the purged set, and a `TagScope` describing how to refresh
     // the inherited-tag cache — falling back to a whole-tree enumeration +
     // global rebuild on any diff shape it cannot resolve.
+    let (import_delta, engine_delta) =
+        import_payload_into_engine(registry, device_id, space_id, payload)?;
     let agaric_engine::loro::engine::ImportDelta {
         changed: changed_blocks,
         // #3162: the subset of `changed_blocks` whose ONLY altered projected
@@ -2403,7 +2437,7 @@ pub(crate) async fn import_and_project(
         // enforced against `oplog_vv()` below, which is the stronger statement
         // (a pending change is exactly one the op-log did not advance over).
         pending: pending_changes,
-    } = import_payload_into_engine(registry, device_id, space_id, payload)?;
+    } = import_delta;
 
     let clearable_ids = clearable_slot_ids(
         registry,
@@ -2434,6 +2468,12 @@ pub(crate) async fn import_and_project(
     let (mut changed_blocks, rank_only_blocks, tag_scope, def_keys) = if noop_diff {
         let trusted = noop_import_is_trusted(pool, space_id, inbox_ids, delivery).await?;
         if trusted {
+            // #6521: an import that changed nothing projected can still have
+            // added ops, and they are saved before their slot goes.
+            if let Some(delta) = &engine_delta {
+                let mut conn = pool.acquire().await?;
+                agaric_engine::loro::delta::insert_delta(&mut conn, space_id, delta).await?;
+            }
             // #3213: `clearable_ids`, not `inbox_ids`. Since the live path also
             // supplies a delete condition this is no longer trivially the same
             // set: the #2264 trust rule proves only that the ENGINE already held
@@ -2508,11 +2548,16 @@ pub(crate) async fn import_and_project(
 
     let (healed, tagged) = project_pass_dropped(&mut tx, registry, new_rows).await?;
 
+    // #6521: what the import added to the engine is saved with its projection.
+    if let Some(delta) = &engine_delta {
+        agaric_engine::loro::delta::insert_delta(&mut tx, space_id, delta).await?;
+    }
+
     clear_inbox_slots(&mut tx, &clearable_ids).await?;
 
     commit_projection(tx, pool, space_id, &block_states).await?;
 
-    fan_out_swept_tombstones(registry, device_id, space_id, &swept_tombstones);
+    fan_out_swept_tombstones(pool, registry, device_id, space_id, &swept_tombstones).await;
 
     refresh_tag_inheritance(pool, tag_scope, &tagged).await;
 

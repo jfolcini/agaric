@@ -3669,6 +3669,7 @@ async fn apply_like_a_command_at(
             .unwrap();
     tx.commit().await.unwrap();
     agaric_engine::materializer::dispatch_delete_descendants(
+        pool,
         &record,
         &effects.deleted_cohort,
         effects.delete_space_id.as_ref(),

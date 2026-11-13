@@ -630,6 +630,14 @@ impl Materializer {
         &self.loro
     }
 
+    /// The `loro_doc_delta` test oracle over this materializer's engines
+    /// ([`crate::loro::delta::assert_saved_engines_match_live`]).
+    #[cfg(any(test, feature = "test-util"))]
+    pub async fn assert_saved_engines_match_live(&self) {
+        crate::loro::delta::assert_saved_engines_match_live(&self.write_pool, &self.loro.registry)
+            .await;
+    }
+
     /// C-3c — register the OS-correct app data directory
     /// so the `CleanupOrphanedAttachments` background task can locate
     /// the `attachments/` subtree at execution time.

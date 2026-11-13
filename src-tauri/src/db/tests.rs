@@ -7809,3 +7809,69 @@ async fn fts_blocks_0131_block_id_index_keeps_existing_rows_6534() {
         [seeded[0].clone(), seeded[3].clone()]
     );
 }
+
+/// #6521 — `loro_doc_delta` is STRICT, reads its rows back in the order they
+/// were saved, and never hands a deleted id out again: a snapshot pass names
+/// the rows it covers as "every id up to the one I read", so a reused id would
+/// let it delete a row saved after it read.
+#[tokio::test]
+async fn loro_doc_delta_0132_keeps_save_order_and_never_reuses_an_id_6521() {
+    let (pool, _dir) = test_pool().await;
+    let strict: i64 =
+        sqlx::query_scalar("SELECT strict FROM pragma_table_list WHERE name = 'loro_doc_delta'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(strict, 1, "loro_doc_delta is STRICT");
+
+    let save = "INSERT INTO loro_doc_delta (space_id, bytes) VALUES (?, ?) RETURNING id";
+    let mut ids = Vec::new();
+    for (space, bytes) in [
+        ("SPACE_A", b"one"),
+        ("SPACE_B", b"two"),
+        ("SPACE_A", b"six"),
+    ] {
+        let id: i64 = sqlx::query_scalar(save)
+            .bind(space)
+            .bind(bytes.as_slice())
+            .fetch_one(&pool)
+            .await
+            .expect("save a delta");
+        ids.push(id);
+    }
+    let rows: Vec<(String, Vec<u8>)> =
+        sqlx::query_as("SELECT space_id, bytes FROM loro_doc_delta ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        [
+            ("SPACE_A".to_owned(), b"one".to_vec()),
+            ("SPACE_B".to_owned(), b"two".to_vec()),
+            ("SPACE_A".to_owned(), b"six".to_vec()),
+        ],
+        "the rows read back as saved, in the order they were saved"
+    );
+
+    sqlx::query("DELETE FROM loro_doc_delta")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let after_a_pass: i64 = sqlx::query_scalar(save)
+        .bind("SPACE_A")
+        .bind(b"new".as_slice())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        after_a_pass,
+        ids[2] + 1,
+        "a row saved after every earlier one was deleted takes the next id"
+    );
+
+    sqlx::query("INSERT INTO loro_doc_delta (space_id, bytes) VALUES ('SPACE_A', 'text')")
+        .execute(&pool)
+        .await
+        .expect_err("a delta that is not a blob is refused");
+}
