@@ -103,3 +103,7 @@ fn markdown_below(root: &Path, folder: &Path, found: &mut Vec<String>) -> std::i
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "read_back_tests.rs"]
+mod tests;

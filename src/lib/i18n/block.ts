@@ -166,6 +166,7 @@ export const block: Record<string, string> = {
   'status.syncStatusTitle': 'Sync status',
   'status.syncIdle': 'Idle',
   'status.syncSyncing': 'Syncing...',
+  'status.syncWaiting': 'Waiting',
   'status.syncError': 'Error',
   'status.syncOffline': 'Offline',
   'status.syncStateLabel': 'Sync state: {{state}}',

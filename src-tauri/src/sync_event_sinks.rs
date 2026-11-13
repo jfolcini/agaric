@@ -507,6 +507,7 @@ mod tests {
             message: "kapow".into(),
             remote_device_id: "DEV_PEER".into(),
             code: None,
+            peer_is_older: None,
         });
 
         assert_eq!(inner.events().len(), 1);
