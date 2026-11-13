@@ -21,7 +21,7 @@ import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import type { SavedPagesView } from '@/lib/preferences'
+import type { SavedPagesView } from '@/lib/saved-pages-views'
 
 export interface SavedViewsDropdownProps {
   views: SavedPagesView[]

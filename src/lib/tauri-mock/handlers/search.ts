@@ -34,6 +34,7 @@ import {
   refInclusiveTags,
 } from '@/lib/tauri-mock/handlers/shared'
 import { inheritedTagIds } from '@/lib/tauri-mock/handlers/tags'
+import { isSavedViewPage } from '@/lib/tauri-mock/page-names'
 import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
@@ -1619,7 +1620,7 @@ function searchStructuralCandidates(
   // {@link rawLastEditedOf} memoizes it on the advanced-query path).
   const needsLastEdited = metadata.some((p) => p['type'] === 'LastEdited')
   return [...blocks.values()].filter((b) => {
-    if (b['deleted_at']) return false
+    if (b['deleted_at'] || isSavedViewPage(b)) return false
     if (spaceIds !== null && !spaceIds.some((id) => fbqInSpace(b, id))) return false
     if (parentId !== null && ((b['parent_id'] as string | null) ?? null) !== parentId) return false
     if (blockTypeFilter !== null && b['block_type'] !== blockTypeFilter) return false
@@ -2337,7 +2338,7 @@ export const searchHandlers = {
     // the filter asks for templates by name.
     const includeTemplates = namesTemplateProperty(filterExpr)
     for (const b of blocks.values()) {
-      if (b['deleted_at']) continue
+      if (b['deleted_at'] || isSavedViewPage(b)) continue
       if (!fbqInSpace(b, spaceId)) continue
       if (!includeTemplates && properties.get(b['page_id'] as string)?.has('template')) continue
       // Page-aggregate primitives (child/inbound counts) need the block's own
@@ -2846,7 +2847,7 @@ export const searchHandlers = {
     const spaceId = readActiveSpaceScope('filtered_blocks_query', a)
 
     const items = [...blocks.values()].filter((b) => {
-      if (b['deleted_at']) return false
+      if (b['deleted_at'] || isSavedViewPage(b)) return false
       if (blockType !== null && b['block_type'] !== blockType) return false
       if (!fbqInSpace(b, spaceId)) return false
       if (!propertyFilters.every((pf) => fbqPropertyFilterMatches(b, pf))) return false

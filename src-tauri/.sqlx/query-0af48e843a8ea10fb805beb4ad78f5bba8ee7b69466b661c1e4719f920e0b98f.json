@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!\", b.block_type, b.content AS \"content!\", b.space_id\n           FROM json_each(?1) je\n           JOIN blocks b ON b.id = je.value\n           WHERE b.block_type IN ('page', 'tag') AND b.content IS NOT NULL\n             AND b.id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "block_type",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
+      },
+      {
+        "name": "content!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "space_id",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "0af48e843a8ea10fb805beb4ad78f5bba8ee7b69466b661c1e4719f920e0b98f"
+}

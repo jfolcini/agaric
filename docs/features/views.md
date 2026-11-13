@@ -56,7 +56,7 @@ A dedicated builder for queries too complex for the search box.
 - **Nested boolean tree**: arbitrary AND / OR / NOT groups over filter leaves, composed visually. Template pages and their blocks are left out unless a filter asks for the `template` property.
 - **Controls bar**: full-text term, sort, group-by (tag, page, state, block type, priority, a property key, or a date bucket — due / scheduled / created / last edited, by day, week, or month), summaries (count, sum, average, minimum, maximum).
 - **Results pane**: flat with a global summary bar, or grouped with per-group headers, counts, and summary chips.
-- **Saved views** keep a query to load, rename or delete later. They are kept per space on this device and do not sync.
+- **Saved views** keep a query to load, rename or delete later. Each is a page of its space that syncs between devices and stays out of every page list, the `[[` picker, the graph and search; a deleted one waits in the Trash.
 
 ## Trash
 

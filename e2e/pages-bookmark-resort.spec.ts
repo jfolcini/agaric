@@ -1,14 +1,5 @@
-import type { Page } from '@playwright/test'
-
+import { pageRow } from './domain'
 import { expect, ipc, navigateToView, test, waitForBoot } from './helpers'
-
-/** The Pages list row for the page titled `title`. */
-function pageRow(page: Page, title: string) {
-  return page
-    .getByRole('grid')
-    .locator('[data-page-item]')
-    .filter({ has: page.locator(`.page-browser-item-title[title="${title}"]`) })
-}
 
 /**
  * The Pages list keys its virtual rows by what they show, not by position. A

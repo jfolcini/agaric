@@ -401,7 +401,7 @@ where
 /// Re-running the WHOLE arm (not just the roll-up) is deliberate: it is
 /// literally the "re-enqueue a per-block `ReindexBlockLinks`" of #3842's
 /// option 2, and `pages_cache.inbound_link_count` is keyed on the source
-/// block's `page_id` too (`recompute_all_pages_cache_counts` filters
+/// block's `page_id` too (`recompute_pages_cache_counts_of` filters
 /// `src.page_id IS NOT NULL AND src.page_id != p.page_id`), so the count
 /// refresh is stale for exactly the same reason the roll-up is. The
 /// `block_links` diff it repeats is idempotent and, for a block whose content
@@ -828,11 +828,13 @@ async fn run_page_cache_rebuild(
             .await
         }
         MaterializeTask::RebuildPagesCacheCounts => {
-            // #417: count-only full-table recompute. Single-pool only —
-            // SQLite is one file regardless of split, and the recompute
-            // reads `blocks`/`block_links` and writes `pages_cache` on the
-            // same write tx (no separate reader snapshot needed).
-            cache::rebuild_pages_cache_counts(pool).await
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_pages_cache_counts_split,
+                cache::rebuild_pages_cache_counts,
+            )
+            .await
         }
         MaterializeTask::RebuildPageIds => {
             dispatch_split_or_single(
@@ -844,7 +846,13 @@ async fn run_page_cache_rebuild(
             .await?;
             // #533: space_id is derived from the freshly rebuilt page_id,
             // so it reconciles on the same task right after.
-            cache::rebuild_space_ids(pool).await
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_space_ids_split,
+                cache::rebuild_space_ids,
+            )
+            .await
         }
         MaterializeTask::RebuildPageLinkCache => {
             dispatch_split_or_single(

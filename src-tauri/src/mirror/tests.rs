@@ -890,3 +890,103 @@ fn states_of_the_earlier_layout_are_adopted_by_their_folder() {
     );
     assert!(!data.path().join("mirror/folder").exists());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_renamed_page_s_state_follows_its_file() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["hello"]).await;
+    fx.tick().await;
+
+    fx.edit(&page, "Gamma").await;
+    fx.tick().await;
+
+    assert_eq!(fx.saved_state(&page).unwrap().path, "TestSpace/Gamma.md");
+}
+
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnot really";
+
+impl Fx {
+    /// Copying on, and `block` holding an image `cat.png`; returns the copy's
+    /// path below the folder.
+    async fn image_in(&self, block: &str) -> String {
+        crate::commands::mirror::set_mirror_copy_files_inner(&self.pool, DEV, &self.state, true)
+            .await
+            .unwrap();
+        let attachment = crate::commands::add_attachment_with_bytes_inner(
+            &self.pool,
+            DEV,
+            &self.mat,
+            &self.data,
+            BlockId::from_trusted(block),
+            "cat.png".into(),
+            "image/png".into(),
+            PNG.to_vec(),
+        )
+        .await
+        .unwrap()
+        .id
+        .into_string();
+        self.edit(block, &format!("![a cat](attachment:{attachment})"))
+            .await;
+        format!("TestSpace/assets/{attachment}/cat.png")
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pass_writing_another_page_keeps_an_unchanged_page_s_copy() {
+    let mut fx = Fx::new().await;
+    let (_, alpha) = fx.page("Alpha", &["a"]).await;
+    let (_, beta) = fx.page("Beta", &["b"]).await;
+    let copy = fx.image_in(&alpha[0]).await;
+    fx.tick().await;
+    assert!(fx.root.join(&copy).exists());
+
+    fx.edit(&beta[0], "B").await;
+    fx.tick().await;
+
+    assert!(fx.root.join(&copy).exists(), "only a full pass sweeps");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_full_pass_leaving_a_page_frozen_keeps_its_copy() {
+    let mut fx = Fx::new().await;
+    let (page, blocks) = fx.page("Alpha", &["a"]).await;
+    let copy = fx.image_in(&blocks[0]).await;
+    fx.tick().await;
+    let edited = fx.read(ALPHA).unwrap().replace("a cat", "the cat");
+    std::fs::write(fx.root.join(ALPHA), edited).unwrap();
+    fx.edit(&page, "Gamma").await;
+    fx.tick().await;
+    assert_eq!(fx.status().await.diverged, diverged(&page, ALPHA));
+
+    fx.sync(Vec::new(), None);
+    fx.tick().await;
+
+    assert!(
+        fx.root.join(&copy).exists(),
+        "a pass that renders no frozen page cannot tell its copies unlinked"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_copy_that_cannot_be_written_is_listed_while_copying_is_on() {
+    let mut fx = Fx::new().await;
+    let (_, blocks) = fx.page("Alpha", &["a"]).await;
+    let copy = fx.image_in(&blocks[0]).await;
+    let stored: String = sqlx::query_scalar("SELECT fs_path FROM attachments")
+        .fetch_one(&fx.pool)
+        .await
+        .unwrap();
+    std::fs::remove_file(fx.data.join(stored)).unwrap();
+
+    fx.tick().await;
+
+    let failed: Vec<String> = fx
+        .status()
+        .await
+        .failed
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(failed, [copy]);
+}

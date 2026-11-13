@@ -16,7 +16,7 @@ Local-only MCP server for AI clients (Claude Desktop, Cursor, Continue), on one 
   `Everyone` and `Anonymous`, so Agaric deliberately does not rely on it (#2720).
 - **Never** a TCP port.
 
-The `agaric-mcp` binary is a stdio↔socket bridge bundled with the app. Agents spawn it with `--token <agent token>`; it writes `AGARIC-TOKEN <token>` before any MCP byte, then forwards JSON-RPC frames over the socket. Configuration snippets live in [`docs/features/agent-access.md`](../features/agent-access.md).
+The `agaric-mcp` binary is a stdio↔socket bridge bundled with the app. Agents spawn it with `--token <agent token>`; it writes `AGARIC-TOKEN <token>` before any MCP byte, then forwards JSON-RPC frames over the socket. `agaric-mcp call <tool> <json>` instead initializes, runs one `tools/call` through rmcp's client and exits. Configuration snippets live in [`docs/features/agent-access.md`](../features/agent-access.md).
 
 ### Agents and tokens
 

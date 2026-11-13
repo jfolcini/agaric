@@ -432,15 +432,15 @@ describe('serializeQuerySpec / parseQuerySpec', () => {
     })
   })
 
-  it('parses a saved spec JSON string back into a SavedQuerySpec', () => {
-    const raw = JSON.stringify({
+  it('reads a saved spec back into a SavedQuerySpec', () => {
+    const saved = {
       filter: { type: 'And', children: [] },
       sort,
       fulltext: 'x',
       group_by: groupBy,
       aggregates,
-    })
-    expect(parseQuerySpec(raw)).toEqual({
+    }
+    expect(parseQuerySpec(saved)).toEqual({
       filter: { type: 'And', children: [] },
       sort,
       fulltext: 'x',
@@ -450,8 +450,7 @@ describe('serializeQuerySpec / parseQuerySpec', () => {
   })
 
   it('defaults missing optional fields when parsing', () => {
-    const raw = JSON.stringify({ filter: { type: 'And', children: [] } })
-    expect(parseQuerySpec(raw)).toEqual({
+    expect(parseQuerySpec({ filter: { type: 'And', children: [] } })).toEqual({
       filter: { type: 'And', children: [] },
       sort: [],
       fulltext: '',
@@ -461,24 +460,20 @@ describe('serializeQuerySpec / parseQuerySpec', () => {
   })
 
   it('throws on a spec missing its filter', () => {
-    expect(() => parseQuerySpec(JSON.stringify({ sort: [] }))).toThrow(/filter/)
-  })
-
-  it('throws on malformed JSON', () => {
-    expect(() => parseQuerySpec('{not json')).toThrow()
+    expect(() => parseQuerySpec({ sort: [] })).toThrow(/filter/)
   })
 
   it.each([
-    ['null', 'null'],
-    ['an array', '[]'],
-    ['a filter of the wrong type', JSON.stringify({ filter: 'x' })],
-    ['a filter with an unknown node type', JSON.stringify({ filter: { type: 'Xor' } })],
+    ['null', null],
+    ['an array', []],
+    ['a filter of the wrong type', { filter: 'x' }],
+    ['a filter with an unknown node type', { filter: { type: 'Xor' } }],
     [
       'a nested filter node without children',
-      JSON.stringify({ filter: { type: 'And', children: [{ type: 'Or' }] } }),
+      { filter: { type: 'And', children: [{ type: 'Or' }] } },
     ],
-  ])('throws on a spec with %s', (_label, raw) => {
-    expect(() => parseQuerySpec(raw)).toThrow(/filter/)
+  ])('throws on a spec with %s', (_label, saved) => {
+    expect(() => parseQuerySpec(saved)).toThrow(/filter/)
   })
 })
 

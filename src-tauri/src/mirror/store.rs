@@ -376,3 +376,7 @@ fn remove_dir_if_any(dir: &Path) -> std::io::Result<()> {
         _ => Ok(()),
     }
 }
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod tests;

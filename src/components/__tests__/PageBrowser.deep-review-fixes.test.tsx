@@ -9,9 +9,11 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
+import { mockInvokeCommands, pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
+import { type HeldView, savedViewInvokeHandlers } from '@/__tests__/helpers/saved-views'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
+import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useResolveStore } from '@/stores/resolve'
@@ -77,7 +79,6 @@ beforeEach(() => {
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.
   localStorage.removeItem('agaric:page-browser-filters')
-  localStorage.removeItem('agaric:pages:savedViews:v1')
   // An empty slice, not an absent one: absent is the default journal chip (#5370).
   usePageBrowserFiltersStore.setState({ filtersBySpace: { SPACE_TEST: [] }, nextAddId: 0 })
   // Phase 2 — PageBrowser now gates its render and page query
@@ -127,38 +128,43 @@ describe('PageBrowser', () => {
     }
 
     // ── #5294 — a saved view's tag chips from another space ─────────────
-    // Saved views are one list for every space, and a tag chip holds a tag id,
-    // which matches nothing in another space.
+    // A tag chip holds a tag id, which matches nothing in another space.
     describe('#5294: applying a saved view', () => {
-      async function applyTaggedView(listSpaceTags: () => Promise<unknown>): Promise<void> {
+      async function applyTaggedView(listSpaceTags: () => Promise<TagCacheRow[]>): Promise<void> {
         const user = userEvent.setup()
-        const view = {
-          id: 'VIEW_1',
-          name: 'Tagged',
-          createdAt: '2026-01-01T00:00:00.000Z',
-          sort: 'alphabetical',
-          filters: [
-            { type: 'Tag', tag: 'TAG_HERE' },
-            { type: 'Tag', tag: 'TAG_ELSEWHERE' },
+        const held = new Map<string, HeldView>([
+          [
+            'VIEW_1',
+            {
+              name: 'Tagged',
+              payload: {
+                kind: 'pages',
+                sort: 'alphabetical',
+                filters: [
+                  { type: 'Tag', tag: 'TAG_HERE' },
+                  { type: 'Tag', tag: 'TAG_ELSEWHERE' },
+                ],
+              },
+              deletedAt: null,
+            },
           ],
-        }
-        localStorage.setItem(
-          'agaric:pages:savedViews:v1',
-          JSON.stringify({ schemaVersion: 1, views: [view] }),
+        ])
+        mockedInvoke.mockImplementation(
+          mockInvokeCommands(
+            {
+              ...savedViewInvokeHandlers(held),
+              resolve_page_by_alias: () => null,
+              list_all_tags_in_space: listSpaceTags,
+              list_pages_with_metadata: () => ({
+                items: [metaPage('P1', 'Apple')],
+                next_cursor: null,
+                has_more: false,
+                total_count: 1,
+              }),
+            },
+            { fallback: pageRowInvokeFallback },
+          ),
         )
-        mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-          if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-          if (cmd === 'list_all_tags_in_space') return listSpaceTags()
-          if (cmd === 'list_pages_with_metadata') {
-            return Promise.resolve({
-              items: [metaPage('P1', 'Apple')],
-              next_cursor: null,
-              has_more: false,
-              total_count: 1,
-            })
-          }
-          return pageRowInvokeFallback(cmd, args)
-        })
 
         render(<PageBrowser />)
         await screen.findByText('Apple')
@@ -205,34 +211,35 @@ describe('PageBrowser', () => {
     })
 
     // ── #3339 — saved-view delete is undoable ───────────────────────────
-    // The delete button sits one row-item away from the apply target and the
-    // store is localStorage-only (no Trash, no restore path), so a mis-click
-    // used to destroy the whole {name, sort, filters} tuple for good.
-    it('#3339: deleting a saved view offers an Undo that restores the tuple', async () => {
+    // The delete button sits one row-item away from the apply target, so a
+    // mis-click offers an Undo besides the Trash (#6544).
+    it('#3339: deleting a saved view moves it to the Trash and offers an Undo that restores it', async () => {
       const user = userEvent.setup()
-      const savedView = {
-        id: 'VIEW_1',
-        name: 'My view',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        sort: 'alphabetical',
-        filters: [{ type: 'Orphan' }],
-      }
-      localStorage.setItem(
-        'agaric:pages:savedViews:v1',
-        JSON.stringify({ schemaVersion: 1, views: [savedView] }),
+      const held = new Map<string, HeldView>([
+        [
+          'VIEW_1',
+          {
+            name: 'My view',
+            payload: { kind: 'pages', sort: 'alphabetical', filters: [{ type: 'Orphan' }] },
+            deletedAt: null,
+          },
+        ],
+      ])
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands(
+          {
+            ...savedViewInvokeHandlers(held),
+            resolve_page_by_alias: () => null,
+            list_pages_with_metadata: () => ({
+              items: [metaPage('P1', 'Apple')],
+              next_cursor: null,
+              has_more: false,
+              total_count: 1,
+            }),
+          },
+          { fallback: pageRowInvokeFallback },
+        ),
       )
-      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') {
-          return Promise.resolve({
-            items: [metaPage('P1', 'Apple')],
-            next_cursor: null,
-            has_more: false,
-            total_count: 1,
-          })
-        }
-        return pageRowInvokeFallback(cmd, args)
-      })
 
       render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -253,27 +260,140 @@ describe('PageBrowser', () => {
         )
       })
 
-      // The view is gone from storage…
-      expect(JSON.parse(localStorage.getItem('agaric:pages:savedViews:v1') ?? '{}').views).toEqual(
-        [],
-      )
+      // The view page is in the Trash…
+      expect(held.get('VIEW_1')?.deletedAt).not.toBeNull()
 
-      // …until Undo puts the exact tuple back.
+      // …until Undo restores it, the same page and tuple.
       const call = mockedToastSuccess.mock.calls.at(-1)
       const undo = (call?.[1] as { action?: { onClick?: () => void } } | undefined)?.action
       undo?.onClick?.()
 
-      const restored = JSON.parse(localStorage.getItem('agaric:pages:savedViews:v1') ?? '{}')
-        .views as Array<Record<string, unknown>>
-      expect(restored).toHaveLength(1)
-      expect(restored[0]).toMatchObject({
-        name: 'My view',
-        sort: 'alphabetical',
-        filters: [{ type: 'Orphan' }],
-      })
+      await waitFor(() => expect(held.get('VIEW_1')?.deletedAt).toBeNull())
+      await waitFor(() =>
+        expect(mockedToastSuccess).toHaveBeenCalledWith(
+          t('pageBrowser.savedViews.restored', { name: 'My view' }),
+        ),
+      )
     })
 
-    // ── E5 — tag chip resolves the id to a tag name ─────────────────────
+    it('a saved view the space already names is refused with a toast', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands(
+          {
+            ...savedViewInvokeHandlers(new Map()),
+            resolve_page_by_alias: () => null,
+            list_all_pages_in_space: () => [
+              {
+                id: 'P1',
+                content: 'Apple',
+                todo_state: null,
+                priority: null,
+                due_date: null,
+                scheduled_date: null,
+              },
+            ],
+            list_pages_with_metadata: () => ({
+              items: [metaPage('P1', 'Apple')],
+              next_cursor: null,
+              has_more: false,
+              total_count: 1,
+            }),
+            create_page_in_space: () => {
+              throw new Error('a taken name must not reach the create')
+            },
+          },
+          { fallback: pageRowInvokeFallback },
+        ),
+      )
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+      await user.click(await screen.findByTestId('saved-views-trigger'))
+      await user.click(
+        await screen.findByRole('button', { name: t('pageBrowser.savedViews.saveCurrentView') }),
+      )
+      await user.type(await screen.findByRole('textbox', { name: 'Name' }), 'apple')
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.savedViews.save') }))
+
+      await waitFor(() =>
+        expect(mockedToastError).toHaveBeenCalledWith(
+          t('pageBrowser.savedViews.nameTaken', { name: 'apple' }),
+        ),
+      )
+    })
+
+    it('a saved view named like a date is refused with a toast saying why', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands(
+          {
+            ...savedViewInvokeHandlers(new Map()),
+            resolve_page_by_alias: () => null,
+            list_all_pages_in_space: () => [],
+            list_pages_with_metadata: () => ({
+              items: [metaPage('P1', 'Apple')],
+              next_cursor: null,
+              has_more: false,
+              total_count: 1,
+            }),
+            create_page_in_space: () => {
+              throw new Error('a date name must not reach the create')
+            },
+          },
+          { fallback: pageRowInvokeFallback },
+        ),
+      )
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+      await user.click(await screen.findByTestId('saved-views-trigger'))
+      await user.click(
+        await screen.findByRole('button', { name: t('pageBrowser.savedViews.saveCurrentView') }),
+      )
+      await user.type(await screen.findByRole('textbox', { name: 'Name' }), '2031-04-05')
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.savedViews.save') }))
+
+      await waitFor(() =>
+        expect(mockedToastError).toHaveBeenCalledWith(
+          t('pageBrowser.savedViews.nameIsDate', { name: '2031-04-05' }),
+        ),
+      )
+    })
+
+    it('a saved view the backend fails to save is reported', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands(
+          {
+            ...savedViewInvokeHandlers(new Map()),
+            resolve_page_by_alias: () => null,
+            list_all_pages_in_space: () => Promise.reject(new Error('backend down')),
+            list_pages_with_metadata: () => ({
+              items: [metaPage('P1', 'Apple')],
+              next_cursor: null,
+              has_more: false,
+              total_count: 1,
+            }),
+          },
+          { fallback: pageRowInvokeFallback },
+        ),
+      )
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+      await user.click(await screen.findByTestId('saved-views-trigger'))
+      await user.click(
+        await screen.findByRole('button', { name: t('pageBrowser.savedViews.saveCurrentView') }),
+      )
+      await user.type(await screen.findByRole('textbox', { name: 'Name' }), 'Fresh')
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.savedViews.save') }))
+
+      await waitFor(() =>
+        expect(mockedToastError).toHaveBeenCalledWith(t('pageBrowser.savedViews.saveFailed')),
+      )
+    })
+
     it('E5: a tag chip shows the resolved tag name, not the raw id', async () => {
       const user = userEvent.setup()
       // Seed the global resolve cache with a tag id → name mapping (tags

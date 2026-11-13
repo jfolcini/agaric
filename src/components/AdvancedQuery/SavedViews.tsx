@@ -1,33 +1,50 @@
 /**
  * SavedViews — #1460 saved-views picker for the advanced-query surface.
  *
- * Lists the active space's saved views (`PREFERENCES.savedQueryViews`, written
- * through `src/lib/saved-query-views.ts`). Load parses the view's stored spec
- * and hydrates the builder store; rename and delete rewrite the list.
+ * Lists the active space's saved queries, view pages that sync
+ * (`src/lib/saved-views.ts`, #6544). Load parses the view's spec and hydrates
+ * the builder store; rename retitles the view page, and delete moves it to
+ * the Trash.
  */
 
 import type React from 'react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { RenameDialog } from '@/components/dialogs/RenameDialog'
 import { Button } from '@/components/ui/button'
+import { useSavedViews } from '@/hooks/useSavedViews'
+import { isDateFormattedPage } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
-import { PREFERENCES, type SavedQueryView, usePreference } from '@/lib/preferences'
-import { deleteSavedQueryView, renameSavedQueryView } from '@/lib/saved-query-views'
+import { reportIpcError } from '@/lib/report-ipc-error'
+import { deleteSavedView, renameSavedView } from '@/lib/saved-views'
 import { parseQuerySpec, useAdvancedQueryStore } from '@/stores/advancedQuery'
 
+/** A saved query: its view page's id, its name, and its unchecked spec. */
+interface SavedQueryView {
+  id: string
+  name: string
+  spec: unknown
+}
+
 export interface SavedViewsProps {
-  /** Active space key (`__legacy__` when no space). Views are listed and loaded here. */
+  /** Active space key (`__legacy__` when no space): the builder a view loads into. */
   spaceKey: string
 }
 
 export function SavedViews({ spaceKey }: SavedViewsProps): React.ReactElement {
   const { t } = useTranslation()
   const loadView = useAdvancedQueryStore((s) => s.loadView)
-  const [views] = usePreference(PREFERENCES.savedQueryViews, spaceKey)
+  const { spaceId, views: all } = useSavedViews()
+  const views = useMemo(
+    () =>
+      all.flatMap(({ id, name, payload }) =>
+        payload.kind === 'query' ? [{ id, name, spec: payload.spec }] : [],
+      ),
+    [all],
+  )
 
   const [renameTarget, setRenameTarget] = useState<SavedQueryView | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SavedQueryView | null>(null)
@@ -42,15 +59,34 @@ export function SavedViews({ spaceKey }: SavedViewsProps): React.ReactElement {
   }
 
   const handleRename = (name: string): void => {
-    if (renameTarget == null) return
-    renameSavedQueryView(spaceKey, renameTarget.id, name)
-    notify.success(t('advancedQuery.savedViews.renamed', { name }))
+    if (renameTarget == null || spaceId == null) return
+    const { id } = renameTarget
+    renameSavedView(spaceId, id, name)
+      .then((renamed) => {
+        if (renamed) notify.success(t('advancedQuery.savedViews.renamed', { name }))
+        else
+          notify.error(
+            t(
+              isDateFormattedPage(name)
+                ? 'advancedQuery.savedViews.nameIsDate'
+                : 'advancedQuery.savedViews.nameTaken',
+              { name },
+            ),
+          )
+      })
+      .catch((err: unknown) => {
+        reportIpcError('SavedViews', 'advancedQuery.savedViews.renameError', err, t, { id })
+      })
   }
 
   const handleDelete = (): void => {
     if (deleteTarget == null) return
-    deleteSavedQueryView(spaceKey, deleteTarget.id)
-    notify.success(t('advancedQuery.savedViews.deleted', { name: deleteTarget.name }))
+    const { id, name } = deleteTarget
+    deleteSavedView(id)
+      .then(() => notify.success(t('advancedQuery.savedViews.deleted', { name })))
+      .catch((err: unknown) => {
+        reportIpcError('SavedViews', 'advancedQuery.savedViews.deleteError', err, t, { id })
+      })
   }
 
   return (

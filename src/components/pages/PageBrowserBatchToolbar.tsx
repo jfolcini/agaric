@@ -30,8 +30,8 @@
  *
  * Saved views (#2003 item 1) are a separate piece — persisted
  * `{sort, filters}` view snapshots — implemented in
- * `src/lib/saved-pages-views.ts` / `SavedViewsDropdown` / `SaveViewDialog`,
- * not in this toolbar.
+ * `src/lib/saved-views.ts` / `SavedViewsDropdown` / `SaveViewDialog`, not in
+ * this toolbar.
  */
 
 import { Bookmark, BookmarkX, SlidersHorizontal, Tag, Trash2 } from 'lucide-react'
@@ -180,8 +180,8 @@ export function PageBrowserBatchToolbar({
 
   const handleToggleStar = useCallback(() => {
     if (selectedIds.length === 0) return
-    // `setMany` shows the change in every bookmark surface at once and reports
-    // its own failure, so no `notify` / `onMutated` is needed.
+    // `setMany` shows the change in every bookmark surface at once and toasts
+    // once if the write fails, so no `notify` / `onMutated` is needed here.
     setMany(selectedIds, !allStarred)
     onClearSelection()
   }, [selectedIds, allStarred, setMany, onClearSelection])

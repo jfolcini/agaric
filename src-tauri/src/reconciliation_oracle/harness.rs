@@ -259,8 +259,8 @@ pub async fn rebuild_page_ownership_from_base(
 }
 
 /// Run production's vault-wide `page_id` re-derivation — the `RebuildPageIds`
-/// task, a member of the create / delete / restore / purge and inbound-sync
-/// rebuild sets in `materializer::dispatch`.
+/// task, a member of the purge and inbound-sync rebuild sets in
+/// `materializer::dispatch`.
 ///
 /// A MOVE deliberately does NOT enqueue it (#2200): the local move command
 /// re-derives the moved subtree synchronously in-transaction via

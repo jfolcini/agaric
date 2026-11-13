@@ -473,8 +473,10 @@ fn closest<'a>(shadows: &'a [Shadow], text: &str) -> Option<&'a Shadow> {
     let lines = content(text);
     shadows.iter().rev().min_by_key(|shadow| {
         let written = content(&shadow.text);
+        // With the first key tied, both explain as many of the file's lines,
+        // so differing in fewer lines is being shorter.
         let equal = equal_pairs(&written, &lines).len();
-        (lines.len() - equal, written.len() + lines.len() - 2 * equal)
+        (lines.len() - equal, written.len())
     })
 }
 
