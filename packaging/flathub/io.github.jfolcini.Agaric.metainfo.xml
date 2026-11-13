@@ -1,9 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   AppStream MetaInfo for Flathub's presentation page (https://flathub.org).
-  Scaffold — pre-submission. The screenshots/release nodes need real
-  URLs before the Flathub PR is opened (see packaging/flathub/README.md
-  open question 3).
+  Not submitted: packaging/flathub/README.md says what is missing.
 -->
 <component type="desktop-application">
   <id>io.github.jfolcini.Agaric</id>
@@ -43,11 +41,8 @@
   </developer>
 
   <!--
-    Screenshots — TODO before Flathub PR submission. The Flathub
-    presentation page renders these. Open question 3 in
-    packaging/flathub/README.md tracks "what URL hosting do we want
-    for screenshots". The placeholder below points at a path that
-    does not exist yet; will fail Flathub's validator.
+    Placeholder: the image is the repository's banner, not a screenshot of
+    the app, and Flathub rejects it (packaging/flathub/README.md, step 5).
   -->
   <screenshots>
     <screenshot type="default">
@@ -56,14 +51,9 @@
     </screenshot>
   </screenshots>
 
-  <!--
-    Releases — Flathub uses the most recent <release> for the version
-    badge. Update on each release; the bump-version.sh script could
-    eventually template this in (TODO open question 2).
-  -->
+  <!-- Flathub shows the most recent <release> as the app's version. -->
   <releases>
-    <release version="0.1.38" date="2026-05-20"/>
-    <release version="0.1.37" date="2026-05-20"/>
+    <release version="0.23.0" date="2026-11-06"/>
   </releases>
 
   <content_rating type="oars-1.1"/>

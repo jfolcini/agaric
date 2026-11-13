@@ -44,6 +44,8 @@
  * they do while the primary mouse button is down on the editor: markers drawn
  * under the pointer mid-drag move the text the drag started in, and the
  * selection ends up elsewhere or empty. They are drawn once the press ends.
+ * A double click whose first click drew markers selects the word that click
+ * was on: by the second press the markers have moved it from under the pointer.
  */
 
 import { Extension } from '@tiptap/core'
@@ -341,6 +343,41 @@ function stopForClick(view: EditorView, event: MouseEvent): ClickedStop | null {
   return { pos: hit.pos, marks, outsideHeading }
 }
 
+/** What is drawn, and where. */
+function drawnAt(state: EditorState): string {
+  const drawn = markdownRevealPluginKey.getState(state)?.find() ?? []
+  return drawn.map((d) => `${d.from}:${d.to}:${d.spec.key}`).join()
+}
+
+/** The position of the character under the pointer. */
+function charUnderPointer(view: EditorView, event: MouseEvent): number | null {
+  const hit = view.posAtCoords({ left: event.clientX, top: event.clientY })
+  if (!hit) return null
+  return view.coordsAtPos(hit.pos).left > event.clientX ? hit.pos - 1 : hit.pos
+}
+
+/** The word holding the character at `pos`, as the platform breaks words; none on a space, punctuation or a chip. */
+function wordAt(doc: PMNode, pos: number): TextSelection | null {
+  const $pos = doc.resolve(pos)
+  const block = $pos.parent
+  if (!block.inlineContent) return null
+  // One character per chip, so an offset in the text is an offset in the block.
+  const text = block.textBetween(0, block.content.size, undefined, '\uFFFC')
+  const word = new Intl.Segmenter(undefined, { granularity: 'word' })
+    .segment(text)
+    .containing($pos.parentOffset)
+  if (!word?.isWordLike) return null
+  const from = $pos.start() + word.index
+  return TextSelection.create(doc, from, from + word.segment.length)
+}
+
+/** A press that may be the first of a double click: the character it was on, in which document, and what was drawn then. */
+interface FirstPress {
+  char: number
+  doc: PMNode
+  drawn: string
+}
+
 const DELETE_SIDE: Partial<Record<string, 'before' | 'after'>> = {
   deleteContentBackward: 'before',
   deleteContentForward: 'after',
@@ -357,6 +394,7 @@ const PRESS_ENDS = ['mouseup', 'dragstart', 'contextmenu'] as const
 function createMarkdownRevealPlugin(statusOf: ChipStatus): Plugin<DecorationSet> {
   let pluginView: EditorView | null = null
   let clicked: ClickedStop | null = null
+  let firstPress: FirstPress | null = null
   let editing = false
   let primaryButtonDown = false
   const redraw = (): void => {
@@ -448,9 +486,25 @@ function createMarkdownRevealPlugin(statusOf: ChipStatus): Plugin<DecorationSet>
         },
         // Judge the click against the markers the user saw, before the caret moves.
         mousedown(view, event) {
-          if (event.button === 0) primaryButtonDown = true
           clicked = stopForClick(view, event)
-          return false
+          if (event.button !== 0) return false
+          primaryButtonDown = true
+          const { doc } = view.state
+          if (event.detail !== 2) {
+            const char = event.detail === 1 ? charUnderPointer(view, event) : null
+            firstPress = char === null ? null : { char, doc, drawn: drawnAt(view.state) }
+            return false
+          }
+          // The markers the first click drew moved the text, so the second press is on
+          // something else (often a marker, where the browser selects nothing): select
+          // the word the first press was on. Not after the roving editor took another
+          // block's document, where that press's position means nothing.
+          if (firstPress?.doc !== doc || firstPress.drawn === drawnAt(view.state)) return false
+          const word = wordAt(doc, firstPress.char)
+          if (!word) return false
+          view.dispatch(view.state.tr.setSelection(word))
+          event.preventDefault()
+          return true
         },
         compositionend(view) {
           // The composition's own transactions left the markers frozen; once
