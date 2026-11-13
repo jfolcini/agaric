@@ -129,7 +129,8 @@ function HistoryListItemInner({
       )}
       onClick={(e) => onRowClick(index, e)}
       onKeyDown={(e) => {
-        if (e.key === ' ') {
+        // A Space on a control inside the row presses that control.
+        if (e.key === ' ' && e.target === e.currentTarget) {
           e.preventDefault()
           // The list's document-level Space toggles the cursor row too.
           e.stopPropagation()
@@ -154,7 +155,7 @@ function HistoryListItemInner({
           disabled={isNonReversible}
           onCheckedChange={() => onToggleSelection(index)}
           onClick={(e) => e.stopPropagation()}
-          // Keys stay on the checkbox: the row toggles itself on Space.
+          // Keys stay on the checkbox, out of the list's document-level shortcuts.
           onKeyDown={(e) => e.stopPropagation()}
           aria-label={t('history.selectOperationLabel', {
             opType: opTypeLabel(entry.op_type, t),

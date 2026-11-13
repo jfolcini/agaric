@@ -37,6 +37,15 @@ test.describe('Space presses the focused control in the Trash view @pages', () =
     })
   }
 
+  test('Space on a row’s Restore restores that item and selects no row', async ({ page }) => {
+    const row = page.getByTestId('trash-item').filter({ hasText: 'Trashed two' })
+    await row.getByRole('button', { name: 'Restore', exact: true }).focus()
+    await page.keyboard.press('Space')
+    await expect(page.getByTestId('trash-item')).toHaveCount(1)
+    await expect(page.getByTestId('trash-item').filter({ hasText: 'Trashed two' })).toHaveCount(0)
+    await expect(page.locator('[data-testid="trash-item"][aria-selected="true"]')).toHaveCount(0)
+  })
+
   test('Space on the list selects the cursor row, and Escape clears it', async ({ page }) => {
     const grid = page.getByRole('grid', { name: 'Trash items' })
     const row = (index: number) => grid.locator(`[data-testid="trash-item"][data-index="${index}"]`)

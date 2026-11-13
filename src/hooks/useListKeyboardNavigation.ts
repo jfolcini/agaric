@@ -273,17 +273,19 @@ export function useListKeyboardNavigation(
 /**
  * Enter and Space press the focused control: a button, a checkbox, a dialog's
  * Cancel. A list that hears keys at the document acts on them only when they
- * are pressed with nothing in particular focused (the document, or an element
- * holding the list such as <body>), on the list itself, or on one of its rows.
+ * are pressed with nothing in particular focused (<body>, or an element holding
+ * the list such as `#main-content`), on the list itself, or on the row holding
+ * its Tab stop. A row a click merely focused (a Pages row) is not that row: the
+ * cursor is elsewhere, and the key would act on the cursor's row.
  */
-export function pressesFocusedControl(e: KeyboardEvent, list: Element | null | undefined): boolean {
+export function pressesFocusedControl(e: KeyboardEvent, list: Element | null): boolean {
   if (e.key !== 'Enter' && e.key !== ' ') return false
   const target = e.target as Element
   const onList =
     target === document.body ||
-    (target as Node) === document ||
     (list != null &&
-      (target.contains(list) || (target.getAttribute('role') === 'row' && list.contains(target))))
+      (target.contains(list) ||
+        (target.matches('[role="row"][tabindex="0"]') && list.contains(target))))
   return !onList
 }
 

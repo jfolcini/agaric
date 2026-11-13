@@ -27,31 +27,32 @@ describe('pressesFocusedControl', () => {
         <button id="header-button">Restore all</button>
         <div id="list" role="grid" tabindex="0">
           <div id="row" role="row" tabindex="0"><button id="row-button">Diff</button></div>
+          <div id="clicked-row" role="row" tabindex="-1"></div>
         </div>
       </main>`
     const list = withList ? document.getElementById('list') : null
     const results: boolean[] = []
     const listen = (e: KeyboardEvent) => results.push(pressesFocusedControl(e, list))
     document.addEventListener('keydown', listen)
-    const target = id === 'document' ? document : (document.getElementById(id) ?? document.body)
+    const target = document.getElementById(id) ?? document.body
     target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
     document.removeEventListener('keydown', listen)
     expect(results).toHaveLength(1)
     return results[0]
   }
 
-  it.each(['header-button', 'row-button'])('Enter and Space on %s are the control’s', (id) => {
-    expect(pressOn(id, 'Enter')).toBe(true)
-    expect(pressOn(id, ' ')).toBe(true)
-  })
-
-  it.each(['list', 'row', 'main', 'body', 'document'])(
-    'Enter and Space on %s are the list’s',
+  it.each(['header-button', 'row-button', 'clicked-row'])(
+    'Enter and Space on %s are the control’s',
     (id) => {
-      expect(pressOn(id, 'Enter')).toBe(false)
-      expect(pressOn(id, ' ')).toBe(false)
+      expect(pressOn(id, 'Enter')).toBe(true)
+      expect(pressOn(id, ' ')).toBe(true)
     },
   )
+
+  it.each(['list', 'row', 'main', 'body'])('Enter and Space on %s are the list’s', (id) => {
+    expect(pressOn(id, 'Enter')).toBe(false)
+    expect(pressOn(id, ' ')).toBe(false)
+  })
 
   it('leaves every other key to the list', () => {
     expect(pressOn('header-button', 'ArrowDown')).toBe(false)
@@ -61,7 +62,6 @@ describe('pressesFocusedControl', () => {
   it('without a list, only a press with nothing focused is the list’s', () => {
     expect(pressOn('main', ' ', { withList: false })).toBe(true)
     expect(pressOn('body', ' ', { withList: false })).toBe(false)
-    expect(pressOn('document', ' ', { withList: false })).toBe(false)
   })
 })
 

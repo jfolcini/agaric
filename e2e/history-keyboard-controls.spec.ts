@@ -4,6 +4,7 @@ import {
   activeAlertDialog,
   activePopover,
   expect,
+  ipc,
   navigateToView,
   seedSearchBlocks,
   test,
@@ -77,6 +78,27 @@ test.describe('Enter and Space press the focused control in the History view @pa
 
     await page.keyboard.press('Enter')
     await expect(activeAlertDialog(page).getByText('Revert 1 operation?')).toBeVisible()
+  })
+
+  test('Space on a row’s Reset to this point opens its confirm and selects no row', async ({
+    page,
+  }) => {
+    await openHistory(page, 3)
+    await historyRow(page, 1).getByRole('button', { name: 'Reset to this point' }).focus()
+    await page.keyboard.press('Space')
+    await expect(activeAlertDialog(page).getByText(/^Restore to .+\?$/)).toBeVisible()
+    await expect(selectedRows(page)).toHaveCount(0)
+  })
+
+  test('Space on a row’s Diff shows the diff and selects no row', async ({ page }) => {
+    const [blockId] = await seedSearchBlocks(page, [{ content: 'Before' }])
+    await ipc(page, 'edit_block', { blockId, toText: 'After' })
+    await navigateToView(page, 'History')
+    const diff = historyRow(page, 0).getByRole('button', { name: 'Diff' })
+    await diff.focus()
+    await page.keyboard.press('Space')
+    await expect(historyRow(page, 0).locator('.diff-container')).toBeVisible()
+    await expect(selectedRows(page)).toHaveCount(0)
   })
 
   test('Enter on a clicked row opens the revert confirm for it', async ({ page }) => {

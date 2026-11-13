@@ -18,7 +18,7 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
 
 export interface UseTrashListShortcutsOptions {
   /** The list container, which gates Space (`pressesFocusedControl`). */
-  listRef?: RefObject<HTMLElement | null>
+  listRef: RefObject<HTMLElement | null>
   filteredBlocks: BlockRow[]
   focusedIndex: number
   selectedSize: number
@@ -51,7 +51,7 @@ export function useTrashListShortcuts({
         target.tagName === 'TEXTAREA'
       )
         return
-      if (pressesFocusedControl(e, listRef?.current)) return
+      if (pressesFocusedControl(e, listRef.current)) return
 
       // Delegate to list keyboard navigation (ArrowUp/Down, Home/End, PageUp/Down)
       if (navHandleKeyDown(e)) {
