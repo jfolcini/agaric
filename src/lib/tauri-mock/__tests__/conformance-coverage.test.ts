@@ -273,6 +273,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   set_mirror_space:
     'device-local setting whose effect is the mirror folder on disk (files removed, kept or ' +
     'left alone), which a fixture seed cannot express',
+  open_data_folder: 'no persistent state — opens the OS file manager on the data folder (#6554)',
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +449,9 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   get_mirror_status:
     'environment dependent: reads the mirror folder and its files on disk, so the answer ' +
     'is not a function of the seeded state',
+  get_last_snapshot_ms:
+    'environment dependent: the modified time of a snapshot file beside the database (#6554), ' +
+    'which no fixture seed can spell',
 }
 
 // ---------------------------------------------------------------------------
@@ -537,6 +541,8 @@ const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
   'mcp_disconnect_all',
   // An OS folder dialog (#5363).
   'pick_mirror_folder',
+  // The OS file manager (#6554).
+  'open_data_folder',
 ])
 
 const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
@@ -586,6 +592,8 @@ const PINNING_BLOCKED_READ: ReadonlySet<string> = new Set([
   // Reads the mirror folder on disk (#5363): the answer depends on the files
   // there, which no fixture seed can spell.
   'get_mirror_status',
+  // Reads a snapshot file's modified time (#6554), likewise.
+  'get_last_snapshot_ms',
 ])
 
 /**

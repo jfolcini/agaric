@@ -2164,11 +2164,12 @@ async fn assert_engine_format_refused(version: u32) {
 }
 
 /// Play the responder for the next inbound session on `harness`: read the
-/// initiator's `HeadExchange`, send `answer` if there is one, then end the
-/// session the way the production responder does.
+/// initiator's `HeadExchange` and send the first of `answers`, then send each
+/// later one in reply to the initiator's next message, and end the session the
+/// way the production responder does.
 fn spawn_scripted_responder(
     harness: &ServiceHarness,
-    answer: Option<SyncMessage>,
+    answers: Vec<SyncMessage>,
 ) -> tokio::task::JoinHandle<()> {
     let service = harness.service.clone();
     tokio::spawn(async move {
@@ -2187,9 +2188,14 @@ fn spawn_scripted_responder(
             matches!(opening, SyncMessage::HeadExchange { .. }),
             "the initiator opens with a HeadExchange, got {opening:?}"
         );
-        let spoke_last = answer.is_some();
-        if let Some(answer) = answer {
-            send_sync_message(&mut session.send, &answer)
+        let spoke_last = !answers.is_empty();
+        for (i, answer) in answers.iter().enumerate() {
+            if i > 0 {
+                recv_sync_message(&mut session.recv)
+                    .await
+                    .expect("the initiator's next message arrives");
+            }
+            send_sync_message(&mut session.send, answer)
                 .await
                 .expect("the scripted answer is sent");
         }
@@ -2213,9 +2219,27 @@ async fn dial_scripted_responder(
     answer: Option<SyncMessage>,
     peer_ref: PeerRef,
 ) -> (Vec<SyncEvent>, u32) {
-    let responder = spawn_scripted_responder(harness, answer);
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
+    dial_scripted_responder_from(
+        harness,
+        answer.into_iter().collect(),
+        peer_ref,
+        pool,
+        materializer,
+    )
+    .await
+}
+
+/// [`dial_scripted_responder`], dialling from the device `materializer` holds.
+async fn dial_scripted_responder_from(
+    harness: &ServiceHarness,
+    answers: Vec<SyncMessage>,
+    peer_ref: PeerRef,
+    pool: SqlitePool,
+    materializer: Materializer,
+) -> (Vec<SyncEvent>, u32) {
+    let responder = spawn_scripted_responder(harness, answers);
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let scheduler = SyncScheduler::new();
@@ -2349,6 +2373,85 @@ async fn a_silent_end_after_head_exchange_from_a_synced_peer_is_coded_6523() {
         vec![(None, None)],
         "a peer that never synced with us gets no version hint, got {stranger:?}"
     );
+}
+
+/// #6523 — the peer holds more of this device's own operations than this
+/// device does (#792): the snapshot catch-up cannot merge its snapshot. The
+/// failure is coded, so the frontend says why and what to do instead of
+/// showing the raw text, and it is booked like any failure.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_snapshot_that_forks_this_devices_own_history_is_coded_6523() {
+    use crate::sync_protocol::loro_sync;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+
+    let space = SpaceId::from_trusted("01HZ6523FORKEDSPACEAAAAAAA");
+    // What the peer holds of this device: three blocks it made before it was
+    // restored from an older database.
+    let (peer_pool, _peer_dir) = test_pool().await;
+    let peer_registry = LoroEngineRegistry::new();
+    for id in ["01HZ6523FORKA", "01HZ6523FORKB", "01HZ6523FORKC"] {
+        peer_registry
+            .for_space(&space, "LOCAL_DEV")
+            .expect("for_space")
+            .engine_mut()
+            .apply_create_block(id, "content", "made before the restore", None, 0)
+            .expect("create");
+    }
+    let held_by_peer =
+        loro_sync::prepare_outgoing_for_pool(&peer_pool, &peer_registry, &space, "LOCAL_DEV", None)
+            .await
+            .expect("prepare")
+            .expect("a consistent space exports");
+    let snapshot = || SyncMessage::LoroSync {
+        msg: held_by_peer.clone(),
+        is_last: true,
+    };
+
+    // This device after the restore: one block, minted under the same peer id.
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    materializer
+        .loro_state()
+        .registry
+        .for_space(&space, "LOCAL_DEV")
+        .expect("for_space")
+        .engine_mut()
+        .apply_create_block("01HZ6523FORKD", "content", "made after it", None, 0)
+        .expect("create");
+
+    // The session's stream, then the catch-up it asks for: both carry the fork.
+    let harness = ServiceHarness::new().await;
+    let (events, failures) = dial_scripted_responder_from(
+        &harness,
+        vec![snapshot(), snapshot()],
+        make_peer_ref("RESP_FORK_6523"),
+        pool,
+        materializer,
+    )
+    .await;
+
+    assert_eq!(
+        reported_errors(&events),
+        vec![(
+            Some(crate::sync_events::SyncErrorCode::OwnHistoryFork),
+            None
+        )],
+        "one coded error, got {events:?}"
+    );
+    let texts: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match e {
+            SyncEvent::Error { message, .. } => Some(message.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        vec![super::session_supervisor::OWN_HISTORY_FORK_MESSAGE],
+        "the text, which keys the once-per-streak report, carries no counter"
+    );
+    assert_eq!(failures, 1, "and booked like any failure");
 }
 
 /// #6523 — a dial that times out against a paired peer mDNS is not announcing,
@@ -7035,8 +7138,9 @@ async fn an_edit_costs_one_pull_back_and_a_converged_pair_none_6551() {
 
 /// #6551 — a gap a pull cannot close prompts one pull-back, not one per
 /// session. A holds a block its export gate refuses to send (live in the
-/// engine, deleted in SQL), so B stays behind however often it pulls; B asks
-/// again only once A's advertisement has moved.
+/// engine, deleted in SQL, with a quarantined inbound change that keeps the
+/// export's repair off the space, #6565), so B stays behind however often it
+/// pulls; B asks again only once A's advertisement has moved.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_gap_no_pull_can_close_is_pulled_for_once_6551() {
     const WITHHELD: &str = "01HZ6551WITHHELDXXXXXXXXXX";
@@ -7061,6 +7165,15 @@ async fn a_gap_no_pull_can_close_is_pulled_for_once_6551() {
         .await
         .unwrap();
     };
+    sqlx::query(
+        "INSERT INTO loro_sync_quarantine (inbox_id, space_id, bytes, declared_end_vv, \
+         last_reason, unresolved_boots, first_seen_at_ms, quarantined_at_ms) \
+         VALUES (1, ?, x'00', '[]', 'projection failed', 5, 0, 0)",
+    )
+    .bind(space.as_str())
+    .execute(&a.pool)
+    .await
+    .unwrap();
     withhold_a_block(WITHHELD).await;
 
     assert_eq!(

@@ -300,8 +300,11 @@ else.** A start that fails can save the vault as a new backup and delete the
 oldest one, and the steps below change the folder.
 
 The backups: before each update that changes the database, Agaric copies it to
-`notes.db.pre-migration-<time>` beside it, and keeps the newest three. Each is a
-complete database file; its modified time is when it was taken. To open one:
+`notes.db.pre-migration-<time>` beside it, and keeps the newest three. Once a
+day it also copies it to `notes.db.daily-<date>`, keeping the newest few
+([Daily snapshot](features/import-export.md#daily-snapshot-settings--data)).
+Each of either kind is a complete database file; its modified time is when it
+was taken. To open one:
 
 1. Move `notes.db`, `notes.db-wal` and `notes.db-shm` out of the data folder. A
    `-wal` left behind belongs to the file you moved, not to the backup.

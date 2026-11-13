@@ -107,6 +107,9 @@ async fn clear_leaked_bypass_sentinel(
     Ok(())
 }
 
+/// The vault database's file name inside the app data folder.
+pub const VAULT_DB_FILE: &str = "notes.db";
+
 /// #2919 / #3062 — number of timestamped pre-migration backups to retain.
 ///
 /// Pruning keeps the newest [`MAX_KEPT_BACKUPS`] siblings and deletes older
@@ -227,7 +230,7 @@ async fn backup_db_before_migration(db_path: &Path) {
 /// The source connection is read-only and short-lived: the snapshot is a read
 /// transaction, so the vault is untouched and no connection outlives the
 /// migration that follows.
-async fn snapshot_vault(db_path: &Path, backup: &Path) -> Result<(), sqlx::Error> {
+pub(super) async fn snapshot_vault(db_path: &Path, backup: &Path) -> Result<(), sqlx::Error> {
     use sqlx::sqlite::SqliteConnectOptions;
     use sqlx::{ConnectOptions, Connection};
 

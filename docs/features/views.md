@@ -58,6 +58,7 @@ A dedicated builder for queries too complex for the search box.
 - **Nested boolean tree**: arbitrary AND / OR / NOT groups over filter leaves, composed visually. Template pages and their blocks are left out unless a filter asks for the `template` property.
 - **Controls bar**: full-text term, sort, group-by (tag, page, state, block type, priority, a property key, or a date bucket — due / scheduled / created / last edited, by day, week, or month), summaries (count, sum, average, minimum, maximum).
 - **Results pane**: flat with a global summary bar, or grouped with per-group headers, counts, and summary chips.
+- **Board**: with the results grouped by state or by a select property, *View › Board* lays them out as columns, wider than the list column: one per task state or per option, in the options' order, then the blocks with no value, then (when there are any) the ones whose value is not an option. A column shows its count and the summaries, loads more on its own, and keeps the query's sort; Tab moves between columns, the arrow keys within one, and Enter opens the card's page. Read-only: a card cannot be moved yet. A saved view remembers the layout.
 - **Saved views** keep a query to load, rename or delete later. Each is a page of its space that syncs between devices and stays out of every page list, the `[[` picker, the graph and search; a deleted one waits in the Trash.
 
 ## Trash

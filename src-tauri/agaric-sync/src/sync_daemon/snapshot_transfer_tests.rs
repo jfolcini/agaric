@@ -1227,3 +1227,75 @@ async fn loro_snapshot_catchup_empty_registry_offers_nothing_2503() {
         "empty offer must terminate with SyncComplete so the initiator stops waiting"
     );
 }
+
+/// #6523: the catch-up offer skips a space the #1257 gate refuses, as the
+/// ordinary export does, and names it to the frontend the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn loro_snapshot_catchup_reports_a_space_it_refuses_to_export_6523() {
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_registry = LoroEngineRegistry::new();
+    let space = SpaceId::from_trusted("01HZ6523CATCHUPSPACEAAAAAA");
+    let block_id = "01HZ6523CATCHUPBLOCKAAAAAA";
+    resp_registry
+        .for_space(&space, REMOTE_DEV)
+        .expect("for_space")
+        .engine_mut()
+        .apply_create_block(block_id, "content", "kept by the engine", None, 0)
+        .expect("create");
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+         VALUES (?, 'content', 'kept by the engine', NULL, 1, 1)",
+    )
+    .bind(block_id)
+    .execute(&resp_pool)
+    .await
+    .expect("insert soft-deleted block");
+    // An unprojected inbound change keeps the #6565 repair off the space.
+    sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, x'00', 0)")
+        .bind(space.as_str())
+        .execute(&resp_pool)
+        .await
+        .expect("insert inbox row");
+
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
+    let recording = Arc::new(RecordingEventSink::new());
+    let sink: Arc<dyn SyncEventSink> = recording.clone();
+
+    let (offer_res, first) = tokio::join!(
+        try_offer_loro_snapshot_catchup(
+            &mut server.send,
+            &mut server.recv,
+            &resp_pool,
+            &resp_registry,
+            &sink,
+            REMOTE_DEV,
+            LOCAL_DEV,
+        ),
+        async { recv_sync_message(&mut client.recv).await },
+    );
+
+    assert_eq!(
+        offer_res.expect("a refused space is skipped, not an error"),
+        LoroCatchupSent {
+            spaces_sent: 0,
+            bytes_sent: 0
+        },
+    );
+    assert!(matches!(
+        first.expect("recv"),
+        SyncMessage::SyncComplete { .. }
+    ));
+    let refusals: Vec<Vec<String>> = recording
+        .events()
+        .into_iter()
+        .filter_map(|e| match e {
+            SyncEvent::ExportRefused { space_ids } => Some(space_ids),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(refusals, vec![vec![space.as_str().to_owned()]]);
+}

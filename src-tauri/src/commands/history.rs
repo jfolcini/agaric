@@ -423,8 +423,8 @@ fn reverse_op_timestamp(reverse_payload: &OpPayload) -> i64 {
 /// after an undo/redo/revert. The staleness is not cosmetic: an undo-of-create
 /// that tombstones the row in SQL but leaves the engine node LIVE trips the
 /// #1257 sync-export freshness gate (`prepare_outgoing` sees an engine-live
-/// block SQL has soft-deleted → `Ok(None)`), silently suspending p2p sync for
-/// the WHOLE space until the app restarts (#2655).
+/// block SQL has soft-deleted), which has to repair the engine before the
+/// space syncs, and holds the WHOLE space back when it cannot (#2655, #6565).
 ///
 /// `space_id` MUST be resolved by the caller at the correct moment: BEFORE a
 /// soft-delete (`resolve_block_space` filters tombstones, so a post-delete
@@ -931,8 +931,8 @@ async fn fit_reverse_to_declared_type(
 /// settled effect onto the engine (via `drive_reverse_engine`, mirroring the
 /// MoveBlock arm's #1553 convergence). Without this the engine goes stale after
 /// an undo/redo/revert — and an undo-of-create leaves an engine-live block SQL
-/// has soft-deleted, tripping the #1257 sync-export freshness gate and silently
-/// suspending p2p sync for the whole space until reboot (#2655). The engine
+/// has soft-deleted, tripping the #1257 sync-export freshness gate, which holds
+/// the whole space back when it cannot repair that (#2655, #6565). The engine
 /// drives here:
 ///   * DeleteBlock (undo-of-create / reverse-of-restore) — tombstone the cohort;
 ///   * RestoreBlock (undo-of-delete / redo-of-create) — restore the cohort + the
