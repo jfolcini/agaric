@@ -1,4 +1,4 @@
-# Session 4044 — page mode's save of a block sends the base text
+# Session 4049 — page mode's save of a block sends the base text
 
 `Refs #6533` (the second follow-up the maintainer decided on 2026-11-13).
 
