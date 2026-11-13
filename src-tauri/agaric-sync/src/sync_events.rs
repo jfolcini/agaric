@@ -375,12 +375,13 @@ pub struct PropertyChangedEvent {
 /// does not flow through a page store's own optimistic path — changes content
 /// on one or more pages, so any open view rendering those pages reloads.
 ///
-/// Two producers emit it. The MCP read-write tool surface: its writes land in
+/// Three producers emit it. The MCP read-write tool surface: its writes land in
 /// SQL + the Loro engine but, before #2505, emitted only `mcp:activity`, so an
 /// open page displaying the affected block never learned about the write
 /// (stale until navigate-away-and-back — `sync:complete` never fires for a
-/// same-device write). And `SpacePlacementSink`, once the post-sync cache
-/// rebuild after an inbound sync session has drained (#5251). Any future
+/// same-device write). The Markdown mirror, after reading an edited file into
+/// its page (`mirror::ingest`). And `SpacePlacementSink`, once the post-sync
+/// cache rebuild after an inbound sync session has drained (#5251). Any future
 /// out-of-band local write path (deep-link-driven mutations, automations)
 /// should funnel through this **one** signal rather than minting a new one.
 pub const EVENT_BLOCKS_CHANGED: &str = "blocks:changed";
@@ -392,8 +393,9 @@ pub const EVENT_BLOCKS_CHANGED: &str = "blocks:changed";
 /// of owning *page* ids (page-root block ids) touched by the write. The
 /// frontend routes this through the exact `forEachPageStore` targeted-reload
 /// machinery `useSyncEvents` already uses for `sync:complete` — mounted stores
-/// whose id is in the set reload (undo re-anchor first), and an empty/absent
-/// set falls back to reloading every mounted store. Keeping the payload shape
+/// whose id is in the set reload (undo re-anchor first, when
+/// `local_ops_appended`), and an empty/absent set falls back to reloading
+/// every mounted store. Keeping the payload shape
 /// (`changed_page_ids: string[]`) equal to the `sync:complete` field is what
 /// lets the frontend consumer share one code path with no new vocabulary.
 ///
@@ -403,6 +405,14 @@ pub const EVENT_BLOCKS_CHANGED: &str = "blocks:changed";
 pub struct BlocksChangedEvent {
     #[serde(default)]
     pub changed_page_ids: Vec<String>,
+    /// Whether the write appended local ops (`is_replicated = 0`): an MCP
+    /// write, a Markdown mirror ingest, a post-sync placement or repair
+    /// (#6541). Those can shift the numbering a page's positional undo
+    /// addresses, so the frontend re-anchors the pages' undo. A sync session's
+    /// own changes are a peer's replicated ops, which that numbering leaves
+    /// out, so `false` keeps the pages' undo and redo. Typed by hand in
+    /// `useSyncEvents.ts`, which reads an absent field as `true`.
+    pub local_ops_appended: bool,
 }
 
 // ---------------------------------------------------------------------------

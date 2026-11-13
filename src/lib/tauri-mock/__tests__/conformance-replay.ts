@@ -547,7 +547,13 @@ function replayOps(fixture: Fixture): CommandRecord[] {
     const createdIds = createdBlockIdsInOpOrder()
     const args = expandOpArgs(op.args, createdIds)
     if (op.via == null) {
+      const appended = opLog.length
       dispatch(op.command, args)
+      // The mock has no MCP path: an agent's op is a user op stamped with the
+      // `origin` the backend's agent actor writes.
+      if (op.agent != null) {
+        for (const entry of opLog.slice(appended)) entry.origin = `agent:${op.agent}`
+      }
       continue
     }
     if (op.via !== 'command') {

@@ -1876,6 +1876,8 @@ async fn journal_for_date_emits_blocks_changed_only_when_it_creates_5314() {
 
     let page_id = created["id"].as_str().expect("id present").to_string();
     assert_eq!(emitter.blocks_changed(), vec![vec![page_id]]);
+    // #6541 — the create appended this device's ops.
+    assert_eq!(emitter.local_ops_appended(), vec![true]);
 }
 
 /// The `journal_for_date` tool lives in the read-only
