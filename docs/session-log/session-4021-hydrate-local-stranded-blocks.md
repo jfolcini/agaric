@@ -1,4 +1,4 @@
-# Session 3986 — the one-time engine hydration runs for locally created blocks
+# Session 4021 — the one-time engine hydration runs for locally created blocks
 
 `Refs #6525` (box 3, step 4, as the maintainer decided on 2026-11-12; steps 1 to 3, with the
 Android suspend save, merged in #6624).
@@ -34,7 +34,9 @@ Known limits, for the maintainer:
   automatic compaction keeps 90 days and this population postdates the first hydration (0.19.0),
   so only a manual compaction with a shorter window can reach it.
 
-Ran: the session-save and #5670 repair tests, each falsification (the twin shown red at 2 nodes),
-clippy over the workspace with all targets, the `SQLX_OFFLINE` check, and the workspace nextest.
-`just e2e-related` selects no Playwright spec and the whole WebdriverIO lane (`src/repair.rs` has
-no area), left to CI.
+Ran, again after the rebase onto `main` (the review that was cut off): the session-save, repair and
+hydration tests; three falsifications, each red on the assertion predicted (without
+`is_replicated = 0` the twin test counts 2 nodes; without the parent check the child is seeded;
+under the `v1` marker the stranded child stays out); clippy over the workspace with all targets,
+the `SQLX_OFFLINE` check, the workspace nextest and the doc-tests. `just e2e-related` selects no
+Playwright spec and the whole WebdriverIO lane (`src/repair.rs` has no area), left to CI.
