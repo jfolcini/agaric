@@ -6,10 +6,6 @@ use agaric_core::error::AppError;
 /// Since [`OpPayload`] uses `#[serde(tag = "op_type")]`, serializing it directly
 /// embeds the tag. We want the `op_log.payload` column to store *only* the
 /// operation-specific data — the `op_type` is already in its own column.
-// #2621 (wave S3b-ii): `pub` (was `pub(crate)`) because the app-crate
-// remote-ingest path `crate::dag::insert_remote_op` (in `src/dag.rs`, which
-// stays in the app) serializes payloads through this helper across the crate
-// boundary.
 pub fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, AppError> {
     // Every [`OpPayload`] variant wraps a `Serialize` struct and the match
     // arm is always the same — serialize via `serde_json::Value` so the
@@ -83,7 +79,7 @@ fn extract_str_field_from_payload(payload_json: &str, field: &'static str) -> Op
 /// Parse the payload JSON **once** and extract both indexed-column values
 /// (`block_id` and `attachment_id`) in a single pass.
 ///
-/// `crate::dag::insert_remote_op` needs both denormalised columns for every
+/// `agaric_engine::dag::ingest_remote_record` needs both denormalised columns for every
 /// ingested remote op. Extracting `block_id` and `attachment_id` with two
 /// separate `serde_json::from_str` passes parses the same JSON twice; this
 /// helper parses it once. Remote-op ingest runs per synced op, so halving the
@@ -98,8 +94,8 @@ fn extract_str_field_from_payload(payload_json: &str, field: &'static str) -> Op
 /// answers for a local append, so an alias op, which names its page as `page_id`
 /// (#5387), is indexed under that page, and a definition op under its
 /// `space_id` (#5841): a peer's row then lists as a local one does.
-// #2621 (wave S3b-ii): `pub` (was `pub(crate)`) because the app-crate
-// remote-ingest path `crate::dag::insert_remote_op` calls it across the crate
+// `pub` because the engine's remote-ingest path
+// (`agaric_engine::dag::ingest_remote_record`) calls it across the crate
 // boundary to populate the indexed columns in a single parse.
 pub fn extract_indexed_ids_from_payload(payload_json: &str) -> (Option<String>, Option<String>) {
     match serde_json::from_str::<serde_json::Value>(payload_json) {
@@ -128,7 +124,7 @@ pub fn extract_indexed_ids_from_payload(payload_json: &str) -> (Option<String>, 
 
 /// Extract the `block_id` from a serialized payload JSON string.
 ///
-/// Used by `crate::dag::insert_remote_op` to populate the indexed
+/// Populates the indexed
 /// `op_log.block_id` column (added in migration 0030) when the caller
 /// only has the payload as a JSON string rather than a typed [`OpPayload`].
 ///
@@ -147,7 +143,7 @@ pub(crate) fn extract_block_id_from_payload(payload_json: &str) -> Option<String
 
 /// Extract the `attachment_id` from a serialized payload JSON string.
 ///
-/// Used by `crate::dag::insert_remote_op` to populate the indexed
+/// Populates the indexed
 /// `op_log.attachment_id` column (added in migration 0064, SQL-review
 /// B-4) when the caller only has the payload as a JSON string rather
 /// than a typed [`OpPayload`].

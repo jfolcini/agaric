@@ -2,8 +2,8 @@
 //!
 //! #4699 deleted the snapshot blob and, with it, the ~6 300 lines of codec,
 //! restore and schema-version tests that covered it. What remains is the
-//! purge: its eligibility cutoff, its per-device seq bound, the
-//! `compaction_watermark` row it writes, and the apply-cursor clamp (#3310).
+//! purge: its eligibility cutoff, its per-device seq bound, and the
+//! apply-cursor clamp (#3310).
 
 use super::*;
 use agaric_core::ulid::BlockId;
@@ -15,25 +15,6 @@ use sqlx::SqlitePool;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
-
-/// Read the single-row compaction watermark, if a compaction has run.
-async fn read_watermark(pool: &SqlitePool) -> Option<(String, String, i64)> {
-    sqlx::query!(
-        "SELECT up_to_seqs, up_to_hash, compacted_at_ms FROM compaction_watermark WHERE id = 1"
-    )
-    .fetch_optional(pool)
-    .await
-    .unwrap()
-    .map(|r| (r.up_to_seqs, r.up_to_hash, r.compacted_at_ms))
-}
-
-/// Parse the watermark's persisted frontier.
-async fn read_watermark_frontier(pool: &SqlitePool) -> BTreeMap<String, i64> {
-    let (json, _, _) = read_watermark(pool)
-        .await
-        .expect("a compaction must have written the watermark");
-    serde_json::from_str(&json).expect("up_to_seqs is the JSON map compaction writes")
-}
 
 async fn test_pool() -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -74,9 +55,7 @@ async fn insert_op_at(pool: &SqlitePool, device_id: &str, block_id: &str, ts: i6
     append_local_op_at(pool, device_id, op, ts).await.unwrap();
 }
 
-/// Nothing older than the retention window: the purge is a no-op and leaves
-/// no watermark, so `find_lca` keeps reporting a missing op as `NotFound`
-/// rather than blaming a compaction that never happened.
+/// Nothing older than the retention window: the purge is a no-op.
 #[tokio::test]
 async fn compact_noop_when_no_old_ops() {
     let (pool, _dir) = test_pool().await;
@@ -90,17 +69,10 @@ async fn compact_noop_when_no_old_ops() {
     // Compact with 90-day retention — all ops are recent
     let result = compact_op_log(&pool, DEFAULT_RETENTION_DAYS).await.unwrap();
     assert!(result.is_none(), "should return None when no old ops");
-
-    assert!(
-        read_watermark(&pool).await.is_none(),
-        "a no-op compaction must not claim the log was trimmed"
-    );
 }
 
-/// The purge, and the row that records it. #4699 replaced the snapshot blob
-/// this used to assert on with the `compaction_watermark` frontier.
 #[tokio::test]
-async fn compact_purges_and_records_the_watermark_4699() {
+async fn compact_purges_old_ops() {
     let (pool, _dir) = test_pool().await;
     let device_id = "dev-1";
 
@@ -111,22 +83,6 @@ async fn compact_purges_and_records_the_watermark_4699() {
     // Compact with 90-day retention
     let result = compact_op_log(&pool, DEFAULT_RETENTION_DAYS).await.unwrap();
     assert_eq!(result, Some(1), "the one old op must be reported deleted");
-
-    let (up_to_seqs, up_to_hash, compacted_at_ms) = read_watermark(&pool)
-        .await
-        .expect("a compaction that ran must record its frontier");
-    assert_eq!(
-        up_to_seqs, r#"{"dev-1":1}"#,
-        "the watermark records the per-device frontier the DELETE was bounded by"
-    );
-    assert!(
-        !up_to_hash.is_empty(),
-        "the watermark records the hash of the newest op at that frontier"
-    );
-    assert!(
-        compacted_at_ms > 0,
-        "compacted_at_ms is written from db::now_ms(), got {compacted_at_ms}"
-    );
 
     // Old ops should be purged
     let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
@@ -210,22 +166,10 @@ async fn compact_multi_device_ops() {
         .await
         .unwrap();
     assert_eq!(dev, "device-B", "remaining op should belong to device-B");
-
-    // The watermark records every device's frontier, not just the one that
-    // had eligible ops — the DELETE runs once per device in the map.
-    let frontier = read_watermark_frontier(&pool).await;
-    assert_eq!(
-        frontier,
-        BTreeMap::from([("device-A".to_owned(), 1), ("device-B".to_owned(), 2)]),
-        "the watermark must carry both devices' MAX(seq) — seq is allocated \
-         per device, so device-B's two ops are its seq 1 and 2"
-    );
 }
 
 /// Calling `compact_op_log` twice: the first call compacts, the second is a
-/// no-op because nothing eligible remains — and, crucially, the no-op leaves
-/// the first call's watermark untouched rather than rewriting it with the
-/// post-purge frontier.
+/// no-op because nothing eligible remains.
 #[tokio::test]
 async fn double_compaction() {
     let (pool, _dir) = test_pool().await;
@@ -235,26 +179,14 @@ async fn double_compaction() {
     insert_block(&pool, "BLOCK-OLD", "old").await;
     insert_op_at(&pool, device_id, "BLOCK-OLD", 1_704_067_200_000).await;
 
-    // First compaction — purges and records the frontier.
     let first = compact_op_log(&pool, DEFAULT_RETENTION_DAYS).await.unwrap();
     assert_eq!(first, Some(1), "the first compaction deletes the old op");
-    let after_first = read_watermark(&pool)
-        .await
-        .expect("the first compaction records a watermark");
 
     // Second compaction — no old ops remain, should be no-op
     let second = compact_op_log(&pool, DEFAULT_RETENTION_DAYS).await.unwrap();
     assert!(
         second.is_none(),
         "second compaction should be no-op (no old ops remain)"
-    );
-
-    assert_eq!(
-        read_watermark(&pool).await,
-        Some(after_first),
-        "a second, no-op compaction must not rewrite the watermark — the log \
-         was not trimmed again, and the recorded frontier is the record of what \
-         was"
     );
 }
 
@@ -304,8 +236,7 @@ async fn compact_read_phase_collects_frontier() {
 
     // Use a DEFERRED read transaction, same as compact_op_log phase 1
     let mut read_tx = pool.begin().await.unwrap();
-    let (frontier, hash): (BTreeMap<String, i64>, String) =
-        collect_frontier(&mut read_tx).await.unwrap();
+    let frontier: BTreeMap<String, i64> = collect_frontier(&mut read_tx).await.unwrap();
     read_tx.commit().await.unwrap();
 
     assert!(
@@ -316,7 +247,6 @@ async fn compact_read_phase_collects_frontier() {
         frontier[device_id], 2,
         "frontier should record max seq = 2 for {device_id}"
     );
-    assert!(!hash.is_empty(), "frontier hash should not be empty");
 }
 
 /// Verify stale-read safety: ops written between phase 1 (read) and phase 2
@@ -357,16 +287,6 @@ async fn compact_stale_read_safety() {
     assert_eq!(
         remaining[0].0, "dev-B",
         "surviving op should belong to dev-B"
-    );
-
-    // The recorded frontier covers both devices — dev-B's entry is what
-    // bounded the DELETE that spared its recent op.
-    let frontier = read_watermark_frontier(&pool).await;
-    assert_eq!(
-        frontier,
-        BTreeMap::from([("dev-A".to_owned(), 1), ("dev-B".to_owned(), 1)]),
-        "the recorded frontier must include both devices — seq is per device, \
-         so each device's single op is its seq 1"
     );
 }
 
@@ -431,14 +351,12 @@ async fn compact_stale_read_seq_guard() {
     );
 }
 
-/// `compact_op_log`'s write phase is one `BEGIN IMMEDIATE` transaction: the
-/// watermark INSERT and the `DELETE FROM op_log` must roll back together.
+/// `compact_op_log`'s write phase is one `BEGIN IMMEDIATE` transaction: a
+/// failing `DELETE FROM op_log` rolls the whole purge back.
 ///
 /// Pass-1 source: 08/F36. We exercise that by installing a custom AFTER
 /// DELETE trigger on `op_log` that unconditionally `RAISE(ABORT)`s, then run
-/// `compact_op_log` and assert the call errors, the `op_log` is intact, and
-/// **no watermark row was left behind** — a watermark over an untrimmed log
-/// would make `find_lca` blame compaction for a chain break it did not cause.
+/// `compact_op_log` and assert the call errors and the `op_log` is intact.
 ///
 /// This contract inverted at #4699. While the write phase built a snapshot
 /// blob it was split across two transactions, so a rolled-back purge
@@ -460,10 +378,6 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
         .await
         .unwrap();
     assert_eq!(ops_before, 1, "should start with 1 op");
-    assert!(
-        read_watermark(&pool).await.is_none(),
-        "should start with no watermark"
-    );
 
     // Install an AFTER DELETE trigger on op_log that unconditionally aborts.
     // The H-13 BEFORE-DELETE bypass mechanism (sentinel row in
@@ -487,15 +401,6 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
     assert!(
         result.is_err(),
         "compaction must fail when DELETE FROM op_log aborts; got {result:?}"
-    );
-
-    // The watermark INSERT rode the same transaction as the DELETE, so the
-    // abort must have taken it with it.
-    assert!(
-        read_watermark(&pool).await.is_none(),
-        "a rolled-back purge must leave no watermark — a row claiming the log \
-         was trimmed to a frontier it still holds would make find_lca report \
-         an intact chain as broken by compaction"
     );
 
     // Op log must be intact — the DELETE was aborted by the injected trigger.
@@ -770,51 +675,5 @@ async fn compaction_never_raises_the_apply_cursor_3310() {
         "#3310: the clamp is `WHERE materialized_through_seq > <surviving max>` — \
          it must be a strict no-op when the cursor is already below the frontier, \
          never raising it over the two unmaterialised ops"
-    );
-}
-
-/// #4699: the watermark is a SINGLE row, upserted. Two real compactions must
-/// leave one row carrying the SECOND one's frontier — an append would make
-/// `find_lca`'s `EXISTS` probe scan a table that grows once a day forever, and
-/// a plain INSERT would fail the `CHECK (id = 1)` primary key outright.
-#[tokio::test]
-async fn compaction_watermark_is_one_upserted_row_4699() {
-    let (pool, _dir) = test_pool().await;
-    let device_id = "dev-1";
-
-    insert_block(&pool, "BLOCK-OLD1", "old").await;
-    insert_op_at(&pool, device_id, "BLOCK-OLD1", 1_704_067_200_000).await;
-    compact_op_log(&pool, DEFAULT_RETENTION_DAYS)
-        .await
-        .unwrap()
-        .expect("the first old op makes compaction run");
-    assert_eq!(
-        read_watermark_frontier(&pool).await,
-        BTreeMap::from([("dev-1".to_owned(), 1)]),
-        "the first compaction records the frontier it purged to"
-    );
-
-    // A second aged op, appended after the first purge: seq keeps climbing
-    // from the durable high-water mark, so the new frontier is strictly above
-    // the recorded one.
-    insert_block(&pool, "BLOCK-OLD2", "older still").await;
-    insert_op_at(&pool, device_id, "BLOCK-OLD2", 1_704_153_600_000).await;
-    compact_op_log(&pool, DEFAULT_RETENTION_DAYS)
-        .await
-        .unwrap()
-        .expect("the second old op makes compaction run again");
-
-    let rows: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM compaction_watermark")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        rows, 1,
-        "the watermark is a single upserted row, never a log"
-    );
-    assert_eq!(
-        read_watermark_frontier(&pool).await,
-        BTreeMap::from([("dev-1".to_owned(), 2)]),
-        "the second compaction overwrites the frontier with its own"
     );
 }

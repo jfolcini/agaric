@@ -1,12 +1,11 @@
 //! App-crate home for the op_log tests that couple to app-only modules.
 //!
-//! `op_log` moved into `agaric-store` (#2621, wave S3b-ii), but five of its
+//! `op_log` moved into `agaric-store` (#2621, wave S3b-ii), but four of its
 //! tests exercise machinery that stays in the app crate and therefore cannot
 //! compile down in the store:
 //!
 //!   * three `origin` tests drive the MCP actor scope
 //!     (`agaric_store::task_locals::{ACTOR, Actor, ActorContext}`),
-//!   * one `origin` test drives remote-op ingest (`agaric_engine::dag::insert_remote_op`),
 //!   * one immutability test reads the app crate's `src/dag.rs` from disk.
 //!
 //! They are relocated here verbatim (modulo path repointing): the op_log entry
@@ -194,43 +193,6 @@ async fn origin_does_not_affect_op_hash() {
     .unwrap();
     assert_eq!(origin_a, "user");
     assert_eq!(origin_b, "agent:hash-test-agent");
-}
-
-/// Rows inserted through paths that do NOT go through
-/// `append_local_op_in_tx` (remote ops via `dag::insert_remote_op`,
-/// merge ops via `dag::append_merge_op`, snapshot / compaction writes)
-/// don't include `origin` in their INSERT column list; the column
-/// default from migration 0033 must take over. This regression-test
-/// pins the invariant so a future refactor that adds `origin` to the
-/// INSERT list of one path but not the others can't silently ship.
-#[tokio::test]
-async fn remote_op_insert_defaults_origin_to_user() {
-    use agaric_engine::dag::insert_remote_op;
-    let (pool, _dir) = test_pool().await;
-
-    // Produce a real valid op on device A, then deliver it to device B's
-    // pool as a remote op.
-    let (pool_src, _dir_src) = test_pool().await;
-    let record = append_local_op(&pool_src, "device-A", make_create_payload("BLKREM"))
-        .await
-        .unwrap();
-
-    let inserted = insert_remote_op(&pool, &record).await.unwrap();
-    assert!(inserted, "fresh remote op must insert");
-
-    let origin: String = sqlx::query_scalar!(
-        "SELECT origin FROM op_log WHERE device_id = ? AND seq = ?",
-        record.device_id,
-        record.seq,
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        origin, "user",
-        "remote op inserted via dag::insert_remote_op must pick up the \
-             'user' column default from migration 0033",
-    );
 }
 
 /// SQL-review B-2: `dag.rs` must read the native indexed `block_id`

@@ -1,10 +1,10 @@
 /**
  * HistoryItemCore --- shared visual elements for a history row.
  *
- * Renders the op-type badge, timestamp, device name, content preview, and
- * optional diff-toggle button. Reused by both the top-level
- * `HistoryListItem` (the global history grid row) and `BlockHistoryItem`
- * (the per-block history sheet row).
+ * Renders the op-type badge, timestamp, the writing agent's badge, device
+ * name, content preview, and optional diff-toggle button. Reused by both the
+ * top-level `HistoryListItem` (the global history grid row) and
+ * `BlockHistoryItem` (the per-block history sheet row).
  *
  * Extracted from the once-monolithic `HistoryListItem.tsx` into a sibling
  * file. The orchestrator (`HistoryListItem.tsx`) keeps re-exporting `opIcon`,
@@ -16,6 +16,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   ArrowLeftRight,
   ArrowRight,
+  Bot,
   Circle,
   Paperclip,
   Pencil,
@@ -256,6 +257,19 @@ export function HistoryItemCore({
               <p>{formatTimestamp(entry.created_at, 'full')}</p>
             </TooltipContent>
           </Tooltip>
+          {entry.agent != null && (
+            <Badge
+              tone="outline"
+              className="history-item-agent max-w-full"
+              data-testid="history-agent-badge"
+            >
+              <Bot aria-hidden="true" />
+              <span aria-hidden="true" className="min-w-0 truncate">
+                {entry.agent}
+              </span>
+              <span className="sr-only">{t('history.agentOp', { name: entry.agent })}</span>
+            </Badge>
+          )}
           {/* #2481: a foreign op replicated from another device (audit-only,
               not revertible here). */}
           {entry.is_replicated && (

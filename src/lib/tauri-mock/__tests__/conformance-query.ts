@@ -382,7 +382,11 @@ const BLOCK_TOKEN = { kind: 'id', idKey: 'id', attrKeys: BLOCK_ATTRS } as const
 const TAG_TOKEN = { kind: 'id', idKey: 'tag_id', attrKeys: ['name', 'usage_count'] } as const
 /** A `HistoryEntry` (#3824). Its head is the `op_type`, not an id — see the
  *  `list_page_history` entry below for why that is the whole vocabulary. */
-const HISTORY_TOKEN = { kind: 'id', idKey: 'op_type', attrKeys: ['is_replicated'] } as const
+const HISTORY_TOKEN = {
+  kind: 'id',
+  idKey: 'op_type',
+  attrKeys: ['is_replicated', 'agent'],
+} as const
 /** A `PropertyDefinition` (#3830): the registry `key` plus what the
  *  declaration says. `created_at` is a wall clock and stays off the token.
  *  MUST match `PROPERTY_DEF_ATTRS` in the Rust twin. */
@@ -638,8 +642,9 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   // `op_type` is what remains, and it is what the #763 op-log digest already
   // compares cross-stack; `is_replicated` rides along because it is the one
   // other per-entry column both stacks fill (migration 0099) and the one
-  // `undoDeleteOf` filters on. A fixture using these steps therefore has to
-  // pick ops whose TYPES discriminate — see `query_history.json`.
+  // `undoDeleteOf` filters on, and `agent` because the History row badges it.
+  // A fixture using these steps therefore has to pick ops whose TYPES
+  // discriminate — see `query_history.json`.
   list_page_history: {
     rows: PAGED,
     token: HISTORY_TOKEN,

@@ -27,7 +27,7 @@ pub struct OpRecord {
     /// on the materializer hot path (`dispatch::enqueue_background_tasks`)
     /// do not have to re-parse `payload` for the JSON `block_id` field.
     /// Populated by the local constructors, not by the wire one:
-    ///   * `append_local_op_in_tx` / `append_merge_op` reads it from the
+    ///   * `append_local_op_in_tx` reads it from the
     ///     typed [`OpPayload`](crate::op::OpPayload) (no JSON parse).
     ///   * DB-read paths (`get_op_by_seq`, `get_ops_since`) populate it
     ///     from the indexed `op_log.block_id` column added in

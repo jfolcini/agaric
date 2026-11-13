@@ -177,10 +177,9 @@ describe('useSyncTrigger', () => {
     })
 
     expect(mockListPeerRefs).toHaveBeenCalled()
-    // `startSync` is now invoked with a progress callback as
-    // its second arg so the hook can stream backend state into the
-    // sync store. Assert peerId + that a function was passed.
-    expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function))
+    // A progress callback streams backend state into the sync store; a
+    // scheduled run leaves the peer's backoff alone (#6523).
+    expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function), false)
   })
 
   it('syncAll can be called manually', async () => {
@@ -208,10 +207,9 @@ describe('useSyncTrigger', () => {
       await result.current.syncAll()
     })
 
-    // `startSync` is now invoked with a progress callback as
-    // its second arg so the hook can stream backend state into the
-    // sync store. Assert peerId + that a function was passed.
-    expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function))
+    // A progress callback streams backend state into the sync store; a
+    // scheduled run leaves the peer's backoff alone (#6523).
+    expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function), false)
   })
 
   it('records the progress under the peer it synced', async () => {
@@ -427,6 +425,11 @@ describe('useSyncTrigger', () => {
       expect(toast.success).toHaveBeenCalledTimes(1)
       expect(toast.success).toHaveBeenCalledWith('Sync complete')
       expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    it("asks the backend to dial through the peer's backoff (#6523)", async () => {
+      await pressSync()
+      expect(mockStartSync).toHaveBeenCalledWith('PEER_PRESS_123', expect.any(Function), true)
     })
 
     it('shows the error when the session fails with no report of its own', async () => {
@@ -825,8 +828,7 @@ describe('useSyncTrigger', () => {
 
     // Initial failure: startSync called once for the peer.
     expect(mockStartSync).toHaveBeenCalledTimes(1)
-    // Callable now takes (peerId, onProgress).
-    expect(mockStartSync).toHaveBeenCalledWith('PEER_RETRY_999', expect.any(Function))
+    expect(mockStartSync).toHaveBeenCalledWith('PEER_RETRY_999', expect.any(Function), false)
 
     // Toast.error received the action with onClick.
     const errorCall = vi.mocked(toast.error).mock.calls[0]
@@ -841,7 +843,8 @@ describe('useSyncTrigger', () => {
     })
 
     expect(mockStartSync).toHaveBeenCalledTimes(2)
-    expect(mockStartSync).toHaveBeenLastCalledWith('PEER_RETRY_999', expect.any(Function))
+    // The click is a press: it dials the peer through its backoff (#6523).
+    expect(mockStartSync).toHaveBeenLastCalledWith('PEER_RETRY_999', expect.any(Function), true)
   })
 
   it('shows toast.error when listPeerRefs fails', async () => {
@@ -978,6 +981,34 @@ describe('useSyncTrigger', () => {
     expect(mockStartSync).toHaveBeenCalledTimes(2) // now at ~122s total
   })
 
+  // #6523 — a scheduled call for a peer the backend is backing off from dials
+  // nothing and resolves with state `backoff`: the peer is waiting, not failing.
+  it('treats a scheduled tick answered with backoff as no failure (#6523)', async () => {
+    mockListPeerRefs.mockResolvedValue([makePeerRow({ peer_id: 'PEER_WAITING_1' })])
+    mockStartSync.mockResolvedValue({
+      state: 'backoff',
+      local_device_id: 'L',
+      remote_device_id: 'PEER_WAITING_1',
+      ops_received: 0,
+      ops_sent: 0,
+    })
+
+    renderHook(() => useSyncTrigger())
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100)
+    })
+    expect(mockStartSync).toHaveBeenCalledTimes(1)
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(useSyncStore.getState().state).toBe('idle')
+
+    // Not counted as a failure: the next tick comes at the base 60 s, not 120 s.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_100)
+    })
+    expect(mockStartSync).toHaveBeenCalledTimes(2)
+  })
+
   it('resets resync interval on success after failure (#418)', async () => {
     mockListPeerRefs.mockResolvedValue([
       {
@@ -1099,10 +1130,9 @@ describe('useSyncTrigger', () => {
     })
 
     expect(mockListPeerRefs).toHaveBeenCalled()
-    // `startSync` is now invoked with a progress callback as
-    // its second arg so the hook can stream backend state into the
-    // sync store. Assert peerId + that a function was passed.
-    expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function))
+    // A progress callback streams backend state into the sync store; a
+    // scheduled run leaves the peer's backoff alone (#6523).
+    expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function), false)
   })
 
   // Offline → online transition feedback
