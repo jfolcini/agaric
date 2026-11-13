@@ -1820,3 +1820,244 @@ async fn a_change_in_an_unmirrored_space_is_not_pending_for_reading_back() {
     assert_eq!(fx.status().await.pending, Vec::<String>::new());
     assert!(read_back(&fx, true, false).await.unwrap().read_back);
 }
+
+#[test]
+fn of_the_texts_explaining_a_file_as_well_the_shortest_is_its_base() {
+    let shadow = |text: &str| Shadow {
+        text: text.into(),
+        line_ids: Vec::new(),
+        buffer: None,
+    };
+    let shadows = [shadow("a\nb\nc"), shadow("a\nb\nc\nd")];
+    assert_eq!(closest(&shadows, "a\nb").unwrap().text, "a\nb\nc");
+    let tied = [shadow("a\nb\nc"), shadow("a\nb\nd")];
+    assert_eq!(
+        closest(&tied, "a\nb").unwrap().text,
+        "a\nb\nd",
+        "the newest of equals"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_anchored_block_moved_and_edited_keeps_its_id() {
+    let mut fx = Fx::new().await;
+    let (page, ids) = fx.page("Alpha", &["one", "two"]).await;
+    refer_to(&fx, &ids[1]).await;
+    fx.tick().await;
+    fx.tick().await;
+    assert!(
+        fx.read().contains(&format!("two ^{}", ids[1])),
+        "{}",
+        fx.read()
+    );
+
+    fx.write(format!("TWO ^{}\n\nONE\n", ids[1]));
+    fx.settle_file().await;
+
+    assert_eq!(
+        fx.blocks(&page).await,
+        [
+            (ids[1].clone(), "TWO".to_owned()),
+            (ids[0].clone(), "ONE".to_owned()),
+        ],
+        "the anchor names the block, not the line's place"
+    );
+}
+
+/// The page's texts as a state written before ingests holds them: no buffer.
+fn without_buffers(fx: &mut Fx, page: &str) {
+    for shadow in &mut fx.mirror.pages.get_mut(page).unwrap().shadows {
+        shadow.buffer = None;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_over_a_text_with_no_buffer_reads_against_the_page_while_it_renders_so() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one", "two"]).await;
+    fx.tick().await;
+    without_buffers(&mut fx, &page);
+
+    fx.write(fx.read().replace("two", "TWO"));
+    fx.settle_file().await;
+
+    assert_eq!(fx.contents(&page).await, ["one", "TWO"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_over_a_text_with_no_buffer_is_left_once_the_page_renders_otherwise() {
+    let mut fx = Fx::new().await;
+    let (page, ids) = fx.page("Alpha", &["one", "two"]).await;
+    fx.tick().await;
+    without_buffers(&mut fx, &page);
+
+    fx.edit(&ids[0], "uno").await;
+    fx.write(fx.read().replace("two", "TWO"));
+    fx.settle_file().await;
+
+    assert_eq!(fx.contents(&page).await, ["uno", "two"], "no base, no read");
+    let diverged: Vec<String> = fx
+        .status()
+        .await
+        .diverged
+        .into_iter()
+        .map(|f| f.page_id)
+        .collect();
+    assert_eq!(diverged, [page]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn text_saved_in_the_file_of_a_page_with_no_blocks_is_read_in() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &[]).await;
+    fx.tick().await;
+
+    fx.write("hello\n");
+    fx.settle_file().await;
+
+    assert_eq!(fx.contents(&page).await, ["hello"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_corrected_after_one_was_refused_is_read_in() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    fx.write("   \n");
+    fx.settle_file().await;
+    assert_eq!(
+        fx.status().await.failed.len(),
+        1,
+        "an emptied file is refused"
+    );
+
+    fx.write("uno\n");
+    fx.settle_file().await;
+
+    assert_eq!(fx.contents(&page).await, ["uno"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_read_in_otherwise_than_saved_is_written_back_as_read() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    write_at(&fx, "TestSpace/Gamma.md", "one\r\ntwo\r\n");
+    fx.settle_file().await;
+
+    let pages = pages_titled(&fx, "Gamma").await;
+    assert_eq!(fx.contents(&pages[0]).await, ["one", "two"]);
+    let file = std::fs::read_to_string(fx.root.join("TestSpace/Gamma.md")).unwrap();
+    assert!(!file.contains('\r'), "written back with LF: {file:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_anchoring_no_page_s_block_is_a_page_of_its_own() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    write_at(
+        &fx,
+        "TestSpace/Gamma.md",
+        "elsewhere ^01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+    );
+    fx.settle_file().await;
+
+    assert_eq!(pages_titled(&fx, "Gamma").await.len(), 1);
+    assert_eq!(fx.contents(&alpha).await, ["one"], "no page is renamed");
+    assert!(fx.root.join(ALPHA).exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_refused_while_empty_is_read_once_it_holds_text() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    write_at(&fx, "TestSpace/Gamma.md", "   \n");
+    fx.settle_file().await;
+    assert!(pages_titled(&fx, "Gamma").await.is_empty(), "refused");
+
+    write_at(&fx, "TestSpace/Gamma.md", "hello\n");
+    fx.settle_file().await;
+
+    let pages = pages_titled(&fx, "Gamma").await;
+    assert_eq!(pages.len(), 1);
+    assert_eq!(fx.contents(&pages[0]).await, ["hello"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_edited_as_its_page_is_renamed_is_read_in_then_moved() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+
+    fx.write(fx.read().replace("one", "uno"));
+    fx.edit(&page, "Gamma").await;
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.contents(&page).await, ["uno"], "read in at its old path");
+    assert!(!fx.root.join(ALPHA).exists(), "then moved");
+    let moved = std::fs::read_to_string(fx.root.join("TestSpace/Gamma.md")).unwrap();
+    assert!(moved.contains("uno"), "{moved}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reading_a_renamed_page_s_edited_file_does_not_end_the_pass() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
+    let (_, beta) = fx.page("Beta", &["b"]).await;
+    fx.tick().await;
+
+    fx.write(fx.read().replace("one", "uno"));
+    fx.edit(&page, "Gamma").await;
+    fx.edit(&beta[0], "B").await;
+    fx.tick().await;
+
+    let file = std::fs::read_to_string(fx.root.join("TestSpace/Beta.md")).unwrap();
+    assert!(
+        file.lines().any(|line| line == "B"),
+        "the same pass writes Beta: {file}"
+    );
+}
+
+/// Alpha as `one` and `two`, its file saved with `*` bullets, which read the
+/// same and are kept.
+async fn alpha_with_own_bullets(fx: &mut Fx) -> (String, Vec<String>, String) {
+    let (page, ids) = fx.page("Alpha", &["one", "two"]).await;
+    fx.tick().await;
+    let render = fx.read();
+    fx.write("* one\n* two\n");
+    fx.settle_file().await;
+    assert_eq!(fx.read(), "* one\n* two\n", "the bullets are kept");
+    (page, ids, render)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_saved_back_as_the_render_is_adopted_not_read() {
+    let mut fx = Fx::new().await;
+    let (_, _, render) = alpha_with_own_bullets(&mut fx).await;
+    let events = fx.events().len();
+
+    fx.write(&render);
+    fx.tick().await;
+
+    assert!(fx.status().await.diverged.is_empty(), "nothing to settle");
+    assert_eq!(fx.events().len(), events, "nothing read in");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_written_before_its_state_was_saved_is_adopted_not_read() {
+    let mut fx = Fx::new().await;
+    let (page, ids, _) = alpha_with_own_bullets(&mut fx).await;
+    let stale = fx.mirror.pages[&page].clone();
+    let events = fx.events().len();
+
+    fx.edit(&ids[1], "TWO").await;
+    fx.tick().await;
+    assert!(fx.read().starts_with("* one\n"), "{}", fx.read());
+    fx.mirror.pages.insert(page.clone(), stale);
+    fx.tick().await;
+
+    assert!(fx.status().await.diverged.is_empty(), "nothing to settle");
+    assert_eq!(fx.events().len(), events, "nothing read in");
+}
