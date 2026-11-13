@@ -25,7 +25,8 @@
 #                                              only: the mock lane has no backend
 #   anything else                              nothing
 #
-# Diff sources (the last one given wins):
+# Diff sources (`--range` with `--worktree` reads both; otherwise the last one
+# given wins):
 #   --cached         (default) files in the git index
 #   --range REVSPEC  files differing in a commit range, e.g. `--range main...HEAD`
 #   --worktree       uncommitted work: staged, unstaged and untracked files
@@ -59,25 +60,32 @@ AREA_WORDS=(
 )
 
 SOURCE="cached"
-LABEL="staged"
 RANGE=""
+WORKTREE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --cached)
-      SOURCE="cached"; LABEL="staged"; shift ;;
+      SOURCE="cached"; RANGE=""; WORKTREE=0; shift ;;
     --range)
       RANGE="${2:-}"
       [ -z "$RANGE" ] && { echo "ERROR: --range requires a revspec" >&2; exit 2; }
-      SOURCE="range"; LABEL="range $RANGE"; shift 2 ;;
+      SOURCE="git"; shift 2 ;;
     --worktree)
-      SOURCE="worktree"; LABEL="working tree"; shift ;;
+      SOURCE="git"; WORKTREE=1; shift ;;
     --stdin)
-      SOURCE="stdin"; LABEL="stdin"; shift ;;
+      SOURCE="stdin"; RANGE=""; WORKTREE=0; shift ;;
     *)
       echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+case "$SOURCE" in
+  cached) LABEL="staged" ;;
+  stdin)  LABEL="stdin" ;;
+  git)    LABEL="${RANGE:+range $RANGE}"
+          [ "$WORKTREE" = 1 ] && LABEL="${LABEL:+$LABEL and }working tree" ;;
+esac
 
 if ! REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
   echo "ERROR: e2e-related.sh must run inside a Git worktree." >&2
@@ -86,11 +94,15 @@ fi
 
 list_changed() {
   case "$SOURCE" in
-    cached)   git -C "$REPO_ROOT" diff --cached --name-only --no-renames ;;
-    range)    git -C "$REPO_ROOT" diff "$RANGE" --name-only --no-renames ;;
-    worktree) git -C "$REPO_ROOT" diff HEAD --name-only --no-renames \
-                && git -C "$REPO_ROOT" ls-files --others --exclude-standard ;;
-    stdin)    cat ;;
+    cached) git -C "$REPO_ROOT" diff --cached --name-only --no-renames ;;
+    git)    if [ -n "$RANGE" ]; then
+              git -C "$REPO_ROOT" diff "$RANGE" --name-only --no-renames || return
+            fi
+            if [ "$WORKTREE" = 1 ]; then
+              git -C "$REPO_ROOT" diff HEAD --name-only --no-renames \
+                && git -C "$REPO_ROOT" ls-files --others --exclude-standard
+            fi ;;
+    stdin)  cat ;;
   esac
 }
 
