@@ -19,16 +19,23 @@ Decisions and traps:
   inside the test module.
 - A restore does write `page_id` in its own transaction, to the value the rebuild derives. The
   premise is about inputs, not writes.
-- Delete and restore no longer repair page-id drift that already existed elsewhere in the vault.
-  That waits for the backstop, a purge or inbound sync. Raised with the maintainer.
+- Delete and restore no longer repair page-id drift that already existed elsewhere in the vault,
+  nor in the rows a batch restore or restore-all brings back: single restore and undo re-derive
+  their subtree, the batch restore does not, and restore-all re-derives `page_id` but not
+  `space_id`. That waits for the backstop, a purge or inbound sync. Raised with the maintainer.
+- A seeded test drives creates, moves, space moves, deletes, single / batch / all restores, purges
+  and undos through the commands and checks after every step that the full rebuild changes
+  nothing; a longer search run of it found no drift either.
 - The plan assertion reads the statement's SQL from the `query!` value, so it tests the production
   text and not a copy.
 - Two mutations can mask each other: an unscoped write hides a read phase that misses rows.
   Falsification ran as two builds.
 
-Not done: settled-time budgets and before/after numbers. `benches/AGENTS.md` takes budgets only
-from warm `bench-slo` runs, which a branch dispatch provides; the bench edit that prints the
-settled times was compiled, never run.
+Not done: settled-time budgets and the before/after comparison, which needs `main`'s settled
+time from a `bench-slo` run. The bench cannot show write-lock time: its materializer has no read
+pool, so every rebuild runs its single-pool form, nothing contends for the lock during the flush,
+and no tracing subscriber is installed, so a `slow BEGIN IMMEDIATE` warning could not appear in
+its log.
 
-Ran: the whole workspace under nextest before the last comment-only edits, the #6522 and fan-out
-tests on the final tree, and clippy over the workspace.
+Ran: the whole workspace under nextest, clippy over the workspace with all targets, the
+`SQLX_OFFLINE` check, and both prek stages, on the final tree.
