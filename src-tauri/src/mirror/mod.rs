@@ -479,7 +479,23 @@ pub struct Mirror {
     unmirrored: HashSet<String>,
     /// What the mirror learned of the folder it writes, forgotten for another.
     seen: Seen,
+    #[cfg(test)]
+    races: Races,
 }
+
+/// What a test runs on a page's file around its write, as a save from
+/// another editor landing there.
+#[cfg(test)]
+#[derive(Default)]
+struct Races {
+    /// Once the file is read, before it is written.
+    before_write: Option<Race>,
+    /// Once it is written.
+    after_write: Option<Race>,
+}
+
+#[cfg(test)]
+type Race = Box<dyn FnMut(&Path) + Send + Sync>;
 
 /// What [`Mirror`] learned of the folder it writes: all of it is that
 /// folder's, so another folder starts from [`Seen::default`].
@@ -616,6 +632,8 @@ impl Mirror {
             unrendered: false,
             copy_failed: BTreeMap::new(),
             unmirrored: HashSet::new(),
+            #[cfg(test)]
+            races: Races::default(),
         })
     }
 
@@ -1363,7 +1381,15 @@ impl Mirror {
                     return Ok(Wrote::Paused(why));
                 }
                 create_folders_below(root, path)?;
+                #[cfg(test)]
+                if let Some(race) = &mut self.races.before_write {
+                    race(&target);
+                }
                 store::write_atomic(&target, shadow.text.as_bytes())?;
+                #[cfg(test)]
+                if let Some(race) = &mut self.races.after_write {
+                    race(&target);
+                }
             }
         }
         self.record(page_id, path, shadow)
@@ -1570,6 +1596,10 @@ impl Mirror {
         if shadow.text.as_bytes() != bytes {
             if let Some(why) = pause_reason(root, &self.device_id) {
                 return Ok(Wrote::Paused(why));
+            }
+            #[cfg(test)]
+            if let Some(race) = &mut self.races.before_write {
+                race(&target);
             }
             store::write_atomic(&target, shadow.text.as_bytes())?;
         }
