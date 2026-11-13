@@ -1046,10 +1046,9 @@ mod convergence_tests {
     //! * When a device splices a STALE full `to_text` against a base that has
     //!   ALREADY merged the other's edit, the diff is computed against the
     //!   post-merge text, so the differing "middle" swallows — and thereby
-    //!   REVERTS — the other's edit. That is the block-granularity
-    //!   last-writer-wins window this module pins (test 2), and the reason
-    //!   frequent commits matter: the smaller the stale window, the smaller the
-    //!   region a diff-splice can clobber.
+    //!   REVERTS — the other's edit. `edit_block` keeps disjoint changes out of
+    //!   this by rebasing the stale text first (`crate::edit_rebase`); changes
+    //!   that share text still resolve last-writer-wins (test 2).
     use super::*;
 
     const SEED_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -1130,22 +1129,22 @@ mod convergence_tests {
         );
     }
 
-    /// The block-granularity last-writer-wins window (#2600): a STALE full-text
-    /// commit reverts a concurrently-arrived remote edit.
+    /// A STALE full-text commit whose change overlaps a remote edit already
+    /// merged reverts that edit.
     ///
-    /// The ONLY difference from the lossless case above is ORDERING: here peer B
-    /// merges A's edit FIRST, then applies a full `to_text` it computed from the
-    /// PRE-merge base. Because [`LoroEngine::apply_edit_via_diff_splice`] diffs
-    /// that stale `to_text` against B's CURRENT (post-A) engine text, the
-    /// differing middle spans — and deletes — A's edit. After syncing back, both
-    /// peers converge on B's text with A's edit CLOBBERED. This is why frequent
-    /// commits matter: a device that commits before a remote edit merges never
-    /// opens this window (that is the lossless test above).
+    /// Peer B merges A's edit FIRST, then applies a full `to_text` it computed
+    /// from the PRE-merge base. `edit_block` rebases such a commit onto the
+    /// current text when the two changes are apart
+    /// ([`crate::edit_rebase::rebase_edit`]); these two share text, so the
+    /// stale `to_text` is applied as sent, and
+    /// [`LoroEngine::apply_edit_via_diff_splice`] diffs it against B's CURRENT
+    /// (post-A) engine text: the differing middle spans, and deletes, A's edit.
+    /// After syncing back, both peers converge on B's text.
     #[test]
-    fn stale_full_text_commit_clobbers_concurrent_edit() {
+    fn overlapping_stale_full_text_commit_clobbers_concurrent_edit() {
         let (mut a, mut b) = two_peers_on_shared_base();
 
-        // Peer A edits the START region and syncs it INTO B first.
+        // Peer A rewrites the first word and syncs it INTO B first.
         a.apply_edit_via_diff_splice(SEED_ID, "HELLO world")
             .expect("A edit start");
         let a_update = a
@@ -1159,28 +1158,31 @@ mod convergence_tests {
         );
 
         // Peer B's user had loaded the block at the PRE-merge base "Hello world"
-        // and typed "Hello WORLD" — a full `to_text` that does NOT include A's
-        // "HELLO". Applying it now diff-splices against B's current "HELLO
-        // world", so the replaced middle swallows A's "ELLO".
-        b.apply_edit_via_diff_splice(SEED_ID, "Hello WORLD")
+        // and changed two letters of the word A rewrote.
+        let stale = "Help world";
+        assert_eq!(
+            crate::edit_rebase::rebase_edit("Hello world", stale, &content(&b)),
+            None,
+            "changes inside one word are not rebased"
+        );
+        b.apply_edit_via_diff_splice(SEED_ID, stale)
             .expect("B stale full-text commit");
         assert_eq!(
             content(&b),
-            "Hello WORLD",
-            "B's stale commit reverts A's edit locally (the LWW window)"
+            "Help world",
+            "B's stale commit reverts A's edit locally"
         );
 
-        // Sync back: both converge on B's text — A's edit is lost, NOT "HELLO
-        // WORLD". This pins the block-granularity last-writer-wins behavior.
+        // Sync back: both converge on B's text, A's edit lost.
         merge(&mut a, &mut b);
         assert_eq!(
             content(&a),
-            "Hello WORLD",
+            "Help world",
             "A's own edit is clobbered by B's stale full-text commit after merge"
         );
         assert_eq!(
             content(&b),
-            "Hello WORLD",
+            "Help world",
             "both peers converge on the stale-commit winner"
         );
     }

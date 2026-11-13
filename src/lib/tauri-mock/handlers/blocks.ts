@@ -18,6 +18,7 @@ import { nameKey } from '@/lib/name-tokens'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import type { TodoState } from '@/lib/task-states'
 import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
+import { rebasedOnto } from '@/lib/tauri-mock/edit-rebase'
 import {
   type TypedHandlers,
   appErrorRejection,
@@ -1453,19 +1454,24 @@ export const blocksHandlers = {
     if (!b || b['deleted_at'] != null) {
       throw notFoundRejection(`block '${blockId}' (not found or deleted)`)
     }
-    if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, a['toText'] as string)
-    if (b['block_type'] === 'tag') {
-      rejectSpacedTagName(a['toText'] as string)
-      rejectDuplicateTagName(blockId, a['toText'] as string)
-    }
-    rejectCrossSpaceTokens(definitionSpaceOf(blockId), a['toText'] as string, blockId)
     const oldContent = b['content'] as string | null
+    const toText = rebasedOnto(
+      oldContent ?? '',
+      a['baseText'] as string | null | undefined,
+      a['toText'] as string,
+    )
+    if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, toText)
+    if (b['block_type'] === 'tag') {
+      rejectSpacedTagName(toText)
+      rejectDuplicateTagName(blockId, toText)
+    }
+    rejectCrossSpaceTokens(definitionSpaceOf(blockId), toText, blockId)
     const linked = linkedTargets(b)
-    b['content'] = a['toText'] as string
+    b['content'] = toText
     indexLinks(b, linked)
     const op = pushOp('edit_block', {
       block_id: a['blockId'],
-      to_text: a['toText'],
+      to_text: toText,
       from_text: oldContent,
     })
     // #2468 — `WithOps<BlockRow>` (spread copy — see create_block).

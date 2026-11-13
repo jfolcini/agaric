@@ -111,7 +111,16 @@ export interface UnmountFlushDeps {
   loaded: string
   /** The unmounted content; callers check `unmount()` did not return null. */
   changed: string
-  edit: (blockId: string, content: string) => Promise<boolean> | void
+  /**
+   * The editor's `storedMarkdown`, read before `unmount()` resets it: the
+   * plain edit is rebased from it when the block holds another text by then.
+   */
+  base?: string | undefined
+  edit: (
+    blockId: string,
+    content: string,
+    options?: { baseText?: string },
+  ) => Promise<boolean> | void
   splitBlock: (blockId: string, content: string) => Promise<boolean> | void
   rootParentId: string | null
   /** Needed only for the checkbox branch's optimistic write. */
@@ -129,6 +138,7 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
     blockId,
     loaded,
     changed,
+    base,
     edit,
     splitBlock,
     invokeSync = (fn) => fn(),
@@ -162,7 +172,9 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
     return { kind: 'edit', outcome: dedupe.outcome }
   }
   bumpFlushSeq(blockId)
-  const outcome = invokeSync(() => edit(blockId, changed))
+  const outcome = invokeSync(() =>
+    base === undefined ? edit(blockId, changed) : edit(blockId, changed, { baseText: base }),
+  )
   return { kind: 'edit', outcome }
 }
 

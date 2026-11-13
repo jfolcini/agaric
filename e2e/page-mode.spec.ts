@@ -240,7 +240,7 @@ test.describe('page mode (#5691) @editor @pages', () => {
       .poll(async () => (await backend(page, seeded.pageId))[10]?.text)
       .toBe('block 10 more')
     expect(await getInvokeCalls(page, 'edit_block')).toEqual([
-      { blockId: seeded.ids[10], toText: 'block 10 more' },
+      { blockId: seeded.ids[10], toText: 'block 10 more', baseText: null },
     ])
   })
 

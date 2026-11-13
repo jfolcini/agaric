@@ -277,7 +277,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       spaceId: string | null,
     ) => {
       try {
-        const resp = unwrap(await commands.editBlock(targetBlockId, previousContent))
+        const resp = unwrap(await commands.editBlock(targetBlockId, previousContent, null))
         recordGraphStructureChange()
         applyRestoredContentToStore(targetBlockId, previousContent, resp.op_refs)
         if (isPage) renamePage(targetBlockId, previousContent, spaceId)
@@ -337,7 +337,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           )
         }
 
-        const resp = unwrap(await commands.editBlock(blockId, toText))
+        const resp = unwrap(await commands.editBlock(blockId, toText, null))
         recordGraphStructureChange()
         applyRestoredContentToStore(blockId, toText, resp.op_refs)
         // #4056 — a restored PAGE block's `content` IS its title. `editBlock`

@@ -318,6 +318,7 @@ describe('PageHeader title editing', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'PAGE_1',
         toText: 'New Title',
+        baseText: null,
       })
     })
   })
@@ -346,6 +347,7 @@ describe('PageHeader title editing', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'PAGE_1',
         toText: 'Notes\u{1F680}',
+        baseText: null,
       })
     })
   })
@@ -382,6 +384,7 @@ describe('PageHeader title editing', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'PAGE_1',
         toText: 'Entered Title',
+        baseText: null,
       })
     })
   })

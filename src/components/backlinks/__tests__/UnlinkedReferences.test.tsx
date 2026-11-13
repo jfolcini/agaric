@@ -633,7 +633,7 @@ describe('UnlinkedReferences', () => {
     const linkItBtn = screen.getByRole('button', { name: /link it/i })
     await user.click(linkItBtn)
 
-    expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'I mention [[PAGE1]] here')
+    expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'I mention [[PAGE1]] here', null)
   })
 
   // "Link it" calls the command directly, not through the page-block store, so
@@ -752,7 +752,7 @@ describe('UnlinkedReferences', () => {
     await user.click(linkItBtn)
 
     // Should replace the case-insensitive match
-    expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'I mention [[PAGE1]] in lowercase')
+    expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'I mention [[PAGE1]] in lowercase', null)
   })
 
   // #5160 D9 — a link's label is FTS text, so a block whose label holds the
@@ -810,6 +810,7 @@ describe('UnlinkedReferences', () => {
     expect(mockedEditBlock).toHaveBeenCalledWith(
       'B1',
       '[[01ARZ3NDEKTSV4RRFFQ69G5FAV|My Page notes]] and [[PAGE1]]',
+      null,
     )
   })
 
@@ -837,6 +838,7 @@ describe('UnlinkedReferences', () => {
     expect(mockedEditBlock).toHaveBeenCalledWith(
       'B1',
       '| [[01ARZ3NDEKTSV4RRFFQ69G5FAV\\|My Page notes]] | [[PAGE1]] |',
+      null,
     )
   })
 
@@ -1215,7 +1217,7 @@ describe('UnlinkedReferences', () => {
 
     await user.click(screen.getByRole('button', { name: /link it/i }))
 
-    expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'I love [[PAGE1]] coding')
+    expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'I love [[PAGE1]] coding', null)
   })
 
   it('"Link it" replaces only first occurrence of page title', async () => {
@@ -1253,7 +1255,7 @@ describe('UnlinkedReferences', () => {
     await user.click(screen.getByRole('button', { name: /link it/i }))
 
     // Only first occurrence replaced
-    expect(mockedEditBlock).toHaveBeenCalledWith('B1', '[[PAGE1]] mentions My Page twice')
+    expect(mockedEditBlock).toHaveBeenCalledWith('B1', '[[PAGE1]] mentions My Page twice', null)
   })
 
   // ---------------------------------------------------------------------------
@@ -1734,7 +1736,11 @@ describe('UnlinkedReferences', () => {
     await user.click(linkBtn)
 
     await waitFor(() => {
-      expect(mockedEditBlock).toHaveBeenCalledWith('B_ALIAS', 'See [[PAGE_ALPHA]] for more info')
+      expect(mockedEditBlock).toHaveBeenCalledWith(
+        'B_ALIAS',
+        'See [[PAGE_ALPHA]] for more info',
+        null,
+      )
     })
   })
 
@@ -1772,6 +1778,7 @@ describe('UnlinkedReferences', () => {
       expect(mockedEditBlock).toHaveBeenCalledWith(
         'B_BOTH',
         'See [[PAGE_ALPHA]] aka ProjAlpha for the rationale',
+        null,
       )
     })
   })
@@ -1846,7 +1853,7 @@ describe('UnlinkedReferences', () => {
     await user.click(linkBtn)
 
     await waitFor(() => {
-      expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'See [[PAGE_BETA]]')
+      expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'See [[PAGE_BETA]]', null)
     })
     expect(mockedGetPageAliases).toHaveBeenCalledTimes(1)
     expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_BETA')
@@ -1944,7 +1951,7 @@ describe('UnlinkedReferences', () => {
 
     await user.click(screen.getByRole('button', { name: /link it/i }))
 
-    expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'A standalone [[PAGE1]] here')
+    expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'A standalone [[PAGE1]] here', null)
   })
 
   it.each([
@@ -1970,7 +1977,7 @@ describe('UnlinkedReferences', () => {
 
     await user.click(screen.getByRole('button', { name: /link it/i }))
 
-    expect(mockedEditBlock).toHaveBeenCalledWith('B1', expected)
+    expect(mockedEditBlock).toHaveBeenCalledWith('B1', expected, null)
   })
 
   it('"Link it" falls through to an alias when the title only matches as a substring', async () => {
@@ -2000,7 +2007,11 @@ describe('UnlinkedReferences', () => {
 
     await user.click(screen.getByRole('button', { name: /link it/i }))
 
-    expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'Notebook app, aka [[PAGE1]], is handy')
+    expect(mockedEditBlock).toHaveBeenCalledWith(
+      'B1',
+      'Notebook app, aka [[PAGE1]], is handy',
+      null,
+    )
   })
 
   it('"Link it" does not splice mid-grapheme into an NFD-decomposed accented cluster', async () => {
@@ -2090,7 +2101,7 @@ describe('UnlinkedReferences — title and alias writes (#5249)', () => {
 
     await user.click(await screen.findByRole('button', { name: /Link it: A note about Bar/i }))
 
-    expect(mockedEditBlock).toHaveBeenCalledWith('B_BAR', 'A note about [[PAGE_FOO]]')
+    expect(mockedEditBlock).toHaveBeenCalledWith('B_BAR', 'A note about [[PAGE_FOO]]', null)
     expect(screen.queryByText('A note about Foo')).not.toBeInTheDocument()
   })
 
@@ -2111,7 +2122,7 @@ describe('UnlinkedReferences — title and alias writes (#5249)', () => {
     await user.click(await screen.findByRole('button', { name: /Link it: A note about Baz/i }))
 
     await waitFor(() => {
-      expect(mockedEditBlock).toHaveBeenCalledWith('B_BAZ', 'A note about [[PAGE_FOO]]')
+      expect(mockedEditBlock).toHaveBeenCalledWith('B_BAZ', 'A note about [[PAGE_FOO]]', null)
     })
   })
 })
