@@ -36,3 +36,5 @@ Known limits, for the maintainer:
 
 Ran: the session-save and #5670 repair tests, each falsification (the twin shown red at 2 nodes),
 clippy over the workspace with all targets, the `SQLX_OFFLINE` check, and the workspace nextest.
+`just e2e-related` selects no Playwright spec and the whole WebdriverIO lane (`src/repair.rs` has
+no area), left to CI.
