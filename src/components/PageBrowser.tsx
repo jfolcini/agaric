@@ -644,6 +644,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           currentSpaceId={currentSpaceId}
           onSelectAll={selectAllPages}
           onClearSelection={clearMultiSelection}
+          listRef={listRef}
           onMutated={reload}
         />
       )}
