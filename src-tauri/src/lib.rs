@@ -227,6 +227,7 @@ macro_rules! agaric_commands {
             // `sync:internet_facing_bind` listener, so this query is how the
             // banner gets on screen at all, not a fallback.
             $crate::commands::sync_cmds::get_bind_exposure_status,
+            $crate::commands::sync_cmds::get_local_sync_address,
             // #4035 — the OS network-block status as it stands NOW. Not a race
             // fix like the two above: `sync:network_blocked` fires only on a
             // transition, so a pairing dialog reopened during one continuous

@@ -113,6 +113,11 @@ export const sync: Record<string, string> = {
   'pairing.passphraseCopied': 'Passphrase copied',
   'pairing.passphraseCopyFailed': 'Failed to copy passphrase',
   'device.localDeviceIdLabel': 'Local device ID',
+  'device.localAddressLabel': "This device's address",
+  'device.localAddressDescription':
+    "Enter it as the other device's manual address when the two do not find each other.",
+  'device.localAddressNoNetwork':
+    'No local network. Other devices cannot reach this one until it joins a network.',
   'device.deviceIdCopied': 'Device ID copied',
   'device.copyFailed': 'Failed to copy to clipboard',
   'device.copyDeviceIdLabel': 'Copy device ID to clipboard',
