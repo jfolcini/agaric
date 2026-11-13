@@ -409,6 +409,8 @@ function resolveOpRefLabel(label: string): { device_id: string; seq: number } {
  * are resolved (`S1` → its 26-char seed id, `C1` → the first op-created block).
  * `value_ref` inside a `set_property` value bundle is resolved too, and so are
  * the link-token labels inside `content` and `toText` ({@link expandContentLabels}).
+ * Rust twin: `expand_op_args` in `conformance_ipc.rs`, which sends the same
+ * wire args to the real commands.
  */
 export function expandOpArgs(
   args: Record<string, unknown>,
@@ -438,7 +440,7 @@ export function expandOpArgs(
   if (args['spaceId'] === '$SPACE') out['spaceId'] = CONFORMANCE_SPACE_ID
   // #5236 — `create_block` takes its space as the wire's `scope` object; the
   // `space_id` inside is a label like `spaceId`, or `$SPACE` for the harness
-  // space. Mirror of the Rust runner's `scope()`.
+  // space.
   const scope = out['scope']
   if (scope != null && typeof scope === 'object') {
     const spaceId = (scope as Record<string, unknown>)['space_id']
@@ -450,8 +452,7 @@ export function expandOpArgs(
     }
   }
   // #5364 — `add_meeting` takes one `input` object: its space and its two
-  // block ids are labels, as the scalar keys are. Mirror of the Rust
-  // runner's `add_meeting` arm.
+  // block ids are labels, as the scalar keys are.
   const input = out['input']
   if (input != null && typeof input === 'object' && !Array.isArray(input)) {
     const copy = { ...(input as Record<string, unknown>) }
@@ -462,7 +463,7 @@ export function expandOpArgs(
     out['input'] = copy
   }
   // #6531 — `split_block` and `merge_blocks` take one `request` object, whose
-  // block ids are labels. Mirror of the Rust runner's `request()`.
+  // block ids are labels.
   const request = out['request']
   if (request != null && typeof request === 'object' && !Array.isArray(request)) {
     const copy = { ...(request as Record<string, unknown>) }
@@ -475,10 +476,9 @@ export function expandOpArgs(
     out['request'] = copy
   }
   // #5057 — a batch command takes the SAME labels as a list, so each entry
-  // expands exactly as the scalar keys above do. Mirror of the Rust runner's
-  // `block_ids()`; without it the mock is handed raw labels, matches no block,
-  // and every batch op silently degenerates into a no-op that still "passes"
-  // its own guards.
+  // expands exactly as the scalar keys above do. Without it the mock is
+  // handed raw labels, matches no block, and every batch op silently
+  // degenerates into a no-op that still "passes" its own guards.
   // #5057 — `create_blocks_batch` carries its labels inside a list of SPECS
   // rather than a list of ids, so `parentId` there expands exactly as the
   // scalar key of the same name does.

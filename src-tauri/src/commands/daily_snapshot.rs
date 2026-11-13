@@ -36,7 +36,9 @@ pub fn open_data_folder_inner(app_data_dir: &Path) -> Result<(), AppError> {
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip_all, err)]
-pub fn get_last_snapshot_ms(app: tauri::AppHandle) -> Result<Option<i64>, AppError> {
+pub fn get_last_snapshot_ms<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<i64>, AppError> {
     let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     daily_snapshot::last_daily_snapshot_ms(&app_data_dir.join(VAULT_DB_FILE))
         .map_err(sanitize_internal_error)
@@ -47,7 +49,7 @@ pub fn get_last_snapshot_ms(app: tauri::AppHandle) -> Result<Option<i64>, AppErr
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip_all, err)]
-pub fn open_data_folder(app: tauri::AppHandle) -> Result<(), AppError> {
+pub fn open_data_folder<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), AppError> {
     let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     open_data_folder_inner(&app_data_dir).map_err(sanitize_internal_error)
 }
