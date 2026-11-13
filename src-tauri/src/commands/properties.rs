@@ -208,7 +208,7 @@ pub(crate) async fn set_property_inner_in_tx(
     // validating there would make a task carrying an already-stored bad rule
     // un-completable — re-creating the #3281 wedge for existing rows. It is
     // also NOT in `op::validate_set_property`, which runs on the remote-op
-    // ingest path (`dag::insert_remote_op`): a peer's legacy rule must still
+    // ingest path (`dag::ingest_remote_record`): a peer's legacy rule must still
     // land, or the two devices stop converging. See the back-compat note in
     // `repeat_rule_validation_is_entry_point_only_3647`.
     //

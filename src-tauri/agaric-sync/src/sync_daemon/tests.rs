@@ -6953,9 +6953,20 @@ async fn run_one_real_loopback_session_2129(
 /// [`run_one_real_loopback_session_2129`], with the initiator's events going
 /// to `init_sink`.
 async fn run_real_loopback_session_reporting_to(
+    init: (&SqlitePool, &Materializer, &str),
+    resp: (&SqlitePool, &Materializer, &str),
+    init_sink: Arc<dyn SyncEventSink>,
+) -> crate::sync_protocol::SyncState {
+    run_real_loopback_session_with(init, resp, init_sink, Arc::new(SyncScheduler::new())).await
+}
+
+/// [`run_real_loopback_session_reporting_to`], with the responder asking
+/// `resp_scheduler` for its sync rounds.
+async fn run_real_loopback_session_with(
     (init_pool, init_mat, init_device): (&SqlitePool, &Materializer, &str),
     (resp_pool, resp_mat, resp_device): (&SqlitePool, &Materializer, &str),
     init_sink: Arc<dyn SyncEventSink>,
+    resp_scheduler: Arc<SyncScheduler>,
 ) -> crate::sync_protocol::SyncState {
     use crate::sync_protocol::SyncOrchestrator;
 
@@ -6971,7 +6982,7 @@ async fn run_real_loopback_session_reporting_to(
         resp_pool.clone(),
         resp_device,
         resp_mat.clone(),
-        Arc::new(SyncScheduler::new()),
+        resp_scheduler,
         Arc::new(RecordingEventSink::new()),
         Arc::new(AtomicBool::new(false)),
     );
@@ -7015,6 +7026,284 @@ async fn run_real_loopback_session_reporting_to(
     resp_result.expect("responder handle_incoming_sync must not error");
 
     init_orch.session().state.clone()
+}
+
+/// One real session in which `puller` dials `server`. Returns how many sync
+/// rounds serving it made `server` ask for: its pull-backs (#6551).
+async fn pull_counting_pull_backs_6551(puller: &Device2141, server: &Device2141) -> u64 {
+    let server_scheduler = Arc::new(SyncScheduler::new());
+    let state = run_real_loopback_session_with(
+        (&puller.pool, &puller.mat, &puller.id),
+        (&server.pool, &server.mat, &server.id),
+        Arc::new(RecordingEventSink::new()),
+        Arc::clone(&server_scheduler),
+    )
+    .await;
+    assert_eq!(state, crate::sync_protocol::SyncState::Complete);
+    puller.mat.flush_background().await.unwrap();
+    server_scheduler.change_count()
+}
+
+async fn holds_block_6551(device: &Device2141, block_id: &str) -> bool {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM blocks WHERE id = ?)")
+        .bind(block_id)
+        .fetch_one(&device.pool)
+        .await
+        .unwrap()
+}
+
+const SPACE_6551: &str = "01HZ6551SPACEXXXXXXXXXXXXX";
+
+/// Two paired devices, each holding the other's one block.
+async fn converged_pair_6551() -> (Device2141, Device2141) {
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_6551);
+    let mut devices = make_n_devices_2141(&["DEV6551A", "DEV6551B"]).await;
+    for (n, dev) in devices.iter().enumerate() {
+        let block = format!("01HZ6551SEED{n:0>14}");
+        make_local_edit_602(
+            &dev.pool,
+            &dev.mat,
+            &dev.state,
+            &dev.id,
+            &space,
+            &block,
+            "seed",
+            1_736_942_400_000,
+        )
+        .await;
+    }
+    let b = devices.pop().unwrap();
+    let a = devices.pop().unwrap();
+    pull_counting_pull_backs_6551(&a, &b).await;
+    pull_counting_pull_backs_6551(&b, &a).await;
+    (a, b)
+}
+
+/// #6551 — a session is a pull, so an edit on A reaches B in two sessions: A
+/// dials and B learns A is ahead, then B pulls back and A learns nothing new.
+/// Around it, a converged pair's sessions ask for no round at all, so the
+/// periodic pulls of an idle pair stay the only sessions there are.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_edit_costs_one_pull_back_and_a_converged_pair_none_6551() {
+    const EDIT: &str = "01HZ6551EDITXXXXXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_6551);
+    let (a, b) = converged_pair_6551().await;
+
+    let idle_pull_backs = async || {
+        let mut asked = 0;
+        for _resync in 0..3 {
+            asked += pull_counting_pull_backs_6551(&a, &b).await;
+            asked += pull_counting_pull_backs_6551(&b, &a).await;
+        }
+        asked
+    };
+    assert_eq!(idle_pull_backs().await, 0, "converged before the edit");
+
+    make_local_edit_602(
+        &a.pool,
+        &a.mat,
+        &a.state,
+        &a.id,
+        &space,
+        EDIT,
+        "typed on A",
+        1_736_942_500_000,
+    )
+    .await;
+
+    assert_eq!(
+        pull_counting_pull_backs_6551(&a, &b).await,
+        1,
+        "B served a device that holds an edit it lacks, so it pulls back"
+    );
+    assert!(
+        !holds_block_6551(&b, EDIT).await,
+        "serving brought nothing in"
+    );
+    assert_eq!(
+        pull_counting_pull_backs_6551(&b, &a).await,
+        0,
+        "A served the device that just pulled everything it has"
+    );
+    assert!(
+        holds_block_6551(&b, EDIT).await,
+        "the pull-back brought the edit"
+    );
+
+    assert_eq!(idle_pull_backs().await, 0, "converged after the edit");
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
+}
+
+/// #6551 — a gap a pull cannot close prompts one pull-back, not one per
+/// session. A holds a block its export gate refuses to send (live in the
+/// engine, deleted in SQL), so B stays behind however often it pulls; B asks
+/// again only once A's advertisement has moved.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_gap_no_pull_can_close_is_pulled_for_once_6551() {
+    const WITHHELD: &str = "01HZ6551WITHHELDXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_6551);
+    let (a, b) = converged_pair_6551().await;
+
+    let withhold_a_block = async |block: &str| {
+        a.state
+            .registry
+            .for_space(&space, &a.id)
+            .unwrap()
+            .engine_mut()
+            .apply_create_block(block, "content", "withheld", None, 9)
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'content', 'withheld', NULL, 9, ?)",
+        )
+        .bind(block)
+        .bind(agaric_store::db::now_ms())
+        .execute(&a.pool)
+        .await
+        .unwrap();
+    };
+    withhold_a_block(WITHHELD).await;
+
+    assert_eq!(
+        pull_counting_pull_backs_6551(&a, &b).await,
+        1,
+        "first shown"
+    );
+    assert_eq!(pull_counting_pull_backs_6551(&b, &a).await, 0);
+    assert!(
+        !holds_block_6551(&b, WITHHELD).await,
+        "precondition: the pull-back could not close the gap"
+    );
+    for _resync in 0..3 {
+        assert_eq!(
+            pull_counting_pull_backs_6551(&a, &b).await,
+            0,
+            "the same advertisement, already pulled for"
+        );
+        assert_eq!(pull_counting_pull_backs_6551(&b, &a).await, 0);
+    }
+
+    withhold_a_block("01HZ6551WITHHELD2XXXXXXXXX").await;
+    assert_eq!(
+        pull_counting_pull_backs_6551(&a, &b).await,
+        1,
+        "A's advertisement moved"
+    );
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
+}
+
+/// A running daemon for `device` that syncs only when its scheduler is asked:
+/// backgrounded, so the periodic round never runs.
+async fn start_daemon_6551(
+    device: &Device2141,
+    secret: &SecretKey,
+    scheduler: &Arc<SyncScheduler>,
+) -> SyncDaemon {
+    let lifecycle = crate::foreground::LifecycleHooks::new();
+    lifecycle.mark_backgrounded();
+    SyncDaemon::start_with_lifecycle(SyncDaemonContext {
+        pool: device.pool.clone(),
+        device_id: device.id.clone(),
+        materializer: std::sync::Arc::new(device.mat.clone()),
+        scheduler: Arc::clone(scheduler),
+        endpoint_secret: secret.clone(),
+        event_sink: Arc::new(RecordingEventSink::new()),
+        cancel: Arc::new(AtomicBool::new(false)),
+        lifecycle,
+        internet_relay: false,
+    })
+    .await
+    .expect("the daemon starts")
+}
+
+/// Give `device` what it needs to dial `peer`'s running daemon with no mDNS
+/// announcement: the bound key and a cached address.
+async fn cache_route_to_6551(
+    device: &Device2141,
+    peer: &Device2141,
+    peer_secret: &SecretKey,
+    peer_scheduler: &SyncScheduler,
+) {
+    let advert = peer_scheduler
+        .await_local_endpoint(BRANCH_DISPATCH_DEADLINE)
+        .await
+        .expect("the peer's daemon binds its endpoint");
+    peer_refs::bind_endpoint_id(&device.pool, &peer.id, &peer_secret.public().to_string())
+        .await
+        .unwrap();
+    peer_refs::update_last_address(&device.pool, &peer.id, &advert.addrs[0].to_string())
+        .await
+        .unwrap();
+}
+
+/// #6551, through two running daemons: an edit on A, announced to A's
+/// scheduler as a committed command announces it and by nothing else, reaches
+/// B. A's round only shows B that A is ahead; the edit arrives by the pull B
+/// starts once it has served that round.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_local_edit_reaches_the_other_running_device_6551() {
+    const EDIT: &str = "01HZ6551DAEMONEDITXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_6551);
+    let (a, b) = converged_pair_6551().await;
+    let (secret_a, secret_b) = (SecretKey::generate(), SecretKey::generate());
+    let new_scheduler = || {
+        let mut scheduler = SyncScheduler::with_intervals(
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(60),
+        );
+        scheduler.local_edit_debounce = std::time::Duration::from_millis(200);
+        Arc::new(scheduler)
+    };
+    let (scheduler_a, scheduler_b) = (new_scheduler(), new_scheduler());
+    let daemon_a = start_daemon_6551(&a, &secret_a, &scheduler_a).await;
+    let daemon_b = start_daemon_6551(&b, &secret_b, &scheduler_b).await;
+    cache_route_to_6551(&a, &b, &secret_b, &scheduler_b).await;
+    cache_route_to_6551(&b, &a, &secret_a, &scheduler_a).await;
+
+    make_local_edit_602(
+        &a.pool,
+        &a.mat,
+        &a.state,
+        &a.id,
+        &space,
+        EDIT,
+        "typed on A",
+        1_736_942_500_000,
+    )
+    .await;
+    scheduler_a.notify_local_edit();
+
+    let deadline = tokio::time::Instant::now() + BRANCH_DISPATCH_DEADLINE;
+    while !holds_block_6551(&b, EDIT).await {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the edit on A never reached B"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    for daemon in [&daemon_a, &daemon_b] {
+        daemon.shutdown();
+    }
+    wait_for(
+        || {
+            [&daemon_a, &daemon_b].iter().all(|daemon| {
+                daemon
+                    .handle
+                    .as_ref()
+                    .is_none_or(tokio::task::JoinHandle::is_finished)
+            })
+        },
+        BRANCH_SHUTDOWN_DEADLINE,
+        "a_local_edit_reaches_the_other_running_device_6551: both daemons stopped",
+    )
+    .await;
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
 }
 
 /// One full session each way: B pulls from A, then A from B.
