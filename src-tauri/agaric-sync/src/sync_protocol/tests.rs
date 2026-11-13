@@ -301,6 +301,71 @@ fn check_reset_required_empty_peer_vvs_never_resets() {
     );
 }
 
+// ── peer_advertises_news — the responder's cue to pull back (#6551) ──
+
+/// A peer that holds ops we lack is news; one that holds what we hold, or
+/// less, is not. The last is the dialling device after a pull, which is what
+/// ends the exchange.
+#[test]
+fn peer_advertises_news_only_when_the_peer_is_ahead() {
+    let space = crr_space();
+    let ours = vec![crafted_space_vv("peer-dev", 2, &space)];
+
+    let ahead = [crafted_space_vv("peer-dev", 3, &space)];
+    let level = [crafted_space_vv("peer-dev", 2, &space)];
+    let behind = [crafted_space_vv("peer-dev", 1, &space)];
+
+    assert!(peer_advertises_news(&ours, &ahead, &[]).unwrap());
+    assert!(!peer_advertises_news(&ours, &level, &[]).unwrap());
+    assert!(!peer_advertises_news(&ours, &behind, &[]).unwrap());
+    assert!(!peer_advertises_news(&ours, &[], &[]).unwrap());
+}
+
+/// A space we do not hold at all is news as soon as the peer has an op in it.
+#[test]
+fn peer_advertises_news_for_a_space_we_do_not_hold() {
+    let peer = [crafted_space_vv("peer-dev", 1, &crr_space())];
+
+    assert!(peer_advertises_news(&[], &peer, &[]).unwrap());
+}
+
+/// An advertisement we were already shown at the last completed session is
+/// not news again, although the peer is still ahead; one that has moved since
+/// is.
+#[test]
+fn peer_advertises_news_once_per_advertisement() {
+    let space = crr_space();
+    let other_space = agaric_store::space::SpaceId::from_trusted("01HZCRRSPACE2XXXXXXXXXXXXX");
+    let ours = vec![crafted_space_vv("peer-dev", 1, &space)];
+    let shown_before = vec![
+        crafted_space_vv("peer-dev", 3, &space),
+        crafted_space_vv("peer-dev", 1, &other_space),
+    ];
+    let moved = [crafted_space_vv("peer-dev", 4, &space)];
+
+    assert!(!peer_advertises_news(&ours, &shown_before[..1], &shown_before).unwrap());
+    assert!(peer_advertises_news(&ours, &moved, &shown_before).unwrap());
+}
+
+#[test]
+fn peer_advertises_news_rejects_a_vv_that_does_not_decode() {
+    let space = crr_space();
+    let garbage = SpaceVersionVector {
+        space_id: space.clone(),
+        vv: vec![0xff; 7],
+    };
+    let sound = crafted_space_vv("peer-dev", 1, &space);
+
+    assert!(matches!(
+        peer_advertises_news(&[], std::slice::from_ref(&garbage), &[]),
+        Err(agaric_core::error::AppError::Validation { .. })
+    ));
+    assert!(matches!(
+        peer_advertises_news(&[garbage], &[sound], &[]),
+        Err(agaric_core::error::AppError::Validation { .. })
+    ));
+}
+
 // ── complete_sync ───────────────────────────────────────────────────
 
 #[tokio::test]

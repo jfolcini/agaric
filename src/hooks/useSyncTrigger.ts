@@ -4,7 +4,7 @@ import { mapBackendState } from '@/hooks/useSyncEvents'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import type { PeerRef } from '@/lib/bindings'
+import type { PeerRef, SyncProgressUpdate } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { startSync } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
@@ -52,11 +52,11 @@ export function mapPeerRefToInfo(row: PeerRef): PeerInfo {
 // and silent rejection of redundant invocations. This frontend trigger
 // is a coarse "wake the scheduler" hint at a slower cadence
 // (60s → 600s on failure). The two schedulers do not coordinate: when
-// the backend is mid-backoff, calling `startSync()` from here is a
-// no-op on the wire — it just resolves quickly. That is fine; do not
-// add cross-scheduler coordination here without first reading
-// `sync_scheduler.rs` end-to-end. See for
-// the deferred unification design note.
+// the backend is mid-backoff, a scheduled `startSync()` from here dials
+// nothing and resolves with state `backoff`, which is the peer waiting and
+// not a failure (#6523). Only a press clears that backoff. Do not add
+// cross-scheduler coordination here without first reading
+// `sync_scheduler.rs` end-to-end.
 const BASE_INTERVAL_MS = 60_000
 const MAX_INTERVAL_MS = 600_000 // 10 minutes
 const SYNC_TIMEOUT_MS = 60_000
@@ -122,10 +122,13 @@ type SessionEnd = 'complete' | 'failed' | 'reported'
  *
  * #6551: `start_sync` resolves once the daemon is woken, before any session
  * ran, and resolves just the same with the peer switched off. With
- * `awaitSession`, success is the terminal `complete` on the channel this call
+ * `pressed`, success is the terminal `complete` on the channel this call
  * opened, within the same `SYNC_TIMEOUT_MS`; a terminal `error` is a failure.
  * Without it (the scheduled tick, which does not answer anyone) success only
  * means the daemon was asked.
+ *
+ * #6523: `pressed` also tells the backend to dial a peer it is backing off
+ * from, so the press reports that dial. The tick leaves the backoff alone.
  *
  * Per-peer failures are transient (network, peer-offline, timeout)
  * so the failure toast carries a Retry action that re-runs `startSync`
@@ -142,7 +145,7 @@ type SessionEnd = 'complete' | 'failed' | 'reported'
 async function syncOnePeerWithToast(
   peerId: string,
   shouldToast: () => boolean = () => true,
-  awaitSession = false,
+  pressed = false,
 ): Promise<boolean> {
   try {
     const store = useSyncStore.getState()
@@ -151,7 +154,7 @@ async function syncOnePeerWithToast(
       endSession = resolve
     })
     const run = async (): Promise<SessionEnd> => {
-      await startSync(peerId, (update) => {
+      const onProgress = (update: SyncProgressUpdate) => {
         store.recordPeerProgress(peerId, update)
         if (update.kind === 'sync') {
           const unanswered = useSyncStore.getState().state === 'syncing'
@@ -167,8 +170,9 @@ async function syncOnePeerWithToast(
           if (update.state === 'complete') endSession('complete')
           if (update.state === 'error') endSession(unanswered ? 'failed' : 'reported')
         }
-      })
-      return awaitSession ? sessionEnd : 'complete'
+      }
+      await startSync(peerId, onProgress, pressed)
+      return pressed ? sessionEnd : 'complete'
     }
     const ending = await runWithTimeout(run(), SYNC_TIMEOUT_MS, new Error('Sync timeout'))
     if (ending === 'reported') return false
@@ -196,7 +200,7 @@ async function syncOnePeerWithToast(
         label: i18n.t('sync.retryAction'),
         onClick: () => {
           // Fire-and-forget — a fresh toast surfaces on subsequent failure.
-          void syncOnePeerWithToast(peerId)
+          void syncOnePeerWithToast(peerId, undefined, true)
         },
       },
     })
@@ -215,10 +219,10 @@ async function syncOnePeerWithToast(
 async function syncAllPeers(
   peers: ReadonlyArray<{ peer_id: string }>,
   shouldToast: () => boolean,
-  awaitSession: boolean,
+  pressed: boolean,
 ): Promise<boolean> {
   const results = await Promise.all(
-    peers.map((peer) => syncOnePeerWithToast(peer.peer_id, shouldToast, awaitSession)),
+    peers.map((peer) => syncOnePeerWithToast(peer.peer_id, shouldToast, pressed)),
   )
   return results.includes(false)
 }

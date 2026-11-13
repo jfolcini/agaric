@@ -221,7 +221,9 @@ pub enum SyncErrorCode {
     PeerAway,
     /// A peer that has synced with us before ended the session without
     /// answering our `HeadExchange` (#6523). A build that predates the
-    /// engine-format refusal frame ends a format mismatch exactly so.
+    /// engine-format refusal frame ends a format mismatch exactly so, and so
+    /// does a same-version peer that quits or loses its network right then:
+    /// the frontend's sentence has to stay true of both.
     HandshakeUnanswered,
 }
 

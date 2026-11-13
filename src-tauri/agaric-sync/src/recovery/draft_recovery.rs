@@ -130,7 +130,7 @@ pub(super) async fn recover_single_draft(
     // Uses the indexed op_log.block_id column (migration 0030)
     // for O(log N) block-scoped lookups instead of json_extract across the
     // full table. block_id is populated on insert by append_local_op_in_tx
-    // and insert_remote_op using OpPayload::block_id() / JSON extraction.
+    // and the remote ingest using OpPayload::block_id() / JSON extraction.
     check_block_id_shape(draft.block_id.as_str())?;
     // Normalize to uppercase — BlockId serializes uppercase, but the draft
     // table stores the raw string that may differ in case.

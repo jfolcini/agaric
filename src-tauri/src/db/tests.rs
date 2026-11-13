@@ -6191,10 +6191,9 @@ async fn agenda_cache_0115_block_id_index_serves_block_id_lookup_3270() {
 // Migration 0116 — `log_snapshots` blob → `compaction_watermark` row (#4699)
 // ----------------------------------------------------------------------
 
-/// **The carry-forward.** An upgraded vault that has already compacted must
-/// keep the marker `agaric_engine::dag::find_lca` reads: without the row it
-/// reports an op the purge removed as a bare `NotFound` instead of naming
-/// compaction, on the one class of vault where compaction demonstrably ran.
+/// **The carry-forward.** Nothing has read or written the table since #6518,
+/// but 0116 still runs on every pre-0116 vault, so its data movement stays
+/// pinned: the newest complete snapshot's frontier is carried into one row.
 ///
 /// Seeds `log_snapshots` at the pre-0116 schema with two `complete` rows and
 /// one `pending` leftover, migrates, and asserts the watermark carries the
@@ -6248,10 +6247,7 @@ async fn compaction_watermark_0116_carries_the_newest_complete_snapshot_frontier
         sqlx::query_as("SELECT up_to_seqs, up_to_hash, compacted_at_ms FROM compaction_watermark")
             .fetch_one(&pool)
             .await
-            .expect(
-                "#4699: a vault that already compacted must carry its frontier forward — \
-                 with no row, find_lca stops naming compaction for chains the purge broke",
-            );
+            .expect("#4699: a vault that already compacted must carry its frontier forward");
     assert_eq!(
         up_to_hash, "hash-new",
         "the NEWEST complete snapshot's frontier is the one that survives"
@@ -6287,9 +6283,7 @@ async fn compaction_watermark_0116_carries_the_newest_complete_snapshot_frontier
 }
 
 /// The other half: a vault that never compacted must come out of 0116 with NO
-/// watermark. A migration that unconditionally seeded a row — the obvious way
-/// to satisfy the `NOT NULL` columns — would make `find_lca` blame compaction
-/// on every vault, including one that has never run it.
+/// watermark row.
 #[tokio::test]
 async fn compaction_watermark_0116_leaves_a_never_compacted_vault_empty_4699() {
     let (pool, _dir) = unmigrated_pool().await;
@@ -6314,7 +6308,7 @@ async fn compaction_watermark_0116_leaves_a_never_compacted_vault_empty_4699() {
     assert_eq!(
         rows, 0,
         "#4699: with no COMPLETE snapshot there is no evidence the log was ever \
-         trimmed, so find_lca must keep reporting a missing op as NotFound"
+         trimmed, so 0116 must not seed a row"
     );
 }
 
