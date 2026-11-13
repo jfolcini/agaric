@@ -29,6 +29,7 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   blockStaticsByMarker,
+  caretToEnd,
   invoke,
   navigateTo,
   openJournalBlockEditor,
@@ -138,7 +139,7 @@ describe('Agaric real-backend line break inside a block (#5160 D2) @editor', () 
     const editor = $(EDITOR)
     await editor.waitForDisplayed({ timeout: ACTION_TIMEOUT })
     await editor.click()
-    await browser.keys(['Control', 'End'])
+    await caretToEnd()
     await browser.keys(SUFFIX.split(''))
     await browser.keys(['Enter'])
     await browser.keys(['Escape'])
