@@ -1,7 +1,7 @@
 /**
- * A PDF highlight as a block (#6629): which of pdf.js's serialized editors a
- * save turns into blocks, the block it sends, how a save points the older
- * highlight blocks at the new copy, and how a block's chip reads its place.
+ * A PDF highlight or comment as a block (#6629): which of pdf.js's serialized
+ * editors a save turns into blocks, the block it sends, how a save points the
+ * older blocks at the new copy, and how a block's chip reads its place.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -10,10 +10,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlockRow } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
-  highlightBlockSpecs,
-  newHighlights,
+  annotationBlockSpecs,
+  newAnnotations,
   pdfSourceOf,
-  repointHighlightBlocks,
+  repointAnnotationBlocks,
 } from '@/lib/pdf-highlights'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -42,7 +42,7 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('newHighlights', () => {
+describe('newAnnotations', () => {
   it('takes each new highlight with its passage, page and boxes, in the order made', () => {
     const storage = storageOf([
       [
@@ -55,10 +55,10 @@ describe('newHighlights', () => {
       ],
     ])
 
-    expect(newHighlights(storage)).toEqual([
-      { passage: 'Page two', page: 2, boxes: [[40, 90.5, 140, 114.25]] },
+    expect(newAnnotations(storage)).toEqual([
+      { text: 'Page two', page: 2, boxes: [[40, 90.5, 140, 114.25]] },
       {
-        passage: 'Page one',
+        text: 'Page one',
         page: 1,
         boxes: [
           [40, 90.5, 140, 114.25],
@@ -68,7 +68,7 @@ describe('newHighlights', () => {
     ])
   })
 
-  it('leaves out what the file holds, a free-hand highlight, a comment and a highlight with no text', () => {
+  it('leaves out what the file holds, a free-hand highlight and an annotation with no text', () => {
     const storage = storageOf([
       [
         { annotationType: 9, id: '12R', pageIndex: 0, quadPoints: QUADS },
@@ -79,7 +79,28 @@ describe('newHighlights', () => {
       [{ annotationType: 9, id: null, pageIndex: 0, quadPoints: QUADS }, { div: null }],
     ])
 
-    expect(newHighlights(storage)).toEqual([])
+    expect(newAnnotations(storage)).toEqual([])
+  })
+
+  it('takes each new pinned comment with its words, page and box', () => {
+    const storage = storageOf([
+      [
+        {
+          annotationType: 3,
+          id: null,
+          pageIndex: 1,
+          rect: [30.004, 150.5, 90, 170.25],
+          value: ' Check\n this ',
+        },
+        {},
+      ],
+      [{ annotationType: 3, id: '9R', pageIndex: 0, rect: [1, 2, 3, 4], value: 'in the file' }, {}],
+      [{ annotationType: 3, id: null, pageIndex: 0, rect: [1, 2, 3, 4], value: ' \n' }, {}],
+    ])
+
+    expect(newAnnotations(storage)).toEqual([
+      { text: 'Check this', page: 2, boxes: [[30, 150.5, 90, 170.25]] },
+    ])
   })
 
   it('finds none in an empty storage, which pdf.js serializes without a map', () => {
@@ -88,14 +109,14 @@ describe('newHighlights', () => {
       getRawValue: () => ({}),
     } as const
 
-    expect(newHighlights(storage)).toEqual([])
+    expect(newAnnotations(storage)).toEqual([])
   })
 })
 
-describe('highlightBlockSpecs', () => {
+describe('annotationBlockSpecs', () => {
   it('appends a block per highlight under the owner, its place in three text properties', () => {
-    const specs = highlightBlockSpecs('OWNER', 'ATT_NEW', [
-      { passage: 'a *starred* word', page: 12, boxes: [[1, 2, 3, 4]] },
+    const specs = annotationBlockSpecs('OWNER', 'ATT_NEW', [
+      { text: 'a *starred* word', page: 12, boxes: [[1, 2, 3, 4]] },
     ])
 
     expect(specs).toEqual([
@@ -114,7 +135,7 @@ describe('highlightBlockSpecs', () => {
   })
 })
 
-describe('repointHighlightBlocks', () => {
+describe('repointAnnotationBlocks', () => {
   const page = (ids: string[], next: string | null) => ({
     items: ids.map((id) => makeBlockRow({ id })),
     next_cursor: next,
@@ -139,7 +160,7 @@ describe('repointHighlightBlocks', () => {
       }),
     )
 
-    await repointHighlightBlocks('SPACE_1', 'ATT_OLD', 'ATT_NEW')
+    await repointAnnotationBlocks('SPACE_1', 'ATT_OLD', 'ATT_NEW')
 
     expect(
       queries.map((args) => {
@@ -188,14 +209,14 @@ describe('repointHighlightBlocks', () => {
       }),
     )
 
-    await expect(repointHighlightBlocks('SPACE_1', 'ATT_OLD', 'ATT_NEW')).rejects.toThrow(
+    await expect(repointAnnotationBlocks('SPACE_1', 'ATT_OLD', 'ATT_NEW')).rejects.toThrow(
       'database is locked',
     )
     expect(written).toEqual(['HL_1'])
   })
 
   it('has nothing to point with no active space', async () => {
-    await repointHighlightBlocks(null, 'ATT_OLD', 'ATT_NEW')
+    await repointAnnotationBlocks(null, 'ATT_OLD', 'ATT_NEW')
 
     expect(mockedInvoke).not.toHaveBeenCalled()
   })

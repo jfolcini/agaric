@@ -683,10 +683,10 @@ describe('PdfViewerDialog', () => {
       await waitFor(() => {
         expect(onSaved).toHaveBeenCalledWith('new-att-id')
       })
-      expect(mockNotify.error).toHaveBeenCalledWith(t('pdfViewer.highlightBlocksFailed'))
+      expect(mockNotify.error).toHaveBeenCalledWith(t('pdfViewer.annotationBlocksFailed'))
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         'PdfViewerDialog',
-        'adding the highlight blocks failed',
+        'adding the annotation blocks failed',
         { ownerId: 'block-1' },
         expect.anything(),
       )

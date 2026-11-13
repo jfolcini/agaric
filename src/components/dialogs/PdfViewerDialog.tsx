@@ -11,13 +11,13 @@
  *   Ink/freehand is deferred (#1452 phase 3).
  * - Persist: on Save, `pdfDocument.saveDocument()` bakes the annotations
  *   into the PDF bytes; those bytes are written as a NEW attachment (new
- *   ULID) on the same block, each new highlight becomes a child block of it
- *   pointing at the copy (`pdf-highlights.ts`, #6629), the block's
- *   `attachment:<id>` links and the older highlight blocks move to the copy,
+ *   ULID) on the same block, each new highlight and comment becomes a child
+ *   block of it pointing at the copy (`pdf-highlights.ts`, #6629), the block's
+ *   `attachment:<id>` links and the older such blocks move to the copy,
  *   and the original attachment is deleted. We never mutate attachment bytes
  *   in place — a rewritten file changes its blake3 hash and would break sync
  *   (see #1452).
- * - Opens on `initialPage` when given: a highlight block's source chip.
+ * - Opens on `initialPage` when given: a highlight or comment block's source chip.
  * - Page count indicator via `t('pdfViewer.pageIndicator')`, prev/next nav.
  * - Cleans up the PDF document + viewer on close.
  *
@@ -48,10 +48,10 @@ import { isEditableTarget } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import {
-  highlightBlockSpecs,
-  newHighlights,
-  type PdfHighlight,
-  repointHighlightBlocks,
+  annotationBlockSpecs,
+  newAnnotations,
+  type PdfAnnotation,
+  repointAnnotationBlocks,
 } from '@/lib/pdf-highlights'
 import { getPageStore, type PageBlockState, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -112,7 +112,7 @@ function annotatedFilename(filename: string): string {
 
 /**
  * The mounted store of page `pageId`, the reader's own when that is its page.
- * The reader also opens from a highlight block's chip, which can sit on another
+ * The reader also opens from an annotation block's chip, which can sit on another
  * page than the PDF's owner; a page that is not open has no store and no undo.
  */
 function openStoreOf(
@@ -146,20 +146,20 @@ async function repointBlockLinks(
 }
 
 /**
- * Add a block for each new highlight under `ownerId`, pointing at the copy that
- * holds them, as one undo entry of the owner's page. A refusal is toasted: the
- * highlights are in the file all the same.
+ * Add a block for each new highlight and comment under `ownerId`, pointing at
+ * the copy that holds them, as one undo entry of the owner's page. A refusal is
+ * toasted: they are in the file all the same.
  */
-async function addHighlightBlocks(
+async function addAnnotationBlocks(
   pageStore: StoreApi<PageBlockState>,
   ownerId: string,
   attachmentId: string,
-  highlights: readonly PdfHighlight[],
+  annotations: readonly PdfAnnotation[],
   failed: string,
 ): Promise<void> {
-  if (highlights.length === 0) return
+  if (annotations.length === 0) return
   try {
-    const specs = highlightBlockSpecs(ownerId, attachmentId, highlights)
+    const specs = annotationBlockSpecs(ownerId, attachmentId, annotations)
     const { blocks, op_refs } = unwrap(await commands.createBlocksBatch(specs))
     const pageId = blocks[0]?.page_id
     const ownerStore = openStoreOf(pageStore, pageId)
@@ -169,7 +169,7 @@ async function addHighlightBlocks(
     }
     recordGraphStructureChange()
   } catch (err) {
-    logger.warn('PdfViewerDialog', 'adding the highlight blocks failed', { ownerId }, err)
+    logger.warn('PdfViewerDialog', 'adding the annotation blocks failed', { ownerId }, err)
     notify.error(failed)
   }
 }
@@ -431,15 +431,15 @@ export function PdfViewerDialog({
   /**
    * Save: bake the current annotations into the PDF binary via
    * `saveDocument()`, write the result as a NEW attachment (new ULID) on the
-   * same block, add a block for each new highlight, point the block's links and
-   * the older highlight blocks at the copy, then delete the original. This
-   * composes existing ops only (AddAttachment + CreateBlock + SetProperty +
+   * same block, add a block for each new highlight and comment, point the
+   * block's links and the older such blocks at the copy, then delete the
+   * original. This composes existing ops only (AddAttachment + CreateBlock + SetProperty +
    * EditBlock + DeleteAttachment) — no in-place mutation, so the file at a
    * given ULID stays byte-stable for the sync layer (#1452).
    *
-   * The highlight blocks are made here, not as each highlight is drawn: until
-   * Save a highlight lives only in the reader, and closing it unsaved drops it,
-   * so a block made earlier could point at a highlight no file holds.
+   * The blocks are made here, not as each annotation is drawn: until Save it
+   * lives only in the reader, and closing it unsaved drops it, so a block made
+   * earlier could point at an annotation no file holds.
    */
   const handleSave = useCallback(async () => {
     const pdfDoc = pdfDocRef.current
@@ -448,7 +448,7 @@ export function PdfViewerDialog({
     const toastId = notify.loading(t('pdfViewer.saving'))
     try {
       // What the save writes, read before it writes it.
-      const highlights = newHighlights(pdfDoc.annotationStorage)
+      const annotations = newAnnotations(pdfDoc.annotationStorage)
       // Bake annotations into the PDF bytes.
       const bytes = await pdfDoc.saveDocument()
       const row = unwrap(
@@ -459,16 +459,16 @@ export function PdfViewerDialog({
           Array.from(new Uint8Array(bytes)),
         ),
       )
-      const failed = t('pdfViewer.highlightBlocksFailed')
-      await addHighlightBlocks(pageStore, blockId, row.id, highlights, failed)
-      // The original goes only once no link in the block and no highlight block
+      const failed = t('pdfViewer.annotationBlocksFailed')
+      await addAnnotationBlocks(pageStore, blockId, row.id, annotations, failed)
+      // The original goes only once no link in the block and no annotation block
       // names it (#6629). A failed read, edit or delete leaves two copies on the
       // block and every link still opens one — never data loss — so we still
       // report success.
       try {
         if (await repointBlockLinks(pageStore, blockId, attachmentId, row.id)) {
           const spaceId = useSpaceStore.getState().currentSpaceId
-          await repointHighlightBlocks(spaceId, attachmentId, row.id)
+          await repointAnnotationBlocks(spaceId, attachmentId, row.id)
           unwrap(await commands.deleteAttachment(attachmentId))
         }
       } catch (err) {

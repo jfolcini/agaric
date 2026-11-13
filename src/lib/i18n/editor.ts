@@ -277,7 +277,8 @@ export const editor: Record<string, string> = {
   'pdfViewer.saved': 'Saved annotated copy',
   'pdfViewer.saveFailed': 'Failed to save annotated PDF',
   // #6629 — a highlight becomes a block; its chip opens the reader on its page.
-  'pdfViewer.highlightBlocksFailed': 'Highlights saved in the PDF, but not added as blocks',
+  'pdfViewer.annotationBlocksFailed':
+    'Highlights and comments saved in the PDF, but not added as blocks',
   'pdfViewer.source': '{{filename}} · p. {{page}}',
   'pdfViewer.sourceUnknown': 'PDF · p. {{page}}',
   'pdfViewer.sourceLabel': 'Open {{filename}} at page {{page}}',
