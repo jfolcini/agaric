@@ -1,4 +1,4 @@
-# Session 4065 — the sync endpoint follows the network and keeps its port (#6526)
+# Session 4066 — the sync endpoint follows the network and keeps its port (#6526)
 
 The issue said the endpoint binds once and a laptop that changes network keeps a socket on the old subnet. It had not been run. Running it changed the design.
 
