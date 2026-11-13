@@ -258,8 +258,8 @@ async fn await_accept_loop_exit(lifecycle: &McpLifecycle) {
 /// Tauri command: return the current MCP status for the Settings tab.
 #[tauri::command]
 #[specta::specta]
-pub async fn get_mcp_status(
-    app: tauri::AppHandle,
+pub async fn get_mcp_status<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     lifecycle: tauri::State<'_, Arc<McpLifecycle>>,
 ) -> Result<McpStatus, AppError> {
     let app_data_dir = app_data_dir_from_handle(&app).map_err(sanitize_internal_error)?;
@@ -324,8 +324,8 @@ pub async fn get_mcp_recent_activity(
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
-pub async fn mcp_set_enabled(
-    app: tauri::AppHandle,
+pub async fn mcp_set_enabled<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     lifecycle: tauri::State<'_, Arc<McpLifecycle>>,
     toggle_gate: tauri::State<'_, McpToggleGate>,
     read_pool: tauri::State<'_, crate::db::ReadPool>,

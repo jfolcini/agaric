@@ -14,10 +14,14 @@
  */
 
 import { FileSearch, Pin } from 'lucide-react'
-import { Suspense, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
+// Imported, not lazy: a segment that loaded after the sheet opened grew the
+// sheet and moved the scope toggle out from under a tap already on its way.
+import { PaletteBody } from '@/components/common/CommandPalette'
+import { InPageFind } from '@/components/query/InPageFind'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -32,8 +36,6 @@ import { useLongPress } from '@/hooks/useLongPress'
 import { usePullToDismiss } from '@/hooks/usePullToDismiss'
 import { useSearchSheetBridge } from '@/hooks/useSearchSheetBridge'
 import { haptic } from '@/lib/haptics'
-import { lazyWithPreload } from '@/lib/lazy-with-preload'
-import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import {
   clearPinnedSearchScope,
@@ -43,23 +45,6 @@ import {
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 import { type SearchSheetMode, useSearchSheetStore } from '@/stores/useSearchSheetStore'
-
-// The in-page-find toolbar and the palette body are both lazy-imported
-// at the App level for their overlay surfaces. Importing them here
-// reuses the same chunks — the module loader memoises by module identifier.
-const InPageFind = lazyWithPreload(() =>
-  import('@/components/query/InPageFind').then((m) => ({ default: m.InPageFind })),
-)
-const PaletteBody = lazyWithPreload(() =>
-  import('@/components/common/CommandPalette').then((m) => ({ default: m.PaletteBody })),
-)
-// This module loads at idle with the App-level overlays, so the sheet's first
-// open finds its segment loaded and does not suspend on it.
-for (const segment of [InPageFind, PaletteBody]) {
-  segment.preload().catch((err: unknown) => {
-    logger.warn('SearchSheet', 'search segment preload failed', undefined, err)
-  })
-}
 
 export function SearchSheet(): React.ReactElement | null {
   const { t } = useTranslation()
@@ -263,22 +248,17 @@ export function SearchSheet(): React.ReactElement | null {
                 </Button>
               </div>
             ) : (
-              <Suspense fallback={null}>
-                {/* `onCloseRequest` routes the toolbar's Escape to the
-                    SHEET (not the find store). The
-                    bridge's cleanup closes the find store as part of
-                    the sheet-close transition. */}
-                <InPageFind variant="embedded" onCloseRequest={close} />
-              </Suspense>
+              // `onCloseRequest` routes the toolbar's Escape to the SHEET (not
+              // the find store). The bridge's cleanup closes the find store as
+              // part of the sheet-close transition.
+              <InPageFind variant="embedded" onCloseRequest={close} />
             )
           ) : (
             // PaletteBody is the inner cmdk surface. The escalation
             // footer it renders runs `setPendingViewQuery → onClose →
             // setView('search')`; our `handlePaletteClose` closes the
             // sheet too.
-            <Suspense fallback={null}>
-              <PaletteBody onClose={handlePaletteClose} actionMenuOpenRef={actionMenuOpenRef} />
-            </Suspense>
+            <PaletteBody onClose={handlePaletteClose} actionMenuOpenRef={actionMenuOpenRef} />
           )}
         </SheetBody>
       </SheetContent>

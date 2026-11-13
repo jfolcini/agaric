@@ -170,8 +170,8 @@ impl AddMeetingInput {
 /// the whole meeting.
 #[tauri::command]
 #[specta::specta]
-pub async fn add_meeting(
-    app: tauri::AppHandle,
+pub async fn add_meeting<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: tauri::State<'_, crate::db::WriteCtx>,
     input: AddMeetingInput,
 ) -> Result<super::WithOps<MeetingResult>, AppError> {

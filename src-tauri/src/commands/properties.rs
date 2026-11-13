@@ -26,7 +26,7 @@ use super::*;
 /// The `block:properties-changed` events a property write's wrapper emits once
 /// its `_inner` commits: one per block the caller named, whether or not the
 /// write changed it, each carrying `changed_keys`. The conformance harness
-/// records this same list, which holds the mock to it.
+/// records them as the wrapper emits them, which holds the mock to them.
 pub fn property_changed_events(
     block_ids: impl IntoIterator<Item = BlockId>,
     changed_keys: &[String],
@@ -2265,8 +2265,8 @@ pub async fn list_property_values(
 /// frontend undo stack can address the action by exact ref (`undo_op`).
 #[tauri::command]
 #[specta::specta]
-pub async fn set_property(
-    app: tauri::AppHandle,
+pub async fn set_property<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     key: String,
@@ -2307,8 +2307,8 @@ pub async fn set_property(
 /// the next occurrence's among them, so the frontend undoes it by those refs.
 #[tauri::command]
 #[specta::specta]
-pub async fn set_todo_state(
-    app: tauri::AppHandle,
+pub async fn set_todo_state<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     state: Option<String>,
@@ -2349,8 +2349,8 @@ pub async fn set_todo_state(
 /// stamps' among them, so the frontend undoes it by those refs.
 #[tauri::command]
 #[specta::specta]
-pub async fn set_todo_state_batch(
-    app: tauri::AppHandle,
+pub async fn set_todo_state_batch<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
     state: Option<String>,
@@ -2386,8 +2386,8 @@ pub async fn set_todo_state_batch(
 /// changes — mirroring the `set_todo_state_batch` emit loop.
 #[tauri::command]
 #[specta::specta]
-pub async fn set_property_batch(
-    app: tauri::AppHandle,
+pub async fn set_property_batch<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
     key: String,
@@ -2418,8 +2418,8 @@ pub async fn set_property_batch(
 /// does not propagate as a command error.
 #[tauri::command]
 #[specta::specta]
-pub async fn set_priority(
-    app: tauri::AppHandle,
+pub async fn set_priority<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     level: Option<String>,
@@ -2443,8 +2443,8 @@ pub async fn set_priority(
 /// Tauri command: set due date on a block. Delegates to [`set_due_date_inner`].
 #[tauri::command]
 #[specta::specta]
-pub async fn set_due_date(
-    app: tauri::AppHandle,
+pub async fn set_due_date<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     date: Option<String>,
@@ -2468,8 +2468,8 @@ pub async fn set_due_date(
 /// Tauri command: set scheduled date on a block. Delegates to [`set_scheduled_date_inner`].
 #[tauri::command]
 #[specta::specta]
-pub async fn set_scheduled_date(
-    app: tauri::AppHandle,
+pub async fn set_scheduled_date<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     date: Option<String>,
@@ -2499,8 +2499,8 @@ pub async fn set_scheduled_date(
 /// current call sites discard the result).
 #[tauri::command]
 #[specta::specta]
-pub async fn delete_property(
-    app: tauri::AppHandle,
+pub async fn delete_property<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     key: String,
