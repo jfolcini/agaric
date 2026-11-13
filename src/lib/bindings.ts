@@ -5187,7 +5187,7 @@ peer_is_older: boolean | null }) & { address?: never; blocked?: never; bytes_don
  */
 ({ type: "mdns_disabled"; reason: string }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
- *  #3864: emitted once per daemon start when the sync endpoint bound a
+ *  #3864: emitted each time the sync endpoint binds a
  *  **globally-routable** address, so the QUIC listener may be reachable
  *  from outside the local network.
  * 
@@ -5206,11 +5206,7 @@ peer_is_older: boolean | null }) & { address?: never; blocked?: never; bytes_don
 ({ type: "internet_facing_bind"; 
 /**  The bound IPv4 address, e.g. `"192.160.160.80"`. */
 address: string; 
-/**
- *  The UDP port the listener actually got. The bind requests port 0,
- *  so this is assigned by the OS **and differs on every start** — it
- *  identifies the current listener, it is not a stable firewall rule.
- */
+/**  The UDP port the listener is bound to. */
 port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
  *  #3852: the operating system says it is blocking (or has stopped
@@ -5337,7 +5333,7 @@ peer_is_older?: boolean | null }) & { address?: never; blocked?: never; bytes_do
  */
 ({ type: "mdns_disabled"; reason: string }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
- *  #3864: emitted once per daemon start when the sync endpoint bound a
+ *  #3864: emitted each time the sync endpoint binds a
  *  **globally-routable** address, so the QUIC listener may be reachable
  *  from outside the local network.
  * 
@@ -5356,11 +5352,7 @@ peer_is_older?: boolean | null }) & { address?: never; blocked?: never; bytes_do
 ({ type: "internet_facing_bind"; 
 /**  The bound IPv4 address, e.g. `"192.160.160.80"`. */
 address: string; 
-/**
- *  The UDP port the listener actually got. The bind requests port 0,
- *  so this is assigned by the OS **and differs on every start** — it
- *  identifies the current listener, it is not a stable firewall rule.
- */
+/**  The UDP port the listener is bound to. */
 port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
  *  #3852: the operating system says it is blocking (or has stopped
