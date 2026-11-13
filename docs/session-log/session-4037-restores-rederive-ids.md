@@ -1,4 +1,4 @@
-# Session 4033 — Batch restore and restore-all re-derive `page_id` and `space_id`
+# Session 4037 — Batch restore and restore-all re-derive `page_id` and `space_id`
 
 #6522 follow-on, decided by the maintainer on the issue: since #6656 no vault-wide `RebuildPageIds` follows a restore, so each restore has to leave its rows with the ids their place in the tree gives them. Single restore already did. Batch restore did not at all, and restore-all re-derived `page_id` only.
 
