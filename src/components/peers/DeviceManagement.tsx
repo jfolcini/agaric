@@ -52,7 +52,11 @@ import { useSyncStore } from '@/stores/sync'
 // The backend keeps one progress channel per peer, the last one registered, so
 // a press that passed none would silence that peer's row for its session.
 function startSyncReportingProgress(peerId: string) {
-  return startSync(peerId, (update) => useSyncStore.getState().recordPeerProgress(peerId, update))
+  return startSync(
+    peerId,
+    (update) => useSyncStore.getState().recordPeerProgress(peerId, update),
+    true,
+  )
 }
 
 export function DeviceManagement(): React.ReactElement {
