@@ -13,7 +13,7 @@ import { axe } from 'vitest-axe'
 
 const writeText = vi.fn<(text: string) => Promise<void>>()
 vi.mock('@/lib/clipboard', () => ({ writeText: (text: string) => writeText(text) }))
-const downloadBlob = vi.fn<(blob: Blob, name: string) => void>()
+const downloadBlob = vi.fn<(blob: Blob, name: string) => Promise<void>>()
 vi.mock('@/lib/export-graph', () => ({
   downloadBlob: (blob: Blob, name: string) => downloadBlob(blob, name),
 }))
@@ -129,6 +129,16 @@ describe('DiagramViewer', () => {
     await user.click(expandButton())
     await user.click(screen.getByRole('button', { name: 'Copy source' }))
     await waitFor(() => expect(notifyError).toHaveBeenCalledWith("Couldn't copy to the clipboard"))
+  })
+
+  // #6546 — Android's save can fail (Downloads refuses the file).
+  it('reports an SVG that was not saved', async () => {
+    downloadBlob.mockRejectedValue(new Error('no space left'))
+    const user = userEvent.setup()
+    renderViewer()
+    await user.click(expandButton())
+    await user.click(screen.getByRole('button', { name: 'Download SVG' }))
+    await waitFor(() => expect(notifyError).toHaveBeenCalledWith("Couldn't download the SVG"))
   })
 
   it('closes on Escape and returns focus to Expand', async () => {
