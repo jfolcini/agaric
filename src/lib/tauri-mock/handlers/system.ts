@@ -29,6 +29,9 @@ function unmirroredSpaces(): string[] {
 /** What the mock's folder dialog answers: there is no OS dialog to drive. */
 const MOCK_MIRROR_FOLDER = '/home/mock/Agaric mirror'
 
+/** 14 March 2026, 09:30 UTC: the mock's one daily snapshot. */
+const MOCK_LAST_SNAPSHOT_MS = Date.UTC(2026, 2, 14, 9, 30)
+
 function mirrorStatus(): MirrorStatus {
   return {
     supported: true,
@@ -191,6 +194,11 @@ export const systemHandlers = {
   },
   get_mirror_status: mirrorStatus,
 
+  // #6554 — the daily snapshot row. The mock has no disk, so the last
+  // snapshot is a fixed time and the folder opens nowhere.
+  get_last_snapshot_ms: () => MOCK_LAST_SNAPSHOT_MS,
+  open_data_folder: () => null,
+
   // ---------------------------------------------------------------------------
   // Op log compaction commands
   // ---------------------------------------------------------------------------
@@ -216,4 +224,6 @@ export const systemHandlers = {
   | 'set_mirror_copy_files'
   | 'set_mirror_space'
   | 'get_mirror_status'
+  | 'get_last_snapshot_ms'
+  | 'open_data_folder'
 >

@@ -1,7 +1,7 @@
 import { clearConsoleErrors, deleteBlockViaContextMenu, expect, test } from './helpers'
 
 interface MockErrorWindow extends Window {
-  __injectMockError?: (command: string, message: string) => void
+  __injectMockError?: (command: string, error: string | { kind: string; message: string }) => void
   __clearMockErrors?: () => void
 }
 
@@ -71,6 +71,33 @@ test.describe('Error scenarios @boot', () => {
 
     // Verify error feedback appears (toast or error message)
     await expect(page.getByText(/failed|error/i)).toBeVisible()
+  })
+
+  test('a full disk is named once, however many commands fail on it (#6554)', async ({ page }) => {
+    await openGettingStarted(page)
+    await page.evaluate(() => {
+      ;(window as unknown as MockErrorWindow).__injectMockError?.('create_block', {
+        kind: 'storage_full',
+        message: 'The disk is full',
+      })
+    })
+
+    const addBlockButton = page.getByRole('button', { name: /add block/i })
+    await addBlockButton.click()
+    const banner = page.getByTestId('storage-failure-banner')
+    await expect(banner).toContainText('The disk is full, so changes are not being saved.')
+    await addBlockButton.click()
+    await expect(page.getByText('Failed to create block')).not.toHaveCount(0)
+    await expect(banner.getByText(/The disk is full/)).toHaveCount(1)
+
+    // It stays up across views until dismissed.
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Journal', exact: true })
+      .click()
+    await expect(banner).toBeVisible()
+    await banner.getByRole('button', { name: 'Dismiss' }).click()
+    await expect(banner).toHaveCount(0)
   })
 
   test('shows error toast when the Enter split fails', async ({ page }) => {

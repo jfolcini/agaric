@@ -108,6 +108,7 @@ export const common: Record<string, string> = {
   'action.undo': 'Undo',
   'action.redo': 'Redo',
   'action.retry': 'Retry',
+  'action.dismiss': 'Dismiss',
   'action.review': 'Review',
   'action.reload': 'Reload',
   'action.loadMore': 'Load more',
@@ -502,6 +503,17 @@ export const common: Record<string, string> = {
   'data.importMergeDescription_other':
     'These files have the titles of existing pages, so the import updates each in place: changed lines update their blocks, new lines add blocks, and lines missing from a file go to the Trash. Undo on a page reverts its update.',
   'data.importMergeConfirm': 'Update and import',
+  // #6554 — which space's pages the question is about, in a restore of several.
+  'data.importMergeSpace': 'In the space {{name}}:',
+  // #6554 — a folder pick of an unzipped Export all spaces ZIP restores each space.
+  'data.importVaultTitle_one': 'Restore {{count}} space?',
+  'data.importVaultTitle_other': 'Restore {{count}} spaces?',
+  'data.importVaultDescription':
+    'This folder is an export of every space. Each space’s notes and property definitions import into the space of its name, which is created when there is none; the active space stays as it is. History, block ids and the Trash are not restored.',
+  'data.importVaultConfirm': 'Restore spaces',
+  'data.importVaultExisting': '{{name}}: imported into the existing space',
+  'data.importVaultNew': '{{name}}: created',
+  'data.importSpaceCreateFailed': 'the space could not be created: {{reason}}',
   'data.importMergeCheckFailed':
     'The import did not run: the pages it would update could not be read: {{reason}}',
   'data.importShowAll': 'Show all',
@@ -536,6 +548,16 @@ export const common: Record<string, string> = {
   // #6538 — shown instead of any file save on Android, where nothing writes it.
   'data.fileSaveUnavailableAndroid':
     "Agaric can't save files on Android yet. To get notes or files off this phone, sync it with a computer and export there.",
+  // #6554 — the daily snapshot row: when the last copy of the database was
+  // taken, and on desktop the folder that holds the copies.
+  'data.snapshotLabel': 'Daily snapshot',
+  'data.snapshotDesc':
+    'Once a day Agaric saves a copy of its database beside it and keeps the most recent ones. They are a safety net, not a restore button.',
+  'data.snapshotLast': 'Last snapshot: {{time}}',
+  'data.snapshotNone': 'No snapshot yet. The first is taken shortly after Agaric starts.',
+  'data.snapshotUnreadable': 'The time of the last snapshot could not be read.',
+  'data.snapshotOpenFolder': 'Open folder',
+  'data.snapshotOpenFolderFailed': 'Could not open the data folder',
   // #5363 — the Markdown mirror: one `.md` file per page in a folder this
   // device writes to. A file edited elsewhere is read back into its page.
   'data.mirrorTitle': 'Markdown mirror',

@@ -44,6 +44,7 @@ import type {
   WithOps,
 } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { blobToBase64 } from '@/lib/file-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
@@ -70,7 +71,7 @@ async function defaultMeetingDate(blockId: string | undefined): Promise<string> 
 
 async function fileInput(file: File | null): Promise<MeetingFileInput | null> {
   if (file === null) return null
-  return { filename: file.name, bytes: Array.from(new Uint8Array(await file.arrayBuffer())) }
+  return { filename: file.name, bytes: await blobToBase64(file) }
 }
 
 export interface MeetingDialogProps {

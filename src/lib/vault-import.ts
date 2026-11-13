@@ -23,6 +23,7 @@ import {
   enexPageName,
   sanitizeNoteTitleToFilename,
 } from '@/lib/enex-import'
+import { blobToBase64 } from '@/lib/file-utils'
 import { t } from '@/lib/i18n'
 import { NOTE_EXTENSIONS, scanAttachmentRefs } from '@/lib/import-attachments'
 import { type JexNote, jexNoteToMarkdown } from '@/lib/jex-import'
@@ -101,11 +102,13 @@ const AGARIC_DIR = '.agaric/'
 export const SPACE_FILE_PATH = `${AGARIC_DIR}space.json`
 
 /**
- * The contents of {@link SPACE_FILE_PATH}: the space's own property
- * definitions, and the title of each file whose path does not read back as it
- * ({@link pathTitle}), keyed by that path.
+ * The contents of {@link SPACE_FILE_PATH}: the space's name (only an
+ * all-spaces export writes it), its own property definitions, and the title of
+ * each file whose path does not read back as it ({@link pathTitle}), keyed by
+ * that path.
  */
 export interface SpaceFile {
+  name?: string
   propertyDefinitions: { key: string; value_type: string; options: string | null }[]
   titles: Record<string, string>
 }
@@ -135,7 +138,12 @@ function parseSpaceFile(text: string): SpaceFile {
   if (!isRecord(titles) || !Object.values(titles).every((title) => typeof title === 'string')) {
     throw new TypeError('not a space file')
   }
-  return { propertyDefinitions, titles: titles as Record<string, string> }
+  const name = value['name']
+  return {
+    ...(typeof name === 'string' ? { name } : {}),
+    propertyDefinitions,
+    titles: titles as Record<string, string>,
+  }
 }
 
 /**
@@ -178,6 +186,62 @@ export async function restoreSpaceFile(
     warnings.push(t('data.importSpaceFileFailed', { reason: importErrorReason(err) }))
   }
   return { titles: new Map(Object.entries(space.titles)), warnings }
+}
+
+/** One space of an all-spaces export: its name and its folder's files. */
+export interface VaultSpace {
+  name: string
+  /** The folder's files, each as a pick of that folder would carry it. */
+  files: File[]
+}
+
+/** `file` with `webkitRelativePath` set to `path`. */
+function atPath(file: File, path: string): File {
+  const moved = new File([file], file.name, { type: file.type, lastModified: file.lastModified })
+  Object.defineProperty(moved, 'webkitRelativePath', { value: path })
+  return moved
+}
+
+/**
+ * The spaces of a folder pick of an unzipped *Export all spaces* ZIP (#6554),
+ * in pick order, or null for any other pick: one holding no
+ * {@link SPACE_FILE_PATH} of its own, no top-level file but a hidden one, and
+ * some top-level folder, every one of which (but the root {@link AGARIC_DIR}
+ * the skip ledger goes in) holds one. A
+ * space is named by its space file, else by its folder, and its files are
+ * moved below the picked folder, so the import reads the folder as picked.
+ */
+export async function vaultRestoreSpaces(files: readonly File[]): Promise<VaultSpace[] | null> {
+  const folders = new Map<string, File[]>()
+  for (const file of files) {
+    const path = vaultRelativePath(file.webkitRelativePath)
+    const slash = path.indexOf('/')
+    // A `.DS_Store` the file manager left beside the space folders.
+    if (slash === -1 && path.startsWith('.')) continue
+    if (slash === -1 || path === SPACE_FILE_PATH) return null
+    const folder = path.slice(0, slash)
+    if (`${folder}/` === AGARIC_DIR) continue
+    const folderFiles = folders.get(folder) ?? []
+    folders.set(folder, folderFiles)
+    folderFiles.push(atPath(file, path))
+  }
+  if (folders.size === 0) return null
+  const spaces: VaultSpace[] = []
+  for (const [folder, folderFiles] of folders) {
+    const spaceFile = folderFiles.find(
+      (file) => vaultRelativePath(file.webkitRelativePath) === SPACE_FILE_PATH,
+    )
+    if (spaceFile === undefined) return null
+    let name = folder
+    try {
+      name = parseSpaceFile(await spaceFile.text()).name ?? folder
+    } catch (err) {
+      // The import says so when it restores the file into the space.
+      logger.warn('vault-import', 'space file unreadable', { folder }, err)
+    }
+    spaces.push({ name, files: folderFiles })
+  }
+  return spaces
 }
 
 /** Final path segment (basename) of a `/`-separated path. */
@@ -258,7 +322,7 @@ export function resolveVaultRef(reference: string, noteDir: string, index: Vault
  *
  * Returns `null` when there is nothing to ship (no refs, or none resolved) so
  * the wrapper sends `null` ⇒ the pre-#1925 behaviour. Reading is async (
- * `File.arrayBuffer`), so matched files are read in parallel.
+ * `blobToBase64`), so matched files are read in parallel.
  */
 export async function collectVaultFiles(
   content: string,
@@ -278,10 +342,9 @@ export async function collectVaultFiles(
   if (matched.size === 0) return null
 
   const vaultFiles = await Promise.all(
-    [...matched].map(async ([path, file]) => {
-      const buf = await file.arrayBuffer()
-      return { path, bytes: Array.from(new Uint8Array(buf)) } satisfies VaultFile
-    }),
+    [...matched].map(
+      async ([path, file]) => ({ path, bytes: await blobToBase64(file) }) satisfies VaultFile,
+    ),
   )
   return vaultFiles
 }
@@ -617,19 +680,21 @@ export function mdFilesToUnits(
 }
 
 /**
- * Build a note's `vaultFiles` payload from its decoded attachments, converting
- * each `Uint8Array` to the `number[]` the IPC wire shape needs (#2899). Kept
- * as its own step (rather than inline in the `*ToUnits` producers below) so it
- * can be called LAZILY from `load()` — the expensive part (one `number[]` per
- * attachment byte, plus JSON-serialization on the IPC boundary) then happens
- * only for the note currently being imported, not for every note up front.
+ * Build a note's `vaultFiles` payload from its decoded attachments, encoding
+ * each `Uint8Array` as the base64 the IPC wire shape needs. Called from
+ * `load()` (#2899), so only the note being imported holds its encoded copy.
  */
-function attachmentsToVaultFiles(
+async function attachmentsToVaultFiles(
   attachments: readonly { path: string; bytes: Uint8Array }[],
-): VaultFile[] | null {
-  return attachments.length > 0
-    ? attachments.map((a) => ({ path: a.path, bytes: Array.from(a.bytes) }))
-    : null
+): Promise<VaultFile[] | null> {
+  if (attachments.length === 0) return null
+  return Promise.all(
+    attachments.map(async (a) => ({
+      path: a.path,
+      // The parsers allocate these themselves, so none is on a SharedArrayBuffer.
+      bytes: await blobToBase64(new Blob([a.bytes as Uint8Array<ArrayBuffer>])),
+    })),
+  )
 }
 
 /**
@@ -642,12 +707,12 @@ function attachmentsToVaultFiles(
  * file name does, and two files' "Meeting"s stay two pages. The stem and the
  * title each go through the Evernote title sanitizer, so each is one level.
  *
- * #2899 — the `Uint8Array` → `number[]` conversion happens inside `load()`,
- * NOT here, so a large `.enex` doesn't materialize every note's attachment
- * bytes as `number[]` up front (peak memory stays O(one note's attachments),
- * not O(all notes')). The parsed `note.attachments` (already-decoded
- * `Uint8Array`s from `parseEnex`) are captured by the closure and converted
- * only when this unit's `load()` runs, right before its `invoke`.
+ * #2899 — the base64 encoding happens inside `load()`, NOT here, so a large
+ * `.enex` doesn't hold every note's attachments encoded up front (peak memory
+ * stays O(one note's attachments), not O(all notes')). The parsed
+ * `note.attachments` (already-decoded `Uint8Array`s from `parseEnex`) are
+ * captured by the closure and encoded only when this unit's `load()` runs,
+ * right before its `invoke`.
  */
 export function enexNotesToUnits(notes: EnexNote[], fileName: string): ImportUnit[] {
   return notes.map((note) => {
@@ -657,14 +722,13 @@ export function enexNotesToUnits(notes: EnexNote[], fileName: string): ImportUni
       name,
       bytes: content.length,
       merges: name,
-      load: () =>
-        Promise.resolve({
-          content,
-          path: name,
-          dialect: 'Markdown',
-          vaultFiles: attachmentsToVaultFiles(note.attachments),
-          vaultNotes: null,
-        }),
+      load: async () => ({
+        content,
+        path: name,
+        dialect: 'Markdown',
+        vaultFiles: await attachmentsToVaultFiles(note.attachments),
+        vaultNotes: null,
+      }),
     }
   })
 }
@@ -672,7 +736,7 @@ export function enexNotesToUnits(notes: EnexNote[], fileName: string): ImportUni
 /**
  * Joplin producer: one {@link ImportUnit} per parsed note. Mirrors
  * {@link enexNotesToUnits} — content composed eagerly, resources shipped as
- * `vaultFiles`, and (#2899) the `number[]` conversion deferred into `load()`
+ * `vaultFiles`, and (#2899) the base64 encoding deferred into `load()`
  * for the same peak-memory reason. The filename is the note's title as
  * `parseJex` built it, each notebook and note name already sanitized, so the
  * `/` between them is the namespace.
@@ -692,14 +756,13 @@ export function jexNotesToUnits(notes: JexNote[]): ImportUnit[] {
       name,
       bytes: content.length,
       merges: name,
-      load: () =>
-        Promise.resolve({
-          content,
-          path: name,
-          dialect: 'Markdown',
-          vaultFiles: attachmentsToVaultFiles(note.attachments),
-          vaultNotes: null,
-        }),
+      load: async () => ({
+        content,
+        path: name,
+        dialect: 'Markdown',
+        vaultFiles: await attachmentsToVaultFiles(note.attachments),
+        vaultNotes: null,
+      }),
     }
   })
 }

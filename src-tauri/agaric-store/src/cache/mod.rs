@@ -24,6 +24,8 @@ mod tags;
 #[cfg(test)]
 mod cascade_tests;
 #[cfg(test)]
+pub(crate) mod random_vault_tests;
+#[cfg(test)]
 mod tests;
 
 // ---------------------------------------------------------------------------
@@ -209,6 +211,8 @@ pub use projected_agenda::rebuild_projected_agenda_cache_with_today;
 // + horizon tests. `pub` (not `#[cfg(test)]`) for the same cross-crate reason
 // as above (#2621, wave S4c).
 pub use projected_agenda::{BACKWARD_WINDOW_DAYS, HORIZON_DAYS, HORIZON_OCCURRENCES};
+#[cfg(test)]
+pub(crate) use tags::TAG_USAGE_RULE;
 pub use tags::{rebuild_tags_cache, rebuild_tags_cache_split, refresh_tag_usage_count};
 
 // ---------------------------------------------------------------------------

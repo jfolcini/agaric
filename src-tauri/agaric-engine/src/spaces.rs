@@ -326,7 +326,7 @@ pub async fn pages_without_space(
 /// placement is precisely the tag guaranteed to have zero cache rows.
 ///
 /// Nor is the cache worth UNIONing in alongside the scan: every row in it is
-/// derived from exactly these tokens (`compute_desired_pairs` /
+/// derived from exactly these tokens (`push_desired_pairs` /
 /// `reindex_block_tag_refs_in_tx` run `tag_ref_re()` over `blocks.content`),
 /// so for a live source block it is a strict subset of what the scan already
 /// sees. The only row it could add is a STALE one whose token has since been
@@ -336,7 +336,7 @@ pub async fn pages_without_space(
 /// since #533 / migration 0086), falling back to its owning page's when the
 /// block itself is unscoped — the same `COALESCE` over a page join guarded
 /// by `p.deleted_at IS NULL` that `space::resolve_block_space` and
-/// `compute_desired_pairs` use, so a block on a trashed page votes exactly
+/// the `block_tag_refs` rebuild use, so a block on a trashed page votes exactly
 /// as the cross-space gate would later judge it. Blocks that resolve to no
 /// space contribute no vote rather than voting for NULL.
 ///

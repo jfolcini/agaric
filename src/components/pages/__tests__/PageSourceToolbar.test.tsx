@@ -32,6 +32,10 @@ import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
+// Loaded with the file, not by its first test: `PageSourceEditor` imports the
+// buffer lazily, and on a loaded machine that one-time import outlasts the
+// first `findByRole`.
+import '@/components/pages/PageSourceBuffer'
 
 const touch = vi.hoisted(() => ({ value: false }))
 vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => touch.value }))

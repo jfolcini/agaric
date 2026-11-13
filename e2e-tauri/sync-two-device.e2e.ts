@@ -690,7 +690,7 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
       const spaceId = (spaces.find((space) => space.name === 'Personal') ?? spaces[0])?.id
       const file = ({ name, bytes }: { name: string; bytes: Buffer }) => ({
         filename: name,
-        bytes: [...bytes],
+        bytes: bytes.toString('base64'),
       })
       // The dialog's call, linked from the block both devices share.
       const made = await invoke<{ page_id: string; recording_block_id: string }>('add_meeting', {

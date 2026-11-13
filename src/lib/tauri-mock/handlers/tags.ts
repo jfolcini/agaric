@@ -22,7 +22,7 @@ import {
   validationRejection,
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
-import { blockTags, blocks, pushOp } from '@/lib/tauri-mock/seed'
+import { blockTags, blocks, properties, pushOp } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // #3871 — tag inheritance (`block_tag_inherited`)
@@ -62,7 +62,9 @@ interface TagCacheRow {
  * with content (`DESIRED_TAGS_SQL`); `usage_count` is the number of LIVE
  * holders. The name slot is `UNIQUE (space_id, name)` (migration 0121, #5237),
  * so the same name in two spaces is two rows. A holder is a live block of the
- * tag's space carrying it attached or inline (`refInclusiveTags`). The backend
+ * tag's space carrying it attached or inline (`refInclusiveTags`), and not a
+ * template page or a block on one: the tag's page leaves those out, and the
+ * count is the badge on its list (#6659). The backend
  * also de-duplicates the cache by normalized name within a space; no fixture
  * seeds two tags of one space that share a fold (`create_block` resolves to the
  * existing one, #5236), so that is not modelled here.
@@ -71,6 +73,7 @@ function tagCacheRows(): TagCacheRow[] {
   const usage = new Map<string, number>()
   for (const holder of blocks.values()) {
     if (holder['deleted_at']) continue
+    if (properties.get(holder['page_id'] as string)?.has('template')) continue
     for (const tagId of refInclusiveTags(holder['id'] as string)) {
       const tag = blocks.get(tagId)
       if (tag && ownerSpaceOf(tag) !== ownerSpaceOf(holder)) continue

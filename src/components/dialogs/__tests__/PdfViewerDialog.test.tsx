@@ -71,7 +71,8 @@ const mockNotify = {
 vi.mock('@/lib/notify', () => ({ notify: mockNotify }))
 
 // ─── pdfjs-dist core (getDocument + saveDocument) ──────────────────────────
-const mockSaveDocument = vi.fn(() => Promise.resolve(new Uint8Array([1, 2, 3]).buffer))
+// pdf.js resolves a `Uint8Array`.
+const mockSaveDocument = vi.fn(() => Promise.resolve(new Uint8Array([1, 2, 3])))
 /** pdf.js's storage of the reader's annotations; empty, it serializes without a map. */
 const emptyStorage = () => ({
   serializable: { map: null as Map<string, unknown> | null },
@@ -138,7 +139,8 @@ vi.mock('pdfjs-dist/web/pdf_viewer.css', () => ({}))
 
 // Import AFTER mocks so the component picks them up.
 const { PdfViewerDialog } = await import('@/components/dialogs/PdfViewerDialog')
-const { createPageBlockStore, PageBlockContext } = await import('@/stores/page-blocks')
+const { createPageBlockStore, getPageStore, PageBlockContext, PageBlockStoreProvider } =
+  await import('@/stores/page-blocks')
 const { useSpaceStore } = await import('@/stores/space')
 const { useUndoStore } = await import('@/stores/undo')
 const { logger } = await import('@/lib/logger')
@@ -160,7 +162,7 @@ beforeEach(() => {
     promise: Promise.resolve(mockPdfDoc),
     destroy: vi.fn(),
   })
-  mockSaveDocument.mockResolvedValue(new Uint8Array([1, 2, 3]).buffer)
+  mockSaveDocument.mockResolvedValue(new Uint8Array([1, 2, 3]))
   mockAddAttachmentWithBytes.mockResolvedValue(ok({ id: 'new-att-id' }))
   mockDeleteAttachment.mockResolvedValue(ok(null))
   mockGetBlock.mockResolvedValue(ok({ id: 'block-1', content: 'Reading list' }))
@@ -400,18 +402,16 @@ describe('PdfViewerDialog', () => {
       await user.click(screen.getByTestId('pdf-save'))
 
       await waitFor(() => {
-        expect(mockSaveDocument).toHaveBeenCalled()
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
       })
+      expect(mockSaveDocument).toHaveBeenCalled()
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
         'block-1',
         'report (annotated).pdf',
         'application/pdf',
-        expect.any(Array),
+        'AQID',
       )
       expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
-      await waitFor(() => {
-        expect(onSaved).toHaveBeenCalledWith('new-att-id')
-      })
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
   })
@@ -426,7 +426,7 @@ describe('PdfViewerDialog', () => {
     function renderInPage(content: string) {
       const onSaved = vi.fn()
       const store = createPageBlockStore('PAGE_1')
-      const block = makeBlock({ id: 'block-1', parent_id: 'PAGE_1', content })
+      const block = makeBlock({ id: 'block-1', parent_id: 'PAGE_1', page_id: 'PAGE_1', content })
       store.setState({ blocks: [block], blocksById: new Map([[block.id, block]]) })
       mockGetBlock.mockResolvedValue(ok(block))
       render(
@@ -482,7 +482,9 @@ describe('PdfViewerDialog', () => {
         Promise.resolve(ok({ id, content, op_refs: [] })),
       )
       const { text, onSaved } = renderInPage(LINKED)
-      mockGetBlock.mockResolvedValue(ok(makeBlock({ id: 'block-1', content: saved })))
+      mockGetBlock.mockResolvedValue(
+        ok(makeBlock({ id: 'block-1', page_id: 'PAGE_1', content: saved })),
+      )
       await annotateAndSave()
 
       await waitFor(() => {
@@ -624,7 +626,10 @@ describe('PdfViewerDialog', () => {
     beforeEach(() => {
       useUndoStore.setState({ pages: new Map() })
       mockCreateBlocksBatch.mockResolvedValue(
-        ok({ blocks: [], op_refs: [{ device_id: 'DEV', seq: 7 }] }),
+        ok({
+          blocks: [makeBlock({ id: 'hl-new', parent_id: 'block-1', page_id: 'PAGE_1' })],
+          op_refs: [{ device_id: 'DEV', seq: 7 }],
+        }),
       )
       mockSetProperty.mockImplementation((id: string) =>
         Promise.resolve(ok({ ...makeBlock({ id }), op_refs: [] })),
@@ -632,7 +637,7 @@ describe('PdfViewerDialog', () => {
     })
 
     afterEach(() => {
-      useSpaceStore.setState({ currentSpaceId: null })
+      useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [] })
     })
 
     it('adds a child of the owner pointing at the copy, as one undo entry', async () => {
@@ -677,10 +682,10 @@ describe('PdfViewerDialog', () => {
       await waitFor(() => {
         expect(onSaved).toHaveBeenCalledWith('new-att-id')
       })
-      expect(mockNotify.error).toHaveBeenCalledWith(t('pdfViewer.highlightBlocksFailed'))
+      expect(mockNotify.error).toHaveBeenCalledWith(t('pdfViewer.annotationBlocksFailed'))
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         'PdfViewerDialog',
-        'adding the highlight blocks failed',
+        'adding the annotation blocks failed',
         { ownerId: 'block-1' },
         expect.anything(),
       )
@@ -734,6 +739,122 @@ describe('PdfViewerDialog', () => {
       await waitFor(() => {
         expect(onSaved).toHaveBeenCalledWith('new-att-id')
       })
+      expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
+    })
+
+    // The reader also opens from a highlight block's chip, which can sit on a
+    // page other than the owner's: Ctrl+Z there must not take back what Save
+    // wrote on the owner's page.
+    describe("opened on a page that is not the owner's", () => {
+      const LINKED = '[report.pdf](attachment:att-1)'
+      const REPOINTED = '[report.pdf](attachment:new-att-id)'
+      const EDIT_REF = { device_id: 'DEV', seq: 8 }
+      const refsOn = (pageId: string) =>
+        useUndoStore
+          .getState()
+          .pages.get(pageId)
+          ?.undoStack.map((e) => e.refs)
+
+      /** The dialog in `PAGE_CHIP`'s store, on a PDF whose owner is on `PAGE_OWNER`. */
+      function renderOnChipPage(ownerPage?: React.ReactElement) {
+        const owner = makeBlock({ id: 'block-1', page_id: 'PAGE_OWNER', content: LINKED })
+        mockGetBlock.mockResolvedValue(ok(owner))
+        mockCreateBlocksBatch.mockResolvedValue(
+          ok({
+            blocks: [makeBlock({ id: 'hl-new', parent_id: 'block-1', page_id: 'PAGE_OWNER' })],
+            op_refs: [{ device_id: 'DEV', seq: 7 }],
+          }),
+        )
+        mockEditBlock.mockImplementation((id: string, content: string) =>
+          Promise.resolve(ok({ id, content, op_refs: [EDIT_REF] })),
+        )
+        const onSaved = vi.fn()
+        render(
+          <>
+            {ownerPage}
+            <PdfViewerDialog
+              open
+              onOpenChange={vi.fn()}
+              fileUrl="blob:t"
+              filename="report.pdf"
+              blockId="block-1"
+              attachmentId="att-1"
+              onSaved={onSaved}
+            />
+          </>,
+          createPageBlockStore('PAGE_CHIP'),
+        )
+        return { onSaved }
+      }
+
+      it('records no undo entry while the owner page is not open', async () => {
+        holdHighlight('Page two', 1)
+        const { onSaved } = renderOnChipPage()
+        await save()
+
+        await waitFor(() => {
+          expect(onSaved).toHaveBeenCalledWith('new-att-id')
+        })
+        expect(mockCreateBlocksBatch).toHaveBeenCalledWith([PAGE_TWO_BLOCK])
+        expect(mockEditBlock).toHaveBeenCalledWith('block-1', REPOINTED, null)
+        expect(useUndoStore.getState().pages.size).toBe(0)
+        expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
+      })
+
+      it("records the undo entries on the owner's page when it is open", async () => {
+        holdHighlight('Page two', 1)
+        const { onSaved } = renderOnChipPage(
+          <PageBlockStoreProvider pageId="PAGE_OWNER">{null}</PageBlockStoreProvider>,
+        )
+        const load = vi.fn(() => Promise.resolve())
+        getPageStore('PAGE_OWNER')?.setState({ load })
+        await save()
+
+        await waitFor(() => {
+          expect(onSaved).toHaveBeenCalledWith('new-att-id')
+        })
+        // The owner's page shows the new block from its own read.
+        expect(load).toHaveBeenCalledTimes(1)
+        // Newest first: the link edit, then the new block.
+        expect(refsOn('PAGE_OWNER')).toEqual([[EDIT_REF], [{ device_id: 'DEV', seq: 7 }]])
+        expect(refsOn('PAGE_CHIP')).toBeUndefined()
+        expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
+      })
+
+      it('keeps the original when the edit of an owner on a closed page is refused', async () => {
+        const { onSaved } = renderOnChipPage()
+        mockEditBlock.mockResolvedValue({
+          status: 'error',
+          error: { kind: 'database', message: 'x' },
+        })
+        await save()
+
+        await waitFor(() => {
+          expect(onSaved).toHaveBeenCalledWith('new-att-id')
+        })
+        expect(mockEditBlock).toHaveBeenCalledTimes(1)
+        expect(mockDeleteAttachment).not.toHaveBeenCalled()
+      })
+    })
+
+    it('points the blocks of every space, the active one first', async () => {
+      highlightBlocks(['hl-1'])
+      useSpaceStore.setState({
+        availableSpaces: [
+          { id: 'SPACE_2', name: 'Work', accent_color: null },
+          { id: 'SPACE_1', name: 'Personal', accent_color: null },
+        ],
+      })
+      const { onSaved } = renderOwner()
+      await save()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(mockQueryByProperty.mock.calls.map(([, scope]) => scope)).toEqual([
+        { kind: 'active', space_id: 'SPACE_1' },
+        { kind: 'active', space_id: 'SPACE_2' },
+      ])
       expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
     })
 

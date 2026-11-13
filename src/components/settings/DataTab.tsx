@@ -5,8 +5,9 @@
  *
  * Composition wiring: the Import card (all import affordances + the shared
  * import-runner state machine) lives in {@link ImportSection}, the Export
- * card in {@link ExportSection}, the Markdown mirror in {@link MirrorSection}. The pure import logic lives in
- * `@/lib/vault-import` and the shared runner in `./useImportRunner`.
+ * card in {@link ExportSection}, the Markdown mirror in {@link MirrorSection},
+ * the daily snapshot row in {@link SnapshotSection}. The pure import logic
+ * lives in `@/lib/vault-import` and the shared runner in `./useImportRunner`.
  */
 
 import { History } from 'lucide-react'
@@ -16,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 import { ExportSection } from '@/components/settings/ExportSection'
 import { ImportSection } from '@/components/settings/ImportSection'
 import { MirrorSection } from '@/components/settings/MirrorSection'
+import { SnapshotSection } from '@/components/settings/SnapshotSection'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { SettingRow } from '@/components/ui/setting-row'
@@ -30,6 +32,7 @@ export function DataTab(): React.ReactElement {
       <ImportSection />
       <ExportSection />
       <MirrorSection />
+      <SnapshotSection />
       {/* HistoryView is a full-page view: it portals its filter bar into the
           shell header and takes Space / Enter / arrows on `document`, so the
           row opens it rather than hosting it. */}

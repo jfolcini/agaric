@@ -160,7 +160,7 @@ describe('Agaric real-backend restore of a space export into another space (#627
       blockId: child,
       filename: `${marker} report.pdf`,
       mimeType: 'application/pdf',
-      bytes: [...new TextEncoder().encode('%PDF-1')],
+      bytes: btoa('%PDF-1'),
     })
     const task = await addBlock(personal, treeId, `${marker}-task`)
     await invoke('set_todo_state', { blockId: task, state: 'DONE' })

@@ -380,6 +380,89 @@ describe('useImportRunner', () => {
     })
   })
 
+  // #6554 — a whole-vault restore runs each space's units in one run.
+  describe('several spaces in one run', () => {
+    const imported = (spaceId: string, deferred: string[]) => ({
+      page_title: spaceId,
+      blocks_created: 2,
+      properties_set: 0,
+      page_id: `PAGE_${spaceId}`,
+      collapsed: [],
+      anchors: [],
+      deferred,
+      warnings: [`w-${spaceId}`],
+    })
+
+    it('imports each group into its space, links each space apart, and sums one result', async () => {
+      mockImportMarkdown.mockImplementation(async (_c: string, _p: string, spaceId: string) =>
+        imported(spaceId, [`D_${spaceId}`]),
+      )
+      mockLinkImportAnchors.mockResolvedValue({ status: 'ok', data: [] })
+      const { result } = renderHook(() => useImportRunner())
+
+      let outcome: Awaited<ReturnType<typeof result.current.run>> | undefined
+      await act(async () => {
+        result.current.begin()
+        outcome = await result.current.run({
+          event: mkEvent(),
+          groups: [
+            { spaceId: 'S1', units: [unit('a.md')], finalWarnings: () => ['skipped-S1'] },
+            {
+              spaceId: 'S2',
+              units: [unit('b.md')],
+              initialWarnings: ['seed-S2'],
+              finalWarnings: () => ['skipped-S2'],
+            },
+          ],
+          notes: false,
+          loggerFailLabel: 'file import failed',
+        })
+      })
+
+      expect(mockImportMarkdown.mock.calls.map((call) => [call[1], call[2]])).toEqual([
+        ['a.md', 'S1'],
+        ['b.md', 'S2'],
+      ])
+      expect(mockLinkImportAnchors.mock.calls).toEqual([
+        ['S1', [], ['D_S1']],
+        ['S2', [], ['D_S2']],
+      ])
+      expect(outcome).toMatchObject({ succeededFiles: 2, totalBlocks: 4, navTitle: null })
+      expect(result.current.importResult).toMatchObject({
+        pageTitle: null,
+        importedCount: 2,
+        blocksCreated: 4,
+        warnings: ['skipped-S1', 'skipped-S2', 'seed-S2', 'w-S1', 'w-S2'],
+        navTitle: null,
+      })
+    })
+
+    it('cancels between spaces: no unit of a later space starts', async () => {
+      const { result } = renderHook(() => useImportRunner())
+      mockImportMarkdown.mockImplementationOnce(async () => {
+        result.current.cancel()
+        return imported('S1', [])
+      })
+
+      let outcome: Awaited<ReturnType<typeof result.current.run>> | undefined
+      await act(async () => {
+        result.current.begin()
+        outcome = await result.current.run({
+          event: mkEvent(),
+          groups: [
+            { spaceId: 'S1', units: [unit('a.md')] },
+            { spaceId: 'S2', units: [unit('b.md')] },
+          ],
+          notes: false,
+          loggerFailLabel: 'file import failed',
+        })
+      })
+
+      expect(outcome).toMatchObject({ cancelled: true, succeededFiles: 1 })
+      expect(mockImportMarkdown).toHaveBeenCalledTimes(1)
+    })
+  })
+
   it("links a folder's notes into one another once its last note is imported", async () => {
     const anchorA = { page_id: 'PAGE_A', anchor: 'mine', block_id: 'BLOCK_A' }
     const anchorB = { page_id: 'PAGE_B', anchor: 'step', block_id: 'BLOCK_B' }

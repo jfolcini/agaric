@@ -283,7 +283,7 @@ async fn a_logseq_file_a_folder_note_and_a_note_with_files_merge() {
         ImportDialect::Markdown,
         Some(vec![VaultFile {
             path: "pic.png".into(),
-            bytes: vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4],
+            bytes: vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4].into(),
         }]),
         None,
         None,
@@ -593,7 +593,7 @@ async fn exported_page_with_files_as(
         md = md.replace(&format!("attachment:{id}"), &path);
         files.push(VaultFile {
             path,
-            bytes: name.as_bytes().to_vec(),
+            bytes: name.as_bytes().to_vec().into(),
         });
     }
     (page.into_string(), md, files)
@@ -787,7 +787,7 @@ async fn a_file_added_to_an_attachments_line_is_attached_to_its_block() {
     let md = md.replace(line, &format!("{line}, [new.pdf](new.pdf)"));
     files.push(VaultFile {
         path: "new.pdf".into(),
-        bytes: b"new".to_vec(),
+        bytes: b"new".to_vec().into(),
     });
 
     let result = import_note(&pool, &mat, dir.path(), &md, &files)
@@ -827,7 +827,7 @@ async fn an_attachments_line_under_a_new_block_attaches_only_its_new_file_to_it(
     );
     files.push(VaultFile {
         path: "new.pdf".into(),
-        bytes: b"new".to_vec(),
+        bytes: b"new".to_vec().into(),
     });
 
     let result = import_note(&pool, &mat, dir.path(), &md, &files)

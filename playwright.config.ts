@@ -1,10 +1,17 @@
-import { defineConfig, devices } from '@playwright/test'
+import { existsSync } from 'node:fs'
+
+import { chromium, defineConfig, devices } from '@playwright/test'
 
 // Parallel worktrees set `PW_PORT` so each one tests its own bundle: with the
 // default port and `reuseExistingServer`, a second worktree would silently run
 // against the first one's server.
 const PORT = process.env['PW_PORT'] ?? '5173'
 const ORIGIN = `http://localhost:${PORT}`
+
+// A Claude cloud session ships one Chromium at this path, often older than the
+// build the pinned Playwright asks for, and Playwright then refuses to launch.
+const CLOUD_CHROMIUM = '/opt/pw-browsers/chromium'
+const useCloudChromium = !existsSync(chromium.executablePath()) && existsSync(CLOUD_CHROMIUM)
 
 export default defineConfig({
   testDir: './e2e',
@@ -83,7 +90,10 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        ...(useCloudChromium ? { launchOptions: { executablePath: CLOUD_CHROMIUM } } : {}),
+      },
     },
   ],
   webServer: {

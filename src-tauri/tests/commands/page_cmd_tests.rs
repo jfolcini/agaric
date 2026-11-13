@@ -17145,7 +17145,7 @@ async fn import_obsidian_embed_ingests_and_rewrites_1925() {
     let bytes: Vec<u8> = vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4];
     let vault = vec![VaultFile {
         path: "assets/diagram.png".into(),
-        bytes: bytes.clone(),
+        bytes: bytes.clone().into(),
     }];
 
     let content = "- here is a diagram ![[diagram.png]] inline";
@@ -17213,7 +17213,7 @@ async fn import_markdown_image_preserves_alt_1925() {
     let bytes: Vec<u8> = vec![9, 8, 7, 6, 5];
     let vault = vec![VaultFile {
         path: "assets/img.png".into(),
-        bytes: bytes.clone(),
+        bytes: bytes.clone().into(),
     }];
 
     let content = "- a picture ![my caption](assets/img.png) end";
@@ -17261,7 +17261,7 @@ async fn import_missing_attachment_warns_and_keeps_ref_1925() {
     // Vault carries a DIFFERENT file, so the ref does not match.
     let vault = vec![VaultFile {
         path: "assets/other.png".into(),
-        bytes: vec![1, 2, 3],
+        bytes: vec![1, 2, 3].into(),
     }];
 
     let content = "- ref to ![[missing.png]] here";
@@ -17321,11 +17321,11 @@ async fn import_ingests_per_block_no_cross_block_dedup_1925() {
     let vault = vec![
         VaultFile {
             path: "assets/a.png".into(),
-            bytes: bytes.clone(),
+            bytes: bytes.clone().into(),
         },
         VaultFile {
             path: "assets/b.png".into(),
-            bytes: bytes.clone(),
+            bytes: bytes.clone().into(),
         },
     ];
 
@@ -17398,7 +17398,7 @@ async fn import_dedups_repeated_ref_within_one_block_1925() {
     let bytes: Vec<u8> = vec![7, 7, 7, 7];
     let vault = vec![VaultFile {
         path: "assets/a.png".into(),
-        bytes: bytes.clone(),
+        bytes: bytes.clone().into(),
     }];
 
     // One block, same embed referenced twice.
@@ -17489,7 +17489,7 @@ async fn import_code_fence_embed_stays_literal_1925() {
 
     let vault = vec![VaultFile {
         path: "assets/x.png".into(),
-        bytes: vec![1, 2, 3, 4],
+        bytes: vec![1, 2, 3, 4].into(),
     }];
 
     // A fenced code block — the parser flags its block(s) `is_code`, so the
@@ -17549,11 +17549,11 @@ fn attachment_ref_detection_and_match_rules_1925() {
     let vault = vec![
         VaultFile {
             path: "other/a.png".into(),
-            bytes: vec![1],
+            bytes: vec![1].into(),
         },
         VaultFile {
             path: "assets/a.png".into(),
-            bytes: vec![2],
+            bytes: vec![2].into(),
         },
     ];
     assert_eq!(
@@ -17599,7 +17599,7 @@ fn attachment_ref_resolves_note_relative_then_root_then_basename_6032() {
 
     let file = |path: &str| VaultFile {
         path: path.into(),
-        bytes: vec![1],
+        bytes: vec![1].into(),
     };
     let vault = vec![
         file("img.png"),
@@ -17679,11 +17679,11 @@ async fn import_attaches_the_image_beside_the_note_6032() {
     let vault = vec![
         VaultFile {
             path: "a/image.png".into(),
-            bytes: vec![0xA, 1, 1],
+            bytes: vec![0xA, 1, 1].into(),
         },
         VaultFile {
             path: "b/image.png".into(),
-            bytes: vec![0xB, 2, 2],
+            bytes: vec![0xB, 2, 2].into(),
         },
     ];
     let result = import_markdown_inner(
@@ -17733,7 +17733,7 @@ async fn import_attaches_a_linked_file_as_a_file_link_6032() {
 
     let file = |path: &str| VaultFile {
         path: path.into(),
-        bytes: b"%PDF-1.4".to_vec(),
+        bytes: b"%PDF-1.4".to_vec().into(),
     };
     let result = import_markdown_inner(
         &pool,
@@ -17820,11 +17820,11 @@ async fn import_obsidian_embed_keeps_its_width() {
         Some(vec![
             VaultFile {
                 path: "pic.png".into(),
-                bytes: vec![0x89, b'P', b'N', b'G'],
+                bytes: vec![0x89, b'P', b'N', b'G'].into(),
             },
             VaultFile {
                 path: "scan.pdf".into(),
-                bytes: b"%PDF-1.4".to_vec(),
+                bytes: b"%PDF-1.4".to_vec().into(),
             },
         ]),
     )
@@ -17877,7 +17877,7 @@ async fn import_reads_an_escaped_pipe_embed_in_a_table_cell() {
         TEST_SPACE_ID.into(),
         Some(vec![VaultFile {
             path: "pic.png".into(),
-            bytes: vec![0x89, b'P', b'N', b'G'],
+            bytes: vec![0x89, b'P', b'N', b'G'].into(),
         }]),
     )
     .await
@@ -17933,11 +17933,11 @@ async fn import_keeps_an_escaped_pipe_image_alt_in_a_table_cell() {
         Some(vec![
             VaultFile {
                 path: "pic.png".into(),
-                bytes: vec![0x89, b'P', b'N', b'G'],
+                bytes: vec![0x89, b'P', b'N', b'G'].into(),
             },
             VaultFile {
                 path: "doc.pdf".into(),
-                bytes: b"%PDF-1.4".to_vec(),
+                bytes: b"%PDF-1.4".to_vec().into(),
             },
         ]),
     )
@@ -17993,7 +17993,7 @@ async fn a_logseq_image_width_becomes_its_alt_width() {
         TEST_SPACE_ID.into(),
         Some(vec![VaultFile {
             path: "assets/cat.png".into(),
-            bytes: vec![0x89, b'P', b'N', b'G'],
+            bytes: vec![0x89, b'P', b'N', b'G'].into(),
         }]),
     )
     .await
@@ -18532,7 +18532,7 @@ async fn import_markdown_rejects_excess_attachment_file_count_2724() {
     let vault: Vec<VaultFile> = (0..=agaric_lib::commands::MAX_ATTACHMENT_FILE_COUNT)
         .map(|i| VaultFile {
             path: format!("assets/f{i}.png"),
-            bytes: Vec::new(),
+            bytes: Vec::new().into(),
         })
         .collect();
 
@@ -18589,7 +18589,7 @@ async fn import_markdown_within_attachment_budget_still_ingests_2724() {
     let bytes: Vec<u8> = vec![0x89, b'P', b'N', b'G', 42, 43, 44];
     let vault = vec![VaultFile {
         path: "assets/pic.png".into(),
-        bytes: bytes.clone(),
+        bytes: bytes.clone().into(),
     }];
 
     let result = import_markdown_inner(
@@ -18636,7 +18636,7 @@ fn ingest_read_counts_counts_occurrences_not_distinct_refs_2724() {
 
     let vault = vec![VaultFile {
         path: "assets/a.png".into(),
-        bytes: vec![1, 2, 3, 4],
+        bytes: vec![1, 2, 3, 4].into(),
     }];
     let mkref = |orig: &str| AttachmentRef {
         alt: String::new(),
@@ -18701,7 +18701,7 @@ async fn import_repeated_ref_in_block_ingests_full_bytes_2724() {
     let bytes: Vec<u8> = vec![0x89, b'P', b'N', b'G', 9, 8, 7, 6, 5];
     let vault = vec![VaultFile {
         path: "assets/a.png".into(),
-        bytes: bytes.clone(),
+        bytes: bytes.clone().into(),
     }];
 
     let result = import_markdown_inner(
@@ -19766,7 +19766,7 @@ async fn a_folder_import_links_embeds_and_anchors_across_its_notes() {
     let b = "Intro paragraph.\n\n## Setup\n\nThe step. ^step\n\nBack to [[A#^mine]] and ![[A]].\n";
     let png = VaultFile {
         path: "img.png".into(),
-        bytes: vec![0x89, b'P', b'N', b'G'],
+        bytes: vec![0x89, b'P', b'N', b'G'].into(),
     };
     let warnings = import_folder(
         &pool,

@@ -115,7 +115,22 @@ export function isAttachmentAllowed(
   return { ok: true }
 }
 
-/** Read a browser `File` into a `Uint8Array` for bytes-over-IPC upload. */
-export async function readFileBytes(file: File): Promise<Uint8Array> {
-  return new Uint8Array(await file.arrayBuffer())
+/**
+ * Encode a `Blob` (a `File` is one) as base64, the shape upload bytes cross IPC
+ * in (#6539; Rust `agaric_core::base64_bytes`). `FileReader` encodes natively
+ * and off the UI thread, where one JS number per byte costs seconds for a
+ * recording.
+ */
+export function blobToBase64(blob: Blob): Promise<string> {
+  // WebKit's data URL for an empty blob is a bare `data:`, with no comma to cut at.
+  if (blob.size === 0) return Promise.resolve('')
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => {
+      const dataUrl = reader.result as string
+      resolve(dataUrl.slice(dataUrl.indexOf(',') + 1))
+    })
+    reader.addEventListener('error', () => reject(reader.error))
+    reader.readAsDataURL(blob)
+  })
 }

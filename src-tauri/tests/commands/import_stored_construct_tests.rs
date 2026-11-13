@@ -545,11 +545,11 @@ async fn import_ingests_logseq_parent_assets_refs_as_attachments() {
     let vault = vec![
         VaultFile {
             path: "assets/cat_123.png".into(),
-            bytes: vec![0x89, b'P', b'N', b'G'],
+            bytes: vec![0x89, b'P', b'N', b'G'].into(),
         },
         VaultFile {
             path: "assets/doc.pdf".into(),
-            bytes: b"%PDF-1.4".to_vec(),
+            bytes: b"%PDF-1.4".to_vec().into(),
         },
     ];
     let md = "- ![cat](../assets/cat_123.png)\n- [doc](../assets/doc.pdf)\n";
@@ -708,7 +708,7 @@ async fn import_stores_an_evernote_note_as_its_converter_writes_it() {
     let (pool, dir, mat) = fixture().await;
     let vault = vec![VaultFile {
         path: "pic.png".into(),
-        bytes: vec![0x89, b'P', b'N', b'G'],
+        bytes: vec![0x89, b'P', b'N', b'G'].into(),
     }];
     let result = import(
         &pool,
@@ -781,15 +781,15 @@ async fn import_stores_a_joplin_note_with_its_to_do_note_link_and_resources() {
     let vault = vec![
         VaultFile {
             path: "paper.pdf".into(),
-            bytes: b"%PDF-1.4".to_vec(),
+            bytes: b"%PDF-1.4".to_vec().into(),
         },
         VaultFile {
             path: "notes.txt".into(),
-            bytes: b"hello".to_vec(),
+            bytes: b"hello".to_vec().into(),
         },
         VaultFile {
             path: "pic.png".into(),
-            bytes: vec![0x89, b'P', b'N', b'G'],
+            bytes: vec![0x89, b'P', b'N', b'G'].into(),
         },
     ];
     let result = import(

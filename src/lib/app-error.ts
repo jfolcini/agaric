@@ -12,7 +12,7 @@
  * type-check error instead of a silently-false branch.
  */
 
-import type { AppError, ValidationCode } from '@/lib/bindings'
+import type { AppError, AppErrorKind, ValidationCode } from '@/lib/bindings'
 
 // Re-export the generated unions under their canonical names so consumers
 // keep importing error vocabulary from `@/lib/app-error` (the narrowing
@@ -180,6 +180,27 @@ export function takenNameReason(err: unknown): string | null {
   return isValidation(err) && err.code === 'DuplicatePageTitle' ? err.message : null
 }
 
+/** The kinds every command fails with while the disk or the database does (#6554). */
+export type StorageFailureKind = Extract<
+  AppErrorKind,
+  'storage_full' | 'storage_read_only' | 'storage_corrupt'
+>
+
+/**
+ * Dispatched on `window` by {@link unwrap} for each command that failed on
+ * storage; `detail` is its {@link StorageFailureKind}. `StorageFailureBanner`
+ * shows the cause once, whichever call site caught the failure.
+ */
+export const STORAGE_FAILURE_EVENT = 'agaric:storageFailure'
+
+function storageFailureKind(err: unknown): StorageFailureKind | null {
+  if (!isAppError(err)) return null
+  const { kind } = err
+  return kind === 'storage_full' || kind === 'storage_read_only' || kind === 'storage_corrupt'
+    ? kind
+    : null
+}
+
 /**
  * Unwrap a `commands.*` result, throwing on error to preserve the
  * reject-based semantics of the `invoke()` wrappers #2927 retired.
@@ -194,6 +215,10 @@ export function unwrap<T>(
   result: { status: 'ok'; data: T } | { status: 'error'; error: unknown },
 ): T {
   if (result.status === 'ok') return result.data
+  const storage = storageFailureKind(result.error)
+  if (storage !== null) {
+    window.dispatchEvent(new CustomEvent(STORAGE_FAILURE_EVENT, { detail: storage }))
+  }
   throw result.error
 }
 

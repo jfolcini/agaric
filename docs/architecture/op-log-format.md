@@ -118,7 +118,8 @@ may itself contain a raw `0x00` byte. `compute_op_hash` checks this with a
 the payload; in **release** builds those assertions are compiled out, so the
 function never panics on a raw NUL — it simply hashes the (ambiguous) bytes
 it was given. The graceful runtime rejection lives at the ingest gate: the
-`\0`-rejection check at the top of `ingest_replicated_record` returns
+`\0`-rejection check in `verify_remote_record_integrity`, the first thing
+`ingest_replicated_record` runs, returns
 `AppError::InvalidOperation` *before* the bytes reach `compute_op_hash`, so
 untrusted/remote ops carrying a raw NUL are refused gracefully rather than
 panicking.

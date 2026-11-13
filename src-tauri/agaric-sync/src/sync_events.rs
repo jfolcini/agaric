@@ -55,7 +55,10 @@ pub enum SyncProgressUpdate {
 }
 
 /// Payload sent over Tauri events for sync progress/completion/errors.
-#[derive(Debug, Clone, Serialize)]
+///
+/// `Type` puts it in `bindings.ts`, where the frontend's listeners take their
+/// payload types from (#6539): `ts_bindings_up_to_date` fails on a renamed field.
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SyncEvent {
     Progress {
@@ -202,11 +205,14 @@ pub enum SyncEvent {
         /// has no text to name.
         reason_key: Option<String>,
     },
+    /// The spaces whose outbound export this round refused because engine and
+    /// SQL disagree about a deleted block (#6523). Each report replaces the
+    /// last one, so an empty list says every space exports again.
+    ExportRefused { space_ids: Vec<String> },
 }
 
 /// A [`SyncEvent::Error`] the frontend explains in its own words (#5728).
-/// Serialized in snake case; `SyncErrorPayload` in `useSyncEvents.ts` mirrors it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncErrorCode {
     /// The peer runs another engine format (#2130). Updating the older device
@@ -215,6 +221,11 @@ pub enum SyncErrorCode {
     /// The user cancelled the session (`cancel_sync`, #5739): the frontend
     /// reads it as idle, not as a failure.
     Cancelled,
+    /// The peer holds more of this device's own operations than this device
+    /// does, as after an older database was restored here, and the snapshot
+    /// catch-up cannot merge that (#792, #6523). The frontend gives the cause
+    /// and the recovery.
+    OwnHistoryFork,
     /// The dial to a paired peer timed out, mDNS is not announcing it, and it
     /// has not pulled from us lately (#6523): the device is away, and the frontend
     /// shows a neutral waiting state rather than a failure.
@@ -243,6 +254,8 @@ pub const EVENT_SYNC_INTERNET_FACING_BIND: &str = "sync:internet_facing_bind";
 /// Emitted when the OS starts or stops blocking this app's network traffic (#3852).
 /// Payload is [`SyncEvent::NetworkBlockedByOs`].
 pub const EVENT_SYNC_NETWORK_BLOCKED: &str = "sync:network_blocked";
+/// Payload is [`SyncEvent::ExportRefused`].
+pub const EVENT_SYNC_EXPORT_REFUSED: &str = "sync:export_refused";
 
 // ---------------------------------------------------------------------------
 // mDNS status (#2506) — backfill for the peers/device-management surface
@@ -403,7 +416,7 @@ pub const EVENT_BLOCKS_CHANGED: &str = "blocks:changed";
 ///
 /// A write no page owns (MCP `create_tag`) names the block itself, so the
 /// frontend still drops its derived caches without the empty set's full reload.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct BlocksChangedEvent {
     #[serde(default)]
     pub changed_page_ids: Vec<String>,
@@ -412,8 +425,8 @@ pub struct BlocksChangedEvent {
     /// (#6541). Those can shift the numbering a page's positional undo
     /// addresses, so the frontend re-anchors the pages' undo. A sync session's
     /// own changes are a peer's replicated ops, which that numbering leaves
-    /// out, so `false` keeps the pages' undo and redo. Typed by hand in
-    /// `useSyncEvents.ts`, which reads an absent field as `true`.
+    /// out, so `false` keeps the pages' undo and redo. The frontend reads an
+    /// absent field as `true`.
     pub local_ops_appended: bool,
 }
 
@@ -649,6 +662,7 @@ mod tests {
         for (code, spelled) in [
             (SyncErrorCode::PeerAway, "peer_away"),
             (SyncErrorCode::HandshakeUnanswered, "handshake_unanswered"),
+            (SyncErrorCode::OwnHistoryFork, "own_history_fork"),
         ] {
             let json = serde_json::to_value(&SyncEvent::Error {
                 message: String::new(),
@@ -867,6 +881,21 @@ mod tests {
         // only thing keeping the listener attached to the emitter is that this
         // string does not change.
         assert_eq!(EVENT_SYNC_NETWORK_BLOCKED, "sync:network_blocked");
+        // #6523 — mirrored by `SYNC_EXPORT_REFUSED_EVENT` in
+        // `src/hooks/useSyncExportRefused.ts`.
+        assert_eq!(EVENT_SYNC_EXPORT_REFUSED, "sync:export_refused");
+    }
+
+    /// `useSyncExportRefused.ts` reads `space_ids` off this payload by name.
+    #[test]
+    fn export_refused_serializes_its_space_ids_6523() {
+        let event = SyncEvent::ExportRefused {
+            space_ids: vec!["SPACE_A".into()],
+        };
+        assert_eq!(
+            serde_json::to_value(&event).expect("serialize ExportRefused"),
+            serde_json::json!({ "type": "export_refused", "space_ids": ["SPACE_A"] }),
+        );
     }
 
     // ── NetworkBlockedByOs variant (#3852) ─────────────────────────

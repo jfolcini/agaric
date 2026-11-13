@@ -527,7 +527,7 @@ const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
     block_id: argBlockId(args),
     filename: String((args['filename'] as string | undefined) ?? 'file.bin'),
     mime_type: String((args['mimeType'] as string | undefined) ?? 'application/octet-stream'),
-    size_bytes: (args['bytes'] as number[] | undefined)?.length ?? 0,
+    size_bytes: atob((args['bytes'] as string | undefined) ?? '').length,
     fs_path: '/files/file.bin',
     created_at: 1_735_689_600_000,
   }),
@@ -4900,12 +4900,15 @@ describe('BlockTree /attach slash command', () => {
       capturedInput!.dispatchEvent(new Event('change'))
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
-      blockId: 'A',
-      filename: 'test.pdf',
-      mimeType: 'application/pdf',
-      bytes: [1, 2, 3, 4],
-    })
+    // The file is encoded on a task `act` does not flush.
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
+        blockId: 'A',
+        filename: 'test.pdf',
+        mimeType: 'application/pdf',
+        bytes: 'AQIDBA==',
+      }),
+    )
 
     vi.restoreAllMocks()
   })
@@ -4947,13 +4950,14 @@ describe('BlockTree /attach slash command', () => {
     // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
     Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
 
+    const fileRead = vi.spyOn(FileReader.prototype, 'readAsDataURL')
     await act(async () => {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
       capturedInput!.dispatchEvent(new Event('change'))
     })
 
-    // Should NOT ship bytes for a disallowed type.
-    expect(mockedInvoke).not.toHaveBeenCalledWith('add_attachment_with_bytes', expect.anything())
+    // The upload itself runs past this point; the refusal shows in the file never being read.
+    expect(fileRead).not.toHaveBeenCalled()
 
     vi.restoreAllMocks()
   })
@@ -5008,12 +5012,15 @@ describe('BlockTree /attach slash command', () => {
       capturedInput!.dispatchEvent(new Event('change'))
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
-      blockId: 'A',
-      filename: 'photo.png',
-      mimeType: 'image/png',
-      bytes: [9, 9, 9, 9],
-    })
+    // The file is encoded on a task `act` does not flush.
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
+        blockId: 'A',
+        filename: 'photo.png',
+        mimeType: 'image/png',
+        bytes: 'CQkJCQ==',
+      }),
+    )
 
     vi.restoreAllMocks()
   })

@@ -45,8 +45,8 @@
  * The other tests are NOT opt-in: rendered-row and IPC counts are
  * deterministic, unlike the timings, so they pin the big page's initial render
  * window (#5329), what opening each list view (#5366) or a page (#5445) costs,
- * and that creating a page or picking a date lists no pages (#6527), in every
- * Playwright run.
+ * that creating a page or picking a date lists no pages, and that a second page
+ * picker lists none either (#6527), in every Playwright run.
  */
 
 import { writeFileSync } from 'node:fs'
@@ -54,6 +54,7 @@ import { writeFileSync } from 'node:fs'
 import type { Browser, CDPSession, Page } from '@playwright/test'
 
 import {
+  activePopover,
   expect,
   focusBlock,
   navigateToView,
@@ -68,12 +69,8 @@ const PAGES = Number(process.env['AGARIC_PERF_PAGES'] ?? 500)
 const BIG_BLOCKS = Number(process.env['AGARIC_PERF_BLOCKS'] ?? 500)
 const TRACE = process.env['AGARIC_PERF_TRACE'] === '1'
 /** A 1×1 PNG, enough for the browser to decode as an image. */
-const PNG_1X1 = [
-  ...Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-    'base64',
-  ),
-]
+const PNG_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 const REVEAL = process.env['AGARIC_PERF_REVEAL'] === '1'
 const TAGS = 50
 const BIG_TITLE = 'Perf big page'
@@ -474,7 +471,7 @@ async function seedBigPage(
           blockId,
           filename: `notes-${i}.txt`,
           mimeType: 'text/plain',
-          bytes: [104, 105],
+          bytes: btoa('hi'),
         })
         if (i % 10 === 0) {
           await invoke('add_attachment_with_bytes', {
@@ -1512,6 +1509,38 @@ test('creating a page and picking a date list no pages (#6527) @editor @pages @j
   const listings = (calls: string[]) => calls.filter((c) => c === 'list_all_pages_in_space')
   expect(listings(create), create.join(', ')).toEqual([])
   expect(listings(pick), pick.join(', ')).toEqual([])
+})
+
+/**
+ * #6527 — the pickers that filter a space's whole page list read one shared
+ * page index, so the first to open lists the pages and the next one does not.
+ */
+test('a second page picker lists no pages (#6527) @search @pages', async ({ page }) => {
+  await page.addInitScript(installProbes)
+  await page.goto('/')
+  await page.locator('[data-testid="block-static"]').first().waitFor()
+  await expect
+    .poll(() => page.evaluate(() => window.__perf__?.ipc.includes('list_peer_refs')))
+    .toBe(true)
+  await navigateToView(page, 'Advanced Query')
+  const root = page.getByRole('group', { name: 'Filter', exact: true })
+  await settle(page, '[role="option"]')
+
+  /** Open `facet`'s page picker and pick `title` from it. */
+  const pickPage = async (facet: RegExp, title: string): Promise<string[]> => {
+    const mark = await page.evaluate(() => window.__perf__?.ipc.length ?? 0)
+    await root.getByRole('button', { name: 'Add filter', exact: true }).click()
+    const picker = activePopover(page)
+    await picker.getByRole('button', { name: facet }).click()
+    await picker.getByRole('button', { name: title, exact: true }).click()
+    await settle(page, '[data-testid="filter-group-leaf"]')
+    const calls = await page.evaluate((from) => window.__perf__?.ipc.slice(from) ?? [], mark)
+    return calls.filter((c) => c === 'list_all_pages_in_space')
+  }
+
+  expect(await pickPage(/^Links to/, 'Getting Started')).toEqual(['list_all_pages_in_space'])
+  expect(await pickPage(/^Linked from/, 'Quick Notes')).toEqual([])
+  await expect(root.getByTestId('filter-group-leaf')).toHaveCount(2)
 })
 
 // ===========================================================================

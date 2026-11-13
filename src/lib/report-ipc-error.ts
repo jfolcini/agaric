@@ -35,8 +35,9 @@ export function reportIpcError(
  * a human: it names the thing that is wrong and what to do about it, and
  * `sanitize_internal_error` passes it to the frontend verbatim (only
  * `database` / `io` / `internal` kinds are replaced with a correlation id).
- * Every other kind is either not actionable by the user or already
- * correlation-id'd, so those keep the localized generic toast.
+ * Every other kind is either not actionable by the user, already
+ * correlation-id'd, or a storage failure `StorageFailureBanner` names once, so
+ * those keep the localized generic toast.
  *
  * #4399 is the case that motivated it: `create_property_def` now refuses to
  * declare a global type over a key whose existing values contradict it, and
