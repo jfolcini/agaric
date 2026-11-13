@@ -108,6 +108,7 @@ export const common: Record<string, string> = {
   'action.undo': 'Undo',
   'action.redo': 'Redo',
   'action.retry': 'Retry',
+  'action.dismiss': 'Dismiss',
   'action.review': 'Review',
   'action.reload': 'Reload',
   'action.loadMore': 'Load more',

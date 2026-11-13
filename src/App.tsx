@@ -5,6 +5,7 @@ import { reloadMeetingLink } from '@/components/attachments/meeting-link'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { HeaderSearchButton } from '@/components/common/HeaderSearchButton'
 import { HistoryNavButtons } from '@/components/common/HistoryNavButtons'
+import { StorageFailureBanner } from '@/components/common/StorageFailureBanner'
 import { NoPeersPairing } from '@/components/dialogs/NoPeersPairing'
 import { ViewToolbarSlot } from '@/components/FormattingToolbar/view-toolbar'
 import { GlobalDateControls, JournalControls } from '@/components/JournalPage'
@@ -645,6 +646,7 @@ function App() {
                 {shouldShowMobileChrome ? <SearchSheetTrigger /> : <HeaderSearchButton />}
               </div>
             </header>
+            <StorageFailureBanner />
             {/*
              * TabBar is hoisted out of the page-editor view router
              * case and rendered at shell level so tabs stay visible across

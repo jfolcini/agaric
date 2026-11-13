@@ -25,6 +25,13 @@ export const errors: Record<string, string> = {
   'error.blockNotFound': 'Could not locate that block on the page',
   'error.sectionCrashed': '{{section}} encountered an error',
   'error.unexpected': 'An unexpected error occurred',
+  // #6554 — why commands are failing, shown once in StorageFailureBanner.
+  'storage.full':
+    'The disk is full, so changes are not being saved. Free up some space, then try again.',
+  'storage.readOnly':
+    'Agaric cannot write to its data folder, so changes are not being saved. Check that the folder and its disk can be written to.',
+  'storage.corrupt':
+    'The database is damaged, so some actions fail. Export your notes (Settings › Data) before changing anything else.',
   'errorBoundary.dataSafe': 'Your data is safe — Retry reloads this panel.',
   // #1700: localized section names for FeatureErrorBoundary fallbacks. View
   // sections reuse the `sidebar.*` labels; the App-shell boundaries below have

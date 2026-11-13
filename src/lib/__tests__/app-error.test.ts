@@ -252,6 +252,11 @@ describe('generated AppErrorKind union (#2251)', () => {
         case 'cancelled': {
           return 'expected'
         }
+        case 'storage_full':
+        case 'storage_read_only':
+        case 'storage_corrupt': {
+          return 'storage'
+        }
         default: {
           return kind satisfies never
         }

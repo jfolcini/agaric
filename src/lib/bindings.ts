@@ -1664,7 +1664,7 @@ export type AppErrorKind = "database" | "not_found" |
  *  [`AppError::PoolTimedOut`] — wire string `"pool_busy"` (kept from the
  *  original frontend contract; deliberately NOT `pool_timed_out`).
  */
-"pool_busy" | "conflict" | "migration" | "io" | "json" | "ulid" | "invalid_operation" | "channel" | "internal" | "snapshot" | "validation" | "non_reversible" | "cancelled";
+"pool_busy" | "conflict" | "migration" | "io" | "json" | "ulid" | "invalid_operation" | "channel" | "internal" | "snapshot" | "validation" | "non_reversible" | "cancelled" | "storage_full" | "storage_read_only" | "storage_corrupt";
 
 /**  One derived artefact's disagreement with its from-base rebuild. */
 export type ArtefactDivergences = {

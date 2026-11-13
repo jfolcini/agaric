@@ -44,6 +44,7 @@ A handful of facts touch every feature; rather than repeat them in each file:
 - **On a touch phone a view's header scrolls away with its content** (a narrow mouse window keeps it pinned, #5992), except the search field of Pages and Search, which stays pinned; each screen shows one title, and Pages' header is one row: search, a sort icon, a ⋮ menu with the saved views and Tags, Graph, Query, Templates and Trash, and New page as an icon (#5955).
 - **On a phone panels, dialogs and long menus open as bottom sheets** (block properties, History, Outline, Keyboard shortcuts, New page, the date picker, the block and page menus), and toasts sit at the bottom, above the capture button and the keyboard (#5957).
 - **On a phone text starts on one 16 px edge**: headings, block text, a sheet's contents and a settings card's contents (#5958).
+- **A failing disk says so once.** When the disk is full, the data folder cannot be written to, or the database is damaged, a banner under the header names the cause and what to do, and stays until dismissed; each failed action still reports itself (#6554).
 - **All edits are offline-first.** They land in the local SQLite database first and sync afterwards (see [features/sync.md](features/sync.md)).
 - **Everything is space-scoped by default.** The active space filters every list, search, agenda, backlink and history view (see [features/spaces.md](features/spaces.md)).
 - **Reduced motion is respected** globally; JS-driven animations check explicitly (see `docs/UX.md` § Accessibility).
