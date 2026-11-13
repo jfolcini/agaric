@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(SUM(CASE WHEN d.name = 'op_log' THEN d.pgsize END), 0) AS \"table_bytes!: i64\", COALESCE(SUM(CASE WHEN d.name <> 'op_log' THEN d.pgsize END), 0) AS \"index_bytes!: i64\" FROM dbstat AS d WHERE d.aggregate = TRUE AND d.name IN (SELECT name FROM sqlite_schema WHERE tbl_name = 'op_log' AND type IN ('table', 'index'))",
+  "describe": {
+    "columns": [
+      {
+        "name": "table_bytes!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "index_bytes!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "8ec11b02ac91cb530e6819d9014da0752f9f45d4003c5fad690147ff52a0a09a"
+}

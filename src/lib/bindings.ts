@@ -42,10 +42,13 @@ export const commands = {
 	after: string,
 } | null) => typedError<WithOps<PastedBlocks>, AppError>(__TAURI_INVOKE("paste_blocks", { anchorBlockId, input, splice })),
 	/**
-	 *  Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
+	 *  Tauri command: edit a block's content. Delegates to
+	 *  [`edit_block_inner_with_base`]; `base_text` is the text an editor started
+	 *  from, and the returned row carries the text written, which differs from
+	 *  `to_text` when the edit was rebased.
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
 	 */
-	editBlock: (blockId: BlockId, toText: string) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText })),
+	editBlock: (blockId: BlockId, toText: string, baseText: string | null) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText, baseText })),
 	/**
 	 *  Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
@@ -965,7 +968,7 @@ export const commands = {
 	 *  recent-error tail embedded in the prefilled public GitHub issue body
 	 *  goes through the same redaction pipeline as the ZIP export.
 	 */
-	collectBugReportMetadata: () => typedError<BugReport, AppError>(__TAURI_INVOKE("collect_bug_report_metadata")),
+	collectBugReportMetadata: () => typedError<BugReport_Serialize, AppError>(__TAURI_INVOKE("collect_bug_report_metadata")),
 	/**
 	 *  Tauri command: enumerate the log files eligible for inclusion in a
 	 *  bug-report ZIP, applying per-file size caps and optional PII
@@ -1061,6 +1064,8 @@ export const commands = {
 	 *  wrapper only needs to thread `materializer` through.
 	 */
 	createPageInSpace: (parentId: string | null, content: string, spaceId: SpaceId) => typedError<string, AppError>(__TAURI_INVOKE("create_page_in_space", { parentId, content, spaceId })),
+	/**  Tauri command wrapper around [`resolve_page_title_inner`]. */
+	resolvePageTitle: (title: string, scope: SpaceScope) => typedError<ResolvedPageTitle, AppError>(__TAURI_INVOKE("resolve_page_title", { title, scope })),
 	/**
 	 *  Tauri command wrapper around [`create_space_inner`].
 	 * 
@@ -1880,7 +1885,10 @@ export type BlockRow = {
 };
 
 /**  Metadata returned by [`collect_bug_report_metadata`]. */
-export type BugReport = {
+export type BugReport = BugReport_Serialize | BugReport_Deserialize;
+
+/**  Metadata returned by [`collect_bug_report_metadata`]. */
+export type BugReport_Deserialize = {
 	app_version: string,
 	os: string,
 	arch: string,
@@ -1908,6 +1916,47 @@ export type BugReport = {
 	 *  report must not conflate them.
 	 */
 	retry_queue: RetryQueueSummary | null,
+	/**
+	 *  #6563 — what the op log costs on disk, or absent when the read failed
+	 *  or the backend has no SQLite file to measure (the browser mock).
+	 */
+	op_log?: OpLogSummary | null,
+};
+
+/**  Metadata returned by [`collect_bug_report_metadata`]. */
+export type BugReport_Serialize = {
+	app_version: string,
+	os: string,
+	arch: string,
+	device_id: string,
+	/**
+	 *  Last `RECENT_ERRORS_CAP` error/warn lines from the recent
+	 *  `agaric.log.YYYY-MM-DD` files, newest last.
+	 * 
+	 *  #4216: this is a recency window, not a calendar-day one — the walk
+	 *  crosses UTC day boundaries backwards until the cap is full or the
+	 *  bundle's own `MAX_ROLLED_AGE_DAYS` retention runs out, so a report
+	 *  filed minutes after midnight still shows the errors that prompted
+	 *  it. See `recent_errors_from_log_dir`.
+	 * 
+	 *  #609: ALWAYS redacted through the same pipeline as the ZIP export
+	 *  (`redact_line_with_redactor`) — the frontend embeds these lines
+	 *  verbatim into the prefilled PUBLIC GitHub issue body
+	 *  (`src/lib/bug-report.ts::formatReportBody`), and unlike the ZIP
+	 *  path there is no user-facing redact toggle on the issue-body path.
+	 */
+	recent_errors: string[],
+	/**
+	 *  #4854 — the derived-state backstop's own backlog, or `None` when the
+	 *  read failed. `None` and a zero `depth` are different answers and the
+	 *  report must not conflate them.
+	 */
+	retry_queue: RetryQueueSummary | null,
+	/**
+	 *  #6563 — what the op log costs on disk, or absent when the read failed
+	 *  or the backend has no SQLite file to measure (the browser mock).
+	 */
+	op_log?: OpLogSummary | null,
 };
 
 export type BulkTrashResponse = {
@@ -3015,10 +3064,37 @@ export type MovedBlocks = {
  */
 export type NamedDateRange = "overdue" | "today" | "yesterday" | "this-week" | "this-month" | "next-week" | "older" | "none";
 
+/**
+ *  `op_log` reduced to the size breakdown a bug report can carry (#6563).
+ * 
+ *  Answers whether `edit_block` ops, which each carry the block's full text,
+ *  dominate a long-form writer's vault. Carries op-type literals and counts
+ *  only, never a payload, because the report body is public.
+ */
+export type OpLogSummary = {
+	/**  One entry per `op_type` present, sorted by `op_type`. */
+	by_op_type: OpTypeUsage[],
+	/**  Bytes of the pages holding the `op_log` table itself. */
+	table_bytes: number,
+	/**
+	 *  Bytes of the pages holding every index on `op_log`, the primary key's
+	 *  included.
+	 */
+	index_bytes: number,
+};
+
 /**  Reference to a specific op in the log. */
 export type OpRef = {
 	device_id: string,
 	seq: number,
+};
+
+/**  Rows and payload bytes of one `op_type` in `op_log`. */
+export type OpTypeUsage = {
+	op_type: string,
+	rows: number,
+	/**  UTF-8 bytes of `payload` summed over the rows, not characters. */
+	payload_bytes: number,
 };
 
 /**
@@ -4075,6 +4151,17 @@ export type ResolvedBlock = {
 	title: string | null,
 	block_type: string,
 	deleted: boolean,
+};
+
+/**  What [`resolve_page_title_inner`] answers. */
+export type ResolvedPageTitle = {
+	/**  The holder's title as written, else the name a new page takes. */
+	title: string,
+	/**
+	 *  The live page already titled so, which `create_page_in_space` opens
+	 *  instead of creating one.
+	 */
+	page_id: string | null,
 };
 
 export type RestoreResponse = {

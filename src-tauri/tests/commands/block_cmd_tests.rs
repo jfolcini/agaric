@@ -1449,6 +1449,154 @@ async fn edit_block_updates_content() {
     );
 }
 
+/// A content block holding `first`, then edited to `current` as a peer's edit
+/// would leave it.
+async fn block_edited_under_an_editor(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    first: &str,
+    current: &str,
+) -> BlockId {
+    let created = create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "content".into(),
+        first.into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    edit_block_inner(pool, DEV, mat, created.id.clone(), current.into())
+        .await
+        .unwrap();
+    created.id
+}
+
+async fn stored_and_logged_text(pool: &SqlitePool, id: &BlockId) -> (Option<String>, String) {
+    let stored: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(id.as_str())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let logged: String = sqlx::query_scalar(
+        "SELECT json_extract(payload, '$.to_text') FROM op_log \
+         WHERE op_type = 'edit_block' ORDER BY seq DESC LIMIT 1",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    (stored, logged)
+}
+
+/// #6533 — an editor that started from text the block no longer holds has its
+/// change replayed on the current text: the row, the answer and the op all
+/// carry both edits.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_rebases_a_stale_edit_onto_the_current_text_6533() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let id = block_edited_under_an_editor(&pool, &mat, "Hello world", "HELLO world").await;
+
+    let edited = edit_block_inner_with_base(
+        &pool,
+        DEV,
+        &mat,
+        id.clone(),
+        "Hello WORLD".into(),
+        Some("Hello world".into()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(edited.content.as_deref(), Some("HELLO WORLD"));
+    assert_eq!(
+        stored_and_logged_text(&pool, &id).await,
+        (Some("HELLO WORLD".into()), "HELLO WORLD".into())
+    );
+}
+
+/// #6533 — undoing a rebased edit gives back the text the block held before
+/// it, the peer's, not the text the editor started from.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_a_rebased_edit_restores_the_peers_text_6533() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let id = block_edited_under_an_editor(&pool, &mat, "Hello world", "HELLO world").await;
+    let edited = capture_op_refs(edit_block_inner_with_base(
+        &pool,
+        DEV,
+        &mat,
+        id.clone(),
+        "Hello WORLD".into(),
+        Some("Hello world".into()),
+    ))
+    .await
+    .unwrap();
+
+    undo_ops_inner(&pool, DEV, &mat, edited.op_refs)
+        .await
+        .unwrap();
+
+    let stored: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored.as_deref(), Some("HELLO world"));
+}
+
+/// #6533 — changes that share text are not merged: the text sent is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_writes_an_overlapping_stale_edit_as_sent_6533() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let id = block_edited_under_an_editor(&pool, &mat, "Hello world", "HELLO world").await;
+
+    let edited = edit_block_inner_with_base(
+        &pool,
+        DEV,
+        &mat,
+        id.clone(),
+        "Help world".into(),
+        Some("Hello world".into()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(edited.content.as_deref(), Some("Help world"));
+    assert_eq!(
+        stored_and_logged_text(&pool, &id).await,
+        (Some("Help world".into()), "Help world".into())
+    );
+}
+
+/// #6533 — the length cap applies to the text written: two appends that each
+/// fit can exceed it together, and then nothing is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_refuses_a_rebased_text_over_the_length_cap_6533() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let half = "a".repeat(MAX_CONTENT_LENGTH / 2);
+    let current = format!("{half}{}", "b".repeat(half.len()));
+    let id = block_edited_under_an_editor(&pool, &mat, &half, &current).await;
+
+    let result =
+        edit_block_inner_with_base(&pool, DEV, &mat, id.clone(), format!("{half}c"), Some(half))
+            .await;
+
+    // `assert!`, not `unwrap_err` or `assert_eq!`: a failure would print the whole text.
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a rebased text over the cap must be refused"
+    );
+    assert!(
+        stored_and_logged_text(&pool, &id).await == (Some(current.clone()), current),
+        "a refused edit must write nothing"
+    );
+}
+
 /// #656 — an edit only changes `content`; the returned `BlockRow` must
 /// carry the block's existing task metadata (todo_state / priority /
 /// due_date / scheduled_date) rather than hardcoding them to `None`. A

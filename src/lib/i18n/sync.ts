@@ -151,11 +151,12 @@ export const sync: Record<string, string> = {
   // cost of the choice, because the setting IS that choice: what the relay
   // can and cannot see, that both devices need it, and that it takes effect
   // at the next launch (the endpoint binds once per daemon; there is no
-  // restart command). The word "relay" is deliberately absent — "connection
-  // server" says what it does to someone who has never heard of one.
+  // restart command), whose server it is and that it is opt-in (#6564). The
+  // word "relay" is deliberately absent — "connection server" says what it
+  // does to someone who has never heard of one.
   'device.internetRelayLabel': 'Local network, with an internet fallback',
   'device.internetRelayDescription':
-    "When your devices can't reach each other directly, such as behind a VPN, sync goes through a connection server on the internet. Your notes stay encrypted so it can't read them, but it sees which of your devices are talking and how much data moves. Turn this on for both devices; it takes effect the next time Agaric starts.",
+    "Off unless you turn it on. When your devices can't reach each other directly, such as behind a VPN, or a paired device is away from this network, sync tries a connection server on the internet run by n0, the makers of the iroh networking library. Your notes stay encrypted so it can't read them, but it sees which of your devices are talking and how much data moves. Turn this on for both devices; it takes effect the next time Agaric starts.",
   'device.internetRelayLoadFailed': 'Failed to load the internet fallback setting',
   'device.internetRelaySaveFailed': 'Failed to save the internet fallback setting',
   'device.noAddress': 'No address',

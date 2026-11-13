@@ -26,7 +26,11 @@ export interface UseBlockPageHistoryParams {
   visibleIdsRef: RefObject<readonly string[]>
   /** BlockTree's empty-block cleanup skips a block listed here once, on focus leaving it. */
   preserveEmptyBlockIdsRef: RefObject<Set<string>>
-  edit: (blockId: string, content: string) => Promise<boolean> | void
+  edit: (
+    blockId: string,
+    content: string,
+    options?: { baseText?: string },
+  ) => Promise<boolean> | void
   splitBlock: (blockId: string, content: string) => Promise<boolean> | void
 }
 
@@ -45,6 +49,7 @@ export function useBlockPageHistory({
       const at = ids.indexOf(blockId)
       const above = at > 0 ? ids[at - 1] : undefined
       const loaded = handle.originalMarkdown
+      const base = handle.storedMarkdown
       const changed = handle.unmount()
       // Leaving the block for the undo is not leaving it empty: an Enter stub stays.
       preserveEmptyBlockIdsRef.current.add(blockId)
@@ -54,6 +59,7 @@ export function useBlockPageHistory({
           blockId,
           loaded,
           changed,
+          base,
           edit,
           splitBlock,
           rootParentId: pageId,

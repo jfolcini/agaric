@@ -22,14 +22,49 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { countFilterLeaves, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { buildCustomPropsMap } from '@/lib/query-result-columns'
+import { chipTagId, isLegacyQueryText, readQueryText } from '@/lib/query-text'
 import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
+import { type FilterToken, tokenKey, tokenSource } from '@/lib/search-query'
 import { usePageBlockStoreOptional } from '@/stores/page-blocks'
+import { useResolveStore } from '@/stores/resolve'
 
 // #5441 — lazy: the builder loads when "edit query" is first used, not with every query block.
 const QueryBuilderModal = lazy(() =>
   import('@/components/dialogs/QueryBuilderModal').then((m) => ({ default: m.QueryBuilderModal })),
 )
+
+/** A tag chip's token (`#[ULID]`, a `#name` typed in the block) as the tag's name. */
+function TagChipPill({ id }: { id: string }): React.ReactElement {
+  const name = useResolveStore((s) => {
+    const title = s.resolveTitle(id)
+    return title.startsWith('[[') ? id : title
+  })
+  return <Badge tone="secondary">tag:#{name}</Badge>
+}
+
+function QueryTokenPill({ token }: { token: FilterToken }): React.ReactElement {
+  const chip = token.kind === 'tag' ? chipTagId(token.value) : null
+  if (chip !== null) return <TagChipPill id={chip} />
+  return (
+    <Badge tone={token.kind === 'invalid' ? 'destructive' : 'secondary'}>
+      {tokenSource(token)}
+    </Badge>
+  )
+}
+
+/** A search-syntax query (#6628) as the search box's chips: one per token, then the free text. */
+function QueryTextPills({ expression }: { expression: string }): React.ReactElement {
+  const { ast } = readQueryText(expression)
+  return (
+    <span className="flex flex-1 flex-wrap items-center gap-1" title={expression}>
+      {ast.filters.map((token) => (
+        <QueryTokenPill key={tokenKey(token)} token={token} />
+      ))}
+      {ast.freeText !== '' && <Badge tone="secondary">{ast.freeText}</Badge>}
+    </span>
+  )
+}
 
 /** Render query expression as styled filter pills. */
 function QueryExpressionPills({ expression }: { expression: string }): React.ReactElement {
@@ -47,6 +82,7 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
       </span>
     )
   }
+  if (!isLegacyQueryText(expression)) return <QueryTextPills expression={expression} />
 
   const parsed = parseQueryExpression(expression)
   const pills: React.ReactNode[] = []
@@ -208,7 +244,7 @@ export function QueryResult({
   } = useQueryExecution({ expression })
 
   // A structured (`v2:`) query carries its table flag in the decoded spec; a
-  // legacy text query carries `table:true` as a parsed param.
+  // text query, older or search syntax, carries `table:true` as a word.
   const structured = decodeInlineQueryPayload(expression)
   const tableMode = structured
     ? structured.table

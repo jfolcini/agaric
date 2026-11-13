@@ -531,6 +531,7 @@ async fn create_meeting_page_in_tx(
                 device_id,
                 placeholder.id.as_str().to_owned(),
                 String::new(),
+                None,
             )
             .await?
         }
@@ -765,6 +766,7 @@ async fn link_meeting_in_tx(
                 device_id,
                 block_id.as_str().to_owned(),
                 content,
+                None,
             )
             .await?;
             Ok(block_id)

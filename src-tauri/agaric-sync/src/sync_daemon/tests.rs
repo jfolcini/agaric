@@ -3567,6 +3567,65 @@ fn resolve_peer_address_falls_back_to_cached_address() {
     assert_eq!(peer.addresses[0].to_string(), "192.168.1.42");
 }
 
+/// #6564: what the daemon dials for a paired peer mDNS does not see, such as a
+/// device that is away on another network. The resync round resolves it from
+/// `peer_refs` (key + stale cached address) and, with the internet fallback on,
+/// names the pinned relay in that dial too; with it off the dial is IP-only. The
+/// docs and the setting's copy describe exactly this, so both arms are pinned.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn absent_paired_peer_is_dialled_through_the_relay_only_when_the_fallback_is_on() {
+    use tokio::time::Instant;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer: Arc<dyn crate::apply_host::ApplyHost> =
+        Arc::new(Materializer::new(pool.clone()));
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let cancel = AtomicBool::new(false);
+    let harness = ServiceHarness::new().await;
+
+    let discovered: HashMap<String, (mdns::DiscoveredPeer, Instant)> = HashMap::new();
+    let key = mdns::test_endpoint_id("PEER_AWAY");
+    let peer = resolve_peer_address(
+        "PEER_AWAY",
+        Some("192.168.1.42:9443"),
+        Some(&key.to_string()),
+        &discovered,
+    )
+    .expect("a paired peer with a cached key and address resolves without mDNS");
+
+    let relay = crate::transport::endpoint::internet_relay_url();
+    let dial = |relay_url| {
+        let ctx = SyncSessionContext {
+            pool: &pool,
+            device_id: "LOCAL_DEV",
+            materializer: &materializer,
+            scheduler: &scheduler,
+            event_sink: &event_sink,
+            cancel: &cancel,
+            endpoint: &harness.client_endpoint,
+            bind_prefix_len: None,
+            relay_url,
+        };
+        session_supervisor::dial_addr(&ctx, &peer, key)
+    };
+
+    let with_fallback = dial(Some(&relay));
+    assert_eq!(with_fallback.id, key);
+    assert_eq!(
+        with_fallback.ip_addrs().copied().collect::<Vec<_>>(),
+        vec!["192.168.1.42:9443".parse().unwrap()],
+    );
+    assert_eq!(
+        with_fallback.relay_urls().cloned().collect::<Vec<_>>(),
+        vec![relay.clone()],
+    );
+
+    let lan_only = dial(None);
+    assert_eq!(lan_only.relay_urls().count(), 0);
+    assert_eq!(lan_only.ip_addrs().count(), 1);
+}
+
 #[test]
 fn resolve_peer_address_returns_none_when_both_unavailable() {
     use tokio::time::Instant;
