@@ -372,8 +372,7 @@ export function applyRemote(
 }
 
 /**
- * Drop the undo history, as block mode drops a page's undo anchors when a
- * sync changes it (#731): an undo rebased past a block moved or removed
+ * Drop the undo history: an undo rebased past a block moved or removed
  * elsewhere would put back a copy of it.
  */
 function forgetHistory(view: EditorView): void {

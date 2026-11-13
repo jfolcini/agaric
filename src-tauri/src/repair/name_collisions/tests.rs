@@ -786,6 +786,11 @@ async fn a_sync_session_merges_journal_days_and_renames_through_its_sink() {
         vec![Vec::<String>::new()],
         "a repair reloads every view"
     );
+    assert_eq!(
+        view.local_ops_appended(),
+        vec![true],
+        "a repair's ops are this device's own (#6541)"
+    );
     pair.shutdown();
 }
 
