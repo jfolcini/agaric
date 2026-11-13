@@ -3400,18 +3400,18 @@ fn report_percentiles(cmd: &str, samples: &RefCell<Vec<Duration>>) {
 }
 
 /// Enter in the middle of a block and the Backspace-merge that undoes it, as
-/// the block editor sends them (#6559): a split is `create_block` (the text
-/// after the caret, in the next sibling slot) then `edit_block` (the text
-/// before it); a merge is `edit_block` (the joined text) then `delete_block`
-/// (the emptied block). Each iteration splits one child of the 2K-block page
-/// and merges the pair back, settling the background work after each half as
-/// an idle app would have, so every split and every merge meets the same page.
-/// One probe times the split and the other the merge; the percentiles are over
-/// every pair either probe ran. Measurement only: these are the numbers behind
-/// the decision on one backend command for each.
+/// the block editor sends them (#6531): one `split_block` (the text after the
+/// caret created in the next sibling slot, the text before it kept) and one
+/// `merge_blocks` (the joined text written, the emptied block deleted). Each
+/// iteration splits one child of the 2K-block page and merges the pair back,
+/// settling the background work after each half as an idle app would have, so
+/// every split and every merge meets the same page. One probe times the split
+/// and the other the merge; the percentiles are over every pair either probe
+/// ran. Measurement only. Before #6531 each was two commands, which is what
+/// the numbers on #6559 timed.
 fn bench_enter_split_and_merge(c: &mut Criterion) {
-    const SPLIT: &str = "Enter split: create_block + edit_block (2K-block page) @ 100K";
-    const MERGE: &str = "Backspace merge: edit_block + delete_block (2K-block page) @ 100K";
+    const SPLIT: &str = "Enter split: split_block (2K-block page) @ 100K";
+    const MERGE: &str = "Backspace merge: merge_blocks (2K-block page) @ 100K";
     const JOINED: &str = "Write path joined text";
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
@@ -3420,11 +3420,9 @@ fn bench_enter_split_and_merge(c: &mut Criterion) {
     let children = rt.block_on(seed_write_path_fixture(&pool, &materializer));
     let target_slot = WRITE_PATH_PAGE_CHILDREN / 2;
     let target = children[target_slot].clone();
-    let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
     let fallbacks = agaric_lib::materializer::sql_only_fallback_count();
 
-    let (pool_ref, materializer_ref, target_ref, scope_ref) =
-        (&pool, &materializer, &target, &scope);
+    let (pool_ref, materializer_ref, target_ref) = (&pool, &materializer, &target);
     let (split_acc, merge_acc) = (Acc::new(), Acc::new());
     let (split_samples, merge_samples) = (&RefCell::new(Vec::new()), &RefCell::new(Vec::new()));
     let mut group = c.benchmark_group("interactive_slo");
@@ -3438,25 +3436,17 @@ fn bench_enter_split_and_merge(c: &mut Criterion) {
                 let mut elapsed = Duration::ZERO;
                 for _ in 0..iters {
                     let start = Instant::now();
-                    let created = agaric_lib::commands::create_block_inner_with_space(
+                    let split = agaric_lib::commands::split_block_inner(
                         pool_ref,
                         "dev-bench",
                         materializer_ref,
-                        "content".into(),
-                        " joined text".into(),
-                        Some(WRITE_PATH_PAGE_ID.into()),
-                        Some(target_slot as i64 + 1),
-                        scope_ref,
-                        None,
-                    )
-                    .await
-                    .unwrap();
-                    agaric_lib::commands::edit_block_inner(
-                        pool_ref,
-                        "dev-bench",
-                        materializer_ref,
-                        target_ref.clone().into(),
-                        "Write path".into(),
+                        agaric_lib::commands::SplitBlockRequest {
+                            block_id: target_ref.clone().into(),
+                            before: "Write path".into(),
+                            after: " joined text".into(),
+                            new_block_id: agaric_core::ulid::BlockId::new(),
+                            base_text: None,
+                        },
                     )
                     .await
                     .unwrap();
@@ -3464,25 +3454,21 @@ fn bench_enter_split_and_merge(c: &mut Criterion) {
                     materializer_ref.flush_background().await.unwrap();
 
                     let start = Instant::now();
-                    agaric_lib::commands::edit_block_inner(
+                    agaric_lib::commands::merge_blocks_inner(
                         pool_ref,
                         "dev-bench",
                         materializer_ref,
-                        target_ref.clone().into(),
-                        JOINED.into(),
+                        agaric_lib::commands::MergeBlocksRequest {
+                            block_id: split.created.id,
+                            into_id: target_ref.clone().into(),
+                            merged_text: JOINED.into(),
+                            base_text: None,
+                        },
                     )
                     .await
                     .unwrap();
-                    let deleted =
-                        delete_block_inner(pool_ref, "dev-bench", materializer_ref, created.id)
-                            .await
-                            .unwrap();
                     let merge_time = start.elapsed();
                     materializer_ref.flush_background().await.unwrap();
-                    assert_eq!(
-                        deleted.descendants_affected, 1,
-                        "merge @ 100K: the delete tombstones the split-off block alone (#6559)"
-                    );
 
                     split_samples.borrow_mut().push(split_time);
                     merge_samples.borrow_mut().push(merge_time);

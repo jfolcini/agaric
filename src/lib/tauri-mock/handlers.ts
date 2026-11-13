@@ -56,6 +56,7 @@ import {
   returnNull,
   type TypedHandlers,
 } from '@/lib/tauri-mock/handlers/shared'
+import { splitMergeHandlers } from '@/lib/tauri-mock/handlers/split-merge'
 import { syncHandlers } from '@/lib/tauri-mock/handlers/sync'
 import { systemHandlers } from '@/lib/tauri-mock/handlers/system'
 import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
@@ -76,6 +77,7 @@ export {
 
 const HANDLERS_TYPED = {
   ...blocksHandlers,
+  ...splitMergeHandlers,
   ...pagesHandlers,
   ...tagsHandlers,
   ...linksHandlers,

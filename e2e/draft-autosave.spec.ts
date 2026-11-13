@@ -43,8 +43,8 @@
  * gap): pressing Enter to CARET-SPLIT a block (mid-content caret, text
  * both before and after it) now DOES discard the departed (split-source)
  * block's pre-existing draft — via `delete_draft`, never `flush_draft` —
- * immediately after the caret-split branch's `edit()` commits the
- * before-caret text (`useBlockKeyboardHandlers.ts` `handleEnterSave`'s
+ * immediately after the caret-split branch's `split_block` commits the
+ * before-caret text (`use-block-action-orchestration.ts` `handleEnterSave`'s
  * explicit `discardDraft(focusedBlockId)` call, added by #2786 alongside
  * the #2803 spaces-move fix). Before #2786, the same repro (type, wait
  * past the 2000ms debounce so `save_draft` fired, THEN press Enter
@@ -369,11 +369,13 @@ test.describe('Draft autosave @editor', () => {
     // The split committed "hello" into the SAME block id (the new block
     // created below holds "world") — confirm the split actually happened
     // before trusting the draft-discard assertion below.
-    await expect.poll(async () => (await lastCall(page, 'edit_block'))?.toText).toBe('hello')
+    await expect
+      .poll(async () => (await lastCall(page, 'split_block'))?.['request'])
+      .toMatchObject({ blockId, before: 'hello', after: 'world' })
 
     // #2786 — the caret-split branch now discards the departed block's
     // stale ("helloworld") draft via delete_draft immediately after the
-    // edit() commit, mirroring persistUnmount's contract on every other
+    // split_block commit, mirroring persistUnmount's contract on every other
     // programmatic block switch.
     await expect
       .poll(async () => (await getInvokeCalls(page, 'delete_draft')).map((c) => c['blockId']))
