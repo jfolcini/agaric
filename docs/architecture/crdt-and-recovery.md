@@ -54,8 +54,9 @@ There are two co-equal materialization targets now: the SQL primary state (`bloc
 
 ## Op-log compaction
 
-When the op log grows past `DEFAULT_RETENTION_DAYS` (90), a background job
-(`op_log_compact`, 24 h cadence, idle predicate) deletes every op older than the
+When the op log grows past `DEFAULT_RETENTION_DAYS` (90), a maintenance job
+(`op_log_compact`, 24 h cadence; it waits up to `IDLE_JOB_GRACE`, an hour, for
+the app to go to the background) deletes every op older than the
 cutoff, bounded by the per-device frontier (`{device_id → MAX(seq)}`) it read in
 its own `DEFERRED` read transaction. The purge commits in one
 `BEGIN IMMEDIATE` transaction together with the `materializer_apply_cursor`

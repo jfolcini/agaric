@@ -1735,6 +1735,8 @@ fn wal_checkpoint_truncate_job(
         name: "wal_checkpoint_truncate",
         interval: std::time::Duration::from_secs(3600),
         last_run: None,
+        predicate_grace: None,
+        skipped_since: None,
         predicate: Box::new(move || {
             !lifecycle_for_wal
                 .is_foreground
@@ -1759,6 +1761,8 @@ fn op_log_compact_job(
         name: "op_log_compact",
         interval: std::time::Duration::from_secs(24 * 3600),
         last_run: None,
+        predicate_grace: Some(maintenance::IDLE_JOB_GRACE),
+        skipped_since: None,
         predicate: Box::new(move || {
             !lifecycle_for_compact
                 .is_foreground
@@ -1780,6 +1784,8 @@ fn pragma_optimize_tick_job(pools: &db::DbPools) -> maintenance::MaintenanceJob 
         name: "pragma_optimize_tick",
         interval: std::time::Duration::from_secs(4 * 3600),
         last_run: None,
+        predicate_grace: None,
+        skipped_since: None,
         predicate: Box::new(|| true),
         run: Box::new(move || {
             let pool = optimize_write_pool.clone();
@@ -1798,6 +1804,8 @@ fn cleanup_orphaned_attachments_tick_job(
         name: "cleanup_orphaned_attachments_tick",
         interval: std::time::Duration::from_secs(24 * 3600),
         last_run: None,
+        predicate_grace: None,
+        skipped_since: None,
         predicate: Box::new(|| true),
         run: Box::new(move || {
             let mat = materializer_for_cleanup.clone();
@@ -1815,6 +1823,8 @@ fn fts_idle_optimize_job(materializer: &materializer::Materializer) -> maintenan
         name: "fts_idle_optimize",
         interval: std::time::Duration::from_secs(24 * 3600),
         last_run: None,
+        predicate_grace: None,
+        skipped_since: None,
         predicate: Box::new(move || {
             materializer_for_fts_predicate
                 .metrics()
@@ -1845,6 +1855,8 @@ fn tombstone_purge_job(
         name: "tombstone_purge",
         interval: std::time::Duration::from_secs(24 * 3600),
         last_run: None,
+        predicate_grace: Some(maintenance::IDLE_JOB_GRACE),
+        skipped_since: None,
         predicate: Box::new(move || {
             !lifecycle_for_tombstone
                 .is_foreground
@@ -1877,6 +1889,8 @@ fn loro_snapshot_if_dirty_job(
         name: "loro_snapshot_if_dirty",
         interval: std::time::Duration::from_secs(60),
         last_run: None,
+        predicate_grace: None,
+        skipped_since: None,
         predicate: Box::new(move || {
             if lifecycle_for_loro_pred
                 .is_foreground
@@ -1907,6 +1921,8 @@ fn page_ids_backstop_job(materializer: &materializer::Materializer) -> maintenan
         name: "page_ids_backstop",
         interval: std::time::Duration::from_secs(24 * 3600),
         last_run: None,
+        predicate_grace: None,
+        skipped_since: None,
         predicate: Box::new(|| true),
         run: Box::new(move || {
             let mat = materializer.clone();
@@ -1932,6 +1948,8 @@ fn projected_agenda_midnight_job(
         name: "projected_agenda_midnight",
         interval: std::time::Duration::from_secs(60),
         last_run: None,
+        predicate_grace: None,
+        skipped_since: None,
         predicate: Box::new(|| true),
         run: Box::new(move || {
             let mat = projected_agenda_materializer.clone();
@@ -1952,6 +1970,8 @@ fn reminders_tick_job(pools: &db::DbPools, app: tauri::AppHandle) -> maintenance
         name: "reminders_tick",
         interval: maintenance::tick_interval(),
         last_run: None,
+        predicate_grace: None,
+        skipped_since: None,
         predicate: Box::new(|| true),
         run: Box::new(move || {
             let pool = reminders_pool.clone();

@@ -62,10 +62,10 @@
 //!     PASSIVE autocheckpoint that runs at 5000 frames; PASSIVE never
 //!     shrinks the WAL file even when it could.
 //!   - [`op_log_compact`] — prunes the op log (24 h cadence, idle
-//!     predicate, 90-day retention).
+//!     predicate with an [`IDLE_JOB_GRACE`], 90-day retention).
 //!   - [`pragma_optimize`] — periodic `PRAGMA optimize` (4 h cadence).
 //!   - [`tombstone_purge`] — purges expired tombstones (24 h cadence,
-//!     idle predicate, 90-day retention).
+//!     idle predicate with an [`IDLE_JOB_GRACE`], 90-day retention).
 //!   - `enqueue_cleanup_orphaned_attachments`, `enqueue_fts_idle_optimize`,
 //!     `enqueue_rebuild_page_ids`, [`loro_snapshot_if_dirty`], and
 //!     `projected_agenda_midnight_tick` — the remaining materializer-enqueue /
@@ -102,6 +102,12 @@ type JobPredicate = Box<dyn Fn() -> bool + Send + Sync>;
 /// fires within ~1 min of its target time, and slow enough that the
 /// tick itself is invisible cost.
 pub const TICK_INTERVAL: Duration = Duration::from_secs(60);
+
+/// How long the idle-gated op-log compaction and tombstone purge wait for the
+/// app to go to the background before running in the foreground anyway
+/// (#6518). The WAL truncate does not take it: `journal_size_limit` already
+/// bounds the WAL while the window stays visible.
+pub const IDLE_JOB_GRACE: Duration = Duration::from_secs(3600);
 
 /// The tick under the e2e sandbox, so a real-backend spec that waits on a job
 /// (`reminder-due-task.e2e.ts`) waits seconds, not a minute.
@@ -141,6 +147,14 @@ pub struct MaintenanceJob {
     /// Gating predicate. Returning `false` skips the job for this
     /// tick without bumping `last_run`.
     pub predicate: JobPredicate,
+    /// How long a due job may be held back by a `false` predicate before it
+    /// runs anyway. `None` holds it back for as long as the predicate says.
+    /// The idle-gated jobs need this: "background" means hidden or
+    /// minimised, which a window that stays visible all day never is (#6518).
+    pub predicate_grace: Option<Duration>,
+    /// The first tick that found the job due and skipped it on its predicate
+    /// since its last success; the grace counts from here.
+    pub skipped_since: Option<Instant>,
     /// Job body. Returns `Result<(), AppError>` so a failure logs at
     /// warn with the job name + error; the daemon does not propagate.
     pub run: JobRunFn,
@@ -152,6 +166,8 @@ impl std::fmt::Debug for MaintenanceJob {
             .field("name", &self.name)
             .field("interval", &self.interval)
             .field("last_run", &self.last_run)
+            .field("predicate_grace", &self.predicate_grace)
+            .field("skipped_since", &self.skipped_since)
             .finish_non_exhaustive()
     }
 }
@@ -792,13 +808,24 @@ pub async fn run_tick_at(jobs: &mut [MaintenanceJob], tick: Instant) {
             continue;
         }
         if !(job.predicate)() {
-            tracing::debug!(job = job.name, "maintenance job skipped — predicate false");
-            continue;
+            let grace_spent = job.predicate_grace.is_some_and(|grace| {
+                let since = *job.skipped_since.get_or_insert(tick);
+                tick.saturating_duration_since(since) >= grace
+            });
+            if !grace_spent {
+                tracing::debug!(job = job.name, "maintenance job skipped — predicate false");
+                continue;
+            }
+            tracing::info!(
+                job = job.name,
+                "maintenance job running despite its predicate — held back past its grace"
+            );
         }
         let result = (job.run)().await;
         match result {
             Ok(()) => {
                 job.last_run = Some(tick);
+                job.skipped_since = None;
                 tracing::debug!(job = job.name, "maintenance job ran");
             }
             // #3311: `last_run` is deliberately NOT advanced here — the job
@@ -833,6 +860,8 @@ mod tests {
             name,
             interval,
             last_run: None,
+            predicate_grace: None,
+            skipped_since: None,
             predicate,
             run: Box::new(move || {
                 let counter = counter.clone();
@@ -893,6 +922,95 @@ mod tests {
         );
     }
 
+    /// #6518 — a due job held back by its predicate for longer than its
+    /// `predicate_grace` runs anyway; held back for less, it stays skipped.
+    /// After that run the grace restarts from the next due tick, so the job
+    /// does not run on every tick once the grace has been spent.
+    #[tokio::test]
+    async fn run_tick_runs_a_predicate_skipped_job_once_its_grace_is_spent_6518() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut job = counter_job(
+            "idle_gated_job",
+            Duration::from_secs(24 * 3600),
+            counter.clone(),
+            dummy_predicate_false(),
+        );
+        job.predicate_grace = Some(Duration::from_secs(3600));
+        let mut jobs = vec![job];
+        let t0 = Instant::now();
+        let minutes = |m: u64| t0 + Duration::from_secs(m * 60);
+
+        run_tick_at(&mut jobs, t0).await;
+        run_tick_at(&mut jobs, minutes(59)).await;
+        assert_eq!(
+            counter.load(Ordering::Relaxed),
+            0,
+            "skipped for less than the grace: the predicate still holds the job back"
+        );
+
+        run_tick_at(&mut jobs, minutes(60)).await;
+        assert_eq!(
+            counter.load(Ordering::Relaxed),
+            1,
+            "skipped for the whole grace: the job runs despite the predicate"
+        );
+        assert_eq!(jobs[0].last_run, Some(minutes(60)));
+
+        let next_due = minutes(60 + 24 * 60);
+        run_tick_at(&mut jobs, next_due).await;
+        run_tick_at(&mut jobs, next_due + Duration::from_secs(59 * 60)).await;
+        assert_eq!(
+            counter.load(Ordering::Relaxed),
+            1,
+            "the grace restarts once the job runs: the next due tick waits a full grace again"
+        );
+        run_tick_at(&mut jobs, next_due + Duration::from_secs(60 * 60)).await;
+        assert_eq!(counter.load(Ordering::Relaxed), 2);
+    }
+
+    /// #6518 — a job run on a spent grace that FAILS keeps `last_run`
+    /// unchanged and is retried on the next tick, the same #3311 rule as a
+    /// predicate-true run.
+    #[tokio::test]
+    async fn a_grace_run_that_fails_does_not_advance_last_run_6518() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let job = MaintenanceJob {
+            name: "failing_idle_job",
+            interval: Duration::from_secs(24 * 3600),
+            last_run: None,
+            predicate_grace: Some(Duration::from_secs(3600)),
+            skipped_since: None,
+            predicate: dummy_predicate_false(),
+            run: {
+                let calls = calls.clone();
+                Box::new(move || {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    Box::pin(async { Err(AppError::validation("simulated job failure".into())) })
+                })
+            },
+        };
+        let mut jobs = vec![job];
+        let t0 = Instant::now();
+
+        run_tick_at(&mut jobs, t0).await;
+        run_tick_at(&mut jobs, t0 + Duration::from_secs(3600)).await;
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "the spent grace runs the job"
+        );
+        assert!(
+            jobs[0].last_run.is_none(),
+            "a failed run must not record last_run"
+        );
+        run_tick_at(&mut jobs, t0 + Duration::from_secs(3660)).await;
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            2,
+            "a failed grace run is retried on the next tick"
+        );
+    }
+
     /// A job whose interval has not yet elapsed is skipped without
     /// re-running. Pins the per-job-interval guard.
     #[tokio::test]
@@ -927,6 +1045,8 @@ mod tests {
             name: "failing_job",
             interval: Duration::from_secs(3600),
             last_run: None,
+            predicate_grace: None,
+            skipped_since: None,
             predicate: dummy_predicate_true(),
             run: Box::new(|| {
                 Box::pin(async { Err(AppError::validation("simulated job failure".into())) })
@@ -955,6 +1075,8 @@ mod tests {
             name: "flaky_job",
             interval: Duration::from_secs(24 * 3600),
             last_run: None,
+            predicate_grace: None,
+            skipped_since: None,
             predicate: dummy_predicate_true(),
             run: {
                 let calls = calls.clone();
@@ -1014,6 +1136,8 @@ mod tests {
             name: "slow_minute_job",
             interval: TICK_INTERVAL,
             last_run: None,
+            predicate_grace: None,
+            skipped_since: None,
             predicate: dummy_predicate_true(),
             run: {
                 let calls = calls.clone();
