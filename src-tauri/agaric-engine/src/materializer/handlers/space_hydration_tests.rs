@@ -1307,7 +1307,25 @@ async fn a_page_appended_to_a_space_sends_one_root_rank_6527() {
 }
 
 #[tokio::test]
-async fn a_page_seeded_mid_list_renumbers_the_siblings_after_it_6527() {
+async fn a_page_appended_to_a_space_reads_the_root_before_it_and_itself_6527() {
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    let state = crate::loro::shared::LoroState::new();
+    for i in 1..=5 {
+        add_root_page(&pool, &state, i, i).await;
+    }
+
+    crate::loro::engine::sibling_read_spy::reset();
+    add_root_page(&pool, &state, 6, 6).await;
+
+    assert_eq!(
+        crate::loro::engine::sibling_read_spy::count(),
+        2,
+        "the engine reads the last root and the new page, not all six"
+    );
+}
+
+#[tokio::test]
+async fn a_page_entering_a_space_lands_after_its_roots_whatever_its_stamp_6527() {
     let (pool, _dir) = fresh_pool_with_registered_space().await;
     let state = crate::loro::shared::LoroState::new();
     add_root_page(&pool, &state, 1, 10).await;
@@ -1315,15 +1333,11 @@ async fn a_page_seeded_mid_list_renumbers_the_siblings_after_it_6527() {
     add_root_page(&pool, &state, 3, 30).await;
 
     crate::loro::projection::reproject_call_spy::reset();
-    // Its stamp sorts it between pages 1 and 2.
+    // A stamp that sorts between pages 1 and 2: a rank it held elsewhere.
     add_root_page(&pool, &state, 4, 15).await;
 
-    assert_eq!(
-        crate::loro::projection::reproject_call_spy::ids(),
-        3,
-        "the new page and the two siblings after it; page 1 keeps rank 1 unsent"
-    );
-    assert_eq!(root_ranks(&pool).await, ranked(&[1, 4, 2, 3]));
+    assert_eq!(crate::loro::projection::reproject_call_spy::ids(), 1);
+    assert_eq!(root_ranks(&pool).await, ranked(&[1, 2, 3, 4]));
 }
 
 #[tokio::test]
