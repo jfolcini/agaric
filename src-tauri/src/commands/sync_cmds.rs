@@ -578,8 +578,8 @@ pub async fn cancel_pairing(
 /// for such a peer.
 #[tauri::command]
 #[specta::specta]
-pub async fn start_sync(
-    app: tauri::AppHandle,
+pub async fn start_sync<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     peer_id: String,
     user_initiated: bool,
     pool: State<'_, ReadPool>,

@@ -149,7 +149,7 @@ Named snapshots in loops: `insta::assert_yaml_snapshot!(format!("op_payload_json
 
 ## Conformance fixtures
 
-`conformance/fixtures/*.json` pin every mutating command (and read commands via a `queries` array) against both the Rust backend and the TS mock (`src/lib/tauri-mock/__tests__/conformance.test.ts`). An op with `"via": "command"` runs its `*_inner` instead of the payload replay and records its return value or refusal in `expected_ops` (#4670). Never hand-write `expected` / `expected_queries` / `expected_ops`; the backend authors them:
+`conformance/fixtures/*.json` pin every mutating command (and read commands via a `queries` array) against both the Rust backend and the TS mock (`src/lib/tauri-mock/__tests__/conformance.test.ts`). An op with `"via": "command"` crosses the app's IPC surface on a `HeadlessApp` (`conformance_ipc.rs`, #6529) instead of the payload replay, and records its response or refusal in `expected_ops` (#4670). Never hand-write `expected` / `expected_queries` / `expected_ops`; the backend authors them:
 
 ```bash
 cd src-tauri && CONFORMANCE_UPDATE=1 cargo nextest run --workspace --test command_integration -E 'test(conformance_fixtures_match_backend)'
@@ -159,7 +159,7 @@ npx oxfmt --write conformance/fixtures/   # from the repo root
 
 - The update run rewrites every fixture in serde's layout. The `oxfmt` pass puts untouched ones back byte-for-byte; `git checkout -- conformance/fixtures/` would also revert the fixture you meant to change. Never parse and redump fixture JSON with Python: it expands arrays and escapes non-ASCII.
 - A payload-replayed op pins the resulting state, not the command's return value. When the return value matters, use `"via": "command"`.
-- A `"via": "command"` record also lists the Tauri events the command's wrapper emits (`events`, omitted when none). The harness never runs the `#[tauri::command]` wrapper, so its arm builds them from the same function the wrapper calls (`property_changed_events` today); a wrapper that starts emitting gets that function and the arm in the same change.
+- A `"via": "command"` record also lists the `block:properties-changed` events the command's wrapper emitted (`events`, omitted when none). Its args are the wire's, with labels for ids (`expand_op_args`); an arg the frontend takes from its own state goes in `fill_harness_args`.
 - Seed so the wrong answer differs from insertion order; otherwise an unsorted result passes an ordering pin.
 - The markdown renders are backend-only by decision (#5071): `QUERY_STEPS_BACKEND_ONLY` in `conformance-coverage.test.ts`, each step pinned against a backend-authored `<fixture>.<step>.txt` sibling in `conformance/fixtures/`.
 - Both runners seed through raw SQL (`conformance.rs`, `src/lib/tauri-mock/__tests__/conformance-replay.ts`), skipping the repairs a production op runs. A change that removes a repair or adds a derived column updates both seeders.

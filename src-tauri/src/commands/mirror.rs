@@ -247,7 +247,9 @@ pub async fn get_mirror_status_inner(
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip_all, err)]
-pub async fn pick_mirror_folder(app: tauri::AppHandle) -> Result<Option<String>, AppError> {
+pub async fn pick_mirror_folder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<String>, AppError> {
     pick_mirror_folder_inner(&app)
         .await
         .map_err(sanitize_internal_error)
