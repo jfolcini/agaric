@@ -63,6 +63,13 @@ its own `DEFERRED` read transaction. The purge commits in one
 clamp (#3310) that keeps a purged-to-empty log from reading as the H-4
 impossible state at the next boot.
 
+The purge also deletes ops above the apply cursor, the ones boot replay
+restores an engine from, so both triggers (the job and the History card's
+`compact_op_log_cmd`) run a snapshot pass first through
+`save_engines_then_compact`. A pass that left a dirty engine unwritten purges
+nothing and reports the failure: those ops are then the only copy of that
+engine's blocks (#6518).
+
 The purge earns its keep: `op_log` costs ~303 B/op — JSON payload, blake3 hash,
 per-row timestamps — against a materially smaller Loro copy of the same edits,
 so it is the dominant term in vault growth (#4700). It does not *bound* growth:
