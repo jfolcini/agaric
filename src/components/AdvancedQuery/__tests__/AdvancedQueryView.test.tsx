@@ -780,8 +780,9 @@ describe('AdvancedQueryView', () => {
       ])
       // Every card sits under the state it carries.
       const todo = columns[0] as HTMLElement
-      await waitFor(() => expect(within(todo).getAllByRole('option').length).toBeGreaterThan(0))
-      for (const card of within(todo).getAllByRole('option')) {
+      const cards = () => within(todo).getAllByTestId('query-board-card')
+      await waitFor(() => expect(cards().length).toBeGreaterThan(0))
+      for (const card of cards()) {
         expect(card.getAttribute('aria-label')).toMatch(/^TODO /)
       }
       // The list and its group sections are gone, not rendered beside the board.
@@ -790,7 +791,7 @@ describe('AdvancedQueryView', () => {
       // Nor does the list's grouped query keep running behind the board.
       mockedInvoke.mockClear()
       act(() => useAdvancedQueryStore.getState().setFulltext(SEEDED_SPACE, 'release'))
-      await waitFor(() => expect(within(todo).getAllByRole('option')).toHaveLength(1))
+      await waitFor(() => expect(cards()).toHaveLength(1))
       const requests = mockedInvoke.mock.calls
         .filter(([cmd]) => cmd === 'run_advanced_query')
         .map(([, args]) => (args as { request: { groupBy?: unknown } }).request)
