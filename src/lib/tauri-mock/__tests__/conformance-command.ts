@@ -54,8 +54,9 @@ interface ReturnShape {
   lists: readonly string[]
   /**
    * #5140 — the key the LIST OF ROWS rides under when the wrapper answers
-   * `WithOps<{ [rows]: T[] }>` (a `Vec` cannot be flattened). MUST match
-   * `ROWS_KEY` in the Rust twin, which reads the same envelope off the wire.
+   * `WithOps<{ [rows]: T[] }>` (a `Vec` cannot be flattened). It also names
+   * the one row a response nests (#6531). MUST match `ROWS_KEY` in the Rust
+   * twin, which reads the same envelope off the wire.
    */
   rows?: string
 }
@@ -223,6 +224,14 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     lists: [],
     rows: 'moves',
   },
+  // #6531 — the block a split creates, and the block a merge writes.
+  split_block: {
+    idKey: 'id',
+    attrs: ['content', 'parent_id', 'position'],
+    lists: [],
+    rows: 'created',
+  },
+  merge_blocks: { idKey: 'id', attrs: ['content'], lists: [], rows: 'block' },
   // #5140 Phase 3a — the same row list as `create_blocks_batch`: the root copy,
   // then its descendants in pre-order, so the order is pinned with the rows.
   duplicate_block: {
@@ -369,7 +378,7 @@ export function projectReturn(command: string, response: unknown): string[] {
   if (Array.isArray(list)) {
     return list.map((row) => idToken(headRow(row), shape.idKey, shape.attrs))
   }
-  const row = headRow(response)
+  const row = headRow(list)
   const out = [idToken(row, shape.idKey, shape.attrs)]
   for (const field of shape.lists) {
     const ids = row[field]

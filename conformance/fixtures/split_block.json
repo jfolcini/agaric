@@ -1,0 +1,383 @@
+{
+  "description": "#6531: `split_block` keeps `before` in the block and creates `after` as its next sibling, in one transaction: the block's children stay with it, a stale editor's cut is rebased as `edit_block` rebases it, and a refusal at either step leaves nothing of the other. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "hello",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "child",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "next",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "HELLO",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "world",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": " world",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B8",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B9",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 14,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B8",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_split_creates_the_tail_below",
+      "returns": ["B6#content=world#parent_id=B1#position=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_peer_edits_the_start",
+      "returns": ["B5#content=HELLO world"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_stale_split_keeps_the_peers_edit",
+      "returns": ["B7#content= world#parent_id=B1#position=5"]
+    },
+    {
+      "code": null,
+      "error": "conflict",
+      "name": "a_taken_id_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "a_missing_block_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B8"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_page_there",
+      "returns": ["create_page_in_space#page_id=B9"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_refused_edit_takes_the_create_back",
+      "returns": []
+    }
+  ],
+  "name": "split_block",
+  "ops": [
+    {
+      "args": {
+        "request": {
+          "after": "world",
+          "baseText": null,
+          "before": "hello",
+          "blockId": "S2",
+          "newBlockId": "S10"
+        }
+      },
+      "command": "split_block",
+      "comment": "S2 keeps `hello` and its child; the new block holds `world` between S2 and S4.",
+      "name": "a_split_creates_the_tail_below",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "HELLO world"
+      },
+      "command": "edit_block",
+      "comment": "S5 becomes `HELLO world` under an editor still holding `Hello world`.",
+      "name": "a_peer_edits_the_start",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "after": " world",
+          "baseText": "Hello world",
+          "before": "Hello",
+          "blockId": "S5",
+          "newBlockId": "S11"
+        }
+      },
+      "command": "split_block",
+      "comment": "The editor cut the tail off: the peer's edit of the start stays in S5.",
+      "name": "a_stale_split_keeps_the_peers_edit",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "after": "xt",
+          "baseText": null,
+          "before": "ne",
+          "blockId": "S4",
+          "newBlockId": "S3"
+        }
+      },
+      "command": "split_block",
+      "comment": "The create is refused, so S4 keeps its text.",
+      "expect_error": "conflict",
+      "name": "a_taken_id_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "after": "b",
+          "baseText": null,
+          "before": "a",
+          "blockId": "S99",
+          "newBlockId": "S12"
+        }
+      },
+      "command": "split_block",
+      "expect_error": "not_found",
+      "name": "a_missing_block_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Away"
+      },
+      "command": "create_space",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "away",
+        "parentId": null,
+        "spaceId": "C3"
+      },
+      "command": "create_page_in_space",
+      "name": "a_page_there",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "after": "xt",
+          "baseText": null,
+          "before": "ne [[C4]]",
+          "blockId": "S4",
+          "newBlockId": "S12"
+        }
+      },
+      "command": "split_block",
+      "comment": "`before` links a page of another space, so the edit is refused after the create ran: no block S12 and no op is left.",
+      "expect_error": "validation",
+      "name": "a_refused_edit_takes_the_create_back",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "helloworld",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "child",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "next",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Hello world",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

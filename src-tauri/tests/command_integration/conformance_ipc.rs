@@ -175,6 +175,18 @@ async fn expand_op_args(
             resolve_key(input, key, created_ids);
         }
     }
+    // `split_block`'s and `merge_blocks`'s one `request` object.
+    if let Some(Value::Object(request)) = out.get_mut("request") {
+        for key in ["blockId", "intoId", "newBlockId"] {
+            resolve_key(request, key, created_ids);
+        }
+        for key in ["before", "after", "mergedText"] {
+            if let Some(Value::String(text)) = request.get(key) {
+                let text = expand_content_labels(text, created_ids);
+                request.insert(key.to_owned(), json!(text));
+            }
+        }
+    }
     // `set_property`'s value bundle: only a `value_ref` names a block.
     if let Some(Value::Object(value)) = out.get_mut("value") {
         resolve_key(value, "value_ref", created_ids);

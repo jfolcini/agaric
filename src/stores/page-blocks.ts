@@ -126,12 +126,12 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
   const splitInProgress = new Set<string>()
 
   /**
-   * Blocks whose `create_block` has not answered, each with a promise that
-   * settles when it does (#6559). Enter focuses the new block at once and IPC
-   * answers arrive out of order, so a write naming such a block, and a load
-   * whose snapshot would leave it out, wait for it.
+   * Blocks a create, split or merge in flight has changed, each with a promise
+   * that settles when the command answers (#6559, #6531). The editor moves on
+   * at once and IPC answers arrive out of order, so a write naming such a
+   * block, and a load whose snapshot would predate the command, wait for it.
    */
-  const createsInFlight = new Map<string, Promise<void>>()
+  const heldBlocks = new Map<string, Promise<void>>()
 
   /**
    * Per-block mover queue (#774). Movers read their target slot from `get()`
@@ -190,7 +190,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       // A block created but not yet in the backend would be missing from the
       // snapshot, and read as deleted: its row dropped, the focus on it cleared.
       // A second Enter can start another create while this waits.
-      while (createsInFlight.size > 0) await Promise.all(createsInFlight.values())
+      while (heldBlocks.size > 0) await Promise.all(heldBlocks.values())
       const generation = ++loadGeneration
       // What the focused editor was based on as this load started (#6533).
       const startFocusedId = useBlockStore.getState().focusedBlockId
@@ -327,8 +327,8 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     },
 
     // Mutation reducers close over this store's `set`/`get`, the split guard,
-    // `createsInFlight` and the mover queue.
-    ...createReducers({ set, get, splitInProgress, createsInFlight, enqueueMove }),
+    // `heldBlocks` and the mover queue.
+    ...createReducers({ set, get, splitInProgress, heldBlocks, enqueueMove }),
   }))
 
   // External `setState` (tests, ad-hoc callers) derives `blocksById` from

@@ -255,6 +255,14 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["new_parent_id", "new_position"],
         &[],
     ),
+    // #6531 — the block a split creates, and the block a merge writes.
+    (
+        "split_block",
+        "id",
+        &["content", "parent_id", "position"],
+        &[],
+    ),
+    ("merge_blocks", "id", &["content"], &[]),
     // #5140 — the same row list as `create_blocks_batch`: the root copy, then
     // its descendants depth-first, so the order is pinned with the rows.
     (
@@ -396,12 +404,16 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     ("link_import_anchors", HEADED_ID_KEY, &["warning"], &[]),
 ];
 
-/// `(command, key)`: the key a command's LIST OF ROWS rides under, because the
-/// wrapper answers `WithOps<{ <key>: T[] }>` (a `Vec` cannot be flattened
-/// beside `op_refs`, #5140). MUST match `rows` in the TS twin's `RETURN_SHAPE`.
+/// `(command, key)`: the key a command's rows ride under. A LIST OF ROWS is
+/// nested because the wrapper answers `WithOps<{ <key>: T[] }>` (a `Vec`
+/// cannot be flattened beside `op_refs`, #5140); a split and a merge nest the
+/// one row their record is (#6531). MUST match `rows` in the TS twin's
+/// `RETURN_SHAPE`.
 const ROWS_KEY: &[(&str, &str)] = &[
     ("create_blocks_batch", "blocks"),
     ("move_blocks_batch", "moves"),
+    ("split_block", "created"),
+    ("merge_blocks", "block"),
     ("duplicate_block", "blocks"),
     ("paste_blocks", "blocks"),
     ("set_page_aliases", "aliases"),
@@ -413,7 +425,7 @@ const ROWS_KEY: &[(&str, &str)] = &[
 pub(super) fn project_return(command: &str, response: &Value) -> Vec<String> {
     let response = match ROWS_KEY.iter().find(|(c, _)| *c == command) {
         Some((_, key)) => response.get(*key).unwrap_or_else(|| {
-            panic!("conformance op '{command}' answered no '{key}' list: {response}")
+            panic!("conformance op '{command}' answered nothing under '{key}': {response}")
         }),
         None => response,
     };

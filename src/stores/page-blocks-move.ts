@@ -150,6 +150,38 @@ function deriveTouched(blocks: FlatBlock[], touchedIds: Iterable<string>): FlatB
   return touched
 }
 
+/**
+ * The page once `blockId` is merged into `intoId`, as `merge_blocks` leaves
+ * it: `intoId` holds `mergedText`, the direct children of `blockId` follow the
+ * children `intoId` already has, and `blockId` is gone. `childIds` are those
+ * children, in order. `null` when `intoId` sits under `blockId`, which the
+ * backend refuses.
+ */
+export function mergedTree(
+  state: PageBlockState,
+  blockId: string,
+  intoId: string,
+  mergedText: string,
+): { blocks: FlatBlock[]; childIds: string[] } | null {
+  if (!state.blocksById.has(blockId)) return null
+  const childIds = state.blocks.filter((b) => (b.parent_id ?? null) === blockId).map((b) => b.id)
+  const reparented =
+    childIds.length === 0
+      ? state.blocks
+      : reconcileBatchMove(
+          state,
+          childIds.map((id) => ({ block_id: id, new_parent_id: intoId, new_position: 0 })),
+          childIds,
+          intoId,
+          Number.MAX_SAFE_INTEGER,
+        )
+  if (reparented === null) return null
+  const blocks = reparented
+    .filter((b) => b.id !== blockId)
+    .map((b) => (b.id === intoId ? Object.assign({}, b, { content: mergedText }) : b))
+  return { blocks, childIds }
+}
+
 /** What the resolve path needs to heal or roll back a provisional move. */
 export interface ProvisionalMoveHandle {
   /** The moved block's id. */
