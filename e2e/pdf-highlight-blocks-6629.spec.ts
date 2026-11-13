@@ -241,6 +241,48 @@ test.describe('A PDF highlight or comment becomes a block that links back to its
     })
   })
 
+  test('a block moved to another space still follows its file to the newer copy', async ({
+    page,
+  }) => {
+    // The mock's second space, "Work"; a reload re-seeds the mock, so the PDF too.
+    await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
+    await page.reload()
+    await waitForBoot(page)
+    await seedPdf(page)
+
+    await openPage(page, 'Getting Started')
+    const first = await highlightPageTwoAndSave(page)
+    const [block] = await highlightBlocksOf(page, first)
+    // The highlight block goes to a page of its own, and that page to Work.
+    const notesId = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: 'Reading notes',
+      spaceId: 'SPACE_PERSONAL',
+    })
+    await ipc(page, 'move_block', { blockId: block?.id, newParentId: notesId, newIndex: 0 })
+    await ipc(page, 'move_blocks_to_space', {
+      blockIds: [notesId],
+      spaceId: 'SPACE_WORK',
+      acknowledgedLoss: null,
+    })
+    expect(await highlightBlocksOf(page, first)).toEqual([])
+
+    await reopenPage(page, 'Getting Started')
+    await page.getByRole('button', { name: 'Open file report (annotated).pdf' }).click()
+    await activeDialog(page).getByRole('button', { name: 'Next page' }).click()
+    await commentOnPageTwoAndSave(page, 'Note')
+    const [newest] = await ipc<AttachmentRow[]>(page, 'list_attachments', { blockId: BLOCK_GS_1 })
+    expect(newest?.filename).toBe('report (annotated) (annotated).pdf')
+    const props = await ipc<Record<string, Array<{ key: string; value_text: string | null }>>>(
+      page,
+      'get_batch_properties',
+      { blockIds: [block?.id] },
+    )
+    expect(props[block?.id ?? '']?.find((p) => p.key === 'pdf_attachment')?.value_text).toBe(
+      newest?.id,
+    )
+  })
+
   test('undo takes the block back and leaves the PDF', async ({ page }) => {
     await openPage(page, 'Getting Started')
     const first = await highlightPageTwoAndSave(page)

@@ -467,8 +467,12 @@ export function PdfViewerDialog({
       // report success.
       try {
         if (await repointBlockLinks(pageStore, blockId, attachmentId, row.id)) {
-          const spaceId = useSpaceStore.getState().currentSpaceId
-          await repointAnnotationBlocks(spaceId, attachmentId, row.id)
+          // Every space, since a block can be moved to another; the active one
+          // by its own id, which outlasts a space list that failed to load.
+          const { currentSpaceId, availableSpaces } = useSpaceStore.getState()
+          const spaceIds = new Set(currentSpaceId === null ? [] : [currentSpaceId])
+          for (const space of availableSpaces) spaceIds.add(space.id)
+          await repointAnnotationBlocks([...spaceIds], attachmentId, row.id)
           unwrap(await commands.deleteAttachment(attachmentId))
         }
       } catch (err) {

@@ -12,7 +12,7 @@
  *   comment has one, the box it is pinned in.
  *
  * A save stores the annotated copy under a new id and deletes the original, so
- * it points every such block at the copy first.
+ * it points every such block, in every space, at the copy first.
  */
 
 import type { PDFDocumentProxy } from 'pdfjs-dist'
@@ -130,41 +130,42 @@ export function annotationBlockSpecs(
 }
 
 /**
- * Point every live block of the space whose `pdf_attachment` is `from` at
- * `to`, wherever it was moved; throws on the first refused read or write. No
- * active space has nothing to point.
+ * Point every live block whose `pdf_attachment` is `from` at `to`, in each of
+ * `spaceIds`: a block follows its file to whatever page or space it was moved.
+ * Throws on the first refused read or write.
  */
 export async function repointAnnotationBlocks(
-  spaceId: string | null,
+  spaceIds: readonly string[],
   from: string,
   to: string,
 ): Promise<void> {
-  if (spaceId === null) return
   const ids: string[] = []
-  let cursor: string | null = null
-  do {
-    const page: PageResponse<BlockRow> = unwrap(
-      await commands.queryByProperty(
-        {
-          key: PDF_ATTACHMENT_KEY,
-          valueText: from,
-          valueDate: null,
-          operator: null,
-          cursor,
-          limit: paginationLimit(PAGINATION_MAX),
-          excludeParentId: null,
-          contentNonEmpty: null,
-          blockType: null,
-          valueTextIn: null,
-          valueDateRange: null,
-          excludeTodoStates: null,
-        },
-        requireActiveScope(spaceId),
-      ),
-    )
-    ids.push(...page.items.map((block) => block.id))
-    cursor = page.has_more ? page.next_cursor : null
-  } while (cursor !== null)
+  for (const spaceId of spaceIds) {
+    let cursor: string | null = null
+    do {
+      const page: PageResponse<BlockRow> = unwrap(
+        await commands.queryByProperty(
+          {
+            key: PDF_ATTACHMENT_KEY,
+            valueText: from,
+            valueDate: null,
+            operator: null,
+            cursor,
+            limit: paginationLimit(PAGINATION_MAX),
+            excludeParentId: null,
+            contentNonEmpty: null,
+            blockType: null,
+            valueTextIn: null,
+            valueDateRange: null,
+            excludeTodoStates: null,
+          },
+          requireActiveScope(spaceId),
+        ),
+      )
+      ids.push(...page.items.map((block) => block.id))
+      cursor = page.has_more ? page.next_cursor : null
+    } while (cursor !== null)
+  }
   // Not undoable: undoing one would point the block at the deleted original.
   for (const id of ids) {
     unwrap(

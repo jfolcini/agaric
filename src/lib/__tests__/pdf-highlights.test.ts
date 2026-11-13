@@ -160,7 +160,7 @@ describe('repointAnnotationBlocks', () => {
       }),
     )
 
-    await repointAnnotationBlocks('SPACE_1', 'ATT_OLD', 'ATT_NEW')
+    await repointAnnotationBlocks(['SPACE_1'], 'ATT_OLD', 'ATT_NEW')
 
     expect(
       queries.map((args) => {
@@ -209,14 +209,34 @@ describe('repointAnnotationBlocks', () => {
       }),
     )
 
-    await expect(repointAnnotationBlocks('SPACE_1', 'ATT_OLD', 'ATT_NEW')).rejects.toThrow(
+    await expect(repointAnnotationBlocks(['SPACE_1'], 'ATT_OLD', 'ATT_NEW')).rejects.toThrow(
       'database is locked',
     )
     expect(written).toEqual(['HL_1'])
   })
 
-  it('has nothing to point with no active space', async () => {
-    await repointAnnotationBlocks(null, 'ATT_OLD', 'ATT_NEW')
+  it('points the blocks of every space given, one a block was moved to among them', async () => {
+    const written: string[] = []
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        query_by_property: (args) => {
+          const { space_id } = args['scope'] as { space_id: string }
+          return page([`HL_IN_${space_id}`], null)
+        },
+        set_property: (args) => {
+          written.push(args['blockId'] as string)
+          return { ...makeBlockRow({ id: args['blockId'] as string }), op_refs: [] }
+        },
+      }),
+    )
+
+    await repointAnnotationBlocks(['SPACE_1', 'SPACE_2'], 'ATT_OLD', 'ATT_NEW')
+
+    expect(written).toEqual(['HL_IN_SPACE_1', 'HL_IN_SPACE_2'])
+  })
+
+  it('has nothing to point with no space', async () => {
+    await repointAnnotationBlocks([], 'ATT_OLD', 'ATT_NEW')
 
     expect(mockedInvoke).not.toHaveBeenCalled()
   })

@@ -638,7 +638,7 @@ describe('PdfViewerDialog', () => {
     })
 
     afterEach(() => {
-      useSpaceStore.setState({ currentSpaceId: null })
+      useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [] })
     })
 
     it('adds a child of the owner pointing at the copy, as one undo entry', async () => {
@@ -836,6 +836,27 @@ describe('PdfViewerDialog', () => {
         expect(mockEditBlock).toHaveBeenCalledTimes(1)
         expect(mockDeleteAttachment).not.toHaveBeenCalled()
       })
+    })
+
+    it('points the blocks of every space, the active one first', async () => {
+      highlightBlocks(['hl-1'])
+      useSpaceStore.setState({
+        availableSpaces: [
+          { id: 'SPACE_2', name: 'Work', accent_color: null },
+          { id: 'SPACE_1', name: 'Personal', accent_color: null },
+        ],
+      })
+      const { onSaved } = renderOwner()
+      await save()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(mockQueryByProperty.mock.calls.map(([, scope]) => scope)).toEqual([
+        { kind: 'active', space_id: 'SPACE_1' },
+        { kind: 'active', space_id: 'SPACE_2' },
+      ])
+      expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
     })
 
     it('keeps the original when a highlight block cannot be moved to the copy', async () => {
