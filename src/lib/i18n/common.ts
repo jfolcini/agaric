@@ -503,6 +503,17 @@ export const common: Record<string, string> = {
   'data.importMergeDescription_other':
     'These files have the titles of existing pages, so the import updates each in place: changed lines update their blocks, new lines add blocks, and lines missing from a file go to the Trash. Undo on a page reverts its update.',
   'data.importMergeConfirm': 'Update and import',
+  // #6554 — which space's pages the question is about, in a restore of several.
+  'data.importMergeSpace': 'In the space {{name}}:',
+  // #6554 — a folder pick of an unzipped Export all spaces ZIP restores each space.
+  'data.importVaultTitle_one': 'Restore {{count}} space?',
+  'data.importVaultTitle_other': 'Restore {{count}} spaces?',
+  'data.importVaultDescription':
+    'This folder is an export of every space. Each space’s notes and property definitions import into the space of its name, which is created when there is none; the active space stays as it is. History, block ids and the Trash are not restored.',
+  'data.importVaultConfirm': 'Restore spaces',
+  'data.importVaultExisting': '{{name}}: imported into the existing space',
+  'data.importVaultNew': '{{name}}: created',
+  'data.importSpaceCreateFailed': 'the space could not be created: {{reason}}',
   'data.importMergeCheckFailed':
     'The import did not run: the pages it would update could not be read: {{reason}}',
   'data.importShowAll': 'Show all',

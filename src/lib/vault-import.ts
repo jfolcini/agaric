@@ -101,11 +101,13 @@ const AGARIC_DIR = '.agaric/'
 export const SPACE_FILE_PATH = `${AGARIC_DIR}space.json`
 
 /**
- * The contents of {@link SPACE_FILE_PATH}: the space's own property
- * definitions, and the title of each file whose path does not read back as it
- * ({@link pathTitle}), keyed by that path.
+ * The contents of {@link SPACE_FILE_PATH}: the space's name (only an
+ * all-spaces export writes it), its own property definitions, and the title of
+ * each file whose path does not read back as it ({@link pathTitle}), keyed by
+ * that path.
  */
 export interface SpaceFile {
+  name?: string
   propertyDefinitions: { key: string; value_type: string; options: string | null }[]
   titles: Record<string, string>
 }
@@ -135,7 +137,12 @@ function parseSpaceFile(text: string): SpaceFile {
   if (!isRecord(titles) || !Object.values(titles).every((title) => typeof title === 'string')) {
     throw new TypeError('not a space file')
   }
-  return { propertyDefinitions, titles: titles as Record<string, string> }
+  const name = value['name']
+  return {
+    ...(typeof name === 'string' ? { name } : {}),
+    propertyDefinitions,
+    titles: titles as Record<string, string>,
+  }
 }
 
 /**
@@ -178,6 +185,60 @@ export async function restoreSpaceFile(
     warnings.push(t('data.importSpaceFileFailed', { reason: importErrorReason(err) }))
   }
   return { titles: new Map(Object.entries(space.titles)), warnings }
+}
+
+/** One space of an all-spaces export: its name and its folder's files. */
+export interface VaultSpace {
+  name: string
+  /** The folder's files, each as a pick of that folder would carry it. */
+  files: File[]
+}
+
+/** `file` with `webkitRelativePath` set to `path`. */
+function atPath(file: File, path: string): File {
+  const moved = new File([file], file.name, { type: file.type, lastModified: file.lastModified })
+  Object.defineProperty(moved, 'webkitRelativePath', { value: path })
+  return moved
+}
+
+/**
+ * The spaces of a folder pick of an unzipped *Export all spaces* ZIP (#6554),
+ * in pick order, or null for any other pick: one holding no
+ * {@link SPACE_FILE_PATH} of its own, no top-level file but a hidden one, and
+ * some top-level folder, every one of which (but the root {@link AGARIC_DIR}
+ * the skip ledger goes in) holds one. A
+ * space is named by its space file, else by its folder, and its files are
+ * moved below the picked folder, so the import reads the folder as picked.
+ */
+export async function vaultRestoreSpaces(files: readonly File[]): Promise<VaultSpace[] | null> {
+  const folders = new Map<string, File[]>()
+  for (const file of files) {
+    const path = vaultRelativePath(file.webkitRelativePath)
+    const slash = path.indexOf('/')
+    // A `.DS_Store` the file manager left beside the space folders.
+    if (slash === -1 && path.startsWith('.')) continue
+    if (slash === -1 || path === SPACE_FILE_PATH) return null
+    const folder = path.slice(0, slash)
+    if (`${folder}/` === AGARIC_DIR) continue
+    folders.set(folder, [...(folders.get(folder) ?? []), atPath(file, path)])
+  }
+  if (folders.size === 0) return null
+  const spaces: VaultSpace[] = []
+  for (const [folder, folderFiles] of folders) {
+    const spaceFile = folderFiles.find(
+      (file) => vaultRelativePath(file.webkitRelativePath) === SPACE_FILE_PATH,
+    )
+    if (spaceFile === undefined) return null
+    let name = folder
+    try {
+      name = parseSpaceFile(await spaceFile.text()).name ?? folder
+    } catch (err) {
+      // The import says so when it restores the file into the space.
+      logger.warn('vault-import', 'space file unreadable', { folder }, err)
+    }
+    spaces.push({ name, files: folderFiles })
+  }
+  return spaces
 }
 
 /** Final path segment (basename) of a `/`-separated path. */

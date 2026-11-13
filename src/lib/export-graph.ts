@@ -304,12 +304,14 @@ interface SpaceExportAccumulation {
  * `skippedAttachmentEntries` (#2965) rather than silently disappearing —
  * callers combine these into their own {@link EXPORT_REPORT_PATH}. What a
  * file cannot carry goes in the space's {@link SPACE_FILE_PATH}, and each file
- * drops the `# Title` line its path now names (#6277 decision 8).
+ * drops the `# Title` line its path now names (#6277 decision 8). Given a
+ * `spaceName`, the space file names the space and is always written.
  */
 async function exportSpacePagesIntoZip(
   zip: JSZip,
   spaceId: string,
   pathPrefix: string,
+  spaceName?: string,
 ): Promise<SpaceExportAccumulation> {
   // `listAllPagesInSpace` returns every page in one query (no pagination, no
   // clamp) — bounded by the space's intrinsic page count, which is what the
@@ -381,8 +383,14 @@ async function exportSpacePagesIntoZip(
   const propertyDefinitions = (await listAllPropertyDefs(spaceId))
     .filter((def) => !def.builtin)
     .map(({ key, value_type, options }) => ({ key, value_type, options }))
-  if (propertyDefinitions.length > 0 || Object.keys(titles).length > 0) {
-    const space: SpaceFile = { propertyDefinitions, titles }
+  // A folder import tells an all-spaces export's folders for spaces by their
+  // named space files (#6554).
+  if (spaceName !== undefined || propertyDefinitions.length > 0 || Object.keys(titles).length > 0) {
+    const space: SpaceFile = {
+      ...(spaceName === undefined ? {} : { name: spaceName }),
+      propertyDefinitions,
+      titles,
+    }
     zip.file(`${pathPrefix}${SPACE_FILE_PATH}`, JSON.stringify(space, null, 2))
   }
 
@@ -511,7 +519,7 @@ export async function exportAllSpacesAsZip(): Promise<ExportAllSpacesResult> {
       exportedPages: spaceExportedPages,
       skippedPageEntries,
       skippedAttachmentEntries,
-    } = await exportSpacePagesIntoZip(zip, space.id, `${folder}/`)
+    } = await exportSpacePagesIntoZip(zip, space.id, `${folder}/`, space.name)
     exportedPages += spaceExportedPages
     allSkippedPages.push(...skippedPageEntries)
     allSkippedAttachments.push(...skippedAttachmentEntries)
