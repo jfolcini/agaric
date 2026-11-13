@@ -93,7 +93,7 @@ describe('a block changed elsewhere', () => {
     expect(backend.calls).toEqual([])
   })
 
-  it('keeps the local text of a block edited here and not saved yet, which the next save writes', async () => {
+  it('keeps the local text of a block edited here and not saved yet, and the next save keeps both edits (#6533)', async () => {
     const { ed, backend, save, remoteEdit } = open([[A, 0, 'alpha']])
     caret(ed, 0, 5)
     type(ed, '!')
@@ -102,7 +102,7 @@ describe('a block changed elsewhere', () => {
     await save()
 
     expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'alpha!']])
-    expect(backend.live()).toEqual([[A, 0, 'alpha!']])
+    expect(backend.live()).toEqual([[A, 0, 'alpha from a peer!']])
   })
 
   it('shows the new text when the only change here moved the block, and saves the move', async () => {

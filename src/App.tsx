@@ -319,6 +319,8 @@ function App() {
     setBugReportPrefill,
     quickCaptureOpen,
     setQuickCaptureOpen,
+    quickCapturePrefill,
+    setQuickCapturePrefill,
     showNoPeersDialog,
     setShowNoPeersDialog,
     shortcutsOpen,
@@ -820,13 +822,21 @@ function App() {
         <QuickCaptureFab key={viewKey} setQuickCaptureOpen={setQuickCaptureOpen} />
       </FeatureErrorBoundary>
       {/* Quick-capture dialog — driven by the global hotkey
-          registered in App's startup effect. Gated on `quickCaptureOpen`
+          registered in App's startup effect, the floating button, and
+          `agaric://capture` links (#6555). Gated on `quickCaptureOpen`
           + lazy-loaded so the editor surface stays off the critical path
           until the chord fires. */}
       {quickCaptureOpen && (
         <FeatureErrorBoundary name="Quick capture" nameKey="errorBoundary.section.quickCapture">
           <Suspense fallback={null}>
-            <QuickCaptureDialog open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />
+            <QuickCaptureDialog
+              open={quickCaptureOpen}
+              onOpenChange={(open) => {
+                setQuickCaptureOpen(open)
+                if (!open) setQuickCapturePrefill(null)
+              }}
+              prefill={quickCapturePrefill}
+            />
           </Suspense>
         </FeatureErrorBoundary>
       )}

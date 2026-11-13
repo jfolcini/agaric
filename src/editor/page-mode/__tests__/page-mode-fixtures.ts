@@ -19,6 +19,7 @@ import type { PageSaveApi, TreeRow } from '@/editor/page-mode/page-save'
 import type { PageTaskSource } from '@/editor/page-mode/page-tasks'
 import { blockIdOf } from '@/editor/token-ids'
 import type { OpRef } from '@/lib/bindings'
+import { rebasedOnto } from '@/lib/tauri-mock/edit-rebase'
 
 export const PAGE = '01PAGE0000000000000000000P'
 
@@ -235,11 +236,11 @@ export class FakeBackend implements PageSaveApi {
     return Promise.resolve(this.ref())
   }
 
-  edit = (id: string, markdown: string): Promise<OpRef[]> => {
+  edit = (id: string, markdown: string, base?: string): Promise<OpRef[]> => {
     this.check('edit', id)
     const block = this.blocks.get(id)
     if (block === undefined || !this.isLive(id)) throw new Error(`edit: ${id} is not live`)
-    block.content = markdown
+    block.content = rebasedOnto(block.content, base, markdown)
     return Promise.resolve(this.ref())
   }
 
