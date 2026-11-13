@@ -156,14 +156,19 @@ incompatible peer up front, before any raw-byte Loro merge (#2130). Also
 to the import-time format guards.
 
 The rejection emits `SyncEvent::Error` with `code: "engine_format_mismatch"`
-(#5728); `message` keeps the English "peer engine format vN incompatible with
-local vM" for logs. The frontend words the code itself: "This device and
-Pixel 8 run different versions of Agaric. Update both to the latest version,
-then sync again.", naming the peer when it has a name for it. Only the
-responder emits the event: it ends the session without a frame, so the
-initiator learns only that the stream ended. Each device therefore shows the
-message when the other one dials it, and a build from before #5728 shows the
-raw text.
+(#5728) and `peer_is_older` (#6523); `message` keeps the English "peer engine
+format vN incompatible with local vM" for logs. The responder then answers the
+`HeadExchange` with one `Error` frame worded for the initiator: "the other
+device runs a newer version of Agaric; update Agaric on this device", or "…an
+older version…; update Agaric on the other device". The initiator maps those two
+fixed strings back to the same code, with `peer_is_older` from its own side, so
+both devices say which one to update: "Pixel 8 runs an older version of Agaric.
+Update Agaric on Pixel 8, then sync again." A build from before #6523 shows the
+frame's text as it stands. A responder from before #6523 ends the session
+without a frame; the initiator then codes a silent end right after its
+`HeadExchange`, from a peer it has synced with before, `handshake_unanswered`,
+which the frontend words as "could not start; check that both devices run the
+same version".
 
 **Removed field: `wire_compression` (#2200, deleted in #3543).** It advertised
 that the sender could decompress zstd-compressed chunked `LoroSync` payloads.
@@ -484,7 +489,7 @@ peak heap of each.
 A format-4 peer would read this frame as an unsupported variant and the raw
 bytes after it as a frame, so the responder refuses it at `HeadExchange` with
 the `EngineFormatMismatch` code (#5728), which the frontend words as "update
-both devices".
+the older device" (#6523).
 
 ### `SyncMessage::SyncComplete`
 

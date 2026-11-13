@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test'
+
 import { emitMockEvent, expect, navigateToView, openSettingsTab, test } from './helpers'
 
 /**
@@ -135,5 +137,89 @@ test.describe('sync events (#2683) @sync', () => {
     ).toBeVisible()
     await expect(page.getByText('peer engine format v3')).toHaveCount(0)
     await page.screenshot({ path: test.info().outputPath('version-mismatch.png') })
+  })
+})
+
+/** Pair one device in the mock, as the #5728 case above does, and return its id. */
+async function pairOneDevice(page: Page): Promise<string> {
+  const peerId = await page.evaluate(async () => {
+    const invoke = (
+      window as unknown as {
+        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+      }
+    ).__TAURI_INTERNALS__.invoke
+    await invoke('confirm_pairing', { passphrase: 'alpha bravo charlie delta' })
+    let peers: Array<{ peer_id: string }> = []
+    for (let read = 0; read < 3; read++) {
+      peers = (await invoke('list_peer_refs')) as Array<{ peer_id: string }>
+    }
+    return peers[0]?.peer_id
+  })
+  expect(peerId, 'the mock paired a device').toBeTruthy()
+  return peerId as string
+}
+
+// #6523 — what the sync status says when sync stops or waits, on the device
+// that reads the backend's coded error.
+test.describe('sync says why it waits or stops (#6523) @sync', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/')
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
+  })
+
+  test('an away device reads as waiting, with no toast and no error', async ({ page }) => {
+    const peerId = await pairOneDevice(page)
+    await navigateToView(page, 'Settings')
+    await openSettingsTab(page, 'Sync & devices')
+    await expect(page.getByText('Paired Device').first()).toBeVisible()
+
+    await emitMockEvent(page, 'sync:error', {
+      type: 'error',
+      remote_device_id: peerId,
+      message:
+        'Waiting for the peer: it did not answer, and it is not announcing itself on the network',
+      code: 'peer_away',
+    })
+
+    await expect(page.getByTestId('sync-panel-waiting')).toHaveText('Waiting for Paired Device')
+    await expect(page.getByText('Waiting', { exact: true })).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Sync', exact: true }),
+    ).toHaveAccessibleDescription('Waiting for Paired Device')
+    await expect(page.getByRole('alert')).toHaveCount(0)
+    await page.screenshot({ path: test.info().outputPath('waiting-for-device.png') })
+
+    // A toast raised after the away event is on screen, so one the away event
+    // raised would be too: the control is the only toast.
+    await emitMockEvent(page, 'sync:complete', {
+      type: 'complete',
+      remote_device_id: peerId,
+      ops_received: 1,
+      ops_sent: 0,
+      changed_blocks: 1,
+    })
+    await expect(page.locator('[data-sonner-toast]')).toHaveText(['Synced 1 change from device'])
+  })
+
+  test('a version mismatch names the device to update', async ({ page }) => {
+    const peerId = await pairOneDevice(page)
+    await navigateToView(page, 'Settings')
+    await openSettingsTab(page, 'Sync & devices')
+    await expect(page.getByText('Paired Device').first()).toBeVisible()
+
+    await emitMockEvent(page, 'sync:error', {
+      type: 'error',
+      remote_device_id: peerId,
+      message: 'peer engine format v3 incompatible with local v4',
+      code: 'engine_format_mismatch',
+      peer_is_older: true,
+    })
+
+    const sentence =
+      'Paired Device runs an older version of Agaric. Update Agaric on Paired Device, then sync again.'
+    await expect(page.getByRole('alert').getByText(sentence, { exact: true })).toBeVisible()
+    await expect(
+      page.locator('[data-sonner-toast]').getByText(`Sync failed: ${sentence}`),
+    ).toBeVisible()
   })
 })

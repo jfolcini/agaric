@@ -114,6 +114,10 @@ pub enum SyncEvent {
         /// always has.
         #[serde(skip_serializing_if = "Option::is_none")]
         code: Option<SyncErrorCode>,
+        /// For [`SyncErrorCode::EngineFormatMismatch`]: whether the peer runs the
+        /// older engine format, so the frontend names the device to update (#6523).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        peer_is_older: Option<bool>,
     },
     /// Per-frame attachment-transfer progress emitted
     /// by `sync_files`. The `ChannelEventSink` forwards these to the
@@ -205,12 +209,20 @@ pub enum SyncEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncErrorCode {
-    /// The peer runs another engine format (#2130). Only updating both
-    /// devices to the same release lets them sync again.
+    /// The peer runs another engine format (#2130). Updating the older device
+    /// lets them sync again; `peer_is_older` says which one that is (#6523).
     EngineFormatMismatch,
     /// The user cancelled the session (`cancel_sync`, #5739): the frontend
     /// reads it as idle, not as a failure.
     Cancelled,
+    /// The dial timed out, mDNS is not announcing the peer, and it has not
+    /// pulled from us lately (#6523): the device is away, and the frontend
+    /// shows a neutral waiting state rather than a failure.
+    PeerAway,
+    /// A peer that has synced with us before ended the session without
+    /// answering our `HeadExchange` (#6523). A build that predates the
+    /// engine-format refusal frame ends a format mismatch exactly so.
+    HandshakeUnanswered,
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +591,7 @@ mod tests {
             message: "something broke".into(),
             remote_device_id: "DEV_B".into(),
             code: None,
+            peer_is_older: None,
         };
         let json = serde_json::to_value(&event).expect("serialize Error");
         assert_eq!(
@@ -603,9 +616,41 @@ mod tests {
             message: "peer engine format v3 incompatible with local v4".into(),
             remote_device_id: "DEV_B".into(),
             code: Some(SyncErrorCode::EngineFormatMismatch),
+            peer_is_older: None,
         };
         let json = serde_json::to_value(&event).expect("serialize Error");
         assert_eq!(json["code"], "engine_format_mismatch");
+    }
+
+    /// #6523: `useSyncEvents.ts` matches these spellings by hand, and words
+    /// the mismatch by `peer_is_older`.
+    #[test]
+    fn sync_event_error_serializes_the_6523_codes_and_peer_is_older() {
+        let mismatch = SyncEvent::Error {
+            message: "peer engine format v3 incompatible with local v4".into(),
+            remote_device_id: "DEV_B".into(),
+            code: Some(SyncErrorCode::EngineFormatMismatch),
+            peer_is_older: Some(true),
+        };
+        let json = serde_json::to_value(&mismatch).expect("serialize Error");
+        assert_eq!(json["peer_is_older"], true);
+        for (code, spelled) in [
+            (SyncErrorCode::PeerAway, "peer_away"),
+            (SyncErrorCode::HandshakeUnanswered, "handshake_unanswered"),
+        ] {
+            let json = serde_json::to_value(&SyncEvent::Error {
+                message: String::new(),
+                remote_device_id: "DEV_B".into(),
+                code: Some(code),
+                peer_is_older: None,
+            })
+            .expect("serialize Error");
+            assert_eq!(json["code"], spelled);
+            assert!(
+                json.get("peer_is_older").is_none(),
+                "only a mismatch carries peer_is_older, got {json}"
+            );
+        }
     }
 
     /// #5739: a user cancel reaches the frontend as `cancelled`, the code
@@ -616,6 +661,7 @@ mod tests {
             message: "Sync cancelled: [transport::driver] session cancelled".into(),
             remote_device_id: "DEV_B".into(),
             code: Some(SyncErrorCode::Cancelled),
+            peer_is_older: None,
         };
         let json = serde_json::to_value(&event).expect("serialize Error");
         assert_eq!(json["code"], "cancelled");
@@ -1033,6 +1079,7 @@ mod tests {
             message: String::new(),
             remote_device_id: "DEV_EMPTY".into(),
             code: None,
+            peer_is_older: None,
         };
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["type"], "error");

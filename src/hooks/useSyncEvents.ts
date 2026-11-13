@@ -3,7 +3,8 @@
  *
  * Handles two event types from the Rust backend:
  * - sync:complete — resets to idle, shows toast, reloads blocks if data changed
- * - sync:error — sets error state, shows error toast; a user cancel resets to idle
+ * - sync:error — sets error state, shows error toast; a user cancel resets to idle,
+ *   and an away peer sets the neutral waiting state
  *
  * Per-state-transition progress (`sync:progress` in Phase 1) was dropped
  * By Phase 2 — `useSyncTrigger` now consumes the Channel<T>
@@ -82,9 +83,14 @@ export interface SyncCompletePayload {
  * #5728 — a sync error the backend codes so this side can word it in the
  * user's language (Rust `SyncErrorCode`, `sync_events.rs`). Hand-written like
  * the payload: `SyncEvent` rides a Tauri event, not specta. `cancelled` is a
- * user cancel (#5739), which reads as idle, not as a failure.
+ * user cancel (#5739), which reads as idle, and `peer_away` a device that is
+ * simply away (#6523), which reads as waiting: neither is a failure.
  */
-export type SyncErrorCode = 'engine_format_mismatch' | 'cancelled'
+export type SyncErrorCode =
+  | 'engine_format_mismatch'
+  | 'cancelled'
+  | 'peer_away'
+  | 'handshake_unanswered'
 
 export interface SyncErrorPayload {
   type: 'error'
@@ -92,6 +98,23 @@ export interface SyncErrorPayload {
   message: string
   remote_device_id: string
   code?: SyncErrorCode
+  /** #6523 — with `engine_format_mismatch`: whether the peer is the older device. */
+  peer_is_older?: boolean
+}
+
+/** i18n keys for a coded failure's sentence: with the peer's name, and without. */
+function codedSyncErrorKeys(payload: SyncErrorPayload): [named: string, unnamed: string] | null {
+  if (payload.code === 'handshake_unanswered') {
+    return ['sync.handshakeUnanswered', 'sync.handshakeUnansweredUnnamed']
+  }
+  if (payload.code !== 'engine_format_mismatch') return null
+  if (payload.peer_is_older === true) {
+    return ['sync.versionMismatchUpdatePeer', 'sync.versionMismatchUpdatePeerUnnamed']
+  }
+  if (payload.peer_is_older === false) {
+    return ['sync.versionMismatchUpdateThisDevice', 'sync.versionMismatchUpdateThisDeviceUnnamed']
+  }
+  return ['sync.versionMismatch', 'sync.versionMismatchUnnamed']
 }
 
 /**
@@ -99,11 +122,10 @@ export interface SyncErrorPayload {
  * device knows its name; `null` for an uncoded error, which shows `message`.
  */
 export function codedSyncErrorMessage(payload: SyncErrorPayload): string | null {
-  if (payload.code !== 'engine_format_mismatch') return null
+  const keys = codedSyncErrorKeys(payload)
+  if (keys === null) return null
   const peer = useSyncStore.getState().peers.find((p) => p.peerId === payload.remote_device_id)
-  return peer?.name
-    ? i18n.t('sync.versionMismatch', { peer: peer.name })
-    : i18n.t('sync.versionMismatchUnnamed')
+  return peer?.name ? i18n.t(keys[0], { peer: peer.name }) : i18n.t(keys[1])
 }
 
 /**
@@ -310,6 +332,11 @@ export function useSyncEvents(): void {
           useSyncStore.getState().setState('idle')
           return
         }
+        // #6523 — the other device is away; the status says so, quietly.
+        if (event.payload.code === 'peer_away') {
+          useSyncStore.getState().setWaiting(event.payload.remote_device_id)
+          return
+        }
         const message = codedSyncErrorMessage(event.payload) ?? event.payload.message
         // The store update is unconditional: it is the signal `PairingDialog`
         // reads to turn a waiting joiner into an immediate "wrong code", and
@@ -336,9 +363,12 @@ export function useSyncEvents(): void {
           return
         }
         // #6538 — Android does not update itself; a version mismatch there
-        // is fixed by installing the newest APK, so the toast says where.
+        // is fixed by installing the newest APK, so the toast says where,
+        // unless the other device is the one to update (#6523).
         const releasesAction =
-          event.payload.code === 'engine_format_mismatch' && isMobilePlatform()
+          event.payload.code === 'engine_format_mismatch' &&
+          event.payload.peer_is_older !== true &&
+          isMobilePlatform()
             ? {
                 action: {
                   label: i18n.t('help.updateOpenReleasesButton'),

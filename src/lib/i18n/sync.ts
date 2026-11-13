@@ -237,6 +237,24 @@ export const sync: Record<string, string> = {
     'This device and {{peer}} run different versions of Agaric. Update both to the latest version, then sync again.',
   'sync.versionMismatchUnnamed':
     'This device and the other device run different versions of Agaric. Update both to the latest version, then sync again.',
+  // #6523 — the same mismatch when the backend knows which device is older.
+  'sync.versionMismatchUpdatePeer':
+    '{{peer}} runs an older version of Agaric. Update Agaric on {{peer}}, then sync again.',
+  'sync.versionMismatchUpdatePeerUnnamed':
+    'The other device runs an older version of Agaric. Update Agaric on it, then sync again.',
+  'sync.versionMismatchUpdateThisDevice':
+    '{{peer}} runs a newer version of Agaric. Update Agaric on this device, then sync again.',
+  'sync.versionMismatchUpdateThisDeviceUnnamed':
+    'The other device runs a newer version of Agaric. Update Agaric on this device, then sync again.',
+  // #6523 — a peer that synced before ended the session without answering;
+  // an older build ends a version mismatch that way.
+  'sync.handshakeUnanswered':
+    'Sync with {{peer}} could not start. Check that both devices run the same version of Agaric.',
+  'sync.handshakeUnansweredUnnamed':
+    'Sync could not start. Check that both devices run the same version of Agaric.',
+  // #6523 — a paired device that is away: no announcement, no answer.
+  'sync.waitingForPeer': 'Waiting for {{peer}}, last synced {{time}}',
+  'sync.waitingForPeerNeverSynced': 'Waiting for {{peer}}',
   'sync.retryAction': 'Retry sync',
   'sync.backOnline': 'Back online. Syncing\u2026',
   'sync.noPeersTitle': 'No devices paired',
