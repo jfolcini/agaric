@@ -1,4 +1,4 @@
-# Session 4066 — review notes from #6678 to #6693
+# Session 4067 — review notes from #6678 to #6693
 
 The follow-up PR for the non-blocking notes the reviewer left on the PRs merged on 2026-11-13, plus code-scanning alert 294. One commit per source PR.
 
