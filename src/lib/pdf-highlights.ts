@@ -150,7 +150,15 @@ export async function repointHighlightBlocks(
   } while (cursor !== null)
   // Not undoable: undoing one would point the block at the deleted original.
   for (const id of ids) {
-    unwrap(await commands.setProperty(id, PDF_ATTACHMENT_KEY, { value_text: to }))
+    unwrap(
+      await commands.setProperty(id, PDF_ATTACHMENT_KEY, {
+        value_text: to,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      }),
+    )
   }
 }
 

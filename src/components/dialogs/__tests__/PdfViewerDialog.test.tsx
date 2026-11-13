@@ -706,8 +706,28 @@ describe('PdfViewerDialog', () => {
         { kind: 'active', space_id: 'SPACE_1' },
       )
       expect(mockSetProperty.mock.calls).toEqual([
-        ['hl-1', 'pdf_attachment', { value_text: 'new-att-id' }],
-        ['hl-2', 'pdf_attachment', { value_text: 'new-att-id' }],
+        [
+          'hl-1',
+          'pdf_attachment',
+          {
+            value_text: 'new-att-id',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+        [
+          'hl-2',
+          'pdf_attachment',
+          {
+            value_text: 'new-att-id',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
       ])
       expect(mockDeleteAttachment).not.toHaveBeenCalled()
       second.resolve(ok({ ...makeBlock({ id: 'hl-2' }), op_refs: [] }))

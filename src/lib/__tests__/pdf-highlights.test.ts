@@ -151,8 +151,28 @@ describe('repointHighlightBlocks', () => {
       ['pdf_attachment', 'ATT_OLD', 'C1', { kind: 'active', space_id: 'SPACE_1' }],
     ])
     expect(writes).toEqual([
-      { blockId: 'HL_1', key: 'pdf_attachment', value: { value_text: 'ATT_NEW' } },
-      { blockId: 'HL_2', key: 'pdf_attachment', value: { value_text: 'ATT_NEW' } },
+      {
+        blockId: 'HL_1',
+        key: 'pdf_attachment',
+        value: {
+          value_text: 'ATT_NEW',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
+      },
+      {
+        blockId: 'HL_2',
+        key: 'pdf_attachment',
+        value: {
+          value_text: 'ATT_NEW',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
+      },
     ])
   })
 
