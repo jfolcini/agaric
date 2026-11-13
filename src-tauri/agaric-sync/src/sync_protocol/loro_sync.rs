@@ -238,7 +238,7 @@ pub fn classify_from_vv_reachability(
 /// would export as LIVE (`live_block_ids()`) and ask SQL which of them are
 /// soft-deleted (`deleted_at IS NOT NULL`). If ANY engine-live block is
 /// SQL-deleted, the engine is stale for this space: mirror SQL's tombstones
-/// onto it once ([`mirror_sql_tombstones_onto_engine`], #6565). A space that
+/// onto it once (`mirror_sql_tombstones_onto_engine`, #6565). A space that
 /// does not settle is refused (return `Ok(None)`, log).
 ///
 /// Sender-side helper.
