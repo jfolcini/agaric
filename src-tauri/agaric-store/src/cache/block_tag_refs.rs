@@ -12,7 +12,7 @@
 
 use futures_util::TryStreamExt;
 use sqlx::SqlitePool;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::db::MAX_SQL_PARAMS;
 use agaric_core::error::AppError;
@@ -325,93 +325,170 @@ async fn write_block_tag_ref_diff(
 // INSERT binds 2 cols per row → same 499. (REBUILD_CHUNK above is already 499.)
 const DELETE_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 
-/// Compute the desired set of `(source_id, tag_id)` pairs from the live
-/// database. Returns a `Vec` sorted by `(source_id, tag_id)` so the
-/// sort-merge diff can walk it alongside the current cache stream
-/// (which the SQL `ORDER BY` sorts identically).
-///
-/// Streams `(id, content)` rows (M-19a) so the peak working set is
-/// `O(actual ref count + tag-id set)` rather than `O(total content bytes)`.
-///
-/// Note: the cross-space exclusion (#375) requires a `space_of` map that
-/// holds **one entry per non-deleted block**, so the true peak working set
-/// is `O(N-blocks + actual ref count + tag-id set)`. The streaming only
-/// avoids materialising the full content strings, not the block-id set.
-async fn compute_desired_pairs(
-    conn: &mut sqlx::SqliteConnection,
-) -> Result<Vec<(String, String)>, AppError> {
-    let tag_ids: HashSet<String> = sqlx::query_scalar!(
-        "SELECT id FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL"
-    )
-    .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .collect();
+/// A live tag's id → the space it resolves to (`None`: unscoped).
+type TagSpaces = HashMap<String, Option<String>>;
 
-    // #375 / #678: resolve every live block's space once so the full rebuild
-    // applies the SAME cross-space exclusion the incremental
-    // `reindex_block_tag_refs` pushes into its INSERT. Without this, a full
-    // rebuild (snapshot restore, boot empty-table fallback, explicit "rebuild
-    // caches") re-admits exactly the cross-space tag-refs the incremental path
-    // is careful to exclude.
-    //
-    // #678 — this query MUST mirror `space::resolve_block_space`'s SQL, which
-    // is `COALESCE(b.space_id, p.space_id)` via a LEFT JOIN to the owning page
-    // (`blocks.page_id`). The previous bare `b.space_id` lacked that page
-    // fallback its own comment claimed, so a block whose own `space_id` is not
-    // yet materialised — e.g. inside the brief space-propagation gap post-#533,
-    // where `page_id` is stamped but `space_id` is set by a later task —
-    // resolved NULL ("unscoped") in the rebuild while the incremental path
-    // resolved the page's space. That is precisely the rebuild-vs-incremental
-    // divergence the #375 comment says this code exists to prevent. The page
-    // join carries the same `deleted_at IS NULL` guard as `resolve_block_space`.
-    // A NULL space means "unscoped".
-    let space_of: std::collections::HashMap<String, Option<String>> = sqlx::query!(
-        r#"SELECT b.id AS "id!", COALESCE(b.space_id, p.space_id) AS "space?"
-           FROM blocks b
-           LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL
-           WHERE b.deleted_at IS NULL"#
-    )
-    .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .map(|r| (r.id, r.space))
-    .collect();
-
-    let re = super::tag_ref_re();
-    let mut pairs: HashSet<(String, String)> = HashSet::new();
-    {
-        let mut stream = sqlx::query!(
-            "SELECT id, content FROM blocks \
-             WHERE deleted_at IS NULL AND content IS NOT NULL"
+/// The live tags, each with its resolved space: every one, or with
+/// `" AND b.id IN (SELECT value FROM json_each(?))"` and a JSON id array the
+/// ones among those ids.
+///
+/// #678 — the space MUST mirror `space::resolve_block_space`'s SQL,
+/// `COALESCE(b.space_id, p.space_id)` via a LEFT JOIN to the owning page with
+/// the same `deleted_at IS NULL` guard, so the rebuild and the incremental
+/// [`reindex_block_tag_refs`] resolve a block whose own `space_id` is not
+/// stamped yet to the same space.
+macro_rules! live_tag_spaces {
+    ($scope:literal $(, $ids_json:expr)?) => {
+        sqlx::query!(
+            r#"SELECT b.id AS "id!", COALESCE(b.space_id, p.space_id) AS "space?"
+               FROM blocks b
+               LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL
+               WHERE b.block_type = 'tag' AND b.deleted_at IS NULL"#
+                + $scope
+            $(, $ids_json)?
         )
-        .fetch(&mut *conn);
-        while let Some(row) = stream.try_next().await? {
-            let content = row.content.as_deref().unwrap_or("");
-            // Source space: `None` (unscoped) keeps every tag, mirroring the
-            // incremental `?3 IS NULL` branch; otherwise a tag is kept only if
-            // its own resolved space equals the source's (a NULL tag space is
-            // dropped, exactly as `NULL = ?3` evaluates falsy).
-            let src_space = space_of.get(&row.id).cloned().flatten();
-            for cap in re.captures_iter(content) {
-                let tag_id = cap[1].to_string();
-                if !tag_ids.contains(&tag_id) {
-                    continue;
-                }
-                let same_space = match &src_space {
-                    None => true,
-                    Some(s) => space_of.get(&tag_id).and_then(Option::as_ref) == Some(s),
-                };
-                if same_space {
-                    pairs.insert((row.id.clone(), tag_id));
-                }
-            }
+        .map(|r| (r.id, r.space))
+    };
+}
+
+/// The live blocks that have content, as `(id, content, resolved space)`:
+/// every one, or the ones among a JSON id array, scoped as
+/// [`live_tag_spaces`] is. The space is resolved the same way.
+macro_rules! live_sources {
+    ($scope:literal $(, $ids_json:expr)?) => {
+        sqlx::query!(
+            r#"SELECT b.id AS "id!", b.content AS "content!",
+                      COALESCE(b.space_id, p.space_id) AS "space?"
+               FROM blocks b
+               LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL
+               WHERE b.deleted_at IS NULL AND b.content IS NOT NULL"#
+                + $scope
+            $(, $ids_json)?
+        )
+        .map(|r| (r.id, r.content, r.space))
+    };
+}
+
+/// The `#[ULID]` tokens in `content`, whether or not they name a tag.
+fn tag_ref_candidates(content: &str) -> impl Iterator<Item = &str> {
+    super::tag_ref_re()
+        .captures_iter(content)
+        .filter_map(|cap| cap.get(1).map(|id| id.as_str()))
+}
+
+/// Add the rows one source block should have: a pair per `#[ULID]` token in
+/// its content that names a live tag of the source's space. The one rule both
+/// halves of the rebuild derive rows by.
+///
+/// #375: an unscoped source (`None`) keeps every tag, mirroring the
+/// incremental `?3 IS NULL` branch; otherwise a tag is kept only if its own
+/// resolved space equals the source's (a NULL tag space is dropped, exactly
+/// as `NULL = ?3` evaluates falsy).
+fn push_desired_pairs(
+    pairs: &mut BTreeSet<(String, String)>,
+    source_id: &str,
+    content: &str,
+    source_space: Option<&str>,
+    tag_spaces: &TagSpaces,
+) {
+    for tag_id in tag_ref_candidates(content) {
+        let Some(tag_space) = tag_spaces.get(tag_id) else {
+            continue;
+        };
+        if source_space.is_none() || tag_space.as_deref() == source_space {
+            pairs.insert((source_id.to_owned(), tag_id.to_owned()));
         }
     }
+}
 
-    let mut sorted: Vec<(String, String)> = pairs.into_iter().collect();
-    sorted.sort();
-    Ok(sorted)
+/// The read half of [`rebuild_block_tag_refs_cache_split`]: the source blocks
+/// with a pair on which the whole desired state and the whole cache disagree,
+/// in id order.
+///
+/// Streams the sources (M-19a), so it holds the pairs and the tag map but
+/// never every block's content.
+async fn sources_with_stale_tag_refs(read_pool: &SqlitePool) -> Result<Vec<String>, AppError> {
+    let mut conn = read_pool.acquire().await?;
+    let tag_spaces: TagSpaces = live_tag_spaces!("")
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .collect();
+    let mut desired = BTreeSet::new();
+    {
+        let mut sources = live_sources!("").fetch(&mut *conn);
+        while let Some((id, content, space)) = sources.try_next().await? {
+            push_desired_pairs(&mut desired, &id, &content, space.as_deref(), &tag_spaces);
+        }
+    }
+    let mut stale = BTreeSet::new();
+    let mut current =
+        sqlx::query!("SELECT source_id, tag_id FROM block_tag_refs").fetch(&mut *conn);
+    while let Some(row) = current.try_next().await? {
+        if !desired.remove(&(row.source_id.clone(), row.tag_id)) {
+            stale.insert(row.source_id);
+        }
+    }
+    // What is left of `desired` is missing from the cache.
+    stale.extend(desired.into_iter().map(|(source_id, _)| source_id));
+    Ok(stale.into_iter().collect())
+}
+
+/// Sources re-derived per statement by [`rederive_tag_refs_of`], which bounds
+/// the content it holds at once when the whole cache is stale.
+const REDERIVE_CHUNK: usize = 500;
+
+/// The write half of [`rebuild_block_tag_refs_cache_split`]: bring the rows of
+/// the source blocks in `source_ids` to what their content gives now. It
+/// reads the sources, the tags they name and the cached rows again under the
+/// writer lock instead of applying what the read phase saw, so a write that
+/// landed in between is never undone. Every read seeks by id. Returns the
+/// pairs changed.
+async fn rederive_tag_refs_of(
+    conn: &mut sqlx::SqliteConnection,
+    source_ids: &[String],
+) -> Result<u64, AppError> {
+    let mut changed = 0;
+    for chunk in source_ids.chunks(REDERIVE_CHUNK) {
+        let ids_json = serde_json::to_string(chunk)?;
+        let sources = live_sources!(" AND b.id IN (SELECT value FROM json_each(?))", ids_json)
+            .fetch_all(&mut *conn)
+            .await?;
+        let candidates: BTreeSet<&str> = sources
+            .iter()
+            .flat_map(|(_, content, _)| tag_ref_candidates(content))
+            .collect();
+        let candidates_json = serde_json::to_string(&candidates)?;
+        let tag_spaces: TagSpaces = live_tag_spaces!(
+            " AND b.id IN (SELECT value FROM json_each(?))",
+            candidates_json
+        )
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .collect();
+        let mut desired = BTreeSet::new();
+        for (id, content, space) in &sources {
+            push_desired_pairs(&mut desired, id, content, space.as_deref(), &tag_spaces);
+        }
+
+        let current: BTreeSet<(String, String)> = sqlx::query!(
+            "SELECT source_id, tag_id FROM block_tag_refs \
+             WHERE source_id IN (SELECT value FROM json_each(?))",
+            ids_json
+        )
+        .map(|r| (r.source_id, r.tag_id))
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .collect();
+
+        let deletes: Vec<_> = current.difference(&desired).cloned().collect();
+        let inserts: Vec<_> = desired.difference(&current).cloned().collect();
+        changed += u64::try_from(deletes.len() + inserts.len()).unwrap_or(u64::MAX);
+        apply_block_tag_refs_diff(conn, &deletes, &inserts).await?;
+    }
+    Ok(changed)
 }
 
 /// Apply a `block_tag_refs` diff inside an open transaction in chunks
@@ -460,146 +537,54 @@ async fn apply_block_tag_refs_diff(
     Ok(())
 }
 
-/// Stream-walk the desired and current `block_tag_refs` pairs in
-/// lockstep against the current cache stream:
-///   - PK in NEW not in OLD → INSERT.
-///   - PK in OLD not in NEW → DELETE.
-///   - PK in both → no-op (the table has no non-PK columns to update).
-///
-/// Both inputs share the sort key `(source_id, tag_id)`. Diff rows are
-/// accumulated into `Vec`s and flushed at end-of-stream as one chunked
-/// DELETE + chunked INSERT pair.
-async fn diff_against_current(
-    desired_sorted: &[(String, String)],
-    current_conn: &mut sqlx::SqliteConnection,
-    write_conn: &mut sqlx::SqliteConnection,
-) -> Result<u64, AppError> {
-    let mut current_stream = sqlx::query!(
-        "SELECT source_id, tag_id FROM block_tag_refs ORDER BY source_id ASC, tag_id ASC",
-    )
-    .map(|r| (r.source_id, r.tag_id))
-    .fetch(current_conn);
-
-    let mut deletes: Vec<(String, String)> = Vec::new();
-    let mut inserts: Vec<(String, String)> = Vec::new();
-    let mut changed: u64 = 0;
-
-    let mut d_iter = desired_sorted.iter();
-    let mut next_desired: Option<&(String, String)> = d_iter.next();
-    let mut next_current: Option<(String, String)> = current_stream.try_next().await?;
-
-    loop {
-        match (next_desired, &next_current) {
-            (None, None) => break,
-            (Some(d), None) => {
-                inserts.push(d.clone());
-                changed += 1;
-                next_desired = d_iter.next();
-            }
-            (None, Some(c)) => {
-                deletes.push(c.clone());
-                changed += 1;
-                next_current = current_stream.try_next().await?;
-            }
-            (Some(d), Some(c)) => match d.cmp(c) {
-                std::cmp::Ordering::Less => {
-                    inserts.push(d.clone());
-                    changed += 1;
-                    next_desired = d_iter.next();
-                }
-                std::cmp::Ordering::Greater => {
-                    deletes.push(c.clone());
-                    changed += 1;
-                    next_current = current_stream.try_next().await?;
-                }
-                std::cmp::Ordering::Equal => {
-                    next_desired = d_iter.next();
-                    next_current = current_stream.try_next().await?;
-                }
-            },
-        }
-    }
-
-    drop(current_stream);
-
-    if !deletes.is_empty() || !inserts.is_empty() {
-        apply_block_tag_refs_diff(write_conn, &deletes, &inserts).await?;
-    }
-
-    Ok(changed)
-}
-
-/// Incremental rebuild of `block_tag_refs` (was full DELETE +
-/// INSERT pre-refactor).
-///
-/// Scans every non-deleted, non-conflict block's content, extracts
-/// `#[ULID]` tokens, filters to candidates that are real tag blocks,
-/// sorts the result, then sort-merge diffs against the current cache
-/// and applies only the changed rows.
+/// Incremental rebuild of `block_tag_refs`:
+/// [`rebuild_block_tag_refs_cache_split`] with one pool for both halves.
 ///
 /// Intended for: migration backfill, snapshot restore, explicit "rebuild
 /// caches" actions. Per-block content edits still go through
 /// [`reindex_block_tag_refs`] instead.
 #[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_block_tag_refs_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("block_tag_refs", || rebuild_block_tag_refs_cache_impl(pool))
-        .await?;
-    crate::derivations::record(pool, crate::derivations::Derivation::TagRefTokens).await
+    rebuild_block_tag_refs_cache_split(pool, pool).await
 }
 
-async fn rebuild_block_tag_refs_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    // Two readers (desired-pairs computation + current cache stream)
-    // plus a writer tx. Distinct connections required so the streams'
-    // mutable borrows don't conflict. Snapshot consistency across the
-    // three is not required: same stale-while-revalidate semantics as
-    // `rebuild_agenda_cache_impl` (M-19b).
-    let mut desired_conn = pool.acquire().await?;
-    let mut current_conn = pool.acquire().await?;
-    let mut tx = crate::db::begin_immediate_logged(pool, "cache_block_tag_refs_rebuild").await?;
-
-    let desired_sorted = compute_desired_pairs(&mut desired_conn).await?;
-    let changed = diff_against_current(&desired_sorted, &mut current_conn, &mut tx).await?;
-
-    if changed == 0 {
-        return Ok(0);
-    }
-
-    tx.commit().await?;
-    Ok(changed)
-}
-
-/// Read/write split variant of [`rebuild_block_tag_refs_cache`].
+/// Rebuild `block_tag_refs` with the whole-vault comparison on `read_pool`.
 ///
-/// Desired-pairs computation and the current-cache stream both read
-/// from `read_pool`; the final chunked DELETE + INSERT transaction runs
-/// on `write_pool`.
+/// 1. Scans every live block's content for `#[ULID]` tokens that name a live
+///    tag of the block's space, compares the pairs with the cache, and keeps
+///    the ids of the source blocks they disagree on.
+/// 2. Takes the writer lock only when there are any, and under it re-derives
+///    those sources' rows ([`rederive_tag_refs_of`]).
+///
+/// A source that goes stale after step 1 read it is left to the reindex or
+/// rebuild its own write enqueues, which runs after this one.
 pub async fn rebuild_block_tag_refs_cache_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
     super::rebuild_with_timing("block_tag_refs", || {
-        rebuild_block_tag_refs_cache_split_impl(write_pool, read_pool)
+        rebuild_block_tag_refs_cache_impl(write_pool, read_pool)
     })
     .await?;
-    crate::derivations::record(write_pool, crate::derivations::Derivation::TagRefTokens).await
+    crate::derivations::record_split(
+        write_pool,
+        read_pool,
+        crate::derivations::Derivation::TagRefTokens,
+    )
+    .await
 }
 
-async fn rebuild_block_tag_refs_cache_split_impl(
+async fn rebuild_block_tag_refs_cache_impl(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<u64, AppError> {
-    let mut desired_conn = read_pool.acquire().await?;
-    let mut current_conn = read_pool.acquire().await?;
-    let mut tx =
-        crate::db::begin_immediate_logged(write_pool, "cache_block_tag_refs_rebuild_write").await?;
-
-    let desired_sorted = compute_desired_pairs(&mut desired_conn).await?;
-    let changed = diff_against_current(&desired_sorted, &mut current_conn, &mut tx).await?;
-
-    if changed == 0 {
+    let stale = sources_with_stale_tag_refs(read_pool).await?;
+    if stale.is_empty() {
         return Ok(0);
     }
-
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_block_tag_refs_rebuild_write").await?;
+    let changed = rederive_tag_refs_of(&mut tx, &stale).await?;
     tx.commit().await?;
     Ok(changed)
 }
@@ -703,7 +688,7 @@ mod tests {
             expected.insert((src, tag_a.clone()));
         }
 
-        let inserted = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        let inserted = rebuild_block_tag_refs_cache_impl(&pool, &pool).await.unwrap();
 
         let actual = fetch_all_pairs(&pool).await;
         assert_eq!(
@@ -721,7 +706,7 @@ mod tests {
     async fn rebuild_with_no_blocks_emits_zero_rows_m19a() {
         let (pool, _dir) = test_pool().await;
 
-        let inserted = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        let inserted = rebuild_block_tag_refs_cache_impl(&pool, &pool).await.unwrap();
 
         assert_eq!(inserted, 0, "empty fixture must insert zero rows");
         let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tag_refs")
@@ -742,7 +727,7 @@ mod tests {
         let content = format!("#[{tag_x}] #[{tag_x}] #[{tag_x}]");
         insert_block(&pool, &src, "content", &content).await;
 
-        let inserted = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        let inserted = rebuild_block_tag_refs_cache_impl(&pool, &pool).await.unwrap();
 
         assert_eq!(
             inserted, 1,
@@ -777,7 +762,7 @@ mod tests {
         .await
         .unwrap();
 
-        let inserted = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        let inserted = rebuild_block_tag_refs_cache_impl(&pool, &pool).await.unwrap();
 
         assert_eq!(
             inserted, 1,
@@ -821,7 +806,7 @@ mod tests {
         }
 
         // Baseline rebuild.
-        let first = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        let first = rebuild_block_tag_refs_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(first, 100, "baseline inserts 100 rows");
         let baseline = fetch_all_pairs(&pool).await;
         assert_eq!(baseline.len(), 100, "baseline cache has 100 pairs");
@@ -867,7 +852,7 @@ mod tests {
         //   inserts: 10 (A) + 20 (B) + 5 (D) = 35
         //   deletes: 5 (C — sources 20..25 lose tag_a)
         //   total logical changes: 40
-        let touched = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        let touched = rebuild_block_tag_refs_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(touched, 40, "diff = 35 inserts + 5 deletes");
 
         // Build the expected set straight from the mutated source data.
@@ -908,15 +893,389 @@ mod tests {
             insert_block(&pool, &src, "content", &format!("#[{tag}]")).await;
         }
 
-        let first = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        let first = rebuild_block_tag_refs_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(first, 30, "baseline inserts 30 rows");
 
-        let second = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        let second = rebuild_block_tag_refs_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(second, 0, "idempotent rebuild must produce zero diff ops");
         assert_eq!(
             fetch_all_pairs(&pool).await.len(),
             30,
             "row count preserved on idempotent rebuild"
         );
+    }
+
+    /// The rebuild [`rebuild_block_tag_refs_cache_split`] replaced, as it
+    /// was: it took the writer lock, then scanned every block and the whole
+    /// cache and wrote the difference. The oracle the split is tested
+    /// against (#6522).
+    mod replaced {
+        use super::super::*;
+
+        async fn compute_desired_pairs(
+            conn: &mut sqlx::SqliteConnection,
+        ) -> Result<Vec<(String, String)>, AppError> {
+            let tag_ids: HashSet<String> = sqlx::query_scalar!(
+                "SELECT id FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL"
+            )
+            .fetch_all(&mut *conn)
+            .await?
+            .into_iter()
+            .collect();
+
+            // #375 / #678: resolve every live block's space once so the full rebuild
+            // applies the SAME cross-space exclusion the incremental
+            // `reindex_block_tag_refs` pushes into its INSERT. Without this, a full
+            // rebuild (snapshot restore, boot empty-table fallback, explicit "rebuild
+            // caches") re-admits exactly the cross-space tag-refs the incremental path
+            // is careful to exclude.
+            //
+            // #678 — this query MUST mirror `space::resolve_block_space`'s SQL, which
+            // is `COALESCE(b.space_id, p.space_id)` via a LEFT JOIN to the owning page
+            // (`blocks.page_id`). The previous bare `b.space_id` lacked that page
+            // fallback its own comment claimed, so a block whose own `space_id` is not
+            // yet materialised — e.g. inside the brief space-propagation gap post-#533,
+            // where `page_id` is stamped but `space_id` is set by a later task —
+            // resolved NULL ("unscoped") in the rebuild while the incremental path
+            // resolved the page's space. That is precisely the rebuild-vs-incremental
+            // divergence the #375 comment says this code exists to prevent. The page
+            // join carries the same `deleted_at IS NULL` guard as `resolve_block_space`.
+            // A NULL space means "unscoped".
+            let space_of: std::collections::HashMap<String, Option<String>> = sqlx::query!(
+                r#"SELECT b.id AS "id!", COALESCE(b.space_id, p.space_id) AS "space?"
+                   FROM blocks b
+                   LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL
+                   WHERE b.deleted_at IS NULL"#
+            )
+            .fetch_all(&mut *conn)
+            .await?
+            .into_iter()
+            .map(|r| (r.id, r.space))
+            .collect();
+
+            let re = crate::cache::tag_ref_re();
+            let mut pairs: HashSet<(String, String)> = HashSet::new();
+            {
+                let mut stream = sqlx::query!(
+                    "SELECT id, content FROM blocks \
+                     WHERE deleted_at IS NULL AND content IS NOT NULL"
+                )
+                .fetch(&mut *conn);
+                while let Some(row) = stream.try_next().await? {
+                    let content = row.content.as_deref().unwrap_or("");
+                    // Source space: `None` (unscoped) keeps every tag, mirroring the
+                    // incremental `?3 IS NULL` branch; otherwise a tag is kept only if
+                    // its own resolved space equals the source's (a NULL tag space is
+                    // dropped, exactly as `NULL = ?3` evaluates falsy).
+                    let src_space = space_of.get(&row.id).cloned().flatten();
+                    for cap in re.captures_iter(content) {
+                        let tag_id = cap[1].to_string();
+                        if !tag_ids.contains(&tag_id) {
+                            continue;
+                        }
+                        let same_space = match &src_space {
+                            None => true,
+                            Some(s) => space_of.get(&tag_id).and_then(Option::as_ref) == Some(s),
+                        };
+                        if same_space {
+                            pairs.insert((row.id.clone(), tag_id));
+                        }
+                    }
+                }
+            }
+
+            let mut sorted: Vec<(String, String)> = pairs.into_iter().collect();
+            sorted.sort();
+            Ok(sorted)
+        }
+
+        async fn diff_against_current(
+            desired_sorted: &[(String, String)],
+            current_conn: &mut sqlx::SqliteConnection,
+            write_conn: &mut sqlx::SqliteConnection,
+        ) -> Result<u64, AppError> {
+            let mut current_stream = sqlx::query!(
+                "SELECT source_id, tag_id FROM block_tag_refs ORDER BY source_id ASC, tag_id ASC",
+            )
+            .map(|r| (r.source_id, r.tag_id))
+            .fetch(current_conn);
+
+            let mut deletes: Vec<(String, String)> = Vec::new();
+            let mut inserts: Vec<(String, String)> = Vec::new();
+            let mut changed: u64 = 0;
+
+            let mut d_iter = desired_sorted.iter();
+            let mut next_desired: Option<&(String, String)> = d_iter.next();
+            let mut next_current: Option<(String, String)> = current_stream.try_next().await?;
+
+            loop {
+                match (next_desired, &next_current) {
+                    (None, None) => break,
+                    (Some(d), None) => {
+                        inserts.push(d.clone());
+                        changed += 1;
+                        next_desired = d_iter.next();
+                    }
+                    (None, Some(c)) => {
+                        deletes.push(c.clone());
+                        changed += 1;
+                        next_current = current_stream.try_next().await?;
+                    }
+                    (Some(d), Some(c)) => match d.cmp(c) {
+                        std::cmp::Ordering::Less => {
+                            inserts.push(d.clone());
+                            changed += 1;
+                            next_desired = d_iter.next();
+                        }
+                        std::cmp::Ordering::Greater => {
+                            deletes.push(c.clone());
+                            changed += 1;
+                            next_current = current_stream.try_next().await?;
+                        }
+                        std::cmp::Ordering::Equal => {
+                            next_desired = d_iter.next();
+                            next_current = current_stream.try_next().await?;
+                        }
+                    },
+                }
+            }
+
+            drop(current_stream);
+
+            if !deletes.is_empty() || !inserts.is_empty() {
+                apply_block_tag_refs_diff(write_conn, &deletes, &inserts).await?;
+            }
+
+            Ok(changed)
+        }
+
+        pub(super) async fn rebuild_block_tag_refs_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+            // Two readers (desired-pairs computation + current cache stream)
+            // plus a writer tx. Distinct connections required so the streams'
+            // mutable borrows don't conflict. Snapshot consistency across the
+            // three is not required: same stale-while-revalidate semantics as
+            // `rebuild_agenda_cache_impl` (M-19b).
+            let mut desired_conn = pool.acquire().await?;
+            let mut current_conn = pool.acquire().await?;
+            let mut tx = crate::db::begin_immediate_logged(pool, "cache_block_tag_refs_rebuild").await?;
+
+            let desired_sorted = compute_desired_pairs(&mut desired_conn).await?;
+            let changed = diff_against_current(&desired_sorted, &mut current_conn, &mut tx).await?;
+
+            if changed == 0 {
+                return Ok(0);
+            }
+
+            tx.commit().await?;
+            Ok(changed)
+        }
+    }
+
+    /// Two tags in one space and one in another, sources that name them, and
+    /// cache rows that are missing (SRC's), left behind (GONE's, for a tag it
+    /// no longer names) and right (KEPT's).
+    async fn seed_tag_ref_drift(pool: &SqlitePool) -> [String; 3] {
+        let tags = [
+            ulid_like("TAGAA", 0),
+            ulid_like("TAGBB", 0),
+            ulid_like("TAGCC", 0),
+        ];
+        let [tag_a, tag_b, tag_other] = &tags;
+        sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES ('SPA', 'page', 'a', 'SPA'), ('SPB', 'page', 'b', 'SPB')")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO spaces (id) VALUES ('SPA'), ('SPB')")
+            .execute(pool)
+            .await
+            .unwrap();
+        for (id, block_type, content, space) in [
+            (tag_a.as_str(), "tag", "a".to_owned(), "SPA"),
+            (tag_b.as_str(), "tag", "b".to_owned(), "SPA"),
+            (tag_other.as_str(), "tag", "other".to_owned(), "SPB"),
+            ("SRC", "content", format!("#[{tag_a}] #[{tag_b}] #[{tag_other}]"), "SPA"),
+            ("GONE", "content", format!("#[{tag_a}]"), "SPA"),
+            ("KEPT", "content", format!("#[{tag_b}]"), "SPA"),
+        ] {
+            sqlx::query("INSERT INTO blocks (id, block_type, content, space_id) VALUES (?, ?, ?, ?)")
+                .bind(id)
+                .bind(block_type)
+                .bind(content)
+                .bind(space)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES ('GONE', ?), ('GONE', ?), ('KEPT', ?)")
+            .bind(tag_a)
+            .bind(tag_b)
+            .bind(tag_b)
+            .execute(pool)
+            .await
+            .unwrap();
+        tags
+    }
+
+    async fn sorted_pairs(pool: &SqlitePool) -> Vec<(String, String)> {
+        let mut pairs: Vec<_> = fetch_all_pairs(pool).await.into_iter().collect();
+        pairs.sort();
+        pairs
+    }
+
+    /// #6522: the split rebuild leaves `block_tag_refs` where the rebuild it
+    /// replaced does, and changes the same pairs.
+    #[tokio::test]
+    async fn rebuild_block_tag_refs_split_matches_the_rebuild_it_replaced_6522() {
+        let (oracle_pool, _oracle_dir) = test_pool().await;
+        let (pool, _dir) = test_pool().await;
+        seed_tag_ref_drift(&oracle_pool).await;
+        let [tag_a, tag_b, _] = seed_tag_ref_drift(&pool).await;
+
+        let oracle_changed = replaced::rebuild_block_tag_refs_cache_impl(&oracle_pool)
+            .await
+            .unwrap();
+        let changed = rebuild_block_tag_refs_cache_impl(&pool, &pool)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            oracle_changed, 3,
+            "SRC's two same-space pairs, and GONE's pair for the tag it does not name"
+        );
+        assert_eq!(changed, oracle_changed);
+        assert_eq!(sorted_pairs(&pool).await, sorted_pairs(&oracle_pool).await);
+        let pair = |source: &str, tag: &String| (source.to_owned(), tag.clone());
+        assert_eq!(
+            sorted_pairs(&pool).await,
+            vec![
+                pair("GONE", &tag_a),
+                pair("KEPT", &tag_b),
+                pair("SRC", &tag_a),
+                pair("SRC", &tag_b),
+            ],
+        );
+        assert_eq!(
+            rebuild_block_tag_refs_cache_impl(&pool, &pool)
+                .await
+                .unwrap(),
+            0,
+            "a second run finds nothing stale"
+        );
+    }
+
+    /// #6522: the same, after every round of random writes to the tables the
+    /// rebuild reads and to the cache itself.
+    #[tokio::test]
+    async fn rebuild_block_tag_refs_split_matches_the_rebuild_it_replaced_on_random_vaults_6522() {
+        crate::cache::random_vault::assert_rebuild_matches_oracle(
+            "block_tag_refs",
+            "source_id, tag_id",
+            async |pool| {
+                replaced::rebuild_block_tag_refs_cache_impl(pool)
+                    .await
+                    .unwrap()
+            },
+            async |pool| {
+                rebuild_block_tag_refs_cache_impl(pool, pool)
+                    .await
+                    .unwrap()
+            },
+        )
+        .await;
+    }
+
+    /// #6522: the write half re-derives only the sources it is handed, from
+    /// the content they hold when it runs.
+    #[tokio::test]
+    async fn rederive_tag_refs_of_touches_only_the_sources_named_6522() {
+        let (pool, _dir) = test_pool().await;
+        let [tag_a, tag_b, _] = seed_tag_ref_drift(&pool).await;
+        assert_eq!(
+            sources_with_stale_tag_refs(&pool).await.unwrap(),
+            ["GONE", "SRC"]
+        );
+        // A write lands after the read half: SRC stops naming tag B.
+        sqlx::query("UPDATE blocks SET content = ? WHERE id = 'SRC'")
+            .bind(format!("#[{tag_a}]"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        let changed = rederive_tag_refs_of(&mut tx, &["SRC".to_owned(), "KEPT".to_owned()])
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(changed, 1, "SRC's one pair; KEPT was not stale");
+        let pair = |source: &str, tag: &String| (source.to_owned(), tag.clone());
+        assert_eq!(
+            sorted_pairs(&pool).await,
+            vec![
+                pair("GONE", &tag_a),
+                pair("GONE", &tag_b),
+                pair("KEPT", &tag_b),
+                pair("SRC", &tag_a),
+            ],
+            "SRC takes the pairs its content gives now, and GONE, not named, keeps its planted pair"
+        );
+    }
+
+    /// #6522: with nothing stale the rebuild never asks for the writer lock,
+    /// so it finishes while another connection holds it.
+    #[tokio::test]
+    async fn rebuild_block_tag_refs_takes_no_writer_lock_when_nothing_is_stale_6522() {
+        let (pool, _dir) = test_pool().await;
+        seed_tag_ref_drift(&pool).await;
+        rebuild_block_tag_refs_cache(&pool).await.unwrap();
+
+        let _writer = crate::db::begin_immediate_logged(&pool, "test_holds_the_lock")
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            rebuild_block_tag_refs_cache(&pool),
+        )
+        .await
+        .expect("the rebuild must not wait for the writer lock")
+        .unwrap();
+    }
+
+    /// #6522: what runs under the writer lock seeks the stale sources and
+    /// the tags they name by id; it never scans a table.
+    #[tokio::test]
+    async fn rederive_tag_refs_of_never_scans_a_table_6522() {
+        use sqlx::Execute as _;
+        let (pool, _dir) = test_pool().await;
+        let ids = "[]".to_owned();
+        let mut conn = pool.acquire().await.unwrap();
+        let statements = [
+            live_sources!(" AND b.id IN (SELECT value FROM json_each(?))", ids)
+                .sql()
+                .as_str()
+                .to_owned(),
+            live_tag_spaces!(" AND b.id IN (SELECT value FROM json_each(?))", ids)
+                .sql()
+                .as_str()
+                .to_owned(),
+        ];
+        for sql in statements {
+            let plan: Vec<(i64, i64, i64, String)> =
+                sqlx::query_as(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}")))
+                    .bind("[]")
+                    .fetch_all(&mut *conn)
+                    .await
+                    .unwrap();
+            let scans: Vec<&str> = plan
+                .iter()
+                .map(|row| row.3.as_str())
+                .filter(|detail| {
+                    detail.starts_with("SCAN")
+                        && !detail.starts_with("SCAN (subquery")
+                        && !detail.contains("json_each")
+                })
+                .collect();
+            assert!(scans.is_empty(), "scans under the writer lock in `{sql}`: {scans:?}");
+        }
     }
 }

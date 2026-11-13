@@ -1570,3 +1570,212 @@ async fn random_command_sequences_leave_nothing_for_the_page_id_rebuild_6522() {
         "every shape must be reached: {cov:?}"
     );
 }
+
+// ======================================================================
+// #6522 — the rebuilds that read before they lock, under command sequences
+// ======================================================================
+
+const LIVE_TAGS_6522: &str = "SELECT id FROM blocks WHERE deleted_at IS NULL \
+     AND block_type = 'tag' ORDER BY id";
+
+/// The derived tables whose whole-vault rebuild compares on the read pool and
+/// writes only what it found stale (#6522), as the reconciliation report
+/// names them.
+const READ_BEFORE_LOCK_ARTEFACTS_6522: [&str; 5] = [
+    "agenda_cache.",
+    "block_tag_refs.",
+    "tags_cache.",
+    "pages_cache.",
+    "block_tag_inherited.",
+];
+
+/// A command that feeds those tables: a tag, a tag's space, a tag on a block,
+/// an inline tag reference, a due or scheduled date. Returns what it did.
+async fn random_tag_or_date_command_6522(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    rng: &mut SeqRng,
+    spaces: &[String],
+) -> String {
+    use agaric_core::ulid::BlockId;
+    let live = ids_6522(pool, LIVE_6522).await;
+    let tags = ids_6522(pool, LIVE_TAGS_6522).await;
+    let bid = |id: &String| BlockId::from_trusted(id);
+    let outcome =
+        |r: Result<(), AppError>| r.map_or_else(|e| format!("err: {e}"), |()| "ok".into());
+    // One of three days, or none one time in four.
+    let date = |rng: &mut SeqRng| {
+        let day = 1 + rng.below(3);
+        (rng.below(4) != 0).then(|| format!("2026-03-{day:02}"))
+    };
+    match rng.below(9) {
+        0..=1 => {
+            let name = ["topic", "Topic", "date/2026-03-01", "date/2026-03-02"][rng.below(4)];
+            let r =
+                create_block_inner(pool, DEV, mat, "tag".into(), name.into(), None, None).await;
+            format!("create tag {name}: {}", outcome(r.map(|_| ())))
+        }
+        2 => {
+            let Some(tag) = rng.pick(&tags).cloned() else {
+                return "tag to space: no tag".into();
+            };
+            let space = spaces[rng.below(spaces.len())].clone();
+            let r = set_property_inner(
+                pool,
+                DEV,
+                mat,
+                tag.clone().into(),
+                "space".into(),
+                None,
+                None,
+                None,
+                Some(space.clone()),
+                None,
+                None,
+            )
+            .await;
+            format!("tag {tag} to space {space}: {}", outcome(r.map(|_| ())))
+        }
+        3..=4 => {
+            let (Some(block), Some(tag)) = (rng.pick(&live).cloned(), rng.pick(&tags).cloned())
+            else {
+                return "add tag: nothing to tag".into();
+            };
+            let r = add_tag_inner(pool, DEV, mat, bid(&block), bid(&tag)).await;
+            format!("tag {block} with {tag}: {}", outcome(r.map(|_| ())))
+        }
+        5 => {
+            let (Some(block), Some(tag)) = (rng.pick(&live).cloned(), rng.pick(&tags).cloned())
+            else {
+                return "remove tag: nothing tagged".into();
+            };
+            let r = remove_tag_inner(pool, DEV, mat, bid(&block), bid(&tag)).await;
+            format!("untag {block} of {tag}: {}", outcome(r.map(|_| ())))
+        }
+        6 => {
+            let (Some(block), Some(tag)) = (rng.pick(&live).cloned(), rng.pick(&tags).cloned())
+            else {
+                return "inline ref: nothing to edit".into();
+            };
+            let r = edit_block_inner(pool, DEV, mat, bid(&block), format!("see #[{tag}]")).await;
+            format!("{block} names {tag} inline: {}", outcome(r.map(|_| ())))
+        }
+        7 => {
+            let Some(block) = rng.pick(&live).cloned() else {
+                return "due date: nothing live".into();
+            };
+            let due = date(rng);
+            let r = set_due_date_inner(pool, DEV, mat, block.clone().into(), due.clone()).await;
+            format!("{block} due {due:?}: {}", outcome(r.map(|_| ())))
+        }
+        _ => {
+            let Some(block) = rng.pick(&live).cloned() else {
+                return "scheduled date: nothing live".into();
+            };
+            let on = date(rng);
+            let r =
+                set_scheduled_date_inner(pool, DEV, mat, block.clone().into(), on.clone()).await;
+            format!("{block} scheduled {on:?}: {}", outcome(r.map(|_| ())))
+        }
+    }
+}
+
+/// The largest each cache got over a run, so the test cannot pass on
+/// sequences that never fill them.
+#[derive(Default, Debug)]
+struct Filled6522 {
+    agenda_cache: i64,
+    block_tag_refs: i64,
+    used_tags: i64,
+    block_tag_inherited: i64,
+    pages_cache: i64,
+}
+
+impl Filled6522 {
+    async fn raise(&mut self, pool: &SqlitePool) {
+        for (most, sql) in [
+            (&mut self.agenda_cache, "SELECT COUNT(*) FROM agenda_cache"),
+            (
+                &mut self.block_tag_refs,
+                "SELECT COUNT(*) FROM block_tag_refs",
+            ),
+            (
+                &mut self.used_tags,
+                "SELECT COUNT(*) FROM tags_cache WHERE usage_count > 0",
+            ),
+            (
+                &mut self.block_tag_inherited,
+                "SELECT COUNT(*) FROM block_tag_inherited",
+            ),
+            (&mut self.pages_cache, "SELECT COUNT(*) FROM pages_cache"),
+        ] {
+            let now: i64 = sqlx::query_scalar(sql).fetch_one(pool).await.unwrap();
+            *most = (*most).max(now);
+        }
+    }
+}
+
+/// After any sequence of the commands above and of the lifecycle ones
+/// (creates, moves, space moves, deletes, restores, purges, undos), settled,
+/// the five caches whose rebuild reads before it locks hold what the
+/// reconciliation oracle folds for them from the base tables (#6522). The
+/// oracle shares no code with the rebuilds, so a rebuild that skips a stale
+/// row, or re-derives one wrongly, shows here on the step that staled it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn random_command_sequences_leave_the_read_before_lock_caches_at_the_oracle_6522() {
+    const SEEDS: u64 = 10;
+    const STEPS: usize = 50;
+    let today = chrono::Local::now().date_naive();
+    let (mut cov, mut filled) = (Coverage6522::default(), Filled6522::default());
+    for seed in 1..=SEEDS {
+        let (pool, _dir) = test_pool().await;
+        let mat = test_materializer(&pool);
+        let spaces = vec![
+            test_space(&pool, "One").await,
+            test_space(&pool, "Two").await,
+        ];
+        let mut rng = SeqRng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let mut trail = Vec::with_capacity(STEPS);
+        for n in 0..STEPS {
+            let did = if rng.below(2) == 0 {
+                random_command_6522(&pool, &mat, &mut rng, &spaces, n, &mut cov).await
+            } else {
+                random_tag_or_date_command_6522(&pool, &mat, &mut rng, &spaces).await
+            };
+            settle(&mat).await;
+            trail.push(did);
+            let report = reconciliation::compute_reconciliation_report_inner(
+                &pool,
+                mat.loro_state(),
+                None,
+                today,
+            )
+            .await
+            .unwrap();
+            let diverged: Vec<_> = report
+                .artefacts
+                .iter()
+                .filter(|a| {
+                    READ_BEFORE_LOCK_ARTEFACTS_6522
+                        .iter()
+                        .any(|table| a.artefact.starts_with(table))
+                })
+                .collect();
+            assert!(
+                diverged.is_empty(),
+                "seed {seed}: {diverged:#?} after {trail:#?}"
+            );
+            filled.raise(&pool).await;
+        }
+        mat.shutdown();
+    }
+    assert!(
+        filled.agenda_cache > 0
+            && filled.block_tag_refs > 0
+            && filled.used_tags > 0
+            && filled.block_tag_inherited > 0
+            && filled.pages_cache > 0
+            && cov.restores > 0,
+        "every cache must be filled and a restore reached: {filled:?} {cov:?}"
+    );
+}

@@ -98,6 +98,28 @@ where
     Ok(())
 }
 
+/// [`record`] for a rebuild that runs on every delete and restore: it reads
+/// the recorded version on `read_pool` and writes only when that is not the
+/// current one, so a rebuild that found nothing stale takes no writer lock.
+///
+/// # Errors
+/// Returns [`AppError`] if the read or the write fails.
+pub async fn record_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    derivation: Derivation,
+) -> Result<(), AppError> {
+    let key = derivation.key();
+    let recorded: Option<String> =
+        sqlx::query_scalar!("SELECT value FROM app_settings WHERE key = ?", key)
+            .fetch_optional(read_pool)
+            .await?;
+    if recorded.as_deref() == Some(derivation.version().to_string().as_str()) {
+        return Ok(());
+    }
+    record(write_pool, derivation).await
+}
+
 /// The derivations whose cache was last rebuilt by another version of the
 /// rule, or never: a newer one as well as an older one, so a downgrade
 /// rebuilds with the rule it runs.
