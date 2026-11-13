@@ -622,8 +622,48 @@ export async function openPropertyDrawer(id: string): Promise<void> {
 }
 
 /**
- * Press End and Enter in the roving editor's block, and return the id of the
- * blank sibling Enter created once the editor is in it. Enter's create is a
+ * Put the focused roving editor's caret at the end of its last text block,
+ * through the editor's own selection. Not the End key: 20 ms after taking
+ * focus ProseMirror writes its selection back over a caret it has not yet
+ * heard moved, so an End pressed after the click that opened the block can be
+ * undone, leaving the caret where the click landed.
+ */
+export async function caretToEnd(): Promise<void> {
+  await browser.waitUntil(
+    () =>
+      browser.execute(() => {
+        // TipTap keeps its editor on the editable element.
+        const dom = document.querySelector<
+          HTMLElement & {
+            editor?: {
+              state: {
+                doc: {
+                  descendants: (
+                    visit: (node: { isTextblock: boolean; nodeSize: number }, pos: number) => void,
+                  ) => void
+                }
+                selection: { empty: boolean; from: number }
+              }
+              commands: { setTextSelection: (pos: number) => boolean }
+            }
+          }
+        >('[data-testid="block-editor"] [contenteditable="true"]')
+        if (dom?.editor === undefined || document.activeElement !== dom) return false
+        let end = -1
+        dom.editor.state.doc.descendants((node, pos) => {
+          if (node.isTextblock) end = pos + node.nodeSize - 1
+        })
+        dom.editor.commands.setTextSelection(end)
+        const { empty, from } = dom.editor.state.selection
+        return empty && from === end
+      }),
+    { timeout: ACTION_TIMEOUT, timeoutMsg: 'the caret never reached the end of the block' },
+  )
+}
+
+/**
+ * Press Enter at the end of the roving editor's block, and return the id of
+ * the blank sibling Enter created once the editor is in it. Enter's create is a
  * round-trip, and until it answers the editor still sits, emptied, in the
  * block it left, so the wait is for a blank block with a different id: acting
  * any sooner (a paste, an Escape) lands on the wrong block.
@@ -640,7 +680,7 @@ export async function enterBlankSibling(): Promise<string> {
     }, editor)
   const source = (await readEditor()).id
   if (source === null) throw new Error('enterBlankSibling: no block editor is open')
-  await browser.keys(['End'])
+  await caretToEnd()
   await browser.keys(['Enter'])
   let last: { id: string | null; text: string | null } = { id: null, text: null }
   const blank = await browser
@@ -1532,10 +1572,7 @@ export async function cycleTaskTo(id: string, state: string): Promise<void> {
 /** Open block `id` in the editor, the cursor after a space at its end. */
 export async function editAtEnd(id: string): Promise<void> {
   await $(`[data-testid="block-static"][data-block-id="${id}"]`).click()
-  await $('[data-testid="block-editor"] [contenteditable="true"]').waitForDisplayed({
-    timeout: ACTION_TIMEOUT,
-  })
-  await browser.keys(['End'])
+  await caretToEnd()
   await browser.keys([' '])
 }
 
