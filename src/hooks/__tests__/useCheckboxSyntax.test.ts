@@ -173,6 +173,8 @@ describe('useCheckboxSyntax', () => {
       edit: vi.fn(),
       remove: vi.fn(),
       splitBlock: vi.fn(),
+      splitOff: vi.fn(),
+      mergeInto: vi.fn(),
       reorder: vi.fn(),
       moveToParent: vi.fn(),
       moveBlocks: vi.fn(),
