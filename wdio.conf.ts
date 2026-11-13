@@ -39,6 +39,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
+import { invoke } from './e2e-tauri/helpers'
+
 // Directory of this config file (the repo root). Node >= 24 (see package.json
 // `engines`) provides `import.meta.dirname` natively.
 const rootDir = import.meta.dirname
@@ -988,6 +990,36 @@ const dealtSpecs = dealSpecs(
   specSeconds,
 )
 
+// Spec files whose vault `assertVaultReconciled` does not judge, each with its reason.
+const SPECS_THE_ORACLE_SKIPS = new Set([
+  // Rewrites block ids in notes.db behind the engine: the divergence is its fixture.
+  'trash-bulk-noncanonical-ids.e2e.ts',
+])
+
+/**
+ * Fail the spec file when the reconciliation oracle finds its vault
+ * inconsistent (#6567): a derived view that disagrees with what its base
+ * tables rebuild to, or SQL that disagrees with the engine. A spec can pass
+ * while the sequence it drove left `pages_cache`, FTS or tag inheritance
+ * wrong. The command lets the materializer settle first. A mocha root hook,
+ * not WDIO's `after`, because WDIO logs an error a config hook throws and
+ * passes the file.
+ */
+async function assertVaultReconciled(this: Mocha.Context): Promise<void> {
+  if (SPECS_THE_ORACLE_SKIPS.has(path.basename(this.test?.parent?.suites[0]?.file ?? ''))) return
+  const report = await invoke<{
+    total_divergences: number
+    artefacts: unknown[]
+    samples?: unknown[]
+  }>('compute_reconciliation_report')
+  if (report.total_divergences > 0) {
+    const { artefacts, samples } = report
+    throw new Error(
+      `the reconciliation oracle found ${report.total_divergences} diverged row(s) in this spec file's vault: ${JSON.stringify({ artefacts, samples }, null, 2)}`,
+    )
+  }
+}
+
 export const config: WebdriverIO.Config = {
   runner: 'local',
 
@@ -1042,6 +1074,7 @@ export const config: WebdriverIO.Config = {
   mochaOpts: {
     ui: 'bdd',
     timeout: 300_000,
+    rootHooks: { afterAll: assertVaultReconciled },
   },
 
   // -------------------------------------------------------------------------

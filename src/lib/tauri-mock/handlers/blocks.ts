@@ -23,6 +23,7 @@ import {
   type TypedHandlers,
   appErrorRejection,
   appendSlot,
+  assertValidDateFormat,
   assertValidReservedPropertyValue,
   comparePositionThenId,
   createPageInSpace,
@@ -50,7 +51,12 @@ import {
   taskLineOf,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveInboundNames } from '@/lib/tauri-mock/names'
-import { pageNameHolder, pageNameRefusal, rejectTakenPageNames } from '@/lib/tauri-mock/page-names'
+import {
+  isSavedViewPage,
+  pageNameHolder,
+  pageNameRefusal,
+  rejectTakenPageNames,
+} from '@/lib/tauri-mock/page-names'
 import {
   allOrNothing,
   attachmentBytes,
@@ -885,6 +891,110 @@ function restoreRefusingDuplicateNames<T>(restore: () => T): T {
   return result
 }
 
+/** The column a reserved key of a batch spec's `properties` lands in, and its value channel. */
+const BATCH_RESERVED_CHANNEL: Record<string, 'value_text' | 'value_date'> = {
+  todo_state: 'value_text',
+  priority: 'value_text',
+  due_date: 'value_date',
+  scheduled_date: 'value_date',
+}
+
+/** One `typedProperties` value of a batch spec: `SetPropertyArgs`. */
+interface BatchTypedValue {
+  value_text?: string | null
+  value_num?: number | null
+  value_date?: string | null
+  value_ref?: string | null
+  value_bool?: boolean | null
+}
+
+/**
+ * The refusals `create_blocks_batch_inner` makes for one spec, before the
+ * first write: `validate_spec_shapes` (a `parentIndex` names an earlier spec
+ * and never sits beside a `parentId`), then what `set_property_in_tx` checks
+ * of each value (a reserved key's value, one typed value, a calendar date).
+ */
+function assertBatchSpec(spec: Record<string, unknown>, i: number): void {
+  const parentIndex = (spec['parentIndex'] as number | null | undefined) ?? null
+  if (parentIndex !== null) {
+    if (spec['parentId'] != null) {
+      throw validationRejection(`spec ${i}: parentId and parentIndex cannot both be set`)
+    }
+    if (!Number.isInteger(parentIndex) || parentIndex < 0 || parentIndex >= i) {
+      throw validationRejection(`spec ${i}: parentIndex ${parentIndex} must name an earlier spec`)
+    }
+  }
+  const props = (spec['properties'] as Record<string, string> | undefined) ?? {}
+  for (const [key, value] of Object.entries(props)) {
+    const channel = BATCH_RESERVED_CHANNEL[key]
+    if (channel !== undefined) assertValidReservedPropertyValue(key, channel, value)
+  }
+  const typed = (spec['typedProperties'] as Record<string, BatchTypedValue> | undefined) ?? {}
+  for (const value of Object.values(typed)) {
+    const fields = [value.value_text, value.value_num, value.value_date, value.value_ref]
+    const count = [...fields, value.value_bool].filter((v) => v != null).length
+    if (count !== 1) {
+      throw validationRejection(
+        `SetProperty must have exactly 1 non-null value field, found ${count}`,
+      )
+    }
+    if (value.value_date != null) {
+      if (value.value_date.trim() === '') throw validationRejection('set_property.value_date.empty')
+      assertValidDateFormat(value.value_date)
+    }
+  }
+}
+
+/** A batch spec's parent: `parentId`, or the block of the earlier spec `parentIndex` names. */
+function batchParentId(
+  spec: Record<string, unknown>,
+  created: ReadonlyArray<Record<string, unknown>>,
+): string | null {
+  const parentIndex = (spec['parentIndex'] as number | null | undefined) ?? null
+  if (parentIndex === null) return (spec['parentId'] as string | null) ?? null
+  return created[parentIndex]?.['id'] as string
+}
+
+/** Write a batch spec's `typedProperties` on block `id`, returning one op ref each. */
+function writeBatchTypedProperties(
+  id: string,
+  spec: Record<string, unknown>,
+): Array<{ device_id: string; seq: number }> {
+  const typed = (spec['typedProperties'] as Record<string, BatchTypedValue> | undefined) ?? {}
+  return Object.entries(typed).map(([key, value]) => {
+    const fields = {
+      value_text: value.value_text ?? null,
+      value_num: value.value_num ?? null,
+      value_date: value.value_date ?? null,
+      value_ref: value.value_ref ?? null,
+      value_bool: value.value_bool == null ? null : value.value_bool ? 1 : 0,
+    }
+    if (!properties.has(id)) properties.set(id, new Map())
+    properties.get(id)?.set(key, { block_id: id, key, ...fields })
+    const op = pushOp('set_property', { block_id: id, key, ...fields })
+    return { device_id: op.device_id, seq: op.seq }
+  })
+}
+
+/**
+ * #6544 — the live saved views of the space `spaceId` (none when it is no
+ * space), in id order: a delete of the space takes them with it
+ * (`saved_views_of_space_in_tx`).
+ */
+function savedViewsOfSpace(spaceId: string): string[] {
+  if (properties.get(spaceId)?.get('is_space')?.['value_text'] !== 'true') return []
+  return [...blocks.values()]
+    .filter(
+      (b) =>
+        b['block_type'] === 'page' &&
+        !b['deleted_at'] &&
+        b['space_id'] === spaceId &&
+        isSavedViewPage(b),
+    )
+    .map((b) => b['id'] as string)
+    .toSorted()
+}
+
 export const blocksHandlers = {
   // #3870 — mirrors `list_blocks_inner`'s DISPATCH CHAIN, not a conjunction of
   // filters: exactly one branch runs, and each brings its own `ORDER BY` and
@@ -989,15 +1099,10 @@ export const blocksHandlers = {
       // `None` with `count_blocks_by_type`, which counts every match under the
       // SAME predicates as the row fetch, independent of the page.
       //
-      // KNOWN GAP (pre-existing): `list_by_type` and `count_blocks_by_type` also
-      // carry a `NOT EXISTS (… bp.key = 'view_type' AND bp.value_text =
-      // 'query-view')` clause (#1460) excluding saved-view marker blocks from
-      // both the rows and the count. The mock does not model it, so a mock
-      // saved-view page would show up here where the backend hides it. Not
-      // covered by a fixture step either — filed as #3878 rather than fixed
-      // silently.
+      // `list_by_type` and `count_blocks_by_type` leave a saved view out of
+      // both the rows and the count (#6544).
       const items = active.filter(
-        (b) => b['block_type'] === blockType && ownerSpaceOf(b) === spaceId,
+        (b) => b['block_type'] === blockType && ownerSpaceOf(b) === spaceId && !isSavedViewPage(b),
       )
       // `list_by_type` mints `Cursor::for_id`.
       return paginateKeyset(items, idKey, limit, cursor, items.length, [])
@@ -1201,10 +1306,10 @@ export const blocksHandlers = {
 
   // Atomic batch-create. Mirrors the existing
   // `create_block` mock once per input spec, plus a `set_property` op
-  // per (key, value) pair in the spec's `properties` map. The real
-  // backend wraps the whole batch in one IMMEDIATE transaction; the
-  // mock here is sequential (good enough for the FE shape — atomicity
-  // is exercised by the Rust tests). Returns the created BlockRows in
+  // per (key, value) pair in the spec's `properties` and `typedProperties`
+  // maps. The real backend wraps the whole batch in one IMMEDIATE
+  // transaction; the mock has no rollback, so every refusal it models is
+  // checked before the first write. Returns the created BlockRows in
   // INPUT ORDER so callers can map template-line index → block id, plus
   // one op ref per appended op in append order (#5140).
   create_blocks_batch: (args) => {
@@ -1213,11 +1318,12 @@ export const blocksHandlers = {
     if (specs.length === 0) {
       throw validationRejection('specs list cannot be empty')
     }
+    specs.forEach(assertBatchSpec)
     const out: Record<string, unknown>[] = []
     const opRefs: Array<{ device_id: string; seq: number }> = []
     for (const spec of specs) {
       const id = fakeId()
-      const parentId = (spec['parentId'] as string | null) ?? null
+      const parentId = batchParentId(spec, out)
       const specPosition = spec['position'] as number | undefined
       const blockType = spec['blockType'] as string
       // #763 — root-page `page_id` resolution (see `create_block` above): use
@@ -1277,18 +1383,8 @@ export const blocksHandlers = {
         // the backend's reserved-value validation (todo_state/priority
         // membership, non-empty dates); mirror it here so a bad create-time
         // property fails rather than writing a raw value to the column.
-        if (key === 'todo_state') {
-          assertValidReservedPropertyValue('todo_state', 'value_text', value)
-          row['todo_state'] = value
-        } else if (key === 'priority') {
-          assertValidReservedPropertyValue('priority', 'value_text', value)
-          row['priority'] = value
-        } else if (key === 'due_date') {
-          assertValidReservedPropertyValue('due_date', 'value_date', value)
-          row['due_date'] = value
-        } else if (key === 'scheduled_date') {
-          assertValidReservedPropertyValue('scheduled_date', 'value_date', value)
-          row['scheduled_date'] = value
+        if (BATCH_RESERVED_CHANNEL[key] !== undefined) {
+          row[key] = value
         } else {
           if (!properties.has(id)) properties.set(id, new Map())
           properties.get(id)?.set(key, {
@@ -1311,6 +1407,7 @@ export const blocksHandlers = {
         })
         opRefs.push({ device_id: propOp.device_id, seq: propOp.seq })
       }
+      opRefs.push(...writeBatchTypedProperties(id, spec))
       out.push(row)
     }
     return { blocks: out, op_refs: opRefs }
@@ -1505,8 +1602,14 @@ export const blocksHandlers = {
     if (target['deleted_at'] != null) {
       throw invalidOperationRejection(`block '${blockId}' is already deleted`)
     }
+    // #6544 — a space's saved views go first, each its own delete.
+    const swept = savedViewsOfSpace(blockId).map((viewId) => {
+      const viewCohort = deleteCohort(blocks, viewId, nextCohortMarker())
+      return { cohort: viewCohort, op: pushOp('delete_block', { block_id: viewId }) }
+    })
     const now = nextCohortMarker()
-    const cohort = deleteCohort(blocks, blockId, now)
+    // The response lists the seed's own cohort, then each swept view's.
+    const cohort = [...deleteCohort(blocks, blockId, now), ...swept.flatMap((view) => view.cohort)]
     const op = pushOp('delete_block', { block_id: blockId })
     // #4523 — the PAGE members of the cohort the walk just tombstoned. The
     // walk does NOT stop at a nested page, exactly as the backend cascade does
@@ -1522,7 +1625,10 @@ export const blocksHandlers = {
       deleted_at: now,
       descendants_affected: cohort.length,
       affected_page_ids: affectedPageIds,
-      op_refs: [{ device_id: op.device_id, seq: op.seq }],
+      op_refs: [...swept.map((view) => view.op), op].map(({ device_id, seq }) => ({
+        device_id,
+        seq,
+      })),
     }
   },
 

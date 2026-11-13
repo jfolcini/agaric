@@ -13,7 +13,10 @@ import { makePage } from '@/__tests__/fixtures'
 import { type PageListEnvelope, pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
-import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
+import {
+  EXCLUDE_JOURNAL_PAGES_FILTER,
+  usePageBrowserFiltersStore,
+} from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
 // Capture every `estimateSize` callback passed to `useVirtualizer` so the
@@ -345,6 +348,76 @@ describe('PageBrowser', () => {
       })
       // No call: the SPACE_OTHER value must not leak into SPACE_TEST.
       expect(scrollToOffsetMock).not.toHaveBeenCalled()
+    })
+  })
+  describe('list cursor across a load-more and a new sort', () => {
+    // More rows are the same list, so the cursor keeps its row (reset to row 0,
+    // it dragged the list back to the top). A new sort is a new list.
+    it('keeps the cursor row as more pages load, and a new sort returns it to the first', async () => {
+      const user = userEvent.setup()
+      let releasePage2 = () => {}
+      const page2Released = new Promise<void>((resolve) => {
+        releasePage2 = resolve
+      })
+      stubPageRowInvoke(mockedInvoke, {
+        list_pages_with_metadata: (args) =>
+          args['cursor'] == null
+            ? pageList(
+                ['One', 'Two', 'Three'].map((content, i) => makePage({ id: `P${i + 1}`, content })),
+                { next_cursor: 'cursor_abc', has_more: true },
+              )
+            : page2Released.then(() =>
+                pageList([
+                  makePage({ id: 'P4', content: 'Four' }),
+                  makePage({ id: 'P5', content: 'Five' }),
+                ]),
+              ),
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Three')
+      const grid = screen.getByRole('grid')
+      await user.keyboard('{ArrowDown}{ArrowDown}')
+      expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P3')
+
+      await act(async () => releasePage2())
+      expect(await screen.findByText('Five')).toBeInTheDocument()
+      expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P3')
+
+      await user.selectOptions(screen.getByRole('combobox', { name: /sort order/i }), 'created')
+      await waitFor(() => expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P1'))
+    })
+
+    // Kept in place, the cursor would stay on its row index: Two after the
+    // text narrows the list to One and Two, Three after the others.
+    it.each([
+      ['filter text', () => userEvent.type(screen.getByPlaceholderText('Search pages...'), 'o')],
+      [
+        'filter chip',
+        () =>
+          act(async () =>
+            usePageBrowserFiltersStore
+              .getState()
+              .addFilter('SPACE_TEST', EXCLUDE_JOURNAL_PAGES_FILTER),
+          ),
+      ],
+      ['space', () => act(async () => useSpaceStore.setState({ currentSpaceId: 'SPACE_OTHER' }))],
+    ])('a new %s returns the cursor to the first row', async (_trigger, change) => {
+      usePageBrowserFiltersStore.setState({ filtersBySpace: { SPACE_TEST: [], SPACE_OTHER: [] } })
+      stubPageRowInvoke(mockedInvoke, {
+        list_pages_with_metadata: () =>
+          pageList(
+            ['One', 'Two', 'Three'].map((content, i) => makePage({ id: `P${i + 1}`, content })),
+          ),
+      })
+      render(<PageBrowser />)
+      await screen.findByText('Three')
+      const grid = screen.getByRole('grid')
+      await userEvent.keyboard('{ArrowDown}{ArrowDown}')
+      expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P3')
+
+      await change()
+      await waitFor(() => expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P1'))
     })
   })
   describe('  estimateSize referential stability', () => {

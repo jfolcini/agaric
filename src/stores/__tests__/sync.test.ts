@@ -57,6 +57,26 @@ describe('useSyncStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // setWaiting (#6523)
+  // ---------------------------------------------------------------------------
+  describe('setWaiting', () => {
+    it('enters the waiting state for one peer, with no error', () => {
+      useSyncStore.getState().setState('error', 'Connection refused')
+      useSyncStore.getState().setWaiting('PEER1')
+      expect(useSyncStore.getState().state).toBe('waiting')
+      expect(useSyncStore.getState().waitingFor).toBe('PEER1')
+      expect(useSyncStore.getState().error).toBeNull()
+    })
+
+    it('forgets the peer on any other state', () => {
+      useSyncStore.getState().setWaiting('PEER1')
+      useSyncStore.getState().setState('syncing')
+      expect(useSyncStore.getState().state).toBe('syncing')
+      expect(useSyncStore.getState().waitingFor).toBeNull()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // setPeers
   // ---------------------------------------------------------------------------
   describe('setPeers', () => {

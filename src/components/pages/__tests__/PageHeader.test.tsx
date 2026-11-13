@@ -94,6 +94,7 @@ vi.mock('lucide-react', () => ({
   ChevronDown: () => <svg data-testid="chevron-down" />,
   ChevronRight: (props: Record<string, unknown>) => <svg data-testid="chevron-right" {...props} />,
   Clock: () => <svg data-testid="clock-icon" />,
+  Copy: () => <svg data-testid="copy-icon" />,
   Download: () => <svg data-testid="download-icon" />,
   ExternalLink: () => <svg data-testid="external-link-icon" />,
   FileCode: () => <svg data-testid="file-code-icon" />,

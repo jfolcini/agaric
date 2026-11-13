@@ -215,8 +215,8 @@ beforeEach(() => {
   MockIntersectionObserver.instances = []
   vi.stubGlobal('IntersectionObserver', EnteringIntersectionObserver)
   mockNavigateToPage.mockClear()
-  // The read path now runs through the module-singleton TanStack query client
-  // (gcTime: Infinity). Clear cached pages between tests so each case fetches
+  // The read path now runs through the module-singleton TanStack query
+  // client. Clear cached pages between tests so each case fetches
   // fresh and stale groups from a prior case never leak in.
   queryClient.clear()
   // Shared property-keys cache is module-level — flush it

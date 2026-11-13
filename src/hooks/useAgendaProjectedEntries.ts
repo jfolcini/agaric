@@ -82,9 +82,6 @@ export function useAgendaProjectedEntries(filters: AgendaFilter[]): AgendaProjec
           last.has_more && last.next_cursor != null ? last.next_cursor : undefined,
         refetchOnMount: 'always',
         placeholderData: keepPreviousData,
-        // The key carries the range, which moves with the filters and the day;
-        // let a superseded range's entry go instead of keeping it all session.
-        gcTime: 5 * 60 * 1000,
       },
       queryClient,
     )

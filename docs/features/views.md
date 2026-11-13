@@ -53,10 +53,10 @@ Browse every tag and the blocks that carry them.
 
 A dedicated builder for queries too complex for the search box.
 
-- **Nested boolean tree**: arbitrary AND / OR / NOT groups over filter leaves, composed visually.
+- **Nested boolean tree**: arbitrary AND / OR / NOT groups over filter leaves, composed visually. Template pages and their blocks are left out unless a filter asks for the `template` property.
 - **Controls bar**: full-text term, sort, group-by (tag, page, state, block type, priority, a property key, or a date bucket — due / scheduled / created / last edited, by day, week, or month), summaries (count, sum, average, minimum, maximum).
 - **Results pane**: flat with a global summary bar, or grouped with per-group headers, counts, and summary chips.
-- **Saved views** keep a query to load, rename or delete later. They are kept per space on this device and do not sync.
+- **Saved views** keep a query to load, rename or delete later. Each is a page of its space that syncs between devices and stays out of every page list, the `[[` picker, the graph and search; a deleted one waits in the Trash.
 
 ## Trash
 
@@ -89,7 +89,7 @@ Global operation log — every edit Agaric has applied, in reverse chronological
 Pages tagged as templates.
 
 - **Browse**: each template is a page; the row shows a preview of its first child block. The placeholders a template can use (`<% today %>` and the rest) are listed below the templates, each with what it fills in.
-- **Insert a template**: in any block, type `/template` → **TemplatePicker** → pick. The template's blocks land after the current block's last sibling, each with its task state, priority, dates and properties, and one `Ctrl+Z` takes the whole insert back (#6530).
+- **Insert a template**: in any block, type `/template` → **TemplatePicker** → pick. The template's blocks land after the current block's last sibling, each with its task state, priority, dates and properties, all in one transaction: a failed insert lands nothing and says so, and one `Ctrl+Z` takes a whole insert back (#6530).
 - **Toggle template status**: open the page → **PageHeaderMenu** kebab → *Toggle template*.
 - **Journal template**: the template page new daily pages in the space copy, nesting included; it carries a *Journal template* badge. Set it from the page kebab (*Set as journal template*) or the journal's *Configure journal template* button — see [spaces.md](spaces.md).
 
@@ -155,7 +155,7 @@ The view that opens when you navigate to a single page. Not a sidebar entry — 
 - **Block tree**: the editor proper. See [editor.md](editor.md).
 - **Outline** (TOC): sheet slide-out, opened from the page kebab menu, showing the page's heading hierarchy, each heading with its links, tags and block refs by title and its formatting rendered.
 - **Linked / Unlinked references** below the block tree: see [tags-and-links.md](tags-and-links.md).
-- **Page kebab menu (PageHeaderMenu)**: Undo, Redo, Page history, Open outline, Show in graph, Insert emoji, Move to space, Add alias, Add tag, Export as Markdown, Edit as Markdown (the page as one markdown buffer, in place of its blocks; see [editor.md](editor.md#edit-as-markdown)), Send to Trash, Toggle template.
+- **Page kebab menu (PageHeaderMenu)**: Undo, Redo, Page history, Open outline, Show in graph, Insert emoji, Move to space, Add alias, Add tag, Export as Markdown, Save as Markdown file (not on Android; see [import-export.md](import-export.md#per-page-export)), Copy app link (the page's `agaric://page/<id>` link; see [agent-access.md](agent-access.md#agaric-deep-links)), Edit as Markdown (the page as one markdown buffer, in place of its blocks; see [editor.md](editor.md#edit-as-markdown)), Send to Trash, Toggle template.
 - **Zoom into a block** to focus on a sub-tree: breadcrumb at the top, click parts to zoom out.
 - **Image lightbox / PDF viewer**: opens for inline attachments.
 

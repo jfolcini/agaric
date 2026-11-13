@@ -1,6 +1,14 @@
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, ipc, openPage, reopenPage, test, waitForBoot } from './helpers'
+import {
+  dndClickGuardLifted,
+  expect,
+  ipc,
+  openPage,
+  reopenPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * A page dragged from the sidebar's bookmarks, or from the recent pages, into
@@ -37,6 +45,7 @@ async function dragTo(page: Page, source: Locator, x: number, y: number): Promis
   await page.mouse.down()
   await page.mouse.move(x, y, { steps: 20 })
   await page.mouse.up()
+  await dndClickGuardLifted(page)
 }
 
 /** The viewport point just inside the left edge of `word`, in the first text node of `scope`. */

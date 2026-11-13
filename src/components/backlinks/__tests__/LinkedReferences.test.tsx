@@ -211,7 +211,7 @@ function mockInvokeWith(groupedResponse: unknown, extras?: Record<string, unknow
 beforeEach(() => {
   vi.clearAllMocks()
   // The grouped-backlink read now runs through the module-level TanStack query
-  // client (gcTime: Infinity). Clear it between tests so each case fetches fresh
+  // client. Clear it between tests so each case fetches fresh
   // — matching the old per-mount `fetchGroups` behaviour and preventing one
   // test's cached pages from bleeding into another with the same query key.
   queryClient.clear()

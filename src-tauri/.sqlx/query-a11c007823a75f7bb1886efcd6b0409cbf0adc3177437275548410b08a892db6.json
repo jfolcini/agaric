@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM blocks b\n           WHERE block_type = ?1 AND deleted_at IS NULL\n             AND (?2 IS NULL OR b.space_id = ?2)\n             AND b.id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a11c007823a75f7bb1886efcd6b0409cbf0adc3177437275548410b08a892db6"
+}

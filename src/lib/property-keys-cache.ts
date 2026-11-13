@@ -40,6 +40,11 @@ export const PROPERTY_KEYS_GLOBAL_KEY = '__global__'
 /** Query-key root shared by every space-scoped property-keys entry. */
 const PROPERTY_KEYS_QUERY_ROOT = 'propKeys' as const
 
+// One entry per space. The slash menu reads it through `fetchQuery`, which
+// leaves no observer to hold it, so it is kept for the session instead of
+// refetched once the client's `gcTime` passes.
+queryClient.setQueryDefaults([PROPERTY_KEYS_QUERY_ROOT], { gcTime: Number.POSITIVE_INFINITY })
+
 /** Build the TanStack query key for a given `spaceKey`. */
 export function propertyKeysQueryKey(
   spaceKey: string = PROPERTY_KEYS_GLOBAL_KEY,

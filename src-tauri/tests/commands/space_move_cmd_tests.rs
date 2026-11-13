@@ -576,6 +576,8 @@ async fn move_beyond_one_undo_is_refused() {
             content: format!("row {i}"),
             parent_id: Some(page.clone()),
             position: None,
+            parent_index: None,
+            typed_properties: std::collections::HashMap::new(),
             properties: [("onlya".to_owned(), "v".to_owned())].into_iter().collect(),
         })
         .collect();

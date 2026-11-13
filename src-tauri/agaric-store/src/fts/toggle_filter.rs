@@ -50,6 +50,7 @@
 //! `row.content.substring(start, end)` against the same string it
 //! rendered. See [`byte_to_utf16_offsets`].
 
+use crate::filters::NOT_SAVED_VIEW;
 use crate::pagination::{PageRequest, PageResponse};
 use crate::search_types::{MatchOffset, SearchBlockRow, SearchScope};
 use agaric_core::error::AppError;
@@ -836,13 +837,14 @@ async fn scan_regex_candidates(
     pool: &SqlitePool,
     inputs: &StructuralFilterInputs<'_>,
 ) -> Result<Vec<RegexScanRow>, AppError> {
-    let mut sql = String::from(
+    let mut sql = format!(
         r"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                   b.deleted_at, b.todo_state, b.priority, b.due_date,
                   b.scheduled_date, b.page_id
            FROM blocks b
            WHERE b.deleted_at IS NULL
-             AND b.content IS NOT NULL",
+             AND b.content IS NOT NULL
+             AND {NOT_SAVED_VIEW}",
     );
 
     // (#348) `StructuralFilterBuilder` owns the dynamic fragment,
@@ -1226,7 +1228,8 @@ async fn filter_only_scan(
                   b.deleted_at, b.todo_state, b.priority, b.due_date,
                   b.scheduled_date, b.page_id
            FROM blocks b
-           WHERE b.deleted_at IS NULL",
+           WHERE b.deleted_at IS NULL
+             AND {NOT_SAVED_VIEW}",
     );
 
     // (#348) same `StructuralFilterBuilder` as `regex_mode_query`,

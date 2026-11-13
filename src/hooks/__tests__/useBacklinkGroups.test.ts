@@ -58,7 +58,7 @@ function baseParams(overrides: Partial<UseBacklinkGroupsParams> = {}): UseBackli
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // The client is a module singleton with gcTime: Infinity — clear cached
+  // The client is a module singleton — clear cached
   // pages between tests so each case starts fresh.
   queryClient.clear()
 })

@@ -469,7 +469,7 @@ pub(super) async fn apply_op_via_command(
     // seed rows and op-created blocks in a batch exactly as it does singly.
     // `create_blocks_batch` is the one batch command whose list is not ids but
     // SPECS. Only `parentId` inside a spec is a label — everything else is the
-    // caller's own text, as for the scalar args above.
+    // caller's own text or value, as for the scalar args above.
     let block_specs = || {
         arg("specs")
             .and_then(Value::as_array)
@@ -485,6 +485,22 @@ pub(super) async fn apply_op_via_command(
                     .as_str()
                     .map(|l| BlockId::from(resolve_op_arg_id(l, created_ids).as_str())),
                 position: spec["position"].as_i64(),
+                parent_index: spec["parentIndex"]
+                    .as_u64()
+                    .map(|i| u32::try_from(i).expect("spec parentIndex fits u32")),
+                typed_properties: spec["typedProperties"]
+                    .as_object()
+                    .map(|map| {
+                        map.iter()
+                            .map(|(k, v)| {
+                                let value = serde_json::from_value(v.clone()).unwrap_or_else(|e| {
+                                    panic!("conformance op '{command}': typed property {k}: {e}")
+                                });
+                                (k.clone(), value)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 properties: spec["properties"]
                     .as_object()
                     .map(|map| {

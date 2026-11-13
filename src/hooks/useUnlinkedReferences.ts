@@ -15,8 +15,7 @@
  *    a link through a content edit, which fires no property event), applied as
  *    `invalidateQueries` on the exported prefix: the loaded pages refetch in
  *    place, the carried count and the rendered list survive the refetch, and
- *    the key never moves. #3316 item 2: `pageId` is in the key, so a session
- *    that visits N pages mints N entries; the finite `gcTime` below bounds it.
+ *    the key never moves.
  *  - `totalCount`/`truncated` derive from the LAST page, not the first — the old
  *    component set BOTH unconditionally on every fetch (outside the cursor
  *    branch), unlike LinkedReferences' first-page-only rule.
@@ -195,15 +194,6 @@ export function useUnlinkedReferences(
         // the client's `staleTime: Infinity` (no time-based refetch) but force a
         // fresh fetch whenever the panel mounts.
         refetchOnMount: 'always',
-        // #3316 item 2: override the client's `gcTime: Infinity` for THIS hook,
-        // matching `useBacklinkGroups.ts` and `useSearchResults.ts`. The module
-        // header used to argue no bound was needed because there is no
-        // `invalidationKey` in the key — but `pageId` (and now `groupLimit`) are
-        // in the key too, so a session that visits N pages mints N entries that
-        // an infinite `gcTime` would never collect. `staleTime: Infinity` is
-        // still inherited, so this changes nothing about refetch timing: only
-        // the eviction of superseded, observer-less entries.
-        gcTime: 5 * 60 * 1000,
       },
       queryClient,
     )

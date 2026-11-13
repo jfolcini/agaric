@@ -428,7 +428,7 @@ token-scoped REST API is still on master only, a month after it merged.
 | Plugin / extension system | **642 marketplace packages (72 themes)**; 148 declare DB support (23%), 63 of them DB-only, and 314 declare `effect: true` (49%, **un-sandboxed in the host origin**). Counted from `plugins.json` on 2026-11-11 by script, so not like-for-like with the 2026-10-21 hand tally (~625, ~132, ~309) | **No plugin API, no custom CSS, no user scripts.** 6 built-in themes plus an OS-following auto, font sizes, motion controls, full keyboard rebinding (not re-read). The seams are MCP (§12) and, on desktop, the Markdown mirror's files |
 | Flashcards / SRS | OG: SM-5. **2.0: FSRS, does not import SM-5 data**; 2.0.2 "practice again" (#13410) | Not priority per user |
 | Whiteboard | OG: tldraw fork. **2.0: REMOVED**, with slides and Excalidraw | Not priority per user |
-| PDF highlight-to-block | OG: highlights become blocks on an `hls__` page. 2.0: `#PDF Annotation` tag; 2.0.2 imports annotations | pdf.js reader with highlight + comment; saving bakes annotations into a new attachment and deletes the original, leaving inline `attachment:<id>` refs dangling (2026-08-30 finding, not re-audited) |
+| PDF highlight-to-block | OG: highlights become blocks on an `hls__` page. 2.0: `#PDF Annotation` tag; 2.0.2 imports annotations | pdf.js reader with highlight + comment; saving bakes annotations into a new attachment, moves the owning block's `attachment:<id>` links to it and deletes the original (#6629); a link copied into another block still names the original |
 | Zotero | OG: built-in. **2.0: REMOVED**, community plugin | BibTeX/CSL-JSON importer to typed reference pages |
 | Org-mode | OG only; 2.0 dropped it | Design choice |
 
@@ -684,7 +684,7 @@ dropped.
 | 5 | Pairing fallback without multicast | Done for QR (#4702) | Passphrase-only pairing still needs multicast |
 | 6 | Surface quarantined slots and op origin | Partial | The History view still does not show `agent:` origin (`docs/features/views.md`) |
 | 7 | Ship backup/restore | Partial | Sync item 3 |
-| 8 | Fix template block-property loss and the PDF dangling ref | Partial | `/template` drops properties (`insertTemplateBlocks` in `src/lib/template-utils.ts`); PDF not re-checked |
+| 8 | Fix template block-property loss and the PDF dangling ref | Partial | `/template` drops properties (`insertTemplateBlocks` in `src/lib/template-utils.ts`); the PDF link is fixed (#6629) |
 | 10 | Give references substance | Mostly done | A per-block count badge; a peek on touch; inline content |
 | 11 | A user-facing query language | Open | Query blocks take the search syntax (#6628) |
 | 13 | Multi-value properties | Open | `PRIMARY KEY (block_id, key)` |

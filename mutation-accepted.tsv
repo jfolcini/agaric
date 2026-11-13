@@ -342,26 +342,11 @@ frontend	src/lib/search-query/tokenize.ts	ConditionalExpression	8	1	return c !==
 frontend	src/lib/search-query/tokenize.ts	StringLiteral	16	1	assertAdvanced('tokenize/outer', prevOuter, i)
 frontend	src/lib/search-query/tokenize.ts	StringLiteral	16	1	assertAdvanced('tokenize/word', prevInner, i)
 frontend	src/lib/template-utils.ts	ArrayDeclaration	50	1	const properties = propertiesBySpace[spaceId] ?? []
-frontend	src/lib/template-utils.ts	ArrowFunction	72	1	const depthByIndex: number[] = Array.from({ length: deferred.length }, () => 0)
 frontend	src/lib/template-utils.ts	BooleanLiteral	63	1	writePreference(PREFERENCES.spaceTextJournalTemplatesDeleted, true)
-frontend	src/lib/template-utils.ts	ConditionalExpression	11	1	parentId: destParentIndex == null ? parentId : null,
-frontend	src/lib/template-utils.ts	ConditionalExpression	1	1	entry.resolveParentFromIndex == null
 frontend	src/lib/template-utils.ts	ConditionalExpression	27	1	if (userFormat == null || userFormat.length === 0) return fallback
-frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (cursorDeferredIndex !== null && context?.onCursorBlock) {
-frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (entry == null) continue
-frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (idx == null) continue
 frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (pid == null) continue
-frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (row != null) ids[idx] = row.id
 frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (userFormat == null || userFormat.length === 0) return fallback
-frontend	src/lib/template-utils.ts	EqualityOperator	11	1	parentId: destParentIndex == null ? parentId : null,
-frontend	src/lib/template-utils.ts	EqualityOperator	17	1	for (let i = 0; i < deferred.length; i += 1) {
-frontend	src/lib/template-utils.ts	EqualityOperator	17	1	for (let k = 0; k < indicesAtLevel.length; k += 1) {
-frontend	src/lib/template-utils.ts	EqualityOperator	17	2	for (let i = 0; i < deferred.length; i += 1) {
-frontend	src/lib/template-utils.ts	EqualityOperator	35	1	for (const d of depthByIndex) if (d > maxDepth) maxDepth = d
 frontend	src/lib/template-utils.ts	MethodExpression	20	1	const normalized = body.trim().replace(/\s+/g, ' ')
-frontend	src/lib/template-utils.ts	ObjectLiteral	42	1	const ids: string[] = Array.from<string>({ length: deferred.length })
-frontend	src/lib/template-utils.ts	ObjectLiteral	43	1	const depthByIndex: number[] = Array.from({ length: deferred.length }, () => 0)
-frontend	src/lib/template-utils.ts	OptionalChaining	16	1	const parent = deferred[i]?.resolveParentFromIndex
 frontend	src/lib/template-utils.ts	OptionalChaining	65	1	? `Multiple journal templates found (${pages.length}). Using "${pages[0]?.content ?? pages[0]?.id}". ` +
 frontend	src/lib/template-utils.ts	OptionalChaining	86	1	? `Multiple journal templates found (${pages.length}). Using "${pages[0]?.content ?? pages[0]?.id}". ` +
 frontend	src/lib/tree-utils.ts	ArrayDeclaration	33	1	const ancestorStack: string[] = []

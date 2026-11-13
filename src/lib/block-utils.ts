@@ -16,8 +16,9 @@ import { taskStateFromMarker, type TodoState } from '@/lib/task-states'
  * Besides the recurrence and lifecycle keys: the space marker and accent
  * (`is_space`, `accent_color`), the retired Personal-to-Work migration marker
  * still stored on old installs (`personal_to_work_migration_v1`), the template
- * flags, the list style, the image presentation keys, and a page's
- * `bookmark` (its place in the sidebar's bookmarks).
+ * flags, the list style, the image presentation keys, a page's `bookmark`
+ * (its place in the sidebar's bookmarks), and `saved_view`, which makes a page
+ * a saved view (`src/lib/saved-views.ts`).
  *
  * Distinct from `NON_DELETABLE_PROPERTIES` in `property-save-utils.ts`,
  * which mirrors `is_builtin_property_key` in `src-tauri/agaric-store/src/op.rs` for
@@ -40,6 +41,7 @@ export const INTERNAL_PROPERTY_KEYS: ReadonlySet<string> = new Set([
   'image_caption',
   'attachments',
   'bookmark',
+  'saved_view',
 ])
 
 /**

@@ -16,7 +16,8 @@ import {
 
 /**
  * Pages browser happy paths (#5738): creating a page from a namespace
- * folder's `+`, multi-select batch Trash, saved views, and a header rename
+ * folder's `+`, multi-select batch Trash, saved views (pages of their own,
+ * #6544, which the list leaves out and the Trash keeps), and a header rename
  * refused for a taken title. Each is one view's state over IPC calls the mock
  * models, so it is shown failing here, in `e2e/`.
  *
@@ -111,7 +112,9 @@ test('Ctrl+Click and Shift+Click select three pages, and batch Trash moves them 
   await expect(flatPageTitles(page)).toHaveText(['Getting Started', 'Quick Notes'])
 })
 
-test('a saved view restores its sort and filter chips @pages', async ({ page }) => {
+test('a saved view restores its sort and filter chips, stays out of the list, and deletes to the Trash @pages', async ({
+  page,
+}) => {
   const sort = page.getByRole('combobox', { name: 'Sort order' })
   const orphanChip = page.getByRole('group', { name: 'Filter: Orphan', exact: true })
   const journalChip = page.getByRole('group', { name: 'Filter: Exclude journal pages' })
@@ -137,7 +140,9 @@ test('a saved view restores its sort and filter chips @pages', async ({ page }) 
   await page.getByRole('button', { name: 'Clear all filters' }).click()
   await selectSort(page, 'Alphabetical')
   await expect(journalChip).toHaveCount(0)
+  // The six seeded pages, and not the view's own page.
   await expect(flatPageTitles(page)).toHaveCount(6)
+  await expect(grid(page).getByText('Orphans by size', { exact: true })).toHaveCount(0)
   await expect(savedViews).toHaveAccessibleName('Saved views')
 
   await navigateToView(page, 'Journal')
@@ -150,6 +155,12 @@ test('a saved view restores its sort and filter chips @pages', async ({ page }) 
   await expect(journalChip).toBeVisible()
   await expect(flatPageTitles(page)).toHaveText(viewRows)
   await expect(savedViews).toHaveAccessibleName('Saved views — Orphans by size applied')
+
+  await savedViews.click()
+  await activePopover(page).getByRole('button', { name: 'Delete view Orphans by size' }).click()
+  await expect(savedViews).toHaveAccessibleName('Saved views')
+  await navigateToView(page, 'Trash')
+  await expect(page.getByTestId('trash-item').filter({ hasText: 'Orphans by size' })).toHaveCount(1)
 })
 
 // A rename onto a free title is covered by `rename-invalidation.spec.ts` (#5250).

@@ -30,7 +30,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  * `src/components/backlinks/UnlinkedReferences.tsx:270-271` states `edit_block` "emits no
  * `block:properties-changed`, so nothing else refetches". `LinkedReferences`
  * shares the same `queryClient` (`src/lib/query-client.ts`,
- * `staleTime: Infinity` / `gcTime: Infinity`, invalidated only by that
+ * `staleTime: Infinity`, invalidated only by that
  * event). So within one test session the "Getting Started" page's
  * `LinkedReferences` panel will NOT show the freshly-created backlink group
  * — there is no invalidation trigger, and `page.reload()` cannot force a

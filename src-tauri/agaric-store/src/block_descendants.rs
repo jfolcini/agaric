@@ -771,7 +771,7 @@ async fn root_page_context(
 /// precisely because this walk was believed equivalent — so nothing repaired
 /// the row until an unrelated delete / restore / purge fanned the vault-wide
 /// rebuild out. Be exact about what that costs, because the two derived caches
-/// usually named here do NOT see it: `recompute_all_pages_cache_counts` filters
+/// usually named here do NOT see it: `recompute_pages_cache_counts_of` filters
 /// `src.deleted_at IS NULL` / `descendant.deleted_at IS NULL`, and the
 /// `page_link_cache` roll-up filters `sb.deleted_at IS NULL`, so a tombstoned
 /// row's stale `page_id` contributes to neither while it stays tombstoned. What

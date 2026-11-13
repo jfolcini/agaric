@@ -40,7 +40,7 @@ import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
 import { useTrashCount } from '@/hooks/useTrashCount'
 import { NAV_ITEMS } from '@/lib/nav-items'
 import { openNewPageDialog } from '@/lib/overlay-events'
-import type { SavedPagesView } from '@/lib/preferences'
+import type { SavedPagesView } from '@/lib/saved-pages-views'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 

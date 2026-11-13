@@ -1,0 +1,507 @@
+{
+  "description": "#6544 — a saved view is a page carrying the internal `saved_view` property, and every listing a user reads leaves it out: `list_all_pages_in_space` (the `[[` picker, the graph, the resolve preload), `list_pages_with_metadata` (the Pages view and MCP `list_pages`, rows and `total_count`), `search_blocks` and `search_blocks_partitioned` (FTS), `run_advanced_query` and `filtered_blocks_query` (the query surfaces), and `list_blocks` by type (rows and `total_count`). The seed pages move into the space `C1` first, since the harness space refuses a page create. S1 `Weekly plan` is an ordinary page and S2 `Weekly review` a Pages view, both titled through `edit_block` so FTS indexes them, and both match `weekly`, so a listing that drops the exclusion returns S2 next to S1. What still serves a view page: `query_by_property` on `saved_view` (how the saved-view lists read them), `batch_resolve` (the title path by id) and `list_trash` (S3, a deleted Advanced Query view, is a trash root so it can be restored). The `create_page_in_space` op pins that a view holds no name: asking for `Weekly review` makes a NEW page, where the ordinary title resolution would return S2 and let a caller stamp it.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Weekly plan",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Weekly review",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Old view",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Views",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Weekly review",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 17,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "key": "saved_view",
+          "op_type": "set_property"
+        },
+        {
+          "key": "saved_view",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "saved_view",
+        "value": "v1:eyJraW5kIjoicGFnZXMiLCJzb3J0IjoiYWxwaGFiZXRpY2FsIiwiZmlsdGVycyI6W119",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "saved_view",
+        "value": "v1:eyJraW5kIjoicXVlcnkiLCJzcGVjIjp7ImZpbHRlciI6eyJ0eXBlIjoiQW5kIiwiY2hpbGRyZW4iOltdfSwic29ydCI6W10sImZ1bGx0ZXh0IjoiIiwiZ3JvdXBfYnkiOm51bGwsImFnZ3JlZ2F0ZXMiOltdfX0",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space",
+      "returns": ["create_space#space_id=B4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_pages_join_the_space",
+      "returns": ["move_blocks_to_space#moved=3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_view_holds_no_name",
+      "returns": ["create_page_in_space#page_id=B5"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "all_pages_leave_the_view_out",
+      "rows": [
+        "B1#todo_state=null#priority=null#due_date=null#scheduled_date=null",
+        "B5#todo_state=null#priority=null#due_date=null#scheduled_date=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "pages_metadata_leave_the_view_out",
+      "rows": ["B1", "B5"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_leaves_the_view_out",
+      "rows": ["B1", "B5"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "partitioned_search_leaves_the_view_out",
+      "rows": [
+        "B1#partition=pages",
+        "B5#partition=pages",
+        "pages#has_more=false",
+        "B1#partition=blocks",
+        "B5#partition=blocks",
+        "blocks#has_more=false"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_query_leaves_the_view_out",
+      "rows": ["B5", "B1"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_blocks_leave_the_view_out",
+      "rows": ["B1", "B5"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "list_by_type_leaves_the_view_out",
+      "rows": [
+        "B1#parent_id=null#page_id=B1#position=1#deleted_at=null",
+        "B5#parent_id=null#page_id=B5#position=5#deleted_at=null"
+      ],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "views_listed_by_their_property",
+      "rows": ["B2#parent_id=null#page_id=B2#position=2#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "view_title_resolves_by_id",
+      "rows": ["B2#title=Weekly review#block_type=page#deleted=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "trash_lists_the_deleted_view",
+      "rows": ["B3#parent_id=null#page_id=B3#position=3#deleted_at=DELETED"],
+      "total_count": null
+    }
+  ],
+  "name": "query_saved_view_pages_hidden",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Views"
+      },
+      "command": "create_space",
+      "comment": "The space `C1` the pages live in: `create_page_in_space` refuses the harness space.",
+      "name": "a_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S1", "S2", "S3"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "name": "the_pages_join_the_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "toText": "Weekly plan"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "Weekly review"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "saved_view",
+        "value": {
+          "value_text": "v1:eyJraW5kIjoicGFnZXMiLCJzb3J0IjoiYWxwaGFiZXRpY2FsIiwiZmlsdGVycyI6W119"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "saved_view",
+        "value": {
+          "value_text": "v1:eyJraW5kIjoicXVlcnkiLCJzcGVjIjp7ImZpbHRlciI6eyJ0eXBlIjoiQW5kIiwiY2hpbGRyZW4iOltdfSwic29ydCI6W10sImZ1bGx0ZXh0IjoiIiwiZ3JvdXBfYnkiOm51bGwsImFnZ3JlZ2F0ZXMiOltdfX0"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "content": "Weekly review",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "S2 holds the title, but a view holds no name: a new page is made, not S2 returned.",
+      "name": "a_view_holds_no_name",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "list_all_pages_in_space",
+      "comment": "S1 and the page the last op made; S2 is a view and S3 is in the Trash.",
+      "name": "all_pages_leave_the_view_out"
+    },
+    {
+      "args": {
+        "filter": {
+          "sort": "alphabetical",
+          "spaceId": "C1"
+        },
+        "limit": 50
+      },
+      "command": "list_pages_with_metadata",
+      "comment": "The Pages view: the view is out of the rows and of `total_count`.",
+      "name": "pages_metadata_leave_the_view_out"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["C1"]
+          }
+        },
+        "limit": 50,
+        "query": "weekly"
+      },
+      "command": "search_blocks",
+      "comment": "Both titles match `weekly`; only the ordinary page is a hit.",
+      "name": "search_leaves_the_view_out"
+    },
+    {
+      "args": {
+        "blockLimit": 10,
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["C1"]
+          }
+        },
+        "pageLimit": 10,
+        "query": "weekly"
+      },
+      "command": "search_blocks_partitioned",
+      "comment": "Neither partition holds the view.",
+      "name": "partitioned_search_leaves_the_view_out"
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 100,
+          "spaceId": "C1"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "A filterless query is the whole space, less the view.",
+      "name": "advanced_query_leaves_the_view_out"
+    },
+    {
+      "args": {
+        "blockType": "page",
+        "limit": 100,
+        "propertyFilters": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "The `{{query}}` block's pages, less the view.",
+      "name": "filtered_blocks_leave_the_view_out"
+    },
+    {
+      "args": {
+        "request": {
+          "blockType": "page",
+          "limit": 50
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "`list_by_type`: the view is out of the rows and of `total_count` (it replaces the retired `view_type = 'query-view'` marker).",
+      "name": "list_by_type_leaves_the_view_out"
+    },
+    {
+      "args": {
+        "request": {
+          "key": "saved_view",
+          "limit": 100
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "How the saved-view lists read their pages: the live view S2, not the trashed S3.",
+      "name": "views_listed_by_their_property"
+    },
+    {
+      "args": {
+        "ids": ["S2"],
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "batch_resolve",
+      "comment": "The title path by id still names the view.",
+      "name": "view_title_resolves_by_id"
+    },
+    {
+      "args": {
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "list_trash",
+      "comment": "A deleted view is a trash root, so it can be restored.",
+      "name": "trash_lists_the_deleted_view"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Plan",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Review",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Old view",
+        "id": "S3",
+        "parent_id": null,
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
