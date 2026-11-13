@@ -252,6 +252,8 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // #5281 — the renamed row; a rename onto a name its space already holds
     // is refused, which only the command sees.
     ("edit_block", "id", &["content"], &[]),
+    // #6608 — the blocks the batch left alone; the snapshot pins the rest.
+    ("edit_blocks_batch", HEADED_ID_KEY, &[], &["skipped"]),
     // #6054 — the four the differential fuzz drives as commands, so it compares
     // what each returns or refuses, not only the state it leaves.
     (
@@ -1188,6 +1190,28 @@ pub(super) async fn apply_op_via_command(
             .await,
         ),
         "edit_block" => to_json(edit_block_inner(pool, DEV, mat, block_id(), text("toText")).await),
+        "edit_blocks_batch" => {
+            let edits = arg("edits")
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'edits'"))
+                .iter()
+                .map(|edit| {
+                    let field = |k: &str| {
+                        edit[k]
+                            .as_str()
+                            .unwrap_or_else(|| panic!("conformance op '{command}': edit {k}"))
+                    };
+                    BlockEdit {
+                        block_id: BlockId::from(
+                            resolve_op_arg_id(field("blockId"), created_ids).as_str(),
+                        ),
+                        expected: field("expected").to_owned(),
+                        to_text: field("toText").to_owned(),
+                    }
+                })
+                .collect();
+            to_json(edit_blocks_batch_inner(pool, DEV, mat, edits).await)
+        }
         "move_block" => to_json(
             move_block_inner(
                 pool,

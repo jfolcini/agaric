@@ -71,6 +71,7 @@ import {
 } from '@/lib/tauri-mock/names'
 import { isSavedViewPage, pageNameHolder } from '@/lib/tauri-mock/page-names'
 import {
+  allOrNothing,
   blockTags,
   blocks,
   fakeId,
@@ -1965,6 +1966,33 @@ export const pagesHandlers = {
     }
   },
 
+  // #6608 — mirror of `edit_blocks_batch_inner`: each edit whose block is live
+  // and still holds `expected` is an `edit_block`, the rest are `skipped`. One
+  // transaction on the backend, so a refused edit puts the earlier ones back.
+  edit_blocks_batch: allOrNothing((args) => {
+    const edits = ((args as Record<string, unknown>)['edits'] ?? []) as Array<{
+      blockId: string
+      expected: string
+      toText: string
+    }>
+    if (edits.length === 0) throw validationRejection('edits list cannot be empty')
+    // `MAX_BATCH_BLOCK_IDS`.
+    if (edits.length > 1000) {
+      throw validationRejection(`edits length ${edits.length} exceeds maximum 1000`)
+    }
+    const skipped: string[] = []
+    const opRefs: Array<{ device_id: string; seq: number }> = []
+    for (const { blockId, expected, toText } of edits) {
+      const b = blocks.get(blockId)
+      if (!b || b['deleted_at'] != null || b['content'] !== expected) {
+        skipped.push(blockId)
+        continue
+      }
+      opRefs.push(...blocksHandlers.edit_block({ blockId, toText }).op_refs)
+    }
+    return { skipped, op_refs: opRefs }
+  }),
+
   // DELIBERATE APPROXIMATION of `get_blocks_source` (#5140 Phase 3b), the
   // clipboard copy, in the Document dialect a paste reads (#6190), as
   // `renderPageDocument` writes a page: each root at depth 0 and, with
@@ -2309,6 +2337,7 @@ export const pagesHandlers = {
   | 'export_page_markdown'
   | 'get_page_buffer'
   | 'apply_page_source'
+  | 'edit_blocks_batch'
   | 'get_blocks_source'
   | 'import_markdown'
   | 'list_import_merges'

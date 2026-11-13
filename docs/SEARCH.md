@@ -268,6 +268,16 @@ The toggle row sits to the right of the search input — three pressable buttons
 
 Toggle state persists in `localStorage` (`agaric:searchToggles:v1`) so opening a fresh window restores your preference. State does NOT survive a save — a saved search is `(query, toggles)`, not just `(query)`.
 
+## Replace across pages
+
+The replace toggle beside the search modes, or `Ctrl+H` with the focus in the Search view, opens a replace row under the search box. While it is open, the text in the search box is the literal text to find, with the case and whole-word toggles: search operators and quotes in it are plain characters, except that one quoted phrase is found without its quotes. Filter chips still narrow where to look, and the search stays in the active space. Regex mode is not replaced in, and neither is a text under three characters, which the index cannot find.
+
+The result list becomes the preview: only the blocks a replace would change, each showing its change and ticked. A click, `Space` or `Enter` on a row unticks or ticks it, and the checkbox in a page's header does so for every row of that page. The button reads **Replace in N blocks across M pages** and asks before it writes. Every match is loaded first, and a search with more matching blocks than one run writes (`MAX_BATCH_BLOCK_IDS`) is refused with a note to narrow it: a run never does part of the matches.
+
+The same code as the in-page [Replace](#replace) computes each block's new text, so the two change the same things: a match in a link, tag or block reference is found and left as it is, and counted in the row. A page title or a tag name holding the text is counted and left too; rename the page or tag for that.
+
+The run is one write (`edit_blocks_batch`, one transaction): every ticked block or none. Each block is sent with the content the search returned, and a block edited or deleted since, on this device or through sync, is left alone and counted in the toast. Typing still pending in an open editor is saved first, so its block counts as edited since. The toast's **Undo** takes the whole run back on every page; after the toast is gone, `Ctrl+Z` on a page opened later undoes that page's part, and History lists the run's edits.
+
 ## Regex syntax
 
 The find-across-pages view uses the Rust [`regex`] crate. Key differences from JavaScript's `RegExp`:

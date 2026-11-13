@@ -71,10 +71,16 @@ export interface UseSearchResultsOptions {
   currentSpaceId: string | null
   spaceIsReady: boolean
   toggles: SearchToggleState
+  /** Show only these rows (#6608, the replace preview); pagination still counts every row. */
+  keepRow?: ((row: SearchBlockRow) => boolean) | undefined
+  /** What Enter, Space or a click does to a row, in place of opening it. */
+  onSelectRow?: ((row: SearchBlockRow) => void) | undefined
 }
 
 export interface UseSearchResultsValue {
   results: SearchBlockRow[]
+  /** Every loaded row, before `keepRow`. */
+  candidates: SearchBlockRow[]
   searchLoading: boolean
   hasMore: boolean
   loadMore: () => void
@@ -102,6 +108,8 @@ export function useSearchResults({
   currentSpaceId,
   spaceIsReady,
   toggles,
+  keepRow,
+  onSelectRow,
 }: UseSearchResultsOptions): UseSearchResultsValue {
   const { t } = useTranslation()
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
@@ -287,7 +295,7 @@ export function useSearchResults({
   // index changes between two fetches, so a later page can repeat a row an
   // earlier page already returned (#5659). A shifted cursor can also skip a row;
   // that is accepted.
-  const results = useMemo<SearchBlockRow[]>(() => {
+  const candidates = useMemo<SearchBlockRow[]>(() => {
     if (!queryEnabled) return []
     const seen = new Set<string>()
     return (data?.pages.flatMap((p) => p.items) ?? []).filter((row) => {
@@ -296,6 +304,10 @@ export function useSearchResults({
       return true
     })
   }, [queryEnabled, data])
+  const results = useMemo(
+    () => (keepRow ? candidates.filter(keepRow) : candidates),
+    [candidates, keepRow],
+  )
   // usePaginatedQuery's `loading` was true during ANY in-flight fetch (initial AND
   // load-more), driving the skeleton and the LoadMoreButton busy state alike —
   // `isFetching` reproduces that (`isLoading` would be false during load-more).
@@ -327,8 +339,8 @@ export function useSearchResults({
   // near 5000, show the cap notice) is identical. The arithmetic is pinned by
   // `useSearchResults.capped.test.ts` (the retired `usePaginatedQuery.test.ts`
   // covered the OLD hook's different implementation).
-  const hasMore = queryEnabled && hasNextPage && results.length < MAX_ITEMS
-  const capped = hasNextPage && results.length >= MAX_ITEMS
+  const hasMore = queryEnabled && hasNextPage && candidates.length < MAX_ITEMS
+  const capped = hasNextPage && candidates.length >= MAX_ITEMS
 
   // #2251 — the raw structured IPC `AppError` behind a failure, or null; `regexError`
   // below discriminates its `InvalidRegex` validation code. Mirrors the old hook's
@@ -349,8 +361,8 @@ export function useSearchResults({
 
   const loadMore = useCallback(() => {
     // Match the cap: never fetch once the flattened set has reached MAX_ITEMS.
-    if (hasNextPage && !isFetchingNextPage && results.length < MAX_ITEMS) void fetchNextPage()
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage, results.length])
+    if (hasNextPage && !isFetchingNextPage && candidates.length < MAX_ITEMS) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, candidates.length])
 
   // #2059 — re-fire the current query from page 1 (the error-recovery affordance).
   const reload = useCallback(() => {
@@ -532,8 +544,10 @@ export function useSearchResults({
     pageUpDown: true,
     onSelect: (idx) => {
       const block = visibleRows[idx]
+      if (!block) return
       // `handleResultClick` reports its own failure; never rejects.
-      if (block) void handleResultClick(block)
+      if (onSelectRow) onSelectRow(block)
+      else void handleResultClick(block)
     },
   })
 
@@ -547,6 +561,7 @@ export function useSearchResults({
 
   return {
     results,
+    candidates,
     searchLoading,
     hasMore,
     loadMore,

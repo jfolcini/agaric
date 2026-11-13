@@ -479,6 +479,13 @@ export function expandOpArgs(
       return copy
     })
   }
+  // `edit_blocks_batch` names its blocks inside a list of edits.
+  if (Array.isArray(out['edits'])) {
+    out['edits'] = out['edits'].map((edit: Record<string, unknown>) => ({
+      ...edit,
+      blockId: resolveOpArgId(edit['blockId'] as string, createdIds),
+    }))
+  }
   for (const key of ['blockIds', 'spaceIds']) {
     if (Array.isArray(out[key])) {
       out[key] = out[key].map((label) =>

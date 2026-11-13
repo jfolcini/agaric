@@ -117,6 +117,16 @@ export function skippedMatches(
     .skipped
 }
 
+/** The `ranges` (over `content`'s find text) a replace rewrites, and how many it leaves as they are. */
+export function replaceableRanges<R extends { start: number; end: number }>(
+  content: string | null,
+  ranges: readonly R[],
+  resolveTitle: (id: string) => string,
+): { applied: R[]; skipped: number } {
+  if (!hasFindText(content) || ranges.length === 0) return { applied: [], skipped: 0 }
+  return selectRanges(findTextPieces(parse(content) as MarkdownNode, resolveTitle).pieces, ranges)
+}
+
 /**
  * `content` with `ranges` (over its find text, `blockFindText`) replaced.
  * Overlapping ranges keep the first; each one not wholly in the block's own

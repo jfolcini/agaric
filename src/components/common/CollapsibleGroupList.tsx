@@ -131,6 +131,8 @@ export interface CollapsibleGroupListProps<G extends GroupItem> {
    * unset and keep the eager `<ul>` path unchanged.
    */
   renderGroupList?: (group: G, title: string) => React.ReactNode
+  /** A control for the group's header row, before its count; only where the title is a link. */
+  renderHeaderExtra?: (group: G, title: string) => React.ReactNode
   /**
    * #3316 item 3 — window each expanded group's rows instead of mounting all
    * of them. The default path used to map over every block of every expanded
@@ -172,6 +174,7 @@ function CollapsibleGroupListInner<G extends GroupItem>({
   listDataTestId,
   formatCount,
   renderGroupList,
+  renderHeaderExtra,
   virtualizeRows = false,
   activeBlockId,
 }: CollapsibleGroupListProps<G>): React.ReactElement {
@@ -227,6 +230,7 @@ function CollapsibleGroupListInner<G extends GroupItem>({
                     )}
                   </span>
                 </PageLink>
+                {renderHeaderExtra?.(group, title)}
                 <span>{countLabel}</span>
               </div>
             ) : (

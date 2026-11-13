@@ -26,6 +26,8 @@ Reachable via the sidebar Search icon or `Ctrl+Shift+F` (this is the find-across
 
 The in-page find bar (`Ctrl+F`) also replaces: its replace toggle or `Ctrl+H` shows **Replace** and **Replace all**, which rewrite the page's blocks as typing saves them, one `Ctrl+Z` taking back a Replace all; a match in a link, tag or block reference is left as it is ([../SEARCH.md § Replace](../SEARCH.md#replace)).
 
+The Search view replaces across pages: its replace toggle or `Ctrl+H` turns the results into a preview of the blocks that would change, each ticked, and **Replace in N blocks across M pages** writes the ticked ones in one step after a confirmation. The toast's **Undo** takes the run back; a block that changed since the search is left alone ([../SEARCH.md § Replace across pages](../SEARCH.md#replace-across-pages)).
+
 ## Pages
 
 Browse every page in the active space. The first row is search, then sort, saved views and a **New page** button. Search takes focus when you open the view with a mouse or trackpad, never on a touch screen, so a phone's keyboard does not cover the list. While the search text names no page, the results start with a **Create page "…"** row that opens the New page dialog with that title.

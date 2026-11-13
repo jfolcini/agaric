@@ -37,6 +37,7 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { FilterChipRow } from '@/components/search/FilterChipRow'
 import { FilterHelperPopover } from '@/components/search/FilterHelperPopover'
 import { SearchHistoryDropdown } from '@/components/search/SearchHistoryDropdown'
+import { SearchReplaceBar, SearchReplaceToggle } from '@/components/search/SearchReplaceBar'
 import { SearchResultGroups } from '@/components/search/SearchResultGroups'
 import { SearchToggleRow, type SearchToggleState } from '@/components/search/SearchToggleRow'
 import {
@@ -49,11 +50,13 @@ import { SearchStatusRegion } from '@/components/SearchPanel/SearchStatusRegion'
 import { useAliasResolution } from '@/components/SearchPanel/useAliasResolution'
 import { useFilterSyntaxIntroToast } from '@/components/SearchPanel/useFilterSyntaxIntroToast'
 import { useSearchHistoryControls } from '@/components/SearchPanel/useSearchHistoryControls'
+import { useSearchReplace, useSearchReplaceMode } from '@/components/SearchPanel/useSearchReplace'
 import { useSearchResults } from '@/components/SearchPanel/useSearchResults'
 import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
+import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { useLocalStoragePreference } from '@/lib/local-storage-preference'
 import { recordPathHistory } from '@/lib/path-history'
 import type { FilterToken } from '@/lib/search-query'
@@ -211,6 +214,14 @@ function RegexScopeNotice({
   )
 }
 
+/** Ctrl+H inside the panel toggles its replace row, before the app-wide handler opens the in-page bar. */
+function onReplaceShortcut(e: React.KeyboardEvent, toggle: () => void): void {
+  if (!matchesShortcutBinding(e.nativeEvent, 'replaceInPage')) return
+  e.preventDefault()
+  e.stopPropagation()
+  toggle()
+}
+
 export function SearchPanel(): React.ReactElement {
   const { t } = useTranslation()
 
@@ -274,8 +285,13 @@ export function SearchPanel(): React.ReactElement {
   // FE-A18 — the results pipeline (AST→IPC projection, pagination,
   // breadcrumbs, grouping + collapse, roving keyboard nav, navigation) lives
   // in `useSearchResults`.
+  // #6608 — while the replace row is open, the search fetches the candidates
+  // for the typed text and the list shows only the blocks a replace would change.
+  const replaceMode = useSearchReplaceMode(debouncedAst, toggles)
+  const toggleReplace = (): void => replaceMode.toggle(() => searchInputRef.current?.focus())
   const {
     results,
+    candidates,
     searchLoading,
     hasMore,
     loadMore,
@@ -294,7 +310,24 @@ export function SearchPanel(): React.ReactElement {
     loadingResultId,
     recentPages,
     handleRecentClick,
-  } = useSearchResults({ debouncedAst, debouncedQuery, currentSpaceId, spaceIsReady, toggles })
+  } = useSearchResults({
+    debouncedAst: replaceMode.searchAst,
+    debouncedQuery,
+    currentSpaceId,
+    spaceIsReady,
+    toggles: replaceMode.searchToggles,
+    ...replaceMode.rowOptions,
+  })
+  const replace = useSearchReplace({
+    mode: replaceMode,
+    toggles,
+    candidates,
+    searchLoading,
+    hasMore,
+    capped,
+    loadMore,
+    reload,
+  })
 
   // D-3 / alias resolution runs against the free-text
   // portion so a query like `[[Alpha]] tag:#x` resolves the alias correctly.
@@ -586,7 +619,11 @@ export function SearchPanel(): React.ReactElement {
   }
 
   return (
-    <div className="search-panel mx-auto w-full max-w-list space-y-4">
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- not a control: the panel catches the replace shortcut from whatever inside it has focus
+    <div
+      className="search-panel mx-auto w-full max-w-list space-y-4"
+      onKeyDown={(e) => onReplaceShortcut(e, toggleReplace)}
+    >
       {/*  Phase 3b — input form lifted into `SearchHeader`. */}
       {/* append toggle row + history dropdown + regex error slot. */}
       <SearchHeader
@@ -609,7 +646,12 @@ export function SearchPanel(): React.ReactElement {
         comboboxAttrs={inputComboboxAttrs}
         onHelpClick={() => setHelpOpen(true)}
         regexMode={toggles.isRegex}
-        toggleRow={<SearchToggleRow toggles={toggles} onChange={setToggles} />}
+        toggleRow={
+          <>
+            <SearchToggleRow toggles={toggles} onChange={setToggles} />
+            <SearchReplaceToggle open={replaceMode.open} onToggle={toggleReplace} />
+          </>
+        }
         historyDropdown={
           <SearchHistoryDropdown
             entries={historyEntries}
@@ -645,6 +687,8 @@ export function SearchPanel(): React.ReactElement {
         onApply={handleAutocompleteApply}
         onStateChange={handleAutocompleteStateChange}
       />
+
+      <SearchReplaceBar mode={replaceMode} replace={replace} />
 
       {/* CJK limitation notice sits directly below the input so CJK
           users see it before scanning results. */}
@@ -798,7 +842,7 @@ export function SearchPanel(): React.ReactElement {
         regexError={regexError}
       />
 
-      {aliasMatch && (
+      {aliasMatch && !replaceMode.active && (
         // Expose the alias-match card as a labelled region so it is
         // announced distinctly from the results listbox (it sits outside the
         // roving-listbox model by design).
@@ -838,10 +882,12 @@ export function SearchPanel(): React.ReactElement {
         }}
         loadingResultId={loadingResultId}
         onKeyDown={handleListKeyDown}
+        replacePreview={replaceMode.preview}
       />
 
       <LoadMoreButton
-        hasMore={hasMore}
+        // The replace preview fetches every page itself.
+        hasMore={hasMore && !replaceMode.active}
         loading={searchLoading}
         onLoadMore={loadMore}
         className="search-load-more"

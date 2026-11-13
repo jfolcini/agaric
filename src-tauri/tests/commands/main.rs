@@ -17,6 +17,7 @@ mod prelude;
 
 mod agenda_cmd_tests;
 mod attachment_engine_tests;
+mod batch_edit_tests;
 mod bibliography_cmd_tests;
 mod block_cmd_tests;
 mod block_ref_link_tests;
