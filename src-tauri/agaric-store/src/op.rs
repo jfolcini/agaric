@@ -818,10 +818,11 @@ pub const BUILTIN_PROPERTY_DEFS: [BuiltinPropertyDef; 15] = [
 /// merge moves neither from nor onto (#5841): the built-ins the app sets itself,
 /// the template markers, the image layout, a migration marker,
 /// `attachments`, the key a file writes a block's files under (#6277
-/// decision 9), `bookmark`, a page's place in the sidebar's bookmarks, and
-/// `saved_view`, which makes a page a saved view (#6544). Mirrored by
-/// `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts`.
-pub const INTERNAL_PROPERTY_KEYS: [&str; 17] = [
+/// decision 9), `bookmark`, a page's place in the sidebar's bookmarks,
+/// `saved_view`, which makes a page a saved view (#6544), and a PDF
+/// highlight's place in its file (#6629). Mirrored by `INTERNAL_PROPERTY_KEYS`
+/// in `src/lib/block-utils.ts`.
+pub const INTERNAL_PROPERTY_KEYS: [&str; 20] = [
     "repeat",
     "created_at",
     "completed_at",
@@ -839,6 +840,9 @@ pub const INTERNAL_PROPERTY_KEYS: [&str; 17] = [
     "attachments",
     "bookmark",
     "saved_view",
+    "pdf_attachment",
+    "pdf_page",
+    "pdf_boxes",
 ];
 
 /// Whether `key` is one of the [`INTERNAL_PROPERTY_KEYS`].

@@ -1732,6 +1732,15 @@ pub(super) fn render_clipboard_source(
     output
 }
 
+/// A PDF highlight's place in its file (#6629) is the app's: the buffer and the
+/// mirror's file leave it out, so their save keeps it, while a duplicate points
+/// back to the same page and the export writes it.
+fn drop_pdf_places(properties: &mut HashMap<String, Vec<FrontmatterRow>>) {
+    for rows in properties.values_mut() {
+        rows.retain(|prop| !matches!(prop.key.as_str(), "pdf_attachment" | "pdf_page" | "pdf_boxes"));
+    }
+}
+
 /// Steps 1-4b: every read the page is rendered from, through the caller's
 /// snapshot. What `read` does not need is left empty.
 pub(super) async fn load_page_export_data(
@@ -1773,7 +1782,10 @@ pub(super) async fn load_page_export_data(
         properties
             .retain(|prop| !matches!(prop.key.as_str(), "template" | "bookmark" | "saved_view"));
     }
-    let descendant = load_descendant_properties(conn, &descendants).await?;
+    let mut descendant = load_descendant_properties(conn, &descendants).await?;
+    if matches!(read, PageRead::Buffer | PageRead::File) {
+        drop_pdf_places(&mut descendant.properties);
+    }
     let ref_titles = if front_matter {
         resolve_property_ref_titles(conn, &properties, &descendant.properties).await?
     } else {

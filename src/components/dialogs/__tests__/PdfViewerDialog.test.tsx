@@ -13,18 +13,22 @@
  * - Save moves the owning block's `attachment:` links to the copy before the
  *   original goes, and keeps the original when the block's text cannot be read
  *   or that edit is refused (#6629)
+ * - Save adds a child block per new highlight pointing at the copy, and points
+ *   the older highlight blocks at it before the original goes (#6629)
+ * - `initialPage` opens the reader on that page
  * - Closes the dialog on close button click
  * - axe() accessibility audit
  */
 
 import { act, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { deferred } from '@/__tests__/helpers/invoke'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { t } from '@/lib/i18n'
 
 vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -40,12 +44,18 @@ const mockAddAttachmentWithBytes = vi.fn()
 const mockDeleteAttachment = vi.fn()
 const mockEditBlock = vi.fn()
 const mockGetBlock = vi.fn()
+const mockCreateBlocksBatch = vi.fn()
+const mockQueryByProperty = vi.fn()
+const mockSetProperty = vi.fn()
 vi.mock('@/lib/bindings', () => ({
   commands: {
     addAttachmentWithBytes: (...args: unknown[]) => mockAddAttachmentWithBytes(...args),
     deleteAttachment: (...args: unknown[]) => mockDeleteAttachment(...args),
     editBlock: (...args: unknown[]) => mockEditBlock(...args),
     getBlock: (...args: unknown[]) => mockGetBlock(...args),
+    createBlocksBatch: (...args: unknown[]) => mockCreateBlocksBatch(...args),
+    queryByProperty: (...args: unknown[]) => mockQueryByProperty(...args),
+    setProperty: (...args: unknown[]) => mockSetProperty(...args),
   },
 }))
 
@@ -62,7 +72,16 @@ vi.mock('@/lib/notify', () => ({ notify: mockNotify }))
 
 // ─── pdfjs-dist core (getDocument + saveDocument) ──────────────────────────
 const mockSaveDocument = vi.fn(() => Promise.resolve(new Uint8Array([1, 2, 3]).buffer))
-const mockPdfDoc = { numPages: 5, saveDocument: mockSaveDocument }
+/** pdf.js's storage of the reader's annotations; empty, it serializes without a map. */
+const emptyStorage = () => ({
+  serializable: { map: null as Map<string, unknown> | null },
+  getRawValue: (_key: string): unknown => undefined,
+})
+const mockPdfDoc = {
+  numPages: 5,
+  saveDocument: mockSaveDocument,
+  annotationStorage: emptyStorage(),
+}
 const mockGetDocument = vi.fn()
 vi.mock('pdfjs-dist', () => ({
   GlobalWorkerOptions: { workerSrc: '' },
@@ -120,6 +139,9 @@ vi.mock('pdfjs-dist/web/pdf_viewer.css', () => ({}))
 // Import AFTER mocks so the component picks them up.
 const { PdfViewerDialog } = await import('@/components/dialogs/PdfViewerDialog')
 const { createPageBlockStore, PageBlockContext } = await import('@/stores/page-blocks')
+const { useSpaceStore } = await import('@/stores/space')
+const { useUndoStore } = await import('@/stores/undo')
+const { logger } = await import('@/lib/logger')
 
 /** Render inside a page store, as every host renders the dialog. */
 function render(ui: React.ReactElement, store = createPageBlockStore('PAGE_1')) {
@@ -142,6 +164,7 @@ beforeEach(() => {
   mockAddAttachmentWithBytes.mockResolvedValue(ok({ id: 'new-att-id' }))
   mockDeleteAttachment.mockResolvedValue(ok(null))
   mockGetBlock.mockResolvedValue(ok({ id: 'block-1', content: 'Reading list' }))
+  mockPdfDoc.annotationStorage = emptyStorage()
   mockNotify.loading.mockReturnValue('toast-id')
   mockedUseIsMobile.mockReturnValue(false)
 })
@@ -524,6 +547,224 @@ describe('PdfViewerDialog', () => {
       expect(mockEditBlock).not.toHaveBeenCalled()
       expect(mockDeleteAttachment).not.toHaveBeenCalled()
       expect(onSaved).not.toHaveBeenCalled()
+    })
+  })
+
+  // A highlight is in the file only once saved, so Save makes its block: a
+  // child of the PDF's owner pointing at the copy. The older highlight blocks
+  // move to the copy before the original goes.
+  describe('Save turns each new highlight into a block (#6629)', () => {
+    /** One box, top edge first, as pdf.js serializes a highlight's quad points. */
+    const QUADS = [40, 114, 140, 114, 40, 90, 140, 90]
+    const PAGE_TWO_BLOCK = {
+      blockType: 'content',
+      content: 'Page two',
+      parentId: 'block-1',
+      position: null,
+      properties: {
+        pdf_attachment: 'new-att-id',
+        pdf_page: '2',
+        pdf_boxes: '[[40,90,140,114]]',
+      },
+    }
+
+    /** The reader holds a new highlight of `passage` on page `pageIndex + 1`. */
+    function holdHighlight(passage: string, pageIndex: number): void {
+      const div = document.createElement('div')
+      div.setAttribute('aria-label', passage)
+      mockPdfDoc.annotationStorage = {
+        serializable: {
+          map: new Map([
+            ['editor_0', { annotationType: 9, id: null, pageIndex, quadPoints: QUADS }],
+          ]),
+        },
+        getRawValue: () => ({ div }),
+      }
+    }
+
+    /** The space holds the blocks `ids` pointing at the original. */
+    function highlightBlocks(ids: string[]): void {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+      mockQueryByProperty.mockResolvedValue(
+        ok({ items: ids.map((id) => makeBlock({ id })), next_cursor: null, has_more: false }),
+      )
+    }
+
+    /** The dialog on the owner's PDF, its page store's reads counted. */
+    function renderOwner() {
+      const store = createPageBlockStore('PAGE_1')
+      const load = vi.fn(() => Promise.resolve())
+      store.setState({ load })
+      const onSaved = vi.fn()
+      render(
+        <PdfViewerDialog
+          open
+          onOpenChange={vi.fn()}
+          fileUrl="blob:t"
+          filename="report.pdf"
+          blockId="block-1"
+          attachmentId="att-1"
+          onSaved={onSaved}
+        />,
+        store,
+      )
+      return { onSaved, load }
+    }
+
+    async function save(): Promise<void> {
+      await waitFor(() => {
+        expect(screen.getByTestId('pdf-save')).toBeInTheDocument()
+      })
+      act(() => {
+        lastEventBus?.dispatch('editingstateschanged', { details: { isEmpty: false } })
+      })
+      await userEvent.setup().click(screen.getByTestId('pdf-save'))
+    }
+
+    beforeEach(() => {
+      useUndoStore.setState({ pages: new Map() })
+      mockCreateBlocksBatch.mockResolvedValue(
+        ok({ blocks: [], op_refs: [{ device_id: 'DEV', seq: 7 }] }),
+      )
+      mockSetProperty.mockImplementation((id: string) =>
+        Promise.resolve(ok({ ...makeBlock({ id }), op_refs: [] })),
+      )
+    })
+
+    afterEach(() => {
+      useSpaceStore.setState({ currentSpaceId: null })
+    })
+
+    it('adds a child of the owner pointing at the copy, as one undo entry', async () => {
+      holdHighlight('Page two', 1)
+      const { onSaved, load } = renderOwner()
+      await save()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(mockCreateBlocksBatch).toHaveBeenCalledWith([PAGE_TWO_BLOCK])
+      expect(
+        useUndoStore
+          .getState()
+          .pages.get('PAGE_1')
+          ?.undoStack.map((e) => e.refs),
+      ).toEqual([[{ device_id: 'DEV', seq: 7 }]])
+      // Block mode shows the new block from the store's own read.
+      expect(load).toHaveBeenCalledTimes(1)
+      expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
+    })
+
+    it('sends no block for a save without a new highlight', async () => {
+      const { onSaved } = renderOwner()
+      await save()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(mockCreateBlocksBatch).not.toHaveBeenCalled()
+    })
+
+    it('still saves the file and replaces the original when the blocks are refused', async () => {
+      holdHighlight('Page two', 1)
+      mockCreateBlocksBatch.mockResolvedValue({
+        status: 'error',
+        error: { kind: 'database', message: 'x' },
+      })
+      const { onSaved } = renderOwner()
+      await save()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(mockNotify.error).toHaveBeenCalledWith(t('pdfViewer.highlightBlocksFailed'))
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'PdfViewerDialog',
+        'adding the highlight blocks failed',
+        { ownerId: 'block-1' },
+        expect.anything(),
+      )
+      expect(mockNotify.success).toHaveBeenCalledWith(t('pdfViewer.saved'))
+      expect(useUndoStore.getState().pages.get('PAGE_1')).toBeUndefined()
+      expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
+    })
+
+    it('points the older highlight blocks at the copy before the original goes', async () => {
+      highlightBlocks(['hl-1', 'hl-2'])
+      const second = deferred<unknown>()
+      mockSetProperty.mockImplementation((id: string) =>
+        id === 'hl-2' ? second.promise : Promise.resolve(ok({ ...makeBlock({ id }), op_refs: [] })),
+      )
+      const { onSaved } = renderOwner()
+      await save()
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledTimes(2)
+      })
+      expect(mockQueryByProperty).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'pdf_attachment', valueText: 'att-1', cursor: null }),
+        { kind: 'active', space_id: 'SPACE_1' },
+      )
+      expect(mockSetProperty.mock.calls).toEqual([
+        ['hl-1', 'pdf_attachment', { value_text: 'new-att-id' }],
+        ['hl-2', 'pdf_attachment', { value_text: 'new-att-id' }],
+      ])
+      expect(mockDeleteAttachment).not.toHaveBeenCalled()
+      second.resolve(ok({ ...makeBlock({ id: 'hl-2' }), op_refs: [] }))
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
+    })
+
+    it('keeps the original when a highlight block cannot be moved to the copy', async () => {
+      highlightBlocks(['hl-1', 'hl-2'])
+      mockSetProperty.mockImplementation((id: string) =>
+        Promise.resolve(
+          id === 'hl-2'
+            ? { status: 'error', error: { kind: 'database', message: 'x' } }
+            : ok({ ...makeBlock({ id }), op_refs: [] }),
+        ),
+      )
+      const { onSaved } = renderOwner()
+      await save()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(mockSetProperty).toHaveBeenCalledTimes(2)
+      expect(mockDeleteAttachment).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('initialPage', () => {
+    /** Load the PDF opened on `initialPage`, then lay its pages out as pdf.js does. */
+    async function openOn(initialPage: number): Promise<void> {
+      render(
+        <PdfViewerDialog
+          open
+          onOpenChange={vi.fn()}
+          fileUrl="blob:t"
+          filename="report.pdf"
+          initialPage={initialPage}
+        />,
+      )
+      await waitFor(() => {
+        expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+      })
+      act(() => {
+        lastEventBus?.dispatch('pagesinit', {})
+      })
+    }
+
+    it('opens the reader on that page', async () => {
+      await openOn(3)
+      expect(lastViewer?.currentPageNumber).toBe(3)
+    })
+
+    it('opens on the last page for a page past it', async () => {
+      await openOn(9)
+      expect(lastViewer?.currentPageNumber).toBe(5)
     })
   })
 
