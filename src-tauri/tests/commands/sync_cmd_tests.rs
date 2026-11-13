@@ -872,7 +872,7 @@ async fn sync_start_sync_after_backoff_reset_succeeds() {
     let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
     scheduler.record_failure("peer-1");
-    scheduler.record_success("peer-1"); // reset backoff
+    scheduler.clear_peer_backoff("peer-1"); // reset backoff
 
     let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into(), true).await;
     assert!(

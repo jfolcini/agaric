@@ -5962,7 +5962,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
 ///     suppression, so the toast came back on every attempt.
 ///   * A never stamped `peer_refs.synced_at` on the empty path, so
 ///     `peers_due_for_resync` — which reads that column alone — found B due
-///     forever and A redialled every `RESYNC_TICK` while `record_success` kept
+///     forever and A redialled every `RESYNC_TICK` while `clear_peer_backoff` kept
 ///     clearing the backoff.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn empty_responder_reset_is_progress_and_stamps_synced_at_4960() {
@@ -11330,7 +11330,7 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
         SyncState::Complete,
         "#2140 backoff: the recovery session must complete"
     );
-    scheduler.record_success(&b.id);
+    scheduler.clear_peer_backoff(&b.id);
     assert_eq!(
         scheduler.failure_count(&b.id),
         0,

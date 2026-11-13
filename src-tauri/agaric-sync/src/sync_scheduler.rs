@@ -308,7 +308,7 @@ struct BackoffState {
     /// shows it (#6051); it can only match a later `Busy`, also never shown.
     ///
     /// #4120: lives here, next to the streak it belongs to, because the two
-    /// places the streak resets — [`SyncScheduler::record_success`] (which
+    /// places the streak resets — [`SyncScheduler::clear_peer_backoff`] (which
     /// removes the entry) and [`SyncScheduler::clear_backoff`] (which clears
     /// the map) — are exactly the two places "the user has already been told
     /// this" stops being true. Read and written by
@@ -467,7 +467,7 @@ fn book_failure<'a>(
 /// the same safe direction [`MAX_REMEMBERED_REPORTS`]'s overflow takes, and
 /// the reason a cap is preferable to letting the map track a key set the local
 /// network decides: entries are created from mDNS-announced device ids, and
-/// only [`SyncScheduler::record_success`] / [`SyncScheduler::clear_backoff`]
+/// only [`SyncScheduler::clear_peer_backoff`] / [`SyncScheduler::clear_backoff`]
 /// remove them, so a peer that never succeeds is otherwise never evicted.
 fn evict_for_new_peer(backoff: &mut HashMap<String, BackoffState>, peer_id: &str) {
     if backoff.len() < MAX_BACKOFF_PEERS || backoff.contains_key(peer_id) {
@@ -550,7 +550,7 @@ const MIN_BACKOFF: Duration = Duration::from_secs(1);
 /// What makes eight safe is the overflow behaviour below, not the count. It
 /// comfortably holds the fixed-text causes that can genuinely alternate, and
 /// bounds the memory at eight short strings per peer *in backoff* (the map is
-/// emptied by [`SyncScheduler::record_success`] and
+/// emptied by [`SyncScheduler::clear_peer_backoff`] and
 /// [`SyncScheduler::clear_backoff`]). The number of *peers* is bounded
 /// separately by `MAX_BACKOFF_PEERS` (#4231) — this const alone bounds only
 /// the per-entry payload, which is the gap that issue names.
@@ -571,7 +571,7 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 ///
 /// The map's key set is not chosen by the user: entries are created from
 /// mDNS-announced device ids, and are removed only by
-/// [`SyncScheduler::record_success`] (that one peer) and
+/// [`SyncScheduler::clear_peer_backoff`] (that one peer) and
 /// [`SyncScheduler::clear_backoff`] (all peers). A peer that fails *forever*
 /// therefore never leaves, so on a busy or hostile LAN the map grows with the
 /// number of announcers rather than with anything the local device did — and
@@ -927,7 +927,7 @@ impl SyncScheduler {
     /// last [`MAX_REMEMBERED_REPORTS`] pairs reported for this peer in this
     /// streak. It cannot withhold a first report, a text whose bytes differ by
     /// so much as a character, the first report after the pair goes dark (or
-    /// comes back), anything after [`record_success`](Self::record_success) or
+    /// comes back), anything after [`clear_peer_backoff`](Self::clear_peer_backoff) or
     /// [`clear_backoff`](Self::clear_backoff), or an entry evicted by the cap.
     /// The backoff booking and the caller's tracing are unconditional either
     /// way.
@@ -1034,15 +1034,11 @@ impl SyncScheduler {
             .clear();
     }
 
-    /// Record a successful sync, resetting the backoff for `peer_id`.
-    pub fn record_success(&self, peer_id: &str) {
-        self.clear_peer_backoff(peer_id);
-    }
-
-    /// Forget `peer_id`'s backoff and what was reported in its streak, for a
-    /// press on Sync: the user asked, so the dial runs now and its failure is
-    /// reported even when it repeats an earlier one (#6523). Only a press may
-    /// call this; a timer or an edit that did would dial an away peer forever.
+    /// Forget `peer_id`'s backoff and what was reported in its streak. A
+    /// successful sync calls this, and so does a press on Sync: the user
+    /// asked, so the dial runs now and its failure is reported even when it
+    /// repeats an earlier one (#6523). A timer or an edit that called it would
+    /// dial an away peer forever.
     pub fn clear_peer_backoff(&self, peer_id: &str) {
         self.backoff
             .lock()
@@ -1470,12 +1466,12 @@ mod tests {
     }
 
     #[test]
-    fn record_success_resets_backoff() {
+    fn clear_peer_backoff_resets_backoff() {
         let sched = SyncScheduler::new();
         sched.record_failure("peer-a");
         sched.record_failure("peer-a");
         assert_eq!(sched.failure_count("peer-a"), 2);
-        sched.record_success("peer-a");
+        sched.clear_peer_backoff("peer-a");
         assert!(sched.may_retry("peer-a"));
         assert_eq!(sched.failure_count("peer-a"), 0);
     }
@@ -1702,7 +1698,7 @@ mod tests {
 
     /// #4231: the backoff map's key set is influenced by whatever announces
     /// itself on the local network, and an entry leaves only via
-    /// `record_success` (that peer) or `clear_backoff` (all peers) — so a peer
+    /// `clear_peer_backoff` (that peer) or `clear_backoff` (all peers) — so a peer
     /// that fails FOREVER is never evicted, and since #4201 each stuck entry
     /// can hold up to `MAX_REMEMBERED_REPORTS` strings rather than one.
     ///
@@ -1835,7 +1831,7 @@ mod tests {
         // always fall within [9 s, 11 s] of `now`.
         let sched = SyncScheduler::new();
         for _ in 0..200 {
-            sched.record_success("jitter-peer"); // reset each iteration
+            sched.clear_peer_backoff("jitter-peer"); // reset each iteration
 
             // Drive the deterministic base to exactly 8 s (1→2→4→8)
             // so the *next* record_failure doubles it to 16 s.
@@ -2738,7 +2734,7 @@ mod tests {
 
         assert!(take(&sched));
         assert!(!take(&sched));
-        sched.record_success(PEER);
+        sched.clear_peer_backoff(PEER);
         assert_eq!(
             sched.reported_failure_count(PEER),
             0,

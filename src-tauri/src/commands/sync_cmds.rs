@@ -406,8 +406,8 @@ pub async fn start_sync_inner(
         })?;
     }
 
-    // No `record_success` here: crediting before the daemon has run the sync
-    // would wipe the peer's backoff. The daemon's success path credits it.
+    // A call the user did not start clears no backoff here: the daemon's
+    // success path does, once the sync has run.
     scheduler.notify_change();
 
     Ok(info("queued", peer_id))
