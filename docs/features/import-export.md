@@ -103,7 +103,7 @@ Off by default, desktop only, and set per device: *Choose folder…* turns it on
 
 ### Daily snapshot (Settings → Data)
 
-Agaric keeps its own copies of the database. Each day, shortly after it starts (or after midnight in a session left open), it writes a snapshot beside the database in the data folder, named `notes.db.daily-<YYYY-MM-DD>`, and keeps the newest few (`MAX_KEPT_DAILY_SNAPSHOTS` in `src-tauri/src/db/daily_snapshot.rs`), deleting the older ones. Each is one complete database file holding everything saved up to that moment; attachments are not in it, they are files in the same folder. A snapshot that cannot be written (a full or read-only disk) is logged, its partial file is removed, and the next day or the next launch tries again; Agaric runs either way.
+Agaric keeps its own copies of the database. Each day, shortly after it starts (or after midnight in a session left open), it writes a snapshot beside the database in the data folder, named `notes.db.daily-<YYYY-MM-DD>`, and keeps the newest few (`MAX_KEPT_DAILY_SNAPSHOTS` in `src-tauri/src/db/daily_snapshot.rs`; fewer on Android, where storage is tighter), deleting the older ones. Each is one complete database file holding everything saved up to that moment; attachments are not in it, they are files in the same folder. A day when the disk has less free space than the database takes no snapshot, and the log says so. A snapshot that cannot be written (a full or read-only disk) is logged, its partial file is removed, and the next day or the next launch tries again; Agaric runs either way.
 
 The Data tab's *Daily snapshot* row says when the last one was taken; on desktop its *Open folder* button opens the data folder. On Android the folder is private to the app.
 

@@ -130,6 +130,26 @@ describe('useSyncStore', () => {
       useSyncStore.getState().setPeers([])
       expect(useSyncStore.getState().peers).toEqual([])
     })
+
+    // #6523 — `peer_refs` keeps each device's last sync across a restart.
+    it('takes the latest stored peer sync as the last synced time', () => {
+      useSyncStore.getState().setPeers([
+        { peerId: 'peer-1', lastSyncedAt: '2025-01-15T00:00:00.000Z', resetCount: 0, name: null },
+        { peerId: 'peer-2', lastSyncedAt: '2025-01-16T00:00:00.000Z', resetCount: 0, name: null },
+        { peerId: 'peer-3', lastSyncedAt: null, resetCount: 0, name: null },
+      ])
+      expect(useSyncStore.getState().lastSyncedAt).toBe('2025-01-16T00:00:00.000Z')
+    })
+
+    it("keeps this session's later sync over an older stored one", () => {
+      useSyncStore.getState().updateLastSynced('2025-01-17T00:00:00.000Z')
+      useSyncStore
+        .getState()
+        .setPeers([
+          { peerId: 'peer-1', lastSyncedAt: '2025-01-16T00:00:00.000Z', resetCount: 0, name: null },
+        ])
+      expect(useSyncStore.getState().lastSyncedAt).toBe('2025-01-17T00:00:00.000Z')
+    })
   })
 
   // ---------------------------------------------------------------------------
