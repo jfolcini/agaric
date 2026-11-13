@@ -14,6 +14,7 @@ Agaric exposes itself to AI agents (Claude Desktop, Cursor, Continue, and any ot
   too.
 - **Watch agent activity in real time** in the **ActivityFeed** (Settings → Agent access).
 - **Revert a whole session's edits** with one click (the **SessionRevertControls** action).
+- **Run one tool from a script** with `agaric-mcp call` (see [From a script](#from-a-script)).
 - **Open Agaric from another app** via the `agaric://` deep-link scheme.
 - **Capture quickly into Agaric** via the global Quick Capture hotkey (works even when the app is in the background) — see [editor.md](editor.md) and [keyboard.md](keyboard.md).
 
@@ -44,6 +45,20 @@ Each agent has:
 A connection without a token, or with one no agent holds, is refused with an error naming Settings → Agent access, and closed. Revoking an agent refuses its next call, even on a connection that is still open. To change an agent's access, revoke it and add a new one.
 
 **Upgrading from the two sockets.** Before agents, a read-only and a read-write socket each had a switch and a config entry (`agaric-ro`, `agaric-rw`). Those entries stop working: add one agent per client and replace that client's entries with the agent's. Access that was on stays on. A copy of `agaric-mcp` from before agents rejects `--token`, so replace any copy you made (say, on your `PATH`) with the one that ships with the app ([README § Using Agaric with MCP clients](../../README.md#using-agaric-with-mcp-clients)).
+
+## From a script
+
+`agaric-mcp call <tool> <json>` runs one tool and exits, for a cron job, a git hook, a launcher or a shell alias. It connects as the bridge does, with the same `--token`, `--socket` and `$AGARIC_MCP_SOCKET`, so the agent's mode and spaces apply. `<json>` is the tool's arguments as one JSON object; `list_spaces` with `'{}'` gives the space ids.
+
+```sh
+# Append to today's journal (a read-write agent's token)
+agaric-mcp --token agt_… call capture '{"space_id":"01HZ…","content":"Call the plumber"}'
+
+# Search, and read the hits with jq
+agaric-mcp --token agt_… call search '{"space_id":"01HZ…","query":"plumber"}' | jq -r '.items[].content'
+```
+
+The tool's result is printed on stdout as one line of JSON, and the exit status is 0. A call the app refuses (an unknown tool, a write tool on a read-only agent's token, a bad argument, a revoked token) prints the app's message on stderr and exits 1, as does an app that is not running. Arguments that are not a JSON object, or a missing `--token`, exit 2 before connecting.
 
 ## What agents can do
 
