@@ -1,4 +1,4 @@
-# Session 4024 — page mode's save of a block sends the base text
+# Session 4044 — page mode's save of a block sends the base text
 
 `Refs #6533` (the second follow-up the maintainer decided on 2026-11-13).
 
@@ -23,7 +23,17 @@ Decisions and traps:
   saves after a pause" expected `baseText: null` and now expects the block's text.
 - `page-mode-parity.test.ts` is unchanged: the base changes no op either mode writes when nothing
   was edited elsewhere.
+- `page-mode.property.test.ts` sent no base, so its backend still let the local text win. It now
+  sends it as `commandsApi` does, and brings the page in again after a step with a peer's edit
+  before it holds the backend to the document: without that reload the property fails, the
+  backend holding both edits and the document one. No save reads the page again for it.
 
-Ran: the page-mode vitest directory, typecheck, lint, and `e2e/page-mode.spec.ts`. With the base
-removed from `run`'s edit, the new unit test, the edited `remote-patch` test and the new e2e test
-go red on the stored text (`alpha!` for `Peer: alpha!`), and the call-shape assertion with them.
+Built by an earlier session on the pre-squash rebase branch; this one merged `main` (#6677 is the
+squash of that branch) and kept `main`'s side of every conflict outside this change's own hunks.
+
+Ran, on the merged tree: the page-mode and mock vitest directories, typecheck, lint, and the
+`e2e/page-mode*.spec.ts`, `journal-page-mode` and `reload-keeps-editor` specs. With the base removed from `run`'s edit, the new unit test, the edited
+`remote-patch` test and the new e2e test go red on the stored text (`alpha!` for `Peer: alpha!`),
+and the call-shape assertion with them. The property ran green on two dozen seeds and red with
+its reload removed. `just e2e-related` selects every spec tagged `@editor` or
+`@pages` in both lanes, left to CI.
