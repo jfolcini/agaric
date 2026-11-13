@@ -34,7 +34,11 @@ An independent read of the transaction and op sequence found no atomicity or ord
 
 ## What ran
 
-`cargo nextest run --workspace` in two halves (4002 and 3996 run; the second failed once on the span allowlist above and passed after the fix, re-run for the tests it touches), `cargo clippy --workspace --all-targets -- -D warnings`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `just gen-sqlx` and `just gen-bindings` with no further diff, full vitest (1101 files, 26779 passed), `npm run typecheck`, `npm run typecheck:e2e-tauri`, `npm run lint`, `prek run --all-files` and the manual stage. The whole Playwright lane ran locally on three workers: 1973 passed, 9 skipped, and the two `diagram-legibility.spec.ts` cases session 4057 names failed on this container's older Chromium.
+On the tree with `main` merged in (eleven commits; one conflict, in `e2e/error-scenarios.spec.ts`, both sides kept): `cargo nextest run --workspace` in two halves (4032 and 4026 passed), `cargo clippy --workspace --all-targets -- -D warnings`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `just gen-sqlx` and `just gen-bindings` with no diff, full vitest (1108 files, 26874 passed), `npm run typecheck`, `npm run typecheck:e2e-tauri`, `npm run lint`, `prek run --all-files` and the manual stage, and the seven Playwright specs closest to Enter and merge (50 passed).
+
+Before the merge the whole Playwright lane ran locally on three workers: 1973 passed, 9 skipped, and the two `diagram-legibility.spec.ts` cases session 4057 names failed on this container's older Chromium. An earlier second nextest half failed once, on the span allowlist above.
+
+The first run of the Rust gates after the merge filled the disk allowance: `target/debug/incremental` had grown past 10 GB. It was deleted and the gates re-run with `CARGO_INCREMENTAL=0`, as `docs/BUILD.md` says to; the `gen-sqlx` killed with that run left `.sqlx` entries deleted, restored with `git checkout`.
 
 The real-backend lane did not run here (no `tauri-driver`): the new test in `e2e-tauri/block-structure-roundtrip.e2e.ts` has its first run on the PR.
 
