@@ -17,7 +17,7 @@
  */
 
 import type { TFunction } from 'i18next'
-import { AlertCircle, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, Clock, RefreshCw } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -32,6 +32,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { StatusInfo } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
+import { waitingForPeerLabel } from '@/lib/sync-waiting-label'
 import { cn } from '@/lib/utils'
 import { type SyncState, useSyncStore } from '@/stores/sync'
 
@@ -86,6 +87,9 @@ function syncStateLabel(state: SyncState, t: (key: string) => string): string {
     case 'syncing': {
       return t('status.syncSyncing')
     }
+    case 'waiting': {
+      return t('status.syncWaiting')
+    }
     case 'error': {
       return t('status.syncError')
     }
@@ -137,6 +141,11 @@ function SyncStateIcon({ state }: { state: SyncState }): React.ReactElement {
           data-testid="sync-state-icon-syncing"
           aria-hidden="true"
         />
+      )
+    }
+    case 'waiting': {
+      return (
+        <Clock className={className} data-testid="sync-state-icon-waiting" aria-hidden="true" />
       )
     }
     case 'error':
@@ -350,6 +359,7 @@ export function StatusPanel(): React.ReactElement {
 export function SyncStatusCard(): React.ReactElement | null {
   const syncState = useSyncStore((s) => s.state)
   const syncError = useSyncStore((s) => s.error)
+  const waitingFor = useSyncStore((s) => s.waitingFor)
   const syncPeers = useSyncStore((s) => s.peers)
   const syncLastSynced = useSyncStore((s) => s.lastSyncedAt)
   const syncOpsReceived = useSyncStore((s) => s.opsReceived)
@@ -384,6 +394,12 @@ export function SyncStatusCard(): React.ReactElement | null {
           {syncError && (
             <p className="sync-panel-error text-sm text-destructive" role="alert">
               {syncError}
+            </p>
+          )}
+
+          {syncState === 'waiting' && waitingFor !== null && (
+            <p className="text-sm text-muted-foreground" data-testid="sync-panel-waiting">
+              {waitingForPeerLabel(syncPeers, waitingFor, t, now)}
             </p>
           )}
 

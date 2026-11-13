@@ -374,6 +374,7 @@ export function TrashView(): React.ReactElement {
   // array references it and a forward reference would hit the TDZ.
   const requestBatchPurge = useCallback(() => setConfirmBatchPurge(true), [])
   useTrashListShortcuts({
+    listRef,
     filteredBlocks,
     focusedIndex,
     selectedSize: selected.size,

@@ -770,84 +770,122 @@ async fn a_received_rejection_raises_an_error_event_unless_busy() {
     }
 }
 
-/// #2130: a responder must reject a peer advertising an incompatible
+/// #2130 / #6523: a responder refuses a peer advertising an incompatible
 /// `engine_format_version` UP FRONT in the HeadExchange arm — before any
-/// raw-byte Loro merge — emitting a `SyncEvent::Error`, transitioning to the
-/// terminal `Failed` state, and never producing a `LoroSync` payload.
+/// raw-byte Loro merge — and both devices learn why. The responder emits a
+/// coded `SyncEvent::Error`, ends `Failed`, and answers with a refusal frame
+/// instead of a `LoroSync`; the initiator reading that frame emits the same code.
+/// Each side's `peer_is_older` names the older device, in both directions.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn orchestrator_rejects_incompatible_engine_format() {
-    use crate::sync_events::{RecordingEventSink, SyncEvent};
+async fn an_engine_format_mismatch_is_explained_on_both_sides_naming_the_older_6523() {
+    use crate::sync_events::{RecordingEventSink, SyncErrorCode, SyncEvent};
     use std::sync::Arc;
 
-    // A peer one engine format ahead of us, and one behind: the previous release
-    // meets a build that bumped it (#5387). The responder must reject either up
-    // front rather than letting the bytes reach an import.
+    /// The one coded error `sink` saw, as `(code, peer_is_older)`.
+    fn coded_errors(sink: &RecordingEventSink) -> Vec<(Option<SyncErrorCode>, Option<bool>)> {
+        sink.events()
+            .into_iter()
+            .filter_map(|e| match e {
+                SyncEvent::Error {
+                    code,
+                    peer_is_older,
+                    ..
+                } => Some((code, peer_is_older)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // An initiator one engine format ahead of the responder, and one behind:
+    // the previous release meets a build that bumped it (#5387).
     let local = agaric_engine::loro::engine::ENGINE_FORMAT_VERSION;
-    for incompatible in [local + 1, local - 1] {
-        let (pool, _dir) = test_pool().await;
-        let materializer = Materializer::new(pool.clone());
+    for initiator_version in [local + 1, local - 1] {
+        let initiator_is_older = initiator_version < local;
 
-        let sink = Arc::new(RecordingEventSink::new());
-        let mut orch = SyncOrchestrator::new(
-            pool,
-            "local-dev".into(),
-            std::sync::Arc::new(materializer.clone()),
+        let (responder_pool, _responder_dir) = test_pool().await;
+        let responder_mat = Materializer::new(responder_pool.clone());
+        let responder_sink = Arc::new(RecordingEventSink::new());
+        let mut responder = SyncOrchestrator::new(
+            responder_pool,
+            "responder-dev".into(),
+            Arc::new(responder_mat.clone()),
         )
-        .with_event_sink(Box::new(sink.clone()));
+        .with_event_sink(Box::new(responder_sink.clone()));
 
-        let result = orch
+        let refusal = responder
             .handle_message(SyncMessage::HeadExchange {
                 heads: vec![DeviceHead {
-                    device_id: "remote-dev".into(),
+                    device_id: "initiator-dev".into(),
                     seq: 1,
                     hash: "abc".into(),
                 }],
                 loro_vvs: vec![],
-                engine_format_version: incompatible,
+                engine_format_version: initiator_version,
                 op_log_replication: false,
                 op_log_batch_chunked: false,
                 pairing_proof: None,
                 device_name: None,
                 sender_device_id: None,
             })
-            .await;
-
+            .await
+            .expect("a refusal is an answer, not a dispatch error")
+            .expect("the responder answers the initiator with the refusal frame");
         assert!(
-            result.is_err(),
-            "an incompatible engine_format_version must be rejected with an error"
+            matches!(refusal, SyncMessage::Error { .. }),
+            "the refusal is an Error frame, got {refusal:?}"
         );
         assert!(
-            matches!(orch.session().state, SyncState::Failed(_)),
-            "session must transition to the terminal Failed state, got {:?}",
-            orch.session().state
+            matches!(responder.session().state, SyncState::Failed(_)),
+            "the responder ends Failed, got {:?}",
+            responder.session().state
         );
-
-        let events = sink.events();
-        let (err, code) = events
-            .iter()
-            .find_map(|e| match e {
-                SyncEvent::Error { message, code, .. } => Some((message.clone(), *code)),
-                _ => None,
-            })
-            .expect("a SyncEvent::Error must be emitted on rejection");
         assert!(
-            err.contains("engine format"),
-            "the error message must mention the engine format, got: {err:?}"
+            responder.next_message().is_none(),
+            "a refused session queues no LoroSync (or other) payload"
         );
-        // #5728: the frontend words this one itself, off the code.
         assert_eq!(
-            code,
-            Some(crate::sync_events::SyncErrorCode::EngineFormatMismatch),
-            "the rejection carries the code the frontend translates"
-        );
-        // No LoroSync payload is ever produced: the rejection returns Err before
-        // `head_exchange_outgoing_loro`, so there is nothing queued to drain.
-        assert!(
-            orch.next_message().is_none(),
-            "a rejected session must not queue any LoroSync (or other) payload"
+            coded_errors(&responder_sink),
+            vec![(
+                Some(SyncErrorCode::EngineFormatMismatch),
+                Some(initiator_is_older)
+            )],
+            "the responder names the initiator as the older device exactly when it is \
+             (initiator v{initiator_version}, responder v{local})"
         );
 
-        materializer.shutdown();
+        let (initiator_pool, _initiator_dir) = test_pool().await;
+        let initiator_mat = Materializer::new(initiator_pool.clone());
+        let initiator_sink = Arc::new(RecordingEventSink::new());
+        let mut initiator = SyncOrchestrator::new(
+            initiator_pool,
+            "initiator-dev".into(),
+            Arc::new(initiator_mat.clone()),
+        )
+        .with_event_sink(Box::new(initiator_sink.clone()))
+        .with_expected_remote_id("responder-dev".into());
+        initiator.start().await.expect("the initiator opens");
+
+        let reply = initiator
+            .handle_message(refusal)
+            .await
+            .expect("an Error frame is a terminal answer, not a dispatch error");
+        assert!(reply.is_none(), "nothing answers a refusal, got {reply:?}");
+        assert!(
+            initiator.peer_refused_engine_format(),
+            "the initiator knows the peer refused it over the engine format"
+        );
+        assert_eq!(
+            coded_errors(&initiator_sink),
+            vec![(
+                Some(SyncErrorCode::EngineFormatMismatch),
+                Some(!initiator_is_older)
+            )],
+            "the initiator names the responder as the older device exactly when it is \
+             (initiator v{initiator_version}, responder v{local})"
+        );
+
+        responder_mat.shutdown();
+        initiator_mat.shutdown();
     }
 }
 

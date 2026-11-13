@@ -804,9 +804,11 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
         relay_url: None,
     };
     // Wrap in a timeout to prevent the test from hanging if the dial blocks.
+    // mDNS announces the peer, so its timeout is a failure, not a peer that is
+    // away (#6523).
     let was_cancelled = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        try_sync_with_peer(&ctx, &peer, &refs, None),
+        try_sync_with_peer(&ctx, &peer, &refs, Some(tokio::time::Instant::now())),
     )
     .await
     .expect("try_sync_with_peer must complete within timeout");
@@ -949,9 +951,11 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
             bind_prefix_len: None,
             relay_url: None,
         };
+        // mDNS announces the peer, so the timeout is a failure the suppression
+        // governs, not a peer that is away (#6523).
         tokio::time::timeout(
             std::time::Duration::from_secs(60),
-            try_sync_with_peer(&ctx, &peer, &refs, None),
+            try_sync_with_peer(&ctx, &peer, &refs, Some(tokio::time::Instant::now())),
         )
         .await
         .expect("the dial must exhaust its own budget well inside the test timeout");
@@ -2069,7 +2073,7 @@ async fn handle_incoming_sync_rejects_a_key_not_bound_to_the_claimed_peer_800() 
 
 /// #5728 — a paired peer one engine format behind (a 0.18 device dialling a
 /// 0.19 one) is refused over a real QUIC session, and this device's error is
-/// coded and names the peer, so the frontend can say "update both".
+/// coded and names the peer as the older device (#6523).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_older_engine_format_is_refused_with_a_coded_error_naming_the_peer_5728() {
     assert_engine_format_refused(agaric_engine::loro::engine::ENGINE_FORMAT_VERSION - 1).await;
@@ -2084,11 +2088,9 @@ async fn a_peer_sending_loro_bytes_inside_the_json_is_refused_with_the_coded_mis
     assert_engine_format_refused(4).await;
 }
 
-/// A paired peer advertising engine format `version` is refused over a real
-/// QUIC session, and this device's one coded error names it.
-///
-/// The dialling side gets no frame back: the refusal ends the session, so all
-/// it can tell is that the stream ended.
+/// A paired peer advertising an older engine format `version` is refused over a
+/// real QUIC session: this device's one coded error names it as the older
+/// device, and the dialling side gets the refusal as a frame (#6523).
 async fn assert_engine_format_refused(version: u32) {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
@@ -2121,26 +2123,31 @@ async fn assert_engine_format_refused(version: u32) {
         recv_sync_message(&mut client.recv),
     )
     .await
-    .expect("the responder ends the session");
+    .expect("the responder answers");
+    let Ok(SyncMessage::Error { message }) = reply else {
+        panic!("the dialling side gets the refusal as a frame, got {reply:?}");
+    };
     assert!(
-        reply.is_err(),
-        "the dialling side gets no frame, only the end of the stream: {reply:?}"
+        message.ends_with("update Agaric on this device"),
+        "the refusal tells the older, dialling device to update itself: {message:?}"
     );
+    client.conn.close(0u32.into(), b"test done");
     let result = tokio::time::timeout(std::time::Duration::from_secs(15), handle)
         .await
         .expect("the responder finishes")
         .expect("the responder task does not panic");
     assert!(result.is_err(), "the responder's session fails: {result:?}");
 
-    let coded: Vec<(String, crate::sync_events::SyncErrorCode)> = sink
+    let coded: Vec<(String, crate::sync_events::SyncErrorCode, Option<bool>)> = sink
         .events()
         .into_iter()
         .filter_map(|e| match e {
             SyncEvent::Error {
                 remote_device_id,
                 code: Some(code),
+                peer_is_older,
                 ..
-            } => Some((remote_device_id, code)),
+            } => Some((remote_device_id, code, peer_is_older)),
             _ => None,
         })
         .collect();
@@ -2148,11 +2155,280 @@ async fn assert_engine_format_refused(version: u32) {
         coded,
         vec![(
             "REMOTE_OLDER".to_owned(),
-            crate::sync_events::SyncErrorCode::EngineFormatMismatch
+            crate::sync_events::SyncErrorCode::EngineFormatMismatch,
+            Some(true)
         )],
-        "one coded error, naming the peer"
+        "one coded error, naming the peer as the older device"
     );
     materializer.shutdown();
+}
+
+/// Play the responder for the next inbound session on `harness`: read the
+/// initiator's `HeadExchange`, send `answer` if there is one, then end the
+/// session the way the production responder does.
+fn spawn_scripted_responder(
+    harness: &ServiceHarness,
+    answer: Option<SyncMessage>,
+) -> tokio::task::JoinHandle<()> {
+    let service = harness.service.clone();
+    tokio::spawn(async move {
+        let mut session = service
+            .accept()
+            .await
+            .expect("the accept loop does not error")
+            .expect("an inbound connection is admitted")
+            .establish()
+            .await
+            .expect("the initiator opens its stream");
+        let opening = recv_sync_message(&mut session.recv)
+            .await
+            .expect("the initiator's opening frame arrives");
+        assert!(
+            matches!(opening, SyncMessage::HeadExchange { .. }),
+            "the initiator opens with a HeadExchange, got {opening:?}"
+        );
+        let spoke_last = answer.is_some();
+        if let Some(answer) = answer {
+            send_sync_message(&mut session.send, &answer)
+                .await
+                .expect("the scripted answer is sent");
+        }
+        if let Err(e) = crate::transport::driver::finish_session(
+            spoke_last,
+            &mut session.send,
+            &session.conn,
+            crate::transport::driver::SessionLimits::default(),
+        )
+        .await
+        {
+            tracing::debug!(error = %e, "the scripted responder's close failed");
+        }
+    })
+}
+
+/// One `try_sync_with_peer` against a scripted responder on `harness`; the
+/// initiator's events and the failures it booked against `peer_ref`'s peer.
+async fn dial_scripted_responder(
+    harness: &ServiceHarness,
+    answer: Option<SyncMessage>,
+    peer_ref: PeerRef,
+) -> (Vec<SyncEvent>, u32) {
+    let responder = spawn_scripted_responder(harness, answer);
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let scheduler = SyncScheduler::new();
+    let cancel = AtomicBool::new(false);
+    let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(materializer.clone());
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_DEV",
+        materializer: &apply_host,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    let peer = discovered_service_peer(&peer_ref.peer_id, harness);
+    let peer_id = peer_ref.peer_id.clone();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(&ctx, &peer, &[peer_ref], None),
+    )
+    .await
+    .expect("try_sync_with_peer finishes");
+    tokio::time::timeout(std::time::Duration::from_secs(20), responder)
+        .await
+        .expect("the scripted responder finishes")
+        .expect("the scripted responder does not panic");
+    let failures = scheduler.failure_count(&peer_id);
+    materializer.shutdown();
+    (sink.events(), failures)
+}
+
+/// Every `SyncEvent::Error` in `events`, as `(code, peer_is_older)`.
+fn reported_errors(
+    events: &[SyncEvent],
+) -> Vec<(Option<crate::sync_events::SyncErrorCode>, Option<bool>)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            SyncEvent::Error {
+                code,
+                peer_is_older,
+                ..
+            } => Some((*code, *peer_is_older)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// #6523 — the dialling side of an engine-format refusal. The responder runs
+/// a newer format, so the refusal frame tells this device to update itself:
+/// one coded error naming the peer as the newer device, and no generic
+/// "Sync failed" after it to bury the explanation. The failure is still booked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_engine_format_refusal_reaches_the_dialling_device_coded_and_once_6523() {
+    // The refusal a real orchestrator sends an initiator on an older format.
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut newer_responder =
+        SyncOrchestrator::new(pool, "RESP6523".into(), Arc::new(materializer.clone()));
+    let mut hello = head_exchange(vec![fake_head("LOCAL_DEV")], None);
+    if let SyncMessage::HeadExchange {
+        engine_format_version,
+        ..
+    } = &mut hello
+    {
+        *engine_format_version = agaric_engine::loro::engine::ENGINE_FORMAT_VERSION - 1;
+    }
+    let refusal = newer_responder
+        .handle_message(hello)
+        .await
+        .expect("the gate answers")
+        .expect("the gate answers with a refusal frame");
+    materializer.shutdown();
+
+    let harness = ServiceHarness::new().await;
+    let (events, failures) =
+        dial_scripted_responder(&harness, Some(refusal), make_peer_ref("RESP6523")).await;
+
+    assert_eq!(
+        reported_errors(&events),
+        vec![(
+            Some(crate::sync_events::SyncErrorCode::EngineFormatMismatch),
+            Some(false)
+        )],
+        "one coded error naming the responder as the newer device, got {events:?}"
+    );
+    assert_eq!(failures, 1, "the refusal is booked against the peer");
+}
+
+/// #6523 — a peer that has synced with us before and ends the session without
+/// answering our `HeadExchange` is how a build without the refusal frame ends
+/// an engine-format mismatch, so the error is coded for the frontend to say
+/// "check the versions". A drop after the peer answered, or a silent end from
+/// a peer that never synced with us, stays an uncoded failure.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_silent_end_after_head_exchange_from_a_synced_peer_is_coded_6523() {
+    let synced = || {
+        let mut peer_ref = make_peer_ref("RESP_SYNCED_6523");
+        peer_ref.synced_at = Some(agaric_store::db::now_ms() - 86_400_000);
+        peer_ref
+    };
+    let mid_session = SyncMessage::OpLogBatch {
+        records: vec![],
+        is_last: false,
+    };
+
+    let harness = ServiceHarness::new().await;
+    let (silent, silent_failures) = dial_scripted_responder(&harness, None, synced()).await;
+    let (dropped, _) = dial_scripted_responder(&harness, Some(mid_session), synced()).await;
+    let (stranger, _) =
+        dial_scripted_responder(&harness, None, make_peer_ref("RESP_NEW_6523")).await;
+
+    assert_eq!(
+        reported_errors(&silent),
+        vec![(
+            Some(crate::sync_events::SyncErrorCode::HandshakeUnanswered),
+            None
+        )],
+        "a synced peer's silent end after HeadExchange is coded, got {silent:?}"
+    );
+    assert_eq!(silent_failures, 1, "and booked like any failure");
+    assert_eq!(
+        reported_errors(&dropped),
+        vec![(None, None)],
+        "a drop after the peer answered is an ordinary failure, got {dropped:?}"
+    );
+    assert_eq!(
+        reported_errors(&stranger),
+        vec![(None, None)],
+        "a peer that never synced with us gets no version hint, got {stranger:?}"
+    );
+}
+
+/// #6523 — a dial that times out against a paired peer mDNS is not announcing,
+/// and that has not pulled from us lately, is a device that is simply away: coded
+/// `PeerAway` on every attempt, since the frontend shows it as a state rather
+/// than a toast. Announced, still pulling from us, or never paired (the host a
+/// pairing window scanned), the same timeout stays an uncoded failure, reported
+/// once per streak.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dial_timeout_is_away_only_for_a_silent_peer_not_pulling_from_us_6523() {
+    const PEER: &str = "PEER_AWAY_6523";
+
+    /// A `peer_refs` row for the peer, last streamed to at `streamed_at`.
+    fn paired(streamed_at: Option<i64>) -> Vec<PeerRef> {
+        let mut peer_ref = make_peer_ref(PEER);
+        peer_ref.streamed_at = streamed_at;
+        vec![peer_ref]
+    }
+
+    /// Two dial cycles against an unreachable peer; the errors they reported.
+    async fn two_cycles(
+        mdns_seen_at: Option<tokio::time::Instant>,
+        refs: Vec<PeerRef>,
+    ) -> Vec<(Option<crate::sync_events::SyncErrorCode>, Option<bool>)> {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let scheduler = SyncScheduler::new().with_connect_timeout(UNANSWERED_DIAL_BUDGET);
+        let sink = Arc::new(RecordingEventSink::new());
+        let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+        let cancel = AtomicBool::new(false);
+        let harness = ServiceHarness::new().await;
+        let peer = unreachable_peer(PEER);
+        let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(materializer.clone());
+        let ctx = SyncSessionContext {
+            pool: &pool,
+            device_id: "LOCAL_DEV",
+            materializer: &apply_host,
+            scheduler: &scheduler,
+            event_sink: &event_sink,
+            cancel: &cancel,
+            endpoint: &harness.client_endpoint,
+            bind_prefix_len: None,
+            relay_url: None,
+        };
+        for _ in 0..2 {
+            scheduler.expire_backoff(PEER);
+            tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                try_sync_with_peer(&ctx, &peer, &refs, mdns_seen_at),
+            )
+            .await
+            .expect("the dial exhausts its own budget well inside the test timeout");
+        }
+        assert_eq!(scheduler.failure_count(PEER), 2, "both cycles are booked");
+        materializer.shutdown();
+        reported_errors(&sink.events())
+    }
+
+    let away = (Some(crate::sync_events::SyncErrorCode::PeerAway), None);
+    assert_eq!(
+        two_cycles(None, paired(None)).await,
+        vec![away, away],
+        "a silent peer that is not pulling from us is away, on every attempt"
+    );
+    assert_eq!(
+        two_cycles(Some(tokio::time::Instant::now()), paired(None)).await,
+        vec![(None, None)],
+        "a peer mDNS announces is on the network: its timeout is a failure, told once"
+    );
+    assert_eq!(
+        two_cycles(None, paired(Some(agaric_store::db::now_ms()))).await,
+        vec![(None, None)],
+        "a peer still pulling from us is not away: its timeout is a failure, told once"
+    );
+    assert_eq!(
+        two_cycles(None, vec![]).await,
+        vec![(None, None)],
+        "a peer this device never paired with is no device to wait for: its timeout \
+         is a failure, told once"
+    );
 }
 
 /// S-5: a second concurrent session with the same peer is refused.

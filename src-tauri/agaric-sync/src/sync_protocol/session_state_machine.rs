@@ -60,6 +60,36 @@ use crate::apply_host::ApplyHost;
 use agaric_core::error::AppError;
 use agaric_store::peer_refs;
 
+/// The refusal a responder sends an initiator on an older engine format (#6523).
+/// Worded for the device that reads it, so a build that predates the code still
+/// shows the right advice when it shows the text as is. Wire text: a dialler from
+/// #6523 on matches it exactly, so a rewording reaches that dialler uncoded.
+const ENGINE_REFUSAL_INITIATOR_OLDER: &str =
+    "the other device runs a newer version of Agaric; update Agaric on this device";
+
+/// [`ENGINE_REFUSAL_INITIATOR_OLDER`]'s mirror, for an initiator on the newer format.
+const ENGINE_REFUSAL_INITIATOR_NEWER: &str =
+    "the other device runs an older version of Agaric; update Agaric on the other device";
+
+/// The refusal frame's text for an initiator on the older format, or the newer.
+fn engine_refusal(initiator_is_older: bool) -> &'static str {
+    if initiator_is_older {
+        ENGINE_REFUSAL_INITIATOR_OLDER
+    } else {
+        ENGINE_REFUSAL_INITIATOR_NEWER
+    }
+}
+
+/// Whether the responder that sent `message` runs the older engine format, as
+/// the initiator reading it sees it; `None` for any text but the two refusals.
+fn peer_is_older_from_engine_refusal(message: &str) -> Option<bool> {
+    match message {
+        ENGINE_REFUSAL_INITIATOR_OLDER => Some(false),
+        ENGINE_REFUSAL_INITIATOR_NEWER => Some(true),
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // SyncOrchestrator — message-driven state machine
 // ---------------------------------------------------------------------------
@@ -631,6 +661,7 @@ impl SyncOrchestrator {
             message: msg_str.into(),
             remote_device_id: self.session.remote_device_id.clone(),
             code: None,
+            peer_is_older: None,
         });
         AppError::InvalidOperation(msg_str.into())
     }
@@ -732,13 +763,11 @@ impl SyncOrchestrator {
         sender_device_id: Option<String>,
     ) -> Result<Option<SyncMessage>, AppError> {
         // Gate raw-byte Loro merges by engine format before doing any
-        // import work (#2130). An incompatible peer is rejected up
-        // front with a `SyncEvent::Error` coded `EngineFormatMismatch`,
-        // which the frontend words as "update both devices" (#5728),
-        // rather than failing mid-session on a raw-byte merge.
-        //
-        // Only this side, the responder, learns why: the error ends the
-        // session without a frame, so the initiator sees the stream end.
+        // import work (#2130). An incompatible peer is refused up front
+        // rather than failing mid-session on a raw-byte merge: this side
+        // emits a `SyncEvent::Error` coded `EngineFormatMismatch`, and the
+        // initiator gets the refusal as a frame worded for it, so both
+        // devices say which one to update (#5728, #6523).
         //
         // `engine_format_version == 0` means a legacy peer predating
         // this field — fall through to the existing import-time
@@ -750,17 +779,21 @@ impl SyncOrchestrator {
         // hard incompatibility, so it is intentionally not gated.
         let local = agaric_engine::loro::engine::ENGINE_FORMAT_VERSION;
         if engine_format_version != 0 && engine_format_version != local {
+            let peer_is_older = engine_format_version < local;
             let msg = format!(
                 "peer engine format v{engine_format_version} incompatible with local v{local}"
             );
             self.state = SyncState::Failed(msg.clone());
             self.session.state = self.state.clone();
             self.emit(crate::sync_events::SyncEvent::Error {
-                message: msg.clone(),
+                message: msg,
                 remote_device_id: self.session.remote_device_id.clone(),
                 code: Some(crate::sync_events::SyncErrorCode::EngineFormatMismatch),
+                peer_is_older: Some(peer_is_older),
             });
-            return Err(AppError::InvalidOperation(msg));
+            return Ok(Some(SyncMessage::Error {
+                message: engine_refusal(peer_is_older).to_owned(),
+            }));
         }
 
         // Identify the remote device.
@@ -1093,6 +1126,7 @@ impl SyncOrchestrator {
                 message: msg.clone(),
                 remote_device_id: self.session.remote_device_id.clone(),
                 code: None,
+                peer_is_older: None,
             });
             return Err(AppError::InvalidOperation(msg));
         };
@@ -1192,6 +1226,7 @@ impl SyncOrchestrator {
                 message: msg.into(),
                 remote_device_id: self.session.remote_device_id.clone(),
                 code: None,
+                peer_is_older: None,
             });
             return Err(AppError::InvalidOperation(msg.into()));
         }
@@ -1295,15 +1330,19 @@ impl SyncOrchestrator {
                 self.session.state = SyncState::Failed(message.clone());
                 // #6051: `Busy`, the answer when both devices dial at once, is
                 // no sync failure. Every other refusal still reaches the UI in
-                // the responder's own words.
+                // the responder's own words; an engine-format refusal (#6523)
+                // in the frontend's, coded.
                 if !matches!(
                     crate::sync_daemon::Rejection::from_peer_message(&message),
                     Some(crate::sync_daemon::Rejection::Busy)
                 ) {
+                    let peer_is_older = peer_is_older_from_engine_refusal(&message);
                     self.emit(crate::sync_events::SyncEvent::Error {
                         message,
                         remote_device_id: self.session.remote_device_id.clone(),
-                        code: None,
+                        code: peer_is_older
+                            .map(|_| crate::sync_events::SyncErrorCode::EngineFormatMismatch),
+                        peer_is_older,
                     });
                 }
                 Ok(None)
@@ -2078,6 +2117,13 @@ impl SyncOrchestrator {
     /// retry / snapshot-transfer respectively.
     pub fn is_succeeded(&self) -> bool {
         self.state == SyncState::Complete
+    }
+
+    /// Whether the peer refused this session over the engine format, a
+    /// refusal this orchestrator has already reported in words (#6523).
+    pub fn peer_refused_engine_format(&self) -> bool {
+        matches!(&self.state, SyncState::Failed(reason)
+            if peer_is_older_from_engine_refusal(reason).is_some())
     }
 
     /// Returns `true` when the sync session has reached a terminal state
