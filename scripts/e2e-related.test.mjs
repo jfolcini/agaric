@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import { parseSync } from 'vite'
+
+import { initScratchRepo, scrubbedGitEnv } from './lib/git-scratch-guard.mjs'
 
 // `scripts/e2e-related.sh` picks the e2e specs a change can affect by their
 // area tags, so an untagged spec is one no change ever selects. Every
@@ -114,12 +117,10 @@ function scanSpecs() {
 }
 
 // The spec files each lane's printed command names; `ALL` for a whole lane.
-function select(paths) {
-  const res = spawnSync('bash', [SCRIPT, '--stdin'], {
-    input: paths.join('\n'),
-    cwd: ROOT,
-    encoding: 'utf8',
-  })
+const select = (paths) => selectWith(['--stdin'], { input: paths.join('\n') })
+
+function selectWith(args, { input, cwd = ROOT, env = process.env } = {}) {
+  const res = spawnSync('bash', [SCRIPT, ...args], { input, cwd, env, encoding: 'utf8' })
   assert.equal(res.status, 0, res.stderr)
   const lane = (command) => {
     const line = res.stdout
@@ -173,3 +174,57 @@ void test('a changed spec runs alone, and a deleted spec or a doc runs nothing',
   const paths = ['e2e/smoke.spec.ts', 'e2e/gone.spec.ts', 'e2e-tauri/gone.e2e.ts', 'docs/BUILD.md']
   assert.deepEqual(select(paths), { playwright: ['e2e/smoke.spec.ts'], wdio: [] })
 })
+
+// A scratch repo whose `origin/main` holds `e2e/base.spec.ts`. `commit` specs
+// land on the branch; then `base.spec.ts` is edited, one spec is staged and
+// one left untracked, so each diff source names different specs.
+function withBranch(commit, fn) {
+  const root = mkdtempSync(join(tmpdir(), 'e2e-related-'))
+  try {
+    const dir = join(root, 'repo')
+    const env = scrubbedGitEnv(root)
+    const git = initScratchRepo(dir, env)
+    mkdirSync(join(dir, 'e2e'))
+    const write = (name) => writeFileSync(join(dir, 'e2e', name), `// ${name}\n`)
+    write('base.spec.ts')
+    git('add', '-A')
+    git('commit', '-qm', 'base')
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    if (commit.length > 0) {
+      commit.forEach(write)
+      git('add', '-A')
+      git('commit', '-qm', 'branch')
+    }
+    writeFileSync(join(dir, 'e2e/base.spec.ts'), '// edited\n')
+    write('staged.spec.ts')
+    git('add', 'e2e/staged.spec.ts')
+    write('untracked.spec.ts')
+    return fn((...args) => selectWith(args, { cwd: dir, env }).playwright)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+const UNCOMMITTED = ['e2e/base.spec.ts', 'e2e/staged.spec.ts', 'e2e/untracked.spec.ts']
+
+void test('--range alone reads only the commits in the range', () =>
+  withBranch(['committed.spec.ts'], (run) => {
+    assert.deepEqual(run('--range', 'origin/main...HEAD'), ['e2e/committed.spec.ts'])
+  }))
+
+void test('--worktree alone reads only uncommitted work', () =>
+  withBranch(['committed.spec.ts'], (run) => {
+    assert.deepEqual(run('--worktree'), UNCOMMITTED)
+  }))
+
+void test('--worktree with --range reads both, in either order', () =>
+  withBranch(['committed.spec.ts'], (run) => {
+    const both = ['e2e/base.spec.ts', 'e2e/committed.spec.ts', ...UNCOMMITTED.slice(1)]
+    assert.deepEqual(run('--worktree', '--range', 'origin/main...HEAD'), both)
+    assert.deepEqual(run('--range', 'origin/main...HEAD', '--worktree'), both)
+  }))
+
+void test('--worktree with --range before the first commit reads the working tree', () =>
+  withBranch([], (run) => {
+    assert.deepEqual(run('--worktree', '--range', 'origin/main...HEAD'), UNCOMMITTED)
+  }))

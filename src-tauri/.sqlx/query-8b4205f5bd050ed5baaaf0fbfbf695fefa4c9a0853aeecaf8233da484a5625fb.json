@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\", content AS \"content!\"\n               FROM blocks\n               WHERE block_type = 'page'\n                 AND deleted_at IS NULL\n                 AND space_id = ?1\n                 AND content IS NOT NULL\n                 AND id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')\n               ORDER BY id ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "content!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "8b4205f5bd050ed5baaaf0fbfbf695fefa4c9a0853aeecaf8233da484a5625fb"
+}

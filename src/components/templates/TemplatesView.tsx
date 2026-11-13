@@ -26,7 +26,6 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notifyPageAdded } from '@/lib/name-change-bus'
-import { nameKey } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { paginationLimit } from '@/lib/safe-limit'
@@ -158,13 +157,8 @@ export function TemplatesView(): React.ReactElement {
       // page instead of creating one, so stamping the returned id would turn
       // an ordinary page into a template. Same pre-check as the welcome
       // flow's `ensureSamplePage`.
-      const spacePages = unwrap(
-        await commands.listAllPagesInSpace({ kind: 'active', space_id: activeSpaceId }, null),
-      )
-      // #6278 — under the key the backend resolves a title by.
-      if (
-        spacePages.some((page) => page.content !== null && nameKey(page.content) === nameKey(name))
-      ) {
+      const taken = unwrap(await commands.resolvePageTitle(name, requireActiveScope(activeSpaceId)))
+      if (taken.page_id !== null) {
         notify.error(t('templates.titleTaken', { name }))
         setIsCreating(false)
         return

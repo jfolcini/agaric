@@ -18,10 +18,12 @@
 
 import { type RefObject, useEffect } from 'react'
 
+import { pressesFocusedControl } from '@/hooks/useListKeyboardNavigation'
+
 interface UsePageBrowserKeyboardParams {
   /** Returns `true` when the navigation handler consumed the key. */
   navHandleKeyDown: (e: KeyboardEvent) => boolean
-  /** The list container: Enter and Space open the cursor's page only from it or from <body>. */
+  /** The list container, which gates Enter, Space and overlay keys (`pressesFocusedControl`). */
   listRef: RefObject<HTMLElement | null>
   selectAllPages: () => void
   clearMultiSelection: () => void
@@ -45,15 +47,7 @@ export function usePageBrowserKeyboard({
         target.tagName === 'TEXTAREA'
       )
         return
-      // Enter and Space press the focused control: a row's title, star or
-      // checkbox, a header button, a dialog's Cancel. Only a press on the list
-      // itself, or with nothing focused, opens the cursor's page.
-      if (
-        (e.key === 'Enter' || e.key === ' ') &&
-        target !== listRef.current &&
-        target !== document.body
-      )
-        return
+      if (pressesFocusedControl(e, listRef.current)) return
       if (navHandleKeyDown(e)) {
         e.preventDefault()
       }
@@ -76,6 +70,7 @@ export function usePageBrowserKeyboard({
         target.tagName === 'TEXTAREA'
       )
         return
+      if (pressesFocusedControl(e, listRef.current)) return
       if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault()
         selectAllPages()
@@ -88,5 +83,5 @@ export function usePageBrowserKeyboard({
     }
     document.addEventListener('keydown', handleSelectionKeys)
     return () => document.removeEventListener('keydown', handleSelectionKeys)
-  }, [selectAllPages, clearMultiSelection, multiSelectedSize])
+  }, [selectAllPages, clearMultiSelection, multiSelectedSize, listRef])
 }

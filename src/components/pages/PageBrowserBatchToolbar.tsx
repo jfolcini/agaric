@@ -30,13 +30,21 @@
  *
  * Saved views (#2003 item 1) are a separate piece — persisted
  * `{sort, filters}` view snapshots — implemented in
- * `src/lib/saved-pages-views.ts` / `SavedViewsDropdown` / `SaveViewDialog`,
- * not in this toolbar.
+ * `src/lib/saved-views.ts` / `SavedViewsDropdown` / `SaveViewDialog`, not in
+ * this toolbar.
  */
 
 import { Bookmark, BookmarkX, SlidersHorizontal, Tag, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
@@ -75,6 +83,8 @@ export interface PageBrowserBatchToolbarProps {
   onSelectAll: () => void
   /** Clear the selection. */
   onClearSelection: () => void
+  /** The pages list; focus returns to it when the selection empties from here. */
+  listRef: RefObject<HTMLElement | null>
   /** Called after a successful bulk op so the parent refreshes the list
    * (cache/materializer invalidation → query refetch). */
   onMutated: () => void
@@ -96,6 +106,7 @@ export function PageBrowserBatchToolbar({
   currentSpaceId,
   onSelectAll,
   onClearSelection,
+  listRef,
   onMutated,
 }: PageBrowserBatchToolbarProps): React.ReactElement {
   const { t } = useTranslation()
@@ -180,8 +191,8 @@ export function PageBrowserBatchToolbar({
 
   const handleToggleStar = useCallback(() => {
     if (selectedIds.length === 0) return
-    // `setMany` shows the change in every bookmark surface at once and reports
-    // its own failure, so no `notify` / `onMutated` is needed.
+    // `setMany` shows the change in every bookmark surface at once and toasts
+    // once if the write fails, so no `notify` / `onMutated` is needed here.
     setMany(selectedIds, !allStarred)
     onClearSelection()
   }, [selectedIds, allStarred, setMany, onClearSelection])
@@ -471,6 +482,7 @@ export function PageBrowserBatchToolbar({
   return (
     <BatchActionToolbar
       selectedCount={selectedIds.length}
+      listRef={listRef}
       className="page-browser-batch-toolbar gap-3 p-3"
       suppressRangeSelectHint
     >

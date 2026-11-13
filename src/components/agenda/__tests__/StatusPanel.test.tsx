@@ -756,6 +756,38 @@ describe('StatusPanel', () => {
       expect(alert).toHaveClass('sync-panel-error')
     })
 
+    // #6523 — an away device is no failure: a neutral line naming it and its
+    // own last sync, never the red alert.
+    describe('waiting for an away device', () => {
+      afterEach(() => {
+        Object.assign(mockSyncStoreState, { waitingFor: null })
+      })
+
+      it('names the device and its last sync in a neutral line, with no alert', async () => {
+        const lastSyncedAt = new Date(Date.now() - 5 * 60_000).toISOString()
+        mockSyncStoreState.peers = [
+          { peerId: 'P1', name: 'Pixel 8', lastSyncedAt } as { peerId: string },
+        ]
+        mockSyncStoreState.state = 'waiting'
+        Object.assign(mockSyncStoreState, { waitingFor: 'P1' })
+        const { container } = render(<SyncStatusCard />)
+
+        expect(screen.getByText(t('status.syncWaiting'))).toBeInTheDocument()
+        expect(screen.getByTestId('sync-panel-waiting')).toHaveTextContent(
+          t('sync.waitingForPeer', {
+            peer: 'Pixel 8',
+            time: t('sidebar.minutesAgo', { count: 5 }),
+          }),
+        )
+        expect(screen.queryByRole('alert')).toBeNull()
+        expect(screen.getByTestId('sync-state-icon-waiting')).toBeInTheDocument()
+        expect(container.querySelector('.sync-state-dot')).toHaveClass('bg-muted-foreground')
+
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
+
     it('shows sync metrics (peers count, ops received/sent)', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }, { peer_id: 'P2' }]
       mockSyncStoreState.state = 'syncing'

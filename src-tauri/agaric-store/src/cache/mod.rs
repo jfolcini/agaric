@@ -183,7 +183,8 @@ pub use block_tag_refs::{
 };
 pub use page_id::{
     PageIdWrite, rebuild_page_ids, rebuild_page_ids_split, rebuild_space_ids,
-    rebuild_space_ids_split, set_block_page_id_from_parent_in_tx, set_block_space_id_from_parent,
+    rebuild_space_ids_split, rederive_space_ids_in_tx, set_block_page_id_from_parent_in_tx,
+    set_block_space_id_from_parent,
 };
 pub use page_links::{
     rebuild_page_link_cache, rebuild_page_link_cache_split, reindex_page_link_cache_for_block,

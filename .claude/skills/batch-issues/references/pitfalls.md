@@ -26,6 +26,10 @@ Dependabot force-pushes its branch on rebase or supersession, sometimes under a 
 
 Never take a Dependabot `Cargo.lock` verbatim: it is a snapshot of an older `main` and reverts any bump landed since (an advisory fix). Apply its lock hunks three-way onto `main`; a local `cargo update -p X --precise V` can re-point unrelated edges, so read the lock diff either way.
 
+### Another session ships your item while it builds
+
+The claim check at launch does not cover the build: another session merged the same item meanwhile, and a builder cut from an older `origin/main` built a duplicate that only its reviewer caught. Before committing a builder's work, and again before launching its reviewer, `git fetch` and check `git log origin/main --since=<launch time> --grep '#N'` and the open PRs; drop the build if the item shipped.
+
 ### A staged change carried across branches
 
 After a failed commit, never `git switch` with changes still staged: they ride into the other branch. Finish or unstage first.
@@ -50,8 +54,9 @@ GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` an
 
 ## Lint and format
 
-- `oxfmt --write` reflows JSX and detaches an `oxlint-disable-next-line` from the line it covered. Use a `/* oxlint-disable rule -- reason */ … /* oxlint-enable rule */` pair, and re-run `npx oxlint` after formatting.
+- `oxfmt --write` reflows JSX and detaches an `oxlint-disable-next-line` from the line it covered. Use a `/* oxlint-disable rule -- reason */ … /* oxlint-enable rule */` pair, and re-run `npm run lint` after formatting, never bare `npx oxlint`: only the `--type-aware` run sees a floating `act()` or a stale dependency array.
 - Never `oxfmt --write .` or `npm run format`: it reformats all TOML in a style taplo rejects. Format only your files.
+- `npm audit` reds every PR on a dev-only advisory whose fix is younger than `.npmrc`'s `min-release-age`: add a dated `.nsprc` waiver (both ids when npm serves the GHSA under two), then run `node scripts/sync-audit-from-deny.mjs`.
 - A rules-config change and its linter version bump land in one commit; oxlint rejects a config naming rules it does not know.
 - Swapping `<div role="status">` for `<output>` removes the literal attribute a test may query. Grep the tests for `[role=` / `toHaveAttribute('role'` first, and run the full suite for a11y sweeps.
 - The gitleaks hook flags a random-looking fixture secret (a token like `agt_0123…cdef`) as a leaked key. Build fixtures from a repeated character (`` `agt_${'a'.repeat(32)}` ``), never an allowlist entry.
@@ -83,6 +88,7 @@ Splitting a file breaks path-keyed guards even for a verbatim move. Rebase onto 
 
 ## Shell
 
-- Never pipe a build, test run, or push through `tail` or `head`, and never read a piped exit code: `$?` is the last stage's, and a truncated log hides the failure. Redirect to a file and read the summary line.
+- Never pipe a build, test run, or push through `tail`, `head` or `grep`, and never read a piped exit code: `$?` is the last stage's, and a truncated log hides the failure. Redirect to a file and read the summary line.
+- A foreground command that outruns its tool timeout (a `flock` wait, a commit whose hooks build Rust) moves to the background, and its return reads as done: a commit made right before launching a reviewer was still in its pre-commit hooks. After any commit, read `git log --oneline -1` and `git status -s` before the next step, and give a commit with Rust hooks a long timeout.
 - `pgrep -f` / `pkill -f` match their own shell's command line. Find a process by port or PID.
 - Run a changed `.mjs` guard and its self-test on Node 22 as well as 24: 22 is the `engines` floor, and `node:sqlite` warns there only.

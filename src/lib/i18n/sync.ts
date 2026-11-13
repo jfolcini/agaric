@@ -151,11 +151,12 @@ export const sync: Record<string, string> = {
   // cost of the choice, because the setting IS that choice: what the relay
   // can and cannot see, that both devices need it, and that it takes effect
   // at the next launch (the endpoint binds once per daemon; there is no
-  // restart command). The word "relay" is deliberately absent — "connection
-  // server" says what it does to someone who has never heard of one.
+  // restart command), whose server it is and that it is opt-in (#6564). The
+  // word "relay" is deliberately absent — "connection server" says what it
+  // does to someone who has never heard of one.
   'device.internetRelayLabel': 'Local network, with an internet fallback',
   'device.internetRelayDescription':
-    "When your devices can't reach each other directly, such as behind a VPN, sync goes through a connection server on the internet. Your notes stay encrypted so it can't read them, but it sees which of your devices are talking and how much data moves. Turn this on for both devices; it takes effect the next time Agaric starts.",
+    "Off unless you turn it on. When your devices can't reach each other directly, such as behind a VPN, or a paired device is away from this network, sync tries a connection server on the internet run by n0, the makers of the iroh networking library. Your notes stay encrypted so it can't read them, but it sees which of your devices are talking and how much data moves. Turn this on for both devices; it takes effect the next time Agaric starts.",
   'device.internetRelayLoadFailed': 'Failed to load the internet fallback setting',
   'device.internetRelaySaveFailed': 'Failed to save the internet fallback setting',
   'device.noAddress': 'No address',
@@ -230,13 +231,26 @@ export const sync: Record<string, string> = {
   // it says the true thing it can say and claims no number.
   'sync.changesAppliedUnknownCount': 'Synced changes from device',
   'sync.failed': 'Sync failed: {{message}}',
-  // #5728 — the peer runs another engine format (`SyncErrorCode`), which only
-  // updating both devices fixes. The unnamed form is for a peer this device
-  // has no name for.
-  'sync.versionMismatch':
-    'This device and {{peer}} run different versions of Agaric. Update both to the latest version, then sync again.',
-  'sync.versionMismatchUnnamed':
-    'This device and the other device run different versions of Agaric. Update both to the latest version, then sync again.',
+  // #5728 — the peer runs another engine format (`SyncErrorCode`); updating the
+  // older device fixes it, and `peer_is_older` says which one that is (#6523).
+  // The unnamed form is for a peer this device has no name for.
+  'sync.versionMismatchUpdatePeer':
+    '{{peer}} runs an older version of Agaric. Update Agaric on {{peer}}, then sync again.',
+  'sync.versionMismatchUpdatePeerUnnamed':
+    'The other device runs an older version of Agaric. Update Agaric on it, then sync again.',
+  'sync.versionMismatchUpdateThisDevice':
+    '{{peer}} runs a newer version of Agaric. Update Agaric on this device, then sync again.',
+  'sync.versionMismatchUpdateThisDeviceUnnamed':
+    'The other device runs a newer version of Agaric. Update Agaric on this device, then sync again.',
+  // #6523 — a peer that synced before ended the session without answering;
+  // an older build ends a version mismatch that way.
+  'sync.handshakeUnanswered':
+    'Sync with {{peer}} could not start. Check that both devices run the same version of Agaric.',
+  'sync.handshakeUnansweredUnnamed':
+    'Sync could not start. Check that both devices run the same version of Agaric.',
+  // #6523 — a paired device that is away: no announcement, no answer.
+  'sync.waitingForPeer': 'Waiting for {{peer}}, last synced {{time}}',
+  'sync.waitingForPeerNeverSynced': 'Waiting for {{peer}}',
   'sync.retryAction': 'Retry sync',
   'sync.backOnline': 'Back online. Syncing\u2026',
   'sync.noPeersTitle': 'No devices paired',

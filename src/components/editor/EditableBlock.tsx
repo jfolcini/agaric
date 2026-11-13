@@ -98,6 +98,7 @@ function persistUnmount(
   // Read BEFORE `unmount()` resets it: the flush classifies the edit against
   // the content the editor was mounted with (#5160 D2).
   const loaded = re.originalMarkdown
+  const base = re.storedMarkdown
   const changed = re.unmount()
   // #770 gap 1 — drop the previous block's draft row so it can't resurrect at
   // boot. Best-effort; deleting an absent row is a harmless no-op.
@@ -130,6 +131,7 @@ function persistUnmount(
     blockId: prevId,
     loaded,
     changed,
+    base,
     edit: editFn,
     splitBlock: splitBlockFn,
     rootParentId,
