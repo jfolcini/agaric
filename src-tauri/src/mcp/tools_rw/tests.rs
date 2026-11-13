@@ -2031,6 +2031,8 @@ async fn append_block_emits_blocks_changed_for_owning_page() {
         vec![vec![page_id]],
         "append_block must emit blocks:changed with the owning page id",
     );
+    // #6541 — the agent's op is a page op the positional undo numbers.
+    assert_eq!(emitter.local_ops_appended(), vec![true]);
     // Content-only write emits no property-changed event.
     assert!(emitter.property_changed().is_empty());
 }

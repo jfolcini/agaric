@@ -183,7 +183,7 @@ export const commands = {
 	/**  Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`]. */
 	getBacklinks: (blockId: BlockId, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, scope })),
 	/**  Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`]. */
-	getBlockHistory: (blockId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppError>(__TAURI_INVOKE("get_block_history", { blockId, opTypeFilter, cursor, limit })),
+	getBlockHistory: (blockId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry_Serialize>, AppError>(__TAURI_INVOKE("get_block_history", { blockId, opTypeFilter, cursor, limit })),
 	/**  Tauri command: get materializer queue status. Delegates to [`get_status_inner`]. */
 	getStatus: () => typedError<StatusInfo, AppError>(__TAURI_INVOKE("get_status")),
 	/**
@@ -391,7 +391,7 @@ export const commands = {
 	/**  Tauri command: batch-fetch properties. Delegates to [`get_batch_properties_inner`]. */
 	getBatchProperties: (blockIds: BlockId[]) => typedError<{ [key in string]: PropertyRow[] }, AppError>(__TAURI_INVOKE("get_batch_properties", { blockIds })),
 	/**  Tauri command: list page history. Delegates to [`list_page_history_inner`]. */
-	listPageHistory: (pageId: string, opTypeFilter: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppError>(__TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, scope, cursor, limit })),
+	listPageHistory: (pageId: string, opTypeFilter: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry_Serialize>, AppError>(__TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, scope, cursor, limit })),
 	/**  Tauri command: batch revert ops. Delegates to [`revert_ops_inner`]. */
 	revertOps: (ops: OpRef[]) => typedError<UndoResult[], AppError>(__TAURI_INVOKE("revert_ops", { ops })),
 	/**  Tauri command: undo page op. Delegates to [`undo_page_op_inner`]. */
@@ -607,9 +607,12 @@ export const commands = {
 	cancelPairing: () => typedError<null, AppError>(__TAURI_INVOKE("cancel_pairing")),
 	/**
 	 *  Tauri command: start sync with a remote peer.
-	 *  Checks backoff (#278), acquires the per-peer lock, and returns session info.
+	 * 
+	 *  `user_initiated` is `true` for a press on Sync, which dials a peer in
+	 *  backoff at once; a scheduled call passes `false` and gets state `"backoff"`
+	 *  for such a peer.
 	 */
-	startSync: (peerId: string, progress: Channel<SyncProgressUpdate>) => typedError<SyncSessionInfo, AppError>(__TAURI_INVOKE("start_sync", { peerId, progress })),
+	startSync: (peerId: string, userInitiated: boolean, progress: Channel<SyncProgressUpdate>) => typedError<SyncSessionInfo, AppError>(__TAURI_INVOKE("start_sync", { peerId, userInitiated, progress })),
 	/**  Tauri command: cancel an active sync session. */
 	cancelSync: () => typedError<null, AppError>(__TAURI_INVOKE("cancel_sync")),
 	/**
@@ -1905,8 +1908,9 @@ export type BlockRow = {
  *  of owning *page* ids (page-root block ids) touched by the write. The
  *  frontend routes this through the exact `forEachPageStore` targeted-reload
  *  machinery `useSyncEvents` already uses for `sync:complete` — mounted stores
- *  whose id is in the set reload (undo re-anchor first), and an empty/absent
- *  set falls back to reloading every mounted store. Keeping the payload shape
+ *  whose id is in the set reload (undo re-anchor first, when
+ *  `local_ops_appended`), and an empty/absent set falls back to reloading
+ *  every mounted store. Keeping the payload shape
  *  (`changed_page_ids: string[]`) equal to the `sync:complete` field is what
  *  lets the frontend consumer share one code path with no new vocabulary.
  * 
@@ -1915,6 +1919,16 @@ export type BlockRow = {
  */
 export type BlocksChangedEvent = {
 	changed_page_ids?: string[],
+	/**
+	 *  Whether the write appended local ops (`is_replicated = 0`): an MCP
+	 *  write, a Markdown mirror ingest, a post-sync placement or repair
+	 *  (#6541). Those can shift the numbering a page's positional undo
+	 *  addresses, so the frontend re-anchors the pages' undo. A sync session's
+	 *  own changes are a peer's replicated ops, which that numbering leaves
+	 *  out, so `false` keeps the pages' undo and redo. The frontend reads an
+	 *  absent field as `true`.
+	 */
+	local_ops_appended: boolean,
 };
 
 /**  Metadata returned by [`collect_bug_report_metadata`]. */
@@ -2599,7 +2613,10 @@ export type GroupedBacklinkResponse = {
 };
 
 /**  Row returned by block history queries (op_log entries for a block). */
-export type HistoryEntry = {
+export type HistoryEntry = HistoryEntry_Serialize | HistoryEntry_Deserialize;
+
+/**  Row returned by block history queries (op_log entries for a block). */
+export type HistoryEntry_Deserialize = {
 	device_id: string,
 	seq: number,
 	op_type: string,
@@ -2614,6 +2631,34 @@ export type HistoryEntry = {
 	 *  `reverse::reject_replicated_targets`). Local-authored ops are `false`.
 	 */
 	is_replicated: boolean,
+	/**
+	 *  The name of the MCP agent that wrote the op (`op_log.origin =
+	 *  'agent:<name>'`), absent for every other origin.
+	 */
+	agent: string | null,
+};
+
+/**  Row returned by block history queries (op_log entries for a block). */
+export type HistoryEntry_Serialize = {
+	device_id: string,
+	seq: number,
+	op_type: string,
+	payload: string,
+	/**  Epoch-ms (op_log.created_at is INTEGER since migration 0079). */
+	created_at: number,
+	/**
+	 *  #2481 phase 2: `true` for a **foreign** op replicated from a peer as
+	 *  append-only audit metadata (`op_log.is_replicated = 1`) — surfaced in
+	 *  the History view for cross-device attribution and to gate revert
+	 *  (replicated rows are not locally revertible; see
+	 *  `reverse::reject_replicated_targets`). Local-authored ops are `false`.
+	 */
+	is_replicated: boolean,
+	/**
+	 *  The name of the MCP agent that wrote the op (`op_log.origin =
+	 *  'agent:<name>'`), absent for every other origin.
+	 */
+	agent?: string | null,
 };
 
 /**
@@ -5015,7 +5060,9 @@ export type SyncErrorCode =
 /**
  *  A peer that has synced with us before ended the session without
  *  answering our `HeadExchange` (#6523). A build that predates the
- *  engine-format refusal frame ends a format mismatch exactly so.
+ *  engine-format refusal frame ends a format mismatch exactly so, and so
+ *  does a same-version peer that quits or loses its network right then:
+ *  the frontend's sentence has to stay true of both.
  */
 "handshake_unanswered";
 

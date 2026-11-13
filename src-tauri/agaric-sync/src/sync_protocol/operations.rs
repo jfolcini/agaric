@@ -13,11 +13,10 @@ use agaric_store::peer_refs;
 /// #2621 Sync-D: moved down from the app-side `dag.rs` — it decodes an
 /// [`OpTransfer`] (an `agaric-sync` type) and threads the transfer-carried
 /// `origin` (which `OpRecord::from` drops) into the engine core
-/// [`agaric_engine::dag::ingest_replicated_record`], which reuses
-/// `insert_remote_op`'s exact verification recipe (blake3 hash check,
+/// [`agaric_engine::dag::ingest_replicated_record`] (blake3 hash check,
 /// NUL-rejection gate, `SetProperty` domain validation, idempotent
-/// `INSERT OR IGNORE` on `(device_id, seq)`, divergence probe) under the audit
-/// parent-gap policy. The stored record is **never applied to state** (state
+/// `INSERT OR IGNORE` on `(device_id, seq)`, divergence probe, audit
+/// parent-gap policy). The stored record is **never applied to state** (state
 /// flows exclusively through Loro CRDT sync); the `is_replicated = 1` stamp keeps
 /// it out of boot replay, the materializer apply pipeline, and the apply cursor.
 pub async fn insert_replicated_op(
@@ -106,7 +105,7 @@ pub struct BatchIngestOutcome {
 ///   permanently blocking that device's later ops behind it. So we skip it and
 ///   let the frontier advance past it, deliberately. The resulting hash-chain
 ///   discontinuity is already a first-class state on this path:
-///   `IngestProfile::Audit` lands an unresolved `parent_seqs` pointer with a
+///   the audit ingest lands an unresolved `parent_seqs` pointer with a
 ///   `warn!` rather than rejecting it, because peer-side compaction produces
 ///   legitimate gaps too.
 ///
@@ -523,6 +522,50 @@ pub fn check_reset_required(
         };
 
         if peer_own > local_own {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the peer advertised, for some space, state we do not hold and have
+/// not already answered: what makes a responder pull back (#6551).
+///
+/// `answered` is what this peer advertised at its last completed session with
+/// us (`peer_refs.loro_vv_bytes`). A space whose advertisement has not moved
+/// since then is skipped: we were shown it once, and the pull it prompted either
+/// closed the gap or could not (a blob parked on a missing dependency, a reset),
+/// in which case pulling again on every session would bounce the two devices
+/// off each other. The periodic pull retries that gap at its own pace.
+pub fn peer_advertises_news(
+    local_loro_vvs: &[SpaceVersionVector],
+    peer_loro_vvs: &[SpaceVersionVector],
+    answered: &[SpaceVersionVector],
+) -> Result<bool, AppError> {
+    let decode = |svv: &SpaceVersionVector| {
+        loro::VersionVector::decode(&svv.vv).map_err(|e| {
+            AppError::validation(format!(
+                "peer_advertises_news: decode loro_vv for space {}: {e}",
+                svv.space_id.as_str()
+            ))
+        })
+    };
+    for peer_svv in peer_loro_vvs {
+        if answered.contains(peer_svv) {
+            continue;
+        }
+        let peer_vv = decode(peer_svv)?;
+        let local_vv = match local_loro_vvs
+            .iter()
+            .find(|local| local.space_id == peer_svv.space_id)
+        {
+            Some(local) => decode(local)?,
+            None => loro::VersionVector::default(),
+        };
+        let ahead = peer_vv
+            .iter()
+            .any(|(peer, counter)| *counter > local_vv.get(peer).copied().unwrap_or(0));
+        if ahead {
             return Ok(true);
         }
     }

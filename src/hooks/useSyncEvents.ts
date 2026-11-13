@@ -74,8 +74,9 @@ export function codedSyncErrorMessage(payload: SyncError): string | null {
 /**
  * #1071 / #2505 — the shared targeted page-store reload. Given the set of
  * owning-page ids touched by an out-of-band write (a remote sync session or an
- * MCP write), reload + undo-re-anchor ONLY the mounted page stores whose id is
- * in the set, then run one resolve-cache preload and `invalidateDerivedCaches`.
+ * MCP write), reload + undo-re-anchor (unless `reanchorUndo: false`) ONLY the
+ * mounted page stores whose id is in the set, then run one resolve-cache
+ * preload and `invalidateDerivedCaches`.
  * `QuickCaptureDialog` calls it for its own write too (#5291).
  *
  * FALLBACK: when `changedPageIds` is absent or empty (an older peer, the
@@ -83,9 +84,10 @@ export function codedSyncErrorMessage(payload: SyncError): string | null {
  * ancestor) reload EVERY mounted store plus a full preload — when in doubt we
  * fall back rather than risk a missed update.
  *
- * `reanchorUndo: false` keeps each page's undo and redo: for a local write
- * whose op belongs to no page (a space's option rename), which shifts no
- * page's op-log positions.
+ * `reanchorUndo: false` keeps each page's undo and redo, for a write that
+ * shifts no page's op-log positions: a sync session's (a peer's replicated
+ * ops, #6541), or a local write whose op belongs to no page (a space's option
+ * rename).
  */
 export function reloadChangedPageStores(
   changedPageIds?: string[],
@@ -226,8 +228,8 @@ export function useSyncEvents(): void {
         }
 
         // #1071 — TARGETED invalidation via the shared `reloadChangedPageStores`
-        // helper: when `changed_page_ids` is present and non-empty, reload +
-        // re-anchor ONLY the mounted page stores in the set; otherwise fall
+        // helper: when `changed_page_ids` is present and non-empty, reload
+        // ONLY the mounted page stores in the set; otherwise fall
         // back to reloading every mounted store. The same helper backs the
         // #2505 `blocks:changed` (MCP-write) listener, so both out-of-band
         // write sources share one reconciliation path.
@@ -237,7 +239,11 @@ export function useSyncEvents(): void {
         // precisely the full-reload case. Before #4305 that path emitted
         // `ops_received: 0` and so reloaded nothing at all, despite its own
         // comment promising the frontend would fall back to a full reload.
-        reloadChangedPageStores(changed_page_ids)
+        //
+        // #6541 — a session appends only the peer's ops, replicated rows the
+        // positional undo does not number, so each page keeps its undo and
+        // redo. A placement or repair after it says so on `blocks:changed`.
+        reloadChangedPageStores(changed_page_ids, { reanchorUndo: false })
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:complete handler failed', undefined, err)
       }
@@ -325,12 +331,14 @@ export function useSyncEvents(): void {
   // page updates without navigation — no toast, no ops counter, just the
   // reconciliation. #5251: the backend also sends it after a sync session
   // once its post-sync cache rebuild has drained, so the graph and the Pages
-  // list refetch with `page_id` / `page_link_cache` current.
+  // list refetch with `page_id` / `page_link_cache` current. #6541: undo
+  // re-anchors unless the event says no local ops were appended.
   useTauriEventListener<BlocksChangedEvent>(
     EVENT_BLOCKS_CHANGED,
     (event) => {
       try {
-        reloadChangedPageStores(event.payload.changed_page_ids)
+        const { changed_page_ids, local_ops_appended } = event.payload
+        reloadChangedPageStores(changed_page_ids, { reanchorUndo: local_ops_appended !== false })
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'blocks:changed handler failed', undefined, err)
       }

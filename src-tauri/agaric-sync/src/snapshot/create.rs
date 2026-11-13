@@ -3,63 +3,17 @@ use std::collections::BTreeMap;
 
 use agaric_core::error::AppError;
 
-/// Compute the op frontier: `device_id → max seq` and the hash of the latest op.
+/// Compute the op frontier: `device_id → max seq`, the bound
+/// [`compact_op_log`]'s DELETE runs against.
 ///
-/// Returns `(BTreeMap::new(), String::new())` on an empty op_log rather than
-/// erroring. [`compact_op_log`] gates the call behind its own row-count check,
-/// so that shape is only reachable from tests today.
-///
-/// # `up_to_hash` is opaque, `up_to_seqs` is the real causal anchor
-///
-/// Note for anyone grepping the tree for op-log ordering after #4402: #4402
-/// canonicalised the sweep/history/reverse comparators
-/// (`agaric_store::op_log::BlockEditScan`, `commands::history`, `reverse::*`)
-/// onto `(created_at, seq, device_id)` and left none of the
-/// `device_id`-before-`seq` shape behind in those layers. This `ORDER BY` — in
-/// the compaction layer, not one of them — keeps that shape deliberately, and
-/// the rest of this section says why: the value is opaque and never compared
-/// across devices, so it is not an LWW decision at all.
-///
-/// This does NOT mean `(created_at, device_id, seq)` is extinct elsewhere:
-/// `db::recovery` replays in that order as its own LWW convention
-/// (`recover_blocks_from_op_log`, `recover_derived_state_from_op_log` and
-/// `recover_attachments_from_op_log`).
-///
-/// The "latest hash" returned here is selected via `ORDER BY created_at DESC,
-/// device_id DESC, seq DESC LIMIT 1` — i.e. wall-clock-ordered. Because two
-/// devices' clocks can disagree by seconds (and the op log has no global
-/// monotonic clock), the hash returned depends on which device's wall clock
-/// happened to run ahead of the other.
-///
-/// That is **deliberate, not a bug**: the value is written to
-/// `compaction_watermark.up_to_hash` as a record of what the purge reached and
-/// is read by nothing. The **real causal anchor is `up_to_seqs`** — a
-/// per-device-id `MAX(seq)` map that behaves like a vector clock, and the
-/// bound [`compact_op_log`]'s DELETE runs against.
-///
-/// # #2481 phase 1 — deliberately UNFILTERED on `is_replicated`
-///
-/// Unlike boot replay / the apply cursor (`recovery::replay`), this query does
-/// NOT add `WHERE is_replicated = 0`. That is intentional for
-/// [`compact_op_log`]'s DELETE frontier: per the #2481 design (issue body,
-/// "Compaction: foreign-device ops age out under the same 90-day
-/// snapshot-frontier policy"), replicated foreign-device audit rows are meant
-/// to be purged by the same retention sweep as locally-authored ones.
-///
-/// #3487 removed the only consumer that read `up_to_seqs[device]` as a proxy
-/// for state coverage, so the #2481-phase-2 hazard that block described — a
-/// replicated audit seq passing a coverage check it says nothing about — is no
-/// longer reachable from here.
+/// Deliberately unfiltered on `is_replicated` (#2481): replicated foreign-device
+/// audit rows age out under the same retention sweep as locally-authored ones.
 pub async fn collect_frontier(
     conn: &mut SqliteConnection,
-) -> Result<(BTreeMap<String, i64>, String), AppError> {
+) -> Result<BTreeMap<String, i64>, AppError> {
     let rows = sqlx::query!("SELECT device_id, MAX(seq) as max_seq FROM op_log GROUP BY device_id")
         .fetch_all(&mut *conn)
         .await?;
-
-    if rows.is_empty() {
-        return Ok((BTreeMap::new(), String::new()));
-    }
 
     let mut frontier = BTreeMap::new();
     for row in &rows {
@@ -68,16 +22,7 @@ pub async fn collect_frontier(
             frontier.insert(device_id.clone(), row.max_seq);
         }
     }
-
-    // Get the hash of the overall latest op (by created_at DESC, then device_id, seq)
-    // Safe to use fetch_one here: we verified above that at least one row exists.
-    let latest_hash: String = sqlx::query_scalar!(
-        "SELECT hash FROM op_log ORDER BY created_at DESC, device_id DESC, seq DESC LIMIT 1"
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-
-    Ok((frontier, latest_hash))
+    Ok(frontier)
 }
 
 /// Default retention period for op log compaction (90 days).
@@ -149,8 +94,7 @@ async fn clamp_apply_cursor_to_surviving_max(conn: &mut SqliteConnection) -> Res
     Ok(())
 }
 
-/// Purge `op_log` rows older than `retention_days` and record the frontier the
-/// purge ran to in `compaction_watermark`.
+/// Purge `op_log` rows older than `retention_days`.
 ///
 /// Returns `Some(deleted_count)` if compaction occurred, `None` if no ops
 /// predate the cutoff.
@@ -159,9 +103,8 @@ async fn clamp_apply_cursor_to_surviving_max(conn: &mut SqliteConnection) -> Res
 ///
 /// 1. **Read phase** — a DEFERRED read transaction counts eligible ops and
 ///    collects the op frontier (`up_to_seqs`). No write lock is acquired.
-/// 2. **Write phase** — one `BEGIN IMMEDIATE` transaction upserts the
-///    watermark, deletes the old ops, and clamps the apply cursor down to the
-///    surviving frontier.
+/// 2. **Write phase** — one `BEGIN IMMEDIATE` transaction deletes the old ops
+///    and clamps the apply cursor down to the surviving frontier.
 ///
 /// **Stale-read safety**: between the phases new ops may arrive. The DELETE is
 /// bounded by *both* `created_at < cutoff` *and* `seq <= up_to_seqs[device_id]`
@@ -207,39 +150,13 @@ pub async fn compact_op_log(
         return Ok(None);
     }
 
-    let (up_to_seqs, up_to_hash) = collect_frontier(&mut read_tx).await?;
+    let up_to_seqs = collect_frontier(&mut read_tx).await?;
     read_tx.commit().await?;
 
     // ── Phase 2: Write (one BEGIN IMMEDIATE transaction) ─────────────
     // `begin_immediate_logged` surfaces a stalled writer as a `warn`
     // instead of letting it disappear into the 5 s busy_timeout.
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "compact_op_log_purge").await?;
-
-    // Record the frontier this purge ran to. #4699: this replaced a
-    // zstd-CBOR dump of every derived table. Only the ROW'S EXISTENCE is
-    // read (by `agaric_engine::dag::find_lca`, to pick the
-    // compaction-aware wording for a broken edit chain); the columns are
-    // the durable record of how far the log was trimmed.
-    //
-    // Written INSIDE the purge transaction: a watermark without the purge
-    // would claim a trim that did not happen, and a purge without the
-    // watermark makes `find_lca` report a purged op as a plain NotFound.
-    let up_to_seqs_json = serde_json::to_string(&up_to_seqs)
-        .map_err(|e| AppError::Internal(format!("serialising the compaction frontier: {e}")))?;
-    let compacted_at_ms = agaric_store::db::now_ms();
-    sqlx::query!(
-        "INSERT INTO compaction_watermark (id, up_to_seqs, up_to_hash, compacted_at_ms) \
-         VALUES (1, ?, ?, ?) \
-         ON CONFLICT(id) DO UPDATE SET \
-           up_to_seqs = excluded.up_to_seqs, \
-           up_to_hash = excluded.up_to_hash, \
-           compacted_at_ms = excluded.compacted_at_ms",
-        up_to_seqs_json,
-        up_to_hash,
-        compacted_at_ms,
-    )
-    .execute(&mut *tx)
-    .await?;
 
     // Purge old ops: bounded by BOTH the time cutoff AND the phase-1
     // frontier, so ops written after the read phase are never deleted.

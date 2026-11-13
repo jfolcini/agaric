@@ -489,6 +489,12 @@ impl Peer {
 
     async fn sync(&self) -> Result<Reply, AppError> {
         let app_id = self.paired_app()?;
+        // A pull already running was not asked for here: this vault pulls back
+        // by itself once it has served the app (#6551), and such a pull may
+        // have read the app before the write this `sync` is for.
+        while self.scheduler.has_active_session() {
+            tokio::time::sleep(POLL).await;
+        }
         let before = peer_refs::get_peer_ref(&self.pools.read, app_id)
             .await?
             .and_then(|row| row.synced_at);

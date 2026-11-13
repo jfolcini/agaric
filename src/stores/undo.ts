@@ -135,11 +135,12 @@ interface UndoStore {
   clearPage: (pageId: string) => void
 
   /**
-   * Reset a page's undo state after sync applied remote ops to it (#731):
-   * remote ops shift the positional fallback, and stale redo refs may target
-   * superseded ops. Captured refs would stay valid, but reverting a change the
-   * user has since seen overwritten is surprising, so this resets fully. No-op
-   * for a page with no undo state.
+   * Reset a page's undo state after a write outside its editor appended local
+   * ops to it (#731, #6541): an MCP write, a mirror ingest, a post-sync
+   * placement or repair. Those ops shift the positional fallback's numbering,
+   * so this resets fully. A sync session's own ops are a peer's, which that
+   * numbering leaves out, so a sync keeps the stacks. No-op for a page with no
+   * undo state.
    */
   reanchorAfterRemoteOps: (pageId: string) => void
 

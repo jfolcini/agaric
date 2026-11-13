@@ -144,7 +144,31 @@ describe('startSync', () => {
     expect(result).toEqual(expected)
     expect(mockedInvoke).toHaveBeenCalledWith(
       'start_sync',
-      expect.objectContaining({ peerId: 'peer-1', progress: expect.anything() }),
+      expect.objectContaining({
+        peerId: 'peer-1',
+        userInitiated: false,
+        progress: expect.anything(),
+      }),
+    )
+  })
+
+  // #6523 — a press clears the peer's backoff on the backend and dials at once.
+  it('passes a press to start_sync as userInitiated', async () => {
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        start_sync: () => ({
+          state: 'queued',
+          local_device_id: 'local',
+          remote_device_id: 'peer-1',
+          ops_received: 0,
+          ops_sent: 0,
+        }),
+      }),
+    )
+    await startSync('peer-1', undefined, true)
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'start_sync',
+      expect.objectContaining({ peerId: 'peer-1', userInitiated: true }),
     )
   })
 

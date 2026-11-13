@@ -248,6 +248,7 @@ export const history: Record<string, string> = {
   // #2481 — foreign op badge (audit-only, not revertible here). Shared by
   // the sr-only accessible name and the visible tooltip content.
   'history.foreignOp': 'Synced from another device (audit-only; not revertible here)',
+  'history.agentOp': 'Written by agent {{name}}',
   'history.loadDiffFailed': 'Failed to load diff',
   // Part B — segmented control + primary button in the per-block
   // history panel's expanded preview state.

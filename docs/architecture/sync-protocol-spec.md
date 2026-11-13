@@ -168,8 +168,9 @@ dialler from #6523 on matches them exactly, so rewording one reaches it as an
 uncoded failure. A build from before #6523 shows the frame's text as it stands. A responder from before #6523 ends the session
 without a frame; the initiator then codes a silent end right after its
 `HeadExchange`, from a peer it has synced with before, `handshake_unanswered`,
-which the frontend words as "could not start; check that both devices run the
-same version".
+which the frontend words as "could not start; if this repeats, check that both
+devices run the same version": a same-version peer that quits or loses its
+network right then ends the session the same way.
 
 **Removed field: `wire_compression` (#2200, deleted in #3543).** It advertised
 that the sender could decompress zstd-compressed chunked `LoroSync` payloads.

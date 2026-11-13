@@ -36,8 +36,16 @@ use crate::repair::name_collisions::{EVENT_PAGES_RENAMED, PageRenamed};
 /// never propagate). Both methods take owned `Vec`/`String`s because the
 /// caller has just resolved them and has no further use for the values.
 pub trait ViewChangeEmitter: Send + Sync {
-    /// Emit [`EVENT_BLOCKS_CHANGED`] with the resolved owning-page id set.
+    /// Emit [`EVENT_BLOCKS_CHANGED`] with the resolved owning-page id set, for
+    /// a write that appended local ops, so the pages' undo re-anchors.
     fn emit_blocks_changed(&self, changed_page_ids: Vec<String>);
+
+    /// Emit [`EVENT_BLOCKS_CHANGED`] for a sync session's own changes, a
+    /// peer's replicated ops: this device appended none, so the pages keep
+    /// their undo and redo (#6541). Defaults to the form that re-anchors.
+    fn emit_blocks_changed_by_peer(&self, changed_page_ids: Vec<String>) {
+        self.emit_blocks_changed(changed_page_ids);
+    }
 
     /// Emit [`EVENT_PROPERTY_CHANGED`] with the same `{ block_id, changed_keys }`
     /// payload local property writes emit.
@@ -54,6 +62,9 @@ pub trait ViewChangeEmitter: Send + Sync {
 impl<T: ViewChangeEmitter + ?Sized> ViewChangeEmitter for Arc<T> {
     fn emit_blocks_changed(&self, changed_page_ids: Vec<String>) {
         (**self).emit_blocks_changed(changed_page_ids);
+    }
+    fn emit_blocks_changed_by_peer(&self, changed_page_ids: Vec<String>) {
+        (**self).emit_blocks_changed_by_peer(changed_page_ids);
     }
     fn emit_property_changed(&self, block_id: String, changed_keys: Vec<String>) {
         (**self).emit_property_changed(block_id, changed_keys);
@@ -99,7 +110,21 @@ impl<R: tauri::Runtime> ViewChangeEmitter for TauriViewChangeEmitter<R> {
         crate::main_thread::emit(
             &self.handle,
             EVENT_BLOCKS_CHANGED,
-            BlocksChangedEvent { changed_page_ids },
+            BlocksChangedEvent {
+                changed_page_ids,
+                local_ops_appended: true,
+            },
+        );
+    }
+
+    fn emit_blocks_changed_by_peer(&self, changed_page_ids: Vec<String>) {
+        crate::main_thread::emit(
+            &self.handle,
+            EVENT_BLOCKS_CHANGED,
+            BlocksChangedEvent {
+                changed_page_ids,
+                local_ops_appended: false,
+            },
         );
     }
 
@@ -124,8 +149,8 @@ impl<R: tauri::Runtime> ViewChangeEmitter for TauriViewChangeEmitter<R> {
 #[cfg(test)]
 #[derive(Debug, Default)]
 pub struct RecordingViewChangeEmitter {
-    /// Every `blocks:changed` emission, in order — one `Vec<String>` per call.
-    pub blocks_changed: std::sync::Mutex<Vec<Vec<String>>>,
+    /// Every `blocks:changed` emission, in order.
+    pub blocks_changed: std::sync::Mutex<Vec<BlocksChangedEvent>>,
     /// Every `block:properties-changed` emission, in order — `(block_id, changed_keys)`.
     pub property_changed: std::sync::Mutex<Vec<(String, Vec<String>)>>,
     /// Every `pages:renamed` emission, in order.
@@ -138,8 +163,23 @@ impl RecordingViewChangeEmitter {
         Self::default()
     }
 
-    /// Snapshot of every `blocks:changed` payload emitted so far.
+    /// The page ids of every `blocks:changed` emitted so far.
     pub fn blocks_changed(&self) -> Vec<Vec<String>> {
+        self.blocks_changed_events()
+            .into_iter()
+            .map(|event| event.changed_page_ids)
+            .collect()
+    }
+
+    /// Each `blocks:changed`'s `local_ops_appended`, in order.
+    pub fn local_ops_appended(&self) -> Vec<bool> {
+        self.blocks_changed_events()
+            .iter()
+            .map(|event| event.local_ops_appended)
+            .collect()
+    }
+
+    fn blocks_changed_events(&self) -> Vec<BlocksChangedEvent> {
         self.blocks_changed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -169,7 +209,19 @@ impl ViewChangeEmitter for RecordingViewChangeEmitter {
         self.blocks_changed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(changed_page_ids);
+            .push(BlocksChangedEvent {
+                changed_page_ids,
+                local_ops_appended: true,
+            });
+    }
+    fn emit_blocks_changed_by_peer(&self, changed_page_ids: Vec<String>) {
+        self.blocks_changed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(BlocksChangedEvent {
+                changed_page_ids,
+                local_ops_appended: false,
+            });
     }
     fn emit_property_changed(&self, block_id: String, changed_keys: Vec<String>) {
         self.property_changed
@@ -215,6 +267,36 @@ mod tests {
             .recv_timeout(Duration::from_secs(10))
             .expect("blocks:changed was never emitted");
         assert_eq!(emitted_on, main_thread);
+    }
+
+    /// #6541: `useSyncEvents.ts` reads `local_ops_appended` by this name, and
+    /// an absent one as `true`, so a rename would drop every page's undo and
+    /// redo on each sync.
+    #[test]
+    fn blocks_changed_says_on_the_wire_whether_local_ops_were_appended() {
+        let (app, _main_thread) = crate::main_thread::test_support::running_mock_app();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.listen(EVENT_BLOCKS_CHANGED, move |event| {
+            let _ = tx.send(event.payload().to_owned());
+        });
+        let emitter = TauriViewChangeEmitter::new(app.clone());
+
+        emitter.emit_blocks_changed(vec!["MCP".into()]);
+        emitter.emit_blocks_changed_by_peer(vec!["PEER".into()]);
+
+        let payloads: Vec<String> = (0..2)
+            .map(|_| {
+                rx.recv_timeout(Duration::from_secs(10))
+                    .expect("blocks:changed was never emitted")
+            })
+            .collect();
+        assert_eq!(
+            payloads,
+            [
+                r#"{"changed_page_ids":["MCP"],"local_ops_appended":true}"#,
+                r#"{"changed_page_ids":["PEER"],"local_ops_appended":false}"#,
+            ]
+        );
     }
 
     /// The renames notice's wire shape, which `usePageRenameNotices` reads by

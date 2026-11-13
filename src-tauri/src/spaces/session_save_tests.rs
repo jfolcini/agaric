@@ -700,3 +700,66 @@ async fn the_hydration_does_not_twin_a_peers_block_the_engine_lacks_6525() {
     a.shutdown();
     b.shutdown();
 }
+
+/// #6518 — the daily compaction can purge ops no save has covered yet (the
+/// periodic save runs every five minutes), so it saves the engines first: a
+/// kill after it boots with the purged ops' blocks still in the engine.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_compaction_before_any_save_keeps_its_blocks_after_a_kill_6518() {
+    let mut a = Device::new(DEV_A).await;
+    let space = create_space_inner(&a.pool, DEV_A, &a.mat, "Mine".into(), None)
+        .await
+        .unwrap();
+    let page = create_page_in_space_inner(
+        &a.pool,
+        DEV_A,
+        &a.mat,
+        None,
+        "P".into(),
+        space.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    let x = create_block_inner(
+        &a.pool,
+        DEV_A,
+        &a.mat,
+        "content".into(),
+        "abc".into(),
+        Some(page),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let space = SpaceId::from_trusted(space.as_str());
+    a.mat.flush_background().await.unwrap();
+    let mut tx = a.pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE op_log SET created_at = created_at - ?")
+        .bind(91_i64 * 24 * 3600 * 1000)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    crate::maintenance::op_log_compact(&a.pool, &a.mat)
+        .await
+        .unwrap();
+    let ops_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&a.pool)
+        .await
+        .unwrap();
+    assert_eq!(ops_left, 0, "every aged op is purged");
+    a.kill_and_boot().await;
+
+    assert_eq!(a.engine_content(&space, &x).as_deref(), Some("abc"));
+    a.shutdown();
+}
