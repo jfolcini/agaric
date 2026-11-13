@@ -92,7 +92,7 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+F` | Find within the current page (in-page find bar) |
-| `Ctrl+H` | Find and replace within the current page (the find bar with its replace row; the Control key on macOS) |
+| `Ctrl+H` | Find and replace within the current page (the find bar with its replace row; the Control key on macOS). With the focus in the Search view, it opens that view's replace row instead |
 | `F3` / `Shift+F3` | Next / previous in-page match |
 | `Ctrl+Shift+F` | Open the **Search** view (find across pages) |
 | `Ctrl+K` | Open the command palette (outside the editor); the header Search button opens the same palette |

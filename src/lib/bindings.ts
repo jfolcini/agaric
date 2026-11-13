@@ -50,6 +50,11 @@ export const commands = {
 	 */
 	editBlock: (blockId: BlockId, toText: string, baseText: string | null) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText, baseText })),
 	/**
+	 *  Tauri command: edit many blocks in one transaction. Delegates to
+	 *  [`edit_blocks_batch_inner`]; the response carries the appended op refs.
+	 */
+	editBlocksBatch: (edits: BlockEdit[]) => typedError<WithOps<EditBlocksBatchResponse>, AppError>(__TAURI_INVOKE("edit_blocks_batch", { edits })),
+	/**
 	 *  Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
 	 *  #4523: it also carries `affected_page_ids`, the page ids inside the cascade
@@ -1879,6 +1884,16 @@ export type BindExposureStatus = {
 };
 
 /**
+ *  One edit of [`edit_blocks_batch`]: `to_text` replaces the block's content
+ *  only while that content is still `expected`.
+ */
+export type BlockEdit = {
+	blockId: BlockId,
+	expected: string,
+	toText: string,
+};
+
+/**
  *  Newtype wrapper around ULID for type safety and consistent serialisation.
  *  Stores the canonical uppercase Crockford base32 representation.
  * 
@@ -2345,6 +2360,15 @@ export type Draft = {
 	 *  "matches the recovering device".
 	 */
 	draft_anchor_device: string | null,
+};
+
+/**  Reply of [`edit_blocks_batch`]. */
+export type EditBlocksBatchResponse = {
+	/**
+	 *  The blocks left alone, in request order: in the Trash, gone, or no
+	 *  longer holding the `expected` content.
+	 */
+	skipped: BlockId[],
 };
 
 /**
