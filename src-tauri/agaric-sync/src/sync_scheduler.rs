@@ -1027,6 +1027,9 @@ impl SyncScheduler {
     /// about is whichever unpaired endpoint answers. The blast radius is one
     /// extra dial round for any peer that happened to be in backoff, bounded to
     /// the moment a user pressed a button in the pairing dialog.
+    ///
+    /// The daemon also calls it when it binds its endpoint again (#6526): what
+    /// failed on the old network says nothing about the new one.
     pub fn clear_backoff(&self) {
         self.backoff
             .lock()

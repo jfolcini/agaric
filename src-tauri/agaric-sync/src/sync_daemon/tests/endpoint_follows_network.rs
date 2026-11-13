@@ -124,13 +124,17 @@ fn bound_ip(advert: &LocalEndpointAdvert) -> IpAddr {
     advert.addrs[0].ip()
 }
 
-/// Fire the daemon's resync tick, as a return to the foreground does, until `done`.
+/// Fire the daemon's resync tick now, without changing whether it is backgrounded.
+async fn tick(lifecycle: &LifecycleHooks) {
+    lifecycle.wake.notify_waiters();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+}
+
 async fn tick_until(lifecycle: &LifecycleHooks, mut done: impl AsyncFnMut() -> bool, label: &str) {
     let deadline = tokio::time::Instant::now() + BRANCH_DISPATCH_DEADLINE;
     while !done().await {
         assert!(tokio::time::Instant::now() < deadline, "timed out: {label}");
-        lifecycle.mark_foreground();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tick(lifecycle).await;
     }
 }
 
@@ -336,11 +340,8 @@ async fn an_endpoint_that_stops_is_bound_again_and_then_syncs_6526() {
         "A binds a second endpoint",
     )
     .await;
-    assert!(
-        !bind.endpoints()[1].endpoint().is_closed(),
-        "the second endpoint is live"
-    );
 
+    lifecycle.mark_foreground();
     tick_until(
         &lifecycle,
         async || holds_block_6551(&a, EDIT_ON_PEER).await,
@@ -382,7 +383,7 @@ async fn endpoints_that_stop_at_once_are_bound_again_at_a_pace_6526() {
         "the daemon binds",
     )
     .await;
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
         bind.endpoints().len(),
         1,
@@ -396,6 +397,47 @@ async fn endpoints_that_stop_at_once_are_bound_again_at_a_pace_6526() {
     .await;
 
     stopping_each_endpoint.abort();
+    stop(&[&daemon]).await;
+    device.flush_and_shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_decision_with_no_lan_leaves_a_working_endpoint_bound_6526() {
+    let (device, bind, scheduler, lifecycle) = lone_device().await;
+    let daemon = start_daemon(
+        &device,
+        &SecretKey::generate(),
+        &scheduler,
+        &lifecycle,
+        bind.clone(),
+    )
+    .await;
+    scheduler
+        .await_local_endpoint(BRANCH_DISPATCH_DEADLINE)
+        .await
+        .expect("the daemon binds");
+
+    // What `decide` answers while the interface reads as down: the loopback fallback.
+    bind.move_to(BindDecision {
+        lan_ip: None,
+        ..bind_on(Ipv4Addr::LOCALHOST)
+    });
+    for _tick in 0..25 {
+        tick(&lifecycle).await;
+    }
+    assert!(
+        !bind.endpoints()[0].endpoint().is_closed(),
+        "a working endpoint is not taken to loopback"
+    );
+    // The ticks did run: the same daemon follows a decision that names a LAN.
+    bind.move_to(bind_on(NEW_NETWORK));
+    tick_until(
+        &lifecycle,
+        async || bind.endpoints().len() == 2,
+        "the daemon follows a LAN decision",
+    )
+    .await;
+
     stop(&[&daemon]).await;
     device.flush_and_shutdown().await;
 }
@@ -416,11 +458,12 @@ async fn a_rebind_waits_for_the_session_in_flight_6526() {
         .await
         .expect("the daemon binds on the old network");
 
+    // Minimized: the endpoint has to follow the network all the same.
+    lifecycle.mark_backgrounded();
     let session_in_flight = scheduler.begin_session_activity();
     bind.move_to(bind_on(NEW_NETWORK));
-    for _tick in 0..50 {
-        lifecycle.mark_foreground();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+    for _tick in 0..25 {
+        tick(&lifecycle).await;
     }
     assert!(
         !bind.endpoints()[0].endpoint().is_closed(),

@@ -946,8 +946,8 @@ pub(crate) fn decide(candidates: Vec<LanInterface>, route_hint: Option<Ipv4Addr>
     // scans across `VIRTUAL_NAME_PREFIXES` + `CELLULAR_NAME_PREFIXES` — ran O(n log n)
     // times instead of once per candidate. Materialising the key makes it linear and
     // matches the loop below, which already reuses a materialised `class(candidate)`.
-    // The measured Pixel 8 enumerates 48 links; this still runs once per daemon start,
-    // not per sync, so the change is consistency rather than a measured win.
+    // The measured Pixel 8 enumerates 48 links; this runs once per bind and once per
+    // resync tick, not per sync, so the change is consistency rather than a measured win.
     let winner = rankable
         .iter()
         .copied()
@@ -1123,8 +1123,9 @@ fn host_candidates() -> Vec<LanInterface> {
 /// Enumerate the host and apply [`decide`].
 ///
 /// This is the only impure entry point; everything it decides is decided by [`decide`].
-/// It logs nothing, because the daemon asks again on every resync tick to notice a
-/// network change; [`BindDecision::log`] is called for the decision that gets bound.
+/// The decision is not logged here, because the daemon asks again on every resync tick
+/// to notice a network change; [`BindDecision::log`] is called for the one that gets
+/// bound.
 pub(crate) fn select_bind_target() -> BindDecision {
     decide(host_candidates(), default_route_source_ipv4())
 }
@@ -2521,8 +2522,8 @@ mod tests {
             assert!(
                 !is_publicly_routable(&decision.bind) || vouched,
                 "{label}: `lan_only` refuses a publicly-routable bind it cannot find in \
-                 the list, so a decision that binds one it did not enumerate is a daemon \
-                 that fails to start. bind={}, host_addrs={:?}",
+                 the list, so a decision that binds one it did not enumerate is a \
+                 bring-up that cannot succeed. bind={}, host_addrs={:?}",
                 decision.bind,
                 decision.host_addrs()
             );
@@ -2535,13 +2536,12 @@ mod tests {
     /// enumerate it *again* to decide whether that address may be claimed. Between the
     /// two sweeps an address can go away — a DHCP lease expiring, Wi-Fi roaming, a
     /// hotspot switched off — and the second sweep then refuses a bind the first sweep
-    /// had just chosen. `daemon_loop` maps that refusal to an error and the whole daemon
-    /// fails to start, where a host with genuinely no LAN would have come up on the
-    /// loopback fallback and said so: the narrow failure was strictly louder than the
-    /// total one.
+    /// had just chosen. That refusal fails the bring-up, where a host with genuinely no
+    /// LAN would have come up on the loopback fallback and said so: the narrow failure
+    /// was strictly louder than the total one.
     ///
     /// The two calls below are the two sweeps. The second argument is the only difference
-    /// between them, and it is the difference between a bound endpoint and a dead daemon.
+    /// between them, and it is the difference between a bound endpoint and a failed bring-up.
     ///
     /// Non-vacuous by construction: the fixture's LAN is `192.160.160.0/24`, real public
     /// space (the reporting hardware), so the locality gate is actually consulted — with

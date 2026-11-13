@@ -239,8 +239,8 @@ fn spawn_accept_loop(
     })
 }
 
-/// What the endpoint bring-up leaves for [`run_daemon`]: the two values the select
-/// loop reads, and the three shutdown has to release.
+/// What the endpoint bring-up leaves for [`run_daemon`]: what the select loop reads,
+/// and what closing the endpoint has to release.
 struct BoundEndpoint {
     service: Arc<SyncService>,
     /// The address the bind decision named, which a later decision is compared with.
@@ -405,7 +405,7 @@ async fn bring_up_endpoint(
     //
     // #3852 — nothing here claims "announced". `swarm-discovery` has no send-side
     // event, so the only signals are its own `tracing` output and Android's
-    // `onBlockedStatusChanged` monitor `run_daemon` installs before this call.
+    // `onBlockedStatusChanged` monitor `daemon_loop` installs before this call.
     let mdns = handle_mdns_init_result(
         crate::mdns::attach(service.endpoint(), &ctx.device_id),
         &ctx.event_sink,
@@ -616,6 +616,19 @@ struct EndpointWatch<'a> {
     bind_policy: &'a dyn BindPolicy,
 }
 
+impl EndpointWatch<'_> {
+    /// The bind policy picks a LAN address other than the bound one: Wi-Fi came up
+    /// after a launch on the loopback fallback, or a better interface appeared.
+    ///
+    /// A decision with no LAN moves nothing. An endpoint whose address is gone stops by
+    /// itself, and an interface that reads as down for a moment (Wi-Fi re-authenticating)
+    /// must not take a working endpoint to loopback.
+    fn bind_moved(&self) -> bool {
+        let target = self.bind_policy.target();
+        target.lan_ip.is_some() && target.bind.ip() != self.bound_ip
+    }
+}
+
 /// The daemon's `tokio::select!` loop on one bound endpoint.
 async fn run_select_loop(
     ctx: &SyncSessionContext<'_>,
@@ -713,18 +726,16 @@ async fn run_select_loop(
             // We still drain the tick so the interval timer's internal
             // cursor doesn't fall behind, but skip the expensive parts.
             _ = resync_interval.tick() => {
+                // #6526: asked before the foreground gate, since a minimized app has
+                // to follow the network too. A session in flight keeps its endpoint,
+                // and the next tick asks again. A connection not yet counted as a
+                // session (in its handshake, or awaiting its first frame) closes with
+                // the endpoint, and its dialler retries.
+                if endpoint.bind_moved() && !scheduler.has_active_session() {
+                    return LoopExit::Rebind;
+                }
                 if lifecycle.is_backgrounded() {
                     continue;
-                }
-                // #6526: the endpoint is live on an address the bind policy no longer
-                // picks (Wi-Fi came up after launch, a better interface appeared). A
-                // session in flight keeps its endpoint, and the next tick asks again.
-                // One admitted between this check and the close ends as a lost
-                // connection does, and its dialler retries.
-                if endpoint.bind_policy.target().bind.ip() != endpoint.bound_ip
-                    && !scheduler.has_active_session()
-                {
-                    return LoopExit::Rebind;
                 }
 
                 run_resync_round(ctx, discovered, &mut resync_ticks_since_gc).await;
@@ -760,7 +771,7 @@ async fn run_select_loop(
 }
 
 // ---------------------------------------------------------------------------
-// daemon_loop — the core async select! loop
+// run_daemon and daemon_loop — one endpoint, and the loop that keeps one bound
 // ---------------------------------------------------------------------------
 
 /// One endpoint's life: bring it up, run the select loop on it, release it.
@@ -812,9 +823,9 @@ async fn run_daemon(
     Ok(exit)
 }
 
-/// Main event-driven loop for the sync daemon.
+/// The sync daemon.
 ///
-/// Uses `tokio::select!` to react to mDNS peer-discovery events,
+/// [`run_select_loop`] uses `tokio::select!` to react to mDNS peer-discovery events,
 /// debounced local-change notifications, periodic resync checks, and
 /// shutdown signals — without polling. The shutdown branch is reached
 /// only by tests today: production never calls `SyncDaemon::shutdown`.
@@ -856,8 +867,8 @@ pub(crate) async fn daemon_loop(
     );
     // Acquire WifiManager.MulticastLock on Android so the
     // discovery crate's UDP multicast sockets receive packets. Held in
-    // a local binding so `Drop` releases it on function exit (graceful
-    // shutdown or error return). On non-Android targets this is a no-op.
+    // a local binding so `Drop` releases it on function exit. On non-Android
+    // targets this is a no-op.
     // A missing context degrades to `Err` here, and the daemon carries on
     // without peer discovery (#3847).
     #[cfg(target_os = "android")]
@@ -1073,8 +1084,9 @@ fn maybe_gc_peer_locks(scheduler: &SyncScheduler, ticks_since_gc: &mut u64) {
 ///
 /// `MdnsDisabled` is a **latching** claim: `TauriEventSink` writes
 /// `MdnsStatus { disabled: true }` and nothing writes it back, so only a failure that
-/// proves discovery is dead for the whole session may emit it. `attach` failing is such
-/// a proof — there is no discoverer at all.
+/// proves discovery is dead may emit it. `attach` failing proves it for this endpoint:
+/// there is no discoverer at all. A later bind (#6526) attaches again, and nothing
+/// clears the status when that one succeeds.
 ///
 /// Extracted so a unit test can exercise the failure path without opening multicast
 /// sockets.
@@ -1669,8 +1681,8 @@ fn dial_timeout_text(peer_id: &str, diagnosis: Option<EgressReport>) -> String {
 /// [`SyncScheduler::record_failure_and_take_report`]), so alternating causes
 /// stay suppressed. It rides on the scheduler's backoff entry, which
 /// [`SyncScheduler::record_success`] drops on the next successful pull and
-/// [`SyncScheduler::clear_backoff`] drops on a pairing act, so the next failure
-/// after either is reported again.
+/// [`SyncScheduler::clear_backoff`] drops on a pairing act and when the daemon binds
+/// its endpoint again, so the next failure after any of them is reported again.
 ///
 /// The identity refusal routes here too: its text is the constant
 /// [`IDENTITY_MISMATCH_MESSAGE`], and `streamed_at` is stamped only for the row

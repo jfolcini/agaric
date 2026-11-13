@@ -141,7 +141,7 @@ pub enum SyncEvent {
     /// once bound. The frontend should surface this to the user instead of
     /// showing an Empty peer list.
     MdnsDisabled { reason: String },
-    /// #3864: emitted once per daemon start when the sync endpoint bound a
+    /// #3864: emitted each time the sync endpoint binds a
     /// **globally-routable** address, so the QUIC listener may be reachable
     /// from outside the local network.
     ///
