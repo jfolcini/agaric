@@ -1,4 +1,4 @@
-# Session 4100 — Android: files land in Downloads, shared text opens Quick Capture, a newer release is announced, the multicast lock sleeps
+# Session 4103 — Android: files land in Downloads, shared text opens Quick Capture, a newer release is announced, the multicast lock sleeps
 
 Four Android items built without a phone, by the maintainer's decision of 2026-11-13: the code merges now, and what only a device can show becomes checklist lines on #6513. Items: #6546 boxes 1 and 3, #6555 box 2, #6526 box 3.
 
