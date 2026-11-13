@@ -220,7 +220,9 @@ export async function vaultRestoreSpaces(files: readonly File[]): Promise<VaultS
     if (slash === -1 || path === SPACE_FILE_PATH) return null
     const folder = path.slice(0, slash)
     if (`${folder}/` === AGARIC_DIR) continue
-    folders.set(folder, [...(folders.get(folder) ?? []), atPath(file, path)])
+    const folderFiles = folders.get(folder) ?? []
+    folders.set(folder, folderFiles)
+    folderFiles.push(atPath(file, path))
   }
   if (folders.size === 0) return null
   const spaces: VaultSpace[] = []
