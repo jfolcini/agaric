@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM fts_blocks WHERE rowid IN (SELECT id FROM fts_blocks_content WHERE c0 = ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "80766af14622f85e69e699fdb639a315c0670b0cae4246d3d8ad593e6de80156"
+}

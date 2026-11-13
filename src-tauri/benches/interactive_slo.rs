@@ -2697,7 +2697,8 @@ const WRITE_PATH_REPEATING_BLOCKS: usize = 200;
 /// many link rows as blocks, and the link maintenance a write pays reads that
 /// table), plus [`WRITE_PATH_PAGE_ID`] and its [`WRITE_PATH_PAGE_CHILDREN`]
 /// children. Everything joins [`SLO_SPACE_ID`], `pages_cache` takes its rows and
-/// counts from the production rebuilds, and the production `space` write
+/// counts from the production rebuilds, the search index is built by the
+/// production rebuild, and the production `space` write
 /// hydrates the page into its space's Loro engine (#2326), so the timed
 /// commands take the engine path a real vault takes rather than the SQL-only
 /// fallback. Returns the page's children in position order.
@@ -2762,11 +2763,28 @@ async fn seed_write_path_fixture(pool: &SqlitePool, materializer: &Materializer)
     .await
     .unwrap();
     materializer.flush_background().await.unwrap();
+    rebuild_fts_index(pool).await.unwrap();
 
     // Untimed shape probe (#3304): the link rows are what a write's link
-    // maintenance reads, and the page's `pages_cache` row is what its
-    // in-transaction count recompute updates. Without either, the probes
-    // time a cheaper write than a real vault's.
+    // maintenance reads, the page's `pages_cache` row is what its
+    // in-transaction count recompute updates, and the search index is what a
+    // settled write's FTS update replaces a row in (#6534). Without any of
+    // them, the probes time a cheaper write than a real vault's.
+    let (indexed, indexable): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM fts_blocks), \
+                (SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND content IS NOT NULL)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        indexed, indexable,
+        "write-path fixture: every live block with content must be indexed (#6534)"
+    );
+    assert!(
+        indexed >= FIXTURE_SIZE as i64,
+        "write-path fixture: the search index must hold the whole vault, got {indexed} (#6534)"
+    );
     let links: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_links")
         .fetch_one(pool)
         .await
@@ -2846,9 +2864,12 @@ fn report_settled(cmd: &str, acc: &Acc) {
 }
 
 /// `edit_block` — a content save on one child of the 2K-block page (#5423).
-/// Budget: the first `bench-slo` mean × 2.
+/// Budget: the first `bench-slo` mean × 2. The settled loop has one too
+/// (#6534): its background work replaces the block's row in the 100K-row
+/// search index, which scanned that index until the delete went by rowid.
 fn bench_edit_block(c: &mut Criterion) {
     const BUDGET_MS: f64 = 4.0;
+    const SETTLED_BUDGET_MS: f64 = 20.0;
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_edit_block"));
@@ -2914,8 +2935,12 @@ fn bench_edit_block(c: &mut Criterion) {
         "edit_block @ 100K: the timed edits must take the engine path, not the SQL-only fallback"
     );
 
-    report_settled("edit_block (2K-block page) settled @ 100K", &settled);
     assert_under_budget("edit_block (2K-block page) @ 100K", &acc, BUDGET_MS);
+    assert_under_budget(
+        "edit_block (2K-block page) settled @ 100K",
+        &settled,
+        SETTLED_BUDGET_MS,
+    );
 }
 
 /// `set_property` — a `todo_state` write on one child of the 2K-block page
