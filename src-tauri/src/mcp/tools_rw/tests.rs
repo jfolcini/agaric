@@ -5695,11 +5695,11 @@ async fn add_meeting_makes_what_the_app_command_makes_5364() {
         link_block_id: None,
         audio: Some(meeting::MeetingFileInput {
             filename: "call.ogg".into(),
-            bytes: audio.to_vec(),
+            bytes: audio.to_vec().into(),
         }),
         transcript: Some(meeting::MeetingFileInput {
             filename: "call.md".into(),
-            bytes: transcript.to_vec(),
+            bytes: transcript.to_vec().into(),
         }),
         summary_text: Some("Recap.".into()),
         summary_file: None,

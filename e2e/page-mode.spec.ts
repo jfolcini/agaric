@@ -36,12 +36,8 @@ import {
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const EDITOR = '[data-testid="page-mode-editor"]'
 /** A 1×1 PNG, enough for the browser to decode as an image. */
-const PNG_1X1 = [
-  ...Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-    'base64',
-  ),
-]
+const PNG_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 /** The mock's seeded `work` tag (`src/lib/tauri-mock/seed.ts`). */
 const SEED_TAG_WORK = '000000000000000000000TAG01'
 /** The mock's seeded first block of Getting Started. */
@@ -1379,7 +1375,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
       blockId: ids[1],
       filename: 'notes.txt',
       mimeType: 'text/plain',
-      bytes: [...Buffer.from('hello')],
+      bytes: btoa('hello'),
     })
     await installIpcRecorder(page)
     await openInPageMode(page, 'Page attachments', 3)

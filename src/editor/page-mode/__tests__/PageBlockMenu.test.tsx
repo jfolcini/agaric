@@ -1214,7 +1214,7 @@ describe('PageBlockMenu: other blocks', () => {
       blockId: ids[0],
       filename: 'notes.txt',
       mimeType: 'text/plain',
-      bytes: [104, 105],
+      bytes: 'aGk=',
     })
     const view = renderPageMode(pageId)
     await editorIn(view.container)

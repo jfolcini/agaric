@@ -128,6 +128,7 @@ dependencies = [
 name = "agaric-core"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "blake3",
  "chrono",
  "insta",
@@ -5936,9 +5937,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp"
-version = "0.5.14"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "addec6a0dcad8a8d96a771f815f0eaf55f9d1805756410b39f5fa81332574cbd"
+checksum = "af66907df18639dcf4db56ca65490cabc4b27a97dbadd96f2926cca73298f016"
 dependencies = [
  "cfg_aliases",
  "libc",

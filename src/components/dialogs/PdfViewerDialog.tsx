@@ -43,6 +43,7 @@ import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { unwrap } from '@/lib/app-error'
 import { attachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
+import { blobToBase64 } from '@/lib/file-utils'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { isEditableTarget } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
@@ -456,7 +457,7 @@ export function PdfViewerDialog({
           blockId,
           annotatedFilename(filename),
           'application/pdf',
-          Array.from(new Uint8Array(bytes)),
+          await blobToBase64(new Blob([bytes])),
         ),
       )
       const failed = t('pdfViewer.annotationBlocksFailed')

@@ -107,7 +107,7 @@ function assertTemplatePage(templateId: string, spaceId: string): void {
 /** The files to attach, checked before any write: audio, transcript, summary. */
 function checkedFiles(
   input: AddMeetingInput,
-): { filename: string; mimeType: string; bytes: number[] }[] {
+): { filename: string; mimeType: string; bytes: string }[] {
   const files: [Role, MeetingFileInput | null][] = [
     ['audio', input.audio ?? null],
     ['transcript', input.transcript ?? null],
