@@ -1,4 +1,4 @@
-# Session 4044 — the query builder writes search-syntax text; the differential fuzz runs on every PR
+# Session 4045 — the query builder writes search-syntax text; the differential fuzz runs on every PR
 
 `Closes #6628` (checkbox 3). `Refs #6567` (the fixed-seed fuzz; the stale-cache experiment was
 not run).
