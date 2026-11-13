@@ -32,7 +32,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { unwrap } from '@/lib/app-error'
 import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import { commands } from '@/lib/bindings'
-import { MAX_ATTACHMENT_BYTES } from '@/lib/file-utils'
+import { MAX_ATTACHMENT_BYTES, blobToBase64 } from '@/lib/file-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -137,13 +137,12 @@ function VoiceNoteRecorder({
   const save = async (recording: Recording) => {
     setPhase('saving')
     try {
-      const bytes = new Uint8Array(await recording.blob.arrayBuffer())
       unwrap(
         await commands.addAttachmentWithBytes(
           blockId,
           recording.filename,
           recording.blob.type,
-          Array.from(bytes),
+          await blobToBase64(recording.blob),
         ),
       )
       recordAttachmentInvalidation()

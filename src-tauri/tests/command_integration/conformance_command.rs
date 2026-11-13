@@ -992,7 +992,7 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
-        // The BYTES are the fixture's own literal array, so the two stacks
+        // The BYTES are the fixture's own base64 string, so the two stacks
         // upload the same content and agree on `size_bytes` — what they cannot
         // agree on is what each MINTS from it (see the `RETURN_SHAPE` entry).
         // The blob lands under the fixture's `TempDir`, which is what
@@ -1006,16 +1006,11 @@ pub(super) async fn apply_op_via_command(
                 block_id(),
                 req_str("filename"),
                 req_str("mimeType"),
-                arg("bytes")
-                    .and_then(Value::as_array)
-                    .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'bytes'"))
-                    .iter()
-                    .map(|b| {
-                        u8::try_from(b.as_u64().unwrap_or(u64::MAX)).unwrap_or_else(|_| {
-                            panic!("conformance op '{command}': bytes entry is not a u8")
-                        })
-                    })
-                    .collect(),
+                serde_json::from_value::<agaric_core::base64_bytes::Base64Bytes>(
+                    arg("bytes").cloned().unwrap_or_default(),
+                )
+                .unwrap_or_else(|e| panic!("conformance op '{command}': bytes: {e}"))
+                .0,
             )
             .await,
         ),

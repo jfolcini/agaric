@@ -2145,8 +2145,8 @@ describe('EditableBlock', () => {
   describe('drag-and-drop and paste file attachments', () => {
     // The upload path reads the file to bytes and ships them over
     // IPC; the browser file's absolute path is no longer used. Files carry
-    // real byte content (`'content'` → 7 bytes) so we can assert on the bytes.
-    const CONTENT_BYTES = [99, 111, 110, 116, 101, 110, 116]
+    // real byte content (`'content'`) so we can assert on the bytes.
+    const CONTENT_BASE64 = btoa('content')
     function makeFile(name: string, type: string): File {
       return new File(['content'], name, { type })
     }
@@ -2210,15 +2210,15 @@ describe('EditableBlock', () => {
           dataTransfer: { files: [file], types: ['Files'] },
         })
       })
+      // The file is encoded on a task `act` does not flush; the toast ends the upload.
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1))
 
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
         'BLK_1',
         'test.png',
         'image/png',
-        expect.any(Array),
+        CONTENT_BASE64,
       )
-      const arg = mockAddAttachmentWithBytes.mock.calls[0]?.[3] as number[]
-      expect(arg).toEqual(CONTENT_BYTES)
     })
 
     it('shows success toast after file drop', async () => {
@@ -2239,6 +2239,8 @@ describe('EditableBlock', () => {
           dataTransfer: { files: [file], types: ['Files'] },
         })
       })
+      // The file is encoded on a task `act` does not flush; the toast ends the upload.
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1))
 
       expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining('test.png'))
     })
@@ -2257,6 +2259,7 @@ describe('EditableBlock', () => {
       const file = makeFile('evil.exe', 'application/x-msdownload')
       const wrapper = getBlockEditorWrapper()
 
+      const fileRead = vi.spyOn(FileReader.prototype, 'readAsDataURL')
       await act(async () => {
         fireEvent.drop(wrapper, {
           dataTransfer: { files: [file], types: ['Files'] },
@@ -2264,7 +2267,9 @@ describe('EditableBlock', () => {
       })
 
       expect(mockToastError).toHaveBeenCalled()
-      expect(mockAddAttachmentWithBytes).not.toHaveBeenCalled()
+      // The upload itself runs past this point; the refusal shows in the file never being read.
+      expect(fileRead).not.toHaveBeenCalled()
+      fileRead.mockRestore()
     })
 
     it('a dropped file shows on the block without a remount (#5282)', async () => {
@@ -2332,12 +2337,14 @@ describe('EditableBlock', () => {
           dataTransfer: { files: [file], types: ['Files'] },
         })
       })
+      // The file is encoded on a task `act` does not flush; the toast ends the upload.
+      await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1))
 
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
         'BLK_1',
         'test.png',
         'image/png',
-        expect.any(Array),
+        CONTENT_BASE64,
       )
       expect(mockToastError).toHaveBeenCalledWith(expect.stringContaining('attach file'))
     })
@@ -2360,12 +2367,14 @@ describe('EditableBlock', () => {
           clipboardData: { files: [file] },
         })
       })
+      // The file is encoded on a task `act` does not flush; the toast ends the upload.
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1))
 
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
         'BLK_1',
         'screenshot.png',
         'image/png',
-        expect.any(Array),
+        CONTENT_BASE64,
       )
       expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining('screenshot.png'))
     })
@@ -2435,25 +2444,27 @@ describe('EditableBlock', () => {
           dataTransfer: { files: [file1, file2, file3], types: ['Files'] },
         })
       })
+      // The file is encoded on a task `act` does not flush; the toast ends the upload.
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(3))
 
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledTimes(3)
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
         'BLK_1',
         'photo.jpg',
         'image/jpeg',
-        expect.any(Array),
+        CONTENT_BASE64,
       )
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
         'BLK_1',
         'notes.pdf',
         'application/pdf',
-        expect.any(Array),
+        CONTENT_BASE64,
       )
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
         'BLK_1',
         'data.csv',
         'text/csv',
-        expect.any(Array),
+        CONTENT_BASE64,
       )
       expect(mockToastSuccess).toHaveBeenCalledTimes(3)
     })
@@ -2478,12 +2489,14 @@ describe('EditableBlock', () => {
           dataTransfer: { files: [file], types: ['Files'] },
         })
       })
+      // The file is encoded on a task `act` does not flush; the toast ends the upload.
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1))
 
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
         'BLK_1',
         specialName,
         'application/pdf',
-        expect.any(Array),
+        CONTENT_BASE64,
       )
       expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining(specialName))
       expect(mockToastError).not.toHaveBeenCalled()
@@ -2534,6 +2547,8 @@ describe('EditableBlock', () => {
           dataTransfer: { files: [file], types: ['Files'] },
         })
       })
+      // The file is encoded on a task `act` does not flush; the toast ends the upload.
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1))
 
       // Attachment created, then referenced inline by `attachment:<id>`.
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledTimes(1)
@@ -2557,6 +2572,8 @@ describe('EditableBlock', () => {
       await act(async () => {
         fireEvent.paste(wrapper, { clipboardData: { files: [file] } })
       })
+      // The file is encoded on a task `act` does not flush; the toast ends the upload.
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1))
 
       expect(insertImage).toHaveBeenCalledWith({ src: 'attachment:ATT_1', alt: 'paste.png' })
     })
@@ -2580,6 +2597,8 @@ describe('EditableBlock', () => {
           dataTransfer: { files: [file], types: ['Files'] },
         })
       })
+      // The file is encoded on a task `act` does not flush; the toast ends the upload.
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1))
 
       // The PDF still attaches, but no inline image node is inserted.
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledTimes(1)
@@ -2606,6 +2625,8 @@ describe('EditableBlock', () => {
           dataTransfer: { files: [file], types: ['Files'] },
         })
       })
+      // The file is encoded on a task `act` does not flush; the toast ends the upload.
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1))
 
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledTimes(1)
       expect(insertImage).not.toHaveBeenCalled()

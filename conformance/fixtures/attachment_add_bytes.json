@@ -1,5 +1,5 @@
 {
-  "description": "#5057 — `add_attachment_with_bytes`, the third attachment writer. Its waiver blamed the BLOB, and that is half right: `id`, `fs_path` and `content_hash` are minted per stack (two fresh ULIDs and a real blake3) and `created_at` is `now_ms()`, so the ROW a new attachment leaves is not comparable and `ATTACHMENT_ATTRS` — which pins all four on the SEEDED rows the other fixtures use — must not be loosened to make it so. The input was never the blocker: `bytes` is a literal array both stacks upload verbatim. What this fixture pins is everything else. The return names the four fields the caller supplied and the row stores unchanged. The four refusals are validation the mock did not have AT ALL: it stored whatever it was handed, with no MIME allow-list, no filename check and no live-block check. And the undo is the observation — reversing the add mints the `delete_attachment` that takes the row away, so `list_attachments` afterwards is back to the seeded row alone, which is fully fixture-authored and therefore comparable. That undo needed the op the mock never appended, and the redo beside it needed the reverse PAYLOAD as well as the reverse TYPE — which is what finally supplied `revert.ts` with its `delete_attachment` arm, blocked until now for want of an `add_attachment` op to rebuild the row from. What still cannot be driven is undoing a REAL `delete_attachment` of an op-added attachment: naming it needs a label convention fixtures do not have, the way `Cn` names a created block.",
+  "description": "#5057 — `add_attachment_with_bytes`, the third attachment writer. Its waiver blamed the BLOB, and that is half right: `id`, `fs_path` and `content_hash` are minted per stack (two fresh ULIDs and a real blake3) and `created_at` is `now_ms()`, so the ROW a new attachment leaves is not comparable and `ATTACHMENT_ATTRS` — which pins all four on the SEEDED rows the other fixtures use — must not be loosened to make it so. The input was never the blocker: `bytes` is a literal base64 string both stacks upload verbatim. What this fixture pins is everything else. The return names the four fields the caller supplied and the row stores unchanged. The four refusals are validation the mock did not have AT ALL: it stored whatever it was handed, with no MIME allow-list, no filename check and no live-block check. And the undo is the observation — reversing the add mints the `delete_attachment` that takes the row away, so `list_attachments` afterwards is back to the seeded row alone, which is fully fixture-authored and therefore comparable. That undo needed the op the mock never appended, and the redo beside it needed the reverse PAYLOAD as well as the reverse TYPE — which is what finally supplied `revert.ts` with its `delete_attachment` arm, blocked until now for want of an `add_attachment` op to rebuild the row from. What still cannot be driven is undoing a REAL `delete_attachment` of an op-added attachment: naming it needs a label convention fixtures do not have, the way `Cn` names a created block.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -147,19 +147,19 @@
     {
       "args": {
         "blockId": "S2",
-        "bytes": [104, 105, 10],
+        "bytes": "aGkK",
         "filename": "notes.txt",
         "mimeType": "text/plain"
       },
       "command": "add_attachment_with_bytes",
-      "comment": "`size_bytes` is the array's length, so the bytes are pinned by their count even though their hash is not.",
+      "comment": "`size_bytes` is the decoded length, so the bytes are pinned by their count even though their hash is not.",
       "name": "add_bytes_to_a_live_block",
       "via": "command"
     },
     {
       "args": {
         "blockId": "S2",
-        "bytes": [1],
+        "bytes": "AQ==",
         "filename": "payload.bin",
         "mimeType": "application/x-evil"
       },
@@ -172,7 +172,7 @@
     {
       "args": {
         "blockId": "S2",
-        "bytes": [1],
+        "bytes": "AQ==",
         "filename": "x.png",
         "mimeType": "image/"
       },
@@ -185,7 +185,7 @@
     {
       "args": {
         "blockId": "S2",
-        "bytes": [1],
+        "bytes": "AQ==",
         "filename": "../../evil.sh",
         "mimeType": "text/plain"
       },
@@ -207,7 +207,7 @@
     {
       "args": {
         "blockId": "S3",
-        "bytes": [1],
+        "bytes": "AQ==",
         "filename": "orphan.txt",
         "mimeType": "text/plain"
       },

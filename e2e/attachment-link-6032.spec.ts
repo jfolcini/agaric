@@ -34,7 +34,7 @@ test.describe('attachment link (#6032) @attachments @editor', () => {
         blockId: '0000000000000000000BLOCK01',
         filename: 'paper.pdf',
         mimeType: 'application/pdf',
-        bytes: [37, 80, 68, 70],
+        bytes: btoa('%PDF'),
       })) as { id: string }
       return row.id
     })

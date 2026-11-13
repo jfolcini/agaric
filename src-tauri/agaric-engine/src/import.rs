@@ -1,6 +1,7 @@
 //! The markdown block grammar (#5160): one CommonMark-shaped reading of text
 //! into blocks with depth, shared by file import, Edit as Markdown and paste.
 
+use agaric_core::base64_bytes::Base64Bytes;
 use agaric_core::ulid::BlockId;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -997,12 +998,12 @@ pub enum ImportDialect {
 ///
 /// This is an IPC **input**, so it needs `Deserialize` (unlike the
 /// backend→frontend [`ImportProgressUpdate`], which is `Serialize`-only).
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Deserialize, Type)]
 pub struct VaultFile {
     /// Vault-root-relative path, `/`-separated (e.g. `assets/img.png`).
     pub path: String,
     /// Raw file bytes.
-    pub bytes: Vec<u8>,
+    pub bytes: Base64Bytes,
 }
 
 /// One attachment reference detected in a block's content (#1925).
