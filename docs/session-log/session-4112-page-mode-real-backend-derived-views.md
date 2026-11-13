@@ -1,4 +1,4 @@
-# Session 4103 — page mode on the real backend: search, backlinks, the page's undo, a paste
+# Session 4112 — page mode on the real backend: search, backlinks, the page's undo, a paste
 
 Last PR of #6714 (after #6716, #6719 and the image fix #6723). The mock derives nothing in the background, so four rows of the comparison could only be covered on the real backend: what the backend makes of a page-mode save.
 
