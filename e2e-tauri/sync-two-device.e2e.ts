@@ -4,8 +4,8 @@
 // The app pairs with a second device through its own pairing dialog, and one
 // edit crosses in each direction, then a property and a move, then two
 // concurrent edits to one block, then an image each way, then a meeting with
-// its files (#5364), then a sync cancelled
-// while the peer does not answer, and last an unpair.
+// its files (#5364), then the open page's undo and redo across a pull (#6541),
+// then a sync cancelled while the peer does not answer, and last an unpair.
 // The second device is `e2e_sync_peer`, a headless vault on the app's sync daemon
 // (sync-peer.ts). It reads the dialog's QR as a phone's camera would; the QR
 // carries the address that mDNS, which a CI runner cannot be relied on for,
@@ -240,6 +240,35 @@ async function waitForStaticText(id: string, text: string, what: string): Promis
         return seen === text
       },
       { timeout: NAV_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(`${what}: expected ${JSON.stringify(text)}, saw ${JSON.stringify(seen)}`)
+    })
+}
+
+/**
+ * Pull with the sidebar's Sync, which leaves the open view mounted, until block
+ * `id`'s static row reads exactly `text`. A pull already running can end
+ * without the peer's write, so Sync is pressed again whenever it is idle.
+ */
+async function pullUntilRowReads(id: string, text: string, what: string): Promise<void> {
+  const sync = $('[data-slot="sidebar"] button[aria-label="Sync"]')
+  let seen = ''
+  await browser
+    .waitUntil(
+      async () => {
+        seen = await browser.execute(
+          (blockId: string) =>
+            document
+              .querySelector(`[data-testid="block-static"][data-block-id="${blockId}"]`)
+              ?.textContent?.trim() ?? '(no row)',
+          id,
+        )
+        if (seen === text) return true
+        if ((await sync.getAttribute('aria-disabled')) === 'false') await sync.click()
+        return false
+      },
+      { timeout: NAV_TIMEOUT, interval: 1_000 },
     )
     .catch(() => {
       throw new Error(`${what}: expected ${JSON.stringify(text)}, saw ${JSON.stringify(seen)}`)
@@ -608,6 +637,62 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
       }
       expect((await peer.getBlock(made.recording_block_id)).parentId).toBe(made.page_id)
       expect((await peer.getBlock(paired.appBlockId)).content).toContain(`[[${made.page_id}]]`)
+    })
+
+    // #6541 — a pull brings the peer's ops as replicated rows, which the page's
+    // positional undo does not number, so the open page keeps its undo and redo
+    // through the reload the pull brings. Leaving the page would drop them.
+    it("the open page's undo and redo survive a pull of the peer's edits", async () => {
+      if (peer === undefined || paired === undefined) throw new Error('the pairing test failed')
+      const { appBlockId, peerBlockId } = paired
+      const appEdit = runScopedMarker('wdio-sync-undo-app')
+      const peerText = `${(await peer.getBlock(peerBlockId)).content} ${runScopedMarker('wdio-sync-undo-peer')}`
+      const peerOver = runScopedMarker('wdio-sync-undo-over')
+      const stored = async (id: string) =>
+        (await invoke<{ content: string }>('get_block', { blockId: id })).content
+      const waitStored = async (id: string, text: string, what: string) => {
+        let seen = ''
+        await browser
+          .waitUntil(
+            async () => {
+              seen = await stored(id)
+              return seen === text
+            },
+            { timeout: ACTION_TIMEOUT },
+          )
+          .catch(() => {
+            throw new Error(
+              `${what}: expected ${JSON.stringify(text)}, stored ${JSON.stringify(seen)}`,
+            )
+          })
+      }
+
+      await reopenSharedPage()
+      const before = await stored(appBlockId)
+      await editBlock(appBlockId)
+      await typeMarkerVerified(appEdit)
+      await browser.keys(['Escape'])
+      await waitStored(appBlockId, appEdit, 'the edit was not saved')
+      await browser.keys(['Control', 'z'])
+      await waitStored(appBlockId, before, 'Ctrl+Z did not undo the edit')
+
+      // The peer edits another block of the page; the app pulls with it open.
+      await peer.editBlock(peerBlockId, peerText)
+      await pullUntilRowReads(peerBlockId, peerText, "the open page never showed the peer's edit")
+      await browser.keys(['Control', 'y'])
+      await waitStored(appBlockId, appEdit, 'Ctrl+Y after the pull did not redo the edit')
+
+      // The peer writes over the redone edit. Ctrl+Z still reverts it: the
+      // reverse is an edit back to the text before it, which replaces the
+      // peer's text in that block, as the page-level undo always has.
+      await peer.sync()
+      await waitForPeerText(peer, appBlockId, appEdit)
+      await peer.editBlock(appBlockId, peerOver)
+      await pullUntilRowReads(appBlockId, peerOver, "the open page never showed the peer's edit")
+      await browser.keys(['Control', 'z'])
+      await waitStored(appBlockId, before, 'Ctrl+Z did not revert the edit the peer wrote over')
+      await peer.sync()
+      await waitForPeerText(peer, appBlockId, before)
     })
 
     it('the Settings state card shows Idle, a last-sync time and one peer after the syncs', async () => {
