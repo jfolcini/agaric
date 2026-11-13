@@ -9,12 +9,14 @@
  *   - `seed.ts`      — shared state, seed data, helpers
  *   - `handlers.ts`  — per-command dispatch map
  *   - `injection.ts` — error and latency injection for E2E tests
+ *   - `bridge.ts`    — the real backend in the mock's place (#6529)
  */
 
 import { emit } from '@tauri-apps/api/event'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 
 import { logger } from '@/lib/logger'
+import { bridgeUrl, setupBridge } from '@/lib/tauri-mock/bridge'
 import { setEventSink } from '@/lib/tauri-mock/events'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
@@ -62,6 +64,14 @@ function answer(cmd: string, args: unknown): unknown {
 }
 
 export function setupMock(): void {
+  // #6529 — a Playwright run on the real backend names its bridge; the
+  // commands go there, and nothing below is installed.
+  const bridge = bridgeUrl()
+  if (bridge !== undefined) {
+    setupBridge(bridge)
+    return
+  }
+
   // Fake the window label so getCurrent() works
   mockWindows('main')
 
