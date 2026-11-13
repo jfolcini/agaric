@@ -2351,19 +2351,27 @@ async fn a_silent_end_after_head_exchange_from_a_synced_peer_is_coded_6523() {
     );
 }
 
-/// #6523 — a dial that times out against a peer mDNS is not announcing, and
-/// that has not pulled from us lately, is a device that is simply away: coded
+/// #6523 — a dial that times out against a paired peer mDNS is not announcing,
+/// and that has not pulled from us lately, is a device that is simply away: coded
 /// `PeerAway` on every attempt, since the frontend shows it as a state rather
-/// than a toast. Announced, or still pulling from us, the same timeout stays an
-/// uncoded failure, reported once per streak.
+/// than a toast. Announced, still pulling from us, or never paired (the host a
+/// pairing window scanned), the same timeout stays an uncoded failure, reported
+/// once per streak.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_dial_timeout_is_away_only_for_a_silent_peer_not_pulling_from_us_6523() {
     const PEER: &str = "PEER_AWAY_6523";
 
+    /// A `peer_refs` row for the peer, last streamed to at `streamed_at`.
+    fn paired(streamed_at: Option<i64>) -> Vec<PeerRef> {
+        let mut peer_ref = make_peer_ref(PEER);
+        peer_ref.streamed_at = streamed_at;
+        vec![peer_ref]
+    }
+
     /// Two dial cycles against an unreachable peer; the errors they reported.
     async fn two_cycles(
         mdns_seen_at: Option<tokio::time::Instant>,
-        streamed_at: Option<i64>,
+        refs: Vec<PeerRef>,
     ) -> Vec<(Option<crate::sync_events::SyncErrorCode>, Option<bool>)> {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
@@ -2373,9 +2381,6 @@ async fn a_dial_timeout_is_away_only_for_a_silent_peer_not_pulling_from_us_6523(
         let cancel = AtomicBool::new(false);
         let harness = ServiceHarness::new().await;
         let peer = unreachable_peer(PEER);
-        let mut peer_ref = make_peer_ref(PEER);
-        peer_ref.streamed_at = streamed_at;
-        let refs = vec![peer_ref];
         let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(materializer.clone());
         let ctx = SyncSessionContext {
             pool: &pool,
@@ -2404,19 +2409,25 @@ async fn a_dial_timeout_is_away_only_for_a_silent_peer_not_pulling_from_us_6523(
 
     let away = (Some(crate::sync_events::SyncErrorCode::PeerAway), None);
     assert_eq!(
-        two_cycles(None, None).await,
+        two_cycles(None, paired(None)).await,
         vec![away, away],
         "a silent peer that is not pulling from us is away, on every attempt"
     );
     assert_eq!(
-        two_cycles(Some(tokio::time::Instant::now()), None).await,
+        two_cycles(Some(tokio::time::Instant::now()), paired(None)).await,
         vec![(None, None)],
         "a peer mDNS announces is on the network: its timeout is a failure, told once"
     );
     assert_eq!(
-        two_cycles(None, Some(agaric_store::db::now_ms())).await,
+        two_cycles(None, paired(Some(agaric_store::db::now_ms()))).await,
         vec![(None, None)],
         "a peer still pulling from us is not away: its timeout is a failure, told once"
+    );
+    assert_eq!(
+        two_cycles(None, vec![]).await,
+        vec![(None, None)],
+        "a peer this device never paired with is no device to wait for: its timeout \
+         is a failure, told once"
     );
 }
 

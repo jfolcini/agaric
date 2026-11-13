@@ -98,7 +98,7 @@ export interface SyncErrorPayload {
   message: string
   remote_device_id: string
   code?: SyncErrorCode
-  /** #6523 — with `engine_format_mismatch`: whether the peer is the older device. */
+  /** #6523 — always set with `engine_format_mismatch`: whether the peer is the older device. */
   peer_is_older?: boolean
 }
 
@@ -108,13 +108,9 @@ function codedSyncErrorKeys(payload: SyncErrorPayload): [named: string, unnamed:
     return ['sync.handshakeUnanswered', 'sync.handshakeUnansweredUnnamed']
   }
   if (payload.code !== 'engine_format_mismatch') return null
-  if (payload.peer_is_older === true) {
-    return ['sync.versionMismatchUpdatePeer', 'sync.versionMismatchUpdatePeerUnnamed']
-  }
-  if (payload.peer_is_older === false) {
-    return ['sync.versionMismatchUpdateThisDevice', 'sync.versionMismatchUpdateThisDeviceUnnamed']
-  }
-  return ['sync.versionMismatch', 'sync.versionMismatchUnnamed']
+  return payload.peer_is_older === true
+    ? ['sync.versionMismatchUpdatePeer', 'sync.versionMismatchUpdatePeerUnnamed']
+    : ['sync.versionMismatchUpdateThisDevice', 'sync.versionMismatchUpdateThisDeviceUnnamed']
 }
 
 /**

@@ -3,8 +3,8 @@
 `Refs #6523` (two of four items; a forked history and an engine/SQL disagreement stay open).
 
 - A paired device that is simply away reads "Waiting for <device>, last synced <when>", with a grey
-  dot and no toast. Away is a dial timeout with no mDNS announcement and no recent pull from that
-  peer, coded `peer_away`.
+  dot and no toast. Away is a dial timeout to a paired peer with no mDNS announcement and no recent
+  pull from it, coded `peer_away`.
 - An engine-format mismatch is explained on both devices and names the one to update. The device
   that was dialled answers the handshake with a fixed refusal sentence worded for the dialler,
   which maps it back to `engine_format_mismatch` with `peer_is_older`. An older peer that closes
@@ -12,11 +12,14 @@
 
 Decisions and traps:
 
-- `peer_away` repeats on every attempt. Since #6601 a withheld repeat reads as an unanswered
-  failure in the frontend, so reporting once per streak would turn the status red again within a
-  minute. It has its own log text: repeats are suppressed by matching text, and sharing the timeout
-  text would swallow the first real timeout once the peer is back.
-- A peer still pulling from us as initiator is not away.
+- `peer_away` repeats on every attempt. A withheld repeat ends the attempt's progress channel in a
+  bare error, which the frontend reads as idle on a scheduled tick and as a failure on a press
+  (#6601), so reporting once per streak would drop the waiting line within a minute. It has its own
+  log text: repeats are suppressed by matching text, and sharing the timeout text would swallow the
+  first real timeout once the peer is back.
+- A peer still pulling from us as initiator is not away, and neither is a peer with no row: the host
+  a pairing window scanned on a LAN without multicast would otherwise time out in silence.
+- The "update both" wording is gone: every mismatch event carries `peer_is_older`.
 - The dialler no longer adds a generic "Sync failed" after the version explanation; it used the
   same toast id and store field and overwrote it.
 - A device that refuses on version stops there: it does not bind the peer or record its name.
@@ -28,7 +31,10 @@ Decisions and traps:
 
 Gaps, raised with the maintainer:
 
-- Pressing Sync while an away peer is in backoff still says "Sync failed for device".
+- A `start_sync` refused because the away peer is in backoff, or mid-dial, still toasts "Sync failed
+  for device" once per launch, from the scheduled tick as well as from a press.
+- A device that has only just left reads as failed until its mDNS entry goes stale: its first
+  timeout toasts, and a second one does once it stops counting as pulling from us.
 - The status card's "Last synced" counts this session only, so it can show "--" beside the
   waiting line's real time.
 - A build already shipped shows the new refusal sentence inside its own "Sync failed" wrapper.

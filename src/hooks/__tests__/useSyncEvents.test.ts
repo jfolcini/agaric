@@ -1151,50 +1151,6 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    // #5728 — a peer on another engine format. The backend codes the error and
-    // this side words it, naming the peer when the store knows its name.
-    describe('#5728 a version mismatch says to update both devices', () => {
-      const mismatch = (remoteDeviceId: string) => ({
-        payload: {
-          type: 'error',
-          message: 'peer engine format v3 incompatible with local v4',
-          remote_device_id: remoteDeviceId,
-          code: 'engine_format_mismatch',
-        },
-      })
-
-      it('names a peer the store knows, in the store and the toast', async () => {
-        mockSyncPeers.push({ peerId: 'device-42', name: 'Pixel 8' })
-        const { unmount } = renderHook(() => useSyncEvents())
-        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
-
-        getListenerCallback('sync:error')(mismatch('device-42'))
-
-        const sentence =
-          'This device and Pixel 8 run different versions of Agaric. Update both to the latest version, then sync again.'
-        expect(mockSetState).toHaveBeenCalledWith('error', sentence)
-        expect(mockedToastError).toHaveBeenCalledWith(
-          `Sync failed: ${sentence}`,
-          expect.objectContaining({ id: 'sync-error' }),
-        )
-        unmount()
-      })
-
-      it('says "the other device" for a peer with no name', async () => {
-        mockSyncPeers.push({ peerId: 'device-42', name: null })
-        const { unmount } = renderHook(() => useSyncEvents())
-        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
-
-        getListenerCallback('sync:error')(mismatch('device-42'))
-
-        expect(mockSetState).toHaveBeenCalledWith(
-          'error',
-          'This device and the other device run different versions of Agaric. Update both to the latest version, then sync again.',
-        )
-        unmount()
-      })
-    })
-
     // #6538 — Android does not update itself, so the mismatch toast says where.
     describe('#6538 the version-mismatch toast on Android links the releases page', () => {
       const mismatch = {
@@ -1203,6 +1159,7 @@ describe('useSyncEvents', () => {
           message: 'peer engine format v3 incompatible with local v4',
           remote_device_id: 'device-42',
           code: 'engine_format_mismatch',
+          peer_is_older: false,
         },
       }
       const originalUA = navigator.userAgent
@@ -1261,8 +1218,9 @@ describe('useSyncEvents', () => {
       })
     })
 
-    // #6523 — the responder knows both engine formats, and the initiator reads
-    // the refusal frame, so either device names the one to update.
+    // #5728 / #6523 — a peer on another engine format. The responder knows both
+    // formats and the initiator reads the refusal frame, so either device names
+    // the one to update, and the peer when the store knows its name.
     describe('#6523 a version mismatch names the device to update', () => {
       const mismatch = (peerIsOlder: boolean) => ({
         payload: {

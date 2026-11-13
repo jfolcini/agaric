@@ -62,7 +62,8 @@ use agaric_store::peer_refs;
 
 /// The refusal a responder sends an initiator on an older engine format (#6523).
 /// Worded for the device that reads it, so a build that predates the code still
-/// shows the right advice when it shows the text as is.
+/// shows the right advice when it shows the text as is. Wire text: a dialler from
+/// #6523 on matches it exactly, so a rewording reaches that dialler uncoded.
 const ENGINE_REFUSAL_INITIATOR_OLDER: &str =
     "the other device runs a newer version of Agaric; update Agaric on this device";
 

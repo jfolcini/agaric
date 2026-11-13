@@ -215,8 +215,8 @@ pub enum SyncErrorCode {
     /// The user cancelled the session (`cancel_sync`, #5739): the frontend
     /// reads it as idle, not as a failure.
     Cancelled,
-    /// The dial timed out, mDNS is not announcing the peer, and it has not
-    /// pulled from us lately (#6523): the device is away, and the frontend
+    /// The dial to a paired peer timed out, mDNS is not announcing it, and it
+    /// has not pulled from us lately (#6523): the device is away, and the frontend
     /// shows a neutral waiting state rather than a failure.
     PeerAway,
     /// A peer that has synced with us before ended the session without

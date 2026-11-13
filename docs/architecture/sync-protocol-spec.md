@@ -163,8 +163,9 @@ device runs a newer version of Agaric; update Agaric on this device", or "…an
 older version…; update Agaric on the other device". The initiator maps those two
 fixed strings back to the same code, with `peer_is_older` from its own side, so
 both devices say which one to update: "Pixel 8 runs an older version of Agaric.
-Update Agaric on Pixel 8, then sync again." A build from before #6523 shows the
-frame's text as it stands. A responder from before #6523 ends the session
+Update Agaric on Pixel 8, then sync again." The two strings are wire text: a
+dialler from #6523 on matches them exactly, so rewording one reaches it as an
+uncoded failure. A build from before #6523 shows the frame's text as it stands. A responder from before #6523 ends the session
 without a frame; the initiator then codes a silent end right after its
 `HeadExchange`, from a peer it has synced with before, `handshake_unanswered`,
 which the frontend words as "could not start; check that both devices run the

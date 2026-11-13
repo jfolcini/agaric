@@ -1769,8 +1769,10 @@ fn dial_addr(
 ///
 /// #4299: a timeout is ambiguous by construction — a sleeping peer and a LAN
 /// swallowed by a tunnel produce the same silence, and `dial_timeout_message`
-/// is the one thing that tells them apart. #6523: a peer that is neither
-/// announcing itself nor pulling from us is simply away, which is no failure.
+/// is the one thing that tells them apart. #6523: a paired peer that is neither
+/// announcing itself nor pulling from us is simply away, which is no failure. A
+/// peer with no row, such as the host a pairing window scanned, is no device to
+/// wait for: its timeout is the failure the user standing at the dialog needs.
 fn dial_timeout_report(
     ctx: &SyncSessionContext<'_>,
     peer: &DiscoveredPeer,
@@ -1778,7 +1780,8 @@ fn dial_timeout_report(
     mdns_seen_at: Option<tokio::time::Instant>,
 ) -> (String, Option<ReportAs>) {
     let peer_id = peer.device_id.as_str();
-    let away = !mdns_is_reaching_us(mdns_seen_at)
+    let away = PeerMembership::of(peer_refs, peer_id) == PeerMembership::Known
+        && !mdns_is_reaching_us(mdns_seen_at)
         && !peer_pulled_from_us_recently(ctx.scheduler, peer_refs, peer_id);
     if away {
         return (

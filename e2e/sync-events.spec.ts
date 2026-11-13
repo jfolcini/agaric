@@ -97,50 +97,12 @@ test.describe('sync events (#2683) @sync', () => {
       page.locator('[data-sonner-toast]').getByText('Sync failed: Connection refused'),
     ).toBeVisible()
   })
-
-  // #5728 — a paired device on another engine format (a 0.18 device meeting a
-  // 0.19 one). The backend codes the error; the Sync & devices card says, in
-  // the user's language, to update both, and names the device.
-  test('a version mismatch names the device and says to update both', async ({ page }) => {
-    // Pair one device in the mock: `confirm_pairing` arms a reveal, and the
-    // peer appears on the third `list_peer_refs` read after it.
-    const peerId = await page.evaluate(async () => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      await invoke('confirm_pairing', { passphrase: 'alpha bravo charlie delta' })
-      let peers: Array<{ peer_id: string }> = []
-      for (let read = 0; read < 3; read++) {
-        peers = (await invoke('list_peer_refs')) as Array<{ peer_id: string }>
-      }
-      return peers[0]?.peer_id
-    })
-    expect(peerId, 'the mock paired a device').toBeTruthy()
-    await navigateToView(page, 'Settings')
-    await openSettingsTab(page, 'Sync & devices')
-    await expect(page.getByText('Paired Device').first()).toBeVisible()
-
-    await emitMockEvent(page, 'sync:error', {
-      type: 'error',
-      remote_device_id: peerId,
-      message: 'peer engine format v3 incompatible with local v4',
-      code: 'engine_format_mismatch',
-    })
-
-    const sentence =
-      'This device and Paired Device run different versions of Agaric. Update both to the latest version, then sync again.'
-    await expect(page.getByRole('alert').getByText(sentence, { exact: true })).toBeVisible()
-    await expect(
-      page.locator('[data-sonner-toast]').getByText(`Sync failed: ${sentence}`),
-    ).toBeVisible()
-    await expect(page.getByText('peer engine format v3')).toHaveCount(0)
-    await page.screenshot({ path: test.info().outputPath('version-mismatch.png') })
-  })
 })
 
-/** Pair one device in the mock, as the #5728 case above does, and return its id. */
+/**
+ * Pair one device in the mock and return its id: `confirm_pairing` arms a
+ * reveal, and the peer appears on the third `list_peer_refs` read after it.
+ */
 async function pairOneDevice(page: Page): Promise<string> {
   const peerId = await page.evaluate(async () => {
     const invoke = (
@@ -201,6 +163,9 @@ test.describe('sync says why it waits or stops (#6523) @sync', () => {
     await expect(page.locator('[data-sonner-toast]')).toHaveText(['Synced 1 change from device'])
   })
 
+  // #5728 — a paired device on another engine format (a 0.18 device meeting a
+  // 0.19 one). The backend codes the error; the Sync & devices card says, in
+  // the user's language, which device to update, and names it.
   test('a version mismatch names the device to update', async ({ page }) => {
     const peerId = await pairOneDevice(page)
     await navigateToView(page, 'Settings')
@@ -221,5 +186,7 @@ test.describe('sync says why it waits or stops (#6523) @sync', () => {
     await expect(
       page.locator('[data-sonner-toast]').getByText(`Sync failed: ${sentence}`),
     ).toBeVisible()
+    await expect(page.getByText('peer engine format v3')).toHaveCount(0)
+    await page.screenshot({ path: test.info().outputPath('version-mismatch.png') })
   })
 })

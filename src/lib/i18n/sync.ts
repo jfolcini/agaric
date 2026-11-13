@@ -230,14 +230,9 @@ export const sync: Record<string, string> = {
   // it says the true thing it can say and claims no number.
   'sync.changesAppliedUnknownCount': 'Synced changes from device',
   'sync.failed': 'Sync failed: {{message}}',
-  // #5728 — the peer runs another engine format (`SyncErrorCode`), which only
-  // updating both devices fixes. The unnamed form is for a peer this device
-  // has no name for.
-  'sync.versionMismatch':
-    'This device and {{peer}} run different versions of Agaric. Update both to the latest version, then sync again.',
-  'sync.versionMismatchUnnamed':
-    'This device and the other device run different versions of Agaric. Update both to the latest version, then sync again.',
-  // #6523 — the same mismatch when the backend knows which device is older.
+  // #5728 — the peer runs another engine format (`SyncErrorCode`); updating the
+  // older device fixes it, and `peer_is_older` says which one that is (#6523).
+  // The unnamed form is for a peer this device has no name for.
   'sync.versionMismatchUpdatePeer':
     '{{peer}} runs an older version of Agaric. Update Agaric on {{peer}}, then sync again.',
   'sync.versionMismatchUpdatePeerUnnamed':
