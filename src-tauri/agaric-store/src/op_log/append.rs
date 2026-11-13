@@ -244,8 +244,7 @@ async fn append_local_op_in_tx_with_provenance(
         // regression test) AND removes the silent dependency on "device_id is
         // JSON-safe", which a future migration to non-UUID identifiers would
         // break. The Vec + heap String are negligible against the surrounding
-        // SQL transaction cost. The element type is `(String, i64)` to match
-        // what `dag::append_merge_op` produces.
+        // SQL transaction cost.
         Some(serde_json::to_string(&[(device_id.to_string(), prev_seq)])?)
     } else {
         None
@@ -416,8 +415,7 @@ pub async fn append_local_op_at(
 /// [`extract_indexed_ids_from_payload`] — the remote path only carries the
 /// serialized string, so it parses once here rather than per field. `origin`
 /// (#2481 cross-device attribution) and `is_replicated` (the migration-0099
-/// isolation boundary: `true`/`1` for audit records, `false`/`0` for the
-/// strict merge path) are stamped from the caller-supplied values.
+/// isolation boundary) are stamped from the caller-supplied values.
 pub async fn ingest_remote_op_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     record: &OpRecord,
@@ -447,48 +445,4 @@ pub async fn ingest_remote_op_in_tx(
     .await?;
 
     Ok(result.rows_affected() > 0)
-}
-
-/// Insert a multi-parent **merge** op into `op_log` within an existing
-/// transaction (#2895 slice 5; moved verbatim from `agaric-engine`'s
-/// `dag::append_merge_op`).
-///
-/// Plain `INSERT` (not `INSERT OR IGNORE`): a duplicate `(device_id, seq)` is a
-/// programming error and must surface, not be silently dropped. The
-/// remaining columns (`origin`, `is_replicated`, `is_undo`, `reverses_*`) are
-/// intentionally omitted so the row takes its schema defaults, matching the
-/// original engine site byte-for-byte. `block_id` / `attachment_id` are passed
-/// in pre-extracted from the typed `OpPayload` by the caller (which still owns
-/// the seq/hash/parent computation). The caller commits the transaction.
-#[allow(clippy::too_many_arguments)]
-pub async fn insert_merge_op_in_tx(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    device_id: &str,
-    seq: i64,
-    parent_seqs: &str,
-    hash: &str,
-    op_type: &str,
-    payload: &str,
-    created_at: i64,
-    block_id: Option<&str>,
-    attachment_id: Option<&str>,
-) -> Result<(), AppError> {
-    sqlx::query!(
-        "INSERT INTO op_log \
-         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, attachment_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        device_id,
-        seq,
-        parent_seqs,
-        hash,
-        op_type,
-        payload,
-        created_at,
-        block_id,
-        attachment_id,
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    Ok(())
 }

@@ -318,10 +318,11 @@ describe('DeviceManagement', () => {
     await waitFor(() => {
       // `startSync` constructs a `Channel<SyncProgressUpdate>`
       // and forwards it as `progress`. The exact channel instance is an
-      // implementation detail; assert the IPC name + peerId only.
+      // implementation detail; assert the IPC name, peerId, and that the press
+      // dials through the peer's backoff (#6523).
       expect(mockedInvoke).toHaveBeenCalledWith(
         'start_sync',
-        expect.objectContaining({ peerId: 'peer-abc-1234567890' }),
+        expect.objectContaining({ peerId: 'peer-abc-1234567890', userInitiated: true }),
       )
     })
 
@@ -789,6 +790,7 @@ describe('DeviceManagement', () => {
 
   it('Sync all calls startSync for each peer sequentially', async () => {
     const syncCalls: string[] = []
+    const userInitiated: unknown[] = []
     mockInvokeByCommand({
       get_device_id: () => 'device-123',
       list_peer_refs: () => [
@@ -798,6 +800,7 @@ describe('DeviceManagement', () => {
       start_sync: (args) => {
         const peerId = args['peerId'] as string
         syncCalls.push(peerId)
+        userInitiated.push(args['userInitiated'])
         return {
           state: 'completed',
           local_device_id: 'device-123',
@@ -819,6 +822,8 @@ describe('DeviceManagement', () => {
     await waitFor(() => {
       expect(syncCalls).toEqual(['peer-1', 'peer-2'])
     })
+    // #6523 — Sync all is a press for every peer.
+    expect(userInitiated).toEqual([true, true])
   })
 
   it('displays device name when set', async () => {

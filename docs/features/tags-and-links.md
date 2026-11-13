@@ -118,6 +118,8 @@ A query can also be typed, in the search box's [filter syntax](../SEARCH.md#filt
 
 Older query text runs as it always has. A block reads as it when it uses one of its keys (`property:`, `type:`, `expr:`, `key:`, `value:`, `target:`, `operator:`, `date:`) or its only words with a key are `tag:` words without `#`: there `tag:work` lists the blocks whose tags start with `work`, attached or written inline. The builder's simple form writes this older text.
 
+The builder's *Advanced* tab writes the search syntax whenever the filter is a plain list of conditions that all hold (tag, state, priority, a property equal or not equal to a value or set at all, a due or scheduled date), and shows the text it will save. A filter the syntax cannot say (OR, a group, NOT on a condition, a range of dates, a comparison) is stored in a coded form instead, and the builder says so. *Edit query* on a typed query opens it in the builder with the same conditions; a query using a token the builder has no control for is edited as text.
+
 A query shown as a table derives its columns from the properties the loaded rows carry, until you pick them: the columns button beside the edit button shows, hides and orders them, and the choice is written into the query block, so it syncs with it and the table keeps its shape as rows change. *Columns from the results* goes back to deriving them. Content comes first and the page last either way. Markdown export keeps the choice for a text query (`columns:a,b`) and for a structured (`v2:`) one. A task's state shows in a list row as the block's checkbox, drawn but not clickable.
 
 ## Tag references in property values

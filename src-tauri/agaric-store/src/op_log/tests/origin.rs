@@ -61,12 +61,11 @@ async fn append_outside_actor_scope_stamps_origin_user() {
     );
 }
 
-// NOTE (#2621, wave S3b-ii): four origin tests that couple to the app-only
-// `mcp::actor` scope machinery and `dag::insert_remote_op`
+// NOTE (#2621, wave S3b-ii): three origin tests that couple to the app-only
+// `mcp::actor` scope machinery
 // (`append_inside_agent_scope_stamps_origin_agent_prefix`,
 // `origin_falls_back_to_user_after_agent_scope_ends`,
-// `origin_does_not_affect_op_hash`, `remote_op_insert_defaults_origin_to_user`)
-// cannot compile in the store crate. They relocated to the app crate at
+// `origin_does_not_affect_op_hash`) cannot compile in the store crate. They relocated to the app crate at
 // `src-tauri/tests/app_tests/op_log_app_tests.rs`, rewritten against
 // `agaric_store::op_log::…` + `crate::mcp` / `crate::dag`.
 

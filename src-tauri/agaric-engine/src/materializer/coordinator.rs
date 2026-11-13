@@ -201,6 +201,8 @@ pub struct Materializer {
     /// `cleanup_orphaned_attachments` short-circuits with a debug log
     /// when the dir is not set.
     pub(super) app_data_dir: Arc<OnceLock<PathBuf>>,
+    /// See [`Self::on_local_commit`]. Empty in tests that wire none.
+    local_commit_hook: Arc<OnceLock<Box<dyn Fn() + Send + Sync>>>,
     /// #2249 — per-space Loro engine state the apply path mutates.
     ///
     /// Production receives the ONE process-wide instance from
@@ -567,6 +569,7 @@ impl Materializer {
             #[cfg(test)]
             force_shed_after: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(-1)),
             app_data_dir: Arc::new(OnceLock::new()),
+            local_commit_hook: Arc::new(OnceLock::new()),
             loro,
             // #2291: shared trailing-debounce state for the inbound-sync
             // cache-rebuild fan-out; the driver task is spawned after `Self` is
@@ -642,6 +645,23 @@ impl Materializer {
     pub fn set_app_data_dir(&self, dir: PathBuf) {
         if self.app_data_dir.set(dir).is_err() {
             tracing::warn!("Materializer::set_app_data_dir called twice — ignoring later set");
+        }
+    }
+
+    /// Register what runs after each local command commits ops: the app asks
+    /// its sync scheduler for a round (#6551). A hook rather than a dependency
+    /// because this crate sits below the sync crate. Called once at startup; a
+    /// second registration is ignored and logged.
+    pub fn on_local_commit(&self, hook: impl Fn() + Send + Sync + 'static) {
+        if self.local_commit_hook.set(Box::new(hook)).is_err() {
+            tracing::warn!("Materializer::on_local_commit called twice — ignoring later hook");
+        }
+    }
+
+    /// Run the [`Self::on_local_commit`] hook, if one is registered.
+    pub fn note_local_commit(&self) {
+        if let Some(hook) = self.local_commit_hook.get() {
+            hook();
         }
     }
 
