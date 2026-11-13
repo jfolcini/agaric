@@ -251,6 +251,15 @@ export function PageHeader({
     }
   }, [pageId, title, t])
 
+  const handlePrint = useCallback(() => {
+    setKebabOpen(false)
+    // On macOS Tauri replaces `window.print` with a command call, whose promise can reject.
+    Promise.resolve(window.print() as unknown).catch((err: unknown) => {
+      logger.warn('PageHeader', 'print failed', { pageId }, err)
+      notify.error(t('pageHeader.printFailed'))
+    })
+  }, [pageId, t])
+
   // The link `useDeepLinkRouter` opens, for a calendar entry or a task manager.
   const handleCopyAppLink = useCallback(async () => {
     setKebabOpen(false)
@@ -644,6 +653,8 @@ export function PageHeader({
               onExport={handleExport}
               // Not on Android, whose WebView saves no `blob:` download (#6546).
               onSaveMarkdownFile={isAndroid() ? undefined : handleSaveMarkdownFile}
+              // Not on Android: printing there is out of scope (#6558).
+              onPrint={isAndroid() ? undefined : handlePrint}
               onCopyAppLink={handleCopyAppLink}
               onEditSource={handleEditSource}
               editMode={editMode}

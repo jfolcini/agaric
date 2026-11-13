@@ -1,7 +1,8 @@
 /**
  * The page kebab's *Save as Markdown file* (#6546): it saves the Markdown
  * *Export as Markdown* copies as `<title>.md` through `saveBlob`, and is
- * absent on Android, whose WebView saves no `blob:` download.
+ * absent on Android, whose WebView saves no `blob:` download. And its
+ * *Print…* (#6558), absent on Android too.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -275,6 +276,47 @@ describe('PageHeader Save as Markdown file', () => {
       expect(
         screen.queryByRole('menuitem', { name: t('pageHeader.saveMarkdownFile') }),
       ).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('menuitem', { name: t('pageHeader.print') }),
+      ).not.toBeInTheDocument()
     })
+  })
+})
+
+describe('PageHeader Print… (#6558)', () => {
+  it('opens the print dialog and closes the menu', async () => {
+    const print = vi.fn()
+    vi.stubGlobal('print', print)
+    try {
+      const user = userEvent.setup()
+      renderHeader()
+      await openMenu(user)
+
+      await user.click(screen.getByRole('menuitem', { name: t('pageHeader.print') }))
+
+      expect(print).toHaveBeenCalledTimes(1)
+      await waitFor(() => {
+        expect(screen.queryByRole('menu', { name: t('pageHeader.pageActions') })).toBeNull()
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('shows an error toast when the print command rejects, as it can on macOS', async () => {
+    vi.stubGlobal('print', () => Promise.reject(new Error('not allowed')))
+    try {
+      const user = userEvent.setup()
+      renderHeader()
+      await openMenu(user)
+
+      await user.click(screen.getByRole('menuitem', { name: t('pageHeader.print') }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('pageHeader.printFailed'))
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
