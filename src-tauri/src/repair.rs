@@ -276,12 +276,12 @@ const ENGINE_MISSING_BLOCKS_MARKER: &str = "repair.engine_missing_live_blocks.v2
 /// space's engine does not hold, once. Returns how many it hydrated, or `None`
 /// when the marker says it already ran.
 ///
-/// One-shot because it repairs what two closed defects left: the pre-#5418
-/// replays, and a sync import lost to a kill before the session-end save.
+/// One-shot because it repairs what two defects left: the pre-#5418 replays,
+/// and the sync imports a kill took before the session-end save existed.
 /// Drift that arises later is for the integrity check (#5628) to report, not
-/// for a boot pass to hide. The hydration is in memory until a snapshot persists it and
-/// no op replays it, so the marker is written after the save: a crash in
-/// between leaves the repair to the next boot.
+/// for a boot pass to hide. The hydration is in memory until a snapshot
+/// persists it and no op replays it, so the marker is written after the save:
+/// a crash in between leaves the repair to the next boot.
 async fn hydrate_engine_missing_blocks_once(
     pool: &SqlitePool,
     device_id: &str,

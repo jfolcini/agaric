@@ -18,11 +18,21 @@ Decisions and traps:
   fixture for the stuck population needs a later local op.
 - The two-device harness's `pull` stores no audit rows. Without `ingest_replicated_record` in the
   fixture the `is_replicated = 0` clause was unpinned and its mutant survived.
+- The no-twin test asserts the twin first: after B pulls, B holds Y once. Checked before the pull,
+  "Y was not seeded" fired first under every mutant and the twin count was never seen red.
+- The stranded-block test ends on the reconciliation oracle's `engine.*` artefacts, empty on both
+  devices, with a task state on the child so the property seed is pinned too.
 
-Known limits, raised with the maintainer:
+Known limits, for the maintainer:
 
-- A local child under a peer's page still missing at the upgrade boot stays SQL-only.
-- A locally created block whose `create_block` op was compacted away reads as not local.
+- A local child under a peer's page the engine still lacks at the upgrade boot stays SQL-only for
+  good: it shows on this device only, every later write to it takes the SQL-only fallback, the
+  reconciliation report lists it under `engine.blocks.row`, and an engine-first recovery drops it.
+  It does not stop the space's outbound sync: the #1257 gate refuses only engine-live, SQL-deleted
+  blocks.
+- A locally created block whose `create_block` op was compacted away reads as not local. The
+  automatic compaction keeps 90 days and this population postdates the first hydration (0.19.0),
+  so only a manual compaction with a shorter window can reach it.
 
-Ran: the #6525, #5670, #5712, session-save and repair tests, and clippy over the workspace. The
-whole workspace suite was left to review and CI.
+Ran: the session-save and #5670 repair tests, each falsification (the twin shown red at 2 nodes),
+clippy over the workspace with all targets, the `SQLX_OFFLINE` check, and the workspace nextest.
