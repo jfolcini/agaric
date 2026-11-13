@@ -31,6 +31,7 @@ const props: PageHeaderMenuProps = {
   onToggleTemplate: noop,
   onToggleJournalTemplate: noop,
   onExport: noop,
+  onCopyAppLink: noop,
   onDeleteRequest: noop,
 }
 
@@ -62,8 +63,12 @@ describe('PageHeaderMenu — Page history', () => {
       name: new RegExp(`^${t('pageHeader.undoAction')}`),
     })
     await waitFor(() => {
-      expect(undo).toHaveFocus()
+      expect(
+        within(menu).getByRole('menuitem', { name: t('pageHeader.copyAppLink') }),
+      ).toHaveFocus()
     })
+    await user.keyboard('{ArrowDown}')
+    expect(undo).toHaveFocus()
 
     await user.keyboard('{ArrowDown}')
 

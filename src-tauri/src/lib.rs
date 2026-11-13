@@ -344,6 +344,7 @@ macro_rules! agaric_commands {
             // Spaces (Phase 1 + Phase 2 + Phase 6)
             $crate::commands::spaces::list_spaces,
             $crate::commands::spaces::create_page_in_space,
+            $crate::commands::spaces::resolve_page_title,
             $crate::commands::spaces::create_space,
             // Quick capture — desktop global-shortcut entry point
             $crate::commands::journal::quick_capture_block,
@@ -4227,6 +4228,7 @@ mod log_dir_tests {
                 None,
                 &[],
                 None,
+                None,
             )
             .expect("bug-report metadata collection must succeed")
             .recent_errors
@@ -4259,6 +4261,7 @@ mod log_dir_tests {
             device_id.to_owned(),
             None,
             &[],
+            None,
             None,
         )
         .expect("bug-report metadata collection must succeed")

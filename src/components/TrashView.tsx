@@ -618,6 +618,7 @@ export function TrashView(): React.ReactElement {
       {selected.size > 0 && (
         <BatchActionToolbar
           selectedCount={selected.size}
+          listRef={listRef}
           className="trash-selection-toolbar gap-3 p-3"
           suppressRangeSelectHint
         >

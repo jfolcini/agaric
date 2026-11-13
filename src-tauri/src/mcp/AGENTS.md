@@ -91,7 +91,7 @@ No single test drives the full production stack:
 - `rmcp_adapter::tests` — wire framing over `tokio::io::duplex`, mostly against `MockRoRegistry`.
 - `agents/tests.rs` — the gate through `dispatch_tool_call`: spaces, revoke, `last_used_ms`, the accepted gaps, and a property over random agents and calls.
 - `server/tests.rs`, `server/tests_rmcp.rs` — `run_connection`, shutdown gate, grace period against a real `UnixListener` with stub registries; the token handshake and the registry each mode picks. **Every new protocol-error path needs a test in `server/tests_rmcp.rs`.**
-- `stub_binary_*` (`mod.rs`, `ci-smoke` feature) spawn the real `agaric-mcp` binary: a live token round-trips `initialize`, a revoked one is refused, a missing one exits 2.
+- `stub_binary_*` (`mod.rs`, `ci-smoke` feature) spawn the real `agaric-mcp` binary: a live token round-trips `initialize`, a revoked one is refused, a missing one exits 2; `stub_binary_call_*` run `agaric-mcp call <tool> <json>`, which prints the result and exits 1 on a tool error, a revoked token or a closed pipe.
 
 ```sh
 cd src-tauri && cargo nextest run -p agaric -E 'test(mcp::)'

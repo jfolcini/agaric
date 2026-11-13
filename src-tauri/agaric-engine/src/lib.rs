@@ -117,6 +117,10 @@ pub mod spaces;
 /// post-commit engine fan-out.
 pub mod empty_blocks;
 
+/// Replays a stale editor's change on the block's current text, so an
+/// `edit_block` from an editor that has not seen a peer's edit keeps it.
+pub mod edit_rebase;
+
 /// Boot-time repairs that make historically-unreachable content reachable
 /// again (#4728 orphans re-homed under an `Unreachable` page, #4715 duplicate
 /// journal pages merged onto the oldest). Every change is a real op through

@@ -17,7 +17,7 @@ import type { BlockRow } from '@/lib/bindings'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 
 export interface UseTrashListShortcutsOptions {
-  /** The list container, which gates Space (`pressesFocusedControl`). */
+  /** The list container, which gates Space and overlay keys (`pressesFocusedControl`). */
   listRef: RefObject<HTMLElement | null>
   filteredBlocks: BlockRow[]
   focusedIndex: number

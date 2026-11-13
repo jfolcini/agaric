@@ -1,8 +1,0 @@
-# Session 3612 — The MCP page-read probe checks the read's own page fields
-
-Main's `bench-slo` went red again after #6398 (#6277 E4), in run 42104958625. `bench_mcp_get_page_markdown` asserted that `markdown` starts with `# SLO Export Page\n`. E4 made `get_page_markdown` return `{ page_id, title, markdown, … }`, with `markdown` the page's Edit as Markdown buffer, and that buffer has no `# Title` line.
-
-- Premise check first: the read of the fixture starts at the first block (`Short content block 0. ^EX…`), with no front matter. `anchored_blocks` is 250, which is `PAGE_CHILDREN`, and `parse_markdown_file` also reads 250 blocks. No block is missing, so no product change.
-- The probe now asserts `(page_id, title)` equals `(PAGE_ID, "SLO Export Page")`: the read names its page in those fields now, not in the text. The block-count assert is unchanged.
-- The other title-prefix probes, the two `export_page_markdown` ones (`interactive_slo.rs` and `groups/export_bench.rs`), are left as they are. Export still writes `# Title` at the top for a page with no properties, and the `export_page_markdown` probe in `interactive_slo.rs` passed on post-E4 main in the same run.
-- Ran in debug criterion test mode (`cargo test --bench interactive_slo -- mcp_get_page_markdown`): green, 8.47 ms against the 10 ms budget. Red with the fixture page renamed (the export probe's expected title renamed to match, since it runs outside the name filter): left `(PAGE_ID, "Renamed Page")`, right `(PAGE_ID, "SLO Export Page")`. `cargo clippy --workspace --all-targets -- -D warnings` was clean. The coordinator dispatches the warm lanes on the branch.
