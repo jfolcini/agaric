@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 
@@ -83,7 +91,7 @@ function release(
       return {
         status: res.status,
         stderr: res.stderr,
-        calls: spawnSync('cat', [calls], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean),
+        calls: readFileSync(calls, 'utf8').split('\n').filter(Boolean),
         tags: git('tag', '-l'),
         porcelain: git('status', '--porcelain'),
       }
