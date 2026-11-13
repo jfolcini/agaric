@@ -57,9 +57,8 @@ There are two co-equal materialization targets now: the SQL primary state (`bloc
 When the op log grows past `DEFAULT_RETENTION_DAYS` (90), a background job
 (`op_log_compact`, 24 h cadence, idle predicate) deletes every op older than the
 cutoff, bounded by the per-device frontier (`{device_id → MAX(seq)}`) it read in
-its own `DEFERRED` read transaction. The purge and the single
-`compaction_watermark` row recording that frontier commit in one
-`BEGIN IMMEDIATE` transaction, together with the `materializer_apply_cursor`
+its own `DEFERRED` read transaction. The purge commits in one
+`BEGIN IMMEDIATE` transaction together with the `materializer_apply_cursor`
 clamp (#3310) that keeps a purged-to-empty log from reading as the H-4
 impossible state at the next boot.
 
@@ -68,13 +67,13 @@ per-row timestamps — against a materially smaller Loro copy of the same edits,
 so it is the dominant term in vault growth (#4700). It does not *bound* growth:
 `loro_doc_state` is ungoverned and grows forever.
 
-**What compaction costs the user.** Past the retention window an edit chain is
-broken, and `find_lca` says so — "edit chain broken … likely due to op log
-compaction" rather than a bare `NotFound`. That wording is the only thing that
-reads `compaction_watermark`, via an `EXISTS` probe on the row
-(`agaric_engine::dag::find_lca`); its `up_to_seqs` / `up_to_hash` columns are
-the durable record of how far the last purge reached and are read by nothing.
-Undo, page history and LCA all go dark on ops older than the window.
+**What compaction costs the user.** Undo and page history go dark on ops older
+than the window.
+
+The `compaction_watermark` table (migration 0116) is **retained but dead**:
+nothing writes or reads it since #6518. Migrations are append-only, so it
+outlives the code that gave it meaning until a migration retires it
+explicitly.
 
 ### There is no snapshot blob (#4699)
 

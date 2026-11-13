@@ -455,7 +455,7 @@ fn canonical_json_deterministic_across_all_payload_types() {
 
 /// `extract_indexed_ids_from_payload` parses the payload once and must agree,
 /// field-for-field, with the two single-field helpers it replaces at the
-/// `insert_remote_op` call site — across the create_block (block_id only),
+/// remote-ingest call site — across the create_block (block_id only),
 /// add_attachment (both ids), and delete_attachment (attachment_id only)
 /// shapes.
 #[test]

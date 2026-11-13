@@ -84,7 +84,7 @@ The required shape for an O(vault) background job is **read-phase / brief-write*
 — never "do the scan under the write lock":
 
 1. **Collect** in a `DEFERRED` read transaction (`pool.begin()`). Under WAL a reader never blocks the writer, so an O(vault) table scan does not stall interactive commands. `compact_op_log`'s read phase (`src-tauri/agaric-sync/src/snapshot/create.rs`) follows this shape: it counts eligible ops and reads the per-device frontier with no write lock held.
-2. **Write** in a brief `BEGIN IMMEDIATE` transaction that performs only the minimal INSERT/UPDATE/DELETE, never the collection. `compact_op_log`'s write phase upserts the `compaction_watermark` row, runs the per-device `op_log` DELETE and clamps the apply cursor, then commits.
+2. **Write** in a brief `BEGIN IMMEDIATE` transaction that performs only the minimal INSERT/UPDATE/DELETE, never the collection. `compact_op_log`'s write phase runs the per-device `op_log` DELETE and clamps the apply cursor, then commits.
 
 Every `BEGIN IMMEDIATE` acquire above routes through `begin_immediate_logged` (`src-tauri/src/db/pool.rs`), which times the pool-acquire *and* SQLite-lock-acquire together and emits a `slow BEGIN IMMEDIATE` warning once that exceeds `SLOW_ACQUIRE_WARN_MS` (100 ms, `src-tauri/src/db/pool.rs`) — this warning is the standing observability primitive for a regression in the pattern above.
 
