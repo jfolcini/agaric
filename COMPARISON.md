@@ -288,7 +288,7 @@ Logseq 2.0 turned this into its strongest domain. Agaric is behind, not ahead.
 | Query result table | `query-table:: true` + column picker; 2.0: Table/List/Gallery views with pinned, resizable columns and inline editing | Columns derived from the loaded rows' properties until picked; a column picker chooses and orders them, kept in the block; no widths or inline editing | Partial |
 | Live-updating results | Yes (DataScript reactivity) | Inline queries refetch on property and graph-structure events, including ones arriving by sync (`src/hooks/useQueryExecution.ts`, #5316) | Done |
 | Saved queries | Query nodes live in the graph | Saved views were invisible after a space migration until #5828; they are now per-space `localStorage`, **not synced**, and old views stay invisible | Partial |
-| User-facing query language | Text you can read, diff, paste, version | **Partial.** A query block takes the search box's filter syntax as typed text (`{{query tag:#work state:TODO}}`, `src/lib/query-text.ts`), its tokens joined by AND, with no OR, groups, relative dates or free text yet; the builder still writes `v2:<base64url(JSON)>` (#6628) | Partial |
+| User-facing query language | Text you can read, diff, paste, version | **Partial.** A query block takes the search box's filter syntax as typed text (`{{query tag:#work state:TODO}}`, `src/lib/query-text.ts`), its tokens joined by AND, with no OR, groups, relative dates or free text yet; the builder writes that text for a filter it can say and `v2:<base64url(JSON)>` for the rest (#6628) | Partial |
 | Cross-space queries | Multi-graph search is manual | **Impossible.** `space_id` is mandatory, including MCP `query` | Gap |
 
 ### 8. Task Management
@@ -686,7 +686,7 @@ dropped.
 | 7 | Ship backup/restore | Partial | Sync item 3 |
 | 8 | Fix template block-property loss and the PDF dangling ref | Partial | `/template` drops properties (`insertTemplateBlocks` in `src/lib/template-utils.ts`); the PDF link is fixed (#6629) |
 | 10 | Give references substance | Mostly done | A per-block count badge; a peek on touch; inline content |
-| 11 | A user-facing query language | Partial | Query blocks take the search syntax (#6628); the builder does not write it yet |
+| 11 | A user-facing query language | Partial | Query blocks take the search syntax and the builder writes it (#6628); OR and groups stay `v2:` |
 | 13 | Multi-value properties | Open | `PRIMARY KEY (block_id, key)` |
 | 14 | A structured export | Partial | The Markdown export now restores, with definitions in `.agaric/space.json` (#6277); no dump with history and saved queries |
 | 15 | An answer to bus factor 1 | Open | The repository is public with 20 stars and one maintainer; MCP (39 tools) and the mirror are seams, not a plugin API |

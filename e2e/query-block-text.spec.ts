@@ -1,6 +1,16 @@
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, focusBlock, openPage, reopenPage, saveBlock, test, waitForBoot } from './helpers'
+import {
+  activePopover,
+  expect,
+  focusBlock,
+  openPage,
+  reopenPage,
+  saveBlock,
+  test,
+  typeSlashCommand,
+  waitForBoot,
+} from './helpers'
 
 /**
  * A query block written in the search box's syntax (#6628): the text runs on
@@ -70,5 +80,48 @@ test.describe('Query blocks in the search syntax @editor @search', () => {
       /Fix login bug/,
       /Ship v2\.0 release/,
     ])
+  })
+
+  test('the builder saves an AND of filters as text, and reopens it', async ({ page }) => {
+    await focusBlock(page)
+    await typeSlashCommand(page, 'query')
+    await page.keyboard.press('Enter')
+    const dialog = page.getByRole('dialog')
+    await dialog.getByRole('tab', { name: 'Advanced', exact: true }).click()
+    const root = dialog.getByRole('group', { name: 'Filter', exact: true })
+    await root.getByRole('button', { name: 'Add filter', exact: true }).click()
+    await activePopover(page)
+      .getByRole('button', { name: /^State/ })
+      .click()
+    await activePopover(page).getByRole('checkbox', { name: 'TODO', exact: true }).click()
+    await activePopover(page).getByRole('button', { name: 'Apply', exact: true }).click()
+    await root.getByRole('button', { name: 'Add filter', exact: true }).click()
+    await activePopover(page).getByRole('button', { name: /^Tag/ }).click()
+    await activePopover(page).getByRole('button', { name: 'work', exact: true }).click()
+    await expect(dialog.getByTestId('expression-preview')).toHaveText(
+      'state:TODO #[000000000000000000000TAG01]',
+    )
+    await dialog.getByRole('button', { name: 'Insert Query' }).click()
+
+    const result = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="query-result"]')
+    const items = result.getByTestId('query-result-item')
+    await expect(items).toHaveText([/Ship v2\.0 release/])
+
+    await reopenPage(page, PAGE)
+    await expect(items).toHaveText([/Ship v2\.0 release/])
+    await result.getByRole('button', { name: 'Edit query' }).click()
+    await expect(page.getByRole('dialog').getByTestId('advanced-filter-count')).toHaveText(
+      '2 filters',
+    )
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
+
+    // The block holds the text, its tag a chip (which draws its own `#`).
+    await items.first().click()
+    await expect(page.locator('[data-testid="block-editor"] [contenteditable="true"]')).toHaveText(
+      '{{query state:TODO work}}',
+    )
   })
 })
