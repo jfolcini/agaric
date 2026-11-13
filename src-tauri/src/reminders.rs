@@ -22,7 +22,7 @@
 //!
 //! Desktop only, and only while the process runs. A closed app fires nothing;
 //! a minimised or unfocused one does. The Android arm, lead offsets, a per-task
-//! `reminder` property and the catch-up digest are later phases of #4554.
+//! `reminder` property and the catch-up digest are not built.
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use serde::{Deserialize, Serialize};

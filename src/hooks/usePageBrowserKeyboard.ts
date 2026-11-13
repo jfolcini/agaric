@@ -23,7 +23,7 @@ import { pressesFocusedControl } from '@/hooks/useListKeyboardNavigation'
 interface UsePageBrowserKeyboardParams {
   /** Returns `true` when the navigation handler consumed the key. */
   navHandleKeyDown: (e: KeyboardEvent) => boolean
-  /** The list container, which gates Enter and Space (`pressesFocusedControl`). */
+  /** The list container, which gates Enter, Space and overlay keys (`pressesFocusedControl`). */
   listRef: RefObject<HTMLElement | null>
   selectAllPages: () => void
   clearMultiSelection: () => void
@@ -70,6 +70,7 @@ export function usePageBrowserKeyboard({
         target.tagName === 'TEXTAREA'
       )
         return
+      if (pressesFocusedControl(e, listRef.current)) return
       if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault()
         selectAllPages()
@@ -82,5 +83,5 @@ export function usePageBrowserKeyboard({
     }
     document.addEventListener('keydown', handleSelectionKeys)
     return () => document.removeEventListener('keydown', handleSelectionKeys)
-  }, [selectAllPages, clearMultiSelection, multiSelectedSize])
+  }, [selectAllPages, clearMultiSelection, multiSelectedSize, listRef])
 }

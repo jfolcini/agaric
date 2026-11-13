@@ -5,7 +5,8 @@
  * `setSyncRelaySettings`), off by default. When on, the sync daemon binds its
  * endpoint with iroh's relay transport against one pinned relay, so two devices
  * on a LAN a VPN tunnel has captured — discovery works, every unicast dial dies —
- * still have a path. The daemon reads the row once at start, so the copy says
+ * still have a path, and a paired device mDNS no longer sees is dialled through
+ * it too (#6564). The daemon reads the row once at start, so the copy says
  * the change takes effect at the next launch.
  *
  * Rendered by `DeviceManagement`, below the paired-devices list.

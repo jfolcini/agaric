@@ -253,6 +253,7 @@ async fn rename_later_pages(
             device_id,
             page_id.clone(),
             to.clone(),
+            None,
         ))
         .await?;
         tracing::info!(%page_id, %from, %to, "renamed the later page of a name tie (#6278)");
@@ -486,7 +487,7 @@ async fn rewrite_referrers(
     as_housekeeping(async {
         for (id, content) in referrers {
             let rewritten = content.replace(&later_ref, &keeper_ref);
-            edit_block_in_tx(&mut tx, state, device_id, id, rewritten).await?;
+            edit_block_in_tx(&mut tx, state, device_id, id, rewritten, None).await?;
         }
         Ok::<_, AppError>(())
     })

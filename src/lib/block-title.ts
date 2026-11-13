@@ -47,10 +47,10 @@
  * a later `preload` will re-fetch. `TagList`, `useBlockTags`,
  * `useRichContentCallbacks`, the paste reducer, `page-rename`,
  * `usePageDeleteAction`, `onCreatePage` / `onCreateTag`, the journal /
- * date-picker page seeds, and `createUntitledPage` (`@/lib/untitled-page.ts`,
- * behind the three new-page paths — whose `Untitled` / `Untitled N` title is
- * the PERSISTED content, so it stays an untranslated literal to match what
- * `preload` reads back).
+ * date-picker page seeds, and `usePageCreation` (the New page dialog, whose
+ * `Untitled` / `Untitled N` title from `resolve_page_title` is the PERSISTED
+ * content, so it stays an untranslated literal to match what `preload` reads
+ * back).
  *
  * ## The blank cells, and where the cache-miss signal lives now (#4238)
  *

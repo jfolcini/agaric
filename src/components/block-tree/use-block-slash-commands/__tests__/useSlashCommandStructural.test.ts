@@ -88,6 +88,7 @@ describe('useSlashCommandStructural — headings', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'BLOCK_1',
         toText: expected,
+        baseText: null,
       })
       expect(mount).toHaveBeenCalledWith('BLOCK_1', expected)
     },
@@ -107,6 +108,7 @@ describe('useSlashCommandStructural — headings', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: '# already-h3',
+      baseText: null,
     })
   })
 
@@ -149,6 +151,7 @@ describe('useSlashCommandStructural — callouts, and the list style they and he
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: '> [!INFO] note-text',
+      baseText: null,
     })
   })
 
@@ -171,6 +174,7 @@ describe('useSlashCommandStructural — callouts, and the list style they and he
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: expected,
+      baseText: null,
     })
   })
 
@@ -241,6 +245,7 @@ describe('useSlashCommandStructural — callouts, and the list style they and he
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: '## hello',
+      baseText: null,
     })
     expect(toast.error).toHaveBeenCalledTimes(1)
     expect(toast.error).toHaveBeenCalledWith('blockTree.clearListStyleFailed')
@@ -256,6 +261,7 @@ describe('useSlashCommandStructural — callouts, and the list style they and he
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: '> [!INFO] hello',
+      baseText: null,
     })
     expect(toast.error).toHaveBeenCalledTimes(1)
     expect(toast.error).toHaveBeenCalledWith('slash.calloutFailed')
@@ -397,7 +403,11 @@ describe('useSlashCommandStructural — list, divider (#4552 slice 2)', () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx } = makeSyntheticCtx()
     await result.current.exact['divider']?.(ctx, { id: 'divider', label: 'Divider' })
-    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'BLOCK_1', toText: '---' })
+    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+      blockId: 'BLOCK_1',
+      toText: '---',
+      baseText: null,
+    })
   })
 })
 
@@ -520,6 +530,7 @@ describe('useSlashCommandStructural — turn into (#264)', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: expected,
+      baseText: null,
     })
   })
 
@@ -532,6 +543,7 @@ describe('useSlashCommandStructural — turn into (#264)', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: '```\nhello world\n```',
+      baseText: null,
     })
   })
 
@@ -555,6 +567,7 @@ describe('useSlashCommandStructural — turn into (#264)', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: 'a heading',
+      baseText: null,
     })
   })
 
@@ -567,6 +580,7 @@ describe('useSlashCommandStructural — turn into (#264)', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: '> a thought',
+      baseText: null,
     })
   })
 
@@ -579,6 +593,7 @@ describe('useSlashCommandStructural — turn into (#264)', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: '> [!INFO] important',
+      baseText: null,
     })
   })
 
@@ -594,6 +609,7 @@ describe('useSlashCommandStructural — turn into (#264)', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: 'first',
+      baseText: null,
     })
     expect(mockedSetListStyle).toHaveBeenCalledWith('BLOCK_1', 'ordered')
   })
@@ -607,6 +623,7 @@ describe('useSlashCommandStructural — turn into (#264)', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
       toText: 'first',
+      baseText: null,
     })
     expect(mockedSetListStyle).toHaveBeenCalledWith('BLOCK_1', 'bullet')
   })

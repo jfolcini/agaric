@@ -52,7 +52,8 @@ Idempotently seed a freshly-created git worktree so it can build, commit,
 and push without the friction documented in issue #3171:
 
   - symlinks node_modules to the main checkout's, before an `npm install`
-    could create a real directory in its place
+    could create a real directory in its place, and fails when that install
+    does not match this worktree's package-lock.json
   - copies src-tauri/.env from the main checkout and provisions a freshly
     migrated dev.db (via scripts/setup-dev-db.sh), so push.sh Phase E's
     `sqlx prepare --check` passes
@@ -110,6 +111,7 @@ fi
 DONE=()
 SKIPPED=()
 PROBLEMS=()
+NM_LINKED=0
 
 # ── 1. node_modules symlink — do this FIRST, before anything else could ────
 #      invoke npm and create a real directory in its place.
@@ -124,6 +126,7 @@ elif [ -L node_modules ]; then
   if [ "$link_target" = "$main_nm" ]; then
     echo "  already symlinked -> $link_target"
     SKIPPED+=("node_modules (already symlinked to main checkout)")
+    NM_LINKED=1
   else
     echo "  WARNING: node_modules is a symlink, but points elsewhere:" >&2
     echo "    current: $link_target" >&2
@@ -143,6 +146,17 @@ else
   ln -s "$MAIN_ROOT/node_modules" node_modules
   echo "  symlinked node_modules -> $MAIN_ROOT/node_modules"
   DONE+=("node_modules symlinked to main checkout")
+  NM_LINKED=1
+fi
+# The link is only as good as the install behind it: a main checkout whose
+# install lags its lockfile, or whose lockfile differs from this worktree's,
+# fails tests here that pass in CI.
+if [ "$NM_LINKED" -eq 1 ]; then
+  if node "$WORKTREE_ROOT/scripts/node-modules-drift.mjs" "$MAIN_ROOT" "$WORKTREE_ROOT"; then
+    echo "  the main checkout's install matches this worktree's package-lock.json"
+  else
+    PROBLEMS+=("node_modules behind the symlink does not match package-lock.json -- see message above")
+  fi
 fi
 
 # ── 2. src-tauri/.env + migrated dev.db ─────────────────────────────────────
