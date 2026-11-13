@@ -1441,6 +1441,16 @@ fn session_failure_message(e: &impl std::fmt::Display) -> String {
     format!("Sync failed: {e}")
 }
 
+/// The log text of a session whose catch-up snapshot forks this device's own
+/// history (#6523). The frontend words it from
+/// [`SyncErrorCode::OwnHistoryFork`].
+///
+/// A constant, not the error's own text: that text carries this device's
+/// operation counter, which moves with every edit, and the text is the
+/// suppression key, so each edit would report the same dead end again.
+pub(super) const OWN_HISTORY_FORK_MESSAGE: &str = "Sync failed: the peer holds more of this device's own history than this device does, \
+     and a snapshot cannot merge that";
+
 /// The refusal to sync at all because a different key is announcing this peer's
 /// name (#4203). A constant, so it is exactly stable as a suppression key.
 const IDENTITY_MISMATCH_MESSAGE: &str =
@@ -2272,13 +2282,24 @@ async fn record_session_failure(
         // #4120: books the backoff unconditionally; emits the generic
         // wrapper only on the first failure of a streak while the peer
         // is still pulling from us. See `record_initiator_failure`.
+        let (message, report_as) = if snapshot_transfer::is_own_history_fork(&e) {
+            (
+                OWN_HISTORY_FORK_MESSAGE.to_owned(),
+                Some(ReportAs::Code(SyncErrorCode::OwnHistoryFork)),
+            )
+        } else {
+            (
+                session_failure_message(&e),
+                session_failure_report(orch, rejection.as_ref(), peer_refs, peer_id),
+            )
+        };
         record_initiator_failure(
             ctx.scheduler,
             ctx.event_sink,
             peer_refs,
             peer_id,
-            session_failure_message(&e),
-            session_failure_report(orch, rejection.as_ref(), peer_refs, peer_id),
+            message,
+            report_as,
         );
         tracing::warn!(peer_id, error = %e, "sync session failed");
     }

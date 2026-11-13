@@ -73,6 +73,18 @@ const appErrorCases = {
     error: { kind: 'cancelled', message: 'Failed to fetch while offline' },
     expected: null,
   },
+  storage_full: {
+    error: { kind: 'storage_full', message: 'The disk is full' },
+    expected: 'server',
+  },
+  storage_read_only: {
+    error: { kind: 'storage_read_only', message: 'The vault is read-only' },
+    expected: 'server',
+  },
+  storage_corrupt: {
+    error: { kind: 'storage_corrupt', message: 'The vault database is damaged' },
+    expected: 'server',
+  },
 } satisfies Record<AppErrorKind, AppErrorCase>
 
 describe('categorizeHistoryError', () => {

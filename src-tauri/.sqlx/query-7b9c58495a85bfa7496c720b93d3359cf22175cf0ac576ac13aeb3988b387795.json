@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS(SELECT 1 FROM loro_sync_inbox WHERE space_id = ?1)\n               OR EXISTS(SELECT 1 FROM loro_sync_quarantine WHERE space_id = ?1)\n               AS \"unprojected!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "unprojected!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7b9c58495a85bfa7496c720b93d3359cf22175cf0ac576ac13aeb3988b387795"
+}

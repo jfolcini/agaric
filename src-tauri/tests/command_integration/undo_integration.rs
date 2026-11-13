@@ -920,14 +920,14 @@ async fn reverse_create_block_leaves_recoverable_soft_delete_not_purge_1543() {
 // (`apply_reverse_in_tx`) and never told the per-space engine (what sync
 // exports), so the engine went stale after an undo. The worst case: an
 // undo-of-create tombstoned the row in SQL but left the engine node LIVE, which
-// trips the #1257 sync-export freshness gate — `prepare_outgoing` refuses to
-// export the space (`Ok(None)`), silently suspending p2p sync for the WHOLE
-// space until reboot. These tests drive create/edit/delete/property undo+redo
-// through the production engine pipeline and assert the engine converges with
-// SQL, plus the gate-refusal regression directly.
+// trips the #1257 sync-export freshness gate. These tests drive
+// create/edit/delete/property undo+redo through the production engine pipeline
+// and assert the engine converges with SQL.
 
 /// #2655 CORE REGRESSION. Undo-of-create must tombstone the block in the engine
-/// too; afterwards the #1257 freshness gate must NOT refuse export.
+/// too. The engine is read directly: since #6565 the export gate repairs an
+/// engine-live, SQL-deleted block, so an export that succeeds proves nothing
+/// about what the undo wrote.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_of_create_does_not_trip_1257_freshness_gate_2655() {
     use agaric_core::ulid::BlockId;
@@ -980,7 +980,7 @@ async fn undo_of_create_does_not_trip_1257_freshness_gate_2655() {
     settle(&mat).await;
     assert_eq!(undo.reversed_op_type, "create_block");
 
-    // (a) the engine node is now TOMBSTONED (present but soft-deleted), so
+    // The engine node is now TOMBSTONED (present but soft-deleted), so
     // `live_block_ids` excludes it — matching SQL's soft-delete.
     {
         let mut g = state.registry.for_space(&space, DEV).expect("for_space");
@@ -997,22 +997,6 @@ async fn undo_of_create_does_not_trip_1257_freshness_gate_2655() {
             "#2655: the undone block must no longer be engine-live"
         );
     }
-
-    // (b) THE REGRESSION: the freshness gate no longer refuses the space.
-    let msg = agaric_sync::sync_protocol::loro_sync::prepare_outgoing_for_pool(
-        &pool,
-        &state.registry,
-        &space,
-        DEV,
-        None,
-    )
-    .await
-    .expect("prepare_outgoing must not error");
-    assert!(
-        msg.is_some(),
-        "#2655/#1257: after undo-of-create the engine matches SQL, so the \
-         freshness gate must NOT refuse export (Ok(None) ⇒ sync suspended)"
-    );
 }
 
 /// #2655 — undo AND redo of an edit must drive the engine's `LoroText` so the

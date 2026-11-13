@@ -542,12 +542,11 @@ fn rederive_space_ids_of(ids_json: &str) -> impl sqlx::Execute<'_, sqlx::Sqlite>
 
 /// [`rebuild_space_ids`] for the blocks in `ids` only, inside the caller's
 /// transaction. Their `page_id` must already be current.
-pub async fn rederive_space_ids_in_tx<S: AsRef<str> + Sync>(
+pub async fn rederive_space_ids_in_tx(
     conn: &mut sqlx::SqliteConnection,
-    ids: &[S],
+    ids: &[&String],
 ) -> Result<(), AppError> {
-    let ids: Vec<&str> = ids.iter().map(AsRef::as_ref).collect();
-    let ids_json = serde_json::to_string(&ids)?;
+    let ids_json = serde_json::to_string(ids)?;
     sqlx::Executor::execute(conn, rederive_space_ids_of(&ids_json)).await?;
     Ok(())
 }

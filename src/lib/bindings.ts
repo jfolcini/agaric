@@ -748,6 +748,17 @@ export const commands = {
 	setMirrorCopyFiles: (on: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_copy_files", { on })),
 	setMirrorSpace: (spaceId: string, mirrored: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_space", { spaceId, mirrored })),
 	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
+	/**
+	 *  Tauri command: when the newest daily snapshot was taken, in Unix
+	 *  milliseconds; `null` before the first one. Delegates to
+	 *  [`daily_snapshot::last_daily_snapshot_ms`].
+	 */
+	getLastSnapshotMs: () => typedError<number | null, AppError>(__TAURI_INVOKE("get_last_snapshot_ms")),
+	/**
+	 *  Tauri command: open the vault's folder in the system's file manager.
+	 *  Delegates to [`open_data_folder_inner`].
+	 */
+	openDataFolder: () => typedError<null, AppError>(__TAURI_INVOKE("open_data_folder")),
 	getSpeechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("get_speech_status")),
 	/**  Whether the backend engine can speak now (see [`SpeechEngine::available`]). */
 	getSpeechEngineAvailable: () => typedError<boolean, AppError>(__TAURI_INVOKE("get_speech_engine_available")),
@@ -1674,7 +1685,7 @@ export type AppErrorKind = "database" | "not_found" |
  *  [`AppError::PoolTimedOut`] — wire string `"pool_busy"` (kept from the
  *  original frontend contract; deliberately NOT `pool_timed_out`).
  */
-"pool_busy" | "conflict" | "migration" | "io" | "json" | "ulid" | "invalid_operation" | "channel" | "internal" | "snapshot" | "validation" | "non_reversible" | "cancelled";
+"pool_busy" | "conflict" | "migration" | "io" | "json" | "ulid" | "invalid_operation" | "channel" | "internal" | "snapshot" | "validation" | "non_reversible" | "cancelled" | "storage_full" | "storage_read_only" | "storage_corrupt";
 
 /**  One derived artefact's disagreement with its from-base rebuild. */
 export type ArtefactDivergences = {

@@ -5,6 +5,7 @@ import { reloadMeetingLink } from '@/components/attachments/meeting-link'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { HeaderSearchButton } from '@/components/common/HeaderSearchButton'
 import { HistoryNavButtons } from '@/components/common/HistoryNavButtons'
+import { StorageFailureBanner } from '@/components/common/StorageFailureBanner'
 import { NoPeersPairing } from '@/components/dialogs/NoPeersPairing'
 import { ViewToolbarSlot } from '@/components/FormattingToolbar/view-toolbar'
 import { GlobalDateControls, JournalControls } from '@/components/JournalPage'
@@ -46,6 +47,7 @@ import { useScrollRestore } from '@/hooks/useScrollRestore'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import { useSoftKeyboardInset } from '@/hooks/useSoftKeyboardInset'
 import { useSyncEvents } from '@/hooks/useSyncEvents'
+import { useSyncExportRefused } from '@/hooks/useSyncExportRefused'
 import { useSyncTrigger } from '@/hooks/useSyncTrigger'
 import { useTheme } from '@/hooks/useTheme'
 import { useUndoShortcuts } from '@/hooks/useUndoShortcuts'
@@ -432,6 +434,7 @@ function App() {
 
   // ── Sync event listeners (Tauri → store) ───────────────────────────
   useSyncEvents()
+  useSyncExportRefused()
 
   // ── Markdown mirror ingests (#5363): onto the page's undo stack ────
   useMirrorIngestEvents()
@@ -647,6 +650,7 @@ function App() {
                 {shouldShowMobileChrome ? <SearchSheetTrigger /> : <HeaderSearchButton />}
               </div>
             </header>
+            <StorageFailureBanner />
             {/*
              * TabBar is hoisted out of the page-editor view router
              * case and rendered at shell level so tabs stay visible across
