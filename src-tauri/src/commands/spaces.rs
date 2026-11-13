@@ -381,7 +381,8 @@ impl PageNameHolder {
 }
 
 /// Every name the live pages of one space hold, titles and aliases, each with
-/// its [`name_key`](agaric_core::tag_norm::name_key) (#6278). SQLite cannot
+/// its [`name_key`](agaric_core::tag_norm::name_key) (#6278). A saved view
+/// (#6544) holds none, and has no aliases to leave out. SQLite cannot
 /// apply the fold, so they are all read and folded here, each list as one
 /// `json_group_array` row because sqlx hands rows over one at a time
 /// (`page_name_check_cost_at_10k_pages` measures the check).
@@ -407,7 +408,8 @@ impl SpacePageNames {
                WHERE block_type = 'page'
                  AND deleted_at IS NULL
                  AND content IS NOT NULL
-                 AND space_id = ?1"#,
+                 AND space_id = ?1
+                 AND id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')"#,
             space_id,
         )
         .fetch_one(&mut *conn)

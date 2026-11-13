@@ -1234,14 +1234,16 @@ fn filtered_blocks_sql(
     // The unary `+` keeps `idx_blocks_space_type` out of the plan: without
     // `sqlite_stat1` the planner rates that index above the candidate sets,
     // then reads and sorts every block in the space.
-    let mut sql = String::from(
+    let mut sql = format!(
         "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
                 b.deleted_at, \
                 b.todo_state, b.priority, b.due_date, b.scheduled_date, \
                 b.page_id \
          FROM blocks b \
          WHERE b.deleted_at IS NULL \
-           AND +b.space_id = ?1",
+           AND +b.space_id = ?1 \
+           AND {}",
+        agaric_store::filters::NOT_SAVED_VIEW
     );
     if let Some(id) = after_id {
         sql.push_str(&format!(" AND b.id > ?{next_param}"));

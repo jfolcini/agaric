@@ -26,7 +26,7 @@
 //!   deliberately slow and naive — an oracle, not a fast path.
 //! * They share **no code** with the incremental maintenance path. They do
 //!   not call `recompute_pages_cache_counts_for_pages`, `rebuild_pages_cache`,
-//!   `recompute_all_pages_cache_counts`, `rebuild_page_ids`,
+//!   `rebuild_pages_cache_counts`, `rebuild_page_ids`,
 //!   `cleanup_orphaned_attachments`, or any SQL those functions use. A
 //!   rebuild that calls the same projection helper it is auditing proves
 //!   nothing, so every aggregate, every set difference and every ancestor

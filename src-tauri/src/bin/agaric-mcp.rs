@@ -23,15 +23,21 @@
 //!    Linux, `~/Library/Application Support/com.agaric.app/mcp.sock`
 //!    on macOS, `\\.\pipe\agaric-mcp` on Windows.
 //!
-//! The stub exits 0 on clean EOF (either side), 2 on a bad or missing
-//! argument, and 1 with a single stderr line when the socket cannot be
-//! reached.
+//! `agaric-mcp call <tool> <json>` runs one tool instead and exits, for
+//! scripts (#6555): it initializes as an MCP client, sends one `tools/call`
+//! with the JSON object `<json>` as its arguments, and prints the tool's JSON
+//! on stdout, or the app's refusal on stderr.
+//!
+//! The stub exits 0 on clean EOF (either side) or a tool result, 2 on a bad or
+//! missing argument, and 1 with a single stderr line when the socket cannot be
+//! reached or the app refuses the call.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use rmcp::model::JsonObject;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 // Consume the canonical identifiers from `agaric_lib::mcp` instead of
@@ -72,7 +78,12 @@ async fn main() -> ExitCode {
         ParsedArgs::Run {
             socket_override,
             token,
-        } => run(socket_override, &token).await,
+        } => run(socket_override, &token, None).await,
+        ParsedArgs::Call {
+            socket_override,
+            token,
+            call,
+        } => run(socket_override, &token, Some(call)).await,
         ParsedArgs::BadArg(msg) => {
             eprintln!("agaric-mcp: {msg}");
             eprintln!("Try `agaric-mcp --help` for usage.");
@@ -86,14 +97,26 @@ enum ParsedArgs {
         socket_override: Option<PathBuf>,
         token: String,
     },
+    Call {
+        socket_override: Option<PathBuf>,
+        token: String,
+        call: ToolCall,
+    },
     Version,
     Help,
     BadArg(String),
 }
 
+/// The one tool `agaric-mcp call` runs.
+struct ToolCall {
+    tool: String,
+    arguments: JsonObject,
+}
+
 fn parse_args(args: &[String]) -> ParsedArgs {
     let mut socket_override = None;
     let mut token = None;
+    let mut call = None;
     let mut iter = args.iter().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -108,6 +131,22 @@ fn parse_args(args: &[String]) -> ParsedArgs {
             "--token" => match iter.next() {
                 Some(value) if !value.is_empty() => token = Some(value.clone()),
                 _ => return ParsedArgs::BadArg("--token requires a value".into()),
+            },
+            "call" => match (iter.next(), iter.next()) {
+                (Some(tool), Some(arguments)) => match serde_json::from_str(arguments) {
+                    Ok(arguments) => {
+                        call = Some(ToolCall {
+                            tool: tool.clone(),
+                            arguments,
+                        });
+                    }
+                    Err(e) => {
+                        return ParsedArgs::BadArg(format!(
+                            "call: the arguments are not a JSON object: {e}"
+                        ));
+                    }
+                },
+                _ => return ParsedArgs::BadArg("call requires a tool and its arguments".into()),
             },
             other if other.starts_with("--socket=") => {
                 let (_, value) = other.split_once('=').unwrap();
@@ -128,12 +167,19 @@ fn parse_args(args: &[String]) -> ParsedArgs {
             }
         }
     }
-    match token {
-        Some(token) => ParsedArgs::Run {
+    let Some(token) = token else {
+        return ParsedArgs::BadArg(MISSING_TOKEN.to_owned());
+    };
+    match call {
+        Some(call) => ParsedArgs::Call {
+            socket_override,
+            token,
+            call,
+        },
+        None => ParsedArgs::Run {
             socket_override,
             token,
         },
-        None => ParsedArgs::BadArg(MISSING_TOKEN.to_owned()),
     }
 }
 
@@ -142,7 +188,12 @@ fn print_help() {
         "agaric-mcp — stdio ↔ socket bridge for the Agaric MCP server\n\
          \n\
          USAGE:\n    \
-             agaric-mcp --token <token> [--socket <path>]\n\
+             agaric-mcp --token <token> [--socket <path>]\n    \
+             agaric-mcp --token <token> [--socket <path>] call <tool> <json>\n\
+         \n\
+         COMMANDS:\n    \
+             call <tool> <json>   Run one tool with <json>, a JSON object of its\n                         \
+             arguments, print its result and exit.\n\
          \n\
          OPTIONS:\n    \
              --token <token>   The agent's token, from Settings → Agent access.\n    \
@@ -236,7 +287,7 @@ fn bridge_failure_message(socket_path: &std::path::Path, err: &std::io::Error) -
     )
 }
 
-async fn run(socket_override: Option<PathBuf>, token: &str) -> ExitCode {
+async fn run(socket_override: Option<PathBuf>, token: &str, call: Option<ToolCall>) -> ExitCode {
     let socket_path = resolve_socket_path(socket_override);
 
     // #696 — connect and bridge are distinct phases with distinct
@@ -249,6 +300,9 @@ async fn run(socket_override: Option<PathBuf>, token: &str) -> ExitCode {
         }
     };
 
+    if let Some(call) = call {
+        return call_tool(stream, token, call).await;
+    }
     match bridge(stream, token, tokio::io::stdin(), tokio::io::stdout()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -293,9 +347,7 @@ where
     use tokio::io::AsyncWriteExt;
 
     let (mut read_half, mut write_half) = tokio::io::split(stream);
-    write_half
-        .write_all(format!("{TOKEN_PREAMBLE} {token}\n").as_bytes())
-        .await?;
+    present_token(&mut write_half, token).await?;
 
     let to_socket = tokio::spawn(async move {
         let r = tokio::io::copy(&mut stdin, &mut write_half).await;
@@ -312,6 +364,61 @@ where
     // Once the socket reader finishes, stop forwarding stdin.
     to_socket.abort();
     from_socket_result
+}
+
+/// Write the agent's token preamble, the line the server reads before any MCP
+/// byte.
+async fn present_token<S: AsyncWrite + Unpin>(stream: &mut S, token: &str) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    stream
+        .write_all(format!("{TOKEN_PREAMBLE} {token}\n").as_bytes())
+        .await
+}
+
+/// Present the token, initialize, and run `call`: the tool's JSON goes to
+/// stdout; a refusal, of the token at `initialize` or of the call, to stderr.
+async fn call_tool<S>(mut stream: S, token: &str, call: ToolCall) -> ExitCode
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    use rmcp::ServiceError;
+    use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientConfig, Implementation};
+    use rmcp::service::{ClientInitializeError, ServiceExt};
+
+    if let Err(e) = present_token(&mut stream, token).await {
+        return call_failed(&e.to_string());
+    }
+    let client = ClientConfig::new(
+        ClientCapabilities::default(),
+        Implementation::new("agaric-mcp", env!("CARGO_PKG_VERSION")),
+    );
+    let client = match client.serve(stream).await {
+        Ok(client) => client,
+        Err(ClientInitializeError::JsonRpcError(error)) => return call_failed(&error.message),
+        Err(e) => return call_failed(&e.to_string()),
+    };
+    let request = CallToolRequestParams::new(call.tool).with_arguments(call.arguments);
+    match client.call_tool(request).await {
+        Ok(result) => {
+            // `println!` panics on a closed stdout (`| head -c`), and release
+            // builds abort on panic.
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            for text in result.content.iter().filter_map(|block| block.as_text()) {
+                if let Err(e) = writeln!(stdout, "{}", text.text) {
+                    return call_failed(&format!("could not print the result: {e}"));
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Err(ServiceError::McpError(error)) => call_failed(&error.message),
+        Err(e) => call_failed(&e.to_string()),
+    }
+}
+
+fn call_failed(message: &str) -> ExitCode {
+    eprintln!("agaric-mcp: {message}");
+    ExitCode::from(1)
 }
 
 #[cfg(test)]
@@ -368,6 +475,43 @@ mod tests {
             assert!(
                 matches!(parse_args(&args_from(argv)), ParsedArgs::BadArg(_)),
                 "{argv:?} gives no token",
+            );
+        }
+    }
+
+    #[test]
+    fn parse_args_call_takes_a_tool_and_its_arguments_6555() {
+        let parsed = parse_args(&args_from(&[
+            "agaric-mcp",
+            "--token",
+            "t",
+            "call",
+            "search",
+            r#"{"query":"x"}"#,
+        ]));
+        let ParsedArgs::Call { token, call, .. } = parsed else {
+            panic!("expected Call");
+        };
+        assert_eq!(token, "t");
+        assert_eq!(call.tool, "search");
+        assert_eq!(
+            serde_json::Value::Object(call.arguments),
+            serde_json::json!({ "query": "x" })
+        );
+    }
+
+    #[test]
+    fn parse_args_call_without_a_json_object_is_bad_arg_6555() {
+        for call in [
+            &["call"][..],
+            &["call", "search"][..],
+            &["call", "search", r#"{"query":"#][..],
+            &["call", "search", "[1]"][..],
+        ] {
+            let argv = [&["agaric-mcp", "--token", "t"][..], call].concat();
+            assert!(
+                matches!(parse_args(&args_from(&argv)), ParsedArgs::BadArg(_)),
+                "{call:?} names no tool or no JSON object",
             );
         }
     }

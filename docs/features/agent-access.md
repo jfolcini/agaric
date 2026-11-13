@@ -14,6 +14,7 @@ Agaric exposes itself to AI agents (Claude Desktop, Cursor, Continue, and any ot
   too.
 - **Watch agent activity in real time** in the **ActivityFeed** (Settings → Agent access).
 - **Revert a whole session's edits** with one click (the **SessionRevertControls** action).
+- **Run one tool from a script** with `agaric-mcp call` (see [From a script](#from-a-script)).
 - **Open Agaric from another app** via the `agaric://` deep-link scheme.
 - **Capture quickly into Agaric** via the global Quick Capture hotkey (works even when the app is in the background) — see [editor.md](editor.md) and [keyboard.md](keyboard.md).
 
@@ -45,6 +46,20 @@ A connection without a token, or with one no agent holds, is refused with an err
 
 **Upgrading from the two sockets.** Before agents, a read-only and a read-write socket each had a switch and a config entry (`agaric-ro`, `agaric-rw`). Those entries stop working: add one agent per client and replace that client's entries with the agent's. Access that was on stays on. A copy of `agaric-mcp` from before agents rejects `--token`, so replace any copy you made (say, on your `PATH`) with the one that ships with the app ([README § Using Agaric with MCP clients](../../README.md#using-agaric-with-mcp-clients)).
 
+## From a script
+
+`agaric-mcp call <tool> <json>` runs one tool and exits, for a cron job, a git hook, a launcher or a shell alias. It connects as the bridge does, with the same `--token`, `--socket` and `$AGARIC_MCP_SOCKET`, so the agent's mode and spaces apply. `<json>` is the tool's arguments as one JSON object; `list_spaces` with `'{}'` gives the space ids.
+
+```sh
+# Append to today's journal (a read-write agent's token)
+agaric-mcp --token agt_… call capture '{"space_id":"01HZ…","content":"Call the plumber"}'
+
+# Search, and read the hits with jq
+agaric-mcp --token agt_… call search '{"space_id":"01HZ…","query":"plumber"}' | jq -r '.items[].content'
+```
+
+The tool's result is printed on stdout as one line of JSON, and the exit status is 0. A call the app refuses (an unknown tool, a write tool on a read-only agent's token, a bad argument, a revoked token) prints the app's message on stderr and exits 1, as does an app that is not running. Arguments that are not a JSON object, or a missing `--token`, exit 2 before connecting.
+
 ## What agents can do
 
 The MCP surface is split into:
@@ -65,7 +80,7 @@ What the page reads return:
   - The paths are checked as `attach_file` checks them. A refused call writes nothing and stores no bytes.
 - `list_pages { space_id, sort?, filters?, cursor?, limit? }` lists a space's pages as the Pages view does. `sort` is `alphabetical` (the default), `created` (newest first), `recently-modified`, `last-opened` (on this device), `most-linked` or `most-content`; `filters` are page predicates a page must all match: `Orphan`, `HasNoInboundLinks`, `Stub`, `Tag` / `TagOrRef`, `PathGlob`, `LastEdited`, `HasProperty`, `Priority`. Each row adds `last_modified_at`, `inbound_link_count` and `child_block_count`; the first page carries `total_count`. A cursor continues only the sort it came from.
 - `search { query, space_id, parent_id?, tag_ids?, filter?, include_match_offsets?, cursor?, limit? }` matches each word as a case-insensitive substring and drops words under 3 characters; an empty `query` with a filter lists the matching blocks newest first. `parent_id` matches direct children only. A `tag_ids` tag matches a block that has it attached, written inline as `#tag`, or inherited from an ancestor such as its page. `filter.last_edited` takes `Rolling { days }`, `OlderThan { days }` or `Range { start, end }`. Each row carries its `page_title`, except a page, whose `content` is its title; `match_offsets` only when `include_match_offsets` is true.
-- `query { space_id, where, sort?, group_by?, aggregate?, cursor?, limit? }` runs the advanced query engine (the app's query builder) over one space: `where` is its boolean tree of predicates (tags, properties, state, priority, due, scheduled, created and last-edited dates, links, parent), and `group_by` / `aggregate` bucket and count the matches. A row is the block with its page's title and the properties the query reads; a grouped query returns `{ key, title, count, aggregates }` groups instead. An unknown predicate, a malformed date or a `Between` range that ends before it starts is refused. Ids inside `where` are ULIDs, not names, and content is returned as stored, its ids not resolved to names.
+- `query { space_id, where, sort?, group_by?, aggregate?, cursor?, limit? }` runs the advanced query engine (the app's query builder) over one space: `where` is its boolean tree of predicates (tags, properties, state, priority, due, scheduled, created and last-edited dates, links, parent), and `group_by` / `aggregate` bucket and count the matches. A row is the block with its page's title and the properties the query reads; a grouped query returns `{ key, title, count, aggregates }` groups instead. Template pages and their blocks are left out unless `where` asks for the `template` property; saved views always are. An unknown predicate, a malformed date or a `Between` range that ends before it starts is refused. Ids inside `where` are ULIDs, not names, and content is returned as stored, its ids not resolved to names.
 - `get_page_markdown` returns `{ page_id, title, markdown, truncated, next_cursor }`: the page's title, and the page's Markdown exactly as the app's *Edit as Markdown* edits it, the text `edit_page_markdown` takes back. It opens with YAML front matter (aliases, tags, properties); the title has no line. Then come the blocks as a paste reads them, each with its `key:: value` properties (a value with a line break or surrounding spaces quoted): a plain block as a paragraph, or as a `+` item under another block, a bulleted block as a `-` item, a numbered one as `1.`, a task as `- [ ]`, its priority, dates and rule as Obsidian Tasks signifiers at the end of its line (`⏫ 🔁 every week 📅 2026-10-05`), children indented under their parent's text. A link, tag or ref-typed value is written as its name where that name reads back as the same page or tag in the page's space (a ref-typed value as `[[Title]]`), else as its ULID; a block reference as `[[Title#Heading]]` to a heading whose text no other heading of its page shares and holds no link or markup syntax or `:`, and that no ref-typed value or attachment addresses, else as `[[#^ULID]]` to a block of the page and `[[Title#^ULID]]` to another page's, where that reads back as the same block, else as `((ULID))`. Every block ends with its `^ULID`, the id `update_block_content` takes. Appended as it is with `append_markdown`, which drops the front matter a text opens with (with a warning), the read lands as the same blocks: a `[[#^ULID]]` reads as the live block of that id in the page's space wherever it is appended.
 - A large read stops early: `get_page`, `list_backlinks` and `get_page_markdown` stop at a content budget per call (`RESPONSE_BYTES_CAP` in `src-tauri/src/mcp/tools_ro.rs`), cut at a block or group, with `truncated: true` and a `next_cursor`. Passing it back as `cursor` returns the rest from where the last call stopped, so no block is skipped; one block or group larger than the budget comes back whole.
 

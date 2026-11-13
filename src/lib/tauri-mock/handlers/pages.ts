@@ -70,7 +70,7 @@ import {
   resolveRefValue,
   resolveTagNames,
 } from '@/lib/tauri-mock/names'
-import { pageNameHolder } from '@/lib/tauri-mock/page-names'
+import { isSavedViewPage, pageNameHolder } from '@/lib/tauri-mock/page-names'
 import {
   blockTags,
   blocks,
@@ -105,7 +105,7 @@ function pageSortRows(spaceId: string): PageSortRow[] {
   const rows: PageSortRow[] = []
   for (const b of blocks.values()) {
     if (b['block_type'] !== 'page' || b['deleted_at']) continue
-    if (ownerSpaceOf(b) !== spaceId) continue
+    if (ownerSpaceOf(b) !== spaceId || isSavedViewPage(b)) continue
     const id = b['id'] as string
     rows.push({
       ...buildPageMetaRow(b, byPage.get(id) ?? [], edges),
@@ -1472,6 +1472,7 @@ export const pagesHandlers = {
       if (b['block_type'] !== 'page') continue
       if (b['deleted_at']) continue
       if (ownerSpaceOf(b) !== spaceId) continue
+      if (isSavedViewPage(b)) continue
       if (tagFilter) {
         const tagsForBlock = blockTags.get(b['id'] as string)
         if (!tagsForBlock) continue

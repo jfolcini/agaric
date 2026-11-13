@@ -118,11 +118,16 @@ fn case_and_nfc_variants_collide_and_the_lowest_id_keeps_the_name() {
 
 #[test]
 fn a_twin_whose_id_suffix_is_taken_gets_a_counter() {
-    let paths = paths_of(&["x", "X", "x"]);
+    let paths = paths_of(&["x", "X", "x", "x"]);
     assert_eq!(
         paths,
-        ["Notes/x.md", "Notes/X_01P00000.md", "Notes/x_01P00000-2.md"],
-        "ids 1 and 2 share their first 8 characters"
+        [
+            "Notes/x.md",
+            "Notes/X_01P00000.md",
+            "Notes/x_01P00000-2.md",
+            "Notes/x_01P00000-3.md",
+        ],
+        "ids 1 to 3 share their first 8 characters"
     );
 }
 

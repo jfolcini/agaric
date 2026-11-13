@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(id, content)) AS \"titles!: String\"\n               FROM blocks\n               WHERE block_type = 'page'\n                 AND deleted_at IS NULL\n                 AND content IS NOT NULL\n                 AND space_id = ?1\n                 AND id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')",
+  "describe": {
+    "columns": [
+      {
+        "name": "titles!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "ef4c1067cc85dfc21fe3eb979567a21b373f2e7e4ce575c8e6ced517d8e34992"
+}

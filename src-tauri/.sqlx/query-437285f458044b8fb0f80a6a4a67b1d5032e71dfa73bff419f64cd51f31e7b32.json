@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!: String\",\n                  b.id IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')\n                      AS \"saved_view!: bool\"\n           FROM blocks b\n           WHERE b.deleted_at IS NULL AND b.block_type = 'page' AND b.space_id = ?1\n           ORDER BY b.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "saved_view!: bool",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "437285f458044b8fb0f80a6a4a67b1d5032e71dfa73bff419f64cd51f31e7b32"
+}

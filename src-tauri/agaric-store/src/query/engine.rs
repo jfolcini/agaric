@@ -12,7 +12,8 @@
 //!    [`WhereClause`](crate::filters::WhereClause); an `unsupported()` result is rejected (defence in
 //!    depth — the gate already caught it).
 //! 4. **Assemble** — `FROM blocks b WHERE b.space_id = ? AND
-//!    b.deleted_at IS NULL AND <not under a template page> AND (<compiled>)`
+//!    b.deleted_at IS NULL AND <not under a template page> AND <not a saved
+//!    view> AND (<compiled>)`
 //!    (the template guard is dropped when the filter asks for the `template`
 //!    property, see `names_template_property`), with the anonymous `?`
 //!    placeholders renumbered to explicit `?N` so the space bind + filter
@@ -713,7 +714,8 @@ fn compile_query_ctx(request: &AdvancedQueryRequest) -> Result<QueryCtx, AppErro
         from_clause,
         predicate: format!(
             "{match_prefix}b.space_id = ?{space_pos} AND b.deleted_at IS NULL{template_guard} \
-             AND ({filter_sql})"
+             AND {} AND ({filter_sql})",
+            crate::filters::NOT_SAVED_VIEW
         ),
         space_id: request.space_id.clone(),
         next_pos,

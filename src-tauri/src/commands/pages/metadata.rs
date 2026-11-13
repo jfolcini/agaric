@@ -15,7 +15,9 @@ use crate::db::ReadPool;
 use agaric_core::error::AppError;
 use agaric_core::error::ValidationCode;
 use agaric_core::ulid::{BlockId, PageId};
-use agaric_store::filters::{FilterPrimitive, PagesProjection, Projection, WhereClause};
+use agaric_store::filters::{
+    FilterPrimitive, NOT_SAVED_VIEW, PagesProjection, Projection, WhereClause,
+};
 use agaric_store::pagination::{Cursor, PageRequest, PageResponse};
 
 use super::super::*;
@@ -504,8 +506,9 @@ fn compose_last_opened_sql<'a>(
 /// surface into a single AND-joined SQL fragment plus its ordered binds.
 ///
 /// Returns `(sql_fragment, binds)` where `sql_fragment` is the space term
-/// ([`SPACE_TERM`] or [`SPACE_TERM_UNDER_PAGE_LIST`]) followed by an ` AND (...)`
-/// per compiled primitive, ready to splice after the base WHERE, and
+/// ([`SPACE_TERM`] or [`SPACE_TERM_UNDER_PAGE_LIST`]) and [`NOT_SAVED_VIEW`]
+/// followed by an ` AND (...)` per compiled primitive, ready to splice after
+/// the base WHERE of the rows, the last-opened arm and the count alike, and
 /// `binds` are the filter bind values in the SAME left-to-right order their
 /// `?` placeholders appear in the fragment.
 ///
@@ -608,7 +611,10 @@ fn compile_pages_filters(
         }
     }
 
-    Ok((format!("{space_term}{}", clauses.concat()), binds))
+    Ok((
+        format!("{space_term} AND {NOT_SAVED_VIEW}{}", clauses.concat()),
+        binds,
+    ))
 }
 
 /// Steps 1-2 of [`compile_pages_filters`] — everything that rejects a
@@ -735,7 +741,7 @@ const PAGES_METADATA_COLUMNS: &str = r"SELECT
 /// The join to `blocks` is inner: a page lists only once its cache row
 /// exists, and `b.deleted_at` hides a page the rebuild has not yet swept.
 /// Why the count columns stay materialised: the KEEP rationale on
-/// `cache::pages::recompute_all_pages_cache_counts`.
+/// `cache::pages::recompute_pages_cache_counts_of`.
 const PAGES_METADATA_FROM: &str = r"
            FROM pages_cache pc
            CROSS JOIN blocks b ON b.id = pc.page_id

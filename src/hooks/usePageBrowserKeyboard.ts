@@ -6,23 +6,25 @@
  * surface (INPUT / SELECT / TEXTAREA):
  *
  *  - List navigation: delegates to `useListKeyboardNavigation`'s handler
- *    (arrows / Home / End / PageUp / PageDown), calling `preventDefault`
- *    when the handler reports it consumed the key.
+ *    (arrows / Home / End / PageUp / PageDown, and Enter / Space to open the
+ *    cursor's page), calling `preventDefault` when the handler reports it
+ *    consumed the key.
  * Batch selection (#81 / mirroring `useTrashListShortcuts`):
  *    Cmd/Ctrl+A selects every visible page, Escape clears the selection.
  *    Escape is gated on a non-empty selection so it doesn't swallow the
  *    key for other consumers (e.g. closing the create form) when nothing
  *    is selected.
- *
- * Extracted verbatim from `PageBrowser.tsx` (#1263). Pure move — same
- * effects, same deps, same listener semantics.
  */
 
-import { useEffect } from 'react'
+import { type RefObject, useEffect } from 'react'
+
+import { pressesFocusedControl } from '@/hooks/useListKeyboardNavigation'
 
 interface UsePageBrowserKeyboardParams {
   /** Returns `true` when the navigation handler consumed the key. */
   navHandleKeyDown: (e: KeyboardEvent) => boolean
+  /** The list container, which gates Enter and Space (`pressesFocusedControl`). */
+  listRef: RefObject<HTMLElement | null>
   selectAllPages: () => void
   clearMultiSelection: () => void
   multiSelectedSize: number
@@ -30,6 +32,7 @@ interface UsePageBrowserKeyboardParams {
 
 export function usePageBrowserKeyboard({
   navHandleKeyDown,
+  listRef,
   selectAllPages,
   clearMultiSelection,
   multiSelectedSize,
@@ -44,13 +47,14 @@ export function usePageBrowserKeyboard({
         target.tagName === 'TEXTAREA'
       )
         return
+      if (pressesFocusedControl(e, listRef.current)) return
       if (navHandleKeyDown(e)) {
         e.preventDefault()
       }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [navHandleKeyDown])
+  }, [navHandleKeyDown, listRef])
 
   // #81 / document-level batch-selection shortcuts, mirroring
   // the `useTrashListShortcuts` precedent: Cmd/Ctrl+A selects every

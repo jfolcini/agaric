@@ -1266,9 +1266,10 @@ const LIST_VIEWS: ListView[] = [
   {
     name: 'Pages',
     rows: '[id^="page-row-"]',
-    // set_title, count_trash, list_pages_with_metadata. Visible rows prefetch
-    // their subtree only on touch (#5446), and this viewport is a mouse one.
-    ipcOnOpen: 3,
+    // set_title, count_trash, list_pages_with_metadata, and query_by_property
+    // for the space's saved views. Visible rows prefetch their subtree only on
+    // touch (#5446), and this viewport is a mouse one.
+    ipcOnOpen: 4,
     seed: (page) =>
       invokeEach(
         page,
