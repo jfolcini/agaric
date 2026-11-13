@@ -96,6 +96,7 @@ async function viaBlockMode(doc: DocNode): Promise<Held> {
     blockId: BLOCK,
     loaded: '',
     changed: serialize(doc),
+    base: '',
     edit: store.getState().edit,
     splitBlock: store.getState().splitBlock,
     rootParentId: pageId,

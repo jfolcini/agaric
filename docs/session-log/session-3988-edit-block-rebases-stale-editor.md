@@ -14,18 +14,24 @@ fixture.
 Decisions and traps:
 
 - Two insertions at the same point both survive, the peer's first. That is the issue's own
-  example.
+  example. An edit the block already holds is written once: the idle commit and the blur that
+  re-sends its text, landing in the other order, would otherwise write the text twice.
+- Splices count code points, so two edits of one grapheme (a letter and its combining mark, an
+  emoji and its skin-tone modifier) are apart and both kept, giving a cluster neither side typed.
 - The editor's baseline moves only when a commit answers, so a blur overtaking an idle commit
   would rebase from a stale base and write that commit's text twice. The page store sends no base
   while another edit of the block is unanswered.
-- After a rebased commit the editor keeps its own text until it is left or reloaded while clean;
-  the store adopts the echo, and each later commit rebases again.
+- After a rebased commit the store adopts the merged text and the editor keeps its own until the
+  block is left (a reload re-feeds it only with text the store does not hold yet); each later
+  commit rebases again from the editor's text.
 - The current text is the SQL row read in the transaction. `import_and_project` imports into the
   engine before it takes the writer lock, so a commit that wins the lock in that gap is not
   rebased and behaves as before this change. Closing it means reading the engine's text instead;
   raised with the maintainer.
-- Not covered: page mode, *Edit as Markdown*, a draft flushed at blur or recovered at boot, and
-  the blur branches that split or fold a task marker, property line or tag. They send no base.
+- Not covered: page mode, *Edit as Markdown*, a draft flushed at blur or recovered at boot, an
+  Enter that splits the block mid-text, a slash command or *Turn into* that rewrites it, and the
+  blur branches that split or fold a task marker, property line or tag. They send no base, so
+  they still write the editor's text over a peer's edit.
 - The positional `baseText` in the generated binding changed every `edit_block` payload. A
   hundred call-shape assertions in existing tests were updated to the new shape, editor commits
   asserting their real base; none was removed or weakened.

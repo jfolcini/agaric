@@ -6,7 +6,7 @@ import { runUnmountFlush } from '@/stores/unmount-flush'
 
 type Edit = (id: string, content: string, options?: { baseText?: string }) => Promise<boolean>
 
-function flush(base: string | undefined) {
+function flush(base: string) {
   const edit = vi.fn<Edit>(() => Promise.resolve(true))
   runUnmountFlush({
     blockId: 'BLOCK',
@@ -29,9 +29,5 @@ describe('runUnmountFlush plain edit (#6533)', () => {
 
   it('sends an empty stored text as a base too', () => {
     expect(flush('')).toHaveBeenCalledExactlyOnceWith('BLOCK', 'stored typed', { baseText: '' })
-  })
-
-  it('sends no base when the caller has none', () => {
-    expect(flush(undefined)).toHaveBeenCalledExactlyOnceWith('BLOCK', 'stored typed')
   })
 })

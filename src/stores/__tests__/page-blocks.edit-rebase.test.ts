@@ -8,7 +8,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { answerInvokeFromMock } from '@/__tests__/helpers/invoke'
+import { answerInvokeFromMock, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import { createPageBlockStore } from '@/stores/page-blocks'
@@ -81,6 +81,24 @@ describe('edit from a stale editor (#6533)', () => {
       .edit(BLOCK, `${loadedText} one two three`, { baseText: `${loadedText} one two` })
 
     expect(await storedText()).toBe(`Peer: ${loadedText} one two three`)
+  })
+
+  it('rebases again after an edit that failed', async () => {
+    mockedInvoke.mockImplementationOnce(
+      mockInvokeCommands({
+        edit_block: () => {
+          throw new Error('disk I/O error')
+        },
+      }),
+    )
+    expect(await page.getState().edit(BLOCK, `${loadedText} one`, { baseText: loadedText })).toBe(
+      false,
+    )
+
+    await peerEdits()
+    await page.getState().edit(BLOCK, `${loadedText} two`, { baseText: loadedText })
+
+    expect(await storedText()).toBe(`Peer: ${loadedText} two`)
   })
 
   it('writes the text as sent when no base is given', async () => {

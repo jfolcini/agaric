@@ -1517,6 +1517,36 @@ async fn edit_block_rebases_a_stale_edit_onto_the_current_text_6533() {
     );
 }
 
+/// #6533 — undoing a rebased edit gives back the text the block held before
+/// it, the peer's, not the text the editor started from.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_a_rebased_edit_restores_the_peers_text_6533() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let id = block_edited_under_an_editor(&pool, &mat, "Hello world", "HELLO world").await;
+    let edited = capture_op_refs(edit_block_inner_with_base(
+        &pool,
+        DEV,
+        &mat,
+        id.clone(),
+        "Hello WORLD".into(),
+        Some("Hello world".into()),
+    ))
+    .await
+    .unwrap();
+
+    undo_ops_inner(&pool, DEV, &mat, edited.op_refs)
+        .await
+        .unwrap();
+
+    let stored: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored.as_deref(), Some("HELLO world"));
+}
+
 /// #6533 — changes that share text are not merged: the text sent is written.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn edit_block_writes_an_overlapping_stale_edit_as_sent_6533() {

@@ -490,7 +490,7 @@ pub async fn edit_block_inner_with_base(
 /// lifecycle (BEGIN / arm / COMMIT); this helper only enqueues the op via
 /// `enqueue_edit_background` so the caller's single `commit_and_dispatch`
 /// drains every enqueued op in FIFO order.
-#[instrument(skip(tx, state, device_id, to_text), err)]
+#[instrument(skip(tx, state, device_id, to_text, base_text), err)]
 pub(crate) async fn edit_block_in_tx(
     tx: &mut CommandTx,
     state: &agaric_engine::loro::shared::LoroState,

@@ -21,6 +21,7 @@ function splice(old: string[], next: string[]): [number, number, string[]] {
 
 /** `rebase_edit`: `null` when the two changes overlap. */
 export function rebaseEdit(baseText: string, toText: string, currentText: string): string | null {
+  if (toText === currentText) return toText
   const base = Array.from(baseText)
   const current = Array.from(currentText)
   const [start, end, typed] = splice(base, Array.from(toText))

@@ -115,7 +115,7 @@ export interface UnmountFlushDeps {
    * The editor's `storedMarkdown`, read before `unmount()` resets it: the
    * plain edit is rebased from it when the block holds another text by then.
    */
-  base?: string | undefined
+  base: string
   edit: (
     blockId: string,
     content: string,
@@ -172,9 +172,7 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
     return { kind: 'edit', outcome: dedupe.outcome }
   }
   bumpFlushSeq(blockId)
-  const outcome = invokeSync(() =>
-    base === undefined ? edit(blockId, changed) : edit(blockId, changed, { baseText: base }),
-  )
+  const outcome = invokeSync(() => edit(blockId, changed, { baseText: base }))
   return { kind: 'edit', outcome }
 }
 

@@ -506,7 +506,7 @@ test.describe('a dirty editor’s save keeps the peer’s edit a reload brought 
     await openPage(page, 'Getting Started')
   })
 
-  test('the idle commit and the keys after it save both edits', async ({ page }) => {
+  test('the idle commit, the keys after it and leaving save both edits', async ({ page }) => {
     const editor = await typeThenPeerEdits(page)
 
     await expect.poll(() => storedContent(page, GS3)).toBe(`${PEER_TEXT}!`)
@@ -514,6 +514,12 @@ test.describe('a dirty editor’s save keeps the peer’s edit a reload brought 
     await expect(editor).toHaveText(`${GS3_TEXT}!`)
     await page.keyboard.type('?')
     await expect.poll(() => storedContent(page, GS3)).toBe(`${PEER_TEXT}!?`)
+    await page.keyboard.type('.')
+
+    await blurEditors(page)
+
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${PEER_TEXT}!?.`)
+    await expect(page.locator(`li[data-block-id="${GS3}"]`)).toContainText(`${PEER_TEXT}!?.`)
   })
 
   test('leaving the block saves both edits and shows them', async ({ page }) => {

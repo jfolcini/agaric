@@ -31,9 +31,14 @@ fn splice<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
 /// `base → current` touch the same text.
 ///
 /// Each change is one splice of `base`. Two insertions at the same point both
-/// survive, the one already in `current` first.
+/// survive, the one already in `current` first; an edit `current` already
+/// holds is not made again (the editor's own commit, landed before an
+/// earlier one sent from `base`).
 #[must_use]
 pub fn rebase_edit(base: &str, to_text: &str, current: &str) -> Option<String> {
+    if to_text == current {
+        return Some(to_text.to_owned());
+    }
     let (start, end, typed) = splice(base, to_text);
     let (their_start, their_end, theirs) = splice(base, current);
     // Where the editor's range of `base` sits in `current`.
@@ -51,6 +56,7 @@ pub fn rebase_edit(base: &str, to_text: &str, current: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::rebase_edit;
+    use proptest::prelude::*;
 
     #[test]
     fn an_edit_after_the_peers_keeps_both() {
@@ -140,5 +146,110 @@ mod tests {
             rebase_edit("Hello world", "Hello world", "HELLO world").as_deref(),
             Some("HELLO world")
         );
+    }
+
+    /// Chars that share UTF-8 lead bytes, combine with their neighbour, or
+    /// repeat, so prefixes and suffixes meet inside clusters and multi-byte chars.
+    fn text() -> impl Strategy<Value = String> {
+        let chars = [
+            'a', 'b', 'é', 'è', '日', '😀', '😁', '\u{301}', '\u{200D}', 'א',
+        ];
+        proptest::collection::vec(proptest::sample::select(chars.to_vec()), 0..8)
+            .prop_map(|chars| chars.into_iter().collect())
+    }
+
+    /// One edit of a text of distinct chars: the range `[start, end)` and its
+    /// replacement, drawn from chars the text does not hold, so each edit is
+    /// the only splice that makes it.
+    fn edit(len: usize, chars: &'static [char]) -> impl Strategy<Value = (usize, usize, String)> {
+        (
+            0..=len,
+            0..=len,
+            proptest::collection::vec(proptest::sample::select(chars), 0..3),
+        )
+            .prop_map(|(a, b, typed)| (a.min(b), a.max(b), typed.into_iter().collect()))
+            .prop_filter(
+                "an edit changes something",
+                |(start, end, typed): &(usize, usize, String)| start < end || !typed.is_empty(),
+            )
+    }
+
+    fn apply(base: &[char], (start, end, typed): &(usize, usize, String)) -> String {
+        let (head, tail) = (base[..*start].iter(), base[*end..].iter());
+        head.copied()
+            .chain(typed.chars())
+            .chain(tail.copied())
+            .collect()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4096))]
+
+        #[test]
+        fn a_base_the_block_still_holds_gives_the_text_sent(base in text(), sent in text()) {
+            prop_assert_eq!(rebase_edit(&base, &sent, &base), Some(sent));
+        }
+
+        #[test]
+        fn an_unchanged_editor_gives_the_current_text(base in text(), current in text()) {
+            prop_assert_eq!(rebase_edit(&base, &base, &current), Some(current));
+        }
+
+        /// An edit the block already holds (its own commit, landed first) is not made twice.
+        #[test]
+        fn an_edit_the_block_holds_is_written_once(base in text(), sent in text()) {
+            prop_assert_eq!(rebase_edit(&base, &sent, &sent), Some(sent));
+        }
+
+        /// Merging mine onto theirs gives what merging theirs onto mine gives,
+        /// but for two insertions at one point, whose order says whose came first.
+        #[test]
+        fn the_merge_is_the_same_from_either_side(base in text(), sent in text(), current in text()) {
+            let mine = super::splice(&base, &sent);
+            let theirs = super::splice(&base, &current);
+            let tie = mine.0 == mine.1 && (theirs.0, theirs.1) == (mine.0, mine.1) && sent != current;
+            let (onto_current, onto_sent) =
+                (rebase_edit(&base, &sent, &current), rebase_edit(&base, &current, &sent));
+            prop_assert_eq!(onto_current.is_some(), onto_sent.is_some());
+            if !tie {
+                prop_assert_eq!(onto_current, onto_sent);
+            }
+        }
+
+        /// Two edits of a text of distinct chars: apart, both are in the
+        /// result; sharing a char, or one inserting inside the other's range,
+        /// nothing is merged.
+        #[test]
+        fn apart_edits_both_land_and_overlapping_ones_are_refused(
+            (base, mine, theirs) in proptest::sample::subsequence(
+                vec!['a', 'b', 'c', 'é', 'ñ', '日', '本', '😀', 'א', 'Ω'],
+                0..=10,
+            )
+            .prop_flat_map(|base| {
+                let len = base.len();
+                (Just(base), edit(len, &['X', '🙂', 'ß']), edit(len, &['P', '🎉', 'ç']))
+            })
+        ) {
+            let (sent, current) = (apply(&base, &mine), apply(&base, &theirs));
+            let base_text: String = base.iter().collect();
+            let theirs_first = theirs.1 <= mine.0;
+            let expected = if sent == current {
+                Some(sent.clone())
+            } else if theirs_first || mine.1 <= theirs.0 {
+                let (first, second) = if theirs_first { (&theirs, &mine) } else { (&mine, &theirs) };
+                let chars = |from: usize, to: usize| base[from..to].iter().collect::<String>();
+                Some(format!(
+                    "{}{}{}{}{}",
+                    chars(0, first.0),
+                    first.2,
+                    chars(first.1, second.0),
+                    second.2,
+                    chars(second.1, base.len())
+                ))
+            } else {
+                None
+            };
+            prop_assert_eq!(rebase_edit(&base_text, &sent, &current), expected);
+        }
     }
 }
