@@ -1287,10 +1287,12 @@ describe('the space file and the title line (#6277 decision 8)', () => {
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
 
     expect(await spaceFile(unzipped, 'Personal/.agaric/space.json')).toEqual({
+      name: 'Personal',
       propertyDefinitions: [],
       titles: { 'a_b.md': 'a:b' },
     })
     expect(await spaceFile(unzipped, 'Work/.agaric/space.json')).toEqual({
+      name: 'Work',
       propertyDefinitions: [{ key: 'effort', value_type: 'number', options: null }],
       titles: {},
     })
@@ -1298,6 +1300,24 @@ describe('the space file and the title line (#6277 decision 8)', () => {
       'Work/Broken',
     )
     expect(unzipped.file('Work/.agaric/export-report.txt')).toBeNull()
+  })
+
+  // #6554 — the space file is what tells a whole-vault pick its spaces.
+  it('names every space folder of an all-spaces export in its space file, one with nothing else to carry too', async () => {
+    stubExport({
+      list_spaces: () => [{ id: 'SPACE_A', name: 'Team/Docs', accent_color: null }],
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Plain' })],
+      export_page_markdown: () => '- body\n',
+    })
+
+    const result = await exportAllSpacesAsZip()
+    const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
+
+    expect(await spaceFile(unzipped, 'Team_Docs/.agaric/space.json')).toEqual({
+      name: 'Team/Docs',
+      propertyDefinitions: [],
+      titles: {},
+    })
   })
 })
 

@@ -14,7 +14,7 @@
 
 import { FileUp, FolderUp, Library, Upload, Vault } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useId, useRef } from 'react'
+import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -22,13 +22,22 @@ import {
   useBibliographyImport,
 } from '@/components/settings/BibliographySection'
 import { ImportMergeDialog } from '@/components/settings/ImportMergeDialog'
-import { type FailedFile, useImportRunner } from '@/components/settings/useImportRunner'
+import { ImportVaultDialog, type VaultQuestion } from '@/components/settings/ImportVaultDialog'
+import {
+  type FailedFile,
+  type RunGroup,
+  type RunOutcome,
+  useImportRunner,
+} from '@/components/settings/useImportRunner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SettingRow } from '@/components/ui/setting-row'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { countEvernoteNoteLinks, parseEnex } from '@/lib/enex-import'
 import { formatBytes } from '@/lib/format'
+import { i18n } from '@/lib/i18n'
 import { NOTE_EXTENSIONS } from '@/lib/import-attachments'
 import { parseJex } from '@/lib/jex-import'
 import { logger } from '@/lib/logger'
@@ -43,8 +52,51 @@ import {
   mdFilesToUnits,
   restoreSpaceFile,
   skippedFiles,
+  type VaultSpace,
+  vaultRestoreSpaces,
 } from '@/lib/vault-import'
 import { useSpaceStore } from '@/stores/space'
+
+/**
+ * #1925 — only a folder/vault pick (`webkitdirectory`) carries sibling assets:
+ * the browser populates `webkitRelativePath` for folder picks and leaves it
+ * empty for the plain `.md` multi-file pick. A single-file (non-folder) import
+ * has no siblings — documented limitation — so it ships no `vaultFiles`.
+ */
+function isFolderPick(files: readonly File[]): boolean {
+  return files.some(
+    (f) => typeof f.webkitRelativePath === 'string' && f.webkitRelativePath.length > 0,
+  )
+}
+
+/**
+ * What a folder or file pick imports into `spaceId`. An export's definitions
+ * exist before its first note imports (#6277 decision 8), and a file that is
+ * no note and no attachment is said, not dropped (#6032).
+ */
+async function folderGroup(files: File[], spaceId: string): Promise<RunGroup> {
+  // A folder pick's whole FileList is indexed, so each note's referenced
+  // attachments can be matched and shipped.
+  const vaultIndex = isFolderPick(files) ? indexVaultFiles(files) : null
+  const notion = isNotionPick(files)
+  const restored = await restoreSpaceFile(files, spaceId)
+  return {
+    spaceId,
+    units: mdFilesToUnits(files, vaultIndex, notion, restored.titles),
+    initialWarnings: restored.warnings,
+    finalWarnings: (attached) => {
+      const skipped = skippedFiles(files, notion, attached)
+      const warnings: string[] = []
+      if (skipped.other > 0) {
+        warnings.push(i18n.t('data.importFolderSkipped', { count: skipped.other }))
+      }
+      if (skipped.databases > 0) {
+        warnings.push(i18n.t('data.importNotionDatabases', { count: skipped.databases }))
+      }
+      return warnings
+    },
+  }
+}
 
 export function ImportSection(): React.ReactElement {
   const { t } = useTranslation()
@@ -103,6 +155,67 @@ export function ImportSection(): React.ReactElement {
   // #1454 — bibliography import (single-IPC) shares the `importing` gate.
   const { bibInputRef, bibResult, handleBibliographyImport } = useBibliographyImport(setImporting)
 
+  const [vaultQuestion, setVaultQuestion] = useState<VaultQuestion | null>(null)
+
+  // #6554 — each space of an all-spaces export imports into the live space of
+  // its name, created when there is none, once the user agrees to the list.
+  // Null when the user declines, which writes nothing.
+  const restoreVault = useCallback(
+    async (
+      e: React.ChangeEvent<HTMLInputElement>,
+      vault: VaultSpace[],
+    ): Promise<RunOutcome | null> => {
+      // Two exported spaces of one name stay two: each takes a live space of
+      // that name no earlier one took.
+      const taken = new Set<string>()
+      const targets = vault.map(({ name }) => {
+        const live = useSpaceStore
+          .getState()
+          .availableSpaces.find((space) => space.name === name && !taken.has(space.id))
+        if (live !== undefined) taken.add(live.id)
+        return live?.id
+      })
+      const go = await new Promise<boolean>((resolve) => {
+        setVaultQuestion({
+          spaces: vault.map(({ name }, i) => ({ name, exists: targets[i] !== undefined })),
+          answer: (answer) => {
+            setVaultQuestion(null)
+            resolve(answer)
+          },
+        })
+      })
+      if (!go) {
+        setImporting(false)
+        e.target.value = ''
+        return null
+      }
+      const groups: RunGroup[] = []
+      const failures: FailedFile[] = []
+      for (const [i, { name, files }] of vault.entries()) {
+        try {
+          const spaceId = targets[i] ?? unwrap(await commands.createSpace(name, null))
+          groups.push({ ...(await folderGroup(files, spaceId)), spaceName: name })
+        } catch (err) {
+          logger.error('DataSettingsTab', `space restore failed: ${name}`, { name }, err)
+          failures.push({
+            name,
+            reason: t('data.importSpaceCreateFailed', { reason: importErrorReason(err) }),
+          })
+        }
+      }
+      const outcome = await run({
+        event: e,
+        groups,
+        notes: false,
+        loggerFailLabel: 'file import failed',
+        initialFailures: failures,
+      })
+      await useSpaceStore.getState().refreshAvailableSpaces()
+      return outcome
+    },
+    [t, run, setImporting],
+  )
+
   const handleFileImport = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files
@@ -120,35 +233,22 @@ export function ImportSection(): React.ReactElement {
 
       begin()
       const fileArray = Array.from(files)
-
-      // #1925 — only a folder/vault pick (`webkitdirectory`) carries sibling
-      // assets: the browser populates `webkitRelativePath` for folder picks and
-      // leaves it empty for the plain `.md` multi-file pick. When ANY file has a
-      // relative path we treat the run as a vault import and index the whole
-      // FileList so each markdown's referenced attachments can be matched and
-      // shipped. A single-file (non-folder) import has no siblings — documented
-      // limitation — so `vaultIndex` stays null and `vaultFiles` is omitted.
-      const isVaultImport = fileArray.some(
-        (f) => typeof f.webkitRelativePath === 'string' && f.webkitRelativePath.length > 0,
-      )
-      const vaultIndex = isVaultImport ? indexVaultFiles(fileArray) : null
-      const notion = isNotionPick(fileArray)
-      // An export's definitions exist before its first note imports (#6277 decision 8).
-      const restored = await restoreSpaceFile(fileArray, activeSpaceId)
-      const units = mdFilesToUnits(fileArray, vaultIndex, notion, restored.titles)
-      // A file that is no note and no attachment is said, not dropped (#6032).
-      const skippedWarnings = (attached: ReadonlySet<string>): string[] => {
-        const skipped = skippedFiles(fileArray, notion, attached)
-        const warnings: string[] = []
-        if (skipped.other > 0) {
-          warnings.push(t('data.importFolderSkipped', { count: skipped.other }))
-        }
-        if (skipped.databases > 0) {
-          warnings.push(t('data.importNotionDatabases', { count: skipped.databases }))
-        }
-        return warnings
+      const vault = await vaultRestoreSpaces(fileArray)
+      let outcome: RunOutcome
+      if (vault === null) {
+        const { spaceId, ...group } = await folderGroup(fileArray, activeSpaceId)
+        outcome = await run({
+          event: e,
+          activeSpaceId: spaceId,
+          ...group,
+          notes: false,
+          loggerFailLabel: 'file import failed',
+        })
+      } else {
+        const restored = await restoreVault(e, vault)
+        if (restored === null) return
+        outcome = restored
       }
-
       const {
         totalBlocks,
         pagesUpdated,
@@ -157,15 +257,7 @@ export function ImportSection(): React.ReactElement {
         failedFiles,
         cancelled,
         navTitle,
-      } = await run({
-        event: e,
-        activeSpaceId,
-        units,
-        notes: false,
-        loggerFailLabel: 'file import failed',
-        initialWarnings: restored.warnings,
-        finalWarnings: skippedWarnings,
-      })
+      } = outcome
 
       const viewAction =
         navTitle != null
@@ -204,7 +296,7 @@ export function ImportSection(): React.ReactElement {
         )
       }
     },
-    [t, begin, run, goToImportedPage],
+    [t, begin, run, goToImportedPage, restoreVault],
   )
 
   // #1282 — Evernote `.enex` import. Frontend-only: each picked `.enex` file
@@ -869,6 +961,7 @@ export function ImportSection(): React.ReactElement {
         {/* #1454 — bibliography import outcome (summary + warnings). */}
         {bibResult && <BibliographyResultPanel result={bibResult} />}
         <ImportMergeDialog question={mergeQuestion} />
+        <ImportVaultDialog question={vaultQuestion} />
       </CardContent>
     </Card>
   )

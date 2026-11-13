@@ -1,4 +1,5 @@
 mod command_tx;
+pub mod daily_snapshot;
 mod pool;
 mod recovery;
 

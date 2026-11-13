@@ -732,14 +732,27 @@ export function pressChord(chord: string): void {
   }
 }
 
-/** Confirm the open `[role="alertdialog"]` (ConfirmDialog) with its `label` button and wait for it to close. */
+/**
+ * Confirm the open `[role="alertdialog"]` (ConfirmDialog) with its `label`
+ * button and wait for it to close: for its text to leave the page, since the
+ * next question of the same flow can open as this one closes, under the same
+ * button.
+ */
 export async function confirmDialog(label: string): Promise<void> {
   const dialog = $('[role="alertdialog"]')
   await dialog.waitForDisplayed({ timeout: ACTION_TIMEOUT })
   const confirm = dialog.$(`button=${label}`)
   await confirm.waitForClickable({ timeout: ACTION_TIMEOUT })
+  const dialogTexts = () =>
+    browser.execute(() =>
+      [...document.querySelectorAll('[role="alertdialog"]')].map((open) => open.textContent),
+    )
+  const [asked] = await dialogTexts()
   await confirm.click()
-  await dialog.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+  await browser.waitUntil(async () => !(await dialogTexts()).includes(asked ?? ''), {
+    timeout: ACTION_TIMEOUT,
+    timeoutMsg: `the dialog confirmed with ${label} never closed`,
+  })
 }
 
 /** Open Settings' Data tab, where the import inputs live. */
@@ -774,8 +787,9 @@ export async function waitForImportResult(summary: string): Promise<void> {
 /**
  * Pick the folder `folder` holding `files` (keyed by their paths inside it) in
  * the Data tab's folder-pick input `inputTestId` and wait until the result
- * region reads `summary`; with `confirm`, first confirm the dialog listing
- * the pages the import updates with that button (#6277 G5).
+ * region reads `summary`; with `confirm`, first confirm each dialog the import
+ * asks in turn with that button: the pages it updates (#6277 G5), the spaces a
+ * whole-vault pick restores (#6554).
  * WebKitWebDriver cannot pick a folder (Send Keys with a directory hands the
  * input the directory itself as one File), so the input's FileList is set in
  * the page, each File carrying the `webkitRelativePath` a folder picker gives.
@@ -785,7 +799,7 @@ export async function importFolder(
   folder: string,
   files: Record<string, Buffer>,
   summary: string,
-  confirm?: string,
+  confirm?: string | readonly string[],
 ): Promise<void> {
   await openDataTab()
   await $(`[data-testid="${inputTestId}"]`).waitForExist({ timeout: ACTION_TIMEOUT })
@@ -813,7 +827,9 @@ export async function importFolder(
     inputTestId,
     entries,
   )
-  if (confirm !== undefined) await confirmDialog(confirm)
+  for (const label of typeof confirm === 'string' ? [confirm] : (confirm ?? [])) {
+    await confirmDialog(label)
+  }
   await waitForImportResult(summary)
 }
 
