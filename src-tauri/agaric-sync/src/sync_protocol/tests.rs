@@ -5252,6 +5252,124 @@ async fn certless_session_still_resolves_the_peer_from_heads_4085() {
     materializer.shutdown();
 }
 
+// ── #6523 a refused export is reported ──────────────────────────────
+
+/// A space whose engine holds a block live that SQL has soft-deleted, with an
+/// unprojected inbound change that keeps the export's repair off it (#6565).
+async fn seed_engine_live_sql_deleted_block(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    space: &agaric_store::space::SpaceId,
+    block_id: &str,
+) {
+    materializer
+        .loro_state()
+        .registry
+        .for_space(space, "local-dev")
+        .expect("for_space")
+        .engine_mut()
+        .apply_create_block(block_id, "content", "kept by the engine", None, 0)
+        .expect("create");
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+         VALUES (?, 'content', 'kept by the engine', NULL, 1, ?)",
+    )
+    .bind(block_id)
+    .bind(FIXED_TS)
+    .execute(pool)
+    .await
+    .expect("insert soft-deleted block");
+    sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, x'00', 0)")
+        .bind(space.as_str())
+        .execute(pool)
+        .await
+        .expect("insert inbox row");
+}
+
+/// One responder session against `materializer`'s engines, returning the
+/// `ExportRefused` reports it emitted.
+async fn export_refusals_of_one_responder_session(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+) -> Vec<Vec<String>> {
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use std::sync::Arc;
+
+    let sink = Arc::new(RecordingEventSink::new());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        Arc::new(materializer.clone()),
+    )
+    .with_event_sink(Box::new(sink.clone()));
+    orch.handle_message(SyncMessage::HeadExchange {
+        heads: vec![DeviceHead {
+            device_id: "remote-dev".into(),
+            seq: 1,
+            hash: "abc".into(),
+        }],
+        loro_vvs: vec![],
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
+        op_log_batch_chunked: false,
+        pairing_proof: None,
+        device_name: None,
+        sender_device_id: None,
+    })
+    .await
+    .expect("head exchange");
+    sink.events()
+        .into_iter()
+        .filter_map(|e| match e {
+            SyncEvent::ExportRefused { space_ids } => Some(space_ids),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A responder that refuses a space's export names it in an event, says so
+/// again on every round that still refuses it, and reports an empty list
+/// once, on the first round that exports every space.
+///
+/// Reads the process-global `EXPORT_REFUSAL_REPORTED`, so it needs a process
+/// of its own (nextest): another test's export round moves the flag.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_export_names_its_space_until_the_space_exports_again_6523() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ6523REFUSEDSPACEAAAAAA");
+    let block_id = "01HZ6523REFUSEDBLOCKAAAAAA";
+    seed_engine_live_sql_deleted_block(&pool, &materializer, &space, block_id).await;
+
+    let refused = vec![vec![space.as_str().to_owned()]];
+    assert_eq!(
+        export_refusals_of_one_responder_session(&pool, &materializer).await,
+        refused,
+    );
+    assert_eq!(
+        export_refusals_of_one_responder_session(&pool, &materializer).await,
+        refused,
+        "a round that still refuses the space says so again"
+    );
+
+    sqlx::query("DELETE FROM loro_sync_inbox")
+        .execute(&pool)
+        .await
+        .expect("the inbound change is projected");
+    assert_eq!(
+        export_refusals_of_one_responder_session(&pool, &materializer).await,
+        vec![Vec::<String>::new()],
+        "the first round that exports every space clears the report"
+    );
+    assert_eq!(
+        export_refusals_of_one_responder_session(&pool, &materializer).await,
+        Vec::<Vec<String>>::new(),
+        "a healthy round after the clearing one reports nothing"
+    );
+
+    materializer.shutdown();
+}
+
 // ── #4298 device name on the wire ───────────────────────────────────
 
 /// The name a device advertises survives a JSON round-trip through

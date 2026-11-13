@@ -278,8 +278,8 @@ bash scripts/setup-dev-db.sh || echo "warning: dev DB setup skipped — run scri
 # provisioner reaping the (now fast-returning) SessionStart hook can't take it
 # down with a process-group signal; output is redirected to a log. The session lands
 # build/test-ready immediately; the hooks wire once the pre-commit-stage tools
-# are installed, minutes when binstall finds prebuilt binaries, longer when it
-# has to compile them. It's best-effort + idempotent, so a detached run that is itself cut
+# are installed: prebuilt downloads, except a tool with no prebuilt build, which
+# is compiled and takes far longer. It's best-effort + idempotent, so a detached run that is itself cut
 # short (e.g. the container is reclaimed) just gets completed on the next
 # session start. Local/manual runs stay synchronous — there's no hook timeout
 # there and a developer wants to watch it finish.

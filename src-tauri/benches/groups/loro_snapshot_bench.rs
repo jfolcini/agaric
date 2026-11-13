@@ -33,9 +33,7 @@
 //! Measurement only: no budget. Each case's effect is asserted once, untimed,
 //! before its timed loop.
 
-use std::cell::Cell;
 use std::hint::black_box;
-use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -53,6 +51,7 @@ use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 use crate::loro_wire_bench::{LIVE, PEAK, TRACKING};
+use crate::sync_import_bench::Acc;
 
 /// The device that writes the space, and the one that receives it cold.
 const DEVICE_A: &str = "01LOROSNAPBENCHDEVICEA0001";
@@ -73,30 +72,6 @@ const SAMPLE_SIZE: usize = 10;
 
 fn block_id(i: usize) -> String {
     format!("01LOROSNAPBENCH{i:011}")
-}
-
-// ---------------------------------------------------------------------------
-// Elapsed accumulator (mirrors `sync_import_bench::Acc`)
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Default)]
-struct Acc {
-    total: Rc<Cell<Duration>>,
-    iters: Rc<Cell<u64>>,
-}
-
-impl Acc {
-    fn record(&self, elapsed: Duration, iters: u64) {
-        self.total.set(self.total.get() + elapsed);
-        self.iters.set(self.iters.get() + iters);
-    }
-
-    /// Mean seconds per iteration, or `None` when a name filter left the case
-    /// out.
-    fn mean_secs(&self) -> Option<f64> {
-        let iters = self.iters.get();
-        (iters > 0).then(|| self.total.get().as_secs_f64() / iters as f64)
-    }
 }
 
 fn report(case: &str, scale: &str, acc: &Acc) {

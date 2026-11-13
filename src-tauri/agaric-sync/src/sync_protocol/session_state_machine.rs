@@ -1687,6 +1687,7 @@ impl SyncOrchestrator {
         // back to a snapshot, so a stale advertised vv is safe. Skipped
         // entirely when the registry is empty (nothing to ship).
         let mut messages: VecDeque<LoroSyncMessage> = VecDeque::with_capacity(space_ids.len());
+        let mut refused: Vec<agaric_store::space::SpaceId> = Vec::new();
         if !space_ids.is_empty() {
             // #2040: read the vault-wide SQL-soft-deleted id set ONCE for this
             // whole sync round, then thread it into every per-space
@@ -1713,10 +1714,11 @@ impl SyncOrchestrator {
                     });
                 // #1257 freshness gate: `prepare_outgoing` returns `None` when the
                 // engine is stale vs SQL for this space (it would export a block SQL
-                // has soft-deleted). On refusal, skip the space — emit no payload for
-                // it this round; the gate already logged + signalled a
-                // rebuild-from-op-log is needed. Do NOT repair inline.
+                // has soft-deleted) and its one repair did not settle that. On
+                // refusal, skip the space — emit no payload for it this round, and
+                // name it in the round's report below.
                 match loro_sync::prepare_outgoing(
+                    &self.pool,
                     &loro_state.registry,
                     sid,
                     &self.device_id,
@@ -1731,11 +1733,15 @@ impl SyncOrchestrator {
                             device_id = %self.device_id,
                             space_id = %sid.as_str(),
                             "loro: #1257 freshness gate refused export for space; \
-                             skipping it in this push (rebuild-from-op-log required)"
+                             skipping it in this push"
                         );
+                        refused.push(sid.clone());
                     }
                 }
             }
+        }
+        if let Some(report) = loro_sync::export_refusal_report(&refused) {
+            self.emit(report);
         }
 
         // Empty-stream short-circuit. Nothing to ship — no registered spaces
@@ -1845,8 +1851,8 @@ impl SyncOrchestrator {
     /// answer — a *partial* refusal already streams and already stamps, so
     /// exempting the total refusal would buy no guarantee while adding a third
     /// meaning to the column — and the refusal is not silent: `prepare_outgoing`
-    /// `warn!`s per space per round and signals that a rebuild-from-op-log is
-    /// required.
+    /// `warn!`s per space per round, and the round names the refused spaces to
+    /// the frontend (`loro_sync::export_refusal_report`).
     ///
     /// The peer's advertised frontier is persisted for the same reason the
     /// normal streaming path persists it (#2502): the session completed, so the
@@ -2384,6 +2390,7 @@ mod tests {
                 .map(|v| v.vv.as_slice());
             payloads.push_back(
                 loro_sync::prepare_outgoing(
+                    pool,
                     &peer_state.registry,
                     &space,
                     "DEV_PEER",

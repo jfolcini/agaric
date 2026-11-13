@@ -1,17 +1,18 @@
 /**
- * A PDF highlight as a block (#6629). Saving the reader writes each new
- * highlight into the annotated copy and adds a child of the block that owns the
- * PDF: its text is the passage, and three properties, all text, point at its
- * place in the file:
+ * A PDF highlight or pinned comment as a block (#6629). Saving the reader
+ * writes each new one into the annotated copy and adds a child of the block
+ * that owns the PDF: its text is the highlighted passage or the comment, and
+ * three properties, all text, point at its place in the file:
  *
- * - `pdf_attachment`, the id of the attachment holding the highlight;
+ * - `pdf_attachment`, the id of the attachment holding the annotation;
  * - `pdf_page`, its page, from 1;
  * - `pdf_boxes`, its boxes in PDF units (`[x1, y1, x2, y2]`, origin at the
  *   page's bottom left), as compact JSON: the bytes at an attachment id never
- *   change, so these never drift, and they do not depend on the zoom.
+ *   change, so these never drift, and they do not depend on the zoom. A
+ *   comment has one, the box it is pinned in.
  *
  * A save stores the annotated copy under a new id and deletes the original, so
- * it points every highlight block of the space at the copy first.
+ * it points every such block, in every space, at the copy first.
  */
 
 import type { PDFDocumentProxy } from 'pdfjs-dist'
@@ -26,25 +27,33 @@ export const PDF_ATTACHMENT_KEY = 'pdf_attachment'
 export const PDF_PAGE_KEY = 'pdf_page'
 const PDF_BOXES_KEY = 'pdf_boxes'
 
-/** pdf.js's `AnnotationEditorType.HIGHLIGHT`. */
+/** pdf.js's `AnnotationEditorType`: a pinned comment and a highlight. */
+const FREETEXT = 3
 const HIGHLIGHT = 9
 
-export interface PdfHighlight {
-  passage: string
+export interface PdfAnnotation {
+  /** A highlight's passage, or a comment's words. */
+  text: string
   /** From 1. */
   page: number
   boxes: number[][]
 }
 
-/** The part of a highlight pdf.js serializes into the file. */
-interface SerializedHighlight {
+/** The part of an annotation pdf.js serializes into the file. */
+interface SerializedAnnotation {
   annotationType: number
   /** The annotation the file already holds; absent on a new one. */
   id?: string | null
   pageIndex: number
-  /** Eight numbers a box, top edge first; `null` on a free-hand highlight. */
-  quadPoints: ArrayLike<number> | null
+  /** The annotation's box, `[x1, y1, x2, y2]`. */
+  rect?: ArrayLike<number>
+  /** A highlight's: eight numbers a box, top edge first; `null` on a free-hand one. */
+  quadPoints?: ArrayLike<number> | null
+  /** A comment's words. */
+  value?: string
 }
+
+const oneLine = (text: string): string => text.replaceAll(/\s+/g, ' ').trim()
 
 /** PDF units to two decimals: far below what a page shows, and short to store. */
 const round = (value: number): number => Math.round(value * 100) / 100
@@ -66,41 +75,49 @@ function boxesOf(quadPoints: ArrayLike<number>): number[][] {
  */
 function passageOf(editor: unknown): string {
   const div = (editor as { div?: HTMLElement | null } | undefined)?.div
-  return (div?.getAttribute('aria-label') ?? '').replaceAll(/\s+/g, ' ').trim()
+  return oneLine(div?.getAttribute('aria-label') ?? '')
 }
 
 /**
- * The highlights a save adds to the file, in the order they were made: pdf.js's
- * own serialization of its editors, the one `saveDocument()` writes. One the
- * file already holds is left out, and so is a free-hand one, which covers no
- * text.
+ * The highlights and comments a save adds to the file, in the order they were
+ * made: pdf.js's own serialization of its editors, the one `saveDocument()`
+ * writes. One the file already holds is left out, and so is a free-hand
+ * highlight, which covers no text.
  */
-export function newHighlights(
+export function newAnnotations(
   storage: Pick<PDFDocumentProxy['annotationStorage'], 'serializable' | 'getRawValue'>,
-): PdfHighlight[] {
-  const highlights: PdfHighlight[] = []
-  const map = storage.serializable.map as Map<string, SerializedHighlight> | null
+): PdfAnnotation[] {
+  const annotations: PdfAnnotation[] = []
+  const map = storage.serializable.map as Map<string, SerializedAnnotation> | null
   for (const [key, data] of map ?? []) {
-    if (data.annotationType !== HIGHLIGHT || data.id != null || data.quadPoints == null) continue
-    const passage = passageOf(storage.getRawValue(key))
-    if (passage === '') continue
-    highlights.push({ passage, page: data.pageIndex + 1, boxes: boxesOf(data.quadPoints) })
+    if (data.id != null) continue
+    let text = ''
+    let boxes: number[][] = []
+    if (data.annotationType === HIGHLIGHT && data.quadPoints != null) {
+      text = passageOf(storage.getRawValue(key))
+      boxes = boxesOf(data.quadPoints)
+    } else if (data.annotationType === FREETEXT && data.rect) {
+      text = oneLine(data.value ?? '')
+      boxes = [Array.from(data.rect, round)]
+    }
+    if (text === '') continue
+    annotations.push({ text, page: data.pageIndex + 1, boxes })
   }
-  return highlights
+  return annotations
 }
 
-/** One block per highlight, appended under `ownerId`, pointing at attachment `attachmentId`. */
-export function highlightBlockSpecs(
+/** One block per annotation, appended under `ownerId`, pointing at attachment `attachmentId`. */
+export function annotationBlockSpecs(
   ownerId: string,
   attachmentId: string,
-  highlights: readonly PdfHighlight[],
+  annotations: readonly PdfAnnotation[],
 ): CreateBlockSpec[] {
-  return highlights.map(({ passage, page, boxes }) => ({
+  return annotations.map(({ text, page, boxes }) => ({
     blockType: 'content',
-    // As typed text: a `*` or `#` in the passage stays a character.
+    // As typed text: a `*` or `#` in it stays a character.
     content: serialize({
       type: 'doc',
-      content: [{ type: 'paragraph', content: [{ type: 'text', text: passage }] }],
+      content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
     }),
     parentId: ownerId,
     position: null,
@@ -113,41 +130,42 @@ export function highlightBlockSpecs(
 }
 
 /**
- * Point every live block of the space whose `pdf_attachment` is `from` at
- * `to`, wherever it was moved; throws on the first refused read or write. No
- * active space has nothing to point.
+ * Point every live block whose `pdf_attachment` is `from` at `to`, in each of
+ * `spaceIds`: a block follows its file to whatever page or space it was moved.
+ * Throws on the first refused read or write.
  */
-export async function repointHighlightBlocks(
-  spaceId: string | null,
+export async function repointAnnotationBlocks(
+  spaceIds: readonly string[],
   from: string,
   to: string,
 ): Promise<void> {
-  if (spaceId === null) return
   const ids: string[] = []
-  let cursor: string | null = null
-  do {
-    const page: PageResponse<BlockRow> = unwrap(
-      await commands.queryByProperty(
-        {
-          key: PDF_ATTACHMENT_KEY,
-          valueText: from,
-          valueDate: null,
-          operator: null,
-          cursor,
-          limit: paginationLimit(PAGINATION_MAX),
-          excludeParentId: null,
-          contentNonEmpty: null,
-          blockType: null,
-          valueTextIn: null,
-          valueDateRange: null,
-          excludeTodoStates: null,
-        },
-        requireActiveScope(spaceId),
-      ),
-    )
-    ids.push(...page.items.map((block) => block.id))
-    cursor = page.has_more ? page.next_cursor : null
-  } while (cursor !== null)
+  for (const spaceId of spaceIds) {
+    let cursor: string | null = null
+    do {
+      const page: PageResponse<BlockRow> = unwrap(
+        await commands.queryByProperty(
+          {
+            key: PDF_ATTACHMENT_KEY,
+            valueText: from,
+            valueDate: null,
+            operator: null,
+            cursor,
+            limit: paginationLimit(PAGINATION_MAX),
+            excludeParentId: null,
+            contentNonEmpty: null,
+            blockType: null,
+            valueTextIn: null,
+            valueDateRange: null,
+            excludeTodoStates: null,
+          },
+          requireActiveScope(spaceId),
+        ),
+      )
+      ids.push(...page.items.map((block) => block.id))
+      cursor = page.has_more ? page.next_cursor : null
+    } while (cursor !== null)
+  }
   // Not undoable: undoing one would point the block at the deleted original.
   for (const id of ids) {
     unwrap(
@@ -162,7 +180,7 @@ export async function repointHighlightBlocks(
   }
 }
 
-/** Where a block's highlight is, from its properties; `null` on a block that is no highlight. */
+/** Where a block's annotation is, from its properties; `null` on a block that is none. */
 export function pdfSourceOf(
   properties: ReadonlyArray<{ key: string; value: string }> | undefined,
 ): { attachmentId: string; page: number } | null {

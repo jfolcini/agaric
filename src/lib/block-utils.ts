@@ -18,7 +18,7 @@ import { taskStateFromMarker, type TodoState } from '@/lib/task-states'
  * still stored on old installs (`personal_to_work_migration_v1`), the template
  * flags, the list style, the image presentation keys, a page's `bookmark`
  * (its place in the sidebar's bookmarks), `saved_view`, which makes a page
- * a saved view (`src/lib/saved-views.ts`), and a PDF highlight's place
+ * a saved view (`src/lib/saved-views.ts`), and a PDF highlight's or comment's place
  * (`pdf_attachment`, `pdf_page`, `pdf_boxes`; `src/lib/pdf-highlights.ts`).
  *
  * Distinct from `NON_DELETABLE_PROPERTIES` in `property-save-utils.ts`,
