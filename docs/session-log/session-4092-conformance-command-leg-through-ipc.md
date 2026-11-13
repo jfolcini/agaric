@@ -1,4 +1,4 @@
-# Session 4091 — the conformance command leg crosses the app's IPC surface (#6529 stage 1a)
+# Session 4092 — the conformance command leg crosses the app's IPC surface (#6529 stage 1a)
 
 The session was briefed to build stage 1b of #6529, the bridge binary, as "the next unticked stage". Stage 1a was unticked too and none of it was on `main`: no `HeadlessApp`, a `Wry`-only `build_invoke_handler`, no PR, no branch but the spike's. Stage 1b serves a `HeadlessApp`, so it cannot come first. This PR is stage 1a alone, on the branch the brief named (`claude/6529-headless-bridge-1b`).
 
@@ -33,7 +33,9 @@ The session was briefed to build stage 1b of #6529, the bridge binary, as "the n
 
 ## What ran
 
-Re-authoring every fixture through IPC (`CONFORMANCE_UPDATE=1`, then `oxfmt`) leaves no diff. `just gen-bindings` and `just gen-sqlx` leave no diff. Both halves of `cargo nextest run --workspace`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, the full vitest suite, `npm run typecheck`, `npm run lint`, `prek run --all-files` and the manual stage.
+On the branch merged with `main` at `37bd056`: both halves of `cargo nextest run --workspace` (4046 and 4038 passed, none retried), the full vitest suite, `npm run typecheck`, `npm run lint`, `just gen-sqlx` with no diff, `prek run --all-files` and the manual stage, and the random-seed differential fuzz (`--run-ignored only`). Re-authoring every fixture through IPC (`CONFORMANCE_UPDATE=1`, then `oxfmt`) left no diff, before that merge.
+
+`main` moved six commits further before the push, none in the harness. On that last merge: `just gen-bindings` with no diff, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings` and the `command_integration` binary. The whole suite on that head is CI's.
 
 Timing of the two tests the change touches, three isolated runs each on a 4-vCPU debug build: `conformance_fixtures_match_backend` 18.0 to 19.0 s on `main` and 18.4 to 20.5 s here, which overlap; the fixed-seed fuzz 7.1 to 7.5 s and 7.5 to 8.3 s, about half a second slower.
 
