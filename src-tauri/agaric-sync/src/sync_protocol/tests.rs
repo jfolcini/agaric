@@ -5189,7 +5189,8 @@ async fn certless_session_still_resolves_the_peer_from_heads_4085() {
 
 // ── #6523 a refused export is reported ──────────────────────────────
 
-/// A space whose engine holds a block live that SQL has soft-deleted.
+/// A space whose engine holds a block live that SQL has soft-deleted, with an
+/// unprojected inbound change that keeps the export's repair off it (#6565).
 async fn seed_engine_live_sql_deleted_block(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -5213,6 +5214,11 @@ async fn seed_engine_live_sql_deleted_block(
     .execute(pool)
     .await
     .expect("insert soft-deleted block");
+    sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, x'00', 0)")
+        .bind(space.as_str())
+        .execute(pool)
+        .await
+        .expect("insert inbox row");
 }
 
 /// One responder session against `materializer`'s engines, returning the
@@ -5281,11 +5287,10 @@ async fn a_refused_export_names_its_space_until_the_space_exports_again_6523() {
         "a round that still refuses the space says so again"
     );
 
-    sqlx::query("UPDATE blocks SET deleted_at = NULL WHERE id = ?")
-        .bind(block_id)
+    sqlx::query("DELETE FROM loro_sync_inbox")
         .execute(&pool)
         .await
-        .expect("restore in SQL");
+        .expect("the inbound change is projected");
     assert_eq!(
         export_refusals_of_one_responder_session(&pool, &materializer).await,
         vec![Vec::<String>::new()],

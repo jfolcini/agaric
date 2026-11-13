@@ -1253,6 +1253,12 @@ async fn loro_snapshot_catchup_reports_a_space_it_refuses_to_export_6523() {
     .execute(&resp_pool)
     .await
     .expect("insert soft-deleted block");
+    // An unprojected inbound change keeps the #6565 repair off the space.
+    sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, x'00', 0)")
+        .bind(space.as_str())
+        .execute(&resp_pool)
+        .await
+        .expect("insert inbox row");
 
     let mut pair = quic_pair().await;
     let (client, server) = (&mut pair.client, &mut pair.server);

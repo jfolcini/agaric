@@ -2123,8 +2123,8 @@ pub async fn reproject_block_tags_from_engine(
 /// Returns the `(block_id, deleted_at)` pairs this call newly stamped
 /// into SQL (cascade or sweep; empty for restores/no-ops) so the caller
 /// can fan the tombstones out to the per-space engine — a block whose
-/// engine meta stays "live" while SQL says "deleted" would wedge the
-/// #1257 outbound freshness gate.
+/// engine meta stays "live" while SQL says "deleted" trips the #1257
+/// outbound freshness gate.
 pub async fn reproject_block_deleted_at_from_engine(
     conn: &mut SqliteConnection,
     block_id: &agaric_core::ulid::BlockId,

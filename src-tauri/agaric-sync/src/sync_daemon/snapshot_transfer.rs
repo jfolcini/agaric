@@ -118,13 +118,15 @@ pub async fn try_offer_loro_snapshot_catchup(
     // Build one full snapshot per registered space. `None` peer-vv forces
     // `ExportMode::Snapshot` (engine truth) rather than an incremental delta.
     // The #1257 freshness gate may refuse a space whose engine is stale vs
-    // SQL (returns `None`); that space is skipped and reconciled by a later
-    // rebuild — never shipped as a half-truth.
+    // SQL (returns `None`); that space is skipped and reported, never shipped
+    // as a half-truth.
     let sql_deleted = loro_sync::read_sql_soft_deleted_ids(pool).await?;
     let mut messages: Vec<LoroSyncMessage> = Vec::new();
     let mut refused: Vec<agaric_store::space::SpaceId> = Vec::new();
     for sid in &space_ids {
-        match loro_sync::prepare_outgoing(registry, sid, device_id, None, &sql_deleted).await? {
+        match loro_sync::prepare_outgoing(pool, registry, sid, device_id, None, &sql_deleted)
+            .await?
+        {
             Some(msg) => messages.push(msg),
             None => {
                 tracing::warn!(

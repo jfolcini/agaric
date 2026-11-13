@@ -208,9 +208,9 @@ pub fn classify_from_vv_reachability(
 /// # #1257 — sync-export freshness gate
 ///
 /// Returns `Ok(None)` when the engine is **stale** relative to SQL for
-/// this space and the round MUST emit no payload (the caller skips the
-/// space and a rebuild-from-op-log is signalled). `Ok(Some(msg))` is the
-/// unchanged happy path.
+/// this space, the one repair below did not settle it, and the round MUST
+/// emit no payload (the caller skips the space and reports it).
+/// `Ok(Some(msg))` is the happy path.
 ///
 /// ## Why per-block `deleted_at` reconciliation, not a vv freshness gate
 ///
@@ -237,8 +237,9 @@ pub fn classify_from_vv_reachability(
 /// So the gate reconciles per-block: take the set of blocks the engine
 /// would export as LIVE (`live_block_ids()`) and ask SQL which of them are
 /// soft-deleted (`deleted_at IS NOT NULL`). If ANY engine-live block is
-/// SQL-deleted, the engine is stale for this space → refuse (return
-/// `Ok(None)`, log, signal rebuild). No inline repair.
+/// SQL-deleted, the engine is stale for this space: mirror SQL's tombstones
+/// onto it once ([`mirror_sql_tombstones_onto_engine`], #6565). A space that
+/// does not settle is refused (return `Ok(None)`, log).
 ///
 /// Sender-side helper.
 ///
@@ -256,6 +257,7 @@ pub fn classify_from_vv_reachability(
 /// sharing it is behaviour-preserving — the #1257 freshness gate still
 /// intersects it against each space's engine-live set independently.
 pub async fn prepare_outgoing(
+    pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     space_id: &SpaceId,
     device_id: &str,
@@ -271,18 +273,33 @@ pub async fn prepare_outgoing(
     let live_block_ids: Vec<String> =
         registry.with_engine(space_id, device_id, |engine| engine.live_block_ids())??;
     if let Some(stale_id) = first_engine_live_block_sql_deleted(&live_block_ids, sql_deleted) {
-        // Refuse + signal rebuild. Emit NO payload this round; a future
-        // caller can trigger a rebuild-from-op-log to reconcile the engine
-        // With SQL. Do NOT repair inline (that is territory).
-        tracing::warn!(
-            space_id = %space_id.as_str(),
-            device_id = %device_id,
-            stale_block_id = %stale_id,
-            "loro_sync: #1257 freshness gate REFUSED export — engine holds a \
-             block SQL has soft-deleted (engine stale vs SQL); emitting no sync \
-             payload this round, rebuild-from-op-log required"
-        );
-        return Ok(None);
+        let stale: Vec<String> = live_block_ids
+            .into_iter()
+            .filter(|id| sql_deleted.contains(id))
+            .collect();
+        let settled =
+            mirror_sql_tombstones_onto_engine(pool, registry, space_id, device_id, &stale)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        space_id = %space_id.as_str(),
+                        %error,
+                        "loro_sync: could not mirror SQL's tombstones onto the engine"
+                    );
+                    false
+                });
+        if !settled {
+            // Emit NO payload this round.
+            tracing::warn!(
+                space_id = %space_id.as_str(),
+                device_id = %device_id,
+                stale_block_id = %stale_id,
+                "loro_sync: #1257 freshness gate REFUSED export — engine holds a \
+                 block SQL has soft-deleted (engine stale vs SQL) and mirroring \
+                 SQL's tombstone did not settle it; emitting no sync payload this round"
+            );
+            return Ok(None);
+        }
     }
 
     match peer_vv {
@@ -331,6 +348,89 @@ pub async fn prepare_outgoing(
     }
 }
 
+/// #6565: write SQL's tombstone onto the engine for each of `stale_ids`, the
+/// blocks the engine holds live and the round's soft-deleted set names, so
+/// the delete the user made reaches the other device. `Ok(true)` when the
+/// engine then agrees with SQL about every one of them.
+///
+/// A tombstone written for a block the user still has would trash it on every
+/// device, so three things must hold before one is written:
+///
+/// * **No SQL write is in flight.** The repair holds the write lock from its
+///   reads to its engine write.
+/// * **SQL holds the block deleted now.** `deleted_at` is re-read under the
+///   lock: the round's set predates the per-space loop, and a block restored
+///   since is left alone.
+/// * **No inbound change for the space is unprojected.** An import writes its
+///   `loro_sync_inbox` row before it touches the engine, and the row goes
+///   with the projection, or to `loro_sync_quarantine` once boot replay gives
+///   up on projecting it. While either holds a row the engine may hold a
+///   peer's restore that SQL has yet to see, where SQL is the stale side, so
+///   nothing is written and the space stays refused.
+///
+/// The delete, restore and purge commands write the engine after they commit
+/// (the list is on `agaric_engine::loro::snapshot::op_log_head`). A restore or
+/// a purge commits SQL first, so its block is not deleted in SQL here; a
+/// delete's fan-out writes the timestamp this does.
+///
+/// The tombstones are in no op log, so the space is saved before the caller
+/// exports them: after a crash the engine would otherwise mint its next op
+/// under an id the peer already holds, and the peer would drop that op.
+pub(super) async fn mirror_sql_tombstones_onto_engine(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    space_id: &SpaceId,
+    device_id: &str,
+    stale_ids: &[String],
+) -> Result<bool, AppError> {
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "sync_export_repair").await?;
+    let space = space_id.as_str();
+    let inbound_unprojected = sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM loro_sync_inbox WHERE space_id = ?1)
+               OR EXISTS(SELECT 1 FROM loro_sync_quarantine WHERE space_id = ?1)
+               AS "unprojected!: bool""#,
+        space,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if inbound_unprojected {
+        return Ok(false);
+    }
+    let ids = serde_json::to_string(stale_ids)?;
+    let tombstones = sqlx::query!(
+        r#"SELECT id AS "id!", deleted_at AS "deleted_at!: i64" FROM blocks
+           WHERE deleted_at IS NOT NULL AND id IN (SELECT value FROM json_each(?))"#,
+        ids,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let wrote = registry.with_engine(space_id, device_id, |engine| {
+        // `stale_ids` predates the wait for the lock: an import that finished
+        // meanwhile can have purged or tombstoned one.
+        let live: std::collections::HashSet<String> =
+            engine.live_block_ids()?.into_iter().collect();
+        let mut wrote = false;
+        for tombstone in tombstones.iter().filter(|t| live.contains(&t.id)) {
+            engine.apply_delete_block(&tombstone.id, &tombstone.deleted_at.to_string())?;
+            wrote = true;
+        }
+        Ok::<bool, AppError>(wrote)
+    })??;
+    // Nothing was written to SQL; the commit only releases the lock.
+    tx.commit().await?;
+    if wrote
+        && agaric_engine::loro::snapshot::save_all_engines(pool, registry)
+            .await
+            .persisted_through
+            .is_none()
+    {
+        return Err(AppError::Snapshot(
+            "the mirrored tombstones were not saved".to_owned(),
+        ));
+    }
+    Ok(true)
+}
+
 /// #2040: single-space convenience wrapper around [`prepare_outgoing`] that
 /// reads the SQL-soft-deleted set itself (via [`read_sql_soft_deleted_ids`])
 /// before delegating.
@@ -350,7 +450,7 @@ pub async fn prepare_outgoing_for_pool(
     peer_vv: Option<&[u8]>,
 ) -> Result<Option<LoroSyncMessage>, AppError> {
     let sql_deleted = read_sql_soft_deleted_ids(pool).await?;
-    prepare_outgoing(registry, space_id, device_id, peer_vv, &sql_deleted).await
+    prepare_outgoing(pool, registry, space_id, device_id, peer_vv, &sql_deleted).await
 }
 
 /// #2040: read the vault-wide set of SQL-soft-deleted block ids
@@ -1472,16 +1572,16 @@ async fn commit_projection(
 /// block whose engine meta still says "live". The SQL cascade/sweep can
 /// legally reach blocks no peer ever wrote a delete op for (a block
 /// concurrently moved INTO the deleted subtree), and an engine-live /
-/// SQL-deleted block permanently wedges the #1257 outbound freshness
-/// gate. This mirrors the local delete path's #2344
+/// SQL-deleted block trips the #1257 outbound freshness gate, which then
+/// has to repair it before it can export. This mirrors the local delete path's #2344
 /// `dispatch_delete_descendants` fan-out (same cohort timestamp,
 /// idempotent per-block engine writes), and is deterministic across
 /// peers — each peer derives the identical set from the identical
 /// converged CRDT state. Runs AFTER the committed projection and is
 /// best-effort: a failure must NOT turn the committed projection into
-/// an `Err` (same policy as the tag rebuild below); a later import that
-/// touches the same blocks re-derives the fan-out, and the integrity check
-/// reports any block it leaves live in the engine.
+/// an `Err` (same policy as the tag rebuild below); the next export
+/// mirrors the tombstones it missed ([`mirror_sql_tombstones_onto_engine`]),
+/// and the integrity check reports any block left live in the engine.
 fn fan_out_swept_tombstones(
     registry: &LoroEngineRegistry,
     device_id: &str,
@@ -1503,9 +1603,8 @@ fn fan_out_swept_tombstones(
             tracing::warn!(
                 error = %err,
                 "engine tombstone fan-out failed AFTER the projection \
-                 committed; the committed SQL state stands; the #1257 \
-                 freshness gate may refuse outbound export for this space \
-                 until a later import re-derives the fan-out"
+                 committed; the committed SQL state stands, and the next \
+                 export mirrors the tombstones onto the engine"
             );
         }
     }
