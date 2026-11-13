@@ -128,7 +128,8 @@ input string ──tokenize──▶ raw tokens ──classify──▶ SearchQu
                                                           │
                                                           ├──▶ chip projection (FilterChipRow)
                                                           ├──▶ autocomplete (caret offset)
-                                                          └──▶ astToFilterProjection ──▶ SearchFilter IPC
+                                                          ├──▶ astToFilterProjection ──▶ SearchFilter IPC
+                                                          └──▶ compileQueryText ──▶ FilterExpr (a query block's text)
 ```
 
 Three pure modules under `src/lib/search-query/`:
