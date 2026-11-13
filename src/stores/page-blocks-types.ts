@@ -71,12 +71,15 @@ export interface PageBlockState {
    * an undo entry of its own, as a paste is, instead of joining the block's
    * typing session. `undoGroup` joins the edit to the entry of earlier edits
    * with the same key, whatever block they changed (a replace-all); with
-   * `merge: false` it starts that entry.
+   * `merge: false` it starts that entry. `baseText` is the text an editor
+   * started from: when the block holds another text by then (a peer's edit the
+   * editor never showed), the backend replays the editor's change on it, and
+   * the store takes the text it wrote.
    */
   edit: (
     blockId: string,
     content: string,
-    options?: { merge?: boolean; undoGroup?: string },
+    options?: { merge?: boolean; undoGroup?: string; baseText?: string },
   ) => Promise<boolean>
   /** Delete a block and its subtree; `options` default to a user-initiated delete. */
   remove: (blockId: string, options?: DeleteBlockOptions) => Promise<void>

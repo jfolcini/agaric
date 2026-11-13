@@ -489,6 +489,7 @@ describe('TagList', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
           blockId: 'T1',
           toText: 'new-name',
+          baseText: null,
         })
       })
 

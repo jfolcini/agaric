@@ -60,6 +60,14 @@ async fn seed_blocks_with_fts_incremental(pool: &SqlitePool, count: usize) {
     }
 }
 
+async fn fts_row_count(pool: &SqlitePool) -> usize {
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    usize::try_from(rows).unwrap()
+}
+
 // ---------------------------------------------------------------------------
 // Helper: create a temporary pool
 // ---------------------------------------------------------------------------
@@ -139,10 +147,17 @@ fn bench_update_fts_for_block(c: &mut Criterion) {
         // We always update the same block; the benchmark measures steady-state cost.
         let target_id = "FTS0000000000000000000000";
 
+        // Untimed shape probe: an update against a short index is cheap
+        // whatever the delete does, and one that left its old row behind
+        // would grow the index instead of replacing a row in it.
+        assert_eq!(rt.block_on(fts_row_count(&pool)), count);
+
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt)
                 .iter(|| update_fts_for_block(&pool, target_id));
         });
+
+        assert_eq!(rt.block_on(fts_row_count(&pool)), count);
     }
     group.finish();
 }

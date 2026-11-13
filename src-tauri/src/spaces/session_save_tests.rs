@@ -27,7 +27,7 @@ use agaric_sync::sync_protocol::loro_sync::{
 use super::SpacePlacementSink;
 use crate::commands::{
     create_block_inner, create_page_in_space_inner, create_space_inner, edit_block_inner,
-    set_todo_state_inner,
+    edit_block_inner_with_base, set_todo_state_inner,
 };
 use crate::materializer::Materializer;
 use crate::mcp::view_notify::RecordingViewChangeEmitter;
@@ -697,6 +697,124 @@ async fn the_hydration_does_not_twin_a_peers_block_the_engine_lacks_6525() {
     );
     a.pull(&b, &space).await;
     assert_eq!(a.live_nodes(&space, &y), 1, "and so does A");
+    a.shutdown();
+    b.shutdown();
+}
+
+/// #6518 — the daily compaction can purge ops no save has covered yet (the
+/// periodic save runs every five minutes), so it saves the engines first: a
+/// kill after it boots with the purged ops' blocks still in the engine.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_compaction_before_any_save_keeps_its_blocks_after_a_kill_6518() {
+    let mut a = Device::new(DEV_A).await;
+    let space = create_space_inner(&a.pool, DEV_A, &a.mat, "Mine".into(), None)
+        .await
+        .unwrap();
+    let page = create_page_in_space_inner(
+        &a.pool,
+        DEV_A,
+        &a.mat,
+        None,
+        "P".into(),
+        space.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    let x = create_block_inner(
+        &a.pool,
+        DEV_A,
+        &a.mat,
+        "content".into(),
+        "abc".into(),
+        Some(page),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let space = SpaceId::from_trusted(space.as_str());
+    a.mat.flush_background().await.unwrap();
+    let mut tx = a.pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE op_log SET created_at = created_at - ?")
+        .bind(91_i64 * 24 * 3600 * 1000)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    crate::maintenance::op_log_compact(&a.pool, &a.mat)
+        .await
+        .unwrap();
+    let ops_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&a.pool)
+        .await
+        .unwrap();
+    assert_eq!(ops_left, 0, "every aged op is purged");
+    a.kill_and_boot().await;
+
+    assert_eq!(a.engine_content(&space, &x).as_deref(), Some("abc"));
+    a.shutdown();
+}
+
+/// #6533 — a sync import reaches the engine before it takes the writer lock
+/// to project. An editor's save that wins the lock in between is rebased on
+/// the engine's text, which holds the peer's edit the row does not hold yet.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_between_a_sync_import_and_its_projection_keeps_the_peers_edit_6533() {
+    let (a, b, space, _page, x) = paired().await;
+    edit_block_inner(&a.pool, DEV_A, &a.mat, x.clone(), "Xabc".into())
+        .await
+        .unwrap();
+    let (_, export) = a
+        .mat
+        .loro_state()
+        .registry
+        .snapshot_all_engines()
+        .into_iter()
+        .find(|(s, _)| *s == space)
+        .unwrap();
+    b.mat
+        .loro_state()
+        .registry
+        .with_engine(&space, DEV_B, |engine| engine.import(&export.unwrap()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            b.engine_content(&space, &x).as_deref(),
+            b.sql_content(&x).await.as_str()
+        ),
+        (Some("Xabc"), "abc"),
+        "the fixture: imported, not yet projected"
+    );
+
+    let saved = edit_block_inner_with_base(
+        &b.pool,
+        DEV_B,
+        &b.mat,
+        x.clone(),
+        "abcY".into(),
+        Some("abc".into()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(saved.content.as_deref(), Some("XabcY"));
+    assert_eq!(
+        (
+            b.engine_content(&space, &x).as_deref(),
+            b.sql_content(&x).await.as_str()
+        ),
+        (Some("XabcY"), "XabcY")
+    );
     a.shutdown();
     b.shutdown();
 }

@@ -129,9 +129,11 @@ function stubInvoke(overrides: Readonly<TypedInvokeHandlers> = {}) {
       list_pages_with_metadata: () => emptyPage,
       // Alias resolution: no alias match unless a test says otherwise.
       resolve_page_by_alias: () => null,
-      // The New page dialog's matcher and #4723's pre-create read both list
-      // the space's pages; its alias lookup and FTS search find nothing.
+      // The New page dialog's matcher lists the space's pages; its alias
+      // lookup and FTS search find nothing, and #4723's pre-create lookup
+      // finds no page holding the title.
       list_all_pages_in_space: () => [],
+      resolve_page_title: (args) => ({ title: args['title'] as string, page_id: null }),
       list_page_aliases_by_prefix: () => [],
       search_blocks: () => ({ items: [], next_cursor: null, has_more: false, total_count: null }),
       // Speculative row prefetch — fires on pointer dwell, not on any

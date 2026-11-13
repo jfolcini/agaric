@@ -124,6 +124,7 @@ function renderToolbar(overrides: Partial<Parameters<typeof PageBrowserBatchTool
       currentSpaceId="SPACE_TEST"
       onSelectAll={onSelectAll}
       onClearSelection={onClearSelection}
+      listRef={{ current: null }}
       onMutated={onMutated}
       {...overrides}
     />,

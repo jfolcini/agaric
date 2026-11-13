@@ -937,9 +937,16 @@ async fn write_changes(
         let at = |err| at_line(*line, err);
         if buffer.edited[row] && stored.get(id) != Some(&content.as_str()) {
             let loro = save.materializer.loro_state();
-            edit_block_in_tx(tx, loro, save.device_id, id.to_owned(), content.clone())
-                .await
-                .map_err(at)?;
+            edit_block_in_tx(
+                tx,
+                loro,
+                save.device_id,
+                id.to_owned(),
+                content.clone(),
+                None,
+            )
+            .await
+            .map_err(at)?;
             save.report.edited += 1;
         }
         let prior = priors.get(id).cloned().unwrap_or_default();

@@ -153,6 +153,10 @@ pub async fn compact_op_log_cmd(
     ctx: State<'_, WriteCtx>,
     retention_days: u64,
 ) -> Result<CompactionResult, AppError> {
+    // The purge deletes ops above the apply cursor too; saving first puts them
+    // in `loro_doc_state`, or the next boot has nothing to replay them from (#6518).
+    agaric_engine::loro::snapshot::save_engines_and_advance_cursor(ctx.pool(), ctx.materializer())
+        .await;
     let result = compact_op_log_cmd_inner(ctx.pool(), retention_days)
         .await
         .map_err(sanitize_internal_error)?;

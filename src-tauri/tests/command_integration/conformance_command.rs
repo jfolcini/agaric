@@ -1189,7 +1189,17 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
-        "edit_block" => to_json(edit_block_inner(pool, DEV, mat, block_id(), text("toText")).await),
+        "edit_block" => to_json(
+            edit_block_inner_with_base(
+                pool,
+                DEV,
+                mat,
+                block_id(),
+                text("toText"),
+                opt_str("baseText"),
+            )
+            .await,
+        ),
         "edit_blocks_batch" => {
             let edits = arg("edits")
                 .and_then(Value::as_array)

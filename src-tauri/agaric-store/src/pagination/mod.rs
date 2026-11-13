@@ -539,6 +539,10 @@ pub struct HistoryEntry {
     /// (replicated rows are not locally revertible; see
     /// `reverse::reject_replicated_targets`). Local-authored ops are `false`.
     pub is_replicated: bool,
+    /// The name of the MCP agent that wrote the op (`op_log.origin =
+    /// 'agent:<name>'`), absent for every other origin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 /// Internal cursor for keyset pagination.

@@ -338,12 +338,13 @@ fn list_segments(mut token: String, row: &Value, key: &str) -> String {
 /// which no stack could match. What is left is `op_type`, which the #763 op-log digest ALREADY
 /// compares across the stacks (`{ count, ops }` in `conformance_snapshot.rs`),
 /// plus `is_replicated` — the other per-entry column both stacks fill
-/// (migration 0099) and the one `undoDeleteOf` filters on.
+/// (migration 0099) and the one `undoDeleteOf` filters on — and `agent`, which
+/// the History row badges.
 ///
 /// So these steps pin WHICH ops each query selects, in WHICH order, and how it
 /// pages them; they do not pin the entries' contents. A fixture using them must
 /// therefore choose ops whose TYPES discriminate.
-const HISTORY_ATTRS: &[&str] = &["is_replicated"];
+const HISTORY_ATTRS: &[&str] = &["is_replicated", "agent"];
 
 /// Project a bare `Vec<TagCacheRow>` response.
 fn tag_rows(rows: &[agaric_store::tag_query::TagCacheRow]) -> RawResult {
@@ -2038,6 +2039,29 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        "resolve_page_title" => {
+            let scope: SpaceScope = arg_req(args, "scope");
+            let resolved = resolve_page_title_inner(
+                pool,
+                scope.space_id().as_str(),
+                &arg_req::<String>(args, "title"),
+            )
+            .await?;
+            // Always one answer: a bare struct whose `page_id` is null when no
+            // page holds the title, under a fixed head like the settings
+            // readers, so the page id relabels to its `Bn`.
+            let v = serde_json::to_value(&resolved).expect("serialize ResolvedPageTitle");
+            RawResult {
+                rows: vec![format!(
+                    "resolved_page_title#page_id={}#title={}",
+                    attr_value("page_id", v.get("page_id")),
+                    attr_value("title", v.get("title")),
+                )],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         "list_page_aliases_by_prefix" => {
             let rows = list_page_aliases_by_prefix_inner(
                 pool,
@@ -3191,7 +3215,10 @@ pub(super) mod reader_delegation_tests {
     // over `blocks`, in a plain `pool.begin()` tx
     // (`commands/pages/markdown_import_merge.rs`). The merge it lists for is
     // `import_markdown`, not a read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 69;
+    // #6527 wired `resolve_page_title`: `SpacePageNames::read`'s two
+    // `query_scalar!` SELECTs over `blocks` and `page_aliases JOIN blocks`
+    // (`commands/spaces.rs`), folded in Rust. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 70;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

@@ -448,6 +448,7 @@ describe('a block whose `key:: value` save is still in flight (#5448)', () => {
       blockId: 'EMPTY',
       loaded: '',
       changed: 'context:: home',
+      base: '',
       edit,
       splitBlock: vi.fn(),
       rootParentId: null,

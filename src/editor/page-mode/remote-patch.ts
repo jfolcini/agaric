@@ -15,10 +15,12 @@
  * - edited elsewhere: its text patched in place, touching only what differs so
  *   a cursor in it stays put, unless it holds an edit not saved yet.
  *
- * Where both sides changed a block, the local change wins at the next save:
- * block mode's last-write-wins rule (#2459). `adoptPatch` then records the
- * backend's tree and every block the patch brought in as saved. A patch that
- * moved or removed blocks ends the undo history there (`forgetHistory`).
+ * Where both sides changed a block's text, the next save sends the text page
+ * mode last knew it held, and the backend keeps both changes unless they
+ * touched the same text, as it does for block mode (#6533). `adoptPatch` then
+ * records the backend's tree and every block the patch brought in as saved. A
+ * patch that moved or removed blocks ends the undo history there
+ * (`forgetHistory`).
  */
 
 import { Fragment, type Node as PMNode, type NodeType, type Schema } from '@tiptap/pm/model'
@@ -372,8 +374,7 @@ export function applyRemote(
 }
 
 /**
- * Drop the undo history, as block mode drops a page's undo anchors when a
- * sync changes it (#731): an undo rebased past a block moved or removed
+ * Drop the undo history: an undo rebased past a block moved or removed
  * elsewhere would put back a copy of it.
  */
 function forgetHistory(view: EditorView): void {

@@ -444,6 +444,128 @@ async fn a_tag_name_is_one_name_with_its_padded_spelling() {
     }
 }
 
+/// #6527 — `resolve_page_title` answers what the New page dialog found by
+/// listing every page of the space and taking the first titled under the
+/// name's key: the page and its title as written, or no page and the trimmed
+/// name. An alias, a trashed title and another space's title are no page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_page_title_answers_as_listing_then_finding_did_6527() {
+    use agaric_core::tag_norm::name_key;
+    let v = vault().await;
+    let cafe = v.page(&v.a, CAFE).await;
+    let roadmap = v.page(&v.a, "Roadmap").await;
+    v.set_aliases(&roadmap, &["plans"]).await.unwrap();
+    v.trashed(&v.a, "Gone").await;
+    v.page(&v.b, "Elsewhere").await;
+    let listed = list_all_pages_in_space_inner(&v.pool, &v.a, None)
+        .await
+        .unwrap();
+
+    let probes: [(&str, Option<&BlockId>); 9] = [
+        (CAFE, Some(&cafe)),
+        (RESPELLINGS[0], Some(&cafe)),
+        (RESPELLINGS[1], Some(&cafe)),
+        (RESPELLINGS[2], Some(&cafe)),
+        ("  ROADMAP ", Some(&roadmap)),
+        ("plans", None),
+        ("Gone", None),
+        ("Elsewhere", None),
+        (" Nothing yet ", None),
+    ];
+    for (probe, page) in probes {
+        let found = listed.iter().find(|row| {
+            row.content
+                .as_deref()
+                .is_some_and(|title| name_key(title) == name_key(probe))
+        });
+        let expected = ResolvedPageTitle {
+            title: found.map_or_else(
+                || probe.trim().to_owned(),
+                |row| row.content.clone().unwrap(),
+            ),
+            page_id: found.map(|row| row.id.as_str().to_owned()),
+        };
+        assert_eq!(
+            expected.page_id.as_deref(),
+            page.map(BlockId::as_str),
+            "{probe:?}"
+        );
+        assert_eq!(
+            resolve_page_title_inner(&v.pool, &v.a, probe)
+                .await
+                .unwrap(),
+            expected,
+            "{probe:?}"
+        );
+    }
+}
+
+/// Two live pages holding one title (from before titles were unique per
+/// space): the answer is the page a create of that title opens.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_page_title_answers_the_page_a_create_opens_among_tied_titles_6527() {
+    let v = vault().await;
+    for title in ["Tied", "tied"] {
+        let page = create_block_inner(
+            &v.pool,
+            DEV,
+            &v.mat,
+            "page".into(),
+            title.into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assign_to_space(&v.pool, page.id.as_str(), &v.a).await;
+    }
+    settle(&v.mat).await;
+
+    let resolved = resolve_page_title_inner(&v.pool, &v.a, "TIED")
+        .await
+        .unwrap();
+    let opened = v.page(&v.a, "TIED").await;
+    assert_eq!(resolved.page_id.as_deref(), Some(opened.as_str()));
+    assert_eq!(resolved.title, v.content(&opened).await);
+}
+
+/// #6527 — a blank title takes the first free `Untitled N` under the key a
+/// create resolves a title by, numbered as the New page dialog numbered it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_page_title_numbers_a_blank_title_past_the_taken_untitled_6527() {
+    let v = vault().await;
+    let cases: [(&[&str], &str); 7] = [
+        (&[], "Untitled"),
+        (&["Groceries"], "Untitled"),
+        (&["Untitled"], "Untitled 2"),
+        (&["Untitled", "Untitled 2"], "Untitled 3"),
+        (&["Untitled 2"], "Untitled"),
+        (&["untitled "], "Untitled 2"),
+        (&["UNTITLED", "untitled 2"], "Untitled 3"),
+    ];
+    for (n, (titles, free)) in cases.into_iter().enumerate() {
+        let space = create_space_inner(&v.pool, DEV, &v.mat, format!("Space {n}"), None)
+            .await
+            .unwrap()
+            .into_string();
+        for title in titles {
+            v.page(&space, title).await;
+        }
+        for blank in ["", "  "] {
+            assert_eq!(
+                resolve_page_title_inner(&v.pool, &space, blank)
+                    .await
+                    .unwrap(),
+                ResolvedPageTitle {
+                    title: (*free).to_owned(),
+                    page_id: None,
+                },
+                "{titles:?}, {blank:?}"
+            );
+        }
+    }
+}
+
 /// Measurement (#6278): what the name check costs a page rename and a page
 /// create in a space of `PAGES` pages, some holding aliases. Each is timed
 /// against the same command on a block that pays no name check: a content

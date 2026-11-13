@@ -300,7 +300,7 @@ export function UnlinkedReferences({
         return
       }
       try {
-        unwrap(await commands.editBlock(blockId, newContent))
+        unwrap(await commands.editBlock(blockId, newContent, null))
         // Straight to the command, not through the page-block store, so the
         // structure counter the reference panels refresh on must be bumped here;
         // otherwise Linked References above keeps the pre-link list until a remount.

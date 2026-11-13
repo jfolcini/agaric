@@ -1745,7 +1745,7 @@ fn refuse_on_identity_mismatch(
 /// loop this replaces paid a full connect timeout on a dead path before trying a
 /// live one, which is exactly the multi-homed LAN case — a device on both WiFi and
 /// Ethernet — that the address list exists for.
-fn dial_addr(
+pub(super) fn dial_addr(
     ctx: &SyncSessionContext<'_>,
     peer: &DiscoveredPeer,
     endpoint_id: iroh::EndpointId,
@@ -2147,8 +2147,9 @@ async fn record_session_failure(
 ///
 /// #6523: a peer that has synced with us before and ended the session without
 /// answering our `HeadExchange` most likely predates the engine-format refusal
-/// frame, which is how such a build ends a format mismatch, so the frontend
-/// says to check the versions.
+/// frame, which is how such a build ends a format mismatch. A same-version
+/// peer that quits or loses its network mid-handshake ends it the same way, so
+/// the frontend only suggests checking the versions if it repeats.
 fn session_failure_report(
     orch: &SyncOrchestrator,
     rejection: Option<&Rejection>,

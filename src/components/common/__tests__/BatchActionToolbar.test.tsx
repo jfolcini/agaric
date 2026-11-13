@@ -17,10 +17,12 @@ import { axe } from 'vitest-axe'
 
 import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
 
+const NO_LIST = { current: null }
+
 describe('BatchActionToolbar', () => {
   it('renders selection count badge', () => {
     render(
-      <BatchActionToolbar selectedCount={3}>
+      <BatchActionToolbar listRef={NO_LIST} selectedCount={3}>
         <button type="button">Action</button>
       </BatchActionToolbar>,
     )
@@ -30,7 +32,7 @@ describe('BatchActionToolbar', () => {
 
   it('renders children', () => {
     render(
-      <BatchActionToolbar selectedCount={1}>
+      <BatchActionToolbar listRef={NO_LIST} selectedCount={1}>
         <button type="button">Revert</button>
         <button type="button">Clear</button>
       </BatchActionToolbar>,
@@ -42,7 +44,7 @@ describe('BatchActionToolbar', () => {
 
   it('applies custom className', () => {
     render(
-      <BatchActionToolbar selectedCount={1} className="my-custom-class gap-3 p-3">
+      <BatchActionToolbar listRef={NO_LIST} selectedCount={1} className="my-custom-class gap-3 p-3">
         <button type="button">Action</button>
       </BatchActionToolbar>,
     )
@@ -53,7 +55,7 @@ describe('BatchActionToolbar', () => {
 
   it('updates selection count when prop changes', () => {
     const { rerender } = render(
-      <BatchActionToolbar selectedCount={2}>
+      <BatchActionToolbar listRef={NO_LIST} selectedCount={2}>
         <button type="button">Action</button>
       </BatchActionToolbar>,
     )
@@ -61,7 +63,7 @@ describe('BatchActionToolbar', () => {
     expect(screen.getByText('2 selected')).toBeInTheDocument()
 
     rerender(
-      <BatchActionToolbar selectedCount={7}>
+      <BatchActionToolbar listRef={NO_LIST} selectedCount={7}>
         <button type="button">Action</button>
       </BatchActionToolbar>,
     )
@@ -71,7 +73,7 @@ describe('BatchActionToolbar', () => {
 
   it('has toolbar role with accessible label', () => {
     render(
-      <BatchActionToolbar selectedCount={4}>
+      <BatchActionToolbar listRef={NO_LIST} selectedCount={4}>
         <button type="button">Action</button>
       </BatchActionToolbar>,
     )
@@ -82,7 +84,7 @@ describe('BatchActionToolbar', () => {
 
   it('wires the range-select hint to the toolbar via aria-describedby', () => {
     render(
-      <BatchActionToolbar selectedCount={2}>
+      <BatchActionToolbar listRef={NO_LIST} selectedCount={2}>
         <button type="button">Action</button>
       </BatchActionToolbar>,
     )
@@ -96,7 +98,7 @@ describe('BatchActionToolbar', () => {
 
   it('omits aria-describedby when the range-select hint is suppressed', () => {
     render(
-      <BatchActionToolbar selectedCount={2} suppressRangeSelectHint>
+      <BatchActionToolbar listRef={NO_LIST} selectedCount={2} suppressRangeSelectHint>
         <button type="button">Action</button>
       </BatchActionToolbar>,
     )
@@ -111,7 +113,7 @@ describe('BatchActionToolbar', () => {
     const onClick = vi.fn()
 
     render(
-      <BatchActionToolbar selectedCount={1}>
+      <BatchActionToolbar listRef={NO_LIST} selectedCount={1}>
         <button type="button" onClick={onClick}>
           Do something
         </button>
@@ -125,7 +127,7 @@ describe('BatchActionToolbar', () => {
   describe('a11y', () => {
     it('has no a11y violations', async () => {
       const { container } = render(
-        <BatchActionToolbar selectedCount={3}>
+        <BatchActionToolbar listRef={NO_LIST} selectedCount={3}>
           <button type="button">Revert</button>
           <button type="button">Clear</button>
         </BatchActionToolbar>,
@@ -137,7 +139,7 @@ describe('BatchActionToolbar', () => {
 
     it('has no a11y violations with custom className', async () => {
       const { container } = render(
-        <BatchActionToolbar selectedCount={1} className="extra-class">
+        <BatchActionToolbar listRef={NO_LIST} selectedCount={1} className="extra-class">
           <button type="button">Action</button>
         </BatchActionToolbar>,
       )

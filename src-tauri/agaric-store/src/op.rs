@@ -674,8 +674,7 @@ impl OpPayload {
     /// The three attachment variants carry an `attachment_id`; every other
     /// variant identifies its target by `block_id` and returns `None` here.
     ///
-    /// Used by `op_log::append_local_op_in_tx`, `dag::append_merge_op`,
-    /// and `dag::insert_remote_op` to populate the indexed
+    /// Used by `op_log::append_local_op_in_tx` to populate the indexed
     /// `op_log.attachment_id` column added by migration 0064
     /// (SQL-review B-4), so reverse-attachment lookups are O(log N)
     /// rather than scanning every `add_attachment` row.
@@ -818,10 +817,11 @@ pub const BUILTIN_PROPERTY_DEFS: [BuiltinPropertyDef; 15] = [
 /// merge moves neither from nor onto (#5841): the built-ins the app sets itself,
 /// the template markers, the image layout, a migration marker,
 /// `attachments`, the key a file writes a block's files under (#6277
-/// decision 9), `bookmark`, a page's place in the sidebar's bookmarks, and
-/// `saved_view`, which makes a page a saved view (#6544). Mirrored by
-/// `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts`.
-pub const INTERNAL_PROPERTY_KEYS: [&str; 17] = [
+/// decision 9), `bookmark`, a page's place in the sidebar's bookmarks,
+/// `saved_view`, which makes a page a saved view (#6544), and a PDF
+/// highlight's place in its file (#6629). Mirrored by `INTERNAL_PROPERTY_KEYS`
+/// in `src/lib/block-utils.ts`.
+pub const INTERNAL_PROPERTY_KEYS: [&str; 20] = [
     "repeat",
     "created_at",
     "completed_at",
@@ -839,6 +839,9 @@ pub const INTERNAL_PROPERTY_KEYS: [&str; 17] = [
     "attachments",
     "bookmark",
     "saved_view",
+    "pdf_attachment",
+    "pdf_page",
+    "pdf_boxes",
 ];
 
 /// Whether `key` is one of the [`INTERNAL_PROPERTY_KEYS`].

@@ -484,3 +484,138 @@ test.describe('a reload brings the peer’s text into a focused block with nothi
     await expect(editor).toBeFocused()
   })
 })
+
+test.describe('undo and redo across a reload (#6541) @editor @sync @mcp', () => {
+  const PEER_TEXT = 'PEER WROTE THIS'
+  const AGENT_TEXT = 'AGENT WROTE THIS'
+
+  /**
+   * A peer's edit as the backend delivers it: `sync:complete`, then `blocks:changed` once the
+   * session's rebuild drains, saying this device appended no op of its own. The mock has no
+   * replicated op, so the edit is a plain invoke.
+   */
+  async function peerSyncs(page: Page): Promise<void> {
+    await ipc(page, 'edit_block', { blockId: GS1, toText: PEER_TEXT })
+    await emitMockEvent(page, 'sync:complete', syncComplete([PAGE_GS]))
+    await emitMockEvent(page, 'blocks:changed', {
+      changed_page_ids: [PAGE_GS],
+      local_ops_appended: false,
+    })
+    await expect(page.locator(`li[data-block-id="${GS1}"]`)).toContainText(PEER_TEXT)
+  }
+
+  async function typeAtEnd(page: Page, blockId: string, text: string): Promise<string> {
+    const before = await storedContent(page, blockId)
+    await focusBlockById(page, blockId)
+    await page.keyboard.type(text)
+    await blurEditors(page)
+    await expect.poll(() => storedContent(page, blockId)).toBe(`${before}${text}`)
+    return before
+  }
+
+  test.beforeEach(async ({ page }) => {
+    // Edits less than `UNDO_GROUP_WINDOW_MS` apart join one undo entry; the
+    // fast-forwards below keep each write an entry of its own.
+    await page.clock.install()
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+  })
+
+  test('after an undo and a peer’s sync, Ctrl+Z undoes the edit before it, not the undone one again', async ({
+    page,
+  }) => {
+    const gs2 = await typeAtEnd(page, GS2, ' first')
+    await page.clock.fastForward(1000)
+    await typeAtEnd(page, GS3, ' second')
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => storedContent(page, GS3)).toBe(GS3_TEXT)
+    await page.clock.fastForward(1000)
+    await peerSyncs(page)
+
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => storedContent(page, GS2)).toBe(gs2)
+    expect(await storedContent(page, GS3)).toBe(GS3_TEXT)
+    expect(await storedContent(page, GS1)).toBe(PEER_TEXT)
+  })
+
+  test('an edit undone before a peer’s sync is redone after it', async ({ page }) => {
+    await typeAtEnd(page, GS3, ' typed')
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => storedContent(page, GS3)).toBe(GS3_TEXT)
+    await page.clock.fastForward(1000)
+    await peerSyncs(page)
+
+    await page.keyboard.press('Control+y')
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${GS3_TEXT} typed`)
+    expect(await storedContent(page, GS1)).toBe(PEER_TEXT)
+  })
+
+  // The backend's MCP write says it appended local ops; the agent's op is then the newest
+  // undo target, as when the event does not say (#731, the describe above).
+  test('after an undo and an agent’s write, Ctrl+Z undoes the agent’s op, not the undone edit again', async ({
+    page,
+  }) => {
+    const gs1 = await storedContent(page, GS1)
+    await typeAtEnd(page, GS3, ' typed')
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => storedContent(page, GS3)).toBe(GS3_TEXT)
+    await page.clock.fastForward(1000)
+    await ipc(page, 'edit_block', { blockId: GS1, toText: AGENT_TEXT })
+    await emitMockEvent(page, 'blocks:changed', {
+      changed_page_ids: [PAGE_GS],
+      local_ops_appended: true,
+    })
+    await expect(page.locator(`li[data-block-id="${GS1}"]`)).toContainText(AGENT_TEXT)
+
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => storedContent(page, GS1)).toBe(gs1)
+    expect(await storedContent(page, GS3)).toBe(GS3_TEXT)
+  })
+})
+
+test.describe('a dirty editor’s save keeps the peer’s edit a reload brought (#6533) @editor @sync', () => {
+  const PEER_TEXT = `Peer: ${GS3_TEXT}`
+
+  /** Type into GS3, then have a peer's edit of its start arrive under the unsaved key. */
+  async function typeThenPeerEdits(page: Page): Promise<Locator> {
+    const editor = await focusBlockById(page, GS3)
+    await delayPageLoads(page, 0)
+    // Inside the commit debounce: the typed key is not saved yet.
+    await page.keyboard.type('!')
+    await ipc(page, 'edit_block', { blockId: GS3, toText: PEER_TEXT })
+    await emitMockEvent(page, 'sync:complete', syncComplete([PAGE_GS]))
+    await expect.poll(() => loadsSettled(page, PAGE_GS)).toBe(1)
+    await expect(editor).toHaveText(`${GS3_TEXT}!`)
+    return editor
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+  })
+
+  test('the idle commit, the keys after it and leaving save both edits', async ({ page }) => {
+    const editor = await typeThenPeerEdits(page)
+
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${PEER_TEXT}!`)
+    // The editor still shows its own text: the next commit starts from it.
+    await expect(editor).toHaveText(`${GS3_TEXT}!`)
+    await page.keyboard.type('?')
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${PEER_TEXT}!?`)
+    await page.keyboard.type('.')
+
+    await blurEditors(page)
+
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${PEER_TEXT}!?.`)
+    await expect(page.locator(`li[data-block-id="${GS3}"]`)).toContainText(`${PEER_TEXT}!?.`)
+  })
+
+  test('leaving the block saves both edits and shows them', async ({ page }) => {
+    await typeThenPeerEdits(page)
+
+    await blurEditors(page)
+
+    await expect.poll(() => storedContent(page, GS3)).toBe(`${PEER_TEXT}!`)
+    await expect(page.locator(`li[data-block-id="${GS3}"]`)).toContainText(`${PEER_TEXT}!`)
+  })
+})

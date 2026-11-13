@@ -12,6 +12,7 @@ use super::super::*;
 // #882: the create-block / set-property tx cores moved to the neutral
 // `agaric_engine::block_ops` layer. The `*_inner` wrappers below (which own
 // the transaction + post-commit dispatch) stay here and call into domain.
+use agaric_engine::apply::loro_apply::engine_block_content;
 use agaric_engine::block_ops::{create_block_in_tx, set_property_in_tx};
 use agaric_store::space::{SpaceId, SpaceScope};
 
@@ -429,13 +430,28 @@ pub(crate) async fn create_tag_in_space_in_tx(
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
-#[instrument(skip(pool, device_id, materializer, to_text), err)]
 pub async fn edit_block_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
     block_id: BlockId,
     to_text: String,
+) -> Result<BlockRow, AppError> {
+    edit_block_inner_with_base(pool, device_id, materializer, block_id, to_text, None).await
+}
+
+/// [`edit_block_inner`] for an editor: `base_text` is the text it started
+/// from. When the block no longer holds it, the editor's change is replayed
+/// on the current text (`rebase_edit`), so a peer's edit the editor has not
+/// seen survives unless the two changed the same text.
+#[instrument(skip(pool, device_id, materializer, to_text, base_text), err)]
+pub async fn edit_block_inner_with_base(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: BlockId,
+    to_text: String,
+    base_text: Option<String>,
 ) -> Result<BlockRow, AppError> {
     // #107: BlockId newtype already normalises to canonical uppercase on
     // construction (AGENTS.md invariant #8 — ULID uppercase for blake3 hash
@@ -460,6 +476,7 @@ pub async fn edit_block_inner(
         device_id,
         block_id,
         to_text,
+        base_text.as_deref(),
     )
     .await?;
     tx.commit_and_dispatch(materializer).await?;
@@ -474,24 +491,20 @@ pub async fn edit_block_inner(
 /// lifecycle (BEGIN / arm / COMMIT); this helper only enqueues the op via
 /// `enqueue_edit_background` so the caller's single `commit_and_dispatch`
 /// drains every enqueued op in FIFO order.
-#[instrument(skip(tx, state, device_id, to_text), err)]
+#[instrument(skip(tx, state, device_id, to_text, base_text), err)]
 pub(crate) async fn edit_block_in_tx(
     tx: &mut CommandTx,
     state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     block_id: String,
     to_text: String,
+    base_text: Option<&str>,
 ) -> Result<BlockRow, AppError> {
     // Validate content length BEFORE fetching any row. Content length is a
     // pure function of the input needing no DB state, so an over-length
     // payload is rejected without the wasted existence fetch (fail fast on
     // the input).
-    if to_text.len() > MAX_CONTENT_LENGTH {
-        return Err(AppError::validation(format!(
-            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
-            to_text.len()
-        )));
-    }
+    reject_overlong_content(&to_text)?;
 
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
@@ -504,6 +517,18 @@ pub(crate) async fn edit_block_in_tx(
 
     let existing = existing
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
+    // Before every check on the text, so they see what is written.
+    let to_text = match base_text {
+        Some(base) => {
+            // The text the edit is diffed against: the engine's, which a sync
+            // import reaches before the row.
+            let block = BlockId::from_trusted(&block_id);
+            let engine_text = engine_block_content(tx, state, device_id, &block).await?;
+            let current = engine_text.as_deref().or(existing.content.as_deref());
+            rebased_onto(current.unwrap_or_default(), base, to_text)?
+        }
+        None => to_text,
+    };
     if existing.block_type == "tag" {
         reject_spaced_tag_name(&to_text)?;
     }
@@ -600,6 +625,26 @@ pub(crate) async fn edit_block_in_tx(
         scheduled_date: existing.scheduled_date,
         page_id: existing.page_id,
     })
+}
+
+/// `to_text` with the editor's change replayed on `current` when the editor
+/// started from another text and the two changes do not overlap.
+fn rebased_onto(current: &str, base: &str, to_text: String) -> Result<String, AppError> {
+    let Some(rebased) = agaric_engine::edit_rebase::rebase_edit(base, &to_text, current) else {
+        return Ok(to_text);
+    };
+    reject_overlong_content(&rebased)?;
+    Ok(rebased)
+}
+
+fn reject_overlong_content(text: &str) -> Result<(), AppError> {
+    if text.len() > MAX_CONTENT_LENGTH {
+        return Err(AppError::validation(format!(
+            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
+            text.len()
+        )));
+    }
+    Ok(())
 }
 
 /// #4723 — page titles are unique per space under `name_key` (trim, case,
@@ -2403,6 +2448,9 @@ pub async fn restore_all_deleted_inner(
     // #5371: as in `restore_block_inner`. The roots' cohorts are every
     // tombstone the UPDATE cleared.
     let restored: Vec<&String> = restore_fanout.iter().flat_map(|(_, c)| c).collect();
+    // After the `page_id` backfill above, which it reads. As in
+    // `restore_block_inner`, nothing vault-wide follows to do it (#6522).
+    agaric_store::cache::rederive_space_ids_in_tx(&mut tx, &restored).await?;
     agaric_store::cache::insert_missing_pages_cache_rows(&mut tx, &restored).await?;
 
     // Commit + drain enqueued background dispatches in FIFO order.
@@ -2584,6 +2632,91 @@ async fn load_restore_roots_in_tx(
     )
     .fetch_all(&mut ***tx)
     .await?)
+}
+
+/// [`restore_blocks_by_ids_inner`]'s upward walk, inside its IMMEDIATE tx:
+/// restore each root's tombstoned ancestor chain onto its fan-out entry and
+/// re-derive the ids of what came back. Returns each root's inheritance root.
+async fn restore_ancestor_chains_in_tx(
+    tx: &mut CommandTx,
+    roots: &[TrashCascadeRoot],
+    restore_fanout: &mut [(Arc<op_log::OpRecord>, Vec<String>, Vec<String>)],
+) -> Result<Vec<String>, AppError> {
+    // #1884 / #3818: also restore UPWARD, exactly as
+    // `restore_block_inner` does. The caller's cohort UPDATE only clears
+    // `deleted_at` DOWNWARD, so a root whose PARENT was tombstoned in a
+    // SEPARATE delete event (delete child, then delete parent — the parent's
+    // cascade skips the already-deleted child, making the child its own trash
+    // root) comes back LIVE under a still-tombstoned, invisible parent:
+    // absent from the tree render AND from `list_trash`. Mirroring
+    // `restore_all_deleted_inner` is what hid this — the "all" variant
+    // restores everything, so an upward walk is vacuous THERE and load-bearing
+    // here.
+    //
+    // Resolved per root rather than once for the batch, which is both correct
+    // and cheap: the helper is a bounded (`depth < 100`) upward CTE that emits
+    // NO ops and is idempotent, so two roots under the SAME tombstoned parent
+    // do not double-restore or double-emit — the second walk finds the chain
+    // already live and returns an empty result.
+    //
+    // #3834: the returned `chain` is KEPT (it used to be dropped on the floor
+    // in favour of the `apply_op` → `dispatch_restore_ancestors` replay arm,
+    // which runs for a locally authored op only if boot replays it — the
+    // snapshot pass moves the cursor past LOCAL ops (#5418) — and by then the
+    // chain is already live in SQL and the projection returns an EMPTY chain).
+    // It is stashed on this root's `restore_fanout` entry and driven onto the
+    // engine post-commit alongside the descendant cohort, which
+    // `dispatch_restore_batch_fanout` hand-rolls for exactly this reason.
+    //
+    // `topmost` becomes the inheritance root, mirroring the single path: when
+    // a chain came back with the root, the whole RECONNECTED subtree needs its
+    // inherited tags recomputed, not just the root's own. With no chain it
+    // resolves to the root itself (unchanged behaviour).
+    let mut inheritance_roots: Vec<String> = Vec::with_capacity(roots.len());
+    // The two collections are index-aligned by construction:
+    // `append_restore_ops_in_tx` pushes exactly one entry per root, and every
+    // early exit in it is a `?` return rather than a `continue`. That is an
+    // UNENFORCED invariant, and `zip` fails SILENTLY by truncating — a future
+    // `continue` would mis-pair root i's op record with root j's ancestor
+    // chain. `fan_out_restore` resolves the target space from the OP RECORD, so
+    // a mis-pair applies one root's ancestors against another root's engine:
+    // they stay CRDT-tombstoned in their own space (silently reintroducing the
+    // #3834 bug this fixes) while the last root's chain is dropped entirely.
+    // Cross-space batches are reachable — `restore_blocks_by_ids` is an IPC
+    // entry point with no space scoping. Fail loudly instead, aborting the tx.
+    if roots.len() != restore_fanout.len() {
+        // `Internal`, not `InvalidOperation`: nothing the caller passed can
+        // cause this. It is a violated internal invariant, and classifying it
+        // as a user-facing rejection would send the wrong kind over IPC.
+        return Err(AppError::Internal(format!(
+            "restore: fan-out/root misalignment ({} roots, {} fan-out entries)",
+            roots.len(),
+            restore_fanout.len()
+        )));
+    }
+    for (root, fanout) in roots.iter().zip(restore_fanout.iter_mut()) {
+        let restored_chain =
+            agaric_store::block_descendants::restore_deleted_ancestor_chain(&mut *tx, &root.id)
+                .await?;
+        let inheritance_root = restored_chain
+            .topmost
+            .clone()
+            .unwrap_or_else(|| root.id.clone());
+        // As in `restore_block_inner`: no vault-wide `RebuildPageIds` follows
+        // a restore (#6522), so this is what repairs ids that drifted in the
+        // trash.
+        agaric_store::block_descendants::rederive_page_and_space_ids(&mut *tx, &root.id).await?;
+        if inheritance_root != root.id {
+            agaric_store::block_descendants::rederive_page_and_space_ids(
+                &mut *tx,
+                &inheritance_root,
+            )
+            .await?;
+        }
+        inheritance_roots.push(inheritance_root);
+        fanout.2 = restored_chain.chain;
+    }
+    Ok(inheritance_roots)
 }
 
 /// [`restore_blocks_by_ids_inner`]'s op-append phase, inside its IMMEDIATE
@@ -2788,70 +2921,8 @@ pub async fn restore_blocks_by_ids_inner(
     )
     .await?;
 
-    // #1884 / #3818: also restore UPWARD, exactly as
-    // `restore_block_inner` does. The cohort UPDATE above only clears
-    // `deleted_at` DOWNWARD, so a root whose PARENT was tombstoned in a
-    // SEPARATE delete event (delete child, then delete parent — the parent's
-    // cascade skips the already-deleted child, making the child its own trash
-    // root) comes back LIVE under a still-tombstoned, invisible parent:
-    // absent from the tree render AND from `list_trash`. Mirroring
-    // `restore_all_deleted_inner` is what hid this — the "all" variant
-    // restores everything, so an upward walk is vacuous THERE and load-bearing
-    // here.
-    //
-    // Resolved per root rather than once for the batch, which is both correct
-    // and cheap: the helper is a bounded (`depth < 100`) upward CTE that emits
-    // NO ops and is idempotent, so two roots under the SAME tombstoned parent
-    // do not double-restore or double-emit — the second walk finds the chain
-    // already live and returns an empty result.
-    //
-    // #3834: the returned `chain` is KEPT (it used to be dropped on the floor
-    // in favour of the `apply_op` → `dispatch_restore_ancestors` replay arm,
-    // which runs for a locally authored op only if boot replays it — the
-    // snapshot pass moves the cursor past LOCAL ops (#5418) — and by then the
-    // chain is already live in SQL and the projection returns an EMPTY chain).
-    // It is stashed on this root's `restore_fanout` entry and driven onto the
-    // engine post-commit alongside the descendant cohort, which
-    // `dispatch_restore_batch_fanout` hand-rolls for exactly this reason.
-    //
-    // `topmost` becomes the inheritance root, mirroring the single path: when
-    // a chain came back with the root, the whole RECONNECTED subtree needs its
-    // inherited tags recomputed, not just the root's own. With no chain it
-    // resolves to the root itself (unchanged behaviour).
-    let mut inheritance_roots: Vec<String> = Vec::with_capacity(roots.len());
-    // The two collections are index-aligned by construction:
-    // `append_restore_ops_in_tx` pushes exactly one entry per root, and every
-    // early exit in it is a `?` return rather than a `continue`. That is an
-    // UNENFORCED invariant, and `zip` fails SILENTLY by truncating — a future
-    // `continue` would mis-pair root i's op record with root j's ancestor
-    // chain. `fan_out_restore` resolves the target space from the OP RECORD, so
-    // a mis-pair applies one root's ancestors against another root's engine:
-    // they stay CRDT-tombstoned in their own space (silently reintroducing the
-    // #3834 bug this fixes) while the last root's chain is dropped entirely.
-    // Cross-space batches are reachable — `restore_blocks_by_ids` is an IPC
-    // entry point with no space scoping. Fail loudly instead, aborting the tx.
-    if roots.len() != restore_fanout.len() {
-        // `Internal`, not `InvalidOperation`: nothing the caller passed can
-        // cause this. It is a violated internal invariant, and classifying it
-        // as a user-facing rejection would send the wrong kind over IPC.
-        return Err(AppError::Internal(format!(
-            "restore: fan-out/root misalignment ({} roots, {} fan-out entries)",
-            roots.len(),
-            restore_fanout.len()
-        )));
-    }
-    for (root, fanout) in roots.iter().zip(restore_fanout.iter_mut()) {
-        let restored_chain =
-            agaric_store::block_descendants::restore_deleted_ancestor_chain(&mut tx, &root.id)
-                .await?;
-        inheritance_roots.push(
-            restored_chain
-                .topmost
-                .clone()
-                .unwrap_or_else(|| root.id.clone()),
-        );
-        fanout.2 = restored_chain.chain;
-    }
+    let inheritance_roots =
+        restore_ancestor_chains_in_tx(&mut tx, &roots, &mut restore_fanout).await?;
 
     // Recompute tag inheritance for each restored root subtree (from the
     // topmost restored ancestor where the #1884 walk above reconnected one).
@@ -3289,7 +3360,10 @@ pub async fn create_block(
     .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
+/// Tauri command: edit a block's content. Delegates to
+/// [`edit_block_inner_with_base`]; `base_text` is the text an editor started
+/// from, and the returned row carries the text written, which differs from
+/// `to_text` when the edit was rebased.
 /// #2468: the response carries the produced op ref(s) — see [`create_block`].
 #[tauri::command]
 #[specta::specta]
@@ -3297,13 +3371,15 @@ pub async fn edit_block(
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     to_text: String,
+    base_text: Option<String>,
 ) -> Result<WithOps<BlockRow>, AppError> {
-    capture_op_refs(edit_block_inner(
+    capture_op_refs(edit_block_inner_with_base(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         block_id,
         to_text,
+        base_text,
     ))
     .await
     .map_err(sanitize_internal_error)

@@ -6191,10 +6191,9 @@ async fn agenda_cache_0115_block_id_index_serves_block_id_lookup_3270() {
 // Migration 0116 — `log_snapshots` blob → `compaction_watermark` row (#4699)
 // ----------------------------------------------------------------------
 
-/// **The carry-forward.** An upgraded vault that has already compacted must
-/// keep the marker `agaric_engine::dag::find_lca` reads: without the row it
-/// reports an op the purge removed as a bare `NotFound` instead of naming
-/// compaction, on the one class of vault where compaction demonstrably ran.
+/// **The carry-forward.** Nothing has read or written the table since #6518,
+/// but 0116 still runs on every pre-0116 vault, so its data movement stays
+/// pinned: the newest complete snapshot's frontier is carried into one row.
 ///
 /// Seeds `log_snapshots` at the pre-0116 schema with two `complete` rows and
 /// one `pending` leftover, migrates, and asserts the watermark carries the
@@ -6248,10 +6247,7 @@ async fn compaction_watermark_0116_carries_the_newest_complete_snapshot_frontier
         sqlx::query_as("SELECT up_to_seqs, up_to_hash, compacted_at_ms FROM compaction_watermark")
             .fetch_one(&pool)
             .await
-            .expect(
-                "#4699: a vault that already compacted must carry its frontier forward — \
-                 with no row, find_lca stops naming compaction for chains the purge broke",
-            );
+            .expect("#4699: a vault that already compacted must carry its frontier forward");
     assert_eq!(
         up_to_hash, "hash-new",
         "the NEWEST complete snapshot's frontier is the one that survives"
@@ -6287,9 +6283,7 @@ async fn compaction_watermark_0116_carries_the_newest_complete_snapshot_frontier
 }
 
 /// The other half: a vault that never compacted must come out of 0116 with NO
-/// watermark. A migration that unconditionally seeded a row — the obvious way
-/// to satisfy the `NOT NULL` columns — would make `find_lca` blame compaction
-/// on every vault, including one that has never run it.
+/// watermark row.
 #[tokio::test]
 async fn compaction_watermark_0116_leaves_a_never_compacted_vault_empty_4699() {
     let (pool, _dir) = unmigrated_pool().await;
@@ -6314,7 +6308,7 @@ async fn compaction_watermark_0116_leaves_a_never_compacted_vault_empty_4699() {
     assert_eq!(
         rows, 0,
         "#4699: with no COMPLETE snapshot there is no evidence the log was ever \
-         trimmed, so find_lca must keep reporting a missing op as NotFound"
+         trimmed, so 0116 must not seed a row"
     );
 }
 
@@ -7694,4 +7688,124 @@ async fn property_definitions_0129_copies_every_row_into_every_space_5841() {
     .execute(&pool)
     .await
     .expect_err("(space_id, key) is the key");
+}
+
+/// #6522 — 0130 drops `idx_op_log_block_id`, a prefix of
+/// `idx_op_log_block_created`, and `idx_loro_doc_state_updated_at`, which no
+/// query reads. Every row stays, and a block's ops are still found by
+/// `block_id`.
+#[tokio::test]
+async fn op_log_0130_drops_redundant_indexes_and_keeps_rows_6522() {
+    const DROPPED: &str = "SELECT name FROM sqlite_master WHERE type = 'index' \
+         AND name IN ('idx_op_log_block_id', 'idx_loro_doc_state_updated_at') ORDER BY name";
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 129).await;
+    let before: Vec<String> = sqlx::query_scalar(DROPPED).fetch_all(&pool).await.unwrap();
+    assert_eq!(
+        before,
+        ["idx_loro_doc_state_updated_at", "idx_op_log_block_id"],
+        "both indexes exist before 0130"
+    );
+    for (seq, block_id) in [(1_i64, "BLK_A"), (2, "BLK_B"), (3, "BLK_A")] {
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+             VALUES ('dev', ?, 'h', 'edit_block', '{}', ?, ?)",
+        )
+        .bind(seq)
+        .bind(1_000 + seq)
+        .bind(block_id)
+        .execute(&pool)
+        .await
+        .expect("seed op");
+    }
+    sqlx::query(
+        "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count) \
+         VALUES ('SPACE_A', x'00', 5, 2)",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed snapshot");
+
+    apply_migrations_through(&pool, 129, 130).await;
+
+    let after: Vec<String> = sqlx::query_scalar(DROPPED).fetch_all(&pool).await.unwrap();
+    assert!(after.is_empty(), "0130 drops both indexes, left {after:?}");
+    let seqs: Vec<i64> =
+        sqlx::query_scalar("SELECT seq FROM op_log WHERE block_id = 'BLK_A' ORDER BY seq")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(seqs, [1, 3], "a block's ops are still found by block_id");
+    let snapshot: (String, i64, i64) =
+        sqlx::query_as("SELECT space_id, updated_at, op_count FROM loro_doc_state")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        snapshot,
+        ("SPACE_A".to_owned(), 5, 2),
+        "the snapshot row stays"
+    );
+}
+
+/// #6534 — 0131 indexes the block-id column of the search index's shadow
+/// table in place: an upgrading vault keeps every row, a duplicate included
+/// (nothing in the schema forbids one, so the index cannot be unique), and
+/// search still finds them. Removing one block then takes that block's rows
+/// and no other.
+#[tokio::test]
+async fn fts_blocks_0131_block_id_index_keeps_existing_rows_6534() {
+    const ROWS: [(&str, &str); 4] = [
+        ("B0000000000000000000000001", "first block"),
+        ("B0000000000000000000000002", "second block"),
+        ("B0000000000000000000000002", "second block again"),
+        ("B0000000000000000000000003", "会議室の予約"),
+    ];
+    let rows = |pool: SqlitePool| async move {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT block_id, stripped FROM fts_blocks ORDER BY block_id, stripped",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+    };
+    let seeded: Vec<(String, String)> = ROWS
+        .iter()
+        .map(|(id, text)| ((*id).to_owned(), (*text).to_owned()))
+        .collect();
+
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 130).await;
+    for (id, stripped) in ROWS {
+        sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+            .bind(id)
+            .bind(stripped)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    apply_migrations_through(&pool, 130, 131).await;
+
+    assert_eq!(rows(pool.clone()).await, seeded);
+    let indexed_columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_index_info('idx_fts_blocks_content_block')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(indexed_columns, ["c0"]);
+    let hits: Vec<String> =
+        sqlx::query_scalar("SELECT block_id FROM fts_blocks WHERE fts_blocks MATCH '\"会議室\"'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(hits, ["B0000000000000000000000003"]);
+
+    agaric_store::fts::remove_fts_for_block(&pool, "B0000000000000000000000002")
+        .await
+        .unwrap();
+    assert_eq!(
+        rows(pool.clone()).await,
+        [seeded[0].clone(), seeded[3].clone()]
+    );
 }

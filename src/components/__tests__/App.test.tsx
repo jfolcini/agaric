@@ -31,7 +31,7 @@ import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
-import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
+import { CLOSE_ALL_OVERLAYS_EVENT, openQuickCapture } from '@/lib/overlay-events'
 import { setWindowTitle } from '@/lib/platform/window'
 import { useBootStore } from '@/stores/boot'
 import { useJournalStore } from '@/stores/journal'
@@ -571,6 +571,7 @@ describe('App', () => {
       if (cmd === 'list_spaces')
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
       if (cmd === 'list_all_pages_in_space') return []
+      if (cmd === 'resolve_page_title') return { title: 'Untitled', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
       return emptyPage
     })
@@ -605,6 +606,7 @@ describe('App', () => {
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
       if (cmd === 'list_all_pages_in_space')
         return [{ id: 'P_OLD_0000000000000000000', content: 'Untitled' }]
+      if (cmd === 'resolve_page_title') return { title: 'Untitled 2', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
       return emptyPage
     })
@@ -639,6 +641,7 @@ describe('App', () => {
       if (cmd === 'list_spaces')
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
       if (cmd === 'list_all_pages_in_space') return []
+      if (cmd === 'resolve_page_title') return { title: 'Quarterly review', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
       return emptyPage
     })
@@ -674,6 +677,7 @@ describe('App', () => {
       if (cmd === 'list_spaces')
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
       if (cmd === 'list_all_pages_in_space') return []
+      if (cmd === 'resolve_page_title') return { title: 'From the palette', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
       return emptyPage
     })
@@ -1738,6 +1742,7 @@ describe('App', () => {
         if (cmd === 'list_spaces')
           return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
         if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'resolve_page_title') return { title: 'Untitled', page_id: null }
         if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }
@@ -1768,6 +1773,7 @@ describe('App', () => {
         if (cmd === 'list_spaces')
           return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
         if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'resolve_page_title') return { title: 'Untitled', page_id: null }
         if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }
@@ -2811,5 +2817,25 @@ describe('App — header search trigger', () => {
     expect(await screen.findByTestId('header-search-button')).toBeInTheDocument()
     expect(screen.queryByTestId('search-sheet-trigger')).toBeNull()
     expect(screen.queryByTestId('quick-capture-fab')).toBeNull()
+  })
+})
+
+// #6555 — a capture link's text belongs to the opening it caused: Quick Capture
+// opened afterwards by the floating button (or the hotkey, the same setter) starts empty.
+describe('App — Quick Capture after a capture link', () => {
+  it('opens empty from the floating button after a link-filled capture was cancelled', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    mockedUseIsTouch.mockReturnValue(true)
+    render(<App />)
+    const fab = await screen.findByTestId('quick-capture-fab')
+
+    act(() => openQuickCapture('from a link'))
+    expect(await screen.findByTestId('quick-capture-textarea')).toHaveValue('from a link')
+    // `fireEvent`: the Sheet ignores pointer events while it animates in.
+    fireEvent.click(screen.getByTestId('quick-capture-cancel'))
+    await waitFor(() => expect(screen.queryByTestId('quick-capture-textarea')).toBeNull())
+
+    fireEvent.click(fab)
+    expect(await screen.findByTestId('quick-capture-textarea')).toHaveValue('')
   })
 })

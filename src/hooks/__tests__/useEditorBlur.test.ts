@@ -203,7 +203,7 @@ describe('useEditorBlur', () => {
       })
 
       expect(mockUnmount).toHaveBeenCalledOnce()
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text', { baseText: 'existing content' })
       expect(mockDiscardDraft).toHaveBeenCalledOnce()
       expect(mockSetFocused).toHaveBeenCalledWith(null)
     })
@@ -355,7 +355,7 @@ describe('useEditorBlur', () => {
       })
 
       expect(mockUnmount).toHaveBeenCalledOnce()
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed', { baseText: 'existing content' })
     })
   })
 
@@ -400,7 +400,7 @@ describe('useEditorBlur', () => {
       })
 
       expect(unmount).toHaveBeenCalledOnce()
-      expect(edit).toHaveBeenCalledWith('B1', 'changed')
+      expect(edit).toHaveBeenCalledWith('B1', 'changed', { baseText: 'existing content' })
     })
   })
 
@@ -470,7 +470,7 @@ describe('useEditorBlur', () => {
       })
 
       expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(codeBlock, 'existing content')
-      expect(mockEdit).toHaveBeenCalledWith('B1', codeBlock)
+      expect(mockEdit).toHaveBeenCalledWith('B1', codeBlock, { baseText: 'existing content' })
       expect(mockSplitBlock).not.toHaveBeenCalled()
     })
   })
@@ -715,7 +715,7 @@ describe('useEditorBlur', () => {
 
       expect(mockEdit).toHaveBeenCalledTimes(2)
       expect(mockEdit).toHaveBeenNthCalledWith(1, 'B1', 'first')
-      expect(mockEdit).toHaveBeenNthCalledWith(2, 'B1', 'first then more')
+      expect(mockEdit).toHaveBeenNthCalledWith(2, 'B1', 'first then more', { baseText: '' })
     })
 
     it('does not early-save when block had existing content', () => {
@@ -1192,7 +1192,7 @@ describe('useEditorBlur', () => {
       })
 
       expect(mockUnmount).toHaveBeenCalledOnce()
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed', { baseText: 'existing content' })
     })
 
     it('skips portals nested inside the wrapper even when visible (B-56 invariant)', () => {
@@ -1233,7 +1233,7 @@ describe('useEditorBlur', () => {
       })
 
       expect(mockUnmount).toHaveBeenCalledOnce()
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed', { baseText: 'existing content' })
     })
 
     it('Step 4a takes precedence over Step 4b when relatedTarget matches', () => {
@@ -1322,7 +1322,7 @@ describe('useEditorBlur', () => {
 
       // Internal portal should be ignored -- blur proceeds to save
       expect(mockUnmount).toHaveBeenCalledOnce()
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'saved content')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'saved content', { baseText: 'existing content' })
       expect(mockDiscardDraft).toHaveBeenCalledOnce()
       expect(mockSetFocused).toHaveBeenCalledWith(null)
     })
@@ -1413,7 +1413,7 @@ describe('useEditorBlur', () => {
 
       // B-56 fix: internal toolbar should NOT prevent save
       expect(mockUnmount).toHaveBeenCalledOnce()
-      expect(mockEdit).toHaveBeenCalledWith('B1', 'edited text')
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'edited text', { baseText: 'existing content' })
       expect(mockDiscardDraft).toHaveBeenCalledOnce()
       expect(mockSetFocused).toHaveBeenCalledWith(null)
 
@@ -1971,7 +1971,9 @@ describe('useEditorBlur', () => {
       press('pointerdown')
       blur()
 
-      expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed text')
+      expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed text', {
+        baseText: 'existing content',
+      })
       expect(markCommitted).toHaveBeenCalledExactlyOnceWith('typed text')
       expect(discardDraft).toHaveBeenCalledOnce()
       expect(unmount).not.toHaveBeenCalled()
@@ -2018,7 +2020,9 @@ describe('useEditorBlur', () => {
       press('pointerdown')
       blur()
 
-      expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed text')
+      expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed text', {
+        baseText: 'status:: done',
+      })
       expect(markCommitted).toHaveBeenCalledExactlyOnceWith('typed text')
     })
 
@@ -2032,7 +2036,7 @@ describe('useEditorBlur', () => {
       press('pointerdown')
       blur()
 
-      expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed text')
+      expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed text', { baseText: 'typed text' })
       expect(markCommitted).toHaveBeenCalledExactlyOnceWith('typed text')
     })
 
