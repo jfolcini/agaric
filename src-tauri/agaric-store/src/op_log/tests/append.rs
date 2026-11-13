@@ -353,68 +353,6 @@ async fn ingest_remote_op_in_tx_lands_row_and_is_idempotent() {
     assert_eq!(count, 1, "duplicate delivery must not add a second row");
 }
 
-/// `insert_merge_op_in_tx` lands a merge row via a plain `INSERT`; the
-/// omitted columns take their schema defaults (`origin = 'user'`,
-/// `is_replicated = 0`, `is_undo = 0`).
-#[tokio::test]
-async fn insert_merge_op_in_tx_lands_row_with_defaults() {
-    let (pool, _dir) = test_pool().await;
-
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-    insert_merge_op_in_tx(
-        &mut tx,
-        "merge-device",
-        1,
-        r#"[["dev-a",1],["dev-b",1]]"#,
-        &"b".repeat(64),
-        "create_block",
-        r#"{"block_id":"BLK-MRG"}"#,
-        FIXED_TS,
-        Some("BLK-MRG"),
-        None,
-    )
-    .await
-    .expect("merge insert must succeed");
-    tx.commit().await.unwrap();
-
-    // Runtime (untyped) read-back — no `.sqlx` offline-cache entries added.
-    let block_id: Option<String> = sqlx::query_scalar(
-        "SELECT block_id FROM op_log WHERE device_id = 'merge-device' AND seq = 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let attachment_id: Option<String> = sqlx::query_scalar(
-        "SELECT attachment_id FROM op_log WHERE device_id = 'merge-device' AND seq = 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let origin: String = sqlx::query_scalar(
-        "SELECT origin FROM op_log WHERE device_id = 'merge-device' AND seq = 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let is_replicated: i64 = sqlx::query_scalar(
-        "SELECT is_replicated FROM op_log WHERE device_id = 'merge-device' AND seq = 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let is_undo: i64 = sqlx::query_scalar(
-        "SELECT is_undo FROM op_log WHERE device_id = 'merge-device' AND seq = 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(block_id.as_deref(), Some("BLK-MRG"));
-    assert_eq!(attachment_id, None);
-    assert_eq!(origin, "user", "omitted origin defaults to 'user'");
-    assert_eq!(is_replicated, 0, "omitted is_replicated defaults to 0");
-    assert_eq!(is_undo, 0, "omitted is_undo defaults to 0");
-}
-
 // ── Indexed `attachment_id` column (migration 0064) ───────────────────
 
 /// Read the `op_log.attachment_id` **column** for one appended row.

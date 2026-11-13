@@ -674,8 +674,7 @@ impl OpPayload {
     /// The three attachment variants carry an `attachment_id`; every other
     /// variant identifies its target by `block_id` and returns `None` here.
     ///
-    /// Used by `op_log::append_local_op_in_tx`, `dag::append_merge_op`,
-    /// and `dag::insert_remote_op` to populate the indexed
+    /// Used by `op_log::append_local_op_in_tx` to populate the indexed
     /// `op_log.attachment_id` column added by migration 0064
     /// (SQL-review B-4), so reverse-attachment lookups are O(log N)
     /// rather than scanning every `add_attachment` row.

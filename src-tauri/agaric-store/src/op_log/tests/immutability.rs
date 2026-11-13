@@ -267,9 +267,9 @@ async fn compaction_bypass_does_not_leak_to_sibling_connection() {
 /// `idx_op_log_payload_block_id` from migration 0003 because the four
 /// remaining query sites in `pagination/history.rs` and
 /// `commands/history.rs` now read the native `op_log.block_id` column
-/// (added by migration 0030 and covered by `idx_op_log_block_id`).
-/// This test guards both halves: the legacy expression index is gone,
-/// and the native column index is in place.
+/// (added by migration 0030). Migration 0130 then dropped the column's own
+/// index `idx_op_log_block_id`, a prefix of `idx_op_log_block_created`
+/// (#6522). This test guards that both are gone and the composite stays.
 #[tokio::test]
 async fn op_log_block_id_indexes_post_migration_0048() {
     let (pool, _dir) = test_pool().await;
@@ -291,9 +291,17 @@ async fn op_log_block_id_indexes_post_migration_0048() {
     .fetch_one(&pool)
     .await
     .unwrap();
+    assert_eq!(native, 0, "migration 0130 must drop idx_op_log_block_id");
+
+    let composite: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_op_log_block_created'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(
-        native, 1,
-        "idx_op_log_block_id (native column index from migration 0030) must remain"
+        composite, 1,
+        "idx_op_log_block_created must remain: it serves every block_id lookup"
     );
 }
 

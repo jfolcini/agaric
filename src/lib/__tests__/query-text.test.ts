@@ -10,13 +10,20 @@ import type { FilterExpr, FilterPrimitive } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import {
   compileQueryText,
+  compileQueryTextWithTags,
+  filterToQueryText,
   isLegacyQueryText,
   type QueryTextDeps,
   readQueryText,
   unescapeQueryText,
 } from '@/lib/query-text'
 import { serialize } from '@/lib/search-query'
-import { addLeafToTree, builderTreeToFilterExpr, makeEmptyRoot } from '@/stores/advancedQuery'
+import {
+  addLeafToTree,
+  builderTreeToFilterExpr,
+  filterExprToBuilderTree,
+  makeEmptyRoot,
+} from '@/stores/advancedQuery'
 
 const TAG_WORK = '01HZY3V9Q8K2M4N6P7R8S9T0VW'
 const TAG_HOME = '01HZY3V9Q8K2M4N6P7R8S9T0VX'
@@ -335,5 +342,187 @@ describe('compileQueryText: what it cannot run, named with its column', () => {
 
   it('nothing to run: a block of view words alone runs nothing rather than everything', async () => {
     expect(await problems('table:true columns:a')).toEqual([])
+  })
+})
+
+describe('filterToQueryText: the text the builder saves', () => {
+  const text = (value: string): FilterPrimitive => ({
+    type: 'HasProperty',
+    key: 'k',
+    predicate: { type: 'Eq', value: { type: 'Text', value } },
+  })
+  const todo: FilterPrimitive = { type: 'State', values: ['TODO'], is_null: false, exclude: false }
+
+  /** The leaves of a root `And`, in an order that does not depend on theirs. */
+  function leafSet(filter: FilterExpr): string[] {
+    if (filter.type !== 'And') throw new Error('not an And')
+    return filter.children.map((child) => JSON.stringify(child)).toSorted()
+  }
+
+  it.each<[FilterPrimitive, string]>([
+    [{ type: 'Tag', tag: TAG_WORK }, `#[${TAG_WORK}]`],
+    [todo, 'state:TODO'],
+    [
+      { type: 'State', values: ['TODO', 'DOING'], is_null: true, exclude: false },
+      'state:TODO state:DOING state:none',
+    ],
+    [{ type: 'State', values: ['DONE'], is_null: false, exclude: true }, 'not-state:DONE'],
+    [{ type: 'Priority', values: ['1'], is_null: false, exclude: false }, 'priority:1'],
+    [{ type: 'Priority', values: [], is_null: true, exclude: true }, 'not-priority:none'],
+    [text('done'), 'prop:k=done'],
+    [text('in progress'), 'prop:k="in progress"'],
+    [
+      {
+        type: 'HasProperty',
+        key: 'k',
+        predicate: { type: 'Eq', value: { type: 'Num', value: 3.5 } },
+      },
+      'prop:k=3.5',
+    ],
+    [
+      {
+        type: 'HasProperty',
+        key: 'k',
+        predicate: { type: 'Ne', value: { type: 'Date', value: '2026-01-05' } },
+      },
+      'not-prop:k=2026-01-05',
+    ],
+    [{ type: 'HasProperty', key: 'k', predicate: { type: 'Exists' } }, 'prop:k='],
+    [{ type: 'HasProperty', key: 'k', predicate: { type: 'NotExists' } }, 'not-prop:k='],
+    [{ type: 'DueDate', predicate: { type: 'Before', date: '2026-01-05' } }, 'due:<2026-01-05'],
+    [
+      { type: 'DueDate', predicate: { type: 'OnOrBefore', date: '2026-01-05' } },
+      'due:<=2026-01-05',
+    ],
+    [{ type: 'DueDate', predicate: { type: 'On', date: '2026-01-05' } }, 'due:2026-01-05'],
+    [{ type: 'DueDate', predicate: { type: 'OnOrAfter', date: '2026-01-05' } }, 'due:>=2026-01-05'],
+    [
+      { type: 'Scheduled', predicate: { type: 'After', date: '2026-01-05' } },
+      'scheduled:>2026-01-05',
+    ],
+    [{ type: 'Scheduled', predicate: { type: 'IsNull' } }, 'scheduled:none'],
+  ])('%j is %s, and reads back as itself', (primitive, expected) => {
+    const filter = built(primitive)
+    expect(filterToQueryText(filter)).toBe(expected)
+    expect(compileQueryTextWithTags(expected, [])).toEqual({ ok: true, filter })
+  })
+
+  it('writes the leaves in the builder order; the builder reopens the same filter', () => {
+    const filter = built(
+      todo,
+      { type: 'Tag', tag: TAG_WORK },
+      { type: 'DueDate', predicate: { type: 'IsNull' } },
+      text('done'),
+    )
+    const written = filterToQueryText(filter)
+    expect(written).toBe(`state:TODO #[${TAG_WORK}] due:none prop:k=done`)
+    const read = compileQueryTextWithTags(written ?? '', [])
+    if (!read.ok) throw new Error('did not compile')
+    const reopened = builderTreeToFilterExpr(filterExprToBuilderTree(read.filter, () => 0))
+    expect(leafSet(reopened)).toEqual(leafSet(filter))
+  })
+
+  it.each<[string, FilterExpr]>([
+    ['an Or', { type: 'Or', children: [built(todo), built(text('a'))] }],
+    ['a nested group', { type: 'And', children: [built(todo)] }],
+    ['a negated leaf', { type: 'And', children: [{ type: 'Not', child: built(todo) }] }],
+    ['a leaf at the root', { type: 'Leaf', primitive: todo }],
+    ['no filter', built()],
+    ['a tag matched inline too', built({ type: 'TagOrRef', tag: TAG_WORK })],
+    ['a block type', built({ type: 'BlockType', values: ['page'], exclude: false })],
+    [
+      'a date range',
+      built({
+        type: 'DueDate',
+        predicate: { type: 'Between', from: '2026-01-01', to: '2026-01-05' },
+      }),
+    ],
+    [
+      'a comparison',
+      built({
+        type: 'HasProperty',
+        key: 'k',
+        predicate: { type: 'Gt', value: { type: 'Num', value: 1 } },
+      }),
+    ],
+    [
+      'a reference value',
+      built({
+        type: 'HasProperty',
+        key: 'k',
+        predicate: { type: 'Eq', value: { type: 'Ref', value: TAG_WORK } },
+      }),
+    ],
+    // The text would read these back as another filter.
+    ['text the reader types as a number', built(text('5'))],
+    ['text the reader types as a date', built(text('2026-01-05'))],
+    ['text holding a Markdown escape', built(text('a\\*b'))],
+    ['text holding a legacy key', built(text('x type:y'))],
+    ['text holding a quote', built(text('a "b" c'))],
+    ['two state leaves, which the text would merge', built(todo, { ...todo, values: ['DOING'] })],
+    ['a tag named twice', built({ type: 'Tag', tag: TAG_WORK }, { type: 'Tag', tag: TAG_WORK })],
+    ['a tag that is not an id', built({ type: 'Tag', tag: 'work' })],
+    ['a state the search syntax rejects', built({ ...todo, values: ['todo'] })],
+    [
+      'two due dates',
+      built(
+        { type: 'DueDate', predicate: { type: 'OnOrAfter', date: '2026-01-01' } },
+        { type: 'DueDate', predicate: { type: 'Before', date: '2026-01-05' } },
+      ),
+    ],
+  ])('%s stays a v2 payload', (_name, filter) => {
+    expect(filterToQueryText(filter)).toBeNull()
+  })
+
+  it('never writes a text that reads back as another filter, or as the older text', () => {
+    const value = fc.oneof(
+      fc.constantFrom('done', 'in progress', '5', 'a*b', 'x type:y', 'tag:z', '"q"', 'a}}b', ''),
+      fc.string({ maxLength: 12 }),
+    )
+    const key = fc.oneof(fc.constantFrom('k', 'a_b', 'my key', 'k=v'), fc.string({ maxLength: 6 }))
+    const state = fc.constantFrom('TODO', 'DOING', 'DONE', 'todo', 'none', 'x y')
+    const date = fc.constantFrom('2026-01-05', '2026-13-40', 'today', '')
+    const leaf: fc.Arbitrary<FilterPrimitive> = fc.oneof(
+      fc.constantFrom(TAG_WORK, TAG_HOME, 'work').map((tag) => ({ type: 'Tag' as const, tag })),
+      fc.record({
+        type: fc.constantFrom('State' as const, 'Priority' as const),
+        values: fc.array(state, { maxLength: 3 }),
+        is_null: fc.boolean(),
+        exclude: fc.boolean(),
+      }),
+      fc.tuple(key, value, fc.constantFrom('Eq' as const, 'Ne' as const)).map(([k, v, type]) => ({
+        type: 'HasProperty' as const,
+        key: k,
+        predicate: { type, value: { type: 'Text' as const, value: v } },
+      })),
+      fc.tuple(key, fc.constantFrom('Exists' as const, 'NotExists' as const)).map(([k, type]) => ({
+        type: 'HasProperty' as const,
+        key: k,
+        predicate: { type },
+      })),
+      fc
+        .tuple(
+          fc.constantFrom('DueDate' as const, 'Scheduled' as const),
+          fc.constantFrom('Before' as const, 'On' as const, 'After' as const),
+          date,
+        )
+        .map(([type, op, d]) => ({ type, predicate: { type: op, date: d } })),
+    )
+    let written = 0
+    fc.assert(
+      fc.property(fc.array(leaf, { maxLength: 4 }), (primitives) => {
+        const filter = built(...primitives)
+        const queryText = filterToQueryText(filter)
+        if (queryText === null) return
+        written += 1
+        expect(isLegacyQueryText(queryText)).toBe(false)
+        const read = compileQueryTextWithTags(queryText, [])
+        if (!read.ok) throw new Error(`"${queryText}" did not compile`)
+        expect(leafSet(read.filter)).toEqual(leafSet(filter))
+      }),
+      { numRuns: 1000 },
+    )
+    // The property is vacuous if nothing was ever written as text.
+    expect(written).toBeGreaterThan(50)
   })
 })

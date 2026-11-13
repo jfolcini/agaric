@@ -325,15 +325,20 @@ export async function importMarkdown(
   )
 }
 
-/** Start a sync session with a known peer. */
+/**
+ * Start a sync session with a known peer. `userInitiated` is a press on Sync:
+ * it dials a peer the backend is backing off from, where a scheduled call
+ * resolves with state `backoff` and dials nothing (#6523).
+ */
 export async function startSync(
   peerId: string,
   onProgress?: (update: SyncProgressUpdate) => void,
+  userInitiated = false,
 ): Promise<SyncSessionInfo> {
   const channel = new Channel<SyncProgressUpdate>()
   // oxlint-disable-next-line unicorn/prefer-add-event-listener -- Tauri `Channel` is an IPC primitive, not a DOM EventTarget; it only exposes an `onmessage` setter (no `addEventListener`)
   if (onProgress) channel.onmessage = onProgress
-  return unwrap(await commands.startSync(peerId, channel))
+  return unwrap(await commands.startSync(peerId, userInitiated, channel))
 }
 
 // ---------------------------------------------------------------------------

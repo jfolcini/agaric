@@ -110,9 +110,7 @@ pub async fn apply_op_projected_with_mode(
         //
         // DEBUG only: the whole-log predicate below is a scan (~10 ms per
         // applied op at 100K rows against ~20 µs for the point lookup), the
-        // AGENTS.md hot-check exemption; it also catches a foreign row the
-        // dormant strict ingest (`dag::insert_remote_op`) would leave
-        // `is_replicated = 0`.
+        // AGENTS.md hot-check exemption.
         #[cfg(debug_assertions)]
         {
             // #2282 — `MIN`/`MAX` over the locally-authored rows: equal MIN and
