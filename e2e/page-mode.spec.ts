@@ -236,7 +236,7 @@ test.describe('page mode (#5691) @editor @pages', () => {
       .poll(async () => (await backend(page, seeded.pageId))[10]?.text)
       .toBe('block 10 more')
     expect(await getInvokeCalls(page, 'edit_block')).toEqual([
-      { blockId: seeded.ids[10], toText: 'block 10 more', baseText: null },
+      { blockId: seeded.ids[10], toText: 'block 10 more', baseText: 'block 10' },
     ])
   })
 
@@ -520,6 +520,31 @@ test.describe('page mode keeps the page whole (#5691) @editor @pages', () => {
     for (const cmd of ['create_block', 'move_block', 'delete_block', 'restore_block']) {
       expect(await getInvokeCalls(page, cmd)).toEqual([])
     }
+  })
+
+  // #6533 — the save sends the text page mode last knew the block held, and
+  // the backend replays what was typed on the text the peer left.
+  test('a block a peer edited while typed in keeps both edits, and shows them', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Both edit it', [
+      [0, 'alpha'],
+      [0, 'beta'],
+    ])
+    await openInPageMode(page, 'Both edit it', 2)
+    await caret(page, 0, 'end')
+
+    // Inside the save's pause: the typed key is not saved when the peer's edit lands.
+    await page.keyboard.type('!')
+    await ipc(page, 'edit_block', { blockId: ids[0], toText: 'Peer: alpha' })
+    await syncedPage(page, pageId)
+
+    await expect.poll(async () => (await backend(page, pageId))[0]?.text).toBe('Peer: alpha!')
+    // The document takes the peer's edit with the next reload, and a key typed then keeps it.
+    await syncedPage(page, pageId)
+    await expect.poll(async () => (await shown(page))[0]?.text).toBe('Peer: alpha!')
+    await page.keyboard.type('?')
+    await expect.poll(async () => (await backend(page, pageId))[0]?.text).toBe('Peer: alpha!?')
   })
 
   test('a block deleted elsewhere while typed in keeps the text, as a new block, and says so', async ({

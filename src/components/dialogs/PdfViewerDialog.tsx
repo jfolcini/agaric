@@ -11,10 +11,13 @@
  *   Ink/freehand is deferred (#1452 phase 3).
  * - Persist: on Save, `pdfDocument.saveDocument()` bakes the annotations
  *   into the PDF bytes; those bytes are written as a NEW attachment (new
- *   ULID) on the same block, the block's `attachment:<id>` links move to it,
+ *   ULID) on the same block, each new highlight becomes a child block of it
+ *   pointing at the copy (`pdf-highlights.ts`, #6629), the block's
+ *   `attachment:<id>` links and the older highlight blocks move to the copy,
  *   and the original attachment is deleted. We never mutate attachment bytes
  *   in place — a rewritten file changes its blake3 hash and would break sync
  *   (see #1452).
+ * - Opens on `initialPage` when given: a highlight block's source chip.
  * - Page count indicator via `t('pdfViewer.pageIndicator')`, prev/next nav.
  * - Cleans up the PDF document + viewer on close.
  *
@@ -41,10 +44,19 @@ import { unwrap } from '@/lib/app-error'
 import { attachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
 import { blobToBase64 } from '@/lib/file-utils'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { isEditableTarget } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import {
+  highlightBlockSpecs,
+  newHighlights,
+  type PdfHighlight,
+  repointHighlightBlocks,
+} from '@/lib/pdf-highlights'
 import { type PageBlockState, usePageBlockStoreApi } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
+import { useUndoStore } from '@/stores/undo'
 
 // Set worker path — served from public/
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
@@ -81,6 +93,15 @@ const EDITOR_MODE = {
   HIGHLIGHT: 9,
 } as const
 
+/**
+ * pdf.js's own highlight palette (`highlightEditorColors` in its app options,
+ * which the component build does not export). With none, adding a highlight
+ * throws in pdf.js (`getNonHCMColorName`).
+ */
+const HIGHLIGHT_COLORS =
+  'yellow=#FFFF98,green=#53FFBC,blue=#80EBFF,pink=#FFCBE6,red=#FF4F5F,' +
+  'yellow_HCM=#FFFFCC,green_HCM=#53FFBC,blue_HCM=#80EBFF,pink_HCM=#F6B8FF,red_HCM=#C50043'
+
 type EditorTool = 'highlight' | 'comment' | null
 
 /** Derive an annotated-copy filename: `report.pdf` → `report (annotated).pdf`. */
@@ -108,6 +129,33 @@ async function repointBlockLinks(
   return pageStore.getState().edit(blockId, repointed, { merge: false })
 }
 
+/**
+ * Add a block for each new highlight under `ownerId`, pointing at the copy that
+ * holds them, as one undo entry. A refusal is toasted: the highlights are in the
+ * file all the same.
+ */
+async function addHighlightBlocks(
+  pageStore: StoreApi<PageBlockState>,
+  ownerId: string,
+  attachmentId: string,
+  highlights: readonly PdfHighlight[],
+  failed: string,
+): Promise<void> {
+  if (highlights.length === 0) return
+  try {
+    const specs = highlightBlockSpecs(ownerId, attachmentId, highlights)
+    const { op_refs } = unwrap(await commands.createBlocksBatch(specs))
+    const { rootParentId } = pageStore.getState()
+    if (rootParentId !== null) {
+      useUndoStore.getState().onNewAction(rootParentId, op_refs, undefined, { merge: false })
+    }
+    recordGraphStructureChange()
+  } catch (err) {
+    logger.warn('PdfViewerDialog', 'adding the highlight blocks failed', { ownerId }, err)
+    notify.error(failed)
+  }
+}
+
 export interface PdfViewerDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -121,6 +169,8 @@ export interface PdfViewerDialogProps {
   blockId?: string | undefined
   /** ULID of the attachment being viewed — deleted after a successful save. */
   attachmentId?: string | undefined
+  /** The page to open on, from 1; past the last page opens on the last. */
+  initialPage?: number | undefined
   /**
    * Called after a new annotated attachment is created, and the old one
    * deleted unless the block's links could not be moved off it. Lets the host
@@ -137,6 +187,7 @@ export function PdfViewerDialog({
   filename,
   blockId,
   attachmentId,
+  initialPage = 1,
   onSaved,
 }: PdfViewerDialogProps): React.ReactElement {
   const { t } = useTranslation()
@@ -247,6 +298,7 @@ export function PdfViewerDialog({
           // Mount the annotation-editor layer but start in NONE mode (view/
           // select only). The toolbar toggles HIGHLIGHT / FREETEXT.
           annotationEditorMode: EDITOR_MODE.NONE,
+          annotationEditorHighlightColors: HIGHLIGHT_COLORS,
         })
         linkService.setViewer(viewer)
 
@@ -263,6 +315,9 @@ export function PdfViewerDialog({
           if (cancelled) return
           try {
             viewer.currentScaleValue = 'page-width'
+            if (initialPage > 1) {
+              viewer.currentPageNumber = Math.min(initialPage, pdfDocRef.current?.numPages ?? 1)
+            }
           } catch (err) {
             logger.warn('PdfViewerDialog', 'set scale on pagesinit failed', undefined, err)
           }
@@ -312,7 +367,7 @@ export function PdfViewerDialog({
       cancelled = true
       teardown()
     }
-  }, [open, fileUrl, teardown])
+  }, [open, fileUrl, initialPage, teardown])
 
   /** Jump the viewer to a page (1-based). */
   const goToPage = useCallback(
@@ -358,10 +413,15 @@ export function PdfViewerDialog({
   /**
    * Save: bake the current annotations into the PDF binary via
    * `saveDocument()`, write the result as a NEW attachment (new ULID) on the
-   * same block, point the block's links at it, then delete the original. This
-   * composes existing ops only (AddAttachment + EditBlock + DeleteAttachment) —
-   * no in-place mutation, so the file at a given ULID stays byte-stable for the
-   * sync layer (#1452).
+   * same block, add a block for each new highlight, point the block's links and
+   * the older highlight blocks at the copy, then delete the original. This
+   * composes existing ops only (AddAttachment + CreateBlock + SetProperty +
+   * EditBlock + DeleteAttachment) — no in-place mutation, so the file at a
+   * given ULID stays byte-stable for the sync layer (#1452).
+   *
+   * The highlight blocks are made here, not as each highlight is drawn: until
+   * Save a highlight lives only in the reader, and closing it unsaved drops it,
+   * so a block made earlier could point at a highlight no file holds.
    */
   const handleSave = useCallback(async () => {
     const pdfDoc = pdfDocRef.current
@@ -369,6 +429,8 @@ export function PdfViewerDialog({
     setSaving(true)
     const toastId = notify.loading(t('pdfViewer.saving'))
     try {
+      // What the save writes, read before it writes it.
+      const highlights = newHighlights(pdfDoc.annotationStorage)
       // Bake annotations into the PDF bytes.
       const bytes = await pdfDoc.saveDocument()
       const row = unwrap(
@@ -379,11 +441,16 @@ export function PdfViewerDialog({
           await blobToBase64(new Blob([bytes])),
         ),
       )
-      // The original goes only once no link in the block names it (#6629). A
-      // failed read, edit or delete leaves two copies on the block and every
-      // link still opens one — never data loss — so we still report success.
+      const failed = t('pdfViewer.highlightBlocksFailed')
+      await addHighlightBlocks(pageStore, blockId, row.id, highlights, failed)
+      // The original goes only once no link in the block and no highlight block
+      // names it (#6629). A failed read, edit or delete leaves two copies on the
+      // block and every link still opens one — never data loss — so we still
+      // report success.
       try {
         if (await repointBlockLinks(pageStore, blockId, attachmentId, row.id)) {
+          const spaceId = useSpaceStore.getState().currentSpaceId
+          await repointHighlightBlocks(spaceId, attachmentId, row.id)
           unwrap(await commands.deleteAttachment(attachmentId))
         }
       } catch (err) {
@@ -394,6 +461,9 @@ export function PdfViewerDialog({
           err,
         )
       }
+      // The new blocks and the moved properties: the store's own read shows them,
+      // and page mode's document follows the store.
+      void pageStore.getState().load()
       notify.dismiss(toastId)
       notify.success(t('pdfViewer.saved'))
       onSaved?.(row.id)

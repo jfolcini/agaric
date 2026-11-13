@@ -106,6 +106,21 @@ describe('what a save writes', () => {
     expect(backend.live()[20]).toEqual([blockId(21), 0, 'xblock 20'])
   })
 
+  it('sends the text it last knew a block held, so an edit made elsewhere since is kept (#6533)', async () => {
+    const { ed, backend, save } = open([[A, 0, 'alpha']])
+    await backend.edit(A, 'Peer: alpha')
+    caret(ed, 0, 5)
+    type(ed, '!')
+
+    await save()
+
+    expect(backend.live()).toEqual([[A, 0, 'Peer: alpha!']])
+    // The next save starts from what this one sent.
+    type(ed, '?')
+    await save()
+    expect(backend.live()).toEqual([[A, 0, 'Peer: alpha!?']])
+  })
+
   it('keeps the column alignment of a table edited in a cell (#6277)', async () => {
     const delimiter = '| :--- | ---: | :---: | --- |'
     const { ed, backend, save } = open([

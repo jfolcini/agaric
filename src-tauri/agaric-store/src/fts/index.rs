@@ -6,8 +6,8 @@
 //! FTS5 tables **cannot carry a `UNIQUE` constraint** (nor any other
 //! constraint), so the database does NOT enforce "exactly one row per
 //! `block_id`". That invariant holds ONLY by convention: **every write path
-//! in this module MUST `DELETE FROM fts_blocks WHERE block_id = ?` before it
-//! `INSERT`s a row for that `block_id`.**
+//! in this module MUST delete the `block_id`'s row ([`delete_fts_row_query`])
+//! before it `INSERT`s a row for that `block_id`.**
 //!
 //! Concretely, the delete-then-insert discipline is observed by:
 //!
@@ -114,6 +114,33 @@ async fn insert_fts_rows_tx(
     Ok(())
 }
 
+pub(super) type FtsDelete = sqlx::query::Query<'static, Sqlite, sqlx::sqlite::SqliteArguments>;
+
+/// Delete `block_id`'s `fts_blocks` row by rowid.
+///
+/// `WHERE block_id = ?` on the FTS5 table itself visits every row, under the
+/// write lock (#6534). The rowid comes from FTS5's shadow table
+/// `fts_blocks_content`, whose `id` is the FTS rowid and `c0` the `block_id`
+/// column, through `idx_fts_blocks_content_block` (migration 0131). Without
+/// that index the statement deletes the same rows, slowly.
+pub(super) fn delete_fts_row_query(block_id: &str) -> FtsDelete {
+    sqlx::query!(
+        "DELETE FROM fts_blocks \
+         WHERE rowid IN (SELECT id FROM fts_blocks_content WHERE c0 = ?)",
+        block_id
+    )
+}
+
+/// [`delete_fts_row_query`] for a JSON array of block ids.
+pub(super) fn delete_fts_rows_query(ids_json: &str) -> FtsDelete {
+    sqlx::query!(
+        "DELETE FROM fts_blocks \
+         WHERE rowid IN (SELECT id FROM fts_blocks_content \
+                         WHERE c0 IN (SELECT value FROM json_each(?)))",
+        ids_json
+    )
+}
+
 // ---------------------------------------------------------------------------
 // FTS index management
 // ---------------------------------------------------------------------------
@@ -159,21 +186,15 @@ pub async fn update_fts_for_block_with_maps(
     match row {
         None => {
             // Block doesn't exist — remove from FTS if present
-            sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
-                .execute(&mut *tx)
-                .await?;
+            delete_fts_row_query(block_id).execute(&mut *tx).await?;
         }
         Some(ref r) if r.deleted_at.is_some() => {
             // deleted_at IS NOT NULL — remove from FTS
-            sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
-                .execute(&mut *tx)
-                .await?;
+            delete_fts_row_query(block_id).execute(&mut *tx).await?;
         }
         Some(ref r) if r.content.is_none() => {
             // content IS NULL — remove from FTS
-            sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
-                .execute(&mut *tx)
-                .await?;
+            delete_fts_row_query(block_id).execute(&mut *tx).await?;
         }
         Some(r) => {
             // Active block with content — strip via pre-loaded maps and index.
@@ -182,9 +203,7 @@ pub async fn update_fts_for_block_with_maps(
                 strip_for_fts_with_maps(block_id, &content, tag_names, page_titles, block_titles);
 
             // Delete existing entry
-            sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
-                .execute(&mut *tx)
-                .await?;
+            delete_fts_row_query(block_id).execute(&mut *tx).await?;
 
             // Insert new entry
             sqlx::query!(
@@ -258,9 +277,7 @@ pub async fn update_fts_for_block_split_with_maps(
 
     if should_delete {
         // Phase 2a: Delete only — minimal write lock
-        sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
-            .execute(write_pool)
-            .await?;
+        delete_fts_row_query(block_id).execute(write_pool).await?;
         return Ok(());
     }
 
@@ -271,9 +288,7 @@ pub async fn update_fts_for_block_split_with_maps(
 
     // Phase 2b: Write — minimal transaction
     let mut tx = crate::db::begin_immediate_logged(write_pool, "fts_update_block_write").await?;
-    sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
-        .execute(&mut *tx)
-        .await?;
+    delete_fts_row_query(block_id).execute(&mut *tx).await?;
     sqlx::query!(
         "INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)",
         block_id,
@@ -290,9 +305,7 @@ pub async fn update_fts_for_block_split_with_maps(
 
 /// Remove a block from the FTS index (for soft-delete/purge).
 pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
-    sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
-        .execute(pool)
-        .await?;
+    delete_fts_row_query(block_id).execute(pool).await?;
     Ok(())
 }
 
@@ -312,12 +325,7 @@ pub async fn remove_fts_for_blocks<S: AsRef<str>>(
         return Ok(());
     }
     let ids_json = serde_json::to_string(&ids.iter().map(AsRef::as_ref).collect::<Vec<_>>())?;
-    sqlx::query!(
-        "DELETE FROM fts_blocks WHERE block_id IN (SELECT value FROM json_each(?))",
-        ids_json
-    )
-    .execute(pool)
-    .await?;
+    delete_fts_rows_query(&ids_json).execute(pool).await?;
     Ok(())
 }
 
@@ -476,12 +484,7 @@ pub async fn reindex_fts_for_ids(pool: &SqlitePool, ids: &[String]) -> Result<()
         .await?;
 
         // Batch delete this chunk's old FTS entries (1 query per chunk)
-        sqlx::query!(
-            "DELETE FROM fts_blocks WHERE block_id IN (SELECT value FROM json_each(?))",
-            ids_json
-        )
-        .execute(&mut *tx)
-        .await?;
+        delete_fts_rows_query(&ids_json).execute(&mut *tx).await?;
 
         // Stage (id, stripped) pairs for the chunk, then emit
         // multi-row `INSERT INTO fts_blocks` via QueryBuilder. The previous

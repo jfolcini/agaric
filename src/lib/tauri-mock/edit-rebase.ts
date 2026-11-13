@@ -39,6 +39,6 @@ export function rebasedOnto(
   baseText: string | null | undefined,
   toText: string,
 ): string {
-  if (baseText == null || baseText === current) return toText
+  if (baseText == null) return toText
   return rebaseEdit(baseText, toText, current) ?? toText
 }

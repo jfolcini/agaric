@@ -148,6 +148,9 @@ describe('INTERNAL_PROPERTY_KEYS', () => {
         'attachments',
         'bookmark',
         'saved_view',
+        'pdf_attachment',
+        'pdf_page',
+        'pdf_boxes',
       ].toSorted(),
     )
   })
