@@ -50,8 +50,9 @@ GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` an
 
 ## Lint and format
 
-- `oxfmt --write` reflows JSX and detaches an `oxlint-disable-next-line` from the line it covered. Use a `/* oxlint-disable rule -- reason */ … /* oxlint-enable rule */` pair, and re-run `npx oxlint` after formatting.
+- `oxfmt --write` reflows JSX and detaches an `oxlint-disable-next-line` from the line it covered. Use a `/* oxlint-disable rule -- reason */ … /* oxlint-enable rule */` pair, and re-run `npm run lint` after formatting, never bare `npx oxlint`: only the `--type-aware` run sees a floating `act()` or a stale dependency array.
 - Never `oxfmt --write .` or `npm run format`: it reformats all TOML in a style taplo rejects. Format only your files.
+- `npm audit` reds every PR on a dev-only advisory whose fix is younger than `.npmrc`'s `min-release-age`: add a dated `.nsprc` waiver (both ids when npm serves the GHSA under two), then run `node scripts/sync-audit-from-deny.mjs`.
 - A rules-config change and its linter version bump land in one commit; oxlint rejects a config naming rules it does not know.
 - Swapping `<div role="status">` for `<output>` removes the literal attribute a test may query. Grep the tests for `[role=` / `toHaveAttribute('role'` first, and run the full suite for a11y sweeps.
 - The gitleaks hook flags a random-looking fixture secret (a token like `agt_0123…cdef`) as a leaked key. Build fixtures from a repeated character (`` `agt_${'a'.repeat(32)}` ``), never an allowlist entry.
