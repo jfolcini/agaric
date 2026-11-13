@@ -118,6 +118,8 @@ export interface SavedQuerySpec {
   group_by: GroupSpec | null
   /** Global / grouped aggregates. */
   aggregates: AggregateSpec[]
+  /** Present only for a board (#6542), so a list view's payload is what it always was. */
+  view?: QueryViewMode
 }
 
 /** The builder tree and controls as a {@link SavedQuerySpec}. */
@@ -131,6 +133,7 @@ export function serializeQuerySpec(
     fulltext: controls.fulltext,
     group_by: controls.groupBy,
     aggregates: controls.aggregates,
+    ...(controls.view === 'board' ? { view: 'board' } : {}),
   }
 }
 
@@ -152,8 +155,12 @@ export function parseQuerySpec(parsed: unknown): SavedQuerySpec {
     fulltext: typeof spec.fulltext === 'string' ? spec.fulltext : '',
     group_by: spec.group_by ?? null,
     aggregates: Array.isArray(spec.aggregates) ? spec.aggregates : [],
+    ...(spec.view === 'board' ? { view: 'board' } : {}),
   }
 }
+
+/** `board` lays the results out as one column per value of the group key (#6542). */
+export type QueryViewMode = 'list' | 'board'
 
 /** The non-chip controls, per space and not persisted, like the chips. */
 export interface AdvancedQueryControls {
@@ -168,6 +175,8 @@ export interface AdvancedQueryControls {
   groupBy: GroupSpec | null
   /** Optional global (and, when grouped, per-group) aggregates. */
   aggregates: AggregateSpec[]
+  /** The layout asked for; a group key with no board still shows the list. */
+  view: QueryViewMode
 }
 
 interface AdvancedQueryState {
@@ -205,6 +214,8 @@ interface AdvancedQueryState {
   setGroupBy: (spaceKey: string, groupBy: GroupSpec | null) => void
   /** Replace the aggregate specs for the space. */
   setAggregates: (spaceKey: string, aggregates: AggregateSpec[]) => void
+  /** Set the results layout for the space. */
+  setView: (spaceKey: string, view: QueryViewMode) => void
   /**
    * Replace a space's builder tree and controls from a saved view (#1460),
    * minting fresh node ids so they never collide with existing keys.
@@ -223,6 +234,7 @@ const EMPTY_CONTROLS: Readonly<AdvancedQueryControls> = Object.freeze({
   sort: EMPTY_SORT as SortKey[],
   groupBy: null,
   aggregates: EMPTY_AGGREGATES as AggregateSpec[],
+  view: 'list',
 })
 
 /**
@@ -490,6 +502,8 @@ export const useAdvancedQueryStore = create<AdvancedQueryState>()((set) => ({
     set((state) => ({ controlsBySpace: patchControls(state, spaceKey, { groupBy }) })),
   setAggregates: (spaceKey, aggregates) =>
     set((state) => ({ controlsBySpace: patchControls(state, spaceKey, { aggregates }) })),
+  setView: (spaceKey, view) =>
+    set((state) => ({ controlsBySpace: patchControls(state, spaceKey, { view }) })),
   loadView: (spaceKey, spec) =>
     set((state) => {
       // Fresh ids, so the loaded tree's keys collide with no existing node.
@@ -504,6 +518,7 @@ export const useAdvancedQueryStore = create<AdvancedQueryState>()((set) => ({
         sort: spec.sort,
         groupBy: spec.group_by,
         aggregates: spec.aggregates,
+        view: spec.view ?? 'list',
       }
       return {
         nextAddId: id,

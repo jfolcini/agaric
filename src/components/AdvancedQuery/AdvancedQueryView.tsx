@@ -13,6 +13,9 @@
  *     when aggregates are set.
  *   - GROUPED: group headers (key label + count + per-group aggregate chips)
  *     over each bucket's previewed member rows.
+ *   - BOARD (#6542): `QueryBoard`, one column per value of a group key that
+ *     has one (`boardColumns`); each column runs its own query, so the view's
+ *     own is off.
  *
  * Saved views (#1460): `SavedViews` (mounted below) lists and loads them, and
  * `handleSaveView`'s dialog saves the serialized spec (`serializeQuerySpec`,
@@ -25,8 +28,10 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AggregateSummary } from '@/components/AdvancedQuery/AggregateSummary'
+import { boardColumns } from '@/components/AdvancedQuery/board-columns'
 import { FilterGroup } from '@/components/AdvancedQuery/FilterGroup'
 import { GroupedResults } from '@/components/AdvancedQuery/GroupedResults'
+import { QueryBoard } from '@/components/AdvancedQuery/QueryBoard'
 import { QueryControlsBar } from '@/components/AdvancedQuery/QueryControlsBar'
 import { SavedViews } from '@/components/AdvancedQuery/SavedViews'
 import { EmptyState } from '@/components/common/EmptyState'
@@ -36,6 +41,7 @@ import { QueryResultList } from '@/components/query/QueryResultList'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
+import { useSpacePropertyDefs } from '@/hooks/useSpacePropertyDefs'
 import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey } from '@/lib/bindings'
 import { isDateFormattedPage } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
@@ -47,14 +53,18 @@ import {
   builderTreeToFilterExpr,
   selectAdvancedQueryBuilderForSpace,
   selectAdvancedQueryControlsForSpace,
+  type QueryViewMode,
   serializeQuerySpec,
   useAdvancedQueryStore,
 } from '@/stores/advancedQuery'
 import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
 
 export interface AdvancedQueryViewProps {
-  /** Navigate to a block's parent page (wired through from the app shell). */
-  onNavigate?: ((pageId: string) => void) | undefined
+  /**
+   * Open a block's page (wired through from the app shell), which shows it
+   * under the title it is handed.
+   */
+  onNavigate?: ((pageId: string, title?: string) => void) | undefined
 }
 
 export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React.ReactElement {
@@ -80,11 +90,19 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
   const setSort = useAdvancedQueryStore((s) => s.setSort)
   const setGroupBy = useAdvancedQueryStore((s) => s.setGroupBy)
   const setAggregates = useAdvancedQueryStore((s) => s.setAggregates)
+  const setView = useAdvancedQueryStore((s) => s.setView)
 
   // Compile the builder tree to the wire `FilterExpr` sent verbatim by the hook.
   // `builder` identity changes only when the tree changes, so the memo (and the
   // hook's `JSON.stringify` dep-key) recompute exactly when needed.
   const filterExpr = useMemo(() => builderTreeToFilterExpr(builder), [builder])
+
+  const propertyDefs = useSpacePropertyDefs()
+  const columns = useMemo(
+    () => boardColumns(controls.groupBy, propertyDefs),
+    [controls.groupBy, propertyDefs],
+  )
+  const board = controls.view === 'board' ? columns : null
 
   const {
     results,
@@ -105,6 +123,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
     sort: controls.sort,
     groupBy: controls.groupBy,
     aggregates: controls.aggregates,
+    enabled: board == null,
   })
 
   const handleAddLeaf = (path: BuilderPath, filter: FilterPrimitive): void =>
@@ -120,6 +139,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
   const handleGroupByChange = (groupBy: GroupSpec | null): void => setGroupBy(spaceKey, groupBy)
   const handleAggregatesChange = (aggregates: AggregateSpec[]): void =>
     setAggregates(spaceKey, aggregates)
+  const handleViewChange = (view: QueryViewMode): void => setView(spaceKey, view)
 
   // #1460 saved-views: "Save view" prompts for a name and saves the current
   // spec in this space.
@@ -149,18 +169,21 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
       })
   }
 
+  const openPage = (pageId: string): void => onNavigate?.(pageId, pageTitles.get(pageId))
+
   const isGrouped = groups != null
   // Empty when: flat mode with no rows, OR grouped mode with no groups.
   const isEmpty = isGrouped ? groups.length === 0 : results.length === 0
 
   return (
     <div
-      className="advanced-query-view mx-auto w-full max-w-list flex flex-col gap-3"
+      className="advanced-query-view flex w-full flex-col gap-3"
       data-testid="advanced-query-view"
     >
-      <p className="text-sm text-muted-foreground">{t('advancedQuery.description')}</p>
-      {/* Builder pane — the #1280 D3 recursive nested-boolean tree. */}
-      <div className="advanced-query-builder flex flex-col gap-3">
+      {/* Builder pane — the #1280 D3 recursive nested-boolean tree. It keeps
+          the list column's width; only a board spans the view. */}
+      <div className="advanced-query-builder mx-auto flex w-full max-w-list flex-col gap-3">
+        <p className="text-sm text-muted-foreground">{t('advancedQuery.description')}</p>
         <div className="flex flex-col gap-2">
           <FilterGroup
             node={builder}
@@ -194,6 +217,9 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
           onGroupByChange={handleGroupByChange}
           aggregates={controls.aggregates}
           onAggregatesChange={handleAggregatesChange}
+          view={board != null ? 'board' : 'list'}
+          onViewChange={handleViewChange}
+          boardAvailable={columns != null}
         />
 
         {/* #1460 saved-views: save the current query + browse saved views. */}
@@ -222,104 +248,117 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
         />
       </div>
 
+      {board != null && (
+        <QueryBoard
+          columns={board}
+          filter={filterExpr}
+          fulltext={controls.fulltext}
+          sort={controls.sort}
+          aggregates={controls.aggregates}
+          onNavigate={onNavigate}
+        />
+      )}
+
       {/* Results pane. */}
-      <div className="advanced-query-results">
-        {/* Polite live region — announces that a query is (re)running so
+      {board == null && (
+        <div className="advanced-query-results mx-auto w-full max-w-list">
+          {/* Polite live region — announces that a query is (re)running so
             screen-reader users get more than silence while the list refetches.
             Mirrors SearchStatusRegion. */}
-        <output
-          aria-live="polite"
-          aria-atomic="true"
-          className="sr-only"
-          data-testid="advanced-query-status"
-        >
-          {loading ? t('advancedQuery.searching') : ''}
-        </output>
+          <output
+            aria-live="polite"
+            aria-atomic="true"
+            className="sr-only"
+            data-testid="advanced-query-status"
+          >
+            {loading ? t('advancedQuery.searching') : ''}
+          </output>
 
-        {/* Initial load only (no previous results to keep on screen):
+          {/* Initial load only (no previous results to keep on screen):
             list-shaped skeleton mirroring QueryResultList rows. On a refetch
             the prior results stay mounted (dimmed + aria-busy) below instead
             of being replaced by this skeleton. */}
-        {loading && isEmpty && (
-          <div className="px-3 py-2">
-            <LoadingSkeleton count={5} height="h-10" ariaLabel={t('advancedQuery.searching')} />
-          </div>
-        )}
+          {loading && isEmpty && (
+            <div className="px-3 py-2">
+              <LoadingSkeleton count={5} height="h-10" ariaLabel={t('advancedQuery.searching')} />
+            </div>
+          )}
 
-        {!loading && error && (
-          <div
-            className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-destructive"
-            role="alert"
-          >
-            <span>{error}</span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={fetchResults}
-              aria-label={t('action.retry')}
-              disabled={loadingMore}
-              aria-busy={loadingMore}
+          {!loading && error && (
+            <div
+              className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-destructive"
+              role="alert"
             >
-              {t('action.retry')}
-            </Button>
-          </div>
-        )}
+              <span>{error}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchResults}
+                aria-label={t('action.retry')}
+                disabled={loadingMore}
+                aria-busy={loadingMore}
+              >
+                {t('action.retry')}
+              </Button>
+            </div>
+          )}
 
-        {!loading && !error && isEmpty && (
-          <EmptyState message={t('advancedQuery.noResults')} compact />
-        )}
+          {!loading && !error && isEmpty && (
+            <EmptyState message={t('advancedQuery.noResults')} compact />
+          )}
 
-        {/* Results — kept visible (dimmed + aria-busy) during a refetch rather
+          {/* Results — kept visible (dimmed + aria-busy) during a refetch rather
             than unmounted and replaced by a spinner, so builder/sort/group edits
             don't blank the pane. */}
-        {!error && !isEmpty && (
-          <div
-            aria-busy={loading}
-            className={cn(loading && 'pointer-events-none opacity-60 transition-opacity')}
-          >
-            <p
-              className="px-1 pb-1 text-xs text-muted-foreground"
-              data-testid="advanced-query-total"
+          {!error && !isEmpty && (
+            <div
+              aria-busy={loading}
+              className={cn(loading && 'pointer-events-none opacity-60 transition-opacity')}
             >
-              {/* Grouped mode pages over groups and a block can sit in several
+              <p
+                className="px-1 pb-1 text-xs text-muted-foreground"
+                data-testid="advanced-query-total"
+              >
+                {/* Grouped mode pages over groups and a block can sit in several
                   (tag groups), so the group count is the only honest total. */}
-              {isGrouped
-                ? t('advancedQuery.groupCount', { count: totalCount ?? groups.length })
-                : t('advancedQuery.totalCount', { count: totalCount ?? results.length })}
-            </p>
+                {isGrouped
+                  ? t('advancedQuery.groupCount', { count: totalCount ?? groups.length })
+                  : t('advancedQuery.totalCount', { count: totalCount ?? results.length })}
+              </p>
 
-            {/* Global aggregate summary bar (shown in both flat and grouped mode
+              {/* Global aggregate summary bar (shown in both flat and grouped mode
                 when global aggregates are present). */}
-            {aggregateResults != null && aggregateResults.length > 0 && (
-              <div className="px-1 pb-2">
-                <AggregateSummary
-                  results={aggregateResults}
-                  specs={controls.aggregates}
-                  label={t('advancedQuery.aggregate.summaryLabel')}
+              {aggregateResults != null && aggregateResults.length > 0 && (
+                <div className="px-1 pb-2">
+                  <AggregateSummary
+                    results={aggregateResults}
+                    specs={controls.aggregates}
+                    label={t('advancedQuery.aggregate.summaryLabel')}
+                  />
+                </div>
+              )}
+
+              {isGrouped ? (
+                <GroupedResults
+                  groups={groups}
+                  groupBy={controls.groupBy}
+                  pageTitles={pageTitles}
+                  onNavigate={openPage}
                 />
-              </div>
-            )}
+              ) : (
+                <QueryResultList results={results} pageTitles={pageTitles} onNavigate={openPage} />
+              )}
 
-            {isGrouped ? (
-              <GroupedResults
-                groups={groups}
-                groupBy={controls.groupBy}
-                pageTitles={pageTitles}
-                onNavigate={onNavigate}
+              <LoadMoreButton
+                hasMore={hasMore}
+                loading={loadingMore}
+                onLoadMore={handleLoadMore}
+                className="mx-3 my-2"
               />
-            ) : (
-              <QueryResultList results={results} pageTitles={pageTitles} onNavigate={onNavigate} />
-            )}
-
-            <LoadMoreButton
-              hasMore={hasMore}
-              loading={loadingMore}
-              onLoadMore={handleLoadMore}
-              className="mx-3 my-2"
-            />
-          </div>
-        )}
-      </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

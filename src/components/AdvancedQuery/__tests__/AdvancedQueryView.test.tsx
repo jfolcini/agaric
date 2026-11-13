@@ -1,13 +1,13 @@
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { AdvancedQueryView } from '@/components/AdvancedQuery/AdvancedQueryView'
-import type { ActiveBlockRow, AdvancedQueryResponse } from '@/lib/bindings'
+import type { ActiveBlockRow, AdvancedQueryResponse, GroupSpec } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { queryClient } from '@/lib/query-client'
 import { loadSavedViews } from '@/lib/saved-views'
@@ -582,7 +582,13 @@ describe('AdvancedQueryView', () => {
     // Seed a group-by so the hook runs the GROUPED path on first fetch.
     useAdvancedQueryStore.setState({
       controlsBySpace: {
-        [SPACE_ID]: { fulltext: '', sort: [], groupBy: { key: { type: 'Tag' } }, aggregates: [] },
+        [SPACE_ID]: {
+          fulltext: '',
+          sort: [],
+          groupBy: { key: { type: 'Tag' } },
+          aggregates: [],
+          view: 'list',
+        },
       },
     })
     render(<AdvancedQueryView />)
@@ -612,7 +618,13 @@ describe('AdvancedQueryView', () => {
     )
     useAdvancedQueryStore.setState({
       controlsBySpace: {
-        [SPACE_ID]: { fulltext: '', sort: [], groupBy: { key: { type: 'Tag' } }, aggregates: [] },
+        [SPACE_ID]: {
+          fulltext: '',
+          sort: [],
+          groupBy: { key: { type: 'Tag' } },
+          aggregates: [],
+          view: 'list',
+        },
       },
     })
     render(<AdvancedQueryView />)
@@ -644,7 +656,13 @@ describe('AdvancedQueryView', () => {
     })
     useAdvancedQueryStore.setState({
       controlsBySpace: {
-        [SPACE_ID]: { fulltext: '', sort: [], groupBy: { key: { type: 'Tag' } }, aggregates: [] },
+        [SPACE_ID]: {
+          fulltext: '',
+          sort: [],
+          groupBy: { key: { type: 'Tag' } },
+          aggregates: [],
+          view: 'list',
+        },
       },
     })
     render(<AdvancedQueryView />)
@@ -660,7 +678,13 @@ describe('AdvancedQueryView', () => {
     // Pre-seed a group-by so the very first fetch is grouped.
     useAdvancedQueryStore.setState({
       controlsBySpace: {
-        [SPACE_ID]: { fulltext: '', sort: [], groupBy: { key: { type: 'Tag' } }, aggregates: [] },
+        [SPACE_ID]: {
+          fulltext: '',
+          sort: [],
+          groupBy: { key: { type: 'Tag' } },
+          aggregates: [],
+          view: 'list',
+        },
       },
     })
     render(<AdvancedQueryView />)
@@ -692,7 +716,13 @@ describe('AdvancedQueryView', () => {
     )
     useAdvancedQueryStore.setState({
       controlsBySpace: {
-        [SPACE_ID]: { fulltext: '', sort: [], groupBy: { key: { type: 'Tag' } }, aggregates: [] },
+        [SPACE_ID]: {
+          fulltext: '',
+          sort: [],
+          groupBy: { key: { type: 'Tag' } },
+          aggregates: [],
+          view: 'list',
+        },
       },
     })
     const { container } = render(<AdvancedQueryView />)
@@ -703,6 +733,130 @@ describe('AdvancedQueryView', () => {
       },
       { timeout: 5000 },
     )
+  })
+
+  it('opens a result under its page title, not as an untitled page', async () => {
+    const user = userEvent.setup()
+    const onNavigate = vi.fn()
+    routeInvoke(makeResponse({ rows: [makeRow()], totalCount: 1 }))
+    render(<AdvancedQueryView onNavigate={onNavigate} />)
+
+    await user.click(await screen.findByRole('option', { name: /Hello world/ }))
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith('PAGE001', 'Parent page')
+  })
+
+  // ── #6542 — the board. ─────────────────────────────────────────────────────
+  describe('board view (#6542)', () => {
+    const SEEDED_SPACE = 'SPACE_PERSONAL'
+    /** The mock backend and its seeded tasks, so each column's filter really runs. */
+    function serveMockBackend(): void {
+      seedBlocks()
+      useSpaceStore.setState({ currentSpaceId: SEEDED_SPACE })
+      mockedInvoke.mockImplementation(async (cmd, args) => dispatch(cmd, args as InvokeArgs))
+    }
+    const boardSegment = () => screen.getByRole('radio', { name: t('advancedQuery.view.board') })
+    const groupBy = (key: GroupSpec['key']) =>
+      useAdvancedQueryStore.getState().setGroupBy(SPACE_ID, { key })
+
+    it('lays a State grouping out as one column per task state once Board is picked', async () => {
+      const user = userEvent.setup()
+      serveMockBackend()
+      render(<AdvancedQueryView />)
+      expect(boardSegment()).toBeDisabled()
+
+      act(() =>
+        useAdvancedQueryStore.getState().setGroupBy(SEEDED_SPACE, { key: { type: 'State' } }),
+      )
+      await screen.findByTestId('advanced-query-group-section')
+      await user.click(boardSegment())
+
+      const columns = await screen.findAllByTestId('query-board-column')
+      expect(columns.map((c) => c.getAttribute('aria-label'))).toEqual([
+        'TODO',
+        'DOING',
+        'DONE',
+        'CANCELLED',
+        t('advancedQuery.board.noValue'),
+      ])
+      // Every card sits under the state it carries.
+      const todo = columns[0] as HTMLElement
+      await waitFor(() => expect(within(todo).getAllByRole('option').length).toBeGreaterThan(0))
+      for (const card of within(todo).getAllByRole('option')) {
+        expect(card.getAttribute('aria-label')).toMatch(/^TODO /)
+      }
+      // The list and its group sections are gone, not rendered beside the board.
+      expect(screen.queryByTestId('advanced-query-group-section')).not.toBeInTheDocument()
+
+      // Nor does the list's grouped query keep running behind the board.
+      mockedInvoke.mockClear()
+      act(() => useAdvancedQueryStore.getState().setFulltext(SEEDED_SPACE, 'release'))
+      await waitFor(() => expect(within(todo).getAllByRole('option')).toHaveLength(1))
+      const requests = mockedInvoke.mock.calls
+        .filter(([cmd]) => cmd === 'run_advanced_query')
+        .map(([, args]) => (args as { request: { groupBy?: unknown } }).request)
+      expect(requests).toHaveLength(5)
+      expect(requests.filter((request) => request.groupBy != null)).toEqual([])
+    })
+
+    it('goes back to the list when the group key stops having a board', async () => {
+      const user = userEvent.setup()
+      serveMockBackend()
+      useAdvancedQueryStore.getState().setGroupBy(SEEDED_SPACE, { key: { type: 'State' } })
+      render(<AdvancedQueryView />)
+      await user.click(boardSegment())
+      await screen.findAllByTestId('query-board-column')
+
+      act(() => useAdvancedQueryStore.getState().setGroupBy(SEEDED_SPACE, { key: { type: 'Tag' } }))
+      await screen.findByTestId('advanced-query-group-section')
+      expect(screen.queryByTestId('query-board')).not.toBeInTheDocument()
+      expect(boardSegment()).toBeDisabled()
+    })
+
+    it('offers the board for a select property, and not for one of another type', async () => {
+      const def = (key: string, value_type: string, options: string | null) => ({
+        key,
+        value_type,
+        options,
+        created_at: '2026-01-01T00:00:00Z',
+        builtin: false,
+      })
+      routeInvoke(makeResponse())
+      const base = mockedInvoke.getMockImplementation()
+      mockedInvoke.mockImplementation(async (cmd, args) =>
+        cmd === 'list_property_defs'
+          ? {
+              items: [def('stage', 'select', '["later","now"]'), def('effort', 'number', null)],
+              next_cursor: null,
+              has_more: false,
+              total_count: null,
+            }
+          : base?.(cmd, args),
+      )
+      groupBy({ type: 'Property', key: 'stage' })
+      render(<AdvancedQueryView />)
+      await waitFor(() => expect(boardSegment()).toBeEnabled())
+
+      act(() => groupBy({ type: 'Property', key: 'effort' }))
+      await waitFor(() => expect(boardSegment()).toBeDisabled())
+    })
+
+    it('keeps the list when the property definitions cannot be read', async () => {
+      routeInvoke(makeResponse())
+      const base = mockedInvoke.getMockImplementation()
+      mockedInvoke.mockImplementation(async (cmd, args) =>
+        cmd === 'list_property_defs'
+          ? Promise.reject({ kind: 'database', message: 'disk I/O error' })
+          : base?.(cmd, args),
+      )
+      groupBy({ type: 'Property', key: 'stage' })
+      render(<AdvancedQueryView />)
+
+      await waitFor(() =>
+        expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs', expect.anything()),
+      )
+      await screen.findByText(t('advancedQuery.noResults'))
+      expect(boardSegment()).toBeDisabled()
+    })
   })
 
   // ── #1478 — relational predicates wired end-to-end through the builder. ──────
