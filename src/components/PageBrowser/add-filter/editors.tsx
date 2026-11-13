@@ -6,6 +6,7 @@
  * `MultiSelectGroup` are co-located here.
  */
 
+import { useQuery } from '@tanstack/react-query'
 import { FileSearch, Tag as TagIcon } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -31,6 +32,8 @@ import type { PageHeading, TagCacheRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
+import { pageIndexQuery } from '@/lib/page-index'
+import { queryClient } from '@/lib/query-client'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -521,57 +524,33 @@ export function CreatedEditor({
   )
 }
 
+const NO_PAGES: readonly PageHeading[] = []
+
 /**
- * Shared page list + search-by-title state for a page/block picker
- * (`listAllPagesInSpace`, filtered client-side with the Unicode-aware fold).
+ * Shared page list + search-by-title state for a page/block picker: the
+ * space's page index (`src/lib/page-index.ts`), filtered client-side with the
+ * Unicode-aware fold.
  * Extracted (#4553 Phase 1) so `LinkTargetEditor` (the LinksTo/LinkedFrom
  * facets) and `PropertyRefValueInput` (the `Ref`-valued property picker)
  * share ONE "search pages by title, resolve missing titles" implementation
  * rather than growing a second, drifting copy.
  */
 function usePagePicker(search: string): {
-  filtered: PageHeading[]
+  filtered: readonly PageHeading[]
   loading: boolean
   labelFor: (page: PageHeading) => string
 } {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const resolveTitle = useResolveStore((s) => s.resolveTitle)
-  const [pages, setPages] = useState<PageHeading[]>([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    let cancelled = false
-    // oxlint-disable-next-line react/set-state-in-effect -- arms the spinner for the `listAllPagesInSpace` IPC this effect dispatches; the page list comes from the backend, not from props; see #4407
-    setLoading(true)
-    // b1 — `listAllPagesInSpace` is required-active (no cross-space form).
-    // With no active space the picker has nothing to offer, so short-circuit
-    // locally to an empty list instead of dispatching (a Global scope is
-    // rejected by the backend).
-    if (currentSpaceId == null) {
-      setPages([])
-      setLoading(false)
-      return () => {
-        cancelled = true
-      }
-    }
-    commands
-      .listAllPagesInSpace({ kind: 'active', space_id: currentSpaceId }, null)
-      .then(unwrap)
-      .then((res) => {
-        if (!cancelled) setPages(res)
-      })
-      .catch((err: unknown) => {
-        logger.error('AddFilterPopover', 'Failed to load pages for link picker', undefined, err)
-        if (!cancelled) setPages([])
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [currentSpaceId])
+  // b1 — the listing is required-active (no cross-space form). With no
+  // active space the picker has nothing to offer, so nothing is dispatched.
+  const { data, isPending } = useQuery(
+    { ...pageIndexQuery(currentSpaceId ?? ''), enabled: currentSpaceId != null },
+    queryClient,
+  )
+  const pages = data ?? NO_PAGES
+  const loading = currentSpaceId != null && isPending
 
   // #2276 — compute each row's display label once and filter on that SAME
   // label. A content-less page whose title comes from the resolver used to be
@@ -600,7 +579,7 @@ function PagePickerResults({
   labelFor,
   onSelect,
 }: {
-  filtered: PageHeading[]
+  filtered: readonly PageHeading[]
   loading: boolean
   labelFor: (page: PageHeading) => string
   onSelect: (id: string) => void
