@@ -24,6 +24,9 @@ import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
+// The lazily imported buffer is loaded with the file, not inside the first
+// test's wait for it (see `PageSourceToolbar.test.tsx`).
+import '@/components/pages/PageSourceBuffer'
 
 vi.mock('@/components/pages/PageSourceToolbar', () => ({ PageSourceToolbar: () => null }))
 let touch = false

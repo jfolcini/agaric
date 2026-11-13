@@ -20,8 +20,9 @@ TooltipProvider.displayName = 'TooltipProvider'
 
 /**
  * What `Tooltip` shares with its `TooltipTrigger`: the trigger element, so the
- * tooltip can tell when its trigger's own Select or menu is open, and, with
- * `openOnLongPress`, the press-and-hold handlers (#1735).
+ * tooltip can tell when its trigger's own Select or menu is open, whether a
+ * press ended the hover, and, with `openOnLongPress`, the press-and-hold
+ * handlers (#1735).
  *
  * Radix hover tooltips never open on a coarse-pointer tap, so the label of an
  * icon-only control — which lives in the tooltip — is invisible to sighted
@@ -31,6 +32,7 @@ TooltipProvider.displayName = 'TooltipProvider'
  */
 const TooltipTriggerContext = React.createContext<{
   setTrigger: (node: HTMLElement | null) => void
+  setPressed: (pressed: boolean) => void
   longPress: {
     onPointerDown: (e: React.PointerEvent) => void
     onPointerUp: () => void
@@ -63,6 +65,7 @@ function isTriggerMenuOpen(trigger: HTMLElement | null): boolean {
 
 function Tooltip({ openOnLongPress = false, open, onOpenChange, ...props }: TooltipProps) {
   const triggerRef = React.useRef<HTMLElement | null>(null)
+  const pressedRef = React.useRef(false)
   const [internalOpen, setInternalOpen] = React.useState(false)
   const handleOpenChange = React.useCallback(
     (next: boolean) => {
@@ -70,7 +73,7 @@ function Tooltip({ openOnLongPress = false, open, onOpenChange, ...props }: Tool
       // layer, so it takes the Escape meant for the menu and the clicks on its
       // options. Hover (Radix's delay timer outlives the click that opens the
       // menu) and focus (returned to the trigger) both reach here.
-      if (next && isTriggerMenuOpen(triggerRef.current)) return
+      if (next && (pressedRef.current || isTriggerMenuOpen(triggerRef.current))) return
       setInternalOpen(next)
       onOpenChange?.(next)
     },
@@ -80,6 +83,18 @@ function Tooltip({ openOnLongPress = false, open, onOpenChange, ...props }: Tool
   const setTrigger = React.useCallback((node: HTMLElement | null) => {
     triggerRef.current = node
   }, [])
+  // A press ends the hover before it: the tooltip closes and stays closed
+  // until the pointer leaves or focus arrives. Radix does that on the `click`,
+  // which never comes when the press itself opens a dialog over the trigger (a
+  // toolbar button acts on `pointerdown`); the tooltip then opened above that
+  // dialog and took its Escape.
+  const setPressed = React.useCallback(
+    (pressed: boolean) => {
+      pressedRef.current = pressed
+      if (pressed) handleOpenChange(false)
+    },
+    [handleOpenChange],
+  )
 
   // A tooltip already open when its menu opens closes then: Radix leaves it
   // open when it opened in the same moment as the press that opened the menu.
@@ -98,8 +113,8 @@ function Tooltip({ openOnLongPress = false, open, onOpenChange, ...props }: Tool
 
   const longPress = useLongPress({ onLongPress: () => setInternalOpen(true) })
   const context = React.useMemo(
-    () => ({ setTrigger, longPress: openOnLongPress ? longPress : null }),
-    [setTrigger, openOnLongPress, longPress],
+    () => ({ setTrigger, setPressed, longPress: openOnLongPress ? longPress : null }),
+    [setTrigger, setPressed, openOnLongPress, longPress],
   )
 
   // A call site that controls `open` itself owns it entirely.
@@ -133,11 +148,13 @@ const TooltipTrigger = ({
   onPointerUp,
   onPointerLeave,
   onPointerMove,
+  onFocus,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) => {
   const context = React.useContext(TooltipTriggerContext)
   const longPress = context?.longPress
   const setTrigger = context?.setTrigger
+  const setPressed = context?.setPressed
   const composedRef = React.useCallback(
     (node: HTMLButtonElement | null) => {
       setTrigger?.(node)
@@ -155,6 +172,7 @@ const TooltipTrigger = ({
       // handlers the trigger already carries. No-op when long-press is off.
       onPointerDown={(e) => {
         onPointerDown?.(e)
+        setPressed?.(true)
         longPress?.onPointerDown(e)
       }}
       onPointerUp={(e) => {
@@ -163,7 +181,12 @@ const TooltipTrigger = ({
       }}
       onPointerLeave={(e) => {
         onPointerLeave?.(e)
+        setPressed?.(false)
         longPress?.onPointerLeave()
+      }}
+      onFocus={(e) => {
+        onFocus?.(e)
+        setPressed?.(false)
       }}
       onPointerMove={(e) => {
         onPointerMove?.(e)
