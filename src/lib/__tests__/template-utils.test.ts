@@ -431,6 +431,15 @@ describe('insertTemplateBlocks — {{ }} variable substitution (#1442)', () => {
     expect(batches).toEqual([[['a', 'PARENT']]])
   })
 
+  it('inserts a {{cursor}} template for a caller whose context has no onCursorBlock', async () => {
+    const batches = stubTemplateTree([['A', 'TMPL', 'a{{cursor}}']])
+
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST', { pageTitle: 'Monday' })
+
+    expect(ids).toEqual(['NEW_a'])
+    expect(batches).toEqual([[['a', 'PARENT']]])
+  })
+
   it('reports no cursor block when the insert fails', async () => {
     stubTemplateTree(
       [
@@ -1197,6 +1206,56 @@ describe('insertTemplateBlocks — task state, priority, dates and properties (#
       kickoff: [null, null, '2026-11-01', null, null],
       related: [null, null, null, tpl, null],
     })
+  })
+
+  it('sends a block with no task state or dates none of those keys, and booleans as booleans', async () => {
+    const tpl = unwrap(await commands.createPageInSpace(null, 'Plain', SPACE))
+    await block('Just text', tpl)
+    const full = await block('Everything', tpl)
+    unwrap(await commands.setTodoState(full, 'TODO'))
+    unwrap(await commands.setPriority(full, '2'))
+    unwrap(await commands.setDueDate(full, '2026-12-01'))
+    unwrap(await commands.setScheduledDate(full, '2026-11-30'))
+    unwrap(await commands.setProperty(full, 'effort', { value_num: 3 }))
+    unwrap(await commands.setProperty(full, 'kickoff', { value_date: '2026-11-01' }))
+    unwrap(await commands.setProperty(full, 'done', { value_bool: false }))
+    unwrap(await commands.setProperty(full, 'reviewed', { value_bool: true }))
+    const dest = unwrap(await commands.createPageInSpace(null, 'Monday', SPACE))
+    mockedInvoke.mockClear()
+
+    await insertTemplateBlocks(tpl, dest, SPACE)
+
+    const batch = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'create_blocks_batch')
+    const specs =
+      (
+        batch?.[1] as
+          | {
+              specs: Array<{
+                content: string
+                properties: Record<string, string>
+                typedProperties: Record<string, Record<string, unknown>>
+              }>
+            }
+          | undefined
+      )?.specs ?? []
+    const bySpec = Object.fromEntries(specs.map((s) => [s.content, s]))
+    expect(bySpec['Just text']?.properties).toEqual({})
+    expect(bySpec['Everything']?.properties).toEqual({
+      todo_state: 'TODO',
+      priority: '2',
+      due_date: '2026-12-01',
+      scheduled_date: '2026-11-30',
+    })
+    const typed = bySpec['Everything']?.typedProperties
+    expect(typed?.['effort']).toEqual({
+      value_num: 3,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    })
+    expect(typed?.['kickoff']).toMatchObject({ value_date: '2026-11-01', value_bool: null })
+    expect(typed?.['done']).toMatchObject({ value_bool: false })
+    expect(typed?.['reviewed']).toMatchObject({ value_bool: true })
   })
 
   it('rejects a failed insert and leaves nothing of it behind', async () => {

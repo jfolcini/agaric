@@ -37,13 +37,14 @@ import { announce } from '@/lib/announcer'
 import { unwrap, validationCode } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
-import { pageMarkdownForCopy } from '@/lib/export-graph'
+import { downloadBlob, nameToFlatSegment, pageMarkdownForCopy } from '@/lib/export-graph'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { isAndroid } from '@/lib/platform'
 import type { EditMode } from '@/lib/preferences'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { useNavigationStore } from '@/stores/navigation'
@@ -232,6 +233,22 @@ export function PageHeader({
     await copyPageMarkdownToClipboard()
     setKebabOpen(false)
   }, [copyPageMarkdownToClipboard])
+
+  // The Markdown the copy above takes, as a file named after the title cut to 200 bytes, as
+  // the mirror cuts a name (`MAX_SEGMENT_BYTES`): WebKitGTK writes no file past 255.
+  const handleSaveMarkdownFile = useCallback(async () => {
+    setKebabOpen(false)
+    const { read } = new TextEncoder().encodeInto(title, new Uint8Array(200))
+    const fileName = `${nameToFlatSegment(title.slice(0, read))}.md`
+    try {
+      const markdown = await pageMarkdownForCopy(pageId)
+      downloadBlob(new Blob([markdown], { type: 'text/markdown' }), fileName)
+      notify.success(t('pageHeader.markdownFileSaved', { fileName }))
+    } catch (err) {
+      logger.error('PageHeader', 'Failed to save the page as a Markdown file', { pageId }, err)
+      notify.error(t('pageHeader.markdownFileSaveFailed'))
+    }
+  }, [pageId, title, t])
 
   // The link `useDeepLinkRouter` opens, for a calendar entry or a task manager.
   const handleCopyAppLink = useCallback(async () => {
@@ -465,7 +482,7 @@ export function PageHeader({
       const spaceId = useSpaceStore.getState().currentSpaceId
       try {
         // #2468 — thread the rename's op ref(s) so Ctrl+Z is ref-addressed.
-        const resp = unwrap(await commands.editBlock(pageId, newTitle))
+        const resp = unwrap(await commands.editBlock(pageId, newTitle, null))
         useUndoStore.getState().onNewAction(pageId, resp.op_refs)
         // #3322 — one fan-out to every store that holds a title copy (tabs +
         // recents + resolve); see `@/stores/page-rename`.
@@ -624,6 +641,8 @@ export function PageHeader({
               onToggleTemplate={handleToggleTemplate}
               onToggleJournalTemplate={handleToggleJournalTemplate}
               onExport={handleExport}
+              // Not on Android, whose WebView saves no `blob:` download (#6546).
+              onSaveMarkdownFile={isAndroid() ? undefined : handleSaveMarkdownFile}
               onCopyAppLink={handleCopyAppLink}
               onEditSource={handleEditSource}
               editMode={editMode}

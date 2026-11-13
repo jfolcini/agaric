@@ -92,9 +92,10 @@ export function takeUnstubbedInvokes(): string[] {
   return unique
 }
 
-function isBookmarkQuery(args: unknown): boolean {
+/** The Pages view's own page-property reads: its bookmarks and its saved views (#6544). */
+function isPagesViewPropertyQuery(args: unknown): boolean {
   const request = (args as { request?: { key?: unknown } } | undefined)?.request
-  return request?.key === 'bookmark'
+  return request?.key === 'bookmark' || request?.key === 'saved_view'
 }
 
 /**
@@ -111,14 +112,14 @@ function isBookmarkQuery(args: unknown): boolean {
  *
  * The Pages header's Trash button polls `count_trash` for its badge (#5269),
  * so every Pages-view render makes that call too; it answers an empty trash.
- * The Pages rows read the space's bookmarks (`query_by_property` on the
- * `bookmark` key, #6544); it answers none. A suite that asserts bookmarks
- * stubs that query itself.
+ * The Pages view reads the space's bookmarks and saved views
+ * (`query_by_property` on the `bookmark` and `saved_view` keys, #6544); it
+ * answers none. A suite that asserts either stubs that query itself.
  *
  * Everything else still goes to {@link strictInvokeFallback}.
  */
 export function pageRowInvokeFallback(command: string, args?: unknown): Promise<unknown> {
-  if (command === 'query_by_property' && isBookmarkQuery(args)) {
+  if (command === 'query_by_property' && isPagesViewPropertyQuery(args)) {
     const none: CommandReturns['query_by_property'] = {
       items: [],
       next_cursor: null,

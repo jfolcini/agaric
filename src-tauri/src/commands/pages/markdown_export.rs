@@ -1768,9 +1768,10 @@ pub(super) async fn load_page_export_data(
     };
     // Only an export writes the template flag, so a restore makes a template
     // page again (#6277 G3); the buffer keeps it the app's, and so the page's
-    // bookmark (#6544), which the sidebar orders by.
+    // bookmark, which the sidebar orders by, and a saved view's payload (#6544).
     if !export {
-        properties.retain(|prop| prop.key != "template" && prop.key != "bookmark");
+        properties
+            .retain(|prop| !matches!(prop.key.as_str(), "template" | "bookmark" | "saved_view"));
     }
     let descendant = load_descendant_properties(conn, &descendants).await?;
     let ref_titles = if front_matter {

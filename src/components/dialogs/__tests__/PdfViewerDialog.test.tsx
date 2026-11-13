@@ -10,15 +10,20 @@
  * - The annotation toolbar appears only when blockId + attachmentId are given
  * - Save bakes annotations via pdfDocument.saveDocument(), writes a NEW
  *   attachment (addAttachmentWithBytes), deletes the original, and notifies
+ * - Save moves the owning block's `attachment:` links to the copy before the
+ *   original goes, and keeps the original when the block's text cannot be read
+ *   or that edit is refused (#6629)
  * - Closes the dialog on close button click
  * - axe() accessibility audit
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makeBlock } from '@/__tests__/fixtures'
+import { deferred } from '@/__tests__/helpers/invoke'
 import { useIsMobile } from '@/hooks/useIsMobile'
 
 vi.mock('@/lib/logger', () => ({
@@ -33,10 +38,14 @@ const mockedUseIsMobile = vi.mocked(useIsMobile)
 // Mock the attachment IPC so the save path can be asserted without a backend.
 const mockAddAttachmentWithBytes = vi.fn()
 const mockDeleteAttachment = vi.fn()
+const mockEditBlock = vi.fn()
+const mockGetBlock = vi.fn()
 vi.mock('@/lib/bindings', () => ({
   commands: {
     addAttachmentWithBytes: (...args: unknown[]) => mockAddAttachmentWithBytes(...args),
     deleteAttachment: (...args: unknown[]) => mockDeleteAttachment(...args),
+    editBlock: (...args: unknown[]) => mockEditBlock(...args),
+    getBlock: (...args: unknown[]) => mockGetBlock(...args),
   },
 }))
 
@@ -110,6 +119,16 @@ vi.mock('pdfjs-dist/web/pdf_viewer.css', () => ({}))
 
 // Import AFTER mocks so the component picks them up.
 const { PdfViewerDialog } = await import('@/components/dialogs/PdfViewerDialog')
+const { createPageBlockStore, PageBlockContext } = await import('@/stores/page-blocks')
+
+/** Render inside a page store, as every host renders the dialog. */
+function render(ui: React.ReactElement, store = createPageBlockStore('PAGE_1')) {
+  return rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <PageBlockContext.Provider value={store}>{children}</PageBlockContext.Provider>
+    ),
+  })
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -122,6 +141,7 @@ beforeEach(() => {
   mockSaveDocument.mockResolvedValue(new Uint8Array([1, 2, 3]).buffer)
   mockAddAttachmentWithBytes.mockResolvedValue(ok({ id: 'new-att-id' }))
   mockDeleteAttachment.mockResolvedValue(ok(null))
+  mockGetBlock.mockResolvedValue(ok({ id: 'block-1', content: 'Reading list' }))
   mockNotify.loading.mockReturnValue('toast-id')
   mockedUseIsMobile.mockReturnValue(false)
 })
@@ -349,7 +369,7 @@ describe('PdfViewerDialog', () => {
       })
 
       // Simulate the viewer reporting that an annotation now exists.
-      lastEventBus?.dispatch('editingstateschanged', { isEmpty: false })
+      lastEventBus?.dispatch('editingstateschanged', { details: { isEmpty: false } })
 
       await waitFor(() => {
         expect(screen.getByTestId('pdf-save')).not.toBeDisabled()
@@ -370,6 +390,140 @@ describe('PdfViewerDialog', () => {
         expect(onSaved).toHaveBeenCalledWith('new-att-id')
       })
       expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+  })
+
+  // The owning block's `attachment:<id>` links move to the annotated copy
+  // before the original goes, through the page store that shows the block.
+  describe("Save moves the block's links to the copy (#6629)", () => {
+    const LINKED = '[report.pdf](attachment:att-1), p. 2: ![page](attachment:att-1)'
+    const REPOINTED = '[report.pdf](attachment:new-att-id), p. 2: ![page](attachment:new-att-id)'
+
+    /** The dialog inside the owning block's page store, with the block's text `content`. */
+    function renderInPage(content: string) {
+      const onSaved = vi.fn()
+      const store = createPageBlockStore('PAGE_1')
+      const block = makeBlock({ id: 'block-1', parent_id: 'PAGE_1', content })
+      store.setState({ blocks: [block], blocksById: new Map([[block.id, block]]) })
+      mockGetBlock.mockResolvedValue(ok(block))
+      render(
+        <PdfViewerDialog
+          open
+          onOpenChange={vi.fn()}
+          fileUrl="blob:t"
+          filename="report.pdf"
+          blockId="block-1"
+          attachmentId="att-1"
+          onSaved={onSaved}
+        />,
+        store,
+      )
+      const text = (): string | null | undefined =>
+        store.getState().getBlockById('block-1')?.content
+      return { text, onSaved }
+    }
+
+    /** Report an annotation as pdf.js does, then press Save. */
+    async function annotateAndSave(): Promise<void> {
+      await waitFor(() => {
+        expect(screen.getByTestId('pdf-save')).toBeInTheDocument()
+      })
+      act(() => {
+        lastEventBus?.dispatch('editingstateschanged', { details: { isEmpty: false } })
+      })
+      expect(screen.getByTestId('pdf-save')).toBeEnabled()
+      await userEvent.setup().click(screen.getByTestId('pdf-save'))
+    }
+
+    it('deletes the original only once the block links the copy', async () => {
+      const edit = deferred<unknown>()
+      mockEditBlock.mockReturnValue(edit.promise)
+      const { text, onSaved } = renderInPage(LINKED)
+      await annotateAndSave()
+
+      await waitFor(() => {
+        expect(text()).toBe(REPOINTED)
+      })
+      expect(mockDeleteAttachment).not.toHaveBeenCalled()
+      edit.resolve(ok({ id: 'block-1', content: REPOINTED, op_refs: [] }))
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(text()).toBe(REPOINTED)
+      expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
+    })
+
+    it('repoints the text the backend holds, which page mode saves past the store', async () => {
+      const saved = `${LINKED} read twice`
+      mockEditBlock.mockImplementation((id: string, content: string) =>
+        Promise.resolve(ok({ id, content, op_refs: [] })),
+      )
+      const { text, onSaved } = renderInPage(LINKED)
+      mockGetBlock.mockResolvedValue(ok(makeBlock({ id: 'block-1', content: saved })))
+      await annotateAndSave()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(text()).toBe(`${REPOINTED} read twice`)
+      expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
+    })
+
+    it('keeps the original when the edit is rejected, so the link still opens it', async () => {
+      mockEditBlock.mockResolvedValue({
+        status: 'error',
+        error: { kind: 'database', message: 'x' },
+      })
+      const { text, onSaved } = renderInPage(LINKED)
+      await annotateAndSave()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(text()).toBe(LINKED)
+      expect(mockDeleteAttachment).not.toHaveBeenCalled()
+    })
+
+    it('keeps the original when the block cannot be read', async () => {
+      const { text, onSaved } = renderInPage(LINKED)
+      mockGetBlock.mockResolvedValue({ status: 'error', error: { kind: 'database', message: 'x' } })
+      await annotateAndSave()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(text()).toBe(LINKED)
+      expect(mockEditBlock).not.toHaveBeenCalled()
+      expect(mockDeleteAttachment).not.toHaveBeenCalled()
+    })
+
+    it('deletes the original with no edit when the block text does not link it', async () => {
+      const { text, onSaved } = renderInPage('Reading list')
+      await annotateAndSave()
+
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
+      })
+      expect(text()).toBe('Reading list')
+      expect(mockEditBlock).not.toHaveBeenCalled()
+      expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
+    })
+
+    it('leaves the link and the original alone when the copy is rejected', async () => {
+      mockAddAttachmentWithBytes.mockResolvedValue({
+        status: 'error',
+        error: { kind: 'validation', message: 'x' },
+      })
+      const { text, onSaved } = renderInPage(LINKED)
+      await annotateAndSave()
+
+      await waitFor(() => {
+        expect(mockNotify.error).toHaveBeenCalledWith('Failed to save annotated PDF')
+      })
+      expect(text()).toBe(LINKED)
+      expect(mockEditBlock).not.toHaveBeenCalled()
+      expect(mockDeleteAttachment).not.toHaveBeenCalled()
+      expect(onSaved).not.toHaveBeenCalled()
     })
   })
 

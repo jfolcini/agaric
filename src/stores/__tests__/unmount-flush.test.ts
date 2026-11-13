@@ -22,9 +22,9 @@ import { classifyUnmountFlush, runUnmountFlush, settlePendingSaves } from '@/sto
 const stateRow = () => withOps(makeBlockRow({ id: 'BLOCK', todo_state: 'TODO' }))
 
 function run(loaded: string, changed: string, saved = true) {
-  const edit = vi.fn<(id: string, content: string) => Promise<boolean>>(() =>
-    Promise.resolve(saved),
-  )
+  const edit = vi.fn<
+    (id: string, content: string, options?: { baseText?: string }) => Promise<boolean>
+  >(() => Promise.resolve(saved))
   const splitBlock = vi.fn<(id: string, content: string) => Promise<boolean>>(() =>
     Promise.resolve(true),
   )
@@ -32,6 +32,7 @@ function run(loaded: string, changed: string, saved = true) {
     blockId: 'BLOCK',
     loaded,
     changed,
+    base: loaded,
     edit,
     splitBlock,
     rootParentId: null,
@@ -61,7 +62,7 @@ describe('runUnmountFlush classifies the edit against the loaded content (#5160)
     const { result, edit, splitBlock } = run('a\n\nb', 'a!\n\nb')
     await result.outcome
     expect(result.kind).toBe('edit')
-    expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', 'a!\n\nb')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', 'a!\n\nb', { baseText: 'a\n\nb' })
     expect(splitBlock).not.toHaveBeenCalled()
   })
 
@@ -76,14 +77,16 @@ describe('runUnmountFlush classifies the edit against the loaded content (#5160)
     const { result, edit } = run('a', 'a\nb')
     await result.outcome
     expect(result.kind).toBe('edit')
-    expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', 'a\nb')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', 'a\nb', { baseText: 'a' })
   })
 
   it('a loaded `key:: v` line with a typo fix stays text', async () => {
     const { result, edit } = run('hello\nkey:: v', 'hello!\nkey:: v')
     await result.outcome
     expect(result.kind).toBe('edit')
-    expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', 'hello!\nkey:: v')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', 'hello!\nkey:: v', {
+      baseText: 'hello\nkey:: v',
+    })
   })
 
   it('a typed `key:: v` line becomes a property', async () => {
@@ -104,7 +107,9 @@ describe('runUnmountFlush classifies the edit against the loaded content (#5160)
     const { result, edit } = run('- [ ] open task', '- [ ] open task!')
     await result.outcome
     expect(result.kind).toBe('edit')
-    expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', '- [ ] open task!')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', '- [ ] open task!', {
+      baseText: '- [ ] open task',
+    })
   })
 
   it('a typed task marker folds into the todo state', async () => {

@@ -1377,6 +1377,16 @@ async function renderedFrame(page: Page): Promise<void> {
 }
 
 /**
+ * Resolve once a dnd-kit gesture that just ended lets clicks through again. Its
+ * sensors swallow every click until a 50 ms timer set at the release runs, to
+ * eat the release's own; a click or tap sent at machine speed beats that timer
+ * and is lost. A 50 ms timer set after the release runs after it.
+ */
+export async function dndClickGuardLifted(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 50)))
+}
+
+/**
  * DESKTOP drag (#926 f6) — distance-activated, no artificial hold.
  *
  * Drives the fine-pointer `{ distance: 8 }` sensor. Moves vertically only so
@@ -1494,6 +1504,8 @@ export async function touchLongPress(
     await page.waitForTimeout(holdMs)
     await touch.end()
   })
+  // A hold on a block row lifts it for the TouchSensor, so this release ends a dnd-kit gesture.
+  await dndClickGuardLifted(page)
   return point
 }
 

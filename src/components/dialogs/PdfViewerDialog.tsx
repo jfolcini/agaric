@@ -11,9 +11,10 @@
  *   Ink/freehand is deferred (#1452 phase 3).
  * - Persist: on Save, `pdfDocument.saveDocument()` bakes the annotations
  *   into the PDF bytes; those bytes are written as a NEW attachment (new
- *   ULID) on the same block, and the original attachment is deleted. We
- *   never mutate attachment bytes in place — a rewritten file changes its
- *   blake3 hash and would break sync (see #1452).
+ *   ULID) on the same block, the block's `attachment:<id>` links move to it,
+ *   and the original attachment is deleted. We never mutate attachment bytes
+ *   in place — a rewritten file changes its blake3 hash and would break sync
+ *   (see #1452).
  * - Page count indicator via `t('pdfViewer.pageIndicator')`, prev/next nav.
  * - Cleans up the PDF document + viewer on close.
  *
@@ -32,14 +33,17 @@ import type { PDFViewer as PDFViewerType } from 'pdfjs-dist/web/pdf_viewer.mjs'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { StoreApi } from 'zustand'
 
 import { Button } from '@/components/ui/button'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { unwrap } from '@/lib/app-error'
+import { attachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
 import { isEditableTarget } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { type PageBlockState, usePageBlockStoreApi } from '@/stores/page-blocks'
 
 // Set worker path — served from public/
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
@@ -85,6 +89,24 @@ function annotatedFilename(filename: string): string {
   return `${filename.slice(0, dot)} (annotated)${filename.slice(dot)}`
 }
 
+/**
+ * Point the owning block's `attachment:<from>` links at `to`; `false` when the
+ * edit was refused. The text is the backend's, because page mode saves past
+ * the page store; the edit goes through the store, so the editor showing the
+ * block takes the new text, page mode's document among them.
+ */
+async function repointBlockLinks(
+  pageStore: StoreApi<PageBlockState>,
+  blockId: string,
+  from: string,
+  to: string,
+): Promise<boolean> {
+  const { content } = unwrap(await commands.getBlock(blockId))
+  if (!content?.includes(attachmentRef(from))) return true
+  const repointed = content.replaceAll(attachmentRef(from), attachmentRef(to))
+  return pageStore.getState().edit(blockId, repointed, { merge: false })
+}
+
 export interface PdfViewerDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -99,9 +121,10 @@ export interface PdfViewerDialogProps {
   /** ULID of the attachment being viewed — deleted after a successful save. */
   attachmentId?: string | undefined
   /**
-   * Called after a new annotated attachment is created and the old one is
-   * deleted. Lets the host refresh its attachment list (e.g. invalidate the
-   * BatchAttachments cache) and close the dialog.
+   * Called after a new annotated attachment is created, and the old one
+   * deleted unless the block's links could not be moved off it. Lets the host
+   * refresh its attachment list (e.g. invalidate the BatchAttachments cache)
+   * and close the dialog.
    */
   onSaved?: ((newAttachmentId: string) => void) | undefined
 }
@@ -116,6 +139,7 @@ export function PdfViewerDialog({
   onSaved,
 }: PdfViewerDialogProps): React.ReactElement {
   const { t } = useTranslation()
+  const pageStore = usePageBlockStoreApi()
   const [numPages, setNumPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
   const [loading, setLoading] = useState(false)
@@ -246,11 +270,9 @@ export function PdfViewerDialog({
         eventBus.on('pagechanging', (evt: { pageNumber: number }) => {
           if (!cancelled) setCurrentPage(evt.pageNumber)
         })
-        // Editor state: `isEmpty` flips false once an annotation exists.
-        eventBus.on('editingstateschanged', (evt: { isEmpty?: boolean }) => {
-          if (!cancelled && typeof evt.isEmpty === 'boolean') {
-            setHasAnnotations(!evt.isEmpty)
-          }
+        // Editor state, under `details`: `isEmpty` flips false once an annotation exists.
+        eventBus.on('editingstateschanged', (evt: { details: { isEmpty: boolean } }) => {
+          if (!cancelled) setHasAnnotations(!evt.details.isEmpty)
         })
         // The viewer reports the active editor mode (e.g. it auto-exits a
         // mode after placing a comment) — mirror it into our toolbar state.
@@ -335,9 +357,10 @@ export function PdfViewerDialog({
   /**
    * Save: bake the current annotations into the PDF binary via
    * `saveDocument()`, write the result as a NEW attachment (new ULID) on the
-   * same block, then delete the original. This composes existing attachment
-   * ops only (AddAttachment + DeleteAttachment) — no in-place mutation, so the
-   * file at a given ULID stays byte-stable for the sync layer (#1452).
+   * same block, point the block's links at it, then delete the original. This
+   * composes existing ops only (AddAttachment + EditBlock + DeleteAttachment) —
+   * no in-place mutation, so the file at a given ULID stays byte-stable for the
+   * sync layer (#1452).
    */
   const handleSave = useCallback(async () => {
     const pdfDoc = pdfDocRef.current
@@ -355,17 +378,19 @@ export function PdfViewerDialog({
           Array.from(new Uint8Array(bytes)),
         ),
       )
-      // Repoint the block: drop the original now that the annotated copy
-      // exists. If this fails the worst case is two copies on the block —
-      // never data loss — so we still report success for the new copy.
+      // The original goes only once no link in the block names it (#6629). A
+      // failed read, edit or delete leaves two copies on the block and every
+      // link still opens one — never data loss — so we still report success.
       try {
-        unwrap(await commands.deleteAttachment(attachmentId))
-      } catch (delErr) {
+        if (await repointBlockLinks(pageStore, blockId, attachmentId, row.id)) {
+          unwrap(await commands.deleteAttachment(attachmentId))
+        }
+      } catch (err) {
         logger.warn(
           'PdfViewerDialog',
-          'delete original after save failed',
+          'replacing the original after save failed',
           { attachmentId },
-          delErr,
+          err,
         )
       }
       notify.dismiss(toastId)
@@ -379,7 +404,7 @@ export function PdfViewerDialog({
     } finally {
       setSaving(false)
     }
-  }, [blockId, attachmentId, filename, onSaved, onOpenChange, t])
+  }, [blockId, attachmentId, filename, onSaved, onOpenChange, pageStore, t])
 
   /** Keyboard shortcuts for page navigation while the dialog is open. */
   useEffect(() => {

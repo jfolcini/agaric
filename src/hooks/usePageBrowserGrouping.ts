@@ -60,6 +60,17 @@ export type PageBrowserRow =
   | { kind: 'tree-page'; node: PageTreeNode; pageIndex: number; depth: number }
 
 /**
+ * The row's virtualizer key: what it shows, not where, so a re-sort (a
+ * bookmark toggle moves a page between sections) moves each row's DOM, focus
+ * and state with its page.
+ */
+export function pageBrowserRowKey(row: PageBrowserRow): string {
+  if (row.kind === 'header') return `header:${row.section}`
+  if (row.kind === 'tree-page') return `tree:${row.node.nodeKey ?? row.node.fullPath}`
+  return row.page.id
+}
+
+/**
  * Top-level unit of the `Pages` section: either a flat top-level page (no
  * `/` in its title) or a namespace root (`PageTreeNode` with `name` = the
  * first segment).

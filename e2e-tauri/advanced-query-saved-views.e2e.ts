@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
 // Real-backend Advanced Query saved views (#5738).
 //
-// "Save view" stores the query spec in the active space's saved views on this
-// device (`src/lib/saved-query-views.ts`); Saved views lists them
-// (SavedViews.tsx), and Load parses the stored spec back into the builder and
-// re-runs it against the real engine. Saved views once never listed on the
-// real backend while the mock lane stayed green (#5738), so the round trip is
-// pinned here too.
+// "Save view" stores the query spec as a page of the active space carrying the
+// `saved_view` property (`src/lib/saved-views.ts`, #6544); Saved views lists
+// those pages (SavedViews.tsx), and Load parses the stored spec back into the
+// builder and re-runs it against the real engine. Saved views once never
+// listed on the real backend while the mock lane stayed green (#5738), so the
+// round trip is pinned here too.
 //
 // Advanced Query opens from the Pages header's "Advanced Query" button
 // (PageBrowserHeader.tsx); a result row is `[data-testid="query-result-item"]`
@@ -45,6 +45,11 @@ const NAME_INPUT = 'input[aria-label="Name this view:"]'
 /** The Saved views row named `name` (SavedViews.tsx). */
 function savedViewRow(name: string): string {
   return `//*[@data-testid="saved-view-row"][./span[normalize-space(.)="${name}"]]`
+}
+
+/** The Pages list's title span reading `title` (PageBrowser/PageRow.tsx). */
+function pagesListTitle(title: string): string {
+  return `.//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`
 }
 
 /** Open Advanced Query from the Pages header and wait for its builder. */
@@ -134,6 +139,11 @@ describe('Agaric real-backend Advanced Query saved views (#5738) @search', () =>
     await waitForResults([TASK, NOTE], [], 'Clear all did not widen the results again')
 
     await navigateTo('Journal')
+    // The view is a page the Pages list leaves out (#6544); the page listed
+    // beside it shows the list has loaded.
+    await navigateTo('Pages')
+    await $(pagesListTitle(PAGE)).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await expectAbsent(pagesListTitle(VIEW), 'the saved view in the Pages list')
     await openAdvancedQuery()
     const row = $(savedViewRow(VIEW))
     await row.waitForDisplayed({

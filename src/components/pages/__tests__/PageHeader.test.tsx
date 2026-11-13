@@ -94,6 +94,7 @@ vi.mock('lucide-react', () => ({
   ChevronDown: () => <svg data-testid="chevron-down" />,
   ChevronRight: (props: Record<string, unknown>) => <svg data-testid="chevron-right" {...props} />,
   Clock: () => <svg data-testid="clock-icon" />,
+  Copy: () => <svg data-testid="copy-icon" />,
   Download: () => <svg data-testid="download-icon" />,
   ExternalLink: () => <svg data-testid="external-link-icon" />,
   FileCode: () => <svg data-testid="file-code-icon" />,
@@ -318,6 +319,7 @@ describe('PageHeader title editing', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'PAGE_1',
         toText: 'New Title',
+        baseText: null,
       })
     })
   })
@@ -346,6 +348,7 @@ describe('PageHeader title editing', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'PAGE_1',
         toText: 'Notes\u{1F680}',
+        baseText: null,
       })
     })
   })
@@ -382,6 +385,7 @@ describe('PageHeader title editing', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'PAGE_1',
         toText: 'Entered Title',
+        baseText: null,
       })
     })
   })

@@ -77,7 +77,11 @@ export function useEditorBlur(params: {
   /** Store edit — resolves `false` when the backend write failed and the
    * optimistic update was rolled back (it never rejects). The outcome gates
    * the draft discard below. Fire-and-forget callers may return void. */
-  edit: (blockId: string, content: string) => Promise<boolean> | void
+  edit: (
+    blockId: string,
+    content: string,
+    options?: { baseText?: string },
+  ) => Promise<boolean> | void
   /** Store splitBlock — same contract as `edit`: resolves `false` when any
    * of the split's writes failed (first-line edit, edit-only save, or a
    * createBelow), so the draft discard keeps the row holding the full
@@ -189,6 +193,8 @@ export function useEditorBlur(params: {
       // compared as `unmount()` compares it (`computeLeaveDelta`). It then
       // rebases both baselines, and the deferred unmount finds nothing new.
       const re = rovingEditorRef.current
+      // Read before `unmount()` and `markCommitted` replace it.
+      const base = re.storedMarkdown
       const keptEditor = primaryPressDown ? re.editor : null
       let changed: string | null
       if (keptEditor) {
@@ -222,6 +228,7 @@ export function useEditorBlur(params: {
           blockId,
           loaded,
           changed,
+          base,
           edit,
           splitBlock,
           rootParentId,

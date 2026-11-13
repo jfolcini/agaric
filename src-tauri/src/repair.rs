@@ -1,4 +1,4 @@
-//! Boot driver for [`agaric_engine::repair`] (#4728, #4715, #5074, #5387, #5670, #5608, #5841).
+//! Boot driver for [`agaric_engine::repair`] (#4728, #4715, #5074, #5387, #5670, #5608, #5841, #6525).
 //!
 //! Runs once per boot, after `bootstrap_spaces` and the empty-block sweep,
 //! and never fails boot. Each repair gets a `CommandTx` of its own with the
@@ -8,7 +8,7 @@
 //! boot retries the same population. `bootstrap_spaces` is boot-fatal by
 //! design; sharing its transaction would have made a repair boot-fatal too.
 //!
-//! The one-shot #5670 engine hydration follows them, with the same
+//! The one-shot engine hydration (#5670, #6525) follows them, with the same
 //! contract: see `hydrate_engine_missing_blocks_once`. The #5608 attachment
 //! and #5841 definition backfills run after it: each creates an engine for a
 //! space that had none, and the hydration, which skips a space with no engine,
@@ -101,11 +101,11 @@ pub async fn repair_unreachable_content_at_boot(
     name_collisions::repair_name_collisions(pool, read_pool, device_id, materializer).await;
 
     match hydrate_engine_missing_blocks_once(pool, device_id, materializer).await {
-        Ok(Some(missing)) => tracing::info!(missing, "engine hydration repair ran (#5670)"),
+        Ok(Some(hydrated)) => tracing::info!(hydrated, "engine hydration repair ran (#6525)"),
         Ok(None) => {}
         Err(e) => tracing::error!(
             error = %e,
-            "engine hydration repair failed — boot continues; the next boot retries it (#5670)"
+            "engine hydration repair failed — boot continues; the next boot retries it (#6525)"
         ),
     }
 
@@ -268,17 +268,20 @@ fn backfilled(ops: Vec<RepairOp>) -> (Vec<RepairOp>, String) {
     (ops, summary)
 }
 
-/// `app_settings` key retiring [`hydrate_engine_missing_blocks_once`].
-const ENGINE_MISSING_BLOCKS_MARKER: &str = "repair.engine_missing_live_blocks.v1";
+/// `app_settings` key retiring [`hydrate_engine_missing_blocks_once`]. `v2`
+/// (#6525) runs it once more on a vault that ran `v1` (#5670).
+const ENGINE_MISSING_BLOCKS_MARKER: &str = "repair.engine_missing_live_blocks.v2";
 
-/// #5670 — hydrate the live blocks their space's engine lost, once. Returns
-/// how many were missing, or `None` when the marker says it already ran.
+/// #5670, #6525 — hydrate the live blocks this device created and their
+/// space's engine does not hold, once. Returns how many it hydrated, or `None`
+/// when the marker says it already ran.
 ///
-/// One-shot because it repairs what the pre-#5418 replays left; drift that
-/// arises later is for the integrity check (#5628) to report, not for a boot
-/// pass to hide. The hydration is in memory until a snapshot persists it and
-/// no op replays it, so the marker is written after the save: a crash in
-/// between leaves the repair to the next boot.
+/// One-shot because it repairs what two defects left: the pre-#5418 replays,
+/// and the sync imports a kill took before the session-end save existed.
+/// Drift that arises later is for the integrity check (#5628) to report, not
+/// for a boot pass to hide. The hydration is in memory until a snapshot
+/// persists it and no op replays it, so the marker is written after the save:
+/// a crash in between leaves the repair to the next boot.
 async fn hydrate_engine_missing_blocks_once(
     pool: &SqlitePool,
     device_id: &str,
@@ -296,9 +299,9 @@ async fn hydrate_engine_missing_blocks_once(
     let state = materializer.loro_state();
     let mut tx = CommandTx::begin_immediate(pool, "repair_engine_missing_blocks").await?;
     tx.arm_engine_rollback(state);
-    let missing = hydrate_engine_missing_blocks(&mut tx, state, device_id).await?;
+    let hydrated = hydrate_engine_missing_blocks(&mut tx, state, device_id).await?;
     tx.commit_and_dispatch(materializer).await?;
-    if missing > 0
+    if hydrated > 0
         && agaric_engine::loro::snapshot::save_all_engines(pool, &state.registry)
             .await
             .persisted_through
@@ -309,7 +312,7 @@ async fn hydrate_engine_missing_blocks_once(
         ));
     }
     let now = crate::db::now_ms();
-    let count = missing.to_string();
+    let count = hydrated.to_string();
     sqlx::query!(
         "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
         ENGINE_MISSING_BLOCKS_MARKER,
@@ -318,7 +321,7 @@ async fn hydrate_engine_missing_blocks_once(
     )
     .execute(pool)
     .await?;
-    Ok(Some(missing))
+    Ok(Some(hydrated))
 }
 
 #[cfg(test)]

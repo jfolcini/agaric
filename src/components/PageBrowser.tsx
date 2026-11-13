@@ -13,7 +13,7 @@
  * List (#1263).
  */
 
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { defaultRangeExtractor, type Range, useVirtualizer } from '@tanstack/react-virtual'
 import { FileText, Plus, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -41,7 +41,7 @@ import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '@/hooks/useListMultiSelect'
 import { usePageBrowserAutoLoad } from '@/hooks/usePageBrowserAutoLoad'
 import { usePageBrowserData } from '@/hooks/usePageBrowserData'
-import { usePageBrowserGrouping } from '@/hooks/usePageBrowserGrouping'
+import { pageBrowserRowKey, usePageBrowserGrouping } from '@/hooks/usePageBrowserGrouping'
 import { usePageBrowserKeyboard } from '@/hooks/usePageBrowserKeyboard'
 import { usePageBrowserScrollRestoration } from '@/hooks/usePageBrowserScrollRestoration'
 import { usePageBrowserSort } from '@/hooks/usePageBrowserSort'
@@ -49,11 +49,16 @@ import { useSavedPagesViews } from '@/hooks/useSavedPagesViews'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 import type { BlockRow } from '@/lib/bindings'
+import { isDateFormattedPage } from '@/lib/date-utils'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
 import { openNewPageDialog } from '@/lib/overlay-events'
-import type { SavedPagesView } from '@/lib/preferences'
-import { dropOtherSpacesTagChips, type PagesViewTuple } from '@/lib/saved-pages-views'
+import { reportIpcError } from '@/lib/report-ipc-error'
+import {
+  dropOtherSpacesTagChips,
+  type PagesViewTuple,
+  type SavedPagesView,
+} from '@/lib/saved-pages-views'
 import { cn } from '@/lib/utils'
 import { isExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
@@ -222,8 +227,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     activeView: activeSavedView,
     saveView,
     deleteView,
-    schemaMismatchDetected,
-    clearSchemaMismatch,
+    restoreView,
   } = useSavedPagesViews(currentViewTuple)
 
   const handleApplySavedView = useCallback(
@@ -241,42 +245,51 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const handleSaveCurrentView = useCallback(
     (name: string) => {
       saveView(name, currentViewTuple)
+        .then((saved) => {
+          if (!saved)
+            notify.error(
+              t(
+                isDateFormattedPage(name)
+                  ? 'pageBrowser.savedViews.nameIsDate'
+                  : 'pageBrowser.savedViews.nameTaken',
+                { name },
+              ),
+            )
+        })
+        .catch((err: unknown) => {
+          reportIpcError('PageBrowser', 'pageBrowser.savedViews.saveFailed', err, t, { name })
+        })
     },
-    [saveView, currentViewTuple],
+    [saveView, currentViewTuple, t],
   )
 
-  // The delete button sits one row-item away from the apply target, and the
-  // store is localStorage-only — no Trash, no restore path — so a mis-click
-  // used to destroy the whole {name, sort, filters} tuple with no way
-  // back (#3339). Undo re-saves the captured tuple; that mints a fresh id and
-  // appends, so a restored view lands at the end of the creation-ordered
-  // picker. The id is internal and the applied-view match is structural, so the
-  // only visible cost of the round trip is that position.
+  // The delete button sits one row-item away from the apply target (#3339),
+  // so the toast offers an Undo besides the Trash.
   const handleDeleteSavedView = useCallback(
     (view: SavedPagesView) => {
+      const undo = (deletedAt: number) => {
+        restoreView(view.id, deletedAt)
+          .then(() => notify.success(t('pageBrowser.savedViews.restored', { name: view.name })))
+          .catch((err: unknown) => {
+            reportIpcError('PageBrowser', 'pageBrowser.savedViews.restoreFailed', err, t, {
+              id: view.id,
+            })
+          })
+      }
       deleteView(view.id)
-      notify.success(t('pageBrowser.savedViews.deleted', { name: view.name }), {
-        action: {
-          label: t('action.undo'),
-          onClick: () => {
-            saveView(view.name, view)
-            notify.success(t('pageBrowser.savedViews.restored', { name: view.name }))
-          },
-        },
-      })
+        .then((deletedAt) => {
+          notify.success(t('pageBrowser.savedViews.deleted', { name: view.name }), {
+            action: { label: t('action.undo'), onClick: () => undo(deletedAt) },
+          })
+        })
+        .catch((err: unknown) => {
+          reportIpcError('PageBrowser', 'pageBrowser.savedViews.deleteFailed', err, t, {
+            id: view.id,
+          })
+        })
     },
-    [deleteView, saveView, t],
+    [deleteView, restoreView, t],
   )
-
-  // One-shot recovery notice: a saved-views payload from an incompatible
-  // schema version was found on disk and silently discarded. Surface it
-  // once, then acknowledge so it doesn't re-arm on every render.
-  useEffect(() => {
-    if (schemaMismatchDetected) {
-      notify.warning(t('pageBrowser.savedViews.schemaMismatch'))
-      clearSchemaMismatch()
-    }
-  }, [schemaMismatchDetected, clearSchemaMismatch, t])
 
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   // Stable id base for section header `aria-labelledby` wiring. Two
@@ -364,12 +377,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   const virtualItemCount = groupedRows.length
 
-  const {
-    focusedIndex,
-    setFocusedIndex,
-    handleKeyDown: navHandleKeyDown,
-  } = useListKeyboardNavigation({
+  const { focusedIndex, handleKeyDown: navHandleKeyDown } = useListKeyboardNavigation({
     itemCount: filteredPages.length,
+    // A new space, filter or sort resets the cursor; loading more only clamps it.
+    resetKey: `${currentSpaceId ?? ''}|${filterText}|${sortOption}|${wireFiltersKey}`,
     homeEnd: true,
     pageUpDown: true,
     listRef,
@@ -378,11 +389,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       if (page) onPageSelect?.(page.id, page.content ?? undefined)
     },
   })
-
-  // Reset focusedIndex when filter / sort changes.
-  useEffect(() => {
-    setFocusedIndex(0)
-  }, [filterText, sortOption, wireFiltersKey, setFocusedIndex])
 
   // P1-F1 — append the settled result count to the pending filter
   // announcement once the refetch finishes (#1263).
@@ -410,6 +416,31 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     [groupedRows],
   )
 
+  const getItemKey = useCallback(
+    (index: number) => {
+      const row = groupedRows[index]
+      return row == null ? index : pageBrowserRowKey(row)
+    },
+    [groupedRows],
+  )
+
+  // The row holding DOM focus stays mounted wherever a re-sort moves it: a
+  // bookmark toggle moves its page into or out of Bookmarks, often out of the
+  // window, and unmounting the row dropped focus to <body>. Held by key, since
+  // the move changes its index.
+  const focusedRowKeyRef = useRef<string | number | null>(null)
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const indexes = defaultRangeExtractor(range)
+      const key = focusedRowKeyRef.current
+      if (key == null) return indexes
+      const held = groupedRows.findIndex((row) => pageBrowserRowKey(row) === key)
+      if (held < 0 || indexes.includes(held)) return indexes
+      return [...indexes, held].toSorted((a, b) => a - b)
+    },
+    [groupedRows],
+  )
+
   // oxlint-disable-next-line react/incompatible-library -- The Compiler skips memoizing a component that calls this API, so nothing virtualizer-derived is cached inside this component; the residual hazard the diagnostic names is such a value reaching a MEMOIZED consumer. The only virtualizer values leaving this render body are the live `VirtualItem` (`virtualRow`) and `measureElement`, both handed to `PageBrowserRowRenderer` — a plain function component, NOT `React.memo`, so there is no shallow-compare that could hold a stale window. react-virtual 3.14.10 builds the Virtualizer once (`useState(() => new Virtualizer(...))`) and virtual-core 3.17.8 assigns `measureElement` in the constructor, so the function identities the rule names never change; what does change per render is `getVirtualItems()`/`getTotalSize()`. (#4409)
   const virtualizer = useVirtualizer({
     count: virtualItemCount,
@@ -418,6 +449,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     // (~44px) and tree-page rows (~44px for the root; descendants
     // render inside the same DOM wrapper).
     estimateSize,
+    getItemKey,
+    rangeExtractor,
     overscan: 5,
   })
 
@@ -457,6 +490,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // Document-level keyboard handling (list nav + batch selection, #1263).
   usePageBrowserKeyboard({
     navHandleKeyDown,
+    listRef,
     selectAllPages,
     clearMultiSelection,
     multiSelectedSize: multiSelected.size,
@@ -471,9 +505,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // every load-more re-runs `scrollToIndex(focusedIndex)` and yanks the
   // viewport back to the focused row (index 0 by default), defeating infinite
   // scroll. The mapping is read from a ref so data growth doesn't re-trigger.
+  // Mounting is not a move either: a list still cached renders whole on the
+  // first frame, and scrolling to row 0 then undoes the scroll restoration.
   const pageIndexToRowIndexRef = useRef(pageIndexToRowIndex)
   pageIndexToRowIndexRef.current = pageIndexToRowIndex
+  const scrolledIndexRef = useRef(focusedIndex)
   useEffect(() => {
+    if (focusedIndex === scrolledIndexRef.current) return
+    scrolledIndexRef.current = focusedIndex
     if (focusedIndex < 0) return
     const rowIndex = pageIndexToRowIndexRef.current[focusedIndex] ?? focusedIndex
     virtualizer.scrollToIndex(rowIndex, { align: 'auto' })
@@ -605,6 +644,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           currentSpaceId={currentSpaceId}
           onSelectAll={selectAllPages}
           onClearSelection={clearMultiSelection}
+          listRef={listRef}
           onMutated={reload}
         />
       )}
@@ -650,6 +690,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           // no-match state (see `viewportGridAttrs`).
           ...viewportGridAttrs({ showNoMatch, hasStarred, activeDescendantId, t }),
           tabIndex: 0,
+          onFocus: (e) => {
+            const row = (e.target as HTMLElement).closest('[data-index]')
+            focusedRowKeyRef.current =
+              row == null ? null : getItemKey(Number(row.getAttribute('data-index')))
+          },
           // Section presence flags exposed for tests / styling hooks.
           // The unified model means either or both can be
           // present independently; consumers that want section-aware

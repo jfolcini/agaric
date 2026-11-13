@@ -1333,6 +1333,16 @@ const IDENTITY_MISMATCH_MESSAGE: &str =
 const ROUTED_ELSEWHERE_MESSAGE: &str = "Connection failed: discovered on the network, but traffic to this device is being \
      routed elsewhere - a VPN or firewall may be capturing your LAN";
 
+/// The log text of a dial that timed out against a peer that is away: mDNS is
+/// not announcing it and it has not pulled from us lately (#6523). The frontend
+/// words it from [`SyncErrorCode::PeerAway`].
+///
+/// A text of its own, not [`connect_timeout_message`]'s, because the text is the
+/// suppression key: sharing it would let the away reports withhold the first
+/// report of a real timeout once the peer is back on the network.
+const PEER_AWAY_MESSAGE: &str =
+    "Waiting for the peer: it did not answer, and it is not announcing itself on the network";
+
 /// Did this dial time out because the LAN is captured, rather than because the
 /// peer is asleep? (#4299)
 ///
@@ -1540,13 +1550,15 @@ fn dial_timeout_text(peer_id: &str, diagnosis: Option<EgressReport>) -> String {
 /// so an impostor cannot keep the real peer's report quiet. A proof-bearing
 /// device claiming an *unbound* id can still freshen its `streamed_at`, which
 /// at most withholds repeats of a text already reported once.
+///
+/// `report_as` is `None` for a failure reported as its own text.
 fn record_initiator_failure(
     scheduler: &SyncScheduler,
     event_sink: &Arc<dyn SyncEventSink>,
     peer_refs: &[PeerRef],
     peer_id: &str,
     message: String,
-    rejection: Option<&Rejection>,
+    report_as: Option<ReportAs>,
 ) {
     // Computed before the scheduler call so the one acquisition below covers
     // exactly the check-and-record.
@@ -1569,11 +1581,16 @@ fn record_initiator_failure(
         membership,
     );
 
-    // #6051: a `Busy` refusal (the two devices dialled each other at once) is
-    // the scheduler working, not a failed sync. It is still booked above, as
-    // the backoff is what de-syncs the next pair of dials, and ends quietly.
-    let busy = rejection == Some(&Rejection::Busy);
-    if !booking.report || busy {
+    let code = match report_as {
+        Some(ReportAs::Code(code)) => Some(code),
+        Some(ReportAs::Nothing) | None => None,
+    };
+    // #6523: an away peer is a state the frontend shows without a toast, so
+    // every attempt restates it. A withheld repeat would end the attempt's
+    // progress channel in a bare error, which the frontend reads as a failure.
+    let report = booking.report || code == Some(SyncErrorCode::PeerAway);
+    let quiet = report_as == Some(ReportAs::Nothing);
+    if !report || quiet {
         // `reason`, not `message`: `message` is tracing's own implicit field
         // for the format string, and a second one would be dropped silently —
         // taking the only surviving copy of the failure text with it.
@@ -1582,10 +1599,10 @@ fn record_initiator_failure(
             reason = %message,
             failures = booking.consecutive_failures,
             still_serving = still_serving_this_peer,
-            busy,
+            quiet,
             "sync failed against this peer with a cause the user has already been shown, \
              or that is no failure to show; backoff recorded, report suppressed \
-             (#4084/#4120/#4203/#4305/#6051)"
+             (#4084/#4120/#4203/#4305/#6051/#6523)"
         );
         // The report is withheld, not the outcome: over a progress channel this
         // sends what a reported failure sends there. Otherwise the device row
@@ -1603,8 +1620,21 @@ fn record_initiator_failure(
     event_sink.on_sync_event(SyncEvent::Error {
         message,
         remote_device_id: peer_id.to_string(),
-        code: None,
+        code,
+        peer_is_older: None,
     });
+}
+
+/// How [`record_initiator_failure`] reports a failure other than as its text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReportAs {
+    /// Not at all: a `Busy` refusal, the scheduler working (#6051), or an
+    /// engine-format refusal the orchestrator already reported (#6523). The
+    /// failure is still booked, as the backoff paces the next dial.
+    Nothing,
+    /// In the frontend's words for the code, once per streak like a text,
+    /// except [`SyncErrorCode::PeerAway`], restated on every attempt.
+    Code(SyncErrorCode),
 }
 
 /// Has this peer pulled from *us* recently enough that a second "sync failed"
@@ -1715,7 +1745,7 @@ fn refuse_on_identity_mismatch(
 /// loop this replaces paid a full connect timeout on a dead path before trying a
 /// live one, which is exactly the multi-homed LAN case — a device on both WiFi and
 /// Ethernet — that the address list exists for.
-fn dial_addr(
+pub(super) fn dial_addr(
     ctx: &SyncSessionContext<'_>,
     peer: &DiscoveredPeer,
     endpoint_id: iroh::EndpointId,
@@ -1733,6 +1763,40 @@ fn dial_addr(
         addr = addr.with_relay_url(relay.clone());
     }
     addr
+}
+
+/// What a dial that ran out of its budget reports.
+///
+/// #4299: a timeout is ambiguous by construction — a sleeping peer and a LAN
+/// swallowed by a tunnel produce the same silence, and `dial_timeout_message`
+/// is the one thing that tells them apart. #6523: a paired peer that is neither
+/// announcing itself nor pulling from us is simply away, which is no failure. A
+/// peer with no row, such as the host a pairing window scanned, is no device to
+/// wait for: its timeout is the failure the user standing at the dialog needs.
+fn dial_timeout_report(
+    ctx: &SyncSessionContext<'_>,
+    peer: &DiscoveredPeer,
+    peer_refs: &[PeerRef],
+    mdns_seen_at: Option<tokio::time::Instant>,
+) -> (String, Option<ReportAs>) {
+    let peer_id = peer.device_id.as_str();
+    let away = PeerMembership::of(peer_refs, peer_id) == PeerMembership::Known
+        && !mdns_is_reaching_us(mdns_seen_at)
+        && !peer_pulled_from_us_recently(ctx.scheduler, peer_refs, peer_id);
+    if away {
+        return (
+            PEER_AWAY_MESSAGE.to_owned(),
+            Some(ReportAs::Code(SyncErrorCode::PeerAway)),
+        );
+    }
+    let message = dial_timeout_message(
+        peer_id,
+        ctx.endpoint,
+        ctx.bind_prefix_len,
+        peer,
+        mdns_seen_at,
+    );
+    (message, None)
 }
 
 /// Dial the peer and open the session's bi-stream; `None` once the failure, or
@@ -1778,22 +1842,14 @@ async fn connect_to_peer(
                 timeout_ms = ctx.scheduler.connect_timeout.as_millis(),
                 "peer did not answer the dial within the connect budget"
             );
-            // #4299: a timeout here is ambiguous by construction — a sleeping
-            // peer and a LAN swallowed by a tunnel produce the same silence.
-            // `dial_timeout_message` is the one thing that tells them apart.
+            let (message, report_as) = dial_timeout_report(ctx, peer, peer_refs, mdns_seen_at);
             record_initiator_failure(
                 ctx.scheduler,
                 ctx.event_sink,
                 peer_refs,
                 peer_id,
-                dial_timeout_message(
-                    peer_id,
-                    ctx.endpoint,
-                    ctx.bind_prefix_len,
-                    peer,
-                    mdns_seen_at,
-                ),
-                None,
+                message,
+                report_as,
             );
             return None;
         }
@@ -1981,6 +2037,7 @@ fn report_user_cancel(ctx: &SyncSessionContext<'_>, peer_id: &str, reason: impl 
         message: format!("Sync cancelled: {reason}"),
         remote_device_id: peer_id.to_owned(),
         code: Some(SyncErrorCode::Cancelled),
+        peer_is_older: None,
     });
     tracing::info!(peer_id, %reason, "sync session cancelled by user");
 }
@@ -2073,18 +2130,39 @@ async fn record_session_failure(
         }
         // #4120: books the backoff unconditionally; emits the generic
         // wrapper only on the first failure of a streak while the peer
-        // is still pulling from us, and never for a `Busy` refusal. See
-        // `record_initiator_failure`.
+        // is still pulling from us. See `record_initiator_failure`.
         record_initiator_failure(
             ctx.scheduler,
             ctx.event_sink,
             peer_refs,
             peer_id,
             session_failure_message(&e),
-            rejection.as_ref(),
+            session_failure_report(orch, rejection.as_ref(), peer_refs, peer_id),
         );
         tracing::warn!(peer_id, error = %e, "sync session failed");
     }
+}
+
+/// How a failed session is reported, when not as the generic `Sync failed: …`.
+///
+/// #6523: a peer that has synced with us before and ended the session without
+/// answering our `HeadExchange` most likely predates the engine-format refusal
+/// frame, which is how such a build ends a format mismatch, so the frontend
+/// says to check the versions.
+fn session_failure_report(
+    orch: &SyncOrchestrator,
+    rejection: Option<&Rejection>,
+    peer_refs: &[PeerRef],
+    peer_id: &str,
+) -> Option<ReportAs> {
+    if rejection == Some(&Rejection::Busy) || orch.peer_refused_engine_format() {
+        return Some(ReportAs::Nothing);
+    }
+    let synced_before = peer_refs
+        .iter()
+        .any(|p| p.peer_id == peer_id && (p.synced_at.is_some() || p.streamed_at.is_some()));
+    let unanswered = matches!(orch.session().state, SyncState::ExchangingHeads);
+    (synced_before && unanswered).then_some(ReportAs::Code(SyncErrorCode::HandshakeUnanswered))
 }
 
 // ---------------------------------------------------------------------------

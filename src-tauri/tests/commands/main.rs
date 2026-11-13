@@ -53,6 +53,7 @@ mod property_unfit_convert_cmd_tests;
 mod property_unfit_move_cmd_tests;
 mod query_cmd_tests;
 mod restore_placement_tests;
+mod saved_view_tests;
 mod search_blocks_struct_tests;
 mod snapshot_tests;
 mod space_move_cmd_tests;

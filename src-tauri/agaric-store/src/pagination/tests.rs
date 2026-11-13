@@ -937,52 +937,36 @@ async fn list_by_type_returns_empty_for_unknown_type() {
     );
 }
 
-/// #1460 — saved-view marker blocks (`view_type = 'query-view'`) must be
-/// hidden from the normal block/page listing (`list_by_type`) so they do
-/// not pollute the Pages browser / generic block lists, while remaining
-/// discoverable via the dedicated `query_by_property` marker path.
+/// #6544 — a saved view (a page carrying `saved_view`) is hidden from
+/// `list_by_type`, while the `query_by_property` path the saved-view lists
+/// read still finds it.
 #[tokio::test]
-async fn list_by_type_excludes_query_view_marker_blocks() {
+async fn list_by_type_excludes_saved_view_pages() {
     let (pool, _dir) = test_pool().await;
 
-    // A normal content block and a saved-view marker content block.
-    insert_block(&pool, "CONT0001", "content", "Normal block", None, None).await;
-    insert_block(&pool, "VIEW0001", "content", "My saved view", None, None).await;
-    // Marker property that flags the block as a saved query view.
-    insert_property(&pool, "VIEW0001", "view_type", "query-view").await;
-    // A second, unrelated property on the marker block should not matter.
-    insert_property(&pool, "VIEW0001", "query_spec", "{\"filter\":[]}").await;
-    // A block carrying a different `view_type` value must NOT be hidden.
-    insert_block(&pool, "CONT0002", "content", "Other view_type", None, None).await;
-    insert_property(&pool, "CONT0002", "view_type", "something-else").await;
+    insert_block(&pool, "PAGE0001", "page", "Normal page", None, None).await;
+    insert_block(&pool, "VIEW0001", "page", "My saved view", None, None).await;
+    insert_property(&pool, "VIEW0001", "saved_view", "v1:e30").await;
+    // A page carrying another property is not hidden.
+    insert_block(&pool, "PAGE0002", "page", "Other page", None, None).await;
+    insert_property(&pool, "PAGE0002", "status", "open").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_by_type(&pool, "content", &page, None).await.unwrap();
+    let resp = list_by_type(&pool, "page", &page, None).await.unwrap();
 
     let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
-    assert!(
-        ids.contains(&"CONT0001"),
-        "normal content block must still be listed"
+    assert_eq!(
+        ids,
+        ["PAGE0001", "PAGE0002"],
+        "the saved view must be hidden from list_by_type"
     );
-    assert!(
-        ids.contains(&"CONT0002"),
-        "block with a non-'query-view' view_type must still be listed"
-    );
-    assert!(
-        !ids.contains(&"VIEW0001"),
-        "query-view marker block must be hidden from list_by_type"
-    );
-    assert_eq!(resp.items.len(), 2, "exactly the two non-marker blocks");
 
     assign_all_to_test_space(&pool).await;
-    // The exclusion must NOT leak into the property-query path: the
-    // frontend lists saved views precisely by this marker, so
-    // `query_by_property(view_type = 'query-view')` must still return it.
     let prop_page = PageRequest::new(None, Some(10)).unwrap();
     let prop_resp = query_by_property(
         &pool,
-        "view_type",
-        Some("query-view"),
+        "saved_view",
+        None,
         None,
         "eq",
         &prop_page,
@@ -1001,7 +985,7 @@ async fn list_by_type_excludes_query_view_marker_blocks() {
     assert_eq!(
         prop_ids,
         vec!["VIEW0001"],
-        "query_by_property must still surface the saved-view marker block"
+        "query_by_property must still surface the saved view"
     );
 }
 
