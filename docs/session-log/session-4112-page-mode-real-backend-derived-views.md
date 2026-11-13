@@ -19,7 +19,7 @@ Last PR of #6714 (after #6716, #6719 and the image fix #6723). The mock derives 
 
 - A chip beside the caret shows its `[[…]]` source (the syntax reveal), so a block's text right after typing a link reads `[[Title]]` while the chip is already there. Wait for the chip, not the text.
 - Two plain lines are one paragraph to the Rust grammar and land as one block with a line break; the mock's paste spec uses list lines too.
-- A mutation that leaves a variable unused fails `tsc -b`, the build stops, and the spec then runs against the previous binary. Two runs were void that way before the script was made to stop on a failed build. A mutated binary also stays on disk after the source is restored: rebuild before trusting a later run.
+- A mutation that leaves a variable unused fails `tsc -b`, the build stops, and the spec then runs against the previous binary. Two runs were void that way. The wrapper that mutates, rebuilds and runs was a scratch script of this session, not a file in the repo; it now stops when the build fails. A mutated binary also stays on disk after the source is restored: rebuild before trusting a later run.
 - Link rows have two writers on an edit: the command's transaction and the background `ReindexBlockLinks`. With the background one off alone the backlink test stays green; with both off it reds. The search test reds with the background one off, but at its first search: that mutation un-indexes every edit, block mode's too.
 
 ## Review notes from #6716 and #6719
