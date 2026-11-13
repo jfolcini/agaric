@@ -79,6 +79,7 @@ dependencies = [
  "blake3",
  "chrono",
  "criterion",
+ "flate2",
  "futures-util",
  "gtk",
  "insta",

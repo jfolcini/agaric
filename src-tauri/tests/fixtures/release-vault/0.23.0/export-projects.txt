@@ -1,0 +1,8 @@
+# Projects
+
+- [ ] Write the upgrade test ⏫ ⏳ 2031-03-01 📅 2031-03-04
+  + Notes live in [[Reading]] zebrafish
+
+A block the tag is on
+
+- [ ] Water the plants 🔁 every week 📅 2031-03-05

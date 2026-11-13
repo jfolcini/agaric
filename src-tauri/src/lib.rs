@@ -454,6 +454,8 @@ mod materializer_app_tests;
 /// a real vault. Its test-only half (settles, coverage, panicking asserts)
 /// stays under `cfg(test)` in `reconciliation_oracle/harness.rs`.
 mod reconciliation_oracle;
+#[cfg(test)]
+mod upgrade_vault_tests;
 // LoroSync end-to-end integration tests live in
 // `agaric_sync::sync_protocol::tests` (`loro_sync_e2e_*`).
 // #4499 phase 0d: the command suites, the command-integration suites and the
