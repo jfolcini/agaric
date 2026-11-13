@@ -27,6 +27,9 @@ a filter built in any order is text; the builder reopens it in the reader's orde
 weekly random-seed test and a new ordinary test over a constant seed and 64 chains both call it.
 The fixed run took about 10 s here and reached every command the weekly floor names; it went red
 when the mock's `delete_block` returned one more `descendants_affected`.
+A PR touching only `src/lib/tauri-mock/` does not run it: `scripts/classify-changes.sh` routes the
+mock to the frontend lanes, so `cargo-tests` is skipped. Routing the mock to the Rust tests too
+would put that lane on every mock PR; that trade is left on #6567.
 
 **Not run: the stale-cache experiment (#6567).** The scenario as written cannot be driven through
 the UI: Linked References leaves out blocks on the target page itself

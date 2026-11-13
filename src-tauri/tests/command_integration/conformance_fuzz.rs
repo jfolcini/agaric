@@ -43,8 +43,10 @@
 //!
 //! The same body over [`FIXED_SEED`] and [`FIXED_SEED_CASES`] chains is an
 //! ordinary test (#6567): the chains are the same on every run, so it reddens
-//! only on a change to the mock, the backend, or the generator, in the PR that
-//! makes it.
+//! only on a change to the mock, the backend, or the generator. It runs with
+//! the Rust tests, which `scripts/classify-changes.sh` skips for a PR that
+//! touches only `src/lib/tauri-mock/`: such a divergence shows on the next PR
+//! that runs them.
 //!
 //! ## Known blind spots
 //!
