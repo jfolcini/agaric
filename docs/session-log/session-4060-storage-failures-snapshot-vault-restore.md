@@ -1,4 +1,4 @@
-# Session 4051 — Storage failures say their cause, a daily snapshot, and a whole-vault restore (#6554)
+# Session 4060 — Storage failures say their cause, a daily snapshot, and a whole-vault restore (#6554)
 
 The last three boxes of #6554 in one PR, one commit each; the boot-failure box landed in #6681 while this was being gated, so `docs/TROUBLESHOOTING.md` § 8 now names both kinds of backup.
 
