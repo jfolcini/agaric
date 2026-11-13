@@ -49,11 +49,16 @@ import { useSavedPagesViews } from '@/hooks/useSavedPagesViews'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 import type { BlockRow } from '@/lib/bindings'
+import { isDateFormattedPage } from '@/lib/date-utils'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
 import { openNewPageDialog } from '@/lib/overlay-events'
-import type { SavedPagesView } from '@/lib/preferences'
-import { dropOtherSpacesTagChips, type PagesViewTuple } from '@/lib/saved-pages-views'
+import { reportIpcError } from '@/lib/report-ipc-error'
+import {
+  dropOtherSpacesTagChips,
+  type PagesViewTuple,
+  type SavedPagesView,
+} from '@/lib/saved-pages-views'
 import { cn } from '@/lib/utils'
 import { isExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
@@ -222,8 +227,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     activeView: activeSavedView,
     saveView,
     deleteView,
-    schemaMismatchDetected,
-    clearSchemaMismatch,
+    restoreView,
   } = useSavedPagesViews(currentViewTuple)
 
   const handleApplySavedView = useCallback(
@@ -241,42 +245,51 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const handleSaveCurrentView = useCallback(
     (name: string) => {
       saveView(name, currentViewTuple)
+        .then((saved) => {
+          if (!saved)
+            notify.error(
+              t(
+                isDateFormattedPage(name)
+                  ? 'pageBrowser.savedViews.nameIsDate'
+                  : 'pageBrowser.savedViews.nameTaken',
+                { name },
+              ),
+            )
+        })
+        .catch((err: unknown) => {
+          reportIpcError('PageBrowser', 'pageBrowser.savedViews.saveFailed', err, t, { name })
+        })
     },
-    [saveView, currentViewTuple],
+    [saveView, currentViewTuple, t],
   )
 
-  // The delete button sits one row-item away from the apply target, and the
-  // store is localStorage-only — no Trash, no restore path — so a mis-click
-  // used to destroy the whole {name, sort, filters} tuple with no way
-  // back (#3339). Undo re-saves the captured tuple; that mints a fresh id and
-  // appends, so a restored view lands at the end of the creation-ordered
-  // picker. The id is internal and the applied-view match is structural, so the
-  // only visible cost of the round trip is that position.
+  // The delete button sits one row-item away from the apply target (#3339),
+  // so the toast offers an Undo besides the Trash.
   const handleDeleteSavedView = useCallback(
     (view: SavedPagesView) => {
+      const undo = (deletedAt: number) => {
+        restoreView(view.id, deletedAt)
+          .then(() => notify.success(t('pageBrowser.savedViews.restored', { name: view.name })))
+          .catch((err: unknown) => {
+            reportIpcError('PageBrowser', 'pageBrowser.savedViews.restoreFailed', err, t, {
+              id: view.id,
+            })
+          })
+      }
       deleteView(view.id)
-      notify.success(t('pageBrowser.savedViews.deleted', { name: view.name }), {
-        action: {
-          label: t('action.undo'),
-          onClick: () => {
-            saveView(view.name, view)
-            notify.success(t('pageBrowser.savedViews.restored', { name: view.name }))
-          },
-        },
-      })
+        .then((deletedAt) => {
+          notify.success(t('pageBrowser.savedViews.deleted', { name: view.name }), {
+            action: { label: t('action.undo'), onClick: () => undo(deletedAt) },
+          })
+        })
+        .catch((err: unknown) => {
+          reportIpcError('PageBrowser', 'pageBrowser.savedViews.deleteFailed', err, t, {
+            id: view.id,
+          })
+        })
     },
-    [deleteView, saveView, t],
+    [deleteView, restoreView, t],
   )
-
-  // One-shot recovery notice: a saved-views payload from an incompatible
-  // schema version was found on disk and silently discarded. Surface it
-  // once, then acknowledge so it doesn't re-arm on every render.
-  useEffect(() => {
-    if (schemaMismatchDetected) {
-      notify.warning(t('pageBrowser.savedViews.schemaMismatch'))
-      clearSchemaMismatch()
-    }
-  }, [schemaMismatchDetected, clearSchemaMismatch, t])
 
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   // Stable id base for section header `aria-labelledby` wiring. Two

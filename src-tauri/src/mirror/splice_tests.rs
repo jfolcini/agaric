@@ -154,3 +154,31 @@ proptest! {
         prop_assert!(written.reads_as(&render));
     }
 }
+
+#[test]
+fn a_kept_block_keeps_its_lazy_continuation_line() {
+    let old = [("* one", Some(1)), ("two", None)];
+    let new = [("- one", Some(1)), ("  two", None)];
+    assert_eq!(spliced(&old, &new), "* one\ntwo");
+}
+
+#[test]
+fn a_kept_block_takes_the_renders_gap_after_it() {
+    let old = [("one", Some(1)), ("", None), ("", None), ("two", Some(2))];
+    let new = [("one", Some(1)), ("", None), ("TWO", Some(2))];
+    assert_eq!(spliced(&old, &new), "one\n\nTWO");
+}
+
+#[test]
+fn a_block_past_the_last_line_keeps_nothing() {
+    // The reader ends a line at a lone `\r` too; `split('\n')` does not.
+    assert!(Laid::of("a\r\rb", &[None]).is_none());
+}
+
+#[test]
+fn a_list_number_is_every_digit_before_its_dot_or_parenthesis() {
+    assert_eq!(list_number("12. twelve"), Some("12"));
+    assert_eq!(list_number("  3) three"), Some("3"));
+    assert_eq!(list_number(". none"), None);
+    assert_eq!(list_number("4 none"), None);
+}

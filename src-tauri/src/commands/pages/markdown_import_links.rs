@@ -262,9 +262,10 @@ pub(crate) async fn match_tag_names(
 
 /// Read the [`LinkMatches`] for `link_names` in `space_id`: the live pages
 /// whose title keys like one of the names, then the live pages one of the names
-/// is an alias of. SQLite cannot apply the fold, so every page and alias of the
-/// space is read and folded here; with no index on `content`, SQLite reads
-/// every page row for a title filter anyway.
+/// is an alias of. A saved view (#6544) is named by none. SQLite cannot apply
+/// the fold, so every page and alias of the space is read and folded here;
+/// with no index on `content`, SQLite reads every page row for a title filter
+/// anyway.
 pub(super) async fn snapshot_page_link_matches(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,
@@ -286,6 +287,7 @@ pub(super) async fn snapshot_page_link_matches(
                  AND deleted_at IS NULL
                  AND space_id = ?1
                  AND content IS NOT NULL
+                 AND id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')
                ORDER BY id ASC"#,
         space_id,
     )

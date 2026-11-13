@@ -104,8 +104,8 @@ export function filterExprToBuilderTree(expr: FilterExpr, allocId: () => number)
 }
 
 /**
- * A saved view's JSON (`PREFERENCES.savedQueryViews`, #1460): the whole
- * working state except pagination.
+ * A saved view's spec (#1460; the payload of a view page since #6544): the
+ * whole working state except pagination.
  */
 export interface SavedQuerySpec {
   /** The compiled wire `FilterExpr` (from {@link builderTreeToFilterExpr}). */
@@ -135,11 +135,10 @@ export function serializeQuerySpec(
 }
 
 /**
- * Parse a saved view's spec JSON. Throws on malformed JSON or an invalid
- * `filter`, so the caller toasts rather than hydrate a half-built view.
+ * Read a saved view's spec. Throws on an invalid `filter`, so the caller
+ * toasts rather than hydrate a half-built view.
  */
-export function parseQuerySpec(raw: string): SavedQuerySpec {
-  const parsed: unknown = JSON.parse(raw)
+export function parseQuerySpec(parsed: unknown): SavedQuerySpec {
   const spec = (
     typeof parsed === 'object' && parsed !== null ? parsed : {}
   ) as Partial<SavedQuerySpec>

@@ -16,7 +16,8 @@
  *
  * Saved views (#1460): `SavedViews` (mounted below) lists and loads them, and
  * `handleSaveView`'s dialog saves the serialized spec (`serializeQuerySpec`,
- * `src/stores/advancedQuery.ts`) per space through `src/lib/saved-query-views.ts`.
+ * `src/stores/advancedQuery.ts`) as a view page of the space
+ * (`src/lib/saved-views.ts`, #6544).
  */
 
 import type React from 'react'
@@ -36,8 +37,10 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
 import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey } from '@/lib/bindings'
+import { isDateFormattedPage } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
-import { saveQueryView } from '@/lib/saved-query-views'
+import { reportIpcError } from '@/lib/report-ipc-error'
+import { saveView } from '@/lib/saved-views'
 import { cn } from '@/lib/utils'
 import {
   type BuilderPath,
@@ -119,7 +122,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
     setAggregates(spaceKey, aggregates)
 
   // #1460 saved-views: "Save view" prompts for a name and saves the current
-  // spec in this space; the picker re-reads on the broadcast write.
+  // spec in this space.
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
 
   const handleSaveView = (name: string): void => {
@@ -128,8 +131,22 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
       notify.error(t('advancedQuery.savedViews.saveError'))
       return
     }
-    saveQueryView(currentSpaceId, name, JSON.stringify(serializeQuerySpec(builder, controls)))
-    notify.success(t('advancedQuery.savedViews.saved', { name }))
+    saveView(currentSpaceId, name, { kind: 'query', spec: serializeQuerySpec(builder, controls) })
+      .then((saved) => {
+        if (saved) notify.success(t('advancedQuery.savedViews.saved', { name }))
+        else
+          notify.error(
+            t(
+              isDateFormattedPage(name)
+                ? 'advancedQuery.savedViews.nameIsDate'
+                : 'advancedQuery.savedViews.nameTaken',
+              { name },
+            ),
+          )
+      })
+      .catch((err: unknown) => {
+        reportIpcError('AdvancedQueryView', 'advancedQuery.savedViews.saveError', err, t, { name })
+      })
   }
 
   const isGrouped = groups != null
