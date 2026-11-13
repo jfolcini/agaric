@@ -107,7 +107,7 @@ describe('Agaric real-backend Markdown mirror, copying attachments (#5363) @mark
       blockId,
       filename: FILENAME,
       mimeType: 'image/png',
-      bytes: [...PNG],
+      bytes: PNG.toString('base64'),
     })
     await invoke('edit_block', {
       blockId,

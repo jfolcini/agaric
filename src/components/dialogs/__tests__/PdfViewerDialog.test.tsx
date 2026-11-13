@@ -61,7 +61,8 @@ const mockNotify = {
 vi.mock('@/lib/notify', () => ({ notify: mockNotify }))
 
 // ─── pdfjs-dist core (getDocument + saveDocument) ──────────────────────────
-const mockSaveDocument = vi.fn(() => Promise.resolve(new Uint8Array([1, 2, 3]).buffer))
+// pdf.js resolves a `Uint8Array`.
+const mockSaveDocument = vi.fn(() => Promise.resolve(new Uint8Array([1, 2, 3])))
 const mockPdfDoc = { numPages: 5, saveDocument: mockSaveDocument }
 const mockGetDocument = vi.fn()
 vi.mock('pdfjs-dist', () => ({
@@ -138,7 +139,7 @@ beforeEach(() => {
     promise: Promise.resolve(mockPdfDoc),
     destroy: vi.fn(),
   })
-  mockSaveDocument.mockResolvedValue(new Uint8Array([1, 2, 3]).buffer)
+  mockSaveDocument.mockResolvedValue(new Uint8Array([1, 2, 3]))
   mockAddAttachmentWithBytes.mockResolvedValue(ok({ id: 'new-att-id' }))
   mockDeleteAttachment.mockResolvedValue(ok(null))
   mockGetBlock.mockResolvedValue(ok({ id: 'block-1', content: 'Reading list' }))
@@ -377,18 +378,16 @@ describe('PdfViewerDialog', () => {
       await user.click(screen.getByTestId('pdf-save'))
 
       await waitFor(() => {
-        expect(mockSaveDocument).toHaveBeenCalled()
+        expect(onSaved).toHaveBeenCalledWith('new-att-id')
       })
+      expect(mockSaveDocument).toHaveBeenCalled()
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
         'block-1',
         'report (annotated).pdf',
         'application/pdf',
-        expect.any(Array),
+        'AQID',
       )
       expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
-      await waitFor(() => {
-        expect(onSaved).toHaveBeenCalledWith('new-att-id')
-      })
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
   })

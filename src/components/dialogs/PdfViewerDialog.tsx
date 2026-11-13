@@ -40,6 +40,7 @@ import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { unwrap } from '@/lib/app-error'
 import { attachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
+import { blobToBase64 } from '@/lib/file-utils'
 import { isEditableTarget } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -375,7 +376,7 @@ export function PdfViewerDialog({
           blockId,
           annotatedFilename(filename),
           'application/pdf',
-          Array.from(new Uint8Array(bytes)),
+          await blobToBase64(new Blob([bytes])),
         ),
       )
       // The original goes only once no link in the block names it (#6629). A

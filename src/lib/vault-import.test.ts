@@ -233,7 +233,7 @@ describe('collectVaultFiles', () => {
     const collected = await collectVaultFiles('![](assets/diagram.png)', '', index)
     expect(collected).toHaveLength(1)
     expect(collected?.[0]?.path).toBe('assets/diagram.png')
-    expect(collected?.[0]?.bytes).toEqual([1, 2, 3, 4])
+    expect(collected?.[0]?.bytes).toBe('AQIDBA==')
   })
 
   it('returns null when there are no refs or none resolve', async () => {
@@ -252,11 +252,11 @@ describe('collectVaultFiles', () => {
 
     const tie = await collectVaultFiles('![](image.png)', 'c', index)
     expect(tie?.map((f) => [f.path, f.bytes])).toEqual([
-      ['a/image.png', [0xa]],
-      ['b/image.png', [0xb]],
+      ['a/image.png', 'Cg=='],
+      ['b/image.png', 'Cw=='],
     ])
     const beside = await collectVaultFiles('![](image.png)', 'b', index)
-    expect(beside?.map((f) => [f.path, f.bytes])).toEqual([['b/image.png', [0xb]]])
+    expect(beside?.map((f) => [f.path, f.bytes])).toEqual([['b/image.png', 'Cw==']])
   })
 
   it('#6032 — resolves a `<…>` or `%20` name holding a space', async () => {
@@ -283,7 +283,7 @@ describe('collectVaultFiles', () => {
     const index = indexVaultFiles([pdf, other])
 
     const collected = await collectVaultFiles('[paper](paper.pdf) [o](other.md)', 'docs', index)
-    expect(collected?.map((f) => [f.path, f.bytes])).toEqual([['docs/paper.pdf', [5]]])
+    expect(collected?.map((f) => [f.path, f.bytes])).toEqual([['docs/paper.pdf', 'BQ==']])
   })
 })
 
@@ -319,7 +319,7 @@ describe('mdFilesToUnits', () => {
     expect(loaded?.path).toBe('note.md')
     expect(loaded?.vaultFiles).toHaveLength(1)
     expect(loaded?.vaultFiles?.[0]?.path).toBe('assets/diagram.png')
-    expect(loaded?.vaultFiles?.[0]?.bytes).toEqual([9, 9])
+    expect(loaded?.vaultFiles?.[0]?.bytes).toBe('CQk=')
   })
 
   it("#6032 — resolves a note's refs from the note's own folder", async () => {
@@ -354,7 +354,7 @@ describe('mdFilesToUnits', () => {
 
     expect(units.map((u) => u.name)).toEqual(['note.md', 'LOUD.MD'])
     const loaded = await units[0]?.load()
-    expect(loaded?.vaultFiles).toEqual([{ path: 'pic.png', bytes: [7] }])
+    expect(loaded?.vaultFiles).toEqual([{ path: 'pic.png', bytes: 'Bw==' }])
   })
 
   // #5740 — the backend writes a `[[Name]]` naming a note of the pick with
@@ -1377,7 +1377,7 @@ describe('enexNotesToUnits', () => {
     const loaded = await unit?.load()
     expect(loaded?.vaultFiles).toHaveLength(1)
     expect(loaded?.vaultFiles?.[0]?.path).toBe('pic.png')
-    expect(loaded?.vaultFiles?.[0]?.bytes).toEqual([104, 101, 108, 108, 111])
+    expect(loaded?.vaultFiles?.[0]?.bytes).toBe('aGVsbG8=')
   })
 
   it('returns an empty list for no notes', () => {
@@ -1498,7 +1498,7 @@ describe('jexNotesToUnits', () => {
     const loaded = await unit?.load()
     expect(loaded?.vaultFiles).toHaveLength(1)
     expect(loaded?.vaultFiles?.[0]?.path).toBe('pic.png')
-    expect(loaded?.vaultFiles?.[0]?.bytes).toEqual([1, 2, 3])
+    expect(loaded?.vaultFiles?.[0]?.bytes).toBe('AQID')
   })
 
   it('#2899 — converts resource bytes lazily inside load(), not up front for every note', async () => {

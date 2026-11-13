@@ -111,7 +111,7 @@ describe('Agaric real-backend re-import of an export folder into its own space (
       blockId: holder.id,
       filename: `${marker} report.pdf`,
       mimeType: 'application/pdf',
-      bytes: [...new TextEncoder().encode('%PDF-1')],
+      bytes: btoa('%PDF-1'),
     })
     await invoke('set_property', {
       blockId: pageId,

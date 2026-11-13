@@ -108,12 +108,12 @@ fn take_or_clone_bytes(
     if ingest_counts.get(&idx).copied() == Some(1) {
         ingest_counts.remove(&idx);
         moved_out.insert(idx);
-        return Some(std::mem::take(&mut vault_files[idx].bytes));
+        return Some(std::mem::take(&mut vault_files[idx].bytes.0));
     }
     if moved_out.contains(&idx) {
         return None;
     }
-    Some(vault_files[idx].bytes.clone())
+    Some(vault_files[idx].bytes.0.clone())
 }
 
 /// The vault-file index one attachment ref resolves to. A ref matching nothing

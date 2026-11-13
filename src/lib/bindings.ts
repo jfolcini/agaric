@@ -792,7 +792,7 @@ export const commands = {
 	 *  Tauri command: add an attachment from raw bytes. Delegates to
 	 *  [`add_attachment_with_bytes_inner`].
 	 */
-	addAttachmentWithBytes: (blockId: BlockId, filename: string, mimeType: string, bytes: number[]) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment_with_bytes", { blockId, filename, mimeType, bytes })),
+	addAttachmentWithBytes: (blockId: BlockId, filename: string, mimeType: string, bytes: Base64Bytes) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment_with_bytes", { blockId, filename, mimeType, bytes })),
 	/**
 	 *  Tauri command: the app's *New meeting* (#5364). Delegates to
 	 *  [`add_meeting_inner`], and returns the ops it wrote so one Undo reverts
@@ -1772,6 +1772,15 @@ export type BacklinkGroup = {
 
 /**  Tagged union of sort modes for backlink queries. */
 export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir };
+
+/**
+ *  Upload bytes: a `Vec<u8>` here, standard padded base64 on the wire.
+ * 
+ *  A newtype, not `#[serde(deserialize_with)]` on a `Vec<u8>` field: specta
+ *  splits every type holding such a field into `_Serialize` and `_Deserialize`
+ *  twins in `bindings.ts`.
+ */
+export type Base64Bytes = string;
 
 /**
  *  Reply of the batch soft-delete [`delete_blocks_by_ids`].
@@ -2974,7 +2983,7 @@ export type MdnsStatus = {
 /**  One file of [`AddMeetingInput`]. */
 export type MeetingFileInput = {
 	filename: string,
-	bytes: number[],
+	bytes: Base64Bytes,
 };
 
 /**  What [`add_meeting_inner`] wrote. */
@@ -5307,7 +5316,7 @@ export type VaultFile = {
 	/**  Vault-root-relative path, `/`-separated (e.g. `assets/img.png`). */
 	path: string,
 	/**  Raw file bytes. */
-	bytes: number[],
+	bytes: Base64Bytes,
 };
 
 /**

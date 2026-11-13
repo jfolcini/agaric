@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use agaric_core::base64_bytes::Base64Bytes;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_engine::block_ops::{create_block_in_tx, set_property_in_tx};
@@ -97,7 +98,7 @@ pub struct MeetingResult {
 #[derive(Debug, Clone, Deserialize, specta::Type)]
 pub struct MeetingFileInput {
     pub filename: String,
-    pub bytes: Vec<u8>,
+    pub bytes: Base64Bytes,
 }
 
 /// The app's *New meeting* (#5364): a new meeting page, linked from
@@ -133,7 +134,7 @@ impl AddMeetingInput {
         })?;
         let file = |input: MeetingFileInput| MeetingFile {
             filename: input.filename,
-            bytes: input.bytes,
+            bytes: input.bytes.0,
         };
         let summary = match (self.summary_text, self.summary_file) {
             (Some(_), Some(_)) => {

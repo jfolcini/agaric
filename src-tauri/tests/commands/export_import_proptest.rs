@@ -455,7 +455,7 @@ async fn export_zip(
         .iter()
         .map(|(id, name, fs_path)| VaultFile {
             path: format!("assets/{id}/{name}"),
-            bytes: std::fs::read(dir.join(fs_path)).unwrap(),
+            bytes: std::fs::read(dir.join(fs_path)).unwrap().into(),
         })
         .collect();
     (notes, files)

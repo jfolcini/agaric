@@ -105,7 +105,7 @@
     {
       "args": {
         "blockId": "S2",
-        "bytes": [104, 105, 10],
+        "bytes": "aGkK",
         "filename": "notes.txt",
         "mimeType": "text/plain"
       },
@@ -116,7 +116,7 @@
     {
       "args": {
         "blockId": "S3",
-        "bytes": [1, 2, 3, 4, 5],
+        "bytes": "AQIDBAU=",
         "filename": "photo.png",
         "mimeType": "image/png"
       },

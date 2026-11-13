@@ -1660,13 +1660,13 @@ describe('DataTab', () => {
       await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalled())
       const vaultFiles = mockImportMarkdown.mock.calls[0]?.[5] as Array<{
         path: string
-        bytes: number[]
+        bytes: string
       }> | null
       expect(vaultFiles).toHaveLength(1)
       // Path is vault-root-relative (top folder stripped).
       expect(vaultFiles?.[0]?.path).toBe('assets/diagram.png')
-      // Bytes are the read file contents (non-empty number[]).
-      expect(vaultFiles?.[0]?.bytes).toEqual([1, 2, 3, 4])
+      // Bytes are the read file contents, as base64.
+      expect(vaultFiles?.[0]?.bytes).toBe('AQIDBA==')
     })
 
     it('omits a referenced-but-absent file from vaultFiles', async () => {
@@ -1735,9 +1735,7 @@ describe('DataTab', () => {
       await waitFor(() => {
         expect(screen.getByTestId('import-warnings-heading')).toHaveTextContent('2 warnings')
       })
-      expect(mockImportMarkdown.mock.calls[0]?.[5]).toEqual([
-        { path: 'data.csv', bytes: [97, 44, 98] },
-      ])
+      expect(mockImportMarkdown.mock.calls[0]?.[5]).toEqual([{ path: 'data.csv', bytes: 'YSxi' }])
       expect(screen.getAllByTestId('import-warning-item').map((item) => item.textContent)).toEqual([
         t('data.importFolderSkipped', { count: 1 }),
         'a note warning',
@@ -2100,14 +2098,14 @@ describe('DataTab', () => {
         string,
         string,
         unknown,
-        Array<{ path: string; bytes: number[] }> | null,
+        Array<{ path: string; bytes: string }> | null,
       ]
       // The markdown embeds the rewritten attachment ref.
       expect(content0).toContain('![](pic.png)')
       // The decoded resource bytes ("hello") ship as a VaultFile at that path.
       expect(vaultFiles0).toHaveLength(1)
       expect(vaultFiles0?.[0]?.path).toBe('pic.png')
-      expect(vaultFiles0?.[0]?.bytes).toEqual([104, 101, 108, 108, 111])
+      expect(vaultFiles0?.[0]?.bytes).toBe('aGVsbG8=')
     })
 
     it('#6032 — warns once for every Evernote note link across the files that names no note of its file', async () => {
@@ -2259,7 +2257,7 @@ describe('DataTab', () => {
         string,
         string,
         unknown,
-        Array<{ path: string; bytes: number[] }>,
+        Array<{ path: string; bytes: string }>,
       ]
       expect(filename0).toBe('Picture Note.md')
       expect(spaceId0).toBe(DEFAULT_TEST_SPACE.id)
@@ -2271,7 +2269,7 @@ describe('DataTab', () => {
       // The decoded resource bytes ("hello") ship via the vault-attachment path.
       expect(vaultFiles0).toHaveLength(1)
       expect(vaultFiles0[0]?.path).toBe('pic.png')
-      expect(vaultFiles0[0]?.bytes).toEqual([104, 101, 108, 108, 111])
+      expect(vaultFiles0[0]?.bytes).toBe('aGVsbG8=')
     })
 
     it('labels the aggregate success toast "notes"', async () => {
@@ -2316,10 +2314,10 @@ describe('DataTab', () => {
         string,
         string,
         unknown,
-        Array<{ path: string; bytes: number[] }>,
+        Array<{ path: string; bytes: string }>,
       ]
       expect(content0).toContain('See [report.pdf](report.pdf).')
-      expect(vaultFiles0).toEqual([{ path: 'report.pdf', bytes: [37, 80, 68, 70] }])
+      expect(vaultFiles0).toEqual([{ path: 'report.pdf', bytes: 'JVBERg==' }])
       expect(screen.queryByTestId('import-warnings-heading')).not.toBeInTheDocument()
     })
 

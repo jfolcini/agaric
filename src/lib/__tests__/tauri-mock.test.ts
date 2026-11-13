@@ -3440,13 +3440,13 @@ describe('list_attachments_batch', () => {
       blockId: SEED_IDS.BLOCK_GS_1,
       filename: 'a.png',
       mimeType: 'image/png',
-      bytes: Array.from({ length: 100 }, () => 1),
+      bytes: btoa('\x01'.repeat(100)),
     })
     invoke('add_attachment_with_bytes', {
       blockId: SEED_IDS.BLOCK_GS_1,
       filename: 'b.pdf',
       mimeType: 'application/pdf',
-      bytes: Array.from({ length: 200 }, () => 2),
+      bytes: btoa('\x02'.repeat(200)),
     })
     const result = invoke('list_attachments_batch', {
       blockIds: [SEED_IDS.BLOCK_GS_1, SEED_IDS.BLOCK_GS_2],
@@ -3462,7 +3462,7 @@ describe('add_attachment_with_bytes', () => {
       blockId: SEED_IDS.BLOCK_GS_1,
       filename: 'test.pdf',
       mimeType: 'application/pdf',
-      bytes: Array.from({ length: 1024 }, () => 3),
+      bytes: btoa('\x03'.repeat(1024)),
     }) as Record<string, unknown>
     expect(result).toHaveProperty('id')
     expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
@@ -3478,13 +3478,13 @@ describe('add_attachment_with_bytes', () => {
       blockId: SEED_IDS.BLOCK_GS_1,
       filename: 'a.png',
       mimeType: 'image/png',
-      bytes: Array.from({ length: 100 }, () => 1),
+      bytes: btoa('\x01'.repeat(100)),
     }) as Record<string, unknown>
     const a2 = invoke('add_attachment_with_bytes', {
       blockId: SEED_IDS.BLOCK_GS_1,
       filename: 'b.png',
       mimeType: 'image/png',
-      bytes: Array.from({ length: 200 }, () => 2),
+      bytes: btoa('\x02'.repeat(200)),
     }) as Record<string, unknown>
     expect(a1['id']).not.toBe(a2['id'])
   })
@@ -3497,7 +3497,7 @@ describe('delete_attachment', () => {
       blockId,
       filename: 'doomed.txt',
       mimeType: 'text/plain',
-      bytes: [1, 2, 3],
+      bytes: 'AQID',
     }) as Record<string, unknown>
     const id = added['id'] as string
 

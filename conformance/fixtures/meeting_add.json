@@ -532,7 +532,7 @@
       "args": {
         "input": {
           "audio": {
-            "bytes": [79, 103, 103, 83],
+            "bytes": "T2dnUw==",
             "filename": "call.ogg"
           },
           "date": "2031-03-14",
@@ -542,7 +542,7 @@
           "template_id": "C2",
           "title": " Sync ",
           "transcript": {
-            "bytes": [91, 48, 48, 58, 48, 49, 93, 32, 72, 105],
+            "bytes": "WzAwOjAxXSBIaQ==",
             "filename": "call.md"
           }
         }
@@ -587,7 +587,7 @@
           "date": "2031-03-14",
           "space_id": "C1",
           "summary_file": {
-            "bytes": [120],
+            "bytes": "eA==",
             "filename": "s.md"
           },
           "summary_text": "x",
@@ -604,7 +604,7 @@
       "args": {
         "input": {
           "audio": {
-            "bytes": [37],
+            "bytes": "JQ==",
             "filename": "slides.pdf"
           },
           "date": "2031-03-14",

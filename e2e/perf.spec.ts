@@ -68,12 +68,8 @@ const PAGES = Number(process.env['AGARIC_PERF_PAGES'] ?? 500)
 const BIG_BLOCKS = Number(process.env['AGARIC_PERF_BLOCKS'] ?? 500)
 const TRACE = process.env['AGARIC_PERF_TRACE'] === '1'
 /** A 1×1 PNG, enough for the browser to decode as an image. */
-const PNG_1X1 = [
-  ...Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-    'base64',
-  ),
-]
+const PNG_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 const REVEAL = process.env['AGARIC_PERF_REVEAL'] === '1'
 const TAGS = 50
 const BIG_TITLE = 'Perf big page'
@@ -474,7 +470,7 @@ async function seedBigPage(
           blockId,
           filename: `notes-${i}.txt`,
           mimeType: 'text/plain',
-          bytes: [104, 105],
+          bytes: btoa('hi'),
         })
         if (i % 10 === 0) {
           await invoke('add_attachment_with_bytes', {

@@ -27,7 +27,7 @@ import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
 import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import { attachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
-import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
+import { blobToBase64, extractFileInfo, isAttachmentAllowed } from '@/lib/file-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { carriesPage, droppedPageId } from '@/lib/page-drag'
@@ -232,13 +232,12 @@ export async function processFileAttachments(
       ? notify.loading(t('blockTree.attachingFileMessage', { filename: info.filename }))
       : undefined
     try {
-      const bytes = await readFileBytes(file)
       const row = unwrap(
         await commands.addAttachmentWithBytes(
           blockId,
           info.filename,
           info.mimeType,
-          Array.from(bytes),
+          await blobToBase64(file),
         ),
       )
       recordAttachmentInvalidation()

@@ -10,6 +10,7 @@ use tauri::State;
 use crate::db::now_ms;
 use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::materializer::Materializer;
+use agaric_core::base64_bytes::Base64Bytes;
 use agaric_core::error::AppError;
 use agaric_core::ulid::{AttachmentId, BlockId};
 use agaric_store::op::OpPayload;
@@ -555,8 +556,8 @@ pub(crate) async fn write_attachment_bytes(
 
 /// Add an attachment by passing the raw file bytes over IPC.
 ///
-/// The frontend reads the file into bytes (a browser `ArrayBuffer`) and hands
-/// them to this command; the **backend is the sole writer** — it generates the
+/// The frontend encodes the file as base64 ([`Base64Bytes`]) and hands it to
+/// this command; the **backend is the sole writer** — it generates the
 /// storage path, writes the bytes under `app_data_dir/attachments/`, then
 /// persists the op-log + row atomically. This avoids exposing any renderer API
 /// that can point an attachment row at an arbitrary app-data file.
@@ -1033,7 +1034,7 @@ pub async fn add_attachment_with_bytes(
     block_id: BlockId,
     filename: String,
     mime_type: String,
-    bytes: Vec<u8>,
+    bytes: Base64Bytes,
 ) -> Result<AttachmentRow, AppError> {
     // #3334 — via the `app_paths` seam so attachment bytes land in the SAME
     // directory boot opened `notes.db` in. A direct `app.path().app_data_dir()`
@@ -1048,7 +1049,7 @@ pub async fn add_attachment_with_bytes(
         block_id,
         filename,
         mime_type,
-        bytes,
+        bytes.0,
     )
     .await
     .map_err(sanitize_internal_error)
