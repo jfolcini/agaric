@@ -1,4 +1,4 @@
-# Session 4045 — Five whole-vault rebuilds compare on the read pool and lock only to rewrite what is stale
+# Session 4048 — Five whole-vault rebuilds compare on the read pool and lock only to rewrite what is stale
 
 #6522 follow-on. After #6656 a content delete still enqueued whole-vault rebuilds that opened `BEGIN IMMEDIATE` before their scan (`block_tag_refs`, `tags_cache`, `agenda_cache`), and a restore added two that never used the read pool (`pages_cache` rows, `block_tag_inherited`). The next foreground write waited for those scans.
 
@@ -25,5 +25,5 @@ Picked up from the handover (#6667): one unreviewed `wip:` commit from a builder
 ## Verified
 
 - Every new test was shown red on the assertion predicted for it: read halves that miss a class of stale row, write halves that stop narrowing to the ids named, a lock taken before the comparison, an id filter that cannot seek, a write half that keeps a name loser.
-- `cargo nextest run --workspace` in two halves (8017 passed), `cargo clippy --workspace --all-targets -- -D warnings`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, doc-tests, and `just gen-sqlx`'s command, which left no diff.
+- `cargo nextest run --workspace` in two halves (8018 passed), `cargo clippy --workspace --all-targets -- -D warnings`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, doc-tests, and `just gen-sqlx`'s command, which left no diff.
 - The bench lanes run only on a branch dispatch; the numbers are on the PR.
