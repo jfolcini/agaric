@@ -1,7 +1,8 @@
 # Release vaults
 
 A vault written by a released build, for the upgrade test
-(`src-tauri/src/upgrade_vault_tests.rs`) to open with head.
+(`src-tauri/src/upgrade_vault_tests.rs`) to open with head. There is one: the
+newest release's.
 
 | Path | What |
 |---|---|
@@ -14,6 +15,9 @@ A vault written by a released build, for the upgrade test
 
 ## How a vault is produced
 
+`scripts/release.sh` writes the vault of the version it is about to tag, from
+`HEAD`, and commits it with the version bump. By hand, for a tag that exists:
+
 ```bash
 scripts/gen-release-vault.sh 0.23.0
 ```
@@ -23,7 +27,7 @@ The script checks the release out into a throwaway worktree, copies
 database with the release's boot path (pools and migrations, the materializer,
 crash recovery, the seeded spaces), writes through the release's `*_inner`
 commands, and exits as the app does: queues drained, engine snapshots saved,
-WAL folded in.
+WAL folded in. The new vault replaces the old one.
 
 A regenerated vault has new block ids, timestamps and hashes; the test finds
 its rows by content, and reads from `counts.txt` what depends on how many ops

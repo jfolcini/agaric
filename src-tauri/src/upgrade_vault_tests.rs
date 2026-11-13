@@ -24,13 +24,20 @@ use agaric_store::search_types::SearchFilter;
 use agaric_store::space::{SpaceId, SpaceScope};
 use std::path::PathBuf;
 
-const RELEASE: &str = "0.23.0";
-
+/// A file of the one vault under `tests/fixtures/release-vault/`: the newest
+/// release's, which `scripts/release.sh` writes in place of the one before.
 fn fixture(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/release-vault")
-        .join(RELEASE)
-        .join(name)
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/release-vault");
+    let mut vaults = std::fs::read_dir(&root)
+        .expect("the release-vault fixtures")
+        .map(|entry| entry.expect("a fixture entry").path())
+        .filter(|path| path.is_dir());
+    let vault = vaults.next().expect("a release vault");
+    assert!(
+        vaults.next().is_none(),
+        "one release vault, the newest release's"
+    );
+    vault.join(name)
 }
 
 /// A line of `counts.txt`, the release's own count when it closed the vault.

@@ -443,8 +443,10 @@ done
 bash scripts/require-npm.sh >/dev/null || exit 1
 
 # Refuse to bump on a dirty tree when --commit is requested — the commit
-# would otherwise sweep up unrelated work in progress.
-if [ "$DO_COMMIT" -eq 1 ] && [ -n "$(git status --porcelain)" ]; then
+# would otherwise sweep up unrelated work in progress. The one exception is
+# the release vault scripts/release.sh staged for this commit (#6567).
+if [ "$DO_COMMIT" -eq 1 ] &&
+  [ -n "$(git status --porcelain -- . ':(exclude)src-tauri/tests/fixtures/release-vault')" ]; then
   echo "ERROR: working tree has uncommitted changes; refusing to --commit on top of them." >&2
   echo "       Stash or commit your in-flight work first, or run without --commit." >&2
   git status --short >&2
