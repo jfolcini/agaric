@@ -1,8 +1,9 @@
 /**
  * QueryBuilderModal -- visual builder for inline query expressions (F-24).
  *
- * Supports 3 query types: tag, property, backlinks.
- * Generates `{{query ...}}` expression strings.
+ * Simple mode has 3 query types (tag, property, backlinks) and writes the
+ * older query text. Advanced mode writes the search syntax when the filter is
+ * an AND of its tokens (`filterToQueryText`), and a `v2:` payload otherwise.
  *
  * On phones < 768 px (`useIsMobile() === true`) the dialog renders as a
  * bottom Sheet via `useDialogOrSheet('dialog')` (#2665) — reachable from
@@ -34,10 +35,16 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { FilterPrimitive } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
-import { encodeInlineQueryPayload, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
+import {
+  encodeInlineQueryPayload,
+  decodeInlineQueryPayload,
+  isInlineQueryV2,
+} from '@/lib/inline-query-spec'
 import { logger } from '@/lib/logger'
 import { readQueryColumns, writeQueryColumns } from '@/lib/query-result-columns'
+import { compileQueryText, filterToQueryText, isLegacyQueryText } from '@/lib/query-text'
 import { parseQueryExpression } from '@/lib/query-utils'
+import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
 import {
   addGroupToTree,
@@ -120,9 +127,9 @@ export function QueryBuilderModal({
 
   // ---- State ----
   // `simple` is the legacy 3-type form (emits a `type:… key:…` text query);
-  // `advanced` is the nested And/Or/Not builder (emits a structured `v2:` payload
-  // executed by the rich engine). Defaults to simple so existing flows/tests are
-  // unchanged; editing a `v2:` block switches to advanced automatically.
+  // `advanced` is the nested And/Or/Not builder (emits search-syntax text, or a
+  // structured `v2:` payload for a filter the text cannot say). Defaults to
+  // simple; editing a `v2:` or search-syntax block switches to advanced.
   const [mode, setMode] = useState<'simple' | 'advanced'>('simple')
   const [queryType, setQueryType] = useState<QueryType>('tag')
   const [tagExpr, setTagExpr] = useState('')
@@ -132,6 +139,9 @@ export function QueryBuilderModal({
   const [backlinkTarget, setBacklinkTarget] = useState('')
   const [showAsTable, setShowAsTable] = useState(false)
   const [knownPropertyKeys, setKnownPropertyKeys] = useState<string[]>([])
+  // A search-syntax text the builder has no leaf for (a relative date, free
+  // text): saving the form would overwrite it, so it stays editable as text.
+  const [textOnly, setTextOnly] = useState(false)
 
   // ---- Advanced (nested-builder) state ----
   // A LOCAL builder tree (the modal edits one block's query, so it does NOT use
@@ -196,6 +206,33 @@ export function QueryBuilderModal({
       return
     }
     const parsed = parseQueryExpression(initialExpression)
+    if (!isLegacyQueryText(initialExpression)) {
+      let cancelled = false
+      compileQueryText(initialExpression, {
+        listTags: async () =>
+          spaceId === null
+            ? []
+            : unwrap(await commands.listAllTagsInSpace(requireActiveScope(spaceId))),
+      })
+        .then((compiled) => {
+          if (cancelled) return
+          if (compiled.ok) {
+            setMode('advanced')
+            setBuilderRoot(filterExprToBuilderTree(compiled.filter, nextId))
+          } else {
+            // No problem at all is a text with no filter word: the empty form.
+            setTextOnly(compiled.problems.length > 0)
+          }
+          setShowAsTable(parsed.params['table'] === 'true')
+        })
+        .catch((err) => {
+          logger.warn('QueryBuilderModal', 'failed to read the query text', undefined, err)
+          if (!cancelled) setTextOnly(true)
+        })
+      return () => {
+        cancelled = true
+      }
+    }
     if (parsed.type === 'tag') {
       setQueryType('tag')
       setTagExpr(parsed.params['expr'] ?? '')
@@ -209,20 +246,20 @@ export function QueryBuilderModal({
       setBacklinkTarget(parsed.params['target'] ?? '')
     }
     setShowAsTable(parsed.params['table'] === 'true')
-  }, [initialExpression])
+    return undefined
+  }, [initialExpression, spaceId])
 
   // ---- Expression generation ----
   const filterExpression = useMemo(() => {
-    // Advanced mode emits the structured `v2:` payload run by the rich engine.
     // An empty tree (no leaves) is not a meaningful saved query, so it is
     // treated as invalid (empty string) — same gate as the simple form's empty
     // inputs.
     if (mode === 'advanced') {
       if (advancedLeafCount === 0) return ''
-      return encodeInlineQueryPayload({
-        filter: builderTreeToFilterExpr(builderRoot),
-        table: showAsTable,
-      })
+      const filter = builderTreeToFilterExpr(builderRoot)
+      const text = filterToQueryText(filter)
+      if (text === null) return encodeInlineQueryPayload({ filter, table: showAsTable })
+      return showAsTable ? `${text} table:true` : text
     }
     let expr = ''
     if (queryType === 'tag') {
@@ -269,6 +306,7 @@ export function QueryBuilderModal({
   // can verify intent. Mirrors `expression`'s empty-form gate so the line
   // disappears whenever the raw preview would.
   const humanReadable = useMemo(() => {
+    if (mode !== 'simple') return ''
     if (queryType === 'tag') {
       if (!tagExpr.trim()) return ''
       return t('queryBuilder.readable.tag', { expr: tagExpr.trim() })
@@ -287,7 +325,7 @@ export function QueryBuilderModal({
       return t('queryBuilder.readable.backlinks', { target })
     }
     return ''
-  }, [queryType, tagExpr, propertyKey, propertyValue, propertyOperator, backlinkTarget, t])
+  }, [mode, queryType, tagExpr, propertyKey, propertyValue, propertyOperator, backlinkTarget, t])
 
   // ---- Property-key validation ----
   // Warn when the user enters a key that is not a known property definition.
@@ -302,7 +340,7 @@ export function QueryBuilderModal({
     knownPropertyKeys.length > 0 &&
     !knownPropertyKeys.includes(propertyKeyTrimmed)
 
-  const isValid = expression !== ''
+  const isValid = expression !== '' && !textOnly
   const isEditing = !!initialExpression
 
   const handleSave = () => {
@@ -326,172 +364,181 @@ export function QueryBuilderModal({
         </Header>
 
         <Body>
-          {/* ---- Mode toggle (Simple text form vs. nested And/Or/Not builder) ---- */}
-          <Tabs
-            value={mode}
-            onValueChange={(next) => setMode(next === 'advanced' ? 'advanced' : 'simple')}
-          >
-            <TabsList aria-label={t('queryBuilder.mode.label')}>
-              {(['simple', 'advanced'] as const).map((m) => (
-                <TabsTrigger key={m} value={m}>
-                  {t(`queryBuilder.mode.${m}`)}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            <TabsContent value="simple" className="mt-4 space-y-4">
-              {/* ---- Query Type Selector ---- */}
-              <ToggleGroup
-                type="single"
-                aria-label={t('queryBuilder.typeLabel')}
-                value={queryType}
-                onValueChange={(next) => {
-                  // Pressing the checked segment again reports '', which matches none.
-                  const type = QUERY_TYPES.find((q) => q === next)
-                  if (type) setQueryType(type)
-                }}
+          {textOnly ? (
+            <p className="text-sm text-muted-foreground">{t('queryBuilder.textOnly')}</p>
+          ) : (
+            <>
+              {/* ---- Mode toggle (Simple text form vs. nested And/Or/Not builder) ---- */}
+              <Tabs
+                value={mode}
+                onValueChange={(next) => setMode(next === 'advanced' ? 'advanced' : 'simple')}
               >
-                {QUERY_TYPES.map((type) => (
-                  <ToggleGroupItem key={type} value={type}>
-                    {t(`queryBuilder.type.${type}`)}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-
-              {/* ---- Tag Query Form ---- */}
-              {queryType === 'tag' && (
-                <div className="space-y-2">
-                  <Label htmlFor="qb-tag-prefix">{t('queryBuilder.tagPrefix')}</Label>
-                  <Input
-                    id="qb-tag-prefix"
-                    value={tagExpr}
-                    onChange={(e) => setTagExpr(e.target.value)}
-                    placeholder={t('queryBuilder.tagPrefixPlaceholder')}
-                  />
-                </div>
-              )}
-
-              {/* ---- Property Query Form ---- */}
-              {queryType === 'property' && (
-                <div className="space-y-2">
-                  <Label htmlFor="qb-prop-key">{t('queryBuilder.propertyKey')}</Label>
-                  <Input
-                    id="qb-prop-key"
-                    value={propertyKey}
-                    onChange={(e) => setPropertyKey(e.target.value)}
-                    placeholder={t('queryBuilder.propertyKeyPlaceholder')}
-                    list="qb-prop-key-list"
-                    aria-autocomplete="list"
-                    aria-controls="qb-prop-key-list"
-                    aria-invalid={propertyKeyUnknown}
-                    aria-describedby={propertyKeyUnknown ? 'qb-prop-key-warning' : undefined}
-                    className={cn(propertyKeyUnknown && 'border-destructive')}
-                  />
-                  <datalist id="qb-prop-key-list" data-testid="qb-prop-key-list">
-                    {knownPropertyKeys.map((k) => (
-                      <option key={k} value={k}>
-                        {k}
-                      </option>
+                <TabsList aria-label={t('queryBuilder.mode.label')}>
+                  {(['simple', 'advanced'] as const).map((m) => (
+                    <TabsTrigger key={m} value={m}>
+                      {t(`queryBuilder.mode.${m}`)}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+                <TabsContent value="simple" className="mt-4 space-y-4">
+                  {/* ---- Query Type Selector ---- */}
+                  <ToggleGroup
+                    type="single"
+                    aria-label={t('queryBuilder.typeLabel')}
+                    value={queryType}
+                    onValueChange={(next) => {
+                      // Pressing the checked segment again reports '', which matches none.
+                      const type = QUERY_TYPES.find((q) => q === next)
+                      if (type) setQueryType(type)
+                    }}
+                  >
+                    {QUERY_TYPES.map((type) => (
+                      <ToggleGroupItem key={type} value={type}>
+                        {t(`queryBuilder.type.${type}`)}
+                      </ToggleGroupItem>
                     ))}
-                  </datalist>
-                  {propertyKeyUnknown && (
-                    <p
-                      id="qb-prop-key-warning"
-                      className="text-xs text-destructive"
-                      aria-live="polite"
-                    >
-                      {t('queryBuilder.propertyKeyUnknown', { key: propertyKeyTrimmed })}
-                    </p>
+                  </ToggleGroup>
+
+                  {/* ---- Tag Query Form ---- */}
+                  {queryType === 'tag' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="qb-tag-prefix">{t('queryBuilder.tagPrefix')}</Label>
+                      <Input
+                        id="qb-tag-prefix"
+                        value={tagExpr}
+                        onChange={(e) => setTagExpr(e.target.value)}
+                        placeholder={t('queryBuilder.tagPrefixPlaceholder')}
+                      />
+                    </div>
                   )}
 
-                  <Label htmlFor="qb-prop-operator">{t('queryBuilder.propertyOperator')}</Label>
-                  <Select value={propertyOperator} onValueChange={setPropertyOperator}>
-                    <SelectTrigger
-                      id="qb-prop-operator"
-                      aria-label={t('queryBuilder.propertyOperator')}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {OPERATOR_OPTIONS.map((op) => (
-                        <SelectItem
-                          key={op.value}
-                          value={op.value}
-                          endContent={
-                            <span className="ml-2 text-muted-foreground">{t(op.descKey)}</span>
-                          }
+                  {/* ---- Property Query Form ---- */}
+                  {queryType === 'property' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="qb-prop-key">{t('queryBuilder.propertyKey')}</Label>
+                      <Input
+                        id="qb-prop-key"
+                        value={propertyKey}
+                        onChange={(e) => setPropertyKey(e.target.value)}
+                        placeholder={t('queryBuilder.propertyKeyPlaceholder')}
+                        list="qb-prop-key-list"
+                        aria-autocomplete="list"
+                        aria-controls="qb-prop-key-list"
+                        aria-invalid={propertyKeyUnknown}
+                        aria-describedby={propertyKeyUnknown ? 'qb-prop-key-warning' : undefined}
+                        className={cn(propertyKeyUnknown && 'border-destructive')}
+                      />
+                      <datalist id="qb-prop-key-list" data-testid="qb-prop-key-list">
+                        {knownPropertyKeys.map((k) => (
+                          <option key={k} value={k}>
+                            {k}
+                          </option>
+                        ))}
+                      </datalist>
+                      {propertyKeyUnknown && (
+                        <p
+                          id="qb-prop-key-warning"
+                          className="text-xs text-destructive"
+                          aria-live="polite"
                         >
-                          {op.symbol}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                          {t('queryBuilder.propertyKeyUnknown', { key: propertyKeyTrimmed })}
+                        </p>
+                      )}
 
-                  <Label htmlFor="qb-prop-value">{t('queryBuilder.propertyValue')}</Label>
-                  <Input
-                    id="qb-prop-value"
-                    value={propertyValue}
-                    onChange={(e) => setPropertyValue(e.target.value)}
-                    placeholder={t('queryBuilder.propertyValuePlaceholder')}
-                  />
-                </div>
-              )}
+                      <Label htmlFor="qb-prop-operator">{t('queryBuilder.propertyOperator')}</Label>
+                      <Select value={propertyOperator} onValueChange={setPropertyOperator}>
+                        <SelectTrigger
+                          id="qb-prop-operator"
+                          aria-label={t('queryBuilder.propertyOperator')}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {OPERATOR_OPTIONS.map((op) => (
+                            <SelectItem
+                              key={op.value}
+                              value={op.value}
+                              endContent={
+                                <span className="ml-2 text-muted-foreground">{t(op.descKey)}</span>
+                              }
+                            >
+                              {op.symbol}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
 
-              {/* ---- Backlinks Query Form ---- */}
-              {queryType === 'backlinks' && (
-                <div className="space-y-2">
-                  <Label htmlFor="qb-backlink-target">{t('queryBuilder.backlinkTarget')}</Label>
-                  <Input
-                    id="qb-backlink-target"
-                    value={backlinkTarget}
-                    onChange={(e) => setBacklinkTarget(e.target.value)}
-                    placeholder={t('queryBuilder.backlinkTargetPlaceholder')}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t('queryBuilder.backlinkTargetHelper')}
+                      <Label htmlFor="qb-prop-value">{t('queryBuilder.propertyValue')}</Label>
+                      <Input
+                        id="qb-prop-value"
+                        value={propertyValue}
+                        onChange={(e) => setPropertyValue(e.target.value)}
+                        placeholder={t('queryBuilder.propertyValuePlaceholder')}
+                      />
+                    </div>
+                  )}
+
+                  {/* ---- Backlinks Query Form ---- */}
+                  {queryType === 'backlinks' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="qb-backlink-target">{t('queryBuilder.backlinkTarget')}</Label>
+                      <Input
+                        id="qb-backlink-target"
+                        value={backlinkTarget}
+                        onChange={(e) => setBacklinkTarget(e.target.value)}
+                        placeholder={t('queryBuilder.backlinkTargetPlaceholder')}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {t('queryBuilder.backlinkTargetHelper')}
+                      </p>
+                    </div>
+                  )}
+                </TabsContent>
+
+                {/* ---- Advanced (nested And/Or/Not) builder ---- */}
+                <TabsContent value="advanced" className="mt-4 space-y-2">
+                  <p className="text-xs text-muted-foreground">{t('queryBuilder.advanced.hint')}</p>
+                  <Suspense fallback={<div className="text-xs text-muted-foreground">…</div>}>
+                    <FilterGroup
+                      node={builderRoot}
+                      path={[]}
+                      depth={0}
+                      onAddLeaf={handleAddLeaf}
+                      onAddGroup={handleAddGroup}
+                      onRemoveNode={handleRemoveNode}
+                      onSetGroupOp={handleSetGroupOp}
+                      onToggleNegate={handleToggleNegate}
+                    />
+                  </Suspense>
+                  <p className="text-xs text-muted-foreground" data-testid="advanced-filter-count">
+                    {advancedLeafCount === 0
+                      ? t('queryBuilder.advanced.empty')
+                      : t('queryBuilder.advanced.filterCount', { count: advancedLeafCount })}
                   </p>
-                </div>
-              )}
-            </TabsContent>
+                </TabsContent>
+              </Tabs>
 
-            {/* ---- Advanced (nested And/Or/Not) builder ---- */}
-            <TabsContent value="advanced" className="mt-4 space-y-2">
-              <p className="text-xs text-muted-foreground">{t('queryBuilder.advanced.hint')}</p>
-              <Suspense fallback={<div className="text-xs text-muted-foreground">…</div>}>
-                <FilterGroup
-                  node={builderRoot}
-                  path={[]}
-                  depth={0}
-                  onAddLeaf={handleAddLeaf}
-                  onAddGroup={handleAddGroup}
-                  onRemoveNode={handleRemoveNode}
-                  onSetGroupOp={handleSetGroupOp}
-                  onToggleNegate={handleToggleNegate}
+              {/* ---- Display Options ---- */}
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="qb-show-table"
+                  aria-label={t('queryBuilder.showAsTable')}
+                  checked={showAsTable}
+                  onCheckedChange={(next) => setShowAsTable(next === true)}
                 />
-              </Suspense>
-              <p className="text-xs text-muted-foreground" data-testid="advanced-filter-count">
-                {advancedLeafCount === 0
-                  ? t('queryBuilder.advanced.empty')
-                  : t('queryBuilder.advanced.filterCount', { count: advancedLeafCount })}
-              </p>
-            </TabsContent>
-          </Tabs>
+                <Label htmlFor="qb-show-table" muted={false}>
+                  {t('queryBuilder.showAsTable')}
+                </Label>
+              </div>
+            </>
+          )}
 
-          {/* ---- Display Options ---- */}
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="qb-show-table"
-              aria-label={t('queryBuilder.showAsTable')}
-              checked={showAsTable}
-              onCheckedChange={(next) => setShowAsTable(next === true)}
-            />
-            <Label htmlFor="qb-show-table" muted={false}>
-              {t('queryBuilder.showAsTable')}
-            </Label>
-          </div>
+          {isInlineQueryV2(expression) && (
+            <p className="text-xs text-muted-foreground">{t('queryBuilder.advanced.notText')}</p>
+          )}
 
-          {/* ---- Expression Preview (simple mode only — the advanced builder is
-              its own visual preview, and its `v2:` payload is opaque base64) ---- */}
-          {mode === 'simple' && expression && (
+          {/* ---- Expression Preview (text only: a `v2:` payload is opaque base64) ---- */}
+          {!textOnly && expression && !isInlineQueryV2(expression) && (
             <div className="space-y-1">
               <Label>{t('queryBuilder.preview')}</Label>
               {humanReadable && (
