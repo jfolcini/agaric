@@ -40,6 +40,7 @@ import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { invoke } from './e2e-tauri/helpers'
+import type { ReconciliationReport } from './src/lib/bindings'
 
 // Directory of this config file (the repo root). Node >= 24 (see package.json
 // `engines`) provides `import.meta.dirname` natively.
@@ -1007,11 +1008,7 @@ const SPECS_THE_ORACLE_SKIPS = new Set([
  */
 async function assertVaultReconciled(this: Mocha.Context): Promise<void> {
   if (SPECS_THE_ORACLE_SKIPS.has(path.basename(this.test?.parent?.suites[0]?.file ?? ''))) return
-  const report = await invoke<{
-    total_divergences: number
-    artefacts: unknown[]
-    samples?: unknown[]
-  }>('compute_reconciliation_report')
+  const report = await invoke<ReconciliationReport>('compute_reconciliation_report')
   if (report.total_divergences > 0) {
     const { artefacts, samples } = report
     throw new Error(

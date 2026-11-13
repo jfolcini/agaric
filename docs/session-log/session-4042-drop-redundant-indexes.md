@@ -1,4 +1,4 @@
-# Session 4038 — Migration 0130 drops two redundant indexes
+# Session 4042 — Migration 0130 drops two redundant indexes
 
 #6522's last box. Picked up from the handover (#6667): the branch held three tests and no migration.
 

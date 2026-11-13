@@ -36,7 +36,15 @@
 
 import { Bookmark, BookmarkX, SlidersHorizontal, Tag, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
@@ -75,6 +83,8 @@ export interface PageBrowserBatchToolbarProps {
   onSelectAll: () => void
   /** Clear the selection. */
   onClearSelection: () => void
+  /** The pages list; focus returns to it when the selection empties from here. */
+  listRef: RefObject<HTMLElement | null>
   /** Called after a successful bulk op so the parent refreshes the list
    * (cache/materializer invalidation → query refetch). */
   onMutated: () => void
@@ -96,6 +106,7 @@ export function PageBrowserBatchToolbar({
   currentSpaceId,
   onSelectAll,
   onClearSelection,
+  listRef,
   onMutated,
 }: PageBrowserBatchToolbarProps): React.ReactElement {
   const { t } = useTranslation()
@@ -471,6 +482,7 @@ export function PageBrowserBatchToolbar({
   return (
     <BatchActionToolbar
       selectedCount={selectedIds.length}
+      listRef={listRef}
       className="page-browser-batch-toolbar gap-3 p-3"
       suppressRangeSelectHint
     >

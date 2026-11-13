@@ -90,7 +90,7 @@ test-be *ARGS:
 test-be-related *ARGS:
     bash scripts/test-related-rust.sh --worktree "$@"
 
-# The e2e specs your uncommitted work can affect, by area tag: prints one command per lane (Playwright, WebdriverIO) and runs neither; `--range main...HEAD` checks a branch.
+# The e2e specs your uncommitted work can affect, by area tag: prints one command per lane (Playwright, WebdriverIO) and runs neither; `--range main...HEAD` adds a branch's commits.
 [group('test')]
 [positional-arguments]
 e2e-related *ARGS:

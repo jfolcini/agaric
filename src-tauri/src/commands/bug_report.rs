@@ -364,6 +364,36 @@ pub struct BugReport {
     /// read failed. `None` and a zero `depth` are different answers and the
     /// report must not conflate them.
     pub retry_queue: Option<RetryQueueSummary>,
+    /// #6563 — what the op log costs on disk, or absent when the read failed
+    /// or the backend has no SQLite file to measure (the browser mock).
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub op_log: Option<OpLogSummary>,
+}
+
+/// `op_log` reduced to the size breakdown a bug report can carry (#6563).
+///
+/// Answers whether `edit_block` ops, which each carry the block's full text,
+/// dominate a long-form writer's vault. Carries op-type literals and counts
+/// only, never a payload, because the report body is public.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct OpLogSummary {
+    /// One entry per `op_type` present, sorted by `op_type`.
+    pub by_op_type: Vec<OpTypeUsage>,
+    /// Bytes of the pages holding the `op_log` table itself.
+    pub table_bytes: i64,
+    /// Bytes of the pages holding every index on `op_log`, the primary key's
+    /// included.
+    pub index_bytes: i64,
+}
+
+/// Rows and payload bytes of one `op_type` in `op_log`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct OpTypeUsage {
+    pub op_type: String,
+    pub rows: i64,
+    /// UTF-8 bytes of `payload` summed over the rows, not characters.
+    pub payload_bytes: i64,
 }
 
 /// `materializer_retry_queue` reduced to the shape a bug report can carry.
@@ -856,6 +886,7 @@ pub fn collect_bug_report_metadata_inner(
     home: Option<&str>,
     peer_device_ids: &[String],
     retry_queue: Option<RetryQueueSummary>,
+    op_log: Option<OpLogSummary>,
 ) -> Result<BugReport, AppError> {
     let log_dir = log_dir_for_app_data(app_data_dir);
     let raw_recent_errors = recent_errors_from_log_dir(&log_dir);
@@ -884,6 +915,7 @@ pub fn collect_bug_report_metadata_inner(
         device_id,
         recent_errors,
         retry_queue,
+        op_log,
     })
 }
 
@@ -908,12 +940,14 @@ pub async fn collect_bug_report_metadata(
     let home = home_dir_string();
     let peer_device_ids = fetch_redaction_extras(&pool.inner().0).await;
     let retry_queue = fetch_retry_queue_summary(&pool.inner().0).await;
+    let op_log = fetch_op_log_summary(&pool.inner().0).await;
     collect_bug_report_metadata_inner(
         &data_dir,
         device_id.as_str().to_string(),
         home.as_deref(),
         &peer_device_ids,
         retry_queue,
+        op_log,
     )
     .map_err(super::sanitize_internal_error)
 }
@@ -2162,6 +2196,52 @@ async fn fetch_retry_queue_summary(pool: &SqlitePool) -> Option<RetryQueueSummar
     }
 }
 
+/// Read [`OpLogSummary`], or `None` if the read failed; degrades like
+/// [`fetch_retry_queue_summary`] so a failure never fails the report.
+async fn fetch_op_log_summary(pool: &SqlitePool) -> Option<OpLogSummary> {
+    let by_op_type = sqlx::query_as!(
+        OpTypeUsage,
+        "SELECT op_type AS \"op_type!: String\", \
+                COUNT(*) AS \"rows!: i64\", \
+                COALESCE(SUM(length(CAST(payload AS BLOB))), 0) AS \"payload_bytes!: i64\" \
+           FROM op_log \
+          GROUP BY op_type \
+          ORDER BY op_type"
+    )
+    .fetch_all(pool)
+    .await;
+    // `aggregate = TRUE` makes dbstat return one row per b-tree instead of one
+    // per page.
+    let sizes = sqlx::query!(
+        "SELECT COALESCE(SUM(CASE WHEN d.name = 'op_log' THEN d.pgsize END), 0) \
+                    AS \"table_bytes!: i64\", \
+                COALESCE(SUM(CASE WHEN d.name <> 'op_log' THEN d.pgsize END), 0) \
+                    AS \"index_bytes!: i64\" \
+           FROM dbstat AS d \
+          WHERE d.aggregate = TRUE \
+            AND d.name IN (SELECT name FROM sqlite_schema WHERE tbl_name = 'op_log' \
+                                                           AND type IN ('table', 'index'))"
+    )
+    .fetch_one(pool)
+    .await;
+
+    match (by_op_type, sizes) {
+        (Ok(by_op_type), Ok(sizes)) => Some(OpLogSummary {
+            by_op_type,
+            table_bytes: sizes.table_bytes,
+            index_bytes: sizes.index_bytes,
+        }),
+        (Err(e), _) | (_, Err(e)) => {
+            tracing::warn!(
+                target: "bug_report",
+                error = %e,
+                "failed to read op_log sizes; reporting them as unavailable",
+            );
+            None
+        }
+    }
+}
+
 async fn fetch_redaction_extras(pool: &SqlitePool) -> Vec<String> {
     match sqlx::query_scalar!("SELECT peer_id FROM peer_refs")
         .fetch_all(pool)
@@ -2404,6 +2484,81 @@ mod tests {
             fetch_retry_queue_summary(&pool).await.is_none(),
             "an unreadable queue must be reported as unavailable, never as empty"
         );
+    }
+
+    // -- op_log size breakdown (#6563) -----------------------------------
+
+    async fn append_raw_op(pool: &SqlitePool, seq: i64, op_type: &str, payload: &str) {
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+             VALUES ('DEV', ?, 'h', ?, ?, 0)",
+        )
+        .bind(seq)
+        .bind(op_type)
+        .bind(payload)
+        .execute(pool)
+        .await
+        .expect("seed an op_log row");
+    }
+
+    /// Rows and payload BYTES per op type, plus the pages the table and its
+    /// indexes occupy. The `é` payload pins bytes, not characters.
+    #[tokio::test]
+    async fn op_log_summary_reports_rows_and_payload_bytes_per_op_type_6563() {
+        let (pool, _dir) = retry_queue_pool().await;
+        append_raw_op(&pool, 1, "edit_block", r#"{"t":"é"}"#).await;
+        append_raw_op(&pool, 2, "create_block", "{}").await;
+        append_raw_op(&pool, 3, "edit_block", r#"{"t":"abc"}"#).await;
+        append_raw_op(&pool, 4, "delete_block", "{\"x\":1}").await;
+        append_raw_op(&pool, 5, "edit_block", "{}").await;
+
+        let summary = fetch_op_log_summary(&pool).await.expect("readable");
+
+        let usage = |op_type: &str, rows, payload_bytes| OpTypeUsage {
+            op_type: op_type.to_string(),
+            rows,
+            payload_bytes,
+        };
+        assert_eq!(
+            summary.by_op_type,
+            vec![
+                usage("create_block", 1, 2),
+                usage("delete_block", 1, 7),
+                usage("edit_block", 3, 10 + 11 + 2),
+            ]
+        );
+
+        let page_size: i64 = sqlx::query_scalar("PRAGMA page_size")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let index_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'op_log'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            summary.table_bytes, page_size,
+            "five small rows fit one page"
+        );
+        assert_eq!(
+            summary.index_bytes,
+            index_count * page_size,
+            "every index on op_log, each one page at this size, and nothing else"
+        );
+    }
+
+    /// A pool whose `op_log` is gone reports `None`, never an empty breakdown.
+    #[tokio::test]
+    async fn op_log_summary_is_none_when_the_read_fails_6563() {
+        let (pool, _dir) = retry_queue_pool().await;
+        sqlx::query("ALTER TABLE op_log RENAME TO op_log_gone")
+            .execute(&pool)
+            .await
+            .expect("rename the table to force the read to fail");
+
+        assert!(fetch_op_log_summary(&pool).await.is_none());
     }
 
     // -- STABLE_MESSAGES drift guard (#700) ------------------------------
@@ -2731,8 +2886,8 @@ mod tests {
         )
         .unwrap();
 
-        let md =
-            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None).unwrap();
+        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None, None)
+            .unwrap();
 
         assert_eq!(md.device_id, DEV);
         assert_eq!(md.app_version, env!("CARGO_PKG_VERSION"));
@@ -4054,8 +4209,8 @@ mod tests {
     fn collect_metadata_empty_log_dir_returns_empty_recent_errors() {
         let dir = TempDir::new().unwrap();
 
-        let md =
-            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None).unwrap();
+        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None, None)
+            .unwrap();
 
         assert_eq!(md.recent_errors.len(), 0);
         assert_eq!(md.device_id, DEV);
@@ -4066,8 +4221,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(log_dir_for_app_data(dir.path())).unwrap();
 
-        let md =
-            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None).unwrap();
+        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None, None)
+            .unwrap();
 
         assert_eq!(md.recent_errors.len(), 0);
     }
@@ -4107,8 +4262,8 @@ mod tests {
         contents.push_str("2025-01-01 ERROR [agaric] M31_TAIL_MARKER\n");
         fs::write(log_dir.join("agaric.log"), &contents).unwrap();
 
-        let md =
-            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None).unwrap();
+        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None, None)
+            .unwrap();
 
         // Tail marker survives the cap-truncate-from-head path.
         assert!(
@@ -4160,6 +4315,7 @@ mod tests {
             DEV.into(),
             Some(HOME),
             &[peer.to_string()],
+            None,
             None,
         )
         .unwrap();
@@ -4226,8 +4382,8 @@ mod tests {
         )
         .unwrap();
 
-        let md =
-            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None).unwrap();
+        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None, None)
+            .unwrap();
 
         assert_eq!(md.recent_errors.len(), 1);
         let line = &md.recent_errors[0];
@@ -4281,9 +4437,15 @@ mod tests {
         )
         .unwrap();
 
-        let md =
-            collect_bug_report_metadata_inner(dir.path(), device_id.to_string(), None, &[], None)
-                .unwrap();
+        let md = collect_bug_report_metadata_inner(
+            dir.path(),
+            device_id.to_string(),
+            None,
+            &[],
+            None,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(md.recent_errors.len(), 1);
         let line = &md.recent_errors[0];
@@ -4313,6 +4475,7 @@ mod tests {
             Some(HOME),
             &["peer-device-789".to_string()],
             None,
+            None,
         )
         .unwrap();
 
@@ -4338,6 +4501,7 @@ mod tests {
             DEV.into(),
             Some(HOME),
             &["peer-device-789".to_string()],
+            None,
             None,
         )
         .unwrap();
