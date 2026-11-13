@@ -168,6 +168,8 @@ The link step is the long pole of incremental Rust compiles on this codebase, no
 
 Incremental `cargo check` is unaffected by the linker choice (check doesn't link); the win is on incremental builds and tests that relink.
 
+**sccache (trial, #6560).** `bash scripts/seed-worktree.sh --sccache` routes a newly seeded worktree's rustc through [sccache](https://github.com/mozilla/sccache), so its first build reuses the dependency builds of other worktrees seeded the same way; the workspace's own crates and what depends on them still compile, because their paths differ per worktree. It needs `sccache` on PATH, writes only into a `.cargo/config.toml` that run creates, and turns incremental compilation off there (sccache cannot cache an incremental build), which makes `target/` smaller and a rebuild after an edit slower. Delete the `[build]` block to go back.
+
 The active `.cargo/config.toml` is gitignored, so it never leaks into the tree — only the `.example` is tracked, and `setup.sh` and `seed-worktree.sh` never overwrite an existing file (a manual override wins). An unconditional `[target.…] rustflags` would break a fresh clone that hasn't installed the linker, which is why it's generated rather than committed. **Linux-only**: they only wire the Linux host triple, so macOS/Windows and Android cross-builds are untouched. Safe to delete any time.
 
 ## Testing
