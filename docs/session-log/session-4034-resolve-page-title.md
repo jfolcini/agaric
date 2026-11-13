@@ -1,4 +1,4 @@
-# Session 3994 — creating a page or picking a date no longer fetches every page
+# Session 4034 — creating a page or picking a date no longer fetches every page
 
 `Refs #6527` (item 1, step 1; the shared page-list query of step 2, the bench fixture and linear
 page creation stay open).

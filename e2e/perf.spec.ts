@@ -1510,7 +1510,7 @@ test('creating a page and picking a date list no pages (#6527) @editor @pages @j
   expect(create).toContain('create_page_in_space')
   expect(pick).toContain('create_page_in_space')
   const listings = (calls: string[]) => calls.filter((c) => c === 'list_all_pages_in_space')
-  expect.soft(listings(create), create.join(', ')).toEqual([])
+  expect(listings(create), create.join(', ')).toEqual([])
   expect(listings(pick), pick.join(', ')).toEqual([])
 })
 
