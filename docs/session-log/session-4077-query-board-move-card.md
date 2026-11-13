@@ -1,4 +1,4 @@
-# Session 4076 — Query board, moving a card (#6542)
+# Session 4077 — Query board, moving a card (#6542)
 
 Slice 2 of plan #6542: a card moves between columns from a *Move to…* menu. The maintainer's three decisions of 2026-11-13 are a comment on the issue: a visible button on the card (so the column stops being a listbox), undo from the toast and from the page's own undo stack, and the card lands where the query's sort puts it.
 
@@ -30,7 +30,7 @@ Existing assertions edited, all because a card stopped being a listbox option:
 
 ## What ran
 
-Full vitest, `npm run typecheck`, `npm run lint`, the manual prek stage, `check-set-property-args` and knip. Playwright on the mock: `advanced-query-board.spec.ts` (a move, the card in its new column after leaving the view and coming back, the toast's Undo, and `Ctrl+Z` on the card's page) and the specs `just e2e-related` selects.
+Full vitest, `npm run typecheck`, `npm run lint`, the manual prek stage, `check-set-property-args` and knip. Playwright on the mock: `advanced-query-board.spec.ts` (a move, the card in its new column after leaving the view and coming back, the toast's Undo, and `Ctrl+Z` on the card's page) and the 225 specs `just e2e-related` selects: 1302 passed and 5 failed, none in board code. The `diagram-legibility` and `diagram-scrollbar` tests (two each) fail the same way on clean `origin/main` in this container, whose Chromium is older than the pinned one; one `emoji-picker` test failed under the four-worker load and passed when its spec was rerun alone.
 
 Vitest falsifications, each one command that restored on exit, each red on the predicted assertion: no stack registration, no by-ref undo, the stack path skipped, *Other values* offered as a target, the menu guard removed, no focus handoff, *No value* losing its property key, no refetch.
 
