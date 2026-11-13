@@ -10,8 +10,9 @@
 // - the link graph: a `[[link]]` typed lists its block under the linked page;
 // - the op log's reverse path: the page's undo takes a page-mode edit back and
 //   redo puts it back (undo is waived from conformance, see `undo-todo-state`);
-// - `paste_blocks` and the Rust grammar: lines naming a new page land as
-//   blocks linking it, and the page exists.
+// - `paste_blocks` and the Rust grammar: list lines naming a new page land as
+//   blocks linking it, and the page exists. (Two plain lines are one
+//   paragraph to that grammar, so they land as one block.)
 //
 // Block mode's twins: `search-edited-word`, `table-cell-link-backlink`,
 // `undo-todo-state`, `paste-splice`.
@@ -31,6 +32,7 @@ import {
   runScopedMarker,
   typeMarkerVerified,
   waitForAppReady,
+  waitForPickerToOffer,
   waitForResults,
 } from './helpers'
 import {
@@ -139,8 +141,15 @@ describe('Agaric real-backend page mode: search, backlinks, the page’s undo an
     await reopenInPageMode()
     const linking = await blockHolding(LINKING)
     await pageModeCaret(linking.at, 'end')
-    // The chip reads the page's title once `]]` closes the link.
-    await typeInPageMode(` [[${TARGET}]]`, linking.at, `${LINKING} ${TARGET}`)
+    await typeInPageMode(` [[${TARGET}`, linking.at, `${LINKING} [[${TARGET}`)
+    await waitForPickerToOffer(TARGET)
+    // One `]` a call: WebKit coalesces two identical keys sent together.
+    await typeInPageMode(']', linking.at, `${LINKING} [[${TARGET}]`)
+    await browser.keys([']'])
+    // The chip, not the block's text: beside the caret a chip shows its `[[…]]` source.
+    await $(
+      `${PAGE_MODE} [data-page-block-id="${linking.id}"] [data-testid="block-link-chip"]`,
+    ).waitForExist({ timeout: ACTION_TIMEOUT, timeoutMsg: 'the typed link never became a chip' })
     await waitForStored(
       linking.id,
       new RegExp(`^${LINKING} \\[\\[[0-9A-Z]{26}\\]\\]$`),
@@ -183,7 +192,7 @@ describe('Agaric real-backend page mode: search, backlinks, the page’s undo an
     expect((await pageModeBlocks())[undone.at]?.id).toBe(undone.id)
   })
 
-  it('lines naming a new page, pasted in page mode, land as blocks linking it, and the page exists', async () => {
+  it('list lines naming a new page, pasted in page mode, land as blocks linking it, and the page exists', async () => {
     await reopenInPageMode()
     const before = await pageModeBlocks()
     await pageModeCaret(before.length - 1, 'end')
@@ -204,17 +213,21 @@ describe('Agaric real-backend page mode: search, backlinks, the page’s undo an
           )
       },
       PAGE_MODE,
-      `first [[${PASTED}]]\nsecond line`,
+      `- first [[${PASTED}]]\n- second line`,
     )
 
-    await browser.waitUntil(
-      async () =>
-        (await pageModeBlocks())
-          .slice(before.length)
-          .map((block) => block.text)
-          .join('|') === `first ${PASTED}|second line`,
-      { timeout: NAV_TIMEOUT, timeoutMsg: 'the pasted lines never landed as two blocks' },
-    )
+    let landed: string[] = []
+    await browser
+      .waitUntil(
+        async () => {
+          landed = (await pageModeBlocks()).slice(before.length).map((block) => block.text)
+          return landed.join('|') === `first ${PASTED}|second line`
+        },
+        { timeout: NAV_TIMEOUT },
+      )
+      .catch(() => {
+        throw new Error(`the pasted lines landed as ${JSON.stringify(landed)}`)
+      })
     const [first] = (await pageModeBlocks()).slice(before.length)
     await waitForStored(
       first?.id as string,
