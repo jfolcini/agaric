@@ -1,4 +1,4 @@
-# Session 3975 — delete and restore stop rebuilding the whole vault
+# Session 3991 — delete and restore stop rebuilding the whole vault
 
 `Refs #6522` (items 1 and 2; dropping the two indexes stays open).
 
