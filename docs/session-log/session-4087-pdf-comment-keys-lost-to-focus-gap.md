@@ -1,4 +1,4 @@
-# Session 4085 — a PDF comment's keys typed while pdf.js had taken its box out of the page
+# Session 4087 — a PDF comment's keys typed while pdf.js had taken its box out of the page
 
 `main`'s Playwright shard 2 failed once (run 43499854333, commit 2f1c268) in `e2e/pdf-highlight-blocks-6629.spec.ts`, "page mode: Save adds the block, and its chip reopens the reader there": after the second Save the comment "Note" had no block.
 
