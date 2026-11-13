@@ -6523,10 +6523,10 @@ mod global_history_keyset_5424 {
 mod block_history_plan_6522 {
     use super::test_pool;
 
-    /// Production SQL of `list_block_history`, pinned to `history.rs` below.
-    const BLOCK_HISTORY_SQL: &str = "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-                ol.is_replicated AS \"is_replicated!: bool\" \
-         FROM op_log ol \
+    /// `list_block_history`'s production SQL from its `FROM` on, pinned to
+    /// `history.rs` below. The select list is left out: it does not decide the
+    /// plan.
+    const BLOCK_HISTORY_FROM: &str = "FROM op_log ol \
          WHERE ( \
              ol.block_id = ?1 \
              OR ( \
@@ -6560,7 +6560,7 @@ mod block_history_plan_6522 {
                 .collect()
         };
         assert!(
-            squash(include_str!("history.rs")).contains(&squash(BLOCK_HISTORY_SQL)),
+            squash(include_str!("history.rs")).contains(&squash(BLOCK_HISTORY_FROM)),
             "the SQL pinned here is not list_block_history's; copy it over and \
              re-check the plan assertions"
         );
@@ -6582,22 +6582,23 @@ mod block_history_plan_6522 {
                 .unwrap();
                 sqlx::query("ANALYZE").execute(&mut *conn).await.unwrap();
             }
-            let lines: Vec<String> = sqlx::query_as::<_, (i64, i64, i64, String)>(
-                sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {BLOCK_HISTORY_SQL}")),
-            )
-            .bind("B1")
-            .bind(None::<i64>)
-            .bind(0_i64)
-            .bind(51_i64)
-            .bind("")
-            .bind(None::<&str>)
-            .bind(0_i64)
-            .fetch_all(&mut *conn)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|(_, _, _, detail)| detail)
-            .collect();
+            let lines: Vec<String> =
+                sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(format!(
+                    "EXPLAIN QUERY PLAN SELECT ol.seq {BLOCK_HISTORY_FROM}"
+                )))
+                .bind("B1")
+                .bind(None::<i64>)
+                .bind(0_i64)
+                .bind(51_i64)
+                .bind("")
+                .bind(None::<&str>)
+                .bind(0_i64)
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|(_, _, _, detail)| detail)
+                .collect();
             for alias in ["ol", "src_add"] {
                 let seek =
                     format!("SEARCH {alias} USING INDEX idx_op_log_block_created (block_id=?)");
