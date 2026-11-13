@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR REPLACE INTO tags_cache (tag_id, space_id, name, usage_count, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "1c0d06e676561580a78f02b06bb3c6c9ee49d38b7dc1a879a79d21dfa1d62ffc"
+}

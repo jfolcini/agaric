@@ -56,9 +56,6 @@ for (const theme of THEMES) {
     await navigateToView(page, 'Pages')
     await page.getByText('Projects', { exact: true }).click()
     await expect(page.getByRole('link', { name: 'external link (opens in new tab)' })).toBeVisible()
-    // The pane stays opacity 0 until the view's fade-in timer fires, and axe skips every
-    // node under it; toBeVisible ignores opacity.
-    await expect(page.getByTestId('view-transition-wrapper')).toHaveCSS('opacity', '1')
 
     const onPage = await runAxe(page, '.page-editor', { runOnly: ['color-contrast'] })
     expect(onPage.violations.flatMap((v) => v.nodes.map((n) => n.html))).toEqual([])

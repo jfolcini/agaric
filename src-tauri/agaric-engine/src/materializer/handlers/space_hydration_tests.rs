@@ -1237,3 +1237,129 @@ async fn a_page_moved_away_and_back_brings_no_deleted_attachment_back_5608() {
         "back in S1, the attachment deleted in S2 is a tombstone, not live"
     );
 }
+
+// --------------------------------------------------------------------------
+// #6527 — a page entering a space reprojects only the root ranks it moved.
+// --------------------------------------------------------------------------
+
+fn root_page_id(i: i64) -> String {
+    format!("01HZ000000000000000000R{i:03}")
+}
+
+/// Create root page `i` with the legacy `position` its SQL row is born with,
+/// then assign it to the space: the two ops `create_page_in_space` appends.
+async fn add_root_page(
+    pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+    i: i64,
+    position: i64,
+) {
+    let id = root_page_id(i);
+    let create = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::from_trusted(&id),
+        block_type: "page".into(),
+        parent_id: None,
+        position: Some(position),
+        index: None,
+        content: format!("page {i}"),
+    });
+    apply(pool, state, create).await;
+    apply(pool, state, set_space_op(&id, Some(SPACE_ID))).await;
+}
+
+/// The space's root blocks with their SQL rank, in SQL sibling order.
+async fn root_ranks(pool: &SqlitePool) -> Vec<(String, i64)> {
+    sqlx::query_as(
+        "SELECT id, position FROM blocks WHERE space_id = ? AND parent_id IS NULL \
+         ORDER BY position, id",
+    )
+    .bind(SPACE_ID)
+    .fetch_all(pool)
+    .await
+    .expect("root ranks")
+}
+
+fn ranked(pages: &[i64]) -> Vec<(String, i64)> {
+    pages
+        .iter()
+        .zip(1..)
+        .map(|(page, rank)| (root_page_id(*page), rank))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_page_appended_to_a_space_sends_one_root_rank_6527() {
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    let state = crate::loro::shared::LoroState::new();
+    for i in 1..=5 {
+        add_root_page(&pool, &state, i, i).await;
+    }
+
+    crate::loro::projection::reproject_call_spy::reset();
+    add_root_page(&pool, &state, 6, 6).await;
+
+    assert_eq!(
+        crate::loro::projection::reproject_call_spy::ids(),
+        1,
+        "an append sends the new page's rank alone, not its five siblings'"
+    );
+    assert_eq!(root_ranks(&pool).await, ranked(&[1, 2, 3, 4, 5, 6]));
+}
+
+#[tokio::test]
+async fn a_page_seeded_mid_list_renumbers_the_siblings_after_it_6527() {
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    let state = crate::loro::shared::LoroState::new();
+    add_root_page(&pool, &state, 1, 10).await;
+    add_root_page(&pool, &state, 2, 20).await;
+    add_root_page(&pool, &state, 3, 30).await;
+
+    crate::loro::projection::reproject_call_spy::reset();
+    // Its stamp sorts it between pages 1 and 2.
+    add_root_page(&pool, &state, 4, 15).await;
+
+    assert_eq!(
+        crate::loro::projection::reproject_call_spy::ids(),
+        3,
+        "the new page and the two siblings after it; page 1 keeps rank 1 unsent"
+    );
+    assert_eq!(root_ranks(&pool).await, ranked(&[1, 4, 2, 3]));
+}
+
+#[tokio::test]
+async fn an_append_after_a_purge_left_a_gap_writes_the_whole_group_6527() {
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    let state = crate::loro::shared::LoroState::new();
+    for i in 1..=4 {
+        add_root_page(&pool, &state, i, i).await;
+    }
+    let first = BlockId::from_trusted(&root_page_id(1));
+    apply(
+        &pool,
+        &state,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: first.clone(),
+        }),
+    )
+    .await;
+    apply(
+        &pool,
+        &state,
+        OpPayload::PurgeBlock(agaric_store::op::PurgeBlockPayload { block_id: first }),
+    )
+    .await;
+    // The purge reprojects nothing: the survivors keep ranks 2..=4 while the
+    // engine now ranks them 1..=3.
+    let gapped: Vec<(String, i64)> = [2, 3, 4].map(|i| (root_page_id(i), i)).into();
+    assert_eq!(root_ranks(&pool).await, gapped);
+
+    crate::loro::projection::reproject_call_spy::reset();
+    add_root_page(&pool, &state, 5, 5).await;
+
+    assert_eq!(
+        crate::loro::projection::reproject_call_spy::ids(),
+        4,
+        "the sibling before the new page is off its rank, so every rank is sent"
+    );
+    assert_eq!(root_ranks(&pool).await, ranked(&[2, 3, 4, 5]));
+}

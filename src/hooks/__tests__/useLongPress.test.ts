@@ -45,6 +45,19 @@ describe('useLongPress', () => {
     expect(onLongPress).not.toHaveBeenCalled()
   })
 
+  it('does not fire when the release lands outside the target', () => {
+    const onLongPress = vi.fn()
+    const { result } = renderHook(() => useLongPress({ onLongPress }))
+    act(() => result.current.onPointerDown(pointerEvent(0, 0)))
+    act(() => {
+      document.dispatchEvent(new Event('pointerup'))
+    })
+    act(() => {
+      vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY)
+    })
+    expect(onLongPress).not.toHaveBeenCalled()
+  })
+
   it('cancels when the pointer moves past the threshold (scroll intent)', () => {
     const onLongPress = vi.fn()
     const { result } = renderHook(() => useLongPress({ onLongPress }))

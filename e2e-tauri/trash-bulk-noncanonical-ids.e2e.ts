@@ -49,6 +49,8 @@ async function trashUnderLowercaseIds(): Promise<void> {
   const db = new DatabaseSync(path.join(appVaultDir(), 'notes.db'), {
     // Rows elsewhere still name the canonical id; leaving them dangling is the point.
     enableForeignKeyConstraints: false,
+    // The running app holds the database; wait out its writer rather than fail.
+    timeout: 10_000,
   })
   try {
     for (const id of ids) {
