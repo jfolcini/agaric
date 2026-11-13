@@ -2751,23 +2751,57 @@ fn draft_recovery_supersession_sql_is_in_sync() {
     );
 }
 
-/// Confirms that the `idx_op_log_block_id` index is present after migrations
-/// — guards against accidental migration-ordering regressions.
+/// #6522: with `idx_op_log_block_id` dropped (migration 0130),
+/// `find_prev_edit`'s create-op fallback seeks `idx_op_log_block_created`,
+/// which also yields the rows in `created_at` order, so only the
+/// `(device_id, seq)` tie-break is sorted.
 #[tokio::test]
-async fn perf26_block_id_index_exists() {
-    let (pool, _dir) = test_pool().await;
+async fn find_prev_edit_create_fallback_seeks_block_created_index_6522() {
+    const CREATE_FALLBACK_SQL: &str = "SELECT device_id, seq FROM op_log \
+         WHERE block_id = ? \
+         AND op_type = 'create_block' \
+         ORDER BY created_at ASC, device_id ASC, seq ASC \
+         LIMIT 1";
+    assert!(
+        collapse(include_str!("draft_recovery.rs")).contains(CREATE_FALLBACK_SQL),
+        "find_prev_edit's create-op fallback in draft_recovery.rs changed; update \
+         the copy here to match"
+    );
 
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sqlite_master \
-         WHERE type = 'index' AND name = 'idx_op_log_block_id'",
+    let (pool, _dir) = test_pool().await;
+    // One connection: SQLite reloads `sqlite_stat1` only on the connection
+    // that ran ANALYZE.
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 9999) \
+         INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         SELECT 'dev-' || (i % 2), i + 1, 'h', \
+                CASE WHEN i < 500 THEN 'create_block' ELSE 'edit_block' END, \
+                '{}', 1000 + i, 'B' || (i % 500) \
+         FROM n",
     )
-    .fetch_one(&pool)
+    .execute(&mut *conn)
     .await
     .unwrap();
+    sqlx::raw_sql("ANALYZE").execute(&mut *conn).await.unwrap();
 
+    let plan: Vec<String> = sqlx::query_as::<_, (i64, i64, i64, String)>(
+        sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {CREATE_FALLBACK_SQL}")),
+    )
+    .bind("B1")
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(_, _, _, detail)| detail)
+    .collect();
     assert_eq!(
-        count, 1,
-        "migration 0030 must create idx_op_log_block_id exactly once"
+        plan,
+        [
+            "SEARCH op_log USING INDEX idx_op_log_block_created (block_id=?)",
+            "USE TEMP B-TREE FOR RIGHT PART OF ORDER BY",
+        ],
+        "find_prev_edit's create-op fallback must seek the (block_id, created_at) index"
     );
 }
 
