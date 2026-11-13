@@ -13,11 +13,10 @@ use agaric_store::peer_refs;
 /// #2621 Sync-D: moved down from the app-side `dag.rs` — it decodes an
 /// [`OpTransfer`] (an `agaric-sync` type) and threads the transfer-carried
 /// `origin` (which `OpRecord::from` drops) into the engine core
-/// [`agaric_engine::dag::ingest_replicated_record`], which reuses
-/// `insert_remote_op`'s exact verification recipe (blake3 hash check,
+/// [`agaric_engine::dag::ingest_replicated_record`] (blake3 hash check,
 /// NUL-rejection gate, `SetProperty` domain validation, idempotent
-/// `INSERT OR IGNORE` on `(device_id, seq)`, divergence probe) under the audit
-/// parent-gap policy. The stored record is **never applied to state** (state
+/// `INSERT OR IGNORE` on `(device_id, seq)`, divergence probe, audit
+/// parent-gap policy). The stored record is **never applied to state** (state
 /// flows exclusively through Loro CRDT sync); the `is_replicated = 1` stamp keeps
 /// it out of boot replay, the materializer apply pipeline, and the apply cursor.
 pub async fn insert_replicated_op(
@@ -106,7 +105,7 @@ pub struct BatchIngestOutcome {
 ///   permanently blocking that device's later ops behind it. So we skip it and
 ///   let the frontier advance past it, deliberately. The resulting hash-chain
 ///   discontinuity is already a first-class state on this path:
-///   `IngestProfile::Audit` lands an unresolved `parent_seqs` pointer with a
+///   the audit ingest lands an unresolved `parent_seqs` pointer with a
 ///   `warn!` rather than rejecting it, because peer-side compaction produces
 ///   legitimate gaps too.
 ///
