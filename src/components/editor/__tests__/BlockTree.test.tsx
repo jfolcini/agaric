@@ -4546,11 +4546,11 @@ describe('BlockTree handleDatePick date format', () => {
       expect(mockCalendarOnSelect).toBeDefined()
     })
 
-    // limit-clamp-followup — `handleDateMode` now looks up the date
-    // page via `list_all_pages_in_space`, which returns a flat
-    // `PageHeading[]` (no `.items` wrapper).
+    // #6527 — `handleDateMode` looks the day up by its journal date, then by
+    // its legacy title; neither finds a page here.
     stubBlockTree({
-      list_all_pages_in_space: () => [],
+      get_journal_page_by_date: () => null,
+      resolve_page_title: (args) => ({ title: args['title'] as string, page_id: null }),
       // H-3b: date pages route through `createPageInSpace` so they own a
       // `space` property and surface in PageBrowser.
       create_page_in_space: () => 'DATE_PAGE_1',
@@ -4610,26 +4610,23 @@ describe('BlockTree handleDatePick date format', () => {
       expect(mockCalendarOnSelect).toBeDefined()
     })
 
-    // limit-clamp-followup — `handleDateMode` now awaits
-    // `list_all_pages_in_space`, which returns a flat `PageHeading[]`
-    // (no `.items` wrapper, no pagination).
+    // #6527 — `handleDateMode` looks the day up by its journal date.
     stubBlockTree({
-      list_all_pages_in_space: () => [
-        makePageHeading({ id: 'EXISTING_DATE_PAGE', content: '2025-03-15' }),
-      ],
+      get_journal_page_by_date: () =>
+        makeBlockRow({ id: 'EXISTING_DATE_PAGE', block_type: 'page', content: '2025-03-15' }),
     })
 
     await act(async () => {
       mockCalendarOnSelect?.(new Date(2025, 2, 15))
     })
 
-    // Positive signal: handleDateMode awaits `list_all_pages_in_space`
+    // Positive signal: handleDateMode awaits `get_journal_page_by_date`
     // (page lookup) before deciding whether to create. Wait for it,
     // then assert the create_block path was NOT taken because the page
     // already exists (TEST-FE-1).
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_all_pages_in_space',
+        'get_journal_page_by_date',
         expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_TEST' } }),
       )
     })

@@ -27,6 +27,7 @@ import {
 } from '@/lib/inline-property-parse'
 import { normalizeTagName } from '@/lib/name-tokens'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
+import { RUST_TRIM } from '@/lib/tauri-mock/coerce'
 import { withoutEvents } from '@/lib/tauri-mock/events'
 import { blocksHandlers } from '@/lib/tauri-mock/handlers/blocks'
 import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
@@ -82,6 +83,7 @@ import {
   pushOp,
   seedDefaultPropertyDefs,
 } from '@/lib/tauri-mock/seed'
+import { untitledTitle } from '@/lib/untitled-page'
 
 /**
  * The metadata-rich row for every live page in `spaceId`. Its
@@ -1423,6 +1425,27 @@ export const pagesHandlers = {
     return items
   },
 
+  // `resolve_page_title_inner` (#6527): the page `create_page_in_space` opens
+  // for `title` (the smallest-id live page titled under `nameKey`) with its
+  // title as written, else the trimmed title, or for a blank one the first
+  // free `Untitled N`. Titles only: a name an alias holds answers no page.
+  resolve_page_title: (args) => {
+    const a = args as Record<string, unknown>
+    const spaceId = readActiveSpaceScope('resolve_page_title', a)
+    const title = (a['title'] as string).replace(RUST_TRIM, '')
+    if (title === '') {
+      const titles = [...blocks.values()]
+        .filter(
+          (b) => b['block_type'] === 'page' && !b['deleted_at'] && ownerSpaceOf(b) === spaceId,
+        )
+        .map((b) => (b['content'] as string | null) ?? null)
+      return { title: untitledTitle(titles), page_id: null }
+    }
+    const holder = pageNameHolder(title, spaceId)
+    if (holder?.by !== 'title') return { title, page_id: null }
+    return { title: blocks.get(holder.id)?.['content'] as string, page_id: holder.id }
+  },
+
   // Every page in the active space as a `PageHeading`.  No pagination,
   // no clamp — bounded by the space's intrinsic page count.  Backs
   // `exportGraphAsZip` and graph rendering.
@@ -2292,6 +2315,7 @@ export const pagesHandlers = {
   TypedHandlers,
   | 'get_journal_page_by_date'
   | 'list_journal_pages_in_range'
+  | 'resolve_page_title'
   | 'list_all_pages_in_space'
   | 'load_page_subtree'
   | 'list_pages_with_metadata'

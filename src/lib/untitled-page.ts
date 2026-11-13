@@ -1,6 +1,7 @@
 /**
- * The title a page created with no name gets (#4723): the New page dialog
- * (`usePageCreation`) uses it for a blank title.
+ * The title a page created with no name gets (#4723): the mock's
+ * `resolve_page_title`, twin of `SpacePageNames::free_untitled_title`
+ * (`src-tauri/src/commands/spaces.rs`), which answers the New page dialog.
  *
  * `create_page_in_space` RESOLVES an existing title to that page instead of
  * creating a second one, so passing the literal 'Untitled' twice would reopen

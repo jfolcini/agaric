@@ -13,7 +13,6 @@ import { commands } from '@/lib/bindings'
 import { createBlock } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
-import { nameKey } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 // #754 — the onboarding flag helpers live in `@/lib/onboarding` (outside
 // this lazy chunk) so the App shell can gate-mount the modal without
@@ -76,8 +75,8 @@ const QUICK_TIPS_BODY_KEYS = [
  * removing blocks the user may have already edited is a worse failure mode
  * than a partially-filled page that the next retry completes.
  *
- * Matching is by title within the active space under `nameKey`, the key
- * `create_page_in_space` resolves a title by (#6278; the sample titles are
+ * Matching is by title within the active space, as `create_page_in_space`
+ * resolves a title (`resolve_page_title`, #6278, #6527; the sample titles are
  * fixed i18n strings), and body blocks are matched by exact content so a
  * retry after a mid-sequence failure appends only the parts that never
  * landed. Blocks the user edited no longer match, so they are re-added
@@ -86,22 +85,19 @@ const QUICK_TIPS_BODY_KEYS = [
 async function ensureSamplePage(
   t: TFunction,
   spaceId: string,
-  existingPages: ReadonlyArray<{ id: string; content: string | null }>,
   titleKey: string,
   bodyKeys: ReadonlyArray<string>,
 ): Promise<string> {
   const title = t(titleKey)
-  const existing = existingPages.find(
-    (page) => page.content !== null && nameKey(page.content) === nameKey(title),
-  )
+  const existing = unwrap(await commands.resolvePageTitle(title, requireActiveScope(spaceId)))
 
   let pageId: string
-  if (existing) {
-    pageId = existing.id
+  if (existing.page_id !== null) {
+    pageId = existing.page_id
   } else {
     pageId = unwrap(await commands.createPageInSpace(null, title, spaceId))
-    // #4338 — only on the CREATE branch: the reuse branch found the page in
-    // `existingPages`, so any warm cache filled after that page was created
+    // #4338 — only on the CREATE branch: the reuse branch found an existing
+    // page, so any warm cache filled after that page was created
     // already has it. Usually there is no warm cache here at all (first
     // boot), but Settings → "Show the welcome tour again" re-runs this flow
     // mid-session with `BlockTree`s mounted behind the modal.
@@ -112,7 +108,7 @@ async function ensureSamplePage(
   // of the bodies from an interrupted earlier attempt.
   let existingBodies: ReadonlySet<string | null> = new Set<string | null>()
   let index = 0
-  if (existing) {
+  if (existing.page_id !== null) {
     const children = unwrap(
       await commands.listBlocks(
         {
@@ -161,28 +157,13 @@ async function createSamplePages(t: TFunction): Promise<string> {
     throw new Error('No active space; cannot create sample pages')
   }
 
-  // One unpaginated `{ id, content }` sweep of the space (see
-  // `listAllPagesInSpace`) answers "does this sample page already exist?"
-  // for BOTH pages — the paginated `listBlocks({ blockType: 'page' })`
-  // form could miss a match past the first page of results.
-  const existingPages = unwrap(
-    await commands.listAllPagesInSpace(requireActiveScope(currentSpaceId), null),
-  )
-
   const gettingStartedId = await ensureSamplePage(
     t,
     currentSpaceId,
-    existingPages,
     'welcome.sampleGettingStartedTitle',
     GETTING_STARTED_BODY_KEYS,
   )
-  await ensureSamplePage(
-    t,
-    currentSpaceId,
-    existingPages,
-    'welcome.sampleQuickTipsTitle',
-    QUICK_TIPS_BODY_KEYS,
-  )
+  await ensureSamplePage(t, currentSpaceId, 'welcome.sampleQuickTipsTitle', QUICK_TIPS_BODY_KEYS)
 
   return gettingStartedId
 }

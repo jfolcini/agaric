@@ -1058,6 +1058,8 @@ export const commands = {
 	 *  wrapper only needs to thread `materializer` through.
 	 */
 	createPageInSpace: (parentId: string | null, content: string, spaceId: SpaceId) => typedError<string, AppError>(__TAURI_INVOKE("create_page_in_space", { parentId, content, spaceId })),
+	/**  Tauri command wrapper around [`resolve_page_title_inner`]. */
+	resolvePageTitle: (title: string, scope: SpaceScope) => typedError<ResolvedPageTitle, AppError>(__TAURI_INVOKE("resolve_page_title", { title, scope })),
 	/**
 	 *  Tauri command wrapper around [`create_space_inner`].
 	 * 
@@ -4071,6 +4073,17 @@ export type ResolvedBlock = {
 	title: string | null,
 	block_type: string,
 	deleted: boolean,
+};
+
+/**  What [`resolve_page_title_inner`] answers. */
+export type ResolvedPageTitle = {
+	/**  The holder's title as written, else the name a new page takes. */
+	title: string,
+	/**
+	 *  The live page already titled so, which `create_page_in_space` opens
+	 *  instead of creating one.
+	 */
+	page_id: string | null,
 };
 
 export type RestoreResponse = {

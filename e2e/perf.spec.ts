@@ -44,15 +44,24 @@
  *
  * The other tests are NOT opt-in: rendered-row and IPC counts are
  * deterministic, unlike the timings, so they pin the big page's initial render
- * window (#5329) and what opening each list view (#5366) or a page (#5445)
- * costs in every Playwright run.
+ * window (#5329), what opening each list view (#5366) or a page (#5445) costs,
+ * and that creating a page or picking a date lists no pages (#6527), in every
+ * Playwright run.
  */
 
 import { writeFileSync } from 'node:fs'
 
 import type { Browser, CDPSession, Page } from '@playwright/test'
 
-import { expect, focusBlock, navigateToView, openPage, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlock,
+  navigateToView,
+  openPage,
+  test,
+  typeSlashCommand,
+  waitForBoot,
+} from './helpers'
 
 const CPU = Number(process.env['AGARIC_PERF_CPU'] ?? 1)
 const PAGES = Number(process.env['AGARIC_PERF_PAGES'] ?? 500)
@@ -1442,6 +1451,66 @@ test('opening a page and following a link chip pin their IPC (#5445) @editor @pa
   )
   expect.soft(open, open.join(', ')).toEqual(PAGE_OPEN_IPC)
   expect(link, link.join(', ')).toEqual(LINK_CLICK_IPC)
+})
+
+/**
+ * #6527 — creating a page and picking a date each ask about one title, which
+ * the backend answers by itself; the listing of every page in the space they
+ * used to send costs a page-heavy vault megabytes of JSON per gesture. The
+ * create is measured from Enter: opening the New page dialog still lists every
+ * page once, to fill its similar-pages matcher (a picker cache, out of scope).
+ * The date is one the seed has no page for, so the pick also creates the page.
+ */
+test('creating a page and picking a date list no pages (#6527) @editor @pages @journal', async ({
+  page,
+}) => {
+  const blocks = '[data-testid="block-static"]'
+  // The seed's only journal page is today's.
+  await page.clock.setFixedTime(new Date('2026-10-14T10:00:00'))
+  await page.addInitScript(installProbes)
+  await page.goto('/')
+  await page.locator(blocks).first().waitFor()
+  await expect
+    .poll(() => page.evaluate(() => window.__perf__?.ipc.includes('list_peer_refs')))
+    .toBe(true)
+  await navigateToView(page, 'Pages')
+  await page.locator('[id^="page-row-"]').first().waitFor()
+  await settle(page, '[id^="page-row-"]')
+  await page
+    .locator('.page-browser-header')
+    .getByRole('button', { name: 'New Page', exact: true })
+    .click()
+  const title = page.getByTestId('new-page-dialog').getByRole('textbox', { name: 'New page title' })
+  await title.fill('Perf new page')
+  await settle(page, '[data-testid="new-page-dialog"] *')
+
+  const measure = async (act: () => Promise<void>): Promise<string[]> => {
+    const mark = await page.evaluate(() => window.__perf__?.ipc.length ?? 0)
+    await act()
+    await settle(page, '[data-testid="block-link-chip"]')
+    return page.evaluate((from) => window.__perf__?.ipc.slice(from) ?? [], mark)
+  }
+
+  const create = await measure(async () => {
+    await title.press('Enter')
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Perf new page')
+    await expect(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+    ).toBeFocused()
+  })
+  const pick = await measure(async () => {
+    await typeSlashCommand(page, 'date')
+    await page.keyboard.press('Enter')
+    const popup = page.getByTestId('date-picker-popup')
+    await popup.locator('[role="gridcell"][data-day="2026-10-16"] button').click()
+    await expect(page.locator('[data-testid="block-link-chip"]')).toHaveCount(1)
+  })
+  // The lower bounds prove each gesture reached the backend at all.
+  expect(create).toContain('create_page_in_space')
+  expect(pick).toContain('create_page_in_space')
+  const listings = (calls: string[]) => calls.filter((c) => c === 'list_all_pages_in_space')
+  expect.soft(listings(create), create.join(', ')).toEqual([])
+  expect(listings(pick), pick.join(', ')).toEqual([])
 })
 
 // ===========================================================================

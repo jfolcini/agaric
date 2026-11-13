@@ -15,9 +15,9 @@ import { useSpaceStore } from '@/stores/space'
 // spaceId)`; the shim wraps a fulfilment in the `{ status: 'ok', data }`
 // envelope `unwrap` expects.
 const mockedCreate = vi.hoisted(() => vi.fn())
-// #4723 — the create path asks the space for its full page list first, so an
-// existing title never reaches `createPageInSpace`.
-const mockedListPages = vi.hoisted(() => vi.fn())
+// #4723, #6527 — the create path asks the backend what the name resolves to
+// first, so an existing title never reaches `createPageInSpace`.
+const mockedResolve = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -27,8 +27,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       createPageInSpace: (...args: unknown[]) =>
         mockedCreate(...args).then((data: unknown) => ({ status: 'ok', data })),
-      listAllPagesInSpace: (...args: unknown[]) =>
-        mockedListPages(...args).then((data: unknown) => ({ status: 'ok', data })),
+      resolvePageTitle: (...args: unknown[]) =>
+        mockedResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -40,7 +40,8 @@ import { subscribeToNameChanges } from '@/lib/name-change-bus'
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedListPages.mockResolvedValue([])
+  // No page holds the name: it comes back as the title a new page takes.
+  mockedResolve.mockImplementation((title: string) => Promise.resolve({ title, page_id: null }))
   useSpaceStore.setState({ currentSpaceId: 'SPACE_A', isReady: true })
 })
 
@@ -68,7 +69,7 @@ describe('usePageCreation', () => {
   // #4723 — an existing title resolves to that page on the backend, so the
   // create is skipped and the existing page is returned for the caller to open.
   it('returns the existing page and never calls create when the title already exists', async () => {
-    mockedListPages.mockResolvedValue([{ id: 'OLD', content: 'My Page' }])
+    mockedResolve.mockResolvedValue({ title: 'My Page', page_id: 'OLD' })
 
     const { created } = await create('My Page')
 
@@ -79,7 +80,7 @@ describe('usePageCreation', () => {
   // #6278 — another case or a trailing space is the same name: the page opens
   // under its own title, not the one typed.
   it('returns the page whose title is another spelling of the name, under its title', async () => {
-    mockedListPages.mockResolvedValue([{ id: 'OLD', content: 'My Page' }])
+    mockedResolve.mockResolvedValue({ title: 'My Page', page_id: 'OLD' })
 
     const { created } = await create('my page ')
 
@@ -88,7 +89,7 @@ describe('usePageCreation', () => {
   })
 
   it('names a blank create past an Untitled page of another spelling', async () => {
-    mockedListPages.mockResolvedValue([{ id: 'OLD', content: 'untitled' }])
+    mockedResolve.mockResolvedValue({ title: 'Untitled 2', page_id: null })
     mockedCreate.mockResolvedValue('NEW_ID_0000000000000000000')
 
     await create('')
@@ -155,7 +156,7 @@ describe('usePageCreation', () => {
   // #4782 — a blank name means "New page": the first free `Untitled N`, since
   // `create_page_in_space` RESOLVES a literal 'Untitled' to the one already there.
   it('names a blank create Untitled, suffixed past an existing Untitled page', async () => {
-    mockedListPages.mockResolvedValue([{ id: 'OLD', content: 'Untitled' }])
+    mockedResolve.mockResolvedValue({ title: 'Untitled 2', page_id: null })
     mockedCreate.mockResolvedValue('NEW_ID_0000000000000000003')
 
     const { created } = await create('   ')
@@ -169,10 +170,22 @@ describe('usePageCreation', () => {
 
     const { result, created } = await create('Anything')
 
-    expect(mockedListPages).not.toHaveBeenCalled()
+    expect(mockedResolve).not.toHaveBeenCalled()
     expect(mockedCreate).not.toHaveBeenCalled()
     expect(created).toBeNull()
     expect(result.current.createError).toBe(t('pageBrowser.spaceNotReady'))
+  })
+
+  it('reports the error and creates nothing when the title lookup rejects', async () => {
+    mockedResolve.mockRejectedValue(new Error('Disk gone'))
+
+    const { result, created } = await create('Doomed')
+
+    expect(mockedCreate).not.toHaveBeenCalled()
+    expect(created).toBeNull()
+    expect(result.current.createError).toBe(
+      t('pageBrowser.createFailed', { error: 'Error: Disk gone' }),
+    )
   })
 
   it('maps a conflict to the duplicate-name message', async () => {
