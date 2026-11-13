@@ -165,13 +165,28 @@ pub fn marker_device(root: &Path) -> std::io::Result<Option<String>> {
 }
 
 pub fn write_marker(root: &Path, device_id: &str) -> std::io::Result<()> {
-    write_atomic(&root.join(MARKER_NAME), format!("{device_id}\n").as_bytes()).map(drop)
+    write_atomic(&root.join(MARKER_NAME), format!("{device_id}\n").as_bytes())
 }
 
 /// `bytes` at `path`, all or nothing: written to a temporary file beside it,
-/// synced, then renamed over it. Returns the file's metadata as written,
-/// read from the temporary file before the rename.
-pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<std::fs::Metadata> {
+/// synced, then renamed over it.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_atomic_over(path, bytes, || true).map(drop)
+}
+
+/// [`write_atomic`] over a file another program may save: once the bytes are
+/// synced, `unchanged` says whether the file at `path` is still the one the
+/// caller read, and one that is not is left as it is. Returns the file's
+/// metadata as written, read from the temporary file before the rename;
+/// `None` when nothing was written.
+///
+/// A save landing between that answer and the rename is still written over:
+/// the check narrows the window to that gap, and does not close it.
+pub fn write_atomic_over(
+    path: &Path,
+    bytes: &[u8],
+    unchanged: impl FnOnce() -> bool,
+) -> std::io::Result<Option<std::fs::Metadata>> {
     let name = path
         .file_name()
         .ok_or_else(|| std::io::Error::other(format!("{} names no file", path.display())))?;
@@ -183,8 +198,13 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<std::fs::Metad
         })
         // By path once closed, as the mirror's scan stats the file.
         .and_then(|()| std::fs::metadata(&temp));
-    let renamed = written.and_then(|written| std::fs::rename(&temp, path).map(|()| written));
-    if renamed.is_err() {
+    let renamed = written.and_then(|written| {
+        if !unchanged() {
+            return Ok(None);
+        }
+        std::fs::rename(&temp, path).map(|()| Some(written))
+    });
+    if !matches!(renamed, Ok(Some(_))) {
         // The temporary file is ours; what failed is reported, not this.
         let _ = std::fs::remove_file(&temp);
     }

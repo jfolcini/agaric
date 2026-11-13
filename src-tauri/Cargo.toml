@@ -342,6 +342,10 @@ criterion = { version = "0.8.2", features = ["async_tokio"] }
 # The `opentelemetry_sdk` `testing` dev-dep (InMemory{Span,Log,Metric}Exporter)
 # moved to `agaric-observability` with the pipeline tests it backed (#2878); no
 # app-crate test outside that module used it.
+# #6567 — unpacks the committed release vault (`tests/fixtures/release-vault/`):
+# a migrated SQLite file is over the 500 KB added-file limit unpacked. Already in
+# the graph through tauri-codegen's `png`.
+flate2 = "1.1.9"
 insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"

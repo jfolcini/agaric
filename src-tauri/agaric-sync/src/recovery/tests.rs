@@ -3760,8 +3760,9 @@ async fn crash_after_a_snapshot_pass_replays_only_the_tail_5418() {
     for op in snapshotted {
         apply_like_a_command(&pool, &session, device_id, op).await;
     }
-    let saved =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    let saved = agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session)
+        .await
+        .saved;
     assert_eq!(saved, 1, "the pass persists the one space");
     let tail_len = tail.len();
     for op in tail {
@@ -3940,8 +3941,9 @@ async fn crash_tail_ops_on_blocks_deleted_later_reach_the_engine_5630() {
     for op in snapshotted {
         apply_like_a_command(&pool, &session, device_id, op).await;
     }
-    let saved =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    let saved = agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session)
+        .await
+        .saved;
     assert_eq!(saved, 1, "the pass persists the one space");
     for op in edits_before_x_is_deleted {
         apply_like_a_command(&pool, &session, device_id, op).await;
@@ -4104,8 +4106,9 @@ async fn crash_tail_move_in_move_out_then_delete_the_old_parent_5630() {
     ] {
         apply_like_a_command(&pool, &session, device_id, op).await;
     }
-    let saved =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    let saved = agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session)
+        .await
+        .saved;
     assert_eq!(saved, 1, "the pass persists the one space");
     for op in [
         move_to(W, P, 0),
@@ -4374,8 +4377,9 @@ async fn crash_tail_delete_then_purge_reaches_the_engine_5647() {
     ] {
         apply_like_a_command(&pool, &session, device_id, op).await;
     }
-    let saved =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    let saved = agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session)
+        .await
+        .saved;
     assert_eq!(saved, 1, "the pass persists the one space");
     for op in [
         OpPayload::DeleteBlock(DeleteBlockPayload {
@@ -4446,8 +4450,9 @@ async fn crash_tail_restore(delete_again: bool) {
     // The op the pass's watermark withholds, so boot replays it again; were
     // it a delete, its replay would put the restore's cohort back in SQL.
     apply_like_a_command(&pool, &session, device_id, create_under(Z, PAGE_ID, 1)).await;
-    let saved =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    let saved = agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session)
+        .await
+        .saved;
     assert_eq!(saved, 1, "the pass persists the one space");
     let restore = OpPayload::RestoreBlock(RestoreBlockPayload {
         block_id: BlockId::test_id(X),
@@ -4532,8 +4537,9 @@ async fn crash_tail_space_move(delete_after: bool, same_ms: bool) {
     let trashed_at = apply_like_a_command(&pool, &session, device_id, trash_d)
         .await
         .created_at;
-    let saved =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    let saved = agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session)
+        .await
+        .saved;
     assert_eq!(saved, 2, "the pass persists both spaces");
     let move_at = if same_ms {
         trashed_at
@@ -4663,8 +4669,9 @@ async fn crash_tail_attachment_ops_reach_the_engine_5608() {
     for op in [create_under(X, PAGE_ID, 0), add("T5608A2"), add("T5608A1")] {
         apply_like_a_command(&pool, &session, device_id, op).await;
     }
-    let saved =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    let saved = agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session)
+        .await
+        .saved;
     assert_eq!(saved, 1, "the pass persists the one space");
     for op in [
         OpPayload::RenameAttachment(RenameAttachmentPayload {
@@ -4749,8 +4756,9 @@ async fn retried_replay_op_keeps_replay_routing_5647() {
     let session = Materializer::new(pool.clone());
     seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
     apply_like_a_command(&pool, &session, device_id, create_under(X, PAGE_ID, 0)).await;
-    let saved =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    let saved = agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session)
+        .await
+        .saved;
     assert_eq!(saved, 1, "the pass persists the one space");
     let edit = OpPayload::EditBlock(EditBlockPayload {
         block_id: BlockId::test_id(X),

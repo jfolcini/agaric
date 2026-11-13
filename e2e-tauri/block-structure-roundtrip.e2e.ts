@@ -1,18 +1,19 @@
 // ---------------------------------------------------------------------------
 // Real-backend block structure keys (#5365).
 //
-// Each of these is several IPCs whose stored result the mock-lane specs
-// (`block-keyboard-fundamentals`, `block-keyboard-move`) read off the calls
-// sent, not off the outline stored. Here every step is checked on the page
-// re-opened from the backend:
-//   - Enter mid-text splits the block (`createBelow` with the after-text, then
-//     an `edit_block` shortening the source, with a compensating delete), and
-//     Backspace at the start of the new block merges it back.
+// The mock-lane specs (`block-keyboard-fundamentals`, `block-keyboard-move`)
+// read these off the calls sent, not off the outline stored. Here every step
+// is checked on the page re-opened from the backend:
+//   - Enter mid-text splits the block (`split_block`: a create and an edit in
+//     one transaction), and Backspace at the start of the new block merges it
+//     back (`merge_blocks`: an edit, a move per child and a delete in one).
+//   - One Ctrl+Z takes back a split, and one a merge with the child it moved
+//     (#6531): each command's ops are one undo entry.
 //   - Ctrl+Shift+ArrowUp, Tab, Shift+Tab and Ctrl+Shift+ArrowDown are
 //     `move_block` calls; the order and nesting they store must be the ones
 //     shown.
 //
-// Two tests in one vault, each on its own titled page.
+// Three tests in one vault, each on its own titled page.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
@@ -150,6 +151,13 @@ async function placeCaret(offset: number): Promise<void> {
   )
 }
 
+/** Leave the editor, where Ctrl+Z is its own, and press the page's undo. */
+async function undoOutsideTheEditor(): Promise<void> {
+  await browser.keys(['Escape'])
+  await $('[data-testid="block-editor"]').waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+  await browser.keys(['Control', 'z'])
+}
+
 describe('Agaric real-backend block structure keys (#5365) @editor', () => {
   before(waitForAppReady)
 
@@ -191,6 +199,57 @@ describe('Agaric real-backend block structure keys (#5365) @editor', () => {
     expect(merged?.id).toBe(sourceId)
     const text = merged?.text ?? ''
     expect(text.indexOf(left)).toBeLessThan(text.indexOf(right))
+  })
+
+  it('one Ctrl+Z takes back a split, and one a merge with the child it moved (#6531)', async () => {
+    const page = runScopedMarker('wdio-undo-page')
+    const left = runScopedMarker('wdio-undo-left')
+    const right = runScopedMarker('wdio-undo-right')
+    const second = runScopedMarker('wdio-undo-second')
+    const child = runScopedMarker('wdio-undo-child')
+    const markers = [left, right, second, child]
+    const whole = `${left}+${right}@1`
+    await openNewPageTitled(page)
+    await typeMarkerVerified(`${left} ${right}`)
+    // Re-opening saves the typing and starts the page's undo history afresh,
+    // so the split is the one entry Ctrl+Z can take.
+    await reopen(page)
+    const wholeId = (await waitForOutline(markers, [whole], 'the typed block was not stored'))[0]
+      ?.id
+    if (wholeId === null || wholeId === undefined) throw new Error('the typed block has no id')
+
+    await editBlock(wholeId)
+    await placeCaret(left.length + 1)
+    await browser.keys(['Enter'])
+    await waitForOutline(markers, [`${left}@1`, `${right}@1`], 'Enter did not split the block')
+    await undoOutsideTheEditor()
+    await waitForOutline(markers, [whole], 'one Ctrl+Z did not take the split back')
+    await reopen(page)
+    await waitForOutline(markers, [whole], 'the re-opened page does not hold the block whole')
+
+    await editBlock(wholeId)
+    const secondId = await enterBlankSibling()
+    await typeMarkerVerified(second)
+    await enterBlankSibling()
+    await typeMarkerVerified(child)
+    await browser.keys(['Tab'])
+    const nested = [whole, `${second}@1`, `${child}@2`]
+    await waitForOutline(markers, nested, 'Tab did not nest the child')
+    await reopen(page)
+    await waitForOutline(markers, nested, 'the re-opened page does not hold the nested child')
+
+    await editBlock(secondId)
+    await placeCaret(0)
+    await browser.keys(['Backspace'])
+    await waitForOutline(
+      markers,
+      [`${left}+${right}+${second}@1`, `${child}@2`],
+      'Backspace did not merge the block and move its child',
+    )
+    await undoOutsideTheEditor()
+    await waitForOutline(markers, nested, 'one Ctrl+Z did not take the merge back')
+    await reopen(page)
+    await waitForOutline(markers, nested, 'the re-opened page does not hold the blocks unmerged')
   })
 
   it('move up, Tab, Shift+Tab and move down store the order and nesting shown', async () => {

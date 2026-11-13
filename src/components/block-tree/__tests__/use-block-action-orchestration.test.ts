@@ -106,8 +106,8 @@ function makeDefaultParams(
         makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
       ],
     ),
-    // #1342 — full flat tree (default mirrors collapsedVisible; merge tests
-    // that exercise reparenting override this with a tree that has children).
+    // #1342 — full flat tree (default mirrors collapsedVisible; tests of a
+    // block with children override this with a tree that has them).
     blocks: [
       makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
       makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
@@ -140,7 +140,8 @@ function makeDefaultParams(
     pageStore,
     remove: vi.fn(async () => {}),
     moveBlocks: vi.fn(async () => {}),
-    edit: vi.fn(async () => true),
+    splitOff: vi.fn<OrchestrationParams['splitOff']>(async () => true),
+    mergeInto: vi.fn<OrchestrationParams['mergeInto']>(async () => true),
     indent: vi.fn(async () => true),
     dedent: vi.fn(async () => true),
     moveUp: vi.fn(async () => true),
@@ -1016,8 +1017,9 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
       await result.current.handleMergeWithPrev()
     })
 
-    expect(params.edit).toHaveBeenCalledWith('A', 'AlphaBeta')
-    expect(params.remove).toHaveBeenCalledWith('B')
+    expect(params.mergeInto).toHaveBeenCalledWith('B', 'A', 'AlphaBeta', { baseText: 'Alpha' })
+    // The delete is `merge_blocks`' own, not a second write from the hook.
+    expect(params.remove).not.toHaveBeenCalled()
     expect(params.setFocused).toHaveBeenCalledWith('A')
   })
 
@@ -1039,8 +1041,8 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
     })
 
     // No leading "- " / list structure carried into the merged content.
-    expect(params.edit).toHaveBeenCalledWith('A', 'foobar')
-    const merged = vi.mocked(params.edit).mock.calls[0]?.[1] as string
+    expect(params.mergeInto).toHaveBeenCalledWith('B', 'A', 'foobar', { baseText: 'foo' })
+    const merged = vi.mocked(params.mergeInto).mock.calls[0]?.[2] as string
     expect(merged).not.toMatch(/^- /)
     expect(merged).not.toContain('- bar')
   })
@@ -1058,7 +1060,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
       await result.current.handleMergeWithPrev()
     })
 
-    expect(params.edit).toHaveBeenCalledWith('A', 'fooh')
+    expect(params.mergeInto).toHaveBeenCalledWith('B', 'A', 'fooh', { baseText: 'foo' })
   })
 
   it('leaves plain (marker-free) content as a simple concat', async () => {
@@ -1074,7 +1076,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
       await result.current.handleMergeWithPrev()
     })
 
-    expect(params.edit).toHaveBeenCalledWith('A', 'foobar')
+    expect(params.mergeInto).toHaveBeenCalledWith('B', 'A', 'foobar', { baseText: 'foo' })
   })
 
   it('does nothing when at first block', async () => {
@@ -1085,7 +1087,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
       await result.current.handleMergeWithPrev()
     })
 
-    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.mergeInto).not.toHaveBeenCalled()
   })
 
   it('does nothing when focusedBlockId is null', async () => {
@@ -1096,15 +1098,13 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
       await result.current.handleMergeWithPrev()
     })
 
-    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.mergeInto).not.toHaveBeenCalled()
   })
 
   it('re-mounts editor on merge failure', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    params.edit = vi.fn(async () => {
-      throw new Error('fail')
-    })
+    params.mergeInto = vi.fn<OrchestrationParams['mergeInto']>(async () => false)
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
@@ -1112,34 +1112,15 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
     })
 
     expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'Beta')
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
-  })
-
-  it('reverts edit when remove fails after successful edit', async () => {
-    const params = makeDefaultParams()
-    params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    params.edit = vi.fn(async () => true)
-    params.remove = vi.fn(async () => {
-      throw new Error('remove failed')
-    })
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    await act(async () => {
-      await result.current.handleMergeWithPrev()
-    })
-
-    expect(params.edit).toHaveBeenCalledTimes(2)
-    expect(params.edit).toHaveBeenNthCalledWith(1, 'A', 'AlphaBeta')
-    expect(params.edit).toHaveBeenNthCalledWith(2, 'A', 'Alpha')
-    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'Beta')
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
+    // The store toasts a failed `merge_blocks`; a second toast here would double it.
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
   })
 
   it('a merge that fails after the user moved on leaves the focus where it is', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
     let answer: (ok: boolean) => void = () => undefined
-    params.edit = vi.fn(
+    params.mergeInto = vi.fn<OrchestrationParams['mergeInto']>(
       () =>
         new Promise<boolean>((resolve) => {
           answer = resolve
@@ -1157,38 +1138,21 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
       await merge
     })
 
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
     expect(params.rovingEditor.mount).not.toHaveBeenCalledWith('B', 'Beta')
     expect(useBlockStore.getState().focusedBlockId).toBe('C')
   })
 
-  it('does not revert when edit itself fails', async () => {
-    const params = makeDefaultParams()
-    params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    params.edit = vi.fn(async () => {
-      throw new Error('edit failed')
-    })
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    await act(async () => {
-      await result.current.handleMergeWithPrev()
-    })
-
-    expect(params.edit).toHaveBeenCalledTimes(1)
-    expect(params.remove).not.toHaveBeenCalled()
-  })
-
   // ------------------------------------------------------------------------
-  // #1342 — Backspace-merge of a block that HAS CHILDREN must reparent the
-  // children onto the merge target before the source is removed, instead of
-  // letting the backend's delete cascade soft-delete the whole subtree.
+  // #1342 — Backspace-merge of a block that HAS CHILDREN keeps the children:
+  // `merge_blocks` moves them onto the merge target in the same transaction
+  // as the delete (#6531), so the hook sends the one merge and moves nothing.
   // ------------------------------------------------------------------------
-  describe('reparents children on merge (#1342)', () => {
-    it('reparents an expanded parent’s children onto the merge target before remove', async () => {
+  describe('merges a block with children (#1342)', () => {
+    it('merges an expanded parent with one mergeInto and moves no children itself', async () => {
       const params = makeDefaultParams()
-      // Source B (focused, expanded) has two children B1, B2; merge target A
-      // (the previous VISIBLE block) already has one child A1, which is the
-      // last visible row before B — so the children append AFTER it (slot 1).
+      // Source B (focused, expanded) has two children B1, B2; the previous
+      // VISIBLE block is A's child A1, so the text merges there.
       params.blocks = [
         makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
         makeBlock({ id: 'A1', depth: 1, content: 'A-one', parent_id: 'A' }),
@@ -1201,124 +1165,21 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
       params.focusedBlockId = 'B'
       params.rovingEditor.unmount = vi.fn(() => 'Beta')
 
-      const callOrder: string[] = []
-      params.moveBlocks = vi.fn(async () => {
-        callOrder.push('moveBlocks')
-      })
-      params.remove = vi.fn(async () => {
-        callOrder.push('remove')
-      })
-
       const { result } = renderHook(() => useBlockActionOrchestration(params))
       await act(async () => {
         await result.current.handleMergeWithPrev()
       })
 
-      // The previous VISIBLE block before B is A1, so the text merges there
-      // and B's children reparent onto A1 (which has no children yet → slot 0).
-      expect(params.edit).toHaveBeenCalledWith('A1', 'A-oneBeta')
-      expect(params.moveBlocks).toHaveBeenCalledWith(['B1', 'B2'], 'A1', 0)
-      // Reparent happens BEFORE the source block is removed (so the cascade
-      // cannot soft-delete the now-moved subtree).
-      expect(callOrder).toEqual(['moveBlocks', 'remove'])
-      expect(params.remove).toHaveBeenCalledWith('B')
+      expect(params.mergeInto).toHaveBeenCalledTimes(1)
+      expect(params.mergeInto).toHaveBeenCalledWith('B', 'A1', 'A-oneBeta', {
+        baseText: 'A-one',
+      })
+      expect(params.moveBlocks).not.toHaveBeenCalled()
+      expect(params.remove).not.toHaveBeenCalled()
       expect(params.setFocused).toHaveBeenCalledWith('A1')
     })
 
-    it('appends after the merge target’s existing children (slot = child count)', async () => {
-      const params = makeDefaultParams()
-      // Merge target A already has one direct child A1 (collapsed away), so B's
-      // children land at slot 1 — after A1 — preserving the survivor's tail.
-      params.blocks = [
-        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
-        makeBlock({ id: 'A1', depth: 1, content: 'A-one', parent_id: 'A' }),
-        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
-        makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
-      ]
-      params.collapsedVisible = mountScoped([
-        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
-        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
-      ])
-      params.focusedBlockId = 'B'
-      params.rovingEditor.unmount = vi.fn(() => 'Beta')
-
-      const { result } = renderHook(() => useBlockActionOrchestration(params))
-      await act(async () => {
-        await result.current.handleMergeWithPrev()
-      })
-
-      expect(params.edit).toHaveBeenCalledWith('A', 'AlphaBeta')
-      expect(params.moveBlocks).toHaveBeenCalledWith(['B1'], 'A', 1)
-    })
-
-    it('reparents the children of a COLLAPSED parent (hidden from the visible projection)', async () => {
-      const params = makeDefaultParams()
-      // B is collapsed: its children are absent from collapsedVisible but
-      // present in the full flat tree. The reparent must still find them.
-      params.blocks = [
-        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
-        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
-        makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
-        makeBlock({ id: 'B2', depth: 1, content: 'B-two', parent_id: 'B' }),
-      ]
-      params.collapsedVisible = mountScoped([
-        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
-        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
-      ])
-      params.rovingEditor.unmount = vi.fn(() => 'Beta')
-
-      const { result } = renderHook(() => useBlockActionOrchestration(params))
-      await act(async () => {
-        await result.current.handleMergeWithPrev()
-      })
-
-      // A has no children, so the run lands at slot 0.
-      expect(params.moveBlocks).toHaveBeenCalledWith(['B1', 'B2'], 'A', 0)
-      expect(params.remove).toHaveBeenCalledWith('B')
-    })
-
-    it('does NOT reparent when the merged-away block is childless', async () => {
-      const params = makeDefaultParams()
-      params.rovingEditor.unmount = vi.fn(() => 'Beta')
-      const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-      await act(async () => {
-        await result.current.handleMergeWithPrev()
-      })
-
-      expect(params.moveBlocks).not.toHaveBeenCalled()
-      expect(params.remove).toHaveBeenCalledWith('B')
-    })
-
-    it('aborts the merge (reverts edit, does not remove) when the reparent fails', async () => {
-      const params = makeDefaultParams()
-      params.blocks = [
-        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
-        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
-        makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
-      ]
-      params.collapsedVisible = mountScoped([
-        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
-        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
-      ])
-      params.rovingEditor.unmount = vi.fn(() => 'Beta')
-      params.moveBlocks = vi.fn(async () => {
-        throw new Error('reparent failed')
-      })
-
-      const { result } = renderHook(() => useBlockActionOrchestration(params))
-      await act(async () => {
-        await result.current.handleMergeWithPrev()
-      })
-
-      // Edit committed then reverted; the source is NOT removed (children safe).
-      expect(params.edit).toHaveBeenNthCalledWith(1, 'A', 'AlphaBeta')
-      expect(params.edit).toHaveBeenNthCalledWith(2, 'A', 'Alpha')
-      expect(params.remove).not.toHaveBeenCalled()
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
-    })
-
-    it('handleMergeById reparents the merged-away block’s children too', async () => {
+    it('handleMergeById merges a block with children the same way', async () => {
       const params = makeDefaultParams({ focusedBlockId: null })
       params.blocks = [
         makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
@@ -1336,15 +1197,15 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
         await result.current.handleMergeById('B')
       })
 
-      expect(params.edit).toHaveBeenCalledWith('A', 'AlphaBeta')
-      expect(params.moveBlocks).toHaveBeenCalledWith(['B1', 'B2'], 'A', 0)
-      expect(params.remove).toHaveBeenCalledWith('B')
+      expect(params.mergeInto).toHaveBeenCalledWith('B', 'A', 'AlphaBeta', { baseText: 'Alpha' })
+      expect(params.moveBlocks).not.toHaveBeenCalled()
+      expect(params.remove).not.toHaveBeenCalled()
     })
   })
 
-  // #6559 — the caret goes to the join before the merge's writes land, so keys
-  // typed while they are in flight go there instead of into an unmounted editor.
-  it('puts the caret at the join on the merge target before the edit answers', async () => {
+  // #6559 — the caret goes to the join before the merge lands, so keys typed
+  // while it is in flight go there instead of into an unmounted editor.
+  it('puts the caret at the join on the merge target before the merge answers', async () => {
     const setTextSelection = vi.fn()
     const focus = vi.fn()
     const liveEditor = {
@@ -1358,7 +1219,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
     ;(params.rovingEditor as { editor: unknown }).editor = liveEditor
     let answer: (ok: boolean) => void = () => undefined
-    params.edit = vi.fn(
+    params.mergeInto = vi.fn<OrchestrationParams['mergeInto']>(
       () =>
         new Promise<boolean>((resolve) => {
           answer = resolve
@@ -1375,45 +1236,43 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
     // `pmEndOfFirstBlock` is mocked to 1: the end of 'Alpha's paragraph.
     expect(setTextSelection).toHaveBeenCalledWith(1)
     expect(focus).toHaveBeenCalledTimes(1)
-    expect(params.remove).not.toHaveBeenCalled()
+    expect(params.mergeInto).toHaveBeenCalledWith('B', 'A', 'AlphaBeta', { baseText: 'Alpha' })
 
     await act(async () => {
       answer(true)
       await merge
     })
-    expect(params.remove).toHaveBeenCalledWith('B')
+    expect(params.remove).not.toHaveBeenCalled()
     expect(params.rovingEditor.mount).toHaveBeenCalledTimes(1)
   })
 })
 
 // ---------------------------------------------------------------------------
-// Store failure CONTRACT: pageStore.edit() RESOLVES `false` on failure (it
-// rolls back its optimistic write and toasts internally) — it NEVER rejects.
-// The throwing-edit mocks elsewhere in this file pin the defensive catch, but
-// the boolean is the only failure signal production ever emits; ignoring it
-// let a failed merge-edit fall through to remove() and permanently delete the
-// source block whose merged content was never saved.
+// Store failure CONTRACT: pageStore.mergeInto() RESOLVES `false` on failure
+// (it puts both blocks back and toasts internally) — it NEVER rejects. The
+// boolean is the only failure signal production emits, so the hook must give
+// the merged-away block back on `false`.
 // ---------------------------------------------------------------------------
-describe('merge honors edit() resolving false (store contract)', () => {
-  it('handleMergeWithPrev does not remove the source block when edit resolves false', async () => {
+describe('merge honors mergeInto() resolving false (store contract)', () => {
+  it('handleMergeWithPrev gives the source block back when mergeInto resolves false', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    params.edit = vi.fn(async () => false)
+    params.mergeInto = vi.fn<OrchestrationParams['mergeInto']>(async () => false)
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
     })
 
-    expect(params.edit).toHaveBeenCalledTimes(1)
+    expect(params.mergeInto).toHaveBeenCalledTimes(1)
     expect(params.remove).not.toHaveBeenCalled()
     // Failure cleanup gives the source block back with its captured content.
     expect(params.rovingEditor.mount).toHaveBeenLastCalledWith('B', 'Beta')
     expect(params.setFocused).toHaveBeenLastCalledWith('B')
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
   })
 
-  it('handleMergeWithPrev skips the reparent step when edit resolves false', async () => {
+  it('handleMergeWithPrev moves and deletes nothing when mergeInto resolves false', async () => {
     const params = makeDefaultParams()
     params.blocks = [
       makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
@@ -1425,7 +1284,7 @@ describe('merge honors edit() resolving false (store contract)', () => {
       makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
     ])
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    params.edit = vi.fn(async () => false)
+    params.mergeInto = vi.fn<OrchestrationParams['mergeInto']>(async () => false)
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
@@ -1436,19 +1295,19 @@ describe('merge honors edit() resolving false (store contract)', () => {
     expect(params.remove).not.toHaveBeenCalled()
   })
 
-  it('handleMergeById does not remove the source block when edit resolves false', async () => {
+  it('handleMergeById does not focus the target when mergeInto resolves false', async () => {
     const params = makeDefaultParams()
-    params.edit = vi.fn(async () => false)
+    params.mergeInto = vi.fn<OrchestrationParams['mergeInto']>(async () => false)
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeById('C')
     })
 
-    expect(params.edit).toHaveBeenCalledTimes(1)
+    expect(params.mergeInto).toHaveBeenCalledTimes(1)
     expect(params.remove).not.toHaveBeenCalled()
     expect(params.setFocused).not.toHaveBeenCalled()
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
   })
 })
 
@@ -1460,26 +1319,26 @@ describe('merge honors edit() resolving false (store contract)', () => {
 // The merge needs its own in-progress guard, honored by delete/enter too.
 // ---------------------------------------------------------------------------
 describe('merge in-progress guard (autorepeat Backspace)', () => {
-  function deferredEdit() {
+  function deferredMerge() {
     let resolve!: (v: boolean) => void
     const promise = new Promise<boolean>((res) => {
       resolve = res
     })
-    return { edit: vi.fn(() => promise), resolve }
+    return { mergeInto: vi.fn<OrchestrationParams['mergeInto']>(() => promise), resolve }
   }
 
-  it('handleDeleteBlock is a no-op while a merge is in flight; remove runs exactly once', async () => {
+  it('handleDeleteBlock is a no-op while a merge is in flight; nothing else deletes', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    const deferred = deferredEdit()
-    params.edit = deferred.edit
+    const deferred = deferredMerge()
+    params.mergeInto = deferred.mergeInto
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     let mergePromise!: Promise<void>
     act(() => {
       mergePromise = result.current.handleMergeWithPrev()
     })
-    // Autorepeat Backspace lands while the merge's edit IPC is pending: the
+    // Autorepeat Backspace lands while the merge's IPC is pending: the
     // unmounted (now-empty) editor routes it to the Backspace-on-empty rule.
     act(() => {
       result.current.handleDeleteBlock({ cursorPlacement: 'end' })
@@ -1491,16 +1350,17 @@ describe('merge in-progress guard (autorepeat Backspace)', () => {
       await mergePromise
     })
 
-    // Only the merge's own remove ran — once, for the merged-away block.
-    expect(params.remove).toHaveBeenCalledTimes(1)
-    expect(params.remove).toHaveBeenCalledWith('B')
+    // Only the merge ran — once, for the merged-away block.
+    expect(params.remove).not.toHaveBeenCalled()
+    expect(params.mergeInto).toHaveBeenCalledTimes(1)
+    expect(params.mergeInto).toHaveBeenCalledWith('B', 'A', 'AlphaBeta', { baseText: 'Alpha' })
   })
 
   it('a second handleMergeWithPrev while one is in flight is dropped', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    const deferred = deferredEdit()
-    params.edit = deferred.edit
+    const deferred = deferredMerge()
+    params.mergeInto = deferred.mergeInto
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     let first!: Promise<void>
@@ -1509,22 +1369,22 @@ describe('merge in-progress guard (autorepeat Backspace)', () => {
       first = result.current.handleMergeWithPrev()
       second = result.current.handleMergeWithPrev()
     })
-    // The merge's edit runs synchronously up to its first await, so a
-    // non-guarded second call would have already invoked edit again here.
-    expect(params.edit).toHaveBeenCalledTimes(1)
+    // The merge runs synchronously up to its first await, so a non-guarded
+    // second call would have already invoked mergeInto again here.
+    expect(params.mergeInto).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       deferred.resolve(true)
       await Promise.all([first, second])
     })
-    expect(params.remove).toHaveBeenCalledTimes(1)
+    expect(params.mergeInto).toHaveBeenCalledTimes(1)
   })
 
   it('handleEnterSave is a no-op while a merge is in flight', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    const deferred = deferredEdit()
-    params.edit = deferred.edit
+    const deferred = deferredMerge()
+    params.mergeInto = deferred.mergeInto
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     let mergePromise!: Promise<void>
@@ -1540,14 +1400,16 @@ describe('merge in-progress guard (autorepeat Backspace)', () => {
       deferred.resolve(true)
       await mergePromise
     })
-    expect(params.remove).toHaveBeenCalledTimes(1)
+    expect(params.mergeInto).toHaveBeenCalledTimes(1)
+    expect(params.createBelow).not.toHaveBeenCalled()
+    expect(params.splitOff).not.toHaveBeenCalled()
   })
 
   it('handleMergeById is guarded against an in-flight merge too', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    const deferred = deferredEdit()
-    params.edit = deferred.edit
+    const deferred = deferredMerge()
+    params.mergeInto = deferred.mergeInto
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     let first!: Promise<void>
@@ -1556,7 +1418,7 @@ describe('merge in-progress guard (autorepeat Backspace)', () => {
       first = result.current.handleMergeWithPrev()
       second = result.current.handleMergeById('C')
     })
-    expect(params.edit).toHaveBeenCalledTimes(1)
+    expect(params.mergeInto).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       deferred.resolve(true)
@@ -1622,7 +1484,7 @@ describe('merge into a verbatim previous block is a no-op join', () => {
     })
 
     // No textual join, no delete — the fence would swallow the text.
-    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.mergeInto).not.toHaveBeenCalled()
     expect(params.remove).not.toHaveBeenCalled()
     // Current typing is persisted, then focus moves to the fence block.
     expect(params.handleFlush).toHaveBeenCalled()
@@ -1645,7 +1507,7 @@ describe('merge into a verbatim previous block is a no-op join', () => {
       await result.current.handleMergeWithPrev()
     })
 
-    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.mergeInto).not.toHaveBeenCalled()
     expect(params.remove).not.toHaveBeenCalled()
   })
 
@@ -1662,7 +1524,7 @@ describe('merge into a verbatim previous block is a no-op join', () => {
       await result.current.handleMergeById('B')
     })
 
-    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.mergeInto).not.toHaveBeenCalled()
     expect(params.remove).not.toHaveBeenCalled()
     expect(params.rovingEditor.unmount).not.toHaveBeenCalled()
   })
@@ -1676,8 +1538,7 @@ describe('merge into a verbatim previous block is a no-op join', () => {
       await result.current.handleMergeWithPrev()
     })
 
-    expect(params.edit).toHaveBeenCalledWith('A', 'AlphaBeta')
-    expect(params.remove).toHaveBeenCalledWith('B')
+    expect(params.mergeInto).toHaveBeenCalledWith('B', 'A', 'AlphaBeta', { baseText: 'Alpha' })
   })
 })
 
@@ -1723,7 +1584,9 @@ describe('useBlockActionOrchestration by-id handlers read focus at call time', (
     })
 
     expect(params.rovingEditor.unmount).toHaveBeenCalled() // no-args by contract
-    expect(params.edit).toHaveBeenCalledWith('B', 'BetaEdited Charlie')
+    expect(params.mergeInto).toHaveBeenCalledWith('C', 'B', 'BetaEdited Charlie', {
+      baseText: 'Beta',
+    })
   })
 })
 
@@ -1736,8 +1599,8 @@ describe('useBlockActionOrchestration handleMergeById', () => {
       await result.current.handleMergeById('C')
     })
 
-    expect(params.edit).toHaveBeenCalledWith('B', 'BetaCharlie')
-    expect(params.remove).toHaveBeenCalledWith('C')
+    expect(params.mergeInto).toHaveBeenCalledWith('C', 'B', 'BetaCharlie', { baseText: 'Beta' })
+    expect(params.remove).not.toHaveBeenCalled()
     expect(params.setFocused).toHaveBeenCalledWith('B')
   })
 
@@ -1749,7 +1612,7 @@ describe('useBlockActionOrchestration handleMergeById', () => {
       await result.current.handleMergeById('A')
     })
 
-    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.mergeInto).not.toHaveBeenCalled()
   })
 
   it('unmounts editor when merging focused block', async () => {
@@ -1762,40 +1625,25 @@ describe('useBlockActionOrchestration handleMergeById', () => {
     })
 
     expect(params.rovingEditor.unmount).toHaveBeenCalled() // no-args by contract
-    expect(params.edit).toHaveBeenCalledWith('B', 'BetaEdited Charlie')
+    expect(params.mergeInto).toHaveBeenCalledWith('C', 'B', 'BetaEdited Charlie', {
+      baseText: 'Beta',
+    })
   })
 
-  it('reverts edit when remove fails after successful edit', async () => {
-    const params = makeDefaultParams()
-    params.edit = vi.fn(async () => true)
-    params.remove = vi.fn(async () => {
-      throw new Error('remove failed')
-    })
+  it('a failed mergeInto gives the focused block its editor back and deletes nothing', async () => {
+    const params = makeDefaultParams({ focusedBlockId: 'C' })
+    params.rovingEditor.unmount = vi.fn(() => 'Edited Charlie')
+    params.mergeInto = vi.fn<OrchestrationParams['mergeInto']>(async () => false)
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeById('C')
     })
 
-    expect(params.edit).toHaveBeenCalledTimes(2)
-    expect(params.edit).toHaveBeenNthCalledWith(1, 'B', 'BetaCharlie')
-    expect(params.edit).toHaveBeenNthCalledWith(2, 'B', 'Beta')
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
-  })
-
-  it('does not revert when edit itself fails', async () => {
-    const params = makeDefaultParams()
-    params.edit = vi.fn(async () => {
-      throw new Error('edit failed')
-    })
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    await act(async () => {
-      await result.current.handleMergeById('C')
-    })
-
-    expect(params.edit).toHaveBeenCalledTimes(1)
+    expect(params.mergeInto).toHaveBeenCalledTimes(1)
     expect(params.remove).not.toHaveBeenCalled()
+    expect(params.rovingEditor.mount).toHaveBeenLastCalledWith('C', 'Edited Charlie')
+    expect(params.setFocused).not.toHaveBeenCalled()
   })
 })
 
@@ -1953,6 +1801,7 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
   // #909 — Enter splits the block at the caret.
   it('splits at caret: before-text stays, after-text seeds the new block', async () => {
     const params = makeDefaultParams()
+    params.rovingEditor.storedMarkdown = 'helloworld'
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
@@ -1960,19 +1809,17 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
       await result.current.handleEnterSave()
     })
 
-    // The current block keeps the before-caret text…
-    expect(params.edit).toHaveBeenCalledWith('B', 'hello')
-    // …and the new block is created WITH the after-caret text.
-    expect(params.createBelow).toHaveBeenCalledWith('B', 'world', 'NEW_1')
+    // One `split_block`: the current block keeps the before-caret text and the
+    // new block is created WITH the after-caret text, rebased on what the
+    // block held when the editor took it.
+    expect(params.splitOff).toHaveBeenCalledTimes(1)
+    expect(params.splitOff).toHaveBeenCalledWith('B', 'hello', 'world', 'NEW_1', {
+      baseText: 'helloworld',
+    })
+    expect(params.createBelow).not.toHaveBeenCalled()
     expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
     // The legacy whole-block flush path must NOT run on a mid-text split.
     expect(params.handleFlush).not.toHaveBeenCalled()
-    // #5272 — the after-text is created BEFORE the source is shortened, so a
-    // cross-space link after the caret is still held by a live block of the
-    // page when the create is validated.
-    const createOrder = vi.mocked(params.createBelow).mock.invocationCallOrder[0] ?? -1
-    const editOrder = vi.mocked(params.edit).mock.invocationCallOrder[0] ?? -1
-    expect(createOrder).toBeLessThan(editOrder)
   })
 
   it('caret at end (after === "") uses the legacy empty-block path', async () => {
@@ -1988,74 +1835,45 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1')
   })
 
-  // Store contract (#730 family): edit() RESOLVES false on failure — it never
-  // rejects. Ignoring the boolean forked the content (stale block + orphan
-  // after-text). #5272 — the after-text sibling is created BEFORE the save, so
-  // on a failed save it is deleted again rather than left duplicating the text
-  // the restored source still holds.
-  it('deletes the created sibling and restores the full content when edit resolves false', async () => {
+  // Store contract (#730 family): splitOff() RESOLVES false on failure — it
+  // never rejects, and the store has already put the block back whole. The
+  // hook gives the user the unsplit text and writes nothing to compensate.
+  it('a failed splitOff restores the full content and deletes nothing', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.getMarkdown = vi.fn(() => 'hello world')
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello ', after: 'world' }))
-    params.edit = vi.fn(async () => false)
+    params.splitOff = vi.fn<OrchestrationParams['splitOff']>(async () => false)
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
     })
 
-    expect(params.createBelow).toHaveBeenCalledWith('B', 'world', 'NEW_1')
-    // The compensating delete follows the failed save.
-    expect(params.remove).toHaveBeenCalledWith('NEW_1')
-    const editOrder = vi.mocked(params.edit).mock.invocationCallOrder[0] ?? -1
-    const removeOrder = vi.mocked(params.remove).mock.invocationCallOrder[0] ?? -1
-    expect(editOrder).toBeLessThan(removeOrder)
+    expect(params.splitOff).toHaveBeenCalledTimes(1)
+    expect(params.createBelow).not.toHaveBeenCalled()
+    expect(params.remove).not.toHaveBeenCalled()
     // The user keeps their complete, unsplit text editable.
     expect(params.rovingEditor.mount).toHaveBeenLastCalledWith('B', 'hello world')
     expect(params.setFocused).toHaveBeenLastCalledWith('B')
   })
 
-  // BlockTree's `remove` wrapper THROWS when the block is still in the store
-  // after a failed delete. The failure path must still finish: give the editor
-  // back with the full text and withdraw the #4729 exemption registered for an
-  // Enter at line start, or the user is stranded on an unmounted block.
-  it('re-mounts the full text and withdraws the empty-source exemption even when the compensating delete throws', async () => {
+  // The failure path must withdraw the #4729 exemption registered for an Enter
+  // at line start, or the restored block is never cleaned up when left blank.
+  it('a failed splitOff restores the source editor and withdraws the empty-source exemption', async () => {
     const preserveEmptyBlockIds = { current: new Set<string>() }
     const params = makeDefaultParams({ preserveEmptyBlockIds })
     params.rovingEditor.getMarkdown = vi.fn(() => 'hello world')
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: '', after: 'hello world' }))
-    params.edit = vi.fn(async () => false)
-    params.remove = vi.fn(async (): Promise<void> => {
-      throw new Error('remove incomplete: block still present after delete')
-    })
+    params.splitOff = vi.fn<OrchestrationParams['splitOff']>(async () => false)
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
     })
 
-    expect(params.remove).toHaveBeenCalledWith('NEW_1')
+    expect(params.remove).not.toHaveBeenCalled()
     expect(preserveEmptyBlockIds.current.has('B')).toBe(false)
     expect(params.rovingEditor.mount).toHaveBeenLastCalledWith('B', 'hello world')
-    expect(params.setFocused).toHaveBeenLastCalledWith('B')
-  })
-
-  it('writes nothing and restores the original block when a split createBelow fails', async () => {
-    const params = makeDefaultParams()
-    params.rovingEditor.getMarkdown = vi.fn(() => 'helloworld')
-    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
-    params.createBelow = vi.fn(async () => null)
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    await act(async () => {
-      await result.current.handleEnterSave()
-    })
-
-    // #5272 — the create ran first and failed, so the source was never saved
-    // shortened and there is nothing to compensate.
-    expect(params.edit).not.toHaveBeenCalled()
-    expect(params.remove).not.toHaveBeenCalled()
-    expect(params.rovingEditor.mount).toHaveBeenLastCalledWith('B', 'helloworld')
     expect(params.setFocused).toHaveBeenLastCalledWith('B')
   })
 
@@ -2076,38 +1894,22 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     expect(params.discardDraft).toHaveBeenCalledWith('B')
     // Ordering matters: the draft is only stale to discard once the split
     // content is actually committed.
-    const editOrder = vi.mocked(params.edit).mock.invocationCallOrder[0] ?? -1
+    const splitOrder = vi.mocked(params.splitOff).mock.invocationCallOrder[0] ?? -1
     const discardOrder = vi.mocked(params.discardDraft).mock.invocationCallOrder[0] ?? -1
-    expect(editOrder).toBeLessThan(discardOrder)
+    expect(splitOrder).toBeLessThan(discardOrder)
   })
 
-  it('does not discard the draft when the before-caret save fails (block never departed)', async () => {
+  it('does not discard the draft when the split fails (block never departed)', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.getMarkdown = vi.fn(() => 'hello world')
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello ', after: 'world' }))
-    params.edit = vi.fn(async () => false)
+    params.splitOff = vi.fn<OrchestrationParams['splitOff']>(async () => false)
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
     })
 
-    expect(params.discardDraft).not.toHaveBeenCalled()
-  })
-
-  it('does not discard the draft when createBelow fails (nothing was committed)', async () => {
-    const params = makeDefaultParams()
-    params.rovingEditor.getMarkdown = vi.fn(() => 'helloworld')
-    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
-    params.createBelow = vi.fn(async () => null)
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    await act(async () => {
-      await result.current.handleEnterSave()
-    })
-
-    // #5272 — the create runs first; when it fails `edit()` never ran, so the
-    // pre-split draft row is still the crash-recovery copy of the user's text.
     expect(params.discardDraft).not.toHaveBeenCalled()
   })
 
@@ -2239,8 +2041,8 @@ describe('useBlockActionOrchestration listStyle continuation (#4552 slice 3)', (
       await result.current.handleEnterSave()
     })
 
-    expect(params.edit).toHaveBeenCalledWith('B', 'Be')
-    expect(params.createBelow).toHaveBeenCalledWith('B', 'ta', 'NEW_1')
+    expect(params.splitOff).toHaveBeenCalledWith('B', 'Be', 'ta', 'NEW_1', { baseText: '' })
+    expect(params.createBelow).not.toHaveBeenCalled()
     expect(mockedSetListStyle).toHaveBeenCalledWith('NEW_1', 'bullet')
   })
 
@@ -2408,7 +2210,7 @@ describe('useBlockActionOrchestration listStyle strip-then-merge (#4552 slice 3)
     expect(mockedClearListStyle).toHaveBeenCalledTimes(1)
     expect(mockedClearListStyle).toHaveBeenCalledWith('B')
     expect(params.rovingEditor.updateListMarker).toHaveBeenCalledWith('none', undefined)
-    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.mergeInto).not.toHaveBeenCalled()
     expect(params.remove).not.toHaveBeenCalled()
     expect(params.rovingEditor.unmount).not.toHaveBeenCalled()
   })
@@ -2423,8 +2225,7 @@ describe('useBlockActionOrchestration listStyle strip-then-merge (#4552 slice 3)
     })
 
     expect(mockedClearListStyle).toHaveBeenCalledTimes(1)
-    expect(params.edit).toHaveBeenCalledWith('A', 'AlphaBeta')
-    expect(params.remove).toHaveBeenCalledWith('B')
+    expect(params.mergeInto).toHaveBeenCalledWith('B', 'A', 'AlphaBeta', { baseText: 'Alpha' })
     expect(params.setFocused).toHaveBeenCalledWith('A')
   })
 

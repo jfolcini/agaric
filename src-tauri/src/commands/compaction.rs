@@ -110,7 +110,7 @@ pub async fn get_compaction_status(
         .map_err(sanitize_internal_error)
 }
 
-/// Inner implementation for [`compact_op_log_cmd`], testable without Tauri state.
+/// The purge alone, which [`save_engines_then_compact`] runs after its save.
 ///
 /// `ops_deleted` is the number of rows the purge actually removed.
 #[instrument(skip(pool), fields(retention_days), err)]
@@ -137,6 +137,29 @@ pub async fn compact_op_log_cmd_inner(
     Ok(CompactionResult { ops_deleted })
 }
 
+/// Save the engines, then purge: what [`compact_op_log_cmd`] and the daily
+/// job (`maintenance::op_log_compact`) both run (#6518).
+///
+/// The purge deletes ops above the apply cursor too, the ones boot replay
+/// restores an engine from, so a snapshot pass puts them in `loro_doc_state`
+/// first. A pass that left a dirty engine unwritten purges nothing: those ops
+/// are then all that boot can restore that engine from.
+#[instrument(skip(pool, materializer), err)]
+pub async fn save_engines_then_compact(
+    pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    retention_days: u64,
+) -> Result<CompactionResult, AppError> {
+    let pass =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(pool, materializer).await;
+    if pass.persisted_through.is_none() {
+        return Err(AppError::Snapshot(
+            "an engine could not be saved, so no history was removed".into(),
+        ));
+    }
+    compact_op_log_cmd_inner(pool, retention_days).await
+}
+
 /// Tauri command: trigger op log compaction.
 ///
 /// The frontend is responsible for confirming with the user before calling
@@ -153,11 +176,7 @@ pub async fn compact_op_log_cmd(
     ctx: State<'_, WriteCtx>,
     retention_days: u64,
 ) -> Result<CompactionResult, AppError> {
-    // The purge deletes ops above the apply cursor too; saving first puts them
-    // in `loro_doc_state`, or the next boot has nothing to replay them from (#6518).
-    agaric_engine::loro::snapshot::save_engines_and_advance_cursor(ctx.pool(), ctx.materializer())
-        .await;
-    let result = compact_op_log_cmd_inner(ctx.pool(), retention_days)
+    let result = save_engines_then_compact(ctx.pool(), ctx.materializer(), retention_days)
         .await
         .map_err(sanitize_internal_error)?;
 

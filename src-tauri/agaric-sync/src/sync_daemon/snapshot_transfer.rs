@@ -358,7 +358,7 @@ pub async fn try_receive_snapshot_catchup(
             // may be a page moved into one of them. The session's claim leaves
             // with `engine_reload`; the next completed pull sweeps.
             // #4960: an empty catch-up is still a completed pull from this
-            // peer, so `synced_at` has to advance. `record_success` clears the
+            // peer, so `synced_at` has to advance. `clear_peer_backoff` clears the
             // backoff while `peers_due_for_resync` reads `synced_at` alone, so
             // a session that left it stale kept this peer permanently due and
             // the initiator redialled it every `RESYNC_TICK`, forever.

@@ -31,7 +31,7 @@
 //! vitest — so the two module pipelines are cross-checked on every PR by the
 //! corpus, and only the driver is new here.
 //!
-//! ## Two runs: a fixed seed on every PR, a random one weekly
+//! ## Two runs: a fixed seed with the Rust tests, a random one weekly
 //!
 //! A random-seed run's findings are open-ended and it must not gate a PR on a
 //! newly-discovered PRE-EXISTING divergence, so it is `#[ignore]`d and runs in

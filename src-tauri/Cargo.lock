@@ -79,6 +79,7 @@ dependencies = [
  "blake3",
  "chrono",
  "criterion",
+ "flate2",
  "fs4",
  "futures-util",
  "gtk",

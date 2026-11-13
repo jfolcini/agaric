@@ -33,6 +33,7 @@ import {
 } from '@/stores/page-blocks-map'
 import {
   applyProvisionalMove,
+  mergedTree,
   reconcileBatchMove,
   reconcileProvisionalMoveSuccess,
   rollbackProvisionalMove,
@@ -115,6 +116,27 @@ function siblingSlot(blocks: FlatBlock[], block: FlatBlock): number {
   return siblings.findIndex((b) => b.id === block.id)
 }
 
+/**
+ * A content block created as a sibling of `block`, as the store holds it until
+ * the backend answers: `position: null` heals to the backend's rank.
+ */
+function siblingOf(block: FlatBlock, id: string, content: string): FlatBlock {
+  return {
+    id,
+    block_type: 'content',
+    content,
+    parent_id: block.parent_id,
+    position: null,
+    deleted_at: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+    page_id: block.page_id,
+    depth: block.depth,
+  }
+}
+
 type PageBlockSet = StoreApi<PageBlockState>['setState']
 
 /**
@@ -126,7 +148,7 @@ interface ReducerDeps {
   set: PageBlockSet
   get: () => PageBlockState
   splitInProgress: Set<string>
-  createsInFlight: Map<string, Promise<void>>
+  heldBlocks: Map<string, Promise<void>>
   enqueueMove: <T>(blockId: string, run: () => Promise<T>) => Promise<T>
 }
 
@@ -134,7 +156,7 @@ export function createReducers({
   set,
   get,
   splitInProgress,
-  createsInFlight,
+  heldBlocks,
   enqueueMove,
 }: ReducerDeps): Pick<
   PageBlockState,
@@ -142,6 +164,8 @@ export function createReducers({
   | 'edit'
   | 'remove'
   | 'splitBlock'
+  | 'splitOff'
+  | 'mergeInto'
   | 'reorder'
   | 'moveToParent'
   | 'moveBlocks'
@@ -156,6 +180,67 @@ export function createReducers({
 > {
   /** How many `edit`s of each block have not answered yet. */
   const editsInFlight = new Map<string, number>()
+
+  /**
+   * Hold later writes and loads for `ids` until the returned function is
+   * called, once the command in flight has answered. It runs before the
+   * caller's reconcile or rollback: either may load(), which waits on this.
+   */
+  function hold(ids: readonly string[]): () => void {
+    let answered: () => void = () => undefined
+    const held = new Promise<void>((resolve) => {
+      answered = resolve
+    })
+    for (const id of ids) heldBlocks.set(id, held)
+    return () => {
+      // A later command may hold the same block by now.
+      for (const id of ids) if (heldBlocks.get(id) === held) heldBlocks.delete(id)
+      answered()
+    }
+  }
+
+  /**
+   * Take the text the backend wrote for `blockId` when it is not the text
+   * sent (a stale editor's edit is rebased), unless a newer edit already
+   * replaced what this call wrote (#753).
+   */
+  function adoptWrittenText(blockId: string, sent: string, written: string | null): void {
+    if (typeof written !== 'string' || written === sent) return
+    set((state) => {
+      const cur = state.blocksById.get(blockId)
+      if (!cur || cur.content !== sent) return {}
+      const normalized = { ...cur, content: written }
+      const idx = state.blocks.findIndex((b) => b.id === blockId)
+      if (idx < 0) return {}
+      const blocks = state.blocks.slice()
+      blocks[idx] = normalized
+      return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [normalized]) }
+    })
+  }
+
+  /**
+   * A list block whose text no longer opens with a paragraph leaves the list
+   * (`showsListMarker`), once the text is saved; sync, undo and restore go
+   * through `load()` and clear nothing. Resolves the clear's refs, for the
+   * undo entry of the write that changed the text (#6156). A failure must not
+   * roll back saved text, so it is logged and resolves none.
+   */
+  async function leaveListIfTextDid(
+    blockId: string,
+    previousContent: string | null | undefined,
+    content: string,
+  ): Promise<OpRef[]> {
+    if (previousContent === undefined) return []
+    try {
+      const leaves =
+        contentShowsListMarker(previousContent ?? '') && !contentShowsListMarker(content)
+      return leaves ? await clearListStyle(blockId) : []
+    } catch (err) {
+      logger.warn('page-blocks', 'clearing the list style failed', { blockId }, err)
+      return []
+    }
+  }
+
   return {
     createBelow: async (afterBlockId: string, content = '', newId = newBlockId()) => {
       const { blocks, rootParentId } = get()
@@ -180,39 +265,14 @@ export function createReducers({
         while (insertIdx < cur.length && descendants.has((cur[insertIdx] as FlatBlock).id)) {
           insertIdx++
         }
-        const newBlock: FlatBlock = {
-          id: newId,
-          block_type: 'content',
-          content,
-          parent_id: curAfter.parent_id,
-          position: null,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-          page_id: curAfter.page_id,
-          depth: curAfter.depth,
-        }
+        const newBlock = siblingOf(curAfter, newId, content)
         const newBlocks = [...cur]
         newBlocks.splice(insertIdx, 0, newBlock)
         return { blocks: newBlocks, touchedIds: [newBlock.id] }
       })
 
-      const anchorCreate = createsInFlight.get(afterBlockId)
-      let answered: () => void = () => undefined
-      createsInFlight.set(
-        newId,
-        new Promise<void>((resolve) => {
-          answered = resolve
-        }),
-      )
-      // Settled once the create answers, before the reconcile or rollback
-      // below: either may load(), which waits for the creates in flight.
-      const settle = () => {
-        createsInFlight.delete(newId)
-        answered()
-      }
+      const anchorCreate = heldBlocks.get(afterBlockId)
+      const settle = hold([newId])
       try {
         // The slot is the anchor's + 1, so the anchor's own create must land first.
         if (anchorCreate) await anchorCreate
@@ -263,42 +323,15 @@ export function createReducers({
       const base = editsInFlight.has(blockId) ? null : (baseText ?? null)
       editsInFlight.set(blockId, (editsInFlight.get(blockId) ?? 0) + 1)
       try {
-        const pendingCreate = createsInFlight.get(blockId)
-        if (pendingCreate) await pendingCreate
+        const held = heldBlocks.get(blockId)
+        if (held) await held
         // Retry pool_busy before rolling back text the user can see (#730).
         const resp = await retryOnPoolBusy(() =>
           commands.editBlock(blockId, content, base).then(unwrap),
         )
-        // Adopt the text the backend wrote (a stale editor's edit is rebased),
-        // unless a newer edit already replaced the text this call wrote (#753).
-        if (typeof resp?.content === 'string' && resp.content !== content) {
-          set((state) => {
-            const cur = state.blocksById.get(blockId)
-            if (!cur || cur.content !== content) return {}
-            const normalized = { ...cur, content: resp.content }
-            const idx = state.blocks.findIndex((b) => b.id === blockId)
-            if (idx < 0) return {}
-            const blocks = state.blocks.slice()
-            blocks[idx] = normalized
-            return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [normalized]) }
-          })
-        }
-        // A list block whose text no longer opens with a paragraph leaves the
-        // list (`showsListMarker`), once the text is saved; sync, undo and
-        // restore go through `load()` and clear nothing. A failure here must not
-        // roll back saved text. The clear joins the edit's undo entry (#6156).
-        let opRefs = resp.op_refs
-        try {
-          if (
-            previousContent !== undefined &&
-            contentShowsListMarker(previousContent ?? '') &&
-            !contentShowsListMarker(content)
-          ) {
-            opRefs = [...opRefs, ...(await clearListStyle(blockId))]
-          }
-        } catch (err) {
-          logger.warn('page-blocks', 'clearing the list style failed', { blockId }, err)
-        }
+        adoptWrittenText(blockId, content, resp?.content)
+        const cleared = await leaveListIfTextDid(blockId, previousContent, content)
+        const opRefs = cleared.length > 0 ? [...resp.op_refs, ...cleared] : resp.op_refs
         // One undo entry per block's typing session (#2600). A `merge: false`
         // edit gets no key, so the typing after it does not join it either;
         // an `undoGroup` key joins edits of several blocks.
@@ -333,8 +366,8 @@ export function createReducers({
     remove: async (blockId: string, options?: DeleteBlockOptions) => {
       // Before the splice too: the create's reconcile would find the row gone
       // and reload the page.
-      const pendingCreate = createsInFlight.get(blockId)
-      if (pendingCreate) await pendingCreate
+      const held = heldBlocks.get(blockId)
+      if (held) await held
       const { rootParentId } = get()
       // Default: a user-initiated delete (#4729).
       const undoable = options?.undoable ?? true
@@ -432,6 +465,105 @@ export function createReducers({
         return true
       } finally {
         splitInProgress.delete(blockId)
+      }
+    },
+
+    splitOff: async (blockId, before, after, newId, { baseText } = {}) => {
+      const { rootParentId, blocksById } = get()
+      const previousContent = blocksById.get(blockId)?.content
+      if (previousContent === undefined) return false
+      // As `edit`: an unanswered edit has not moved the editor's baseline yet.
+      const base = editsInFlight.has(blockId) ? null : (baseText ?? null)
+      // The block's own create, when Enter split a block Enter just made.
+      const earlier = heldBlocks.get(blockId)
+      const handle = applyProvisionalMove(set, newId, (state) => {
+        const cur = state.blocks
+        const idx = cur.findIndex((b) => b.id === blockId)
+        const source = cur[idx] as FlatBlock
+        // After the block and all its descendants, which stay with it.
+        const descendants = getDragDescendants(cur, blockId)
+        let insertIdx = idx + 1
+        while (insertIdx < cur.length && descendants.has((cur[insertIdx] as FlatBlock).id)) {
+          insertIdx++
+        }
+        const blocks = cur.slice()
+        blocks[idx] = { ...source, content: before }
+        blocks.splice(insertIdx, 0, siblingOf(source, newId, after))
+        return { blocks, touchedIds: [blockId, newId] }
+      })
+      const settle = hold([blockId, newId])
+      try {
+        if (earlier) await earlier
+        const resp = await retryOnPoolBusy(() =>
+          commands
+            .splitBlock({ blockId, before, after, newBlockId: newId, baseText: base })
+            .then(unwrap),
+        )
+        settle()
+        await reconcileProvisionalMoveSuccess(set, get, handle, resp.created.position)
+        adoptWrittenText(blockId, before, resp.block.content)
+        notifyUndoNewAction(rootParentId, [
+          ...resp.op_refs,
+          ...(await leaveListIfTextDid(blockId, previousContent, before)),
+        ])
+        return true
+      } catch (err) {
+        settle()
+        await rollbackProvisionalMove(set, get, handle)
+        logger.error('page-blocks', 'Failed to split block', { blockId }, err)
+        notify.error(i18n.t('error.createBlockFailed'))
+        return false
+      }
+    },
+
+    mergeInto: async (blockId, intoId, mergedText, { baseText } = {}) => {
+      const state = get()
+      const previousContent = state.blocksById.get(intoId)?.content
+      const merged = mergedTree(state, blockId, intoId, mergedText)
+      if (previousContent === undefined || merged === null) return false
+      const base = editsInFlight.has(intoId) ? null : (baseText ?? null)
+      const earlier = [heldBlocks.get(blockId), heldBlocks.get(intoId)].filter(
+        (held) => held !== undefined,
+      )
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      set({ blocks: merged.blocks, blocksById: buildBlocksById(merged.blocks) })
+      const settle = hold([intoId])
+      try {
+        await Promise.all(earlier)
+        const resp = await retryOnPoolBusy(() =>
+          commands.mergeBlocks({ blockId, intoId, mergedText, baseText: base }).then(unwrap),
+        )
+        settle()
+        adoptWrittenText(intoId, mergedText, resp.block.content)
+        // Chips pointing at the merged-away block render deleted (#5246).
+        useResolveStore.getState().markDeleted(spaceId, [blockId])
+        notifyUndoNewAction(state.rootParentId, [
+          ...resp.op_refs,
+          ...(await leaveListIfTextDid(intoId, previousContent, mergedText)),
+        ])
+        // The backend moved a child this store had not loaded, or a load whose
+        // snapshot predated the merge brought the block back (#2543).
+        const movedIds = resp.moves.map((move) => move.block_id)
+        if (movedIds.join() !== merged.childIds.join() || get().blocksById.has(blockId)) {
+          await get().load()
+        }
+        return true
+      } catch (err) {
+        settle()
+        // Exact restore when nothing landed since; otherwise reload, so a
+        // concurrent write is not clobbered.
+        let needsReload = false
+        set((current) => {
+          if (current.blocks === merged.blocks) {
+            return { blocks: state.blocks, blocksById: state.blocksById }
+          }
+          needsReload = true
+          return {}
+        })
+        if (needsReload) await get().load()
+        logger.error('page-blocks', 'Failed to merge blocks', { blockId, intoId }, err)
+        notify.error(i18n.t('blockTree.mergeBlocksFailed'))
+        return false
       }
     },
 

@@ -31,6 +31,7 @@ mod mirror_round_trip;
 mod page_integration;
 mod pages_cache_counts;
 mod property_integration;
+mod read_after_write;
 mod sync_integration;
 mod tag_integration;
 mod trash_integration;

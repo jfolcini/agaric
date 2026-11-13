@@ -59,6 +59,7 @@ mod saved_view_tests;
 mod search_blocks_struct_tests;
 mod snapshot_tests;
 mod space_move_cmd_tests;
+mod split_merge_cmd_tests;
 mod status_cmd_tests;
 mod sync_cmd_tests;
 mod tag_cmd_tests;

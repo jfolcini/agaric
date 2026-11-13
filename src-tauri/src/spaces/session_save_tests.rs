@@ -720,12 +720,10 @@ async fn the_hydration_does_not_twin_a_peers_block_the_engine_lacks_6525() {
     b.shutdown();
 }
 
-/// #6518 — the daily compaction can purge ops no save has covered yet (the
-/// periodic save runs every five minutes), so it saves the engines first: a
-/// kill after it boots with the purged ops' blocks still in the engine.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_compaction_before_any_save_keeps_its_blocks_after_a_kill_6518() {
-    let mut a = Device::new(DEV_A).await;
+/// A device holding one block, every op of which is past the retention
+/// window and none of which a save has covered: what compaction would purge.
+async fn device_with_one_unsaved_aged_block() -> (Device, SpaceId, BlockId) {
+    let a = Device::new(DEV_A).await;
     let space = create_space_inner(&a.pool, DEV_A, &a.mat, "Mine".into(), None)
         .await
         .unwrap();
@@ -768,18 +766,78 @@ async fn a_compaction_before_any_save_keeps_its_blocks_after_a_kill_6518() {
         .await
         .unwrap();
     tx.commit().await.unwrap();
+    (a, space, x)
+}
+
+async fn op_count(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// #6518 — the daily compaction can purge ops no save has covered yet (the
+/// periodic save runs every five minutes), so it saves the engines first: a
+/// kill after it boots with the purged ops' blocks still in the engine.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_compaction_before_any_save_keeps_its_blocks_after_a_kill_6518() {
+    let (mut a, space, x) = device_with_one_unsaved_aged_block().await;
 
     crate::maintenance::op_log_compact(&a.pool, &a.mat)
         .await
         .unwrap();
-    let ops_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
-        .fetch_one(&a.pool)
-        .await
-        .unwrap();
-    assert_eq!(ops_left, 0, "every aged op is purged");
+    assert_eq!(op_count(&a.pool).await, 0, "every aged op is purged");
     a.kill_and_boot().await;
 
     assert_eq!(a.engine_content(&space, &x).as_deref(), Some("abc"));
+    a.shutdown();
+}
+
+/// #6518 — when that save leaves a dirty engine unwritten, the ops are all
+/// that boot can restore it from, so neither the History card nor the daily
+/// job purges any.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_compaction_whose_save_failed_purges_nothing_6518() {
+    use agaric_core::error::AppError;
+    use tauri::Manager as _;
+
+    let (a, _space, _block) = device_with_one_unsaved_aged_block().await;
+    let ops_before = op_count(&a.pool).await;
+    sqlx::query(
+        "CREATE TRIGGER the_disk_refuses_the_snapshot BEFORE INSERT ON loro_doc_state \
+         BEGIN SELECT RAISE(ABORT, 'simulated persist failure'); END",
+    )
+    .execute(&a.pool)
+    .await
+    .unwrap();
+    let app = tauri::test::mock_app();
+    app.manage(crate::db::WriteCtx::new(
+        a.pool.clone(),
+        agaric_sync::device::DeviceId::new(DEV_A.into()),
+        a.mat.clone(),
+    ));
+
+    let card = crate::commands::compaction::compact_op_log_cmd(app.state(), 90).await;
+    assert_eq!(
+        op_count(&a.pool).await,
+        ops_before,
+        "the card purges no op while an engine that holds it is unsaved"
+    );
+    let job = crate::maintenance::op_log_compact(&a.pool, &a.mat).await;
+    assert_eq!(
+        op_count(&a.pool).await,
+        ops_before,
+        "the job purges no op while an engine that holds it is unsaved"
+    );
+
+    assert!(
+        matches!(card, Err(AppError::Internal(_))),
+        "the card is told, with the cause in the log: {card:?}"
+    );
+    assert!(
+        matches!(job, Err(AppError::Snapshot(_))),
+        "the job reports the refusal, so it stays due: {job:?}"
+    );
     a.shutdown();
 }
 

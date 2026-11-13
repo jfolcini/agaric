@@ -3436,7 +3436,7 @@ pub async fn undo_op_inner(
 /// redo cycle clears the state).
 ///
 /// One batched query (row-value `IN` over `json_each`, the
-/// `dag::ingest_remote_record` parent-check pattern); the `EXISTS` probes
+/// `dag::ingest_replicated_record` parent-check pattern); the `EXISTS` probes
 /// ride the partial `idx_op_log_reverses` index. `ops` is caller-bounded
 /// by `MAX_REVERT_OPS` and deduplicated, so the missing-ref check is a
 /// straight count comparison resolved to a per-ref `NotFound`.

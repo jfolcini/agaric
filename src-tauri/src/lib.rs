@@ -100,6 +100,8 @@ macro_rules! agaric_commands {
             // per-root `move_block` IPC loop + full page reload into one
             // IMMEDIATE tx (N MoveBlock ops) returning authoritative positions.
             $crate::commands::blocks::move_ops::move_blocks_batch,
+            $crate::commands::blocks::split_merge::split_block,
+            $crate::commands::blocks::split_merge::merge_blocks,
             $crate::commands::blocks::queries::list_blocks,
             $crate::commands::blocks::queries::list_trash,
             $crate::commands::blocks::queries::get_block,
@@ -460,6 +462,8 @@ mod materializer_app_tests;
 /// a real vault. Its test-only half (settles, coverage, panicking asserts)
 /// stays under `cfg(test)` in `reconciliation_oracle/harness.rs`.
 mod reconciliation_oracle;
+#[cfg(test)]
+mod upgrade_vault_tests;
 // LoroSync end-to-end integration tests live in
 // `agaric_sync::sync_protocol::tests` (`loro_sync_e2e_*`).
 // #4499 phase 0d: the command suites, the command-integration suites and the
@@ -2303,7 +2307,8 @@ fn spawn_save_on_suspend(
     tauri::async_runtime::spawn(async move {
         let saved =
             agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &materializer)
-                .await;
+                .await
+                .saved;
         tracing::info!(saved, "loro: persisted snapshots on suspend");
     })
 }
@@ -3437,7 +3442,8 @@ pub fn run() {
                             &pool.0,
                             &materializer,
                         ),
-                    );
+                    )
+                    .saved;
                     tracing::info!(saved, "loro: persisted snapshots on exit");
                 }
             }

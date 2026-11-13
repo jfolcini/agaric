@@ -2,9 +2,9 @@
  * DuePanel — projected agenda rows render INLINE rich content (#4719).
  *
  * `ProjectedEntryContentInner` called `renderRichContent` without `inline`,
- * and its output lands in `<span className="min-w-0 flex-1 truncate">` inside
- * a flex `<li>`. Without `inline`, a recurring task written with leading
- * markdown (`- pick up keys`, `# standup`) put a `<ul>` / `<h1>` block box
+ * and its output lands in the row's one-line text span inside a flex `<li>`.
+ * Without `inline`, a recurring task written with leading markdown
+ * (`- pick up keys`, `# standup`) put a `<ul>` / `<h1>` block box
  * inside a wrapper sized for one clamped line. `inline: true` (#1533) exists
  * to downgrade block-level nodes before they enter such a wrapper, and the
  * sibling `AlertSection` rows in this same panel already pass it (#4705).
@@ -115,10 +115,10 @@ beforeEach(() => {
   useTabsStore.setState({ tabs: [{ id: '0', pageStack: [], label: '' }], activeTabIndex: 0 })
 })
 
-/** The clamping `<span class="min-w-0 flex-1 truncate">` of the projected row. */
+/** The one-line text span of the projected row. */
 async function clampingSpan(): Promise<HTMLElement> {
   const li = await screen.findByTestId('projected-entry')
-  const span = li.querySelector('span.truncate')
+  const span = li.querySelector('span[title]')
   expect(span).not.toBeNull()
   return span as HTMLElement
 }

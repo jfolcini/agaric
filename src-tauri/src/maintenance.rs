@@ -212,10 +212,9 @@ pub async fn op_log_compact(
     write_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
 ) -> Result<(), AppError> {
-    // As in `compact_op_log_cmd`: save first, so the purge drops no op the
-    // engine has not persisted (#6518).
-    agaric_engine::loro::snapshot::save_engines_and_advance_cursor(write_pool, materializer).await;
-    let result = crate::commands::compaction::compact_op_log_cmd_inner(write_pool, 90).await?;
+    let result =
+        crate::commands::compaction::save_engines_then_compact(write_pool, materializer, 90)
+            .await?;
     if result.ops_deleted > 0 {
         tracing::info!(
             ops_deleted = result.ops_deleted,
@@ -715,7 +714,8 @@ pub async fn loro_snapshot_if_dirty(
 ) -> Result<(), AppError> {
     let ok =
         agaric_engine::loro::snapshot::save_engines_and_advance_cursor(write_pool, materializer)
-            .await;
+            .await
+            .saved;
     tracing::debug!(saved = ok, "loro_snapshot_if_dirty tick ran");
     Ok(())
 }

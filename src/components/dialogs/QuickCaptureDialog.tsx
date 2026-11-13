@@ -59,7 +59,11 @@ interface QuickCaptureDialogProps {
   prefill?: QuickCapturePrefill | null
 }
 
-/** The field once a link's text arrives: below what the user typed, never over it. */
+/**
+ * The field once a link's text arrives: below what the user typed, never over it.
+ * A launch URL delivered twice (the live event and the `getCurrent()` backfill) would
+ * add its text twice; that has not been seen, so nothing dedupes it (#6680).
+ */
 function withLinkText(typed: string, linkText: string): string {
   if (linkText.length === 0) return typed
   if (typed.trim().length === 0) return linkText
