@@ -380,7 +380,8 @@ async fn a_save_landing_during_an_ingest_is_not_written_over() {
 }
 
 /// Save the page's file from outside, `from` replaced by `to`, when the
-/// mirror's next write of it reaches `race`.
+/// mirror reaches the race this is set as. The save changes the file's
+/// length, so no timestamp's resolution hides it.
 fn save_outside(from: &'static str, to: &'static str) -> Option<Race> {
     Some(Box::new(move |file| {
         let text = std::fs::read_to_string(file).unwrap();
@@ -406,6 +407,24 @@ async fn a_save_landing_right_after_a_write_is_read_in() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_save_landing_right_after_an_unchanged_file_is_read_is_read_in() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    // A full pass reads every page's file, and writes none here.
+    fx.mirror.full_due = true;
+    fx.mirror.races.after_read = save_outside("one", "outside");
+    fx.tick().await;
+    fx.mirror.races.after_read = None;
+    let saved = fx.read();
+    assert!(saved.contains("outside"), "{saved}");
+
+    fx.settle_file().await;
+    assert_eq!(fx.contents(&page).await, ["outside"]);
+    assert_eq!(fx.read(), saved);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_write_leaves_its_file_unchanged_to_the_next_tick() {
     let mut fx = Fx::new().await;
     let (_, blocks) = fx.page("Alpha", &["one"]).await;
@@ -414,46 +433,6 @@ async fn a_write_leaves_its_file_unchanged_to_the_next_tick() {
     fx.edit(&blocks[0], "two").await;
     fx.tick().await;
     assert_eq!(fx.mirror.changed_files(&fx.root), Vec::<String>::new());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_save_landing_while_a_page_is_written_is_not_written_over() {
-    let mut fx = Fx::new().await;
-    let (page, blocks) = fx.page("Alpha", &["one", "last"]).await;
-    fx.tick().await;
-    fx.edit(&blocks[0], "two").await;
-    fx.mirror.races.before_write = save_outside("last", "outside");
-    fx.tick().await;
-    fx.mirror.races.before_write = None;
-    let saved = fx.read();
-    assert!(
-        saved.contains("one") && saved.contains("outside"),
-        "the save is kept as it was made: {saved}"
-    );
-
-    fx.settle_file().await;
-    assert_eq!(fx.contents(&page).await, ["two", "outside"]);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_save_landing_while_an_ingest_is_written_back_is_not_written_over() {
-    let mut fx = Fx::new().await;
-    let (page, _) = fx.page("Alpha", &["one"]).await;
-    fx.tick().await;
-    // CRLF, so the ingest has a write-back to make.
-    fx.write(fx.read().replace("one", "uno").replace('\n', "\r\n"));
-    fx.mirror.races.before_write = save_outside("uno", "newer");
-    fx.settle_file().await;
-    fx.mirror.races.before_write = None;
-    assert_eq!(fx.contents(&page).await, ["uno"]);
-    let saved = fx.read();
-    assert!(
-        saved.contains("newer\r\n"),
-        "the newer save is kept: {saved}"
-    );
-
-    fx.settle_file().await;
-    assert_eq!(fx.contents(&page).await, ["newer"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

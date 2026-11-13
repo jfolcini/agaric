@@ -483,13 +483,13 @@ pub struct Mirror {
     races: Races,
 }
 
-/// What a test runs on a page's file around its write, as a save from
-/// another editor landing there.
+/// What a test runs on a page's file while the mirror writes the page, as a
+/// save from another editor landing there.
 #[cfg(test)]
 #[derive(Default)]
 struct Races {
-    /// Once the file is read, before it is written.
-    before_write: Option<Race>,
+    /// Once the file is read.
+    after_read: Option<Race>,
     /// Once it is written.
     after_write: Option<Race>,
 }
@@ -497,14 +497,21 @@ struct Races {
 #[cfg(test)]
 type Race = Box<dyn FnMut(&Path) + Send + Sync>;
 
+#[cfg(test)]
+fn run(race: &mut Option<Race>, file: &Path) {
+    if let Some(race) = race {
+        race(file);
+    }
+}
+
 /// What [`Mirror`] learned of the folder it writes: all of it is that
 /// folder's, so another folder starts from [`Seen::default`].
 #[derive(Default)]
 struct Seen {
     /// The layout of the last pass, to tell which pages it renamed.
     layout: Layout,
-    /// Each page's file as last seen: a change outside Agaric makes the page
-    /// dirty.
+    /// Each page's file as the mirror last read or wrote it: a change outside
+    /// Agaric makes the page dirty.
     stats: HashMap<String, FileStat>,
     /// The bytes of each file changed outside Agaric as the last tick read
     /// them: one is ingested only once two reads agree, so a save still
@@ -594,7 +601,10 @@ impl Listing {
 type FileStat = Option<(u64, Option<SystemTime>)>;
 
 fn file_stat(path: &Path) -> FileStat {
-    let meta = std::fs::metadata(path).ok()?;
+    stat_of(&std::fs::metadata(path).ok()?)
+}
+
+fn stat_of(meta: &std::fs::Metadata) -> FileStat {
     Some((meta.len(), meta.modified().ok()))
 }
 
@@ -1275,6 +1285,11 @@ impl Mirror {
     /// Write the page and list it by the outcome; `false` when the mirror
     /// paused, which ends the pass.
     async fn write_page(&mut self, root: &Path, page_id: &str, path: &str) -> bool {
+        // Before the file is read, never after: a save landing behind the
+        // read would be the file seen, and so never read.
+        self.seen
+            .stats
+            .insert(page_id.to_owned(), file_stat(&root.join(path)));
         let wrote = self.try_write_page(root, page_id, path).await;
         if !matches!(wrote, Ok(Wrote::Missing)) {
             self.seen.missing.remove(page_id);
@@ -1293,10 +1308,19 @@ impl Mirror {
                 self.state.page_failed(page_id, path, &e);
             }
         }
+        true
+    }
+
+    /// Write `text` as the page's file, seen as it was written: a stat taken
+    /// after could be that of a save landing behind the write.
+    fn write_file(&mut self, page_id: &str, target: &Path, text: &str) -> std::io::Result<()> {
+        let written = store::write_atomic(target, text.as_bytes())?;
         self.seen
             .stats
-            .insert(page_id.to_owned(), file_stat(&root.join(path)));
-        true
+            .insert(page_id.to_owned(), stat_of(&written));
+        #[cfg(test)]
+        run(&mut self.races.after_write, target);
+        Ok(())
     }
 
     /// Write the page's render at `path` over the text last written there,
@@ -1343,6 +1367,8 @@ impl Mirror {
             buffer: Some(file.buffer.clone()),
         };
         let found = store::read_optional(&target)?;
+        #[cfg(test)]
+        run(&mut self.races.after_read, &target);
         let vanished = found.is_none() && newest.is_some();
         match found {
             Some(bytes) if bytes == shadow.text.as_bytes() => {}
@@ -1381,15 +1407,7 @@ impl Mirror {
                     return Ok(Wrote::Paused(why));
                 }
                 create_folders_below(root, path)?;
-                #[cfg(test)]
-                if let Some(race) = &mut self.races.before_write {
-                    race(&target);
-                }
-                store::write_atomic(&target, shadow.text.as_bytes())?;
-                #[cfg(test)]
-                if let Some(race) = &mut self.races.after_write {
-                    race(&target);
-                }
+                self.write_file(page_id, &target, &shadow.text)?;
             }
         }
         self.record(page_id, path, shadow)
@@ -1537,7 +1555,7 @@ impl Mirror {
                 return Ok(Wrote::Paused(why));
             }
             // Written back as the render, as an ingest writes back LF and no BOM.
-            store::write_atomic(&root.join(path), render.text.as_bytes())?;
+            self.write_file(page_id, &root.join(path), &render.text)?;
             let shadow = Shadow {
                 text: render.text.clone(),
                 line_ids: render.line_ids.clone(),
@@ -1597,11 +1615,7 @@ impl Mirror {
             if let Some(why) = pause_reason(root, &self.device_id) {
                 return Ok(Wrote::Paused(why));
             }
-            #[cfg(test)]
-            if let Some(race) = &mut self.races.before_write {
-                race(&target);
-            }
-            store::write_atomic(&target, shadow.text.as_bytes())?;
+            self.write_file(page_id, &target, &shadow.text)?;
         }
         self.record(page_id, path, shadow)
     }
