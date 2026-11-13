@@ -14,7 +14,7 @@
 
 import { type Dispatch, type SetStateAction, useEffect } from 'react'
 
-import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { pressesFocusedControl, useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 
 export interface UseHistoryKeyboardNavOptions {
@@ -22,7 +22,7 @@ export interface UseHistoryKeyboardNavOptions {
   itemCount: number
   /** Identifies the logical list; a change resets the cursor, Load more only clamps it. */
   resetKey?: unknown
-  /** Container ref — takes focus on a navigation key. */
+  /** Container ref — takes focus on a navigation key, and gates Enter and Space. */
   listRef: React.RefObject<HTMLDivElement | null>
   /** Whether the user has at least one entry selected (gates Enter). */
   hasSelection: boolean
@@ -76,6 +76,7 @@ export function useHistoryKeyboardNav({
         target.tagName === 'TEXTAREA'
       )
         return
+      if (pressesFocusedControl(e, listRef.current)) return
 
       // Delegate arrow / j / k / Home / End / PageUp / PageDown.
       if (navHandleKeyDown(e)) {
@@ -115,6 +116,7 @@ export function useHistoryKeyboardNav({
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [
+    listRef,
     navHandleKeyDown,
     focusedIndex,
     hasSelection,

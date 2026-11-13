@@ -144,8 +144,7 @@ export function TrashRowItem({
           checked={isSelected}
           onCheckedChange={() => onToggleSelection(block.id)}
           onClick={(e) => e.stopPropagation()}
-          // Keys stay on the checkbox: the list's document-level Space shortcut
-          // would otherwise toggle the cursor row as well as this one.
+          // Keys stay on the checkbox: the row toggles itself on Enter and Space.
           onKeyDown={(e) => e.stopPropagation()}
           aria-label={t('trash.selectItemLabel', {
             content: block.content ?? t('trash.emptyContent'),

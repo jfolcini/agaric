@@ -18,7 +18,7 @@ Do not compile the release bench graph locally: `[profile.release]` is thin LTO 
 gh workflow run scheduled-deep-checks.yml --ref <branch> -f lanes=bench-smoke   # or bench-slo (also runs bench-perf-gates)
 ```
 
-PR CI runs none of these lanes, so dispatch `lanes=bench-slo` on the branch and merge on its result for any change to SQL an SLO probe or perf gate times: a cache rebuild, a count recompute, a list, graph or agenda read, or a seed helper the gates use. Never `lanes=all` for this: it also starts the mutants shards, which starve PR runners.
+PR CI runs none of these lanes, so dispatch `lanes=bench-slo` on the branch and merge on its result for any change to SQL an SLO probe or perf gate times: a cache rebuild, a count recompute, a list, graph or agenda read, or a seed helper the gates use, and for any change to the text an export, Markdown or MCP read returns: probes parse it (a `- ` line count, a `# Title` prefix) and go red on `main` the next week. Never `lanes=all` for this: it also starts the mutants shards, which starve PR runners.
 
 A non-zero exit or `panicked at` in `bench-smoke` is a real fixture failure. An `assert_under_budget` failure under cold `--test` is not (cold runs inflate heavy benches 10x or more); only the warm `bench-slo` number gates.
 

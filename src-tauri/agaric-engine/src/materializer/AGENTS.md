@@ -24,3 +24,5 @@ Write a durable obligation (`retry_queue::record_failure`) before retiring the r
 ## Paths that add or remove derived rows
 
 Before writing code that makes one path add or remove derived rows, list every path that must undo or repeat it: undo, redo, move (both directions), restore, the batch variant, inbound apply, and the boot rebuild. Restore and move carry descendants the per-op arm cannot see.
+
+A projection that drops a row because its target has no `blocks` row yet (a ref or tag into a block or space that arrives later in the same import) heals it when the target lands (`project_dropped_refs`, `project_dropped_tags`), on inbound sync and engine-first recovery alike: an import walks spaces in a random order, so whether the target exists yet is chance.

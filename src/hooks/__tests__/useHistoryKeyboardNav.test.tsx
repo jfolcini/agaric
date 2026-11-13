@@ -43,7 +43,7 @@ function dispatchKey(
   init: KeyboardEventInit & { ctrlKey?: boolean; metaKey?: boolean } = {},
 ) {
   const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init })
-  document.dispatchEvent(event)
+  document.body.dispatchEvent(event)
   return event
 }
 
