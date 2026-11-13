@@ -44,6 +44,7 @@ const TARGET: HistoryEntry = {
   payload: '{}',
   created_at: 1_735_689_600_000,
   is_replicated: false,
+  agent: null,
 }
 
 beforeEach(() => {

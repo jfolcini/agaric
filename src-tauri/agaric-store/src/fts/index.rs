@@ -116,13 +116,9 @@ async fn insert_fts_rows_tx(
 
 pub(super) type FtsDelete = sqlx::query::Query<'static, Sqlite, sqlx::sqlite::SqliteArguments>;
 
-/// Delete `block_id`'s `fts_blocks` row by rowid.
-///
-/// `WHERE block_id = ?` on the FTS5 table itself visits every row, under the
-/// write lock (#6534). The rowid comes from FTS5's shadow table
-/// `fts_blocks_content`, whose `id` is the FTS rowid and `c0` the `block_id`
-/// column, through `idx_fts_blocks_content_block` (migration 0131). Without
-/// that index the statement deletes the same rows, slowly.
+/// Delete `block_id`'s `fts_blocks` row by rowid, looked up in FTS5's shadow
+/// table (`docs/architecture/search.md`): `WHERE block_id = ?` on `fts_blocks`
+/// itself visits every row, under the write lock (#6534).
 pub(super) fn delete_fts_row_query(block_id: &str) -> FtsDelete {
     sqlx::query!(
         "DELETE FROM fts_blocks \
