@@ -44,7 +44,7 @@ A few specifics for that environment:
 - **Never share a target dir between worktrees**, through `CARGO_TARGET_DIR` or a symlinked `target`, not even one build at a time. Workspace crates get the same artifact names in every checkout, so one tree takes another's artifacts as fresh and builds or tests the wrong source. Recovery: `cargo clean -p` every workspace member in the shared dir, and re-run every gate that went through it.
 - **Memory.** One cargo process at a time ([AGENTS.md § Pre-commit & CI](../AGENTS.md#pre-commit--ci)). A killed `just gen-sqlx` can leave `.sqlx/` entries deleted: `git checkout -- src-tauri/.sqlx`, then re-run it.
 
-- **Playwright's browser.** The container's `/opt/pw-browsers` can hold an older revision than the pinned Playwright wants (`node_modules/playwright-core/browsers.json`), and the mock lane then refuses to launch. Point `PLAYWRIGHT_BROWSERS_PATH` at a scratch directory symlinking the installed revisions under the wanted names, rather than skip the spec. Pixel-measuring specs (`diagram-legibility`, `block-line-break`) can fail on that older build on clean `main` too: compare against `main` before chasing one.
+- **Playwright's browser.** The container's `/opt/pw-browsers` can hold an older Chromium than the pinned Playwright wants (`node_modules/playwright-core/browsers.json`). `playwright.config.ts` then launches the container's `/opt/pw-browsers/chromium`, so the mock lane runs with no setting. Pixel-measuring specs (`diagram-legibility`, `block-line-break`) can fail on that older build on clean `main` too: compare against `main` before chasing one.
 
 ### Hook toolchain
 
