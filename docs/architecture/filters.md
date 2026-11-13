@@ -215,7 +215,9 @@ intersected with full-text, returned as a keyset-paginated page of blocks.
   ([`src-tauri/agaric-store/src/query/engine.rs`](../../src-tauri/agaric-store/src/query/engine.rs)).
 - **Request:** `AdvancedQueryRequest { space_id, filter, sort, cursor, limit, fulltext }`.
   `filter` is a `FilterExpr` defaulting to `And { children: [] }` (the TRUE
-  expression → every block in the space). `fulltext` is optional.
+  expression → every block in the space but template pages and their blocks,
+  and saved views (#6544)).
+  `fulltext` is optional.
 - **Response:** `AdvancedQueryResponse { rows, next_cursor, has_more, total_count }`,
   where each `QueryResultRow` is an `ActiveBlockRow` flattened with a `score`.
 
@@ -228,9 +230,13 @@ intersected with full-text, returned as a keyset-paginated page of blocks.
 3. **Compile** — `QueryProjection::compile_expr` folds the tree into one
    `WhereClause` (an `unsupported()` result is rejected defensively).
 4. **Assemble** — `FROM blocks b WHERE b.space_id = ? AND b.deleted_at IS NULL
-   AND (<compiled>)`, with the anonymous `?` placeholders renumbered to explicit
-   `?N` so the space, filter, keyset (and MATCH) binds never collide (mirroring
-   `compile_pages_filters`).
+   AND <not under a template page> AND <not a saved view> AND (<compiled>)`,
+   the template guard
+   dropped when the filter asks for blocks carrying the `template` property,
+   not when it negates it (as the agenda does,
+   a template's placeholder blocks are not notes), with the anonymous `?`
+   placeholders renumbered to explicit `?N` so the space, filter, keyset (and
+   MATCH) binds never collide (mirroring `compile_pages_filters`).
 5. **Full-text composition** — when `fulltext` is `Some`, the FROM becomes
    `fts_blocks fts JOIN blocks b ON b.id = fts.block_id` and `fts_blocks MATCH ?1`
    (the **sanitised** query) is AND-composed in front of the structural

@@ -6,9 +6,9 @@
  * `useDialogOrSheet` mobile Sheet variant — the Pages view saved-views
  * feature is a power-user desktop affordance, matching the rest of
  * `PageBrowserHeader`'s sort control, which has no mobile Sheet
- * fallback either). Validates only non-empty + a length cap; uniqueness is
- * NOT enforced — saving two views with the same name is allowed (they get
- * distinct ids), same as most "save as" flows.
+ * fallback either). Validates only non-empty + a length cap; a name the
+ * space already holds is refused by the save itself (`saveView` in
+ * `src/lib/saved-views.ts`), which reads the space's titles.
  */
 
 import type React from 'react'

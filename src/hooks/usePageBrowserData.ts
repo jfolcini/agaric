@@ -23,9 +23,7 @@
  * entry instead of being grafted onto the new result set. The client is passed
  * EXPLICITLY as the 2nd arg so no `QueryClientProvider` ancestor is required
  * (bare `renderHook` / `render` tests need no wrapper). `listPagesWithMetadata`
- * takes no AbortSignal, so — as before migration — none is forwarded. There is
- * no `useBlockPropertyEvents` `invalidationKey` in the key, so no monotonic-key
- * growth and no bounded `gcTime` is needed (inherits the client's Infinity).
+ * takes no AbortSignal, so — as before migration — none is forwarded.
  */
 
 import { type InfiniteData, keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
@@ -225,6 +223,8 @@ export function usePageBrowserData({
       enabled: spaceIsReady,
       // #5446 — returning to an unchanged list sends no IPC. A write or a
       // failed fetch invalidates the query, and only then does a mount refetch.
+      // That holds while the list is cached: past the client's `gcTime` a
+      // return loads page 1 afresh.
       // #5371 — "Last opened" moves on every page open, which marks nothing
       // stale (`record_page_open` is a non-note write), so it always refetches.
       refetchOnMount: (query) => query.state.isInvalidated || sortOption === 'recent',

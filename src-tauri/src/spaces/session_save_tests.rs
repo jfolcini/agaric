@@ -458,6 +458,7 @@ async fn a_session_that_fails_after_an_import_still_saves_it_6525() {
         message: "the second space's doc does not import".into(),
         remote_device_id: DEV_A.into(),
         code: None,
+        peer_is_older: None,
     })
     .await;
 
@@ -479,6 +480,7 @@ async fn a_session_that_fails_without_an_import_spawns_no_save() {
         message: "peer unreachable".into(),
         remote_device_id: DEV_A.into(),
         code: None,
+        peer_is_older: None,
     });
     assert!(sink.last_task.lock().unwrap().is_none());
     a.shutdown();

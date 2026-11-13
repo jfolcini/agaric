@@ -651,8 +651,9 @@ describe('useBlockSlashCommands handleTemplateSelect', () => {
     expect(params.load).not.toHaveBeenCalled()
   })
 
-  it('reloads the page when the insert fails, so blocks that landed show', async () => {
-    vi.mocked(insertTemplateBlocks).mockRejectedValueOnce(new Error('set_property failed'))
+  // The insert is one transaction (#6530): a failure leaves nothing to show.
+  it('reports a failed insert without reloading the page', async () => {
+    vi.mocked(insertTemplateBlocks).mockRejectedValueOnce(new Error('insert refused'))
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
 
@@ -660,7 +661,7 @@ describe('useBlockSlashCommands handleTemplateSelect', () => {
       await result.current.handleTemplateSelect('TEMPLATE_1')
     })
 
-    expect(params.load).toHaveBeenCalledTimes(1)
+    expect(params.load).not.toHaveBeenCalled()
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith('slash.templateInsertFailed')
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       'useTemplateSelection',

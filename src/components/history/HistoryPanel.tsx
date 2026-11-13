@@ -208,7 +208,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   // the old behaviour (incl. a re-keyed query re-toasting).
   //
   // Guard against a STALE toast on remount: an errored blockHistory entry is
-  // cached (gcTime Infinity), so on reopen the query presents its old
+  // cached, so on reopen the query presents its old
   // `errorUpdatedAt`. The `!isFetching` gate is what makes this safe:
   // `refetchOnMount: 'always'` puts the query straight into `isFetching` while it
   // re-validates, so a stale cached failure can't toast before the fresh fetch

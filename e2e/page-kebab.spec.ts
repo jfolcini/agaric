@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+
 import type { Locator, Page } from '@playwright/test'
 
 import {
@@ -5,6 +7,7 @@ import {
   expect,
   focusBlockById,
   openPage,
+  readClipboard,
   reopenPage,
   replaceEditorText,
   saveBlock,
@@ -17,7 +20,8 @@ import {
  * there drive the page-level undo store, which Ctrl+Z specs reach only through
  * the keyboard; Insert emoji opens the picker that writes into the page title
  * (`handleTitleEmojiSelect` in `PageHeader`). Both run against the mock and are
- * read back after reopening the page.
+ * read back after reopening the page. Copy app link (#6555) is read back from the
+ * mock's clipboard, and Save as Markdown file (#6546) from the downloaded file.
  */
 
 // SEED_IDS.BLOCK_GS_1 / BLOCK_GS_3 and their seed text (src/lib/tauri-mock/seed.ts).
@@ -25,6 +29,8 @@ const GS_1 = '0000000000000000000BLOCK01'
 const GS_3 = '0000000000000000000BLOCK03'
 const GS_1_TEXT = 'Welcome to Agaric! This is your personal knowledge base.'
 const GS_3_TEXT = 'Create new blocks by pressing Enter at the end of any block.'
+// SEED_IDS.PAGE_QUICK_NOTES.
+const QUICK_NOTES = '00000000000000000000PAGE02'
 
 function staticBlock(page: Page, blockId: string): Locator {
   return page.locator(`[data-testid="block-static"][data-block-id="${blockId}"]`)
@@ -85,5 +91,36 @@ test.describe('Page actions menu @pages', () => {
 
     await reopenPage(page, 'Quick Notes🚀')
     await expect(title).toHaveText('Quick Notes🚀')
+  })
+
+  test('Copy app link puts the page’s agaric:// link on the clipboard', async ({ page }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Quick Notes')
+
+    await pageAction(page, 'Copy app link')
+
+    await expect(page.getByText('App link copied to clipboard', { exact: true })).toBeVisible()
+    expect(await readClipboard(page)).toBe(`agaric://page/${QUICK_NOTES}`)
+  })
+
+  test('Save as Markdown file downloads what Export as Markdown copies, named after the page', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Quick Notes')
+    await pageAction(page, /^Export as Markdown/)
+    await expect(page.getByText('Markdown copied to clipboard', { exact: true })).toBeVisible()
+    const copied = await readClipboard(page)
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      pageAction(page, 'Save as Markdown file'),
+    ])
+
+    expect(download.suggestedFilename()).toBe('Quick Notes.md')
+    const saved = await readFile(await download.path(), 'utf8')
+    expect(saved).toContain('# Quick Notes')
+    expect(saved).toBe(copied)
+    await expect(page.getByText('Saved Quick Notes.md to Downloads', { exact: true })).toBeVisible()
   })
 })

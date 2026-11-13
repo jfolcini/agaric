@@ -72,10 +72,9 @@ export function TrashView(): React.ReactElement {
   // guard: a late load-more response for a superseded space lands in that key's
   // (now observer-less) cache entry instead of being grafted onto the new space's
   // list. There is no `invalidationKey` (the old hook subscribed to no property
-  // events), so the key is stable within a space and needs no bounded `gcTime` —
-  // it inherits the client's `gcTime: Infinity` (see `useUnlinkedReferences`). The
-  // client is passed EXPLICITLY as the 2nd arg so no `QueryClientProvider`
-  // ancestor is required (bare `render()` tests need no wrapper). `listTrash`
+  // events), so the key is stable within a space. The client is passed EXPLICITLY
+  // as the 2nd arg so no `QueryClientProvider` ancestor is required (bare
+  // `render()` tests need no wrapper). `listTrash`
   // takes no AbortSignal, so — as before migration — none is forwarded.
   const queryKey = useMemo(() => ['trash', currentSpaceId], [currentSpaceId])
   const {
@@ -171,7 +170,7 @@ export function TrashView(): React.ReactElement {
   // `isError` latched across consecutive same-key failures, so keying on it alone
   // would toast once; `errorUpdatedAt` advances on every error occurrence, firing
   // once per failed load. The `!isFetching` gate is what makes a cached error
-  // (gcTime Infinity) safe on remount: `refetchOnMount:'always'` puts the query
+  // safe on remount: `refetchOnMount:'always'` puts the query
   // straight into `isFetching` while it re-validates, so a stale cached failure
   // can't toast before the fresh fetch settles — only a genuinely settled error
   // does (#2639). The first-render ref still de-dupes the same settled error
@@ -375,6 +374,7 @@ export function TrashView(): React.ReactElement {
   // array references it and a forward reference would hit the TDZ.
   const requestBatchPurge = useCallback(() => setConfirmBatchPurge(true), [])
   useTrashListShortcuts({
+    listRef,
     filteredBlocks,
     focusedIndex,
     selectedSize: selected.size,

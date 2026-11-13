@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!\" FROM blocks b\n           LEFT JOIN blocks p ON p.id = b.page_id\n           WHERE b.block_type != 'page' AND b.page_id IS NOT NULL\n             AND b.space_id IS NOT p.space_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b33a0bf1119f80a22c751b338ab33e659cc65590431ad973a66677eb37a4f7d1"
+}

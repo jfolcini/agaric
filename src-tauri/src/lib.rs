@@ -1896,11 +1896,11 @@ fn loro_snapshot_if_dirty_job(
 
 /// The vault-wide `page_id` / `space_id` re-derivation (`RebuildPageIds`):
 /// the daemon's first tick, about a minute after boot, then daily (#5420).
-/// Local writes derive both in their own transaction, and every delete /
-/// restore / purge and every non-empty inbound sync enqueues this task
-/// itself, so what is left for a backstop is a fan-out lost to process death
-/// (an inbound sync's is debounced in memory): it need not run in the boot
-/// burst, but it must run every session.
+/// Local writes derive both in their own transaction, and every purge and
+/// every non-empty inbound sync enqueues this task itself, so what is left
+/// for a backstop is a fan-out lost to process death (an inbound sync's is
+/// debounced in memory): it need not run in the boot burst, but it must run
+/// every session.
 fn page_ids_backstop_job(materializer: &materializer::Materializer) -> maintenance::MaintenanceJob {
     let materializer = materializer.clone();
     maintenance::MaintenanceJob {

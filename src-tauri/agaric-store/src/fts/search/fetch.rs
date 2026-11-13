@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use crate::cancellation::CancellationToken;
 use crate::db::search_pool_acquire_logged;
+use crate::filters::NOT_SAVED_VIEW;
 use crate::search_types::SearchScope;
 use agaric_core::error::AppError;
 
@@ -197,6 +198,7 @@ pub(super) fn build_fts_fetch(
          JOIN blocks b ON b.id = fts.block_id
          WHERE fts_blocks MATCH ?1
            AND b.deleted_at IS NULL
+           AND {NOT_SAVED_VIEW}
            AND (?2 IS NULL
                 OR fts.rank > ?3 + (1e-9 * MAX(1.0, ABS(?3)))
                 OR (ABS(fts.rank - ?3) <= (1e-9 * MAX(1.0, ABS(?3))) AND b.id > ?4))",

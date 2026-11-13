@@ -59,7 +59,7 @@ function baseParams(
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // The client is a module singleton with gcTime: Infinity — clear cached
+  // The client is a module singleton — clear cached
   // pages between tests so each case starts fresh.
   queryClient.clear()
 })
@@ -584,11 +584,9 @@ describe('useUnlinkedReferences', () => {
     expect(result.current.queryKey).toEqual([...result.current.queryKeyPrefix, 20])
   })
 
-  // #3316 item 2 (b) — `pageId` is part of the query key, so under the client's
-  // inherited `gcTime: Infinity` a session that visits N pages leaves N
-  // observer-less cache entries that are never collected. The hook must
-  // override it, as `useBacklinkGroups` already does.
-  it('#3316 item 2: overrides the client default gcTime so per-pageId entries are collectable', async () => {
+  // #3316 item 2 (b) — `pageId` is part of the query key, so a session that
+  // visits N pages leaves N observer-less cache entries; each must be collectable.
+  it('#3316 item 2: per-pageId entries have a finite gcTime', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
       next_cursor: null,

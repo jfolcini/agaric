@@ -34,7 +34,8 @@ import {
   refInclusiveTags,
 } from '@/lib/tauri-mock/handlers/shared'
 import { inheritedTagIds } from '@/lib/tauri-mock/handlers/tags'
-import { blockTags, blocks } from '@/lib/tauri-mock/seed'
+import { isSavedViewPage } from '@/lib/tauri-mock/page-names'
+import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // #3938 — the `fts_blocks.stripped` stand-in
@@ -1619,7 +1620,7 @@ function searchStructuralCandidates(
   // {@link rawLastEditedOf} memoizes it on the advanced-query path).
   const needsLastEdited = metadata.some((p) => p['type'] === 'LastEdited')
   return [...blocks.values()].filter((b) => {
-    if (b['deleted_at']) return false
+    if (b['deleted_at'] || isSavedViewPage(b)) return false
     if (spaceIds !== null && !spaceIds.some((id) => fbqInSpace(b, id))) return false
     if (parentId !== null && ((b['parent_id'] as string | null) ?? null) !== parentId) return false
     if (blockTypeFilter !== null && b['block_type'] !== blockTypeFilter) return false
@@ -2203,6 +2204,42 @@ function searchRegexMatches(re: RegExp | null, b: Record<string, unknown>): bool
   return false
 }
 
+/**
+ * Mirror of `names_template_property` (`agaric-store/src/query/engine.rs`):
+ * whether the filter selects blocks that carry the `template` property, the
+ * one way an advanced query asks for template pages and the blocks under them.
+ * `positive` flips under each `Not`: "not a template" asks to leave them out.
+ */
+function namesTemplateProperty(expr: Record<string, unknown>, positive = true): boolean {
+  switch (expr['type'] as string) {
+    case 'Leaf': {
+      const p = (expr['primitive'] as Record<string, unknown> | undefined) ?? {}
+      if (p['type'] === 'HasProperty') {
+        const op = (p['predicate'] as Record<string, unknown> | undefined)?.['type']
+        const absent = op === 'NotExists' || op === 'Ne'
+        return p['key'] === 'template' && positive !== absent
+      }
+      if (p['type'] === 'HasParentMatching') {
+        const matcher = (p['matcher'] as Record<string, unknown> | undefined) ?? {}
+        return namesTemplateProperty(matcher, positive)
+      }
+      return false
+    }
+    case 'And':
+    case 'Or': {
+      const children = (expr['children'] as Array<Record<string, unknown>> | undefined) ?? []
+      return children.some((child) => namesTemplateProperty(child, positive))
+    }
+    case 'Not': {
+      const child = (expr['child'] as Record<string, unknown> | undefined) ?? {}
+      return namesTemplateProperty(child, !positive)
+    }
+    default: {
+      return false
+    }
+  }
+}
+
 export const searchHandlers = {
   // #1280 — advanced-query engine. The mock cannot compile a `FilterExpr` tree
   // to SQL, so it INTERPRETS it in TypeScript instead. The GROUPED + AGGREGATE
@@ -2297,9 +2334,13 @@ export const searchHandlers = {
     const foldedQuery = hasFulltext ? foldForFtsIndex(fulltext) : ''
     const edges = linkEdges()
     const matched: MatchedEntry[] = []
+    // The engine leaves template pages and their placeholder blocks out unless
+    // the filter asks for templates by name.
+    const includeTemplates = namesTemplateProperty(filterExpr)
     for (const b of blocks.values()) {
-      if (b['deleted_at']) continue
+      if (b['deleted_at'] || isSavedViewPage(b)) continue
       if (!fbqInSpace(b, spaceId)) continue
+      if (!includeTemplates && properties.get(b['page_id'] as string)?.has('template')) continue
       // Page-aggregate primitives (child/inbound counts) need the block's own
       // page subtree; non-page blocks have no `page_id === id` descendants, so
       // those counts are 0 — matching the backend's per-row `b.*` evaluation.
@@ -2806,7 +2847,7 @@ export const searchHandlers = {
     const spaceId = readActiveSpaceScope('filtered_blocks_query', a)
 
     const items = [...blocks.values()].filter((b) => {
-      if (b['deleted_at']) return false
+      if (b['deleted_at'] || isSavedViewPage(b)) return false
       if (blockType !== null && b['block_type'] !== blockType) return false
       if (!fbqInSpace(b, spaceId)) return false
       if (!propertyFilters.every((pf) => fbqPropertyFilterMatches(b, pf))) return false

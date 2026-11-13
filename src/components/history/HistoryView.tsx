@@ -160,9 +160,6 @@ export function HistoryView(): React.ReactElement {
       // the prior entries visible (per-key cache writes unchanged, so the #2256
       // stale-guard still holds).
       placeholderData: keepPreviousData,
-      // No `invalidationKey` (monotonic key) sits in this key, so the entry set
-      // is bounded and the client's default `gcTime: Infinity` is left in place
-      // (mirrors `useUnlinkedReferences`; unlike `DonePanel`, which bounds it).
     },
     queryClient,
   )
@@ -200,7 +197,7 @@ export function HistoryView(): React.ReactElement {
   // load-more). TanStack keeps `isError` latched across consecutive same-key
   // failures, so keying only on `isError` would toast just once; `errorUpdatedAt`
   // advances on every error occurrence, firing the toast once per failed load.
-  // The `!isFetching` gate makes a cached error (gcTime Infinity) safe on
+  // The `!isFetching` gate makes a cached error safe on
   // remount: `refetchOnMount: 'always'` puts the query straight into `isFetching`
   // while it re-validates, so a stale cached failure can't toast before the fresh
   // fetch settles — only a genuinely settled error does (#2639). The first-render

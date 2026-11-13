@@ -71,9 +71,11 @@ pub use projection::{QUERY_ALLOWED_KEYS, QueryProjection};
 /// multi-key sort and keyset cursor.
 ///
 /// The `filter` defaults to `And { children: [] }` — the TRUE expression
-/// (`1=1`), i.e. "every block in the space". `sort` defaults to empty (the
-/// engine applies its default keyset on `b.id DESC`). `limit` defaults to
-/// the engine's [`engine::DEFAULT_LIMIT`].
+/// (`1=1`), i.e. "every block in the space". Template pages and their blocks
+/// are left out unless `filter` names the `template` property, and saved
+/// views (#6544) always are. `sort`
+/// defaults to empty (the engine applies its default keyset on `b.id DESC`).
+/// `limit` defaults to the engine's [`engine::DEFAULT_LIMIT`].
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AdvancedQueryRequest {

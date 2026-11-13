@@ -105,8 +105,6 @@ export function useTemplateSelection({
       } catch (err) {
         logger.warn('useTemplateSelection', 'template insert failed', { templatePageId }, err)
         notify.error(t('slash.templateInsertFailed'))
-        // Blocks that landed before the failure are saved and on the undo stack.
-        await load()
       }
     },
     [focusedBlockId, blocks, rootParentId, load, t],

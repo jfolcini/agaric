@@ -223,8 +223,9 @@ pub struct PageHeading {
     pub scheduled_date: Option<String>,
 }
 
-/// Return every live page in `space_id`, ordered by content
-/// (case-insensitive) then id.  No pagination, no clamp.
+/// Return every live page in `space_id` but its saved views (#6544), ordered
+/// by content (case-insensitive) then id.  No pagination, no clamp.  A saved
+/// view carries no tag, so the tag-filter branch needs no exclusion.
 ///
 /// The result set is bounded by the space's page count — intrinsic to
 /// the workspace.  Use this when the caller genuinely needs every
@@ -294,6 +295,7 @@ pub async fn list_all_pages_in_space_inner(
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
              AND b.space_id = ?1
+             AND b.id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')
            ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC"#,
         space_id,
     )

@@ -295,47 +295,39 @@ function isRecordingPlaceholder(content: string): boolean {
   return m?.[1]?.trim().toLowerCase() === 'recording'
 }
 
-/** A template property `create_blocks_batch` cannot write: it types every value as text. */
-interface TypedProperty {
-  index: number
-  key: string
-  value: SetPropertyArgs
-}
-
 /**
  * The task state, priority and dates of a template block, and its properties
- * the copy keeps (the app's stamps and the template marker are not), as
- * `create_blocks_batch`'s text map; a property held as a number, date, ref or
- * boolean goes to `typed` for `set_property`, under the spec's `index`.
+ * the copy keeps (the app's stamps and the template marker are not): text
+ * values as `create_blocks_batch`'s `properties`, values held as a number,
+ * date, ref or boolean as its `typedProperties`.
  */
 function copiedProperties(
   block: BlockRow,
   rows: readonly PropertyRow[],
-  index: number,
-  typed: TypedProperty[],
-): Record<string, string> {
-  const text: Record<string, string> = {}
+): Pick<CreateBlockSpec, 'properties' | 'typedProperties'> {
+  const properties: Record<string, string> = {}
+  const typedProperties: Record<string, SetPropertyArgs> = {}
   for (const key of ['todo_state', 'priority', 'due_date', 'scheduled_date'] as const) {
     const value = block[key]
-    if (value != null) text[key] = value
+    if (value != null) properties[key] = value
   }
   for (const row of rows) {
     if (INLINE_PROPERTY_RESERVED_KEYS.has(row.key)) continue
-    if (row.value_text != null) text[row.key] = row.value_text
+    if (row.value_text != null) properties[row.key] = row.value_text
     else {
       const { value_num, value_date, value_ref, value_bool } = row
       const bool = value_bool == null ? null : value_bool !== 0
-      const value = { value_num, value_date, value_ref, value_bool: bool }
-      typed.push({ index, key: row.key, value })
+      typedProperties[row.key] = { value_num, value_date, value_ref, value_bool: bool }
     }
   }
-  return text
+  return { properties, typedProperties }
 }
 
 /**
- * Insert a template's children as new blocks under the given parent.
- * Recursively copies content, task state, priority, dates, properties,
- * ordering, and nested structure from the template page's entire subtree.
+ * Insert a template's blocks under the given parent, after its last child:
+ * content, task state, priority, dates, properties, order and nesting, in one
+ * `create_blocks_batch` (one transaction: all of it lands or none of it, and a
+ * failure rejects).
  *
  * Template variables are expanded during insertion: the legacy
  * `<% today %>` family AND the #1442 `{{date}}`/`{{date:FORMAT}}`/`{{time}}`/
@@ -343,24 +335,14 @@ function copiedProperties(
  * `{{cursor}}` marker in a block records the caret target: it is stripped
  * from the content and, when `context.onCursorBlock` is supplied, the
  * created block's id is reported back so the caller can focus it after the
- * template lands. `context.onOpRefs` receives the refs of every write, once,
- * so the caller can record the insert as one undo step. Returns the IDs of
- * all created blocks.
+ * template lands. `context.onOpRefs` receives the refs of the insert, once,
+ * so the caller can record it as one undo step. Returns the IDs of all
+ * created blocks.
  *
- * Replaces the per-descendant `createBlock` IPC loop
- * with a single `createBlocksBatch` call. limit-clamp-followup — the
- * walk-children traversal also collapsed from one `listBlocks` IPC per
- * source parent (silently clamped to 100 children per level) into a
- * single `loadPageSubtree` IPC that returns the entire template subtree
- * in one SELECT against the materializer-maintained `page_id` index.
- * The specs are accumulated in DFS order with the source-id → batch-
- * index mapping tracked so each child's `parentId` resolves to the
- * freshly-created destination block from the earlier level's batch. Each
- * depth level is its own transaction, so a level that fails leaves the
- * levels before it in place (#6530 asks for one command that copies the
- * whole template in one transaction).
+ * The template subtree arrives in one `loadPageSubtree` call. The specs are
+ * built depth-first, so a nested block names its parent by that parent's
+ * index in the batch.
  */
-// oxlint-disable-next-line eslint/complexity -- pre-existing
 export async function insertTemplateBlocks(
   templatePageId: string,
   parentId: string,
@@ -381,41 +363,19 @@ export async function insertTemplateBlocks(
     logger.warn('template-utils', 'insertTemplateBlocks: no active space; skipping', {})
     return []
   }
-  const effectiveSpaceId = spaceId
 
-  // Collect specs in DFS order. Each spec's `parentId` is either the
-  // top-level destination (`parentId` arg) when the source's parent is
-  // the template root, or a placeholder string of the form
-  // `__BATCH_INDEX__<i>` that we resolve to the freshly-created block
-  // id after the batch returns. We build a map source-id → batch-index
-  // as we walk so children can reference their just-pushed parent.
-  interface DeferredSpec {
-    spec: CreateBlockSpec
-    resolveParentFromIndex: number | null
-  }
-  const deferred: DeferredSpec[] = []
-
-  // Deferred index of the block that carried the `{{cursor}}` marker (the
-  // first one wins). Resolved to a created block id after the batch lands and
-  // reported via `context.onCursorBlock`.
-  let cursorDeferredIndex: number | null = null
-
-  // Single IPC fetches every descendant of the template root (root
-  // itself excluded). Group by `parent_id` and sort each sibling group
-  // by `position` so the DFS below reproduces the exact ordering the
-  // old per-parent `listBlocks` walk produced.
-  // #1258 — `loadPageSubtree` now returns `{ blocks, truncated, total }`.
+  // #1258 — `loadPageSubtree` returns `{ blocks, truncated, total }`.
   // Templates are authored, small subtrees, so truncation is not expected
-  // here; take the blocks array. (A pathological >10k-block template would
-  // be capped by the backend, matching the prior bare-array behaviour.)
+  // here; take the blocks array.
   const descendants = unwrap(
-    await commands.loadPageSubtree(templatePageId, requireActiveScope(effectiveSpaceId)),
+    await commands.loadPageSubtree(templatePageId, requireActiveScope(spaceId)),
   ).blocks
   const propertiesById =
     descendants.length === 0
       ? {}
       : unwrap(await commands.getBatchProperties(descendants.map((b) => b.id)))
-  const typedProperties: TypedProperty[] = []
+  // `load_page_subtree` documents its row order as not load-bearing, so the
+  // copy orders each sibling group by position itself.
   const childrenByParent = new Map<string, BlockRow[]>()
   for (const block of descendants) {
     const pid = block.parent_id
@@ -430,10 +390,12 @@ export async function insertTemplateBlocks(
     )
   }
 
+  const specs: CreateBlockSpec[] = []
+  // The index of the first block that carried a `{{cursor}}` marker.
+  let cursorIndex: number | null = null
+
   function walkChildren(sourceParentId: string, destParentIndex: number | null): void {
-    const children = childrenByParent.get(sourceParentId)
-    if (!children) return
-    for (const child of children) {
+    for (const child of childrenByParent.get(sourceParentId) ?? []) {
       // The placeholder marks where `/meeting` puts the recording; a plain
       // insert has no recording, so its children take its place.
       if (isRecordingPlaceholder(child.content ?? '')) {
@@ -443,131 +405,35 @@ export async function insertTemplateBlocks(
       // Two-stage expansion: legacy `<% %>` first, then the #1442 `{{ }}`
       // grammar (which also strips any `{{cursor}}` marker and reports it).
       const legacyExpanded = expandTemplateVariables(child.content ?? '', context ?? {})
-      const { text: expandedContent, hasCursor } = substituteTemplateVariables(
+      const { text, hasCursor } = substituteTemplateVariables(
         legacyExpanded,
         context?.pageTitle === undefined ? {} : { pageTitle: context.pageTitle },
       )
-      const myIndex = deferred.length
-      if (hasCursor && cursorDeferredIndex === null) cursorDeferredIndex = myIndex
-      deferred.push({
-        spec: {
-          blockType: 'content',
-          content: expandedContent,
-          // Real parentId resolved post-batch. For now use the
-          // top-level dest; a child rewrites it via
-          // `resolveParentFromIndex`.
-          parentId: destParentIndex == null ? parentId : null,
-          position: null,
-          properties: copiedProperties(
-            child,
-            propertiesById[child.id] ?? [],
-            myIndex,
-            typedProperties,
-          ),
-        },
-        resolveParentFromIndex: destParentIndex,
+      const index = specs.length
+      if (hasCursor && cursorIndex === null) cursorIndex = index
+      specs.push({
+        blockType: 'content',
+        content: text,
+        parentId: destParentIndex == null ? parentId : null,
+        parentIndex: destParentIndex,
+        position: null,
+        ...copiedProperties(child, propertiesById[child.id] ?? []),
       })
-      // Recurse: grandchildren of `child` will reference `myIndex`.
-      walkChildren(child.id, myIndex)
+      walkChildren(child.id, index)
     }
   }
 
   walkChildren(templatePageId, null)
+  if (specs.length === 0) return []
 
-  if (deferred.length === 0) return []
-
-  // First pass writes specs that point to top-level `parentId`. After
-  // the batch lands we do NOT need a second pass — but the backend
-  // accepts forward references via the same-tx parent probe, so the
-  // simpler approach is to fix up every nested spec's parentId BEFORE
-  // sending the batch, using the placeholder "this row is the parent"
-  // index. Since we don't know the ULIDs yet, we leave `parentId =
-  // null` for nested rows and patch each entry's `parentId` to the
-  // top-level `parentId` when it has no source-parent, OR to a
-  // sentinel that the batch can't yet resolve. Backend solution: we
-  // call the batch in TWO halves... NO — simpler: we send N separate
-  // batches, one per depth level. Children at depth d only reference
-  // parents at depth d-1, which are already created.
-  //
-  // For simplicity and correctness with the all-or-nothing semantic,
-  // we compute the depth groups and issue ONE IPC PER DEPTH LEVEL.
-  // Most templates are 1-2 levels deep, so this is still 1-2 IPCs vs
-  // the previous N (one per descendant). For deeper templates the
-  // count scales with depth, not with descendant count.
-  //
-  // Group entries by depth. Depth 0 = direct children of `templatePageId`
-  // (their `resolveParentFromIndex` is `null`).
-  const depthByIndex: number[] = Array.from({ length: deferred.length }, () => 0)
-  for (let i = 0; i < deferred.length; i += 1) {
-    const parent = deferred[i]?.resolveParentFromIndex
-    if (parent != null) {
-      depthByIndex[i] = (depthByIndex[parent] ?? 0) + 1
-    }
+  const { blocks: created, op_refs } = unwrap(await commands.createBlocksBatch(specs))
+  context?.onOpRefs?.(op_refs)
+  const ids = created.map((row) => row.id)
+  if (cursorIndex !== null) {
+    const cursorId = ids[cursorIndex]
+    if (cursorId !== undefined) context?.onCursorBlock?.(cursorId)
   }
-  let maxDepth = 0
-  for (const d of depthByIndex) if (d > maxDepth) maxDepth = d
-
-  const ids: string[] = Array.from<string>({ length: deferred.length })
-  const opRefs: OpRef[] = []
-  // batch-index → created id (filled level-by-level)
-  for (let level = 0; level <= maxDepth; level += 1) {
-    const indicesAtLevel: number[] = []
-    const specsAtLevel: CreateBlockSpec[] = []
-    for (let i = 0; i < deferred.length; i += 1) {
-      if ((depthByIndex[i] ?? 0) !== level) continue
-      const entry = deferred[i]
-      if (entry == null) continue
-      const resolvedParentId =
-        entry.resolveParentFromIndex == null
-          ? parentId
-          : (ids[entry.resolveParentFromIndex] ?? parentId)
-      indicesAtLevel.push(i)
-      specsAtLevel.push({ ...entry.spec, parentId: resolvedParentId })
-    }
-    try {
-      const { blocks: created, op_refs } = unwrap(await commands.createBlocksBatch(specsAtLevel))
-      opRefs.push(...op_refs)
-      for (let k = 0; k < indicesAtLevel.length; k += 1) {
-        const idx = indicesAtLevel[k]
-        if (idx == null) continue
-        const row = created[k]
-        if (row != null) ids[idx] = row.id
-      }
-    } catch (err) {
-      logger.warn(
-        'template-utils',
-        'template batch insert failed at depth level',
-        { level, count: specsAtLevel.length },
-        err,
-      )
-      // Partial-template policy: stop on first error; previously
-      // landed levels survive (mirror of the old per-block
-      // try/catch → ids accumulate as far as we got).
-      break
-    }
-  }
-
-  try {
-    for (const { index, key, value } of typedProperties) {
-      const id = ids[index]
-      if (id === undefined) continue
-      opRefs.push(...unwrap(await commands.setProperty(id, key, value)).op_refs)
-    }
-  } finally {
-    if (opRefs.length > 0) context?.onOpRefs?.(opRefs)
-  }
-
-  // Report the caret-target block (from a `{{cursor}}` marker) once its real
-  // id is known. Best-effort: if the cursor block's level failed to land its
-  // id stays a hole and we simply don't fire the callback.
-  if (cursorDeferredIndex !== null && context?.onCursorBlock) {
-    const cursorId = ids[cursorDeferredIndex]
-    if (typeof cursorId === 'string') context.onCursorBlock(cursorId)
-  }
-
-  // Filter out any holes (in case a level batch failed mid-way and
-  // some indices were never populated).
-  return ids.filter((id): id is string => typeof id === 'string')
+  return ids
 }
 
 const SPACE_TEXT_JOURNAL_TEMPLATE_KEY = 'journal_template'
