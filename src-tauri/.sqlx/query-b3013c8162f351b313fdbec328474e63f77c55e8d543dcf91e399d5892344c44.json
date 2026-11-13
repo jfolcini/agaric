@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT position FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "position",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "position"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "b3013c8162f351b313fdbec328474e63f77c55e8d543dcf91e399d5892344c44"
+}

@@ -933,7 +933,8 @@ pub(crate) enum SeedRank<'a> {
 /// [`hydrate_page_subtree_into_engine`]'s synchronous engine seed, ranking
 /// siblings by `sql_ranks` (keyed by id) when given, else by their stamps.
 /// With `only`, see [`SeedRank::Sql`].
-/// Returns the post-seed sibling order of every parent group actually touched.
+/// Returns the post-seed sibling order of every parent group actually touched,
+/// each with the index of the first block this call seeded into it.
 fn seed_nodes_into_engine(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
@@ -941,12 +942,13 @@ fn seed_nodes_into_engine(
     nodes: &[SeedNode],
     sql_ranks: Option<&std::collections::HashMap<String, i64>>,
     only: Option<&std::collections::HashSet<String>>,
-) -> Result<Vec<Vec<String>>, AppError> {
+) -> Result<Vec<(Vec<String>, usize)>, AppError> {
     let mut guard = state
         .registry
         .for_space_recording(space_id, device_id, &state.revert)?;
     let engine = guard.engine_mut();
     let mut touched_parents: Vec<Option<String>> = Vec::new();
+    let mut seeded: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for n in nodes {
         if engine.read_block(&n.id)?.is_some() {
             continue;
@@ -987,13 +989,19 @@ fn seed_nodes_into_engine(
         if let Some(deleted_at) = n.tombstone {
             engine.apply_delete_block(&n.id, &deleted_at.to_string())?;
         }
+        seeded.insert(&n.id);
         if !touched_parents.contains(&n.parent_id) {
             touched_parents.push(n.parent_id.clone());
         }
     }
     let mut orders = Vec::with_capacity(touched_parents.len());
     for parent in &touched_parents {
-        orders.push(engine.children_ordered_block_ids(parent.as_deref())?);
+        let order = engine.children_ordered_block_ids(parent.as_deref())?;
+        let first_seeded = order
+            .iter()
+            .position(|id| seeded.contains(id.as_str()))
+            .unwrap_or(0);
+        orders.push((order, first_seeded));
     }
     drop(guard);
     Ok(orders)
@@ -1146,14 +1154,22 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
     //    guard is `!Send`, so NO `.await` may run while it is alive. Skip nodes
     //    already present (idempotent), and record the post-seed sibling order of
     //    every parent group we actually touched for the dense reprojection.
-    let touched_orders: Vec<Vec<String>> =
+    let touched_orders =
         seed_nodes_into_engine(state, device_id, space_id, &nodes, sql_ranks.as_ref(), only)?;
 
     // 4. Reproject each touched parent group so the engine's sibling order and
     //    the SQL dense positions agree (mirrors the create path). Empty on a
-    //    pure re-hydration (nothing newly seeded) ⇒ no writes.
-    for order in &touched_orders {
-        projection::reproject_dense_positions(conn, order).await?;
+    //    pure re-hydration (nothing newly seeded) ⇒ no writes. #6527: a seed
+    //    at space assignment moved only the ranks from its first block on. A
+    //    replayed one finds SQL ahead of the engine, and a repair seeds among
+    //    siblings SQL may rank apart from the engine, so both write the group.
+    let seeded_in_step = matches!(rank, SeedRank::Stamp) && admit_deleted_since.is_none();
+    for (order, first_seeded) in &touched_orders {
+        if seeded_in_step {
+            projection::reproject_dense_positions_from(conn, order, *first_seeded).await?;
+        } else {
+            projection::reproject_dense_positions(conn, order).await?;
+        }
     }
     Ok(())
 }

@@ -1532,6 +1532,7 @@ async fn rebuild_stale_derivations(
                 MaterializeTask::RebuildTagsCache,
             ],
             Derivation::Agenda => vec![MaterializeTask::RebuildAgendaCache],
+            Derivation::TagUsage => vec![MaterializeTask::RebuildTagsCache],
             Derivation::PageLink => vec![MaterializeTask::RebuildPageLinkCache],
             Derivation::LinkTokens => {
                 match agaric_store::cache::rederive_block_links(write_pool).await {
@@ -4751,6 +4752,69 @@ mod boot_cache_gating_tests {
             1,
             "an empty block_tag_refs with no inline tag token must schedule no \
              rebuild: only the flush barrier runs"
+        );
+        mat.shutdown();
+    }
+
+    /// #6659 — a tag count written before template blocks were left out is
+    /// recounted at boot. Every other rule is recorded as current, so the
+    /// count rule's version alone schedules the rebuild.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_tag_count_an_older_rule_wrote_is_recounted_at_boot_6659() {
+        use agaric_store::derivations::{Derivation, record};
+        const TEMPLATE: &str = "01J000000000000000TMPL6659";
+        let dir = tempfile::TempDir::new().unwrap();
+        let pools = db::init_pools(&dir.path().join("test.db")).await.unwrap();
+        seed_tag_and_source(&pools.write, "note".to_owned()).await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'Tpl', ?)",
+        )
+        .bind(TEMPLATE)
+        .bind(TEMPLATE)
+        .execute(&pools.write)
+        .await
+        .unwrap();
+        for sql in [
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?1, 'template', 'true')",
+            "UPDATE blocks SET parent_id = ?1, page_id = ?1 WHERE block_type = 'content'",
+        ] {
+            sqlx::query(sql)
+                .bind(TEMPLATE)
+                .execute(&pools.write)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(SOURCE)
+            .bind(TAG)
+            .execute(&pools.write)
+            .await
+            .unwrap();
+        // The row the older rule left: the template's block counted.
+        sqlx::query(
+            "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) VALUES (?, 'tag-name', 1, '')",
+        )
+        .bind(TAG)
+        .execute(&pools.write)
+        .await
+        .unwrap();
+        for derivation in Derivation::ALL {
+            if derivation != Derivation::TagUsage {
+                record(&pools.write, derivation).await.unwrap();
+            }
+        }
+        let mat =
+            materializer::Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background()
+            .await
+            .expect("drain the boot rebuilds");
+
+        assert_eq!(
+            count(&pools.read, "SELECT usage_count FROM tags_cache").await,
+            0,
+            "the block on the template page no longer counts"
         );
         mat.shutdown();
     }

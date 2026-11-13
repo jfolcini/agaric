@@ -20,7 +20,7 @@
 use futures_util::TryStreamExt;
 use sqlx::SqlitePool;
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::db::MAX_SQL_PARAMS;
 use agaric_core::error::AppError;
@@ -41,9 +41,9 @@ type TagRow = (String, String, i64, Option<String>);
 // ---------------------------------------------------------------------------
 
 /// Projection that computes the desired state of `tags_cache` from the
-/// live database. Bound from both [`rebuild_tags_cache_impl`] (single
-/// pool) and [`rebuild_tags_cache_split_impl`] (read/write split) so
-/// the two implementations cannot silently diverge.
+/// live database. The whole-vault read ([`DESIRED_TAGS_SQL`]) and the
+/// re-derivation of the stale tags ([`DESIRED_TAGS_OF_SQL`]) are this one
+/// text, so the two cannot silently diverge.
 ///
 /// Semantics (preserved verbatim from the pre-M-2 full rebuild):
 ///   - `usage_count` counts DISTINCT `block_id`s from the UNION of
@@ -53,10 +53,14 @@ type TagRow = (String, String, i64, Option<String>);
 ///     tag.space_id`, #5275): a `block_tags` / `block_tag_refs` row
 ///     survives the block's move to another space, and the Tags view is
 ///     space-scoped.
+///   - Neither counts a template page or a block on one (#6659): the tag's
+///     page lists its holders with a query that leaves them out, and the
+///     count is the number on that list's badge. The guard is the agenda's
+///     (`DESIRED_AGENDA_SQL`).
 ///   - Tags with zero usage are included via the LEFT JOIN + COALESCE.
 ///
 /// Output is sorted by `b.id ASC` so the sort-merge diff in
-/// [`apply_sort_merge_rebuild`] can walk this stream alongside
+/// [`merge_tag_streams`] can walk this stream alongside
 /// `tags_cache` (also `ORDER BY tag_id ASC`) in lockstep.
 ///
 /// **Duplicate-name de-duplication (#626).** `tags_cache` is
@@ -96,7 +100,10 @@ type TagRow = (String, String, i64, Option<String>);
 /// recoverable by a rename. The ASCII case behaviour is unchanged — it is
 /// a strict subset of the Unicode fold (pinned by
 /// `tag_norm::ascii_fold_matches_sqlite_nocase`).
-const DESIRED_TAGS_SQL: &str = "SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cnt, b.space_id
+macro_rules! desired_tags_sql {
+    ($usage_space:literal, $of_block_tags:literal, $of_tag_refs:literal, $of_tag:literal) => {
+        concat!(
+            "SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cnt, b.space_id
              FROM blocks b
              LEFT JOIN (
                  SELECT tag_id, COUNT(*) AS cnt FROM (
@@ -104,21 +111,64 @@ const DESIRED_TAGS_SQL: &str = "SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cn
                      FROM block_tags bt
                      JOIN blocks blk ON blk.id = bt.block_id
                      JOIN blocks tag ON tag.id = bt.tag_id
-                     WHERE blk.deleted_at IS NULL AND blk.space_id IS tag.space_id
+                     WHERE blk.deleted_at IS NULL AND ",
+            $usage_space,
+            " IS tag.space_id
+                       AND NOT EXISTS (
+                           SELECT 1 FROM block_properties tp
+                           WHERE tp.block_id = blk.page_id AND tp.key = 'template')",
+            $of_block_tags,
+            "
                      UNION
                      SELECT btr.tag_id, btr.source_id AS block_id
                      FROM block_tag_refs btr
                      JOIN blocks blk ON blk.id = btr.source_id
                      JOIN blocks tag ON tag.id = btr.tag_id
-                     WHERE blk.deleted_at IS NULL AND blk.space_id IS tag.space_id
+                     WHERE blk.deleted_at IS NULL AND ",
+            $usage_space,
+            " IS tag.space_id
+                       AND NOT EXISTS (
+                           SELECT 1 FROM block_properties tp
+                           WHERE tp.block_id = blk.page_id AND tp.key = 'template')",
+            $of_tag_refs,
+            "
                  )
                  GROUP BY tag_id
              ) t ON t.tag_id = b.id
-             WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL
-             ORDER BY b.id ASC";
+             WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL",
+            $of_tag,
+            "
+             ORDER BY b.id ASC"
+        )
+    };
+}
+
+const DESIRED_TAGS_SQL: &str = desired_tags_sql!("blk.space_id", "", "", "");
+
+/// The texts that decide a tag's count, for the derivation golden: a change
+/// to either is a change to what `tags_cache` should hold.
+#[cfg(test)]
+pub(crate) const TAG_USAGE_RULE: [&str; 2] = [DESIRED_TAGS_SQL, DESIRED_TAG_USAGE_SQL];
+
+/// [`DESIRED_TAGS_SQL`] for the tags in the JSON id array `?1` alone, before
+/// the name de-duplication: the same text with the usage rows and the tag
+/// rows each narrowed to those ids, so a tag's row here is its row there.
+///
+/// `+blk.space_id` keeps the planner on those tags' usage rows, as in
+/// [`DESIRED_TAG_USAGE_SQL`]; the unary `+` changes no value.
+const DESIRED_TAGS_OF_SQL: &str = desired_tags_sql!(
+    "+blk.space_id",
+    " AND bt.tag_id IN (SELECT value FROM json_each(?1))",
+    " AND btr.tag_id IN (SELECT value FROM json_each(?1))",
+    " AND b.id IN (SELECT value FROM json_each(?1))"
+);
 
 const CURRENT_TAGS_SQL: &str =
     "SELECT tag_id, name, usage_count, space_id FROM tags_cache ORDER BY tag_id ASC";
+
+/// [`CURRENT_TAGS_SQL`] for the tags in the JSON id array `?1` alone.
+const CURRENT_TAGS_OF_SQL: &str = "SELECT tag_id, name, usage_count, space_id FROM tags_cache \
+     WHERE tag_id IN (SELECT value FROM json_each(?1)) ORDER BY tag_id ASC";
 
 /// Scoped desired-state SQL for a SINGLE tag (#676).
 ///
@@ -165,6 +215,9 @@ const DESIRED_TAG_USAGE_SQL: &str =
                  JOIN blocks blk ON blk.id = bt.block_id
                  JOIN blocks tag ON tag.id = bt.tag_id
                  WHERE blk.deleted_at IS NULL AND +blk.space_id IS tag.space_id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM block_properties tp
+                       WHERE tp.block_id = blk.page_id AND tp.key = 'template')
                    AND bt.tag_id = ?1
                  UNION
                  SELECT btr.source_id AS block_id
@@ -172,6 +225,9 @@ const DESIRED_TAG_USAGE_SQL: &str =
                  JOIN blocks blk ON blk.id = btr.source_id
                  JOIN blocks tag ON tag.id = btr.tag_id
                  WHERE blk.deleted_at IS NULL AND +blk.space_id IS tag.space_id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM block_properties tp
+                       WHERE tp.block_id = blk.page_id AND tp.key = 'template')
                    AND btr.tag_id = ?1
              )
          ) t
@@ -225,6 +281,7 @@ pub async fn refresh_tag_usage_count(pool: &SqlitePool, tag_id: &str) -> Result<
 
 async fn refresh_tag_usage_count_impl(pool: &SqlitePool, tag_id: &str) -> Result<u64, AppError> {
     let now = agaric_core::time::now_rfc3339();
+    // dynamic-sql: a named text, documented beside the rebuild's it mirrors
     let desired: Option<(String, i64, Option<String>)> =
         sqlx::query_as::<_, (String, i64, Option<String>)>(DESIRED_TAG_USAGE_SQL)
             .bind(tag_id)
@@ -245,6 +302,7 @@ async fn refresh_tag_usage_count_impl(pool: &SqlitePool, tag_id: &str) -> Result
     // identical to a full rebuild, which omits it — so leave the cache
     // untouched.
     let candidate_norm = normalize_tag_name(&name);
+    // dynamic-sql: a named text, shared with the rebuild's write half
     let siblings = sqlx::query_as::<_, (String, Option<String>)>(LIVE_TAGS_IN_SPACE_SQL)
         .bind(&space_id)
         .fetch_all(pool)
@@ -258,15 +316,15 @@ async fn refresh_tag_usage_count_impl(pool: &SqlitePool, tag_id: &str) -> Result
     }
 
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_tags_refresh_one").await?;
-    let res = sqlx::query(
+    let res = sqlx::query!(
         "INSERT OR REPLACE INTO tags_cache (tag_id, space_id, name, usage_count, updated_at) \
          VALUES (?1, ?2, ?3, ?4, ?5)",
+        tag_id,
+        space_id,
+        name,
+        cnt,
+        now,
     )
-    .bind(tag_id)
-    .bind(&space_id)
-    .bind(&name)
-    .bind(cnt)
-    .bind(&now)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -287,7 +345,7 @@ async fn refresh_tag_usage_count_impl(pool: &SqlitePool, tag_id: &str) -> Result
 /// collide on UNIQUE unless TAG_B's row is deleted first. The pre-M-2 full
 /// rebuild dodged this trivially by truncating the table; here we mirror
 /// that guarantee by sequencing all deletes before all inserts within a
-/// single apply pass — see [`apply_sort_merge_rebuild`] which calls this
+/// single apply pass — see [`rederive_tags_of`] which calls this
 /// exactly once at end-of-stream.
 async fn apply_tags_diff(
     conn: &mut sqlx::SqliteConnection,
@@ -301,6 +359,7 @@ async fn apply_tags_diff(
             "DELETE FROM tags_cache WHERE tag_id IN ({})",
             placeholders.join(", ")
         );
+        // dynamic-sql: the placeholder list is as long as the chunk
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for id in chunk {
             q = q.bind(id);
@@ -327,6 +386,7 @@ async fn apply_tags_diff(
              VALUES {}",
             placeholders.join(", ")
         );
+        // dynamic-sql: the placeholder list is as long as the chunk
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (tag_id, name, usage_count, space_id) in chunk {
             q = q
@@ -379,30 +439,20 @@ async fn next_desired_winner(
     Ok(None)
 }
 
-/// Stream-walk the desired and current tag rows in lockstep, computing
-/// a diff:
-///   - PK in NEW not in OLD → INSERT.
-///   - PK in OLD not in NEW → DELETE.
-///   - PK in both, `(name, usage_count, space_id)` differs → DELETE + INSERT.
-///   - PK in both, same `(name, usage_count, space_id)` → no-op (preserves
-///     the prior `updated_at`).
+/// Walk the desired name-winners and the cached rows in id order and hand
+/// every tag they disagree on to `on_stale`, as `(desired, cached)`:
+///   - PK in NEW not in OLD → `(Some, None)`.
+///   - PK in OLD not in NEW → `(None, Some)`.
+///   - PK in both, `(name, usage_count, space_id)` differs → `(Some, Some)`.
 ///
-/// Diff rows are accumulated into `Vec`s and flushed once at the end via
-/// a single chunked DELETE + chunked INSERT pair (see the ordering
-/// invariant on [`apply_tags_diff`]). For the typical incremental case
-/// the diff is small, so the heap cost is `O(diff_size)` — much smaller
-/// than the pre-M-2 full-table rewrite.
-async fn apply_sort_merge_rebuild(
-    desired_conn: &mut sqlx::SqliteConnection,
-    current_conn: &mut sqlx::SqliteConnection,
-    write_conn: &mut sqlx::SqliteConnection,
-    now: &str,
+/// `desired_stream` is the [`DESIRED_TAGS_SQL`] rows before the name
+/// de-duplication, which [`next_desired_winner`] applies here. Returns how
+/// many tags disagreed.
+async fn merge_tag_streams(
+    mut desired_stream: impl futures_util::Stream<Item = Result<TagRow, sqlx::Error>> + Unpin,
+    mut current_stream: impl futures_util::Stream<Item = Result<TagRow, sqlx::Error>> + Unpin,
+    mut on_stale: impl FnMut(Option<&TagRow>, Option<&TagRow>),
 ) -> Result<u64, AppError> {
-    let mut desired_stream = sqlx::query_as::<_, TagRow>(DESIRED_TAGS_SQL).fetch(desired_conn);
-    let mut current_stream = sqlx::query_as::<_, TagRow>(CURRENT_TAGS_SQL).fetch(current_conn);
-
-    let mut deletes: Vec<String> = Vec::new();
-    let mut inserts: Vec<TagRow> = Vec::new();
     let mut changed: u64 = 0;
     // #1990 — winning `(space_id, normalized name)` keys seen so far. The
     // desired stream is de-duplicated by that key in Rust (the smallest-id tag
@@ -416,53 +466,127 @@ async fn apply_sort_merge_rebuild(
     let mut next_current = current_stream.try_next().await?;
 
     loop {
-        match (&next_desired, &next_current) {
+        // Which side the smaller id is on: `Less` is a tag only the desired
+        // rows have, `Greater` one only the cache has.
+        let side = match (&next_desired, &next_current) {
             (None, None) => break,
-            (Some(desired), None) => {
-                inserts.push(desired.clone());
-                changed += 1;
-                next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
-            }
-            (None, Some((c_id, _, _, _))) => {
-                deletes.push(c_id.clone());
-                changed += 1;
-                next_current = current_stream.try_next().await?;
-            }
-            (Some(desired), Some(current)) => {
-                match desired.0.as_str().cmp(current.0.as_str()) {
-                    Ordering::Less => {
-                        inserts.push(desired.clone());
-                        changed += 1;
-                        next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
-                    }
-                    Ordering::Greater => {
-                        deletes.push(current.0.clone());
-                        changed += 1;
-                        next_current = current_stream.try_next().await?;
-                    }
-                    Ordering::Equal => {
-                        if desired != current {
-                            // Name, usage_count and/or space changed — DELETE +
-                            // INSERT under PK. Counts as one logical change.
-                            deletes.push(current.0.clone());
-                            inserts.push(desired.clone());
-                            changed += 1;
-                        }
-                        next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
-                        next_current = current_stream.try_next().await?;
-                    }
-                }
-            }
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (Some(desired), Some(current)) => desired.0.cmp(&current.0),
+        };
+        let desired = next_desired.as_ref().filter(|_| side != Ordering::Greater);
+        let current = next_current.as_ref().filter(|_| side != Ordering::Less);
+        // Same id with the same name, usage_count and space is the one case
+        // that is not stale, and keeps its row's `updated_at`.
+        if desired != current {
+            on_stale(desired, current);
+            changed += 1;
+        }
+        if side != Ordering::Greater {
+            next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
+        }
+        if side != Ordering::Less {
+            next_current = current_stream.try_next().await?;
         }
     }
 
-    drop(desired_stream);
-    drop(current_stream);
+    Ok(changed)
+}
 
-    if !deletes.is_empty() || !inserts.is_empty() {
-        apply_tags_diff(write_conn, &deletes, &inserts, now).await?;
+/// The read half of [`rebuild_tags_cache_split`]: the tags on which the whole
+/// desired state and the whole cache disagree, in id order.
+///
+/// Two connections, because the two streams are walked together; each has
+/// its own snapshot. A write that lands between the two is seen by one
+/// stream only and at worst names a tag that is not stale, which the write
+/// half then finds nothing to change for.
+async fn tags_with_stale_rows(read_pool: &SqlitePool) -> Result<Vec<String>, AppError> {
+    let mut desired_conn = read_pool.acquire().await?;
+    let mut current_conn = read_pool.acquire().await?;
+    let mut stale = Vec::new();
+    // dynamic-sql: the projection is a named text, which the write half
+    // narrows; the cache is read beside it
+    merge_tag_streams(
+        sqlx::query_as::<_, TagRow>(DESIRED_TAGS_SQL).fetch(&mut *desired_conn),
+        sqlx::query_as::<_, TagRow>(CURRENT_TAGS_SQL).fetch(&mut *current_conn),
+        |desired, current| {
+            if let Some((tag_id, ..)) = desired.or(current) {
+                stale.push(tag_id.clone());
+            }
+        },
+    )
+    .await?;
+    Ok(stale)
+}
+
+/// The write half of [`rebuild_tags_cache_split`]: bring the `tags_cache`
+/// rows of the tags in `tag_ids` to what [`DESIRED_TAGS_SQL`] and its name
+/// de-duplication give for them now. It reads the tags, their usage, their
+/// spaces' names and the cached rows again under the writer lock instead of
+/// applying what the read phase saw, so a write that landed in between is
+/// never undone. Returns the tags changed.
+///
+/// A tag keeps a row only if it is the smallest-id live tag of its space with
+/// its normalized name, so the winners are read per space of the tags named:
+/// an index range over the space's tags, not a scan of `blocks`.
+async fn rederive_tags_of(
+    conn: &mut sqlx::SqliteConnection,
+    tag_ids: &[String],
+    now: &str,
+) -> Result<u64, AppError> {
+    let ids_json = serde_json::to_string(tag_ids)?;
+    // dynamic-sql: `DESIRED_TAGS_SQL`'s text narrowed to an id list
+    let live: Vec<TagRow> = sqlx::query_as(DESIRED_TAGS_OF_SQL)
+        .bind(&ids_json)
+        .fetch_all(&mut *conn)
+        .await?;
+
+    // Per space: normalized name → the id that owns it.
+    let mut winners: HashMap<Option<String>, HashMap<String, String>> = HashMap::new();
+    for (_, _, _, space_id) in &live {
+        if winners.contains_key(space_id) {
+            continue;
+        }
+        let mut names = HashMap::new();
+        // dynamic-sql: a named text, shared with the scoped refresh
+        let tags = sqlx::query_as::<_, (String, Option<String>)>(LIVE_TAGS_IN_SPACE_SQL)
+            .bind(space_id)
+            .fetch_all(&mut *conn)
+            .await?;
+        for (id, content) in tags {
+            // `id`-ordered, so the first tag with a name is its winner.
+            names
+                .entry(normalize_tag_name(content.as_deref().unwrap_or_default()))
+                .or_insert(id);
+        }
+        winners.insert(space_id.clone(), names);
     }
+    let desired = live.into_iter().filter(|(tag_id, name, _, space_id)| {
+        winners
+            .get(space_id)
+            .and_then(|names| names.get(&normalize_tag_name(name)))
+            == Some(tag_id)
+    });
 
+    // dynamic-sql: a named text, which the plan test reads
+    let current: Vec<TagRow> = sqlx::query_as(CURRENT_TAGS_OF_SQL)
+        .bind(&ids_json)
+        .fetch_all(&mut *conn)
+        .await?;
+
+    // A changed row is a DELETE + INSERT under its PK.
+    let mut deletes: Vec<String> = Vec::new();
+    let mut inserts: Vec<TagRow> = Vec::new();
+    let changed = merge_tag_streams(
+        futures_util::stream::iter(desired.map(Ok)),
+        futures_util::stream::iter(current.into_iter().map(Ok)),
+        |desired, current| {
+            deletes.extend(current.map(|row| row.0.clone()));
+            inserts.extend(desired.cloned());
+        },
+    )
+    .await?;
+    apply_tags_diff(conn, &deletes, &inserts, now).await?;
     Ok(changed)
 }
 
@@ -470,93 +594,52 @@ async fn apply_sort_merge_rebuild(
 // Rebuild_tags_cache (p1-t18)
 // ---------------------------------------------------------------------------
 
-/// Incremental rebuild of `tags_cache` (was full DELETE + INSERT
-/// pre-refactor).
+/// Incremental rebuild of `tags_cache`: [`rebuild_tags_cache_split`] with one
+/// pool for both halves.
+#[tracing::instrument(skip(pool), err)]
+pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
+    rebuild_tags_cache_split(pool, pool).await
+}
+
+/// Rebuild `tags_cache` with the whole-vault comparison on `read_pool`.
 ///
-/// Instead of a full `DELETE FROM tags_cache; INSERT SELECT …` two-pass
-/// over every tag, this function:
 /// 1. Streams the desired state from `blocks` (filtered by
 ///    `block_type = 'tag' AND deleted_at IS NULL AND content IS NOT NULL`)
 ///    LEFT-joined with a UNION'd usage subquery over `block_tags` ∪
-///    `block_tag_refs`, sorted by `b.id ASC`.
-/// 2. Streams the current cache state (sorted by `tag_id ASC`).
-/// 3. Walks the two streams in lockstep, accumulating INSERTs and
-///    DELETEs, then applies the diff via one chunked DELETE + chunked
-///    INSERT pair.
+///    `block_tag_refs`, and the cache, both sorted by tag id, and walks them
+///    in lockstep, keeping the ids of the tags they disagree on.
+/// 2. Takes the writer lock only when there are any, and under it re-derives
+///    those tags' rows (`rederive_tags_of`).
 ///
-/// Unchanged rows are not touched — their `updated_at` is preserved.
+/// Unchanged rows are not touched — their `updated_at` is preserved. Tags
+/// with zero usage are included via the LEFT JOIN + COALESCE.
 ///
-/// Tags with zero usage are included via the LEFT JOIN + COALESCE.
-#[tracing::instrument(skip(pool), err)]
-pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("tags", || rebuild_tags_cache_impl(pool)).await
-}
-
-async fn rebuild_tags_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    let now = agaric_core::time::now_rfc3339();
-    // Three independent connections — two readers (desired + current
-    // state streams) plus one writer for the diff transaction. Distinct
-    // connections are required so the streams' mutable borrows don't
-    // conflict. Snapshot consistency across the three connections is not
-    // required: same stale-while-revalidate semantics as
-    // `rebuild_agenda_cache_impl` (M-19b).
-    let mut desired_conn = pool.acquire().await?;
-    let mut current_conn = pool.acquire().await?;
-    let mut tx = crate::db::begin_immediate_logged(pool, "cache_tags_rebuild").await?;
-
-    let changed =
-        apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx, &now).await?;
-
-    if changed == 0 {
-        return Ok(0);
-    }
-
-    tx.commit().await?;
-    Ok(changed)
-}
-
-// ---------------------------------------------------------------------------
-// Read/write split variant (Phase 1A)
-// ---------------------------------------------------------------------------
-
-/// Read/write split variant of [`rebuild_tags_cache`].
-///
-/// Reads desired and current tag rows from `read_pool` and applies the
-/// incremental diff on `write_pool`. Mirrors the single-pool sort-merge
-/// shape so semantic divergence is impossible.
-///
-/// Stale-while-revalidate: each read connection has its own snapshot;
-/// the write tx is opened independently. Any concurrent writer mutation
-/// observed by one reader but not the other is corrected on the next
-/// rebuild — same eventual-consistency guarantee as
-/// [`super::rebuild_agenda_cache_split`] (AGENTS.md "Performance
-/// Conventions / Split read/write pool pattern").
+/// A tag that goes stale after step 1 read it is left to the refresh or
+/// rebuild its own write enqueues, which runs after this one.
 pub async fn rebuild_tags_cache_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
-    super::rebuild_with_timing("tags", || {
-        rebuild_tags_cache_split_impl(write_pool, read_pool)
-    })
+    super::rebuild_with_timing("tags", || rebuild_tags_cache_impl(write_pool, read_pool)).await?;
+    crate::derivations::record_split(
+        write_pool,
+        read_pool,
+        crate::derivations::Derivation::TagUsage,
+    )
     .await
 }
 
-async fn rebuild_tags_cache_split_impl(
+async fn rebuild_tags_cache_impl(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<u64, AppError> {
-    let now = agaric_core::time::now_rfc3339();
-    let mut desired_conn = read_pool.acquire().await?;
-    let mut current_conn = read_pool.acquire().await?;
-    let mut tx = crate::db::begin_immediate_logged(write_pool, "cache_tags_rebuild_write").await?;
-
-    let changed =
-        apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx, &now).await?;
-
-    if changed == 0 {
+    let stale = tags_with_stale_rows(read_pool).await?;
+    if stale.is_empty() {
         return Ok(0);
     }
-
+    let now = agaric_core::time::now_rfc3339();
+    let mut tx = crate::db::begin_immediate_logged(write_pool, "cache_tags_rebuild_write").await?;
+    let changed = rederive_tags_of(&mut tx, &stale, &now).await?;
     tx.commit().await?;
     Ok(changed)
 }
@@ -653,7 +736,7 @@ mod tests {
             }
         }
 
-        let first = rebuild_tags_cache_impl(&pool).await.unwrap();
+        let first = rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(first, 100, "baseline inserts 100 rows");
 
         // Mutate:
@@ -682,7 +765,7 @@ mod tests {
             add_tag(&pool, &bid, &tag_id).await;
         }
 
-        let touched = rebuild_tags_cache_impl(&pool).await.unwrap();
+        let touched = rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
         // 10 renames + 5 deletes + 5 inserts + 10 usage bumps = 30.
         assert_eq!(
             touched, 30,
@@ -730,7 +813,7 @@ mod tests {
         insert_tag(&pool, "TAG_BBBBBBBBBBBBBBBBBBBBBBB", "beta").await;
 
         // Baseline rebuild — both tags in cache
-        let first = rebuild_tags_cache_impl(&pool).await.unwrap();
+        let first = rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(first, 2, "baseline must insert 2 rows");
 
         // Rename tag A to "beta" — now A and B both want the name "beta".
@@ -739,7 +822,7 @@ mod tests {
         rename_tag(&pool, "TAG_AAAAAAAAAAAAAAAAAAAAAAA", "beta").await;
 
         // Incremental rebuild must not silently drop the winning tag A
-        let _changed = rebuild_tags_cache_impl(&pool).await.unwrap();
+        let _changed = rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
 
         let cache = snapshot(&pool).await;
         let tag_a_row = cache
@@ -786,7 +869,7 @@ mod tests {
         let mut winners: Vec<(String, String, i64)> = Vec::new();
         let mut changes: Vec<u64> = Vec::new();
         for _ in 0..3 {
-            let changed = rebuild_tags_cache_impl(&pool).await.unwrap();
+            let changed = rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
             changes.push(changed);
             let cache = snapshot(&pool).await;
             // Exactly one row may occupy the UNIQUE(name) slot for "project".
@@ -847,7 +930,7 @@ mod tests {
         for _ in 0..3 {
             // No UNIQUE(name) crash: the dedup keeps exactly one of the
             // case-variants out of the insert set.
-            let changed = rebuild_tags_cache_impl(&pool).await.unwrap();
+            let changed = rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
             changes.push(changed);
             let cache = snapshot(&pool).await;
             // Exactly ONE cache row exists across both case-variants (they share
@@ -884,7 +967,7 @@ mod tests {
         insert_tag(&pool, "TAGFOOA0000000000000000000", "Foo").await;
         insert_tag(&pool, "TAGFOOB0000000000000000000", "foo").await;
 
-        let changed = rebuild_tags_cache_impl(&pool).await.unwrap();
+        let changed = rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(changed, 1, "ASCII case-variants insert exactly one row");
         let cache = snapshot(&pool).await;
         assert_eq!(
@@ -897,7 +980,7 @@ mod tests {
             "smaller-id Foo wins"
         );
         // Idempotent second rebuild.
-        assert_eq!(rebuild_tags_cache_impl(&pool).await.unwrap(), 0);
+        assert_eq!(rebuild_tags_cache_impl(&pool, &pool).await.unwrap(), 0);
     }
 
     async fn remove_tag_edge(pool: &SqlitePool, block_id: &str, tag_id: &str) {
@@ -918,7 +1001,7 @@ mod tests {
     /// scoped-refresh snapshot, since the full rebuild is idempotent and
     /// converges to the canonical desired state.
     async fn full_rebuild_snapshot(pool: &SqlitePool) -> Vec<(String, String, i64)> {
-        rebuild_tags_cache_impl(pool).await.unwrap();
+        rebuild_tags_cache_impl(pool, pool).await.unwrap();
         snapshot(pool).await
     }
 
@@ -937,7 +1020,7 @@ mod tests {
         insert_content(&pool, "BLK20000000000000000000000", "n2").await;
 
         // Baseline: full rebuild seeds all three tags at usage 0.
-        assert_eq!(rebuild_tags_cache_impl(&pool).await.unwrap(), 3);
+        assert_eq!(rebuild_tags_cache_impl(&pool, &pool).await.unwrap(), 3);
         // Give beta a stable usage of 1 (unrelated to the tag we refresh)
         // and capture its row so we can prove it is never disturbed.
         add_tag(
@@ -946,7 +1029,7 @@ mod tests {
             "TAGB0000000000000000000000",
         )
         .await;
-        rebuild_tags_cache_impl(&pool).await.unwrap();
+        rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
         let beta_before = snapshot(&pool)
             .await
             .into_iter()
@@ -1087,7 +1170,7 @@ mod tests {
         insert_content(&pool, "BLKZ0000000000000000000000", "note").await;
 
         // Full rebuild: only the winner A holds the "project" slot.
-        rebuild_tags_cache_impl(&pool).await.unwrap();
+        rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
         let cache = snapshot(&pool).await;
         assert!(
             cache
@@ -1145,7 +1228,7 @@ mod tests {
         insert_content(&pool, "BLKSIG00000000000000000000", "note").await;
 
         // Full rebuild: only winner A holds the slot.
-        rebuild_tags_cache_impl(&pool).await.unwrap();
+        rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
         let cache = snapshot(&pool).await;
         assert_eq!(cache.len(), 1, "exactly one row; cache = {cache:?}");
         assert_eq!(cache[0].0, "TAGSIGA0000000000000000000");
@@ -1202,7 +1285,7 @@ mod tests {
         insert_tag(&pool, "TAGREF00000000000000000000", "ref").await;
         insert_content(&pool, "SRC10000000000000000000000", "a").await;
         insert_content(&pool, "SRC20000000000000000000000", "b").await;
-        rebuild_tags_cache_impl(&pool).await.unwrap();
+        rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
 
         // One explicit edge + one inline ref → usage 2.
         add_tag(
@@ -1251,9 +1334,9 @@ mod tests {
             )
             .await;
         }
-        let first = rebuild_tags_cache_impl(&pool).await.unwrap();
+        let first = rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(first, 50);
-        let second = rebuild_tags_cache_impl(&pool).await.unwrap();
+        let second = rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(second, 0, "idempotent rebuild must produce zero diff ops");
         assert_eq!(snapshot(&pool).await.len(), 50);
     }
@@ -1335,7 +1418,7 @@ mod tests {
 
         let mut changes = Vec::new();
         for _ in 0..3 {
-            changes.push(rebuild_tags_cache_impl(&pool).await.unwrap());
+            changes.push(rebuild_tags_cache_impl(&pool, &pool).await.unwrap());
             assert_eq!(
                 snapshot_with_space(&pool).await,
                 vec![
@@ -1472,5 +1555,352 @@ mod tests {
             vec![(TODO_WORK.to_owned(), "todo".to_owned(), 1)],
             "the full rebuild drops it too"
         );
+    }
+
+    /// #6659: a tag's count leaves out what its page's list leaves out: a
+    /// template page and the blocks on it, whether the tag is attached or
+    /// written inline. The rebuild and the one-tag refresh count alike.
+    #[tokio::test]
+    async fn usage_count_leaves_out_template_pages_and_their_blocks_6659() {
+        let (pool, _dir) = test_pool().await;
+        insert_tag(&pool, "TAG", "meeting").await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES \
+             ('PG', 'page', 'Notes', NULL, 'PG'), ('NOTE', 'content', 'n', 'PG', 'PG'), \
+             ('TPL', 'page', 'Meeting template', NULL, 'TPL'), \
+             ('SLOT', 'content', 's', 'TPL', 'TPL'), ('INLINE', 'content', 'i', 'TPL', 'TPL')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             VALUES ('TPL', 'template', 'true')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for holder in ["NOTE", "TPL", "SLOT"] {
+            add_tag(&pool, holder, "TAG").await;
+        }
+        sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES ('INLINE', 'TAG')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_tags_cache(&pool).await.unwrap();
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![cached("TAG", "meeting", 1)],
+            "NOTE alone: the template page, its tagged block and its block that names the \
+             tag inline are left out"
+        );
+
+        sqlx::query("UPDATE tags_cache SET usage_count = 9")
+            .execute(&pool)
+            .await
+            .unwrap();
+        refresh_tag_usage_count(&pool, "TAG").await.unwrap();
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![cached("TAG", "meeting", 1)],
+            "the one-tag refresh counts as the rebuild does"
+        );
+    }
+
+    /// The rebuild [`rebuild_tags_cache_split`] replaced, as it was: it took
+    /// the writer lock, then compared the whole desired state with the whole
+    /// cache and wrote the difference. The oracle the split is tested
+    /// against (#6522).
+    mod replaced {
+        use super::super::*;
+
+        async fn apply_sort_merge_rebuild(
+            desired_conn: &mut sqlx::SqliteConnection,
+            current_conn: &mut sqlx::SqliteConnection,
+            write_conn: &mut sqlx::SqliteConnection,
+            now: &str,
+        ) -> Result<u64, AppError> {
+            let mut desired_stream =
+                sqlx::query_as::<_, TagRow>(DESIRED_TAGS_SQL).fetch(desired_conn);
+            let mut current_stream =
+                sqlx::query_as::<_, TagRow>(CURRENT_TAGS_SQL).fetch(current_conn);
+
+            let mut deletes: Vec<String> = Vec::new();
+            let mut inserts: Vec<TagRow> = Vec::new();
+            let mut changed: u64 = 0;
+            // #1990 — winning `(space_id, normalized name)` keys seen so far. The
+            // desired stream is de-duplicated by that key in Rust (the smallest-id tag
+            // wins each key); `seen` tracks those winners as the stream advances. The
+            // desired stream stays `id`-ordered after the filter (we drop rows, never
+            // reorder), so the sort-merge below still walks both streams in lockstep
+            // on `id`.
+            let mut seen: HashSet<(Option<String>, String)> = HashSet::new();
+
+            let mut next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
+            let mut next_current = current_stream.try_next().await?;
+
+            loop {
+                match (&next_desired, &next_current) {
+                    (None, None) => break,
+                    (Some(desired), None) => {
+                        inserts.push(desired.clone());
+                        changed += 1;
+                        next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
+                    }
+                    (None, Some((c_id, _, _, _))) => {
+                        deletes.push(c_id.clone());
+                        changed += 1;
+                        next_current = current_stream.try_next().await?;
+                    }
+                    (Some(desired), Some(current)) => {
+                        match desired.0.as_str().cmp(current.0.as_str()) {
+                            Ordering::Less => {
+                                inserts.push(desired.clone());
+                                changed += 1;
+                                next_desired =
+                                    next_desired_winner(&mut desired_stream, &mut seen).await?;
+                            }
+                            Ordering::Greater => {
+                                deletes.push(current.0.clone());
+                                changed += 1;
+                                next_current = current_stream.try_next().await?;
+                            }
+                            Ordering::Equal => {
+                                if desired != current {
+                                    // Name, usage_count and/or space changed — DELETE +
+                                    // INSERT under PK. Counts as one logical change.
+                                    deletes.push(current.0.clone());
+                                    inserts.push(desired.clone());
+                                    changed += 1;
+                                }
+                                next_desired =
+                                    next_desired_winner(&mut desired_stream, &mut seen).await?;
+                                next_current = current_stream.try_next().await?;
+                            }
+                        }
+                    }
+                }
+            }
+
+            drop(desired_stream);
+            drop(current_stream);
+
+            if !deletes.is_empty() || !inserts.is_empty() {
+                apply_tags_diff(write_conn, &deletes, &inserts, now).await?;
+            }
+
+            Ok(changed)
+        }
+
+        pub(super) async fn rebuild_tags_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+            let now = agaric_core::time::now_rfc3339();
+            // Three independent connections — two readers (desired + current
+            // state streams) plus one writer for the diff transaction. Distinct
+            // connections are required so the streams' mutable borrows don't
+            // conflict. Snapshot consistency across the three connections is not
+            // required: same stale-while-revalidate semantics as
+            // `rebuild_agenda_cache_impl` (M-19b).
+            let mut desired_conn = pool.acquire().await?;
+            let mut current_conn = pool.acquire().await?;
+            let mut tx = crate::db::begin_immediate_logged(pool, "cache_tags_rebuild").await?;
+
+            let changed =
+                apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx, &now)
+                    .await?;
+
+            if changed == 0 {
+                return Ok(0);
+            }
+
+            tx.commit().await?;
+            Ok(changed)
+        }
+    }
+
+    /// Five tags — ALPHA and its name-loser ALPHB, BETA, the deleted GAMMA,
+    /// DELTA — with usage from live and deleted blocks, and cache rows that
+    /// are stale in their count (ALPHA's), held by a loser (ALPHB's) and by a
+    /// deleted tag (GAMMA's), missing (BETA's) and right (DELTA's).
+    async fn seed_tag_drift(pool: &SqlitePool) {
+        for (id, name) in [
+            ("ALPHA", "alpha"),
+            ("ALPHB", "Alpha"),
+            ("BETA", "beta"),
+            ("GAMMA", "gamma"),
+            ("DELTA", "delta"),
+        ] {
+            insert_tag(pool, id, name).await;
+        }
+        soft_delete(pool, "GAMMA").await;
+        for id in ["B1", "B2", "B3"] {
+            insert_content(pool, id, "note").await;
+        }
+        add_tag(pool, "B1", "ALPHA").await;
+        add_tag(pool, "B2", "ALPHA").await;
+        add_tag(pool, "B2", "BETA").await;
+        add_tag(pool, "B3", "BETA").await;
+        soft_delete(pool, "B3").await;
+        sqlx::query(
+            "INSERT INTO tags_cache (tag_id, space_id, name, usage_count, updated_at) VALUES \
+             ('ALPHA', NULL, 'alpha', 0, ''), ('ALPHB', NULL, 'Alpha', 0, ''), \
+             ('GAMMA', NULL, 'gamma', 0, ''), ('DELTA', NULL, 'delta', 0, '')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn cached(tag_id: &str, name: &str, usage_count: i64) -> (String, String, i64) {
+        (tag_id.to_owned(), name.to_owned(), usage_count)
+    }
+
+    /// #6522: the split rebuild leaves `tags_cache` where the rebuild it
+    /// replaced does, and changes the same tags.
+    #[tokio::test]
+    async fn rebuild_tags_cache_split_matches_the_rebuild_it_replaced_6522() {
+        let (oracle_pool, _oracle_dir) = test_pool().await;
+        let (pool, _dir) = test_pool().await;
+        seed_tag_drift(&oracle_pool).await;
+        seed_tag_drift(&pool).await;
+
+        let oracle_changed = replaced::rebuild_tags_cache_impl(&oracle_pool)
+            .await
+            .unwrap();
+        let changed = rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
+
+        assert_eq!(oracle_changed, 4, "ALPHA, ALPHB, BETA and GAMMA drifted");
+        assert_eq!(changed, oracle_changed);
+        assert_eq!(snapshot(&pool).await, snapshot(&oracle_pool).await);
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![
+                cached("ALPHA", "alpha", 2),
+                cached("BETA", "beta", 1),
+                cached("DELTA", "delta", 0),
+            ],
+        );
+        assert_eq!(
+            rebuild_tags_cache_impl(&pool, &pool).await.unwrap(),
+            0,
+            "a second run finds nothing stale"
+        );
+    }
+
+    /// #6522: the same, after every round of random writes to the tables the
+    /// rebuild reads and to the cache itself.
+    #[tokio::test]
+    async fn rebuild_tags_cache_split_matches_the_rebuild_it_replaced_on_random_vaults_6522() {
+        crate::cache::random_vault_tests::assert_rebuild_matches_oracle(
+            "tags_cache",
+            "tag_id, space_id, name, usage_count",
+            async |pool| replaced::rebuild_tags_cache_impl(pool).await.unwrap(),
+            async |pool| rebuild_tags_cache_impl(pool, pool).await.unwrap(),
+        )
+        .await;
+    }
+
+    /// #6522: the write half re-derives only the tags it is handed, from
+    /// what the tables hold when it runs.
+    #[tokio::test]
+    async fn rederive_tags_of_touches_only_the_tags_named_6522() {
+        let (pool, _dir) = test_pool().await;
+        seed_tag_drift(&pool).await;
+        assert_eq!(
+            tags_with_stale_rows(&pool).await.unwrap(),
+            ["ALPHA", "ALPHB", "BETA", "GAMMA"]
+        );
+        // A write lands after the read half: B1 loses its tag.
+        sqlx::query("DELETE FROM block_tags WHERE block_id = 'B1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        let changed = rederive_tags_of(&mut tx, &["ALPHA".to_owned(), "DELTA".to_owned()], "")
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(changed, 1, "ALPHA's count; DELTA was not stale");
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![
+                cached("ALPHA", "alpha", 1),
+                cached("ALPHB", "Alpha", 0),
+                cached("DELTA", "delta", 0),
+                cached("GAMMA", "gamma", 0),
+            ],
+            "ALPHA takes the count it has now, and the tags not named keep their planted rows"
+        );
+    }
+
+    /// #6522: a tag named stale that has since lost its name to a smaller id
+    /// loses its row, as the whole-vault de-duplication would have it.
+    #[tokio::test]
+    async fn rederive_tags_of_drops_a_tag_that_is_no_longer_its_names_winner_6522() {
+        let (pool, _dir) = test_pool().await;
+        insert_tag(&pool, "TAGB", "école").await;
+        rebuild_tags_cache_impl(&pool, &pool).await.unwrap();
+        assert_eq!(snapshot(&pool).await, vec![cached("TAGB", "école", 0)]);
+        insert_tag(&pool, "TAGA", "ÉCOLE").await;
+
+        let mut tx = pool.begin().await.unwrap();
+        let changed = rederive_tags_of(&mut tx, &["TAGB".to_owned()], "")
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(changed, 1);
+        assert_eq!(snapshot(&pool).await, vec![]);
+    }
+
+    /// #6522: with nothing stale the rebuild never asks for the writer lock,
+    /// so it finishes while another connection holds it.
+    #[tokio::test]
+    async fn rebuild_tags_cache_takes_no_writer_lock_when_nothing_is_stale_6522() {
+        let (pool, _dir) = test_pool().await;
+        seed_tag_drift(&pool).await;
+        rebuild_tags_cache(&pool).await.unwrap();
+
+        let _writer = crate::db::begin_immediate_logged(&pool, "test_holds_the_lock")
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), rebuild_tags_cache(&pool))
+            .await
+            .expect("the rebuild must not wait for the writer lock")
+            .unwrap();
+    }
+
+    /// #6522: what runs under the writer lock seeks the stale tags and their
+    /// usage by id, and a space's tags by index; it never scans a table.
+    #[tokio::test]
+    async fn rederive_tags_of_never_scans_a_table_6522() {
+        let (pool, _dir) = test_pool().await;
+        for sql in [
+            DESIRED_TAGS_OF_SQL,
+            CURRENT_TAGS_OF_SQL,
+            LIVE_TAGS_IN_SPACE_SQL,
+        ] {
+            let plan: Vec<(i64, i64, i64, String)> =
+                sqlx::query_as(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}")))
+                    .bind("[]")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            let scans: Vec<&str> = plan
+                .iter()
+                .map(|row| row.3.as_str())
+                .filter(|detail| {
+                    detail.starts_with("SCAN")
+                        && !detail.starts_with("SCAN (subquery")
+                        && !detail.contains("json_each")
+                })
+                .collect();
+            assert!(
+                scans.is_empty(),
+                "scans under the writer lock in `{sql}`: {scans:?}"
+            );
+        }
     }
 }
