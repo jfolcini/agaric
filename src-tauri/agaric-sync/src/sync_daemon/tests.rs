@@ -7138,8 +7138,9 @@ async fn an_edit_costs_one_pull_back_and_a_converged_pair_none_6551() {
 
 /// #6551 — a gap a pull cannot close prompts one pull-back, not one per
 /// session. A holds a block its export gate refuses to send (live in the
-/// engine, deleted in SQL), so B stays behind however often it pulls; B asks
-/// again only once A's advertisement has moved.
+/// engine, deleted in SQL, with a quarantined inbound change that keeps the
+/// export's repair off the space, #6565), so B stays behind however often it
+/// pulls; B asks again only once A's advertisement has moved.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_gap_no_pull_can_close_is_pulled_for_once_6551() {
     const WITHHELD: &str = "01HZ6551WITHHELDXXXXXXXXXX";
@@ -7164,6 +7165,15 @@ async fn a_gap_no_pull_can_close_is_pulled_for_once_6551() {
         .await
         .unwrap();
     };
+    sqlx::query(
+        "INSERT INTO loro_sync_quarantine (inbox_id, space_id, bytes, declared_end_vv, \
+         last_reason, unresolved_boots, first_seen_at_ms, quarantined_at_ms) \
+         VALUES (1, ?, x'00', '[]', 'projection failed', 5, 0, 0)",
+    )
+    .bind(space.as_str())
+    .execute(&a.pool)
+    .await
+    .unwrap();
     withhold_a_block(WITHHELD).await;
 
     assert_eq!(
