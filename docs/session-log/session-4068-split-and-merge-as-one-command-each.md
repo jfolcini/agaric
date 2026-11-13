@@ -34,7 +34,9 @@ An independent read of the transaction and op sequence found no atomicity or ord
 
 ## What ran
 
-On the tree with `main` merged in (eleven commits; one conflict, in `e2e/error-scenarios.spec.ts`, both sides kept): `cargo nextest run --workspace` in two halves (4032 and 4026 passed), `cargo clippy --workspace --all-targets -- -D warnings`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `just gen-sqlx` and `just gen-bindings` with no diff, full vitest (1108 files, 26874 passed), `npm run typecheck`, `npm run typecheck:e2e-tauri`, `npm run lint`, `prek run --all-files` and the manual stage, and the seven Playwright specs closest to Enter and merge (50 passed).
+On the tree with `main` merged in twice (fourteen commits; conflicts in `e2e/error-scenarios.spec.ts`, and in the `commands` re-export list and the conformance arm count where #6701 added `edit_blocks_batch`, both sides kept): `cargo nextest run --workspace` in two halves (4042 and 4035 passed), `cargo clippy --workspace --all-targets -- -D warnings`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `just gen-sqlx` with no diff, full vitest (1112 files, 26901 passed), `npm run typecheck`, `npm run typecheck:e2e-tauri`, `npm run lint`, `prek run --all-files` and the manual stage. The seven Playwright specs closest to Enter and merge ran after the first merge (50 passed).
+
+`just gen-bindings` did leave a diff on that tree, and not from this change: `main` at `dfb7b2b6` holds a `bindings.ts` older than a doc comment of `SyncListeningEvent` (#6688 typed the event from Rust, #6703 reworded it), so `ts_bindings_up_to_date` fails there. The regenerated file is committed here.
 
 Before the merge the whole Playwright lane ran locally on three workers: 1973 passed, 9 skipped, and the two `diagram-legibility.spec.ts` cases session 4057 names failed on this container's older Chromium. An earlier second nextest half failed once, on the span allowlist above.
 
