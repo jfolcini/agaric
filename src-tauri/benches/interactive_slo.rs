@@ -2864,9 +2864,12 @@ fn report_settled(cmd: &str, acc: &Acc) {
 }
 
 /// `edit_block` — a content save on one child of the 2K-block page (#5423).
-/// Budget: the first `bench-slo` mean × 2.
+/// Budget: the first `bench-slo` mean × 2. The settled loop has one too
+/// (#6534): its background work replaces the block's row in the 100K-row
+/// search index, which scanned that index until the delete went by rowid.
 fn bench_edit_block(c: &mut Criterion) {
     const BUDGET_MS: f64 = 4.0;
+    const SETTLED_BUDGET_MS: f64 = 20.0;
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_edit_block"));
@@ -2932,8 +2935,12 @@ fn bench_edit_block(c: &mut Criterion) {
         "edit_block @ 100K: the timed edits must take the engine path, not the SQL-only fallback"
     );
 
-    report_settled("edit_block (2K-block page) settled @ 100K", &settled);
     assert_under_budget("edit_block (2K-block page) @ 100K", &acc, BUDGET_MS);
+    assert_under_budget(
+        "edit_block (2K-block page) settled @ 100K",
+        &settled,
+        SETTLED_BUDGET_MS,
+    );
 }
 
 /// `set_property` — a `todo_state` write on one child of the 2K-block page
