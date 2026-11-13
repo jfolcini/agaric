@@ -6,6 +6,8 @@ A follow-up to #6709 (#6531), left over when it merged.
 
 The probe now calls `split_block_inner` and `merge_blocks_inner`. Its assertions are unchanged and say the same thing about the commands: one create, two edits and one delete per pair, the block ending with the joined text, the page's child count back where it began, and no SQL-only fallback. The assertion that the delete tombstoned one block is gone with the response field it read; the child count covers it. It stays measurement only.
 
+Also here: two assertions for `mergedTree`. #6709's diff-scoped mutation run left three mutants of it alive. Two were test gaps and are killed now, each shown red by the mutation: every block taking the merged text (the test read the target's text only), and the guard for a block the page does not hold (no test). The third, always running the reparent when the block has no children, gives the same tree.
+
 ## Traps
 
 - **A PR can merge between a check and a push.** #6709 merged at the head it was opened with, twenty minutes after it opened, while a merge of `main` and this change were being checked locally. The push was refused with "cannot lock ref": the branch was gone. The branch was restarted from `main` and the one file carried over; the edit made to session 4068's log in that window was dropped, because that log had merged.
