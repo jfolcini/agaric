@@ -7,7 +7,7 @@
 //! rehydrate, crash recovery and version-triggered cache rebuilds run over
 //! rows and snapshots head did not produce.
 //!
-//! Not covered: the tag's UI, sync state, attachments on disk.
+//! Not covered: the tag's UI, and a sync session with the paired device.
 
 use crate::commands::pages::{
     ListPagesWithMetadataFilter, PageSort, list_pages_with_metadata_inner,
@@ -15,6 +15,7 @@ use crate::commands::pages::{
 use crate::commands::{
     count_agenda_batch_by_source_inner, count_trash_inner, edit_block_inner,
     export_page_markdown_inner, get_properties_inner, list_all_tags_in_space_inner,
+    list_attachments_inner, list_peer_refs_inner, read_attachment_inner,
     resolve_page_by_alias_inner, search_blocks_inner,
 };
 use crate::spaces::{SPACE_PERSONAL_ULID, SPACE_WORK_ULID};
@@ -32,8 +33,17 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// A line of `counts.txt`, the release's own count when it closed the vault.
+fn release_count(name: &str) -> i64 {
+    std::fs::read_to_string(fixture("counts.txt"))
+        .expect("the vault's counts")
+        .lines()
+        .find_map(|line| line.strip_prefix(name)?.strip_prefix(' ')?.parse().ok())
+        .unwrap_or_else(|| panic!("counts.txt has no {name}"))
+}
+
 struct Booted {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     pools: crate::db::DbPools,
     materializer: crate::materializer::Materializer,
     device_id: String,
@@ -51,6 +61,17 @@ fn boot_released_vault() -> Booted {
         &mut std::fs::File::create(dir.path().join("notes.db")).expect("create notes.db"),
     )
     .expect("unpack the vault");
+    std::fs::create_dir(dir.path().join("attachments")).expect("create attachments/");
+    for file in std::fs::read_dir(fixture("attachments")).expect("the vault's attachments") {
+        let file = file.expect("an attachment").path();
+        std::fs::copy(
+            &file,
+            dir.path()
+                .join("attachments")
+                .join(file.file_name().expect("its name")),
+        )
+        .expect("copy the attachment");
+    }
     let device_id = std::fs::read_to_string(fixture("device-id"))
         .expect("the vault's device id")
         .trim()
@@ -76,7 +97,7 @@ fn boot_released_vault() -> Booted {
         materializer.flush().await.expect("drain the boot rebuilds");
     });
     Booted {
-        _dir: dir,
+        dir,
         pools,
         materializer,
         device_id,
@@ -166,8 +187,19 @@ fn head_boots_the_vault_the_last_release_wrote_6567() {
                 count(pool, "SELECT COUNT(*) FROM blocks").await,
                 count(pool, "SELECT COUNT(*) FROM op_log").await,
             ),
-            (15, 61),
+            (release_count("blocks"), release_count("ops")),
             "boot keeps every block and op the release wrote, and appends none"
+        );
+        let compacted_through = release_count("compacted_through");
+        let frontier: String =
+            sqlx::query_scalar("SELECT up_to_seqs FROM compaction_watermark WHERE id = 1")
+                .fetch_one(pool)
+                .await
+                .expect("the compaction the release ran left its watermark");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&frontier).unwrap(),
+            serde_json::json!({ vault.device_id.as_str(): compacted_through }),
+            "the compaction's frontier is still on record"
         );
         assert_eq!(
             pages_list(pool, SPACE_PERSONAL_ULID).await,
@@ -247,6 +279,42 @@ fn head_boots_the_vault_the_last_release_wrote_6567() {
         ]
         .map(|(key, value)| (key.to_owned(), value.to_owned()));
         assert_eq!(properties, expected, "one property of each value type");
+
+        let attached = list_attachments_inner(pool, block_id(pool, "The Dispossessed").await)
+            .await
+            .unwrap();
+        assert_eq!(
+            attached
+                .iter()
+                .map(|a| (a.filename.as_str(), a.mime_type.as_str()))
+                .collect::<Vec<_>>(),
+            [("margin-notes.txt", "text/plain")],
+            "the block's attachment"
+        );
+        assert_eq!(
+            read_attachment_inner(pool, vault.dir.path(), attached[0].id.clone())
+                .await
+                .unwrap(),
+            b"Bytes the release wrote to disk.\n",
+            "the attachment's bytes are readable where the release put them"
+        );
+
+        let peers: Vec<_> = list_peer_refs_inner(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.peer_id, p.device_name, p.last_address, p.endpoint_id))
+            .collect();
+        assert_eq!(
+            peers,
+            [(
+                "0f6b2c1e-8d43-4a57-9c1e-2b7a5d9e4f10".to_owned(),
+                Some("Phone".to_owned()),
+                Some("192.168.1.20:4433".to_owned()),
+                Some("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a".to_owned()),
+            )],
+            "the paired device: its name, its address and the key pairing pinned"
+        );
 
         // A write after the upgrade goes through the engine the release's
         // snapshot rehydrated, and the views follow it.

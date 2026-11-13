@@ -31,7 +31,7 @@ out="$fixtures/$tag"
 rm -rf "$out"
 mkdir -p "$out"
 gzip -9 -n -c "$work/vault/notes.db" >"$out/notes.db.gz"
-cp "$work/vault/export-projects.txt" "$out/"
+cp -r "$work/vault/attachments" "$work/vault/export-projects.txt" "$work/vault/counts.txt" "$out/"
 # With the newline the end-of-file hook would add.
 printf '%s\n' "$(cat "$work/vault/device-id")" >"$out/device-id"
 echo "wrote $out"
