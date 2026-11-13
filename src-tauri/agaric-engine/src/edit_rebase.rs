@@ -129,6 +129,9 @@ mod tests {
             Some("è 😀 fin!")
         );
         assert_eq!(rebase_edit("日本語", "日語", "日x語"), None);
+        // "😀" and "😁" share their first UTF-16 unit: counted in units the
+        // peer's deletion would reach past the insertion, and nothing merge.
+        assert_eq!(rebase_edit("😀😁", "😀x😁", "😁").as_deref(), Some("x😁"));
     }
 
     #[test]
@@ -174,6 +177,61 @@ mod tests {
             )
     }
 
+    /// `rebase_edit` counted in `char`s, as the browser mock counts
+    /// (`src/lib/tauri-mock/edit-rebase.ts`).
+    fn rebase_by_chars(base: &str, to_text: &str, current: &str) -> Option<String> {
+        fn splice(old: &[char], new: &[char]) -> (usize, usize, Vec<char>) {
+            let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+            let suffix = old[prefix..]
+                .iter()
+                .rev()
+                .zip(new[prefix..].iter().rev())
+                .take_while(|(a, b)| a == b)
+                .count();
+            (
+                prefix,
+                old.len() - suffix,
+                new[prefix..new.len() - suffix].to_vec(),
+            )
+        }
+        if to_text == current {
+            return Some(to_text.to_owned());
+        }
+        let chars = |text: &str| text.chars().collect::<Vec<_>>();
+        let (base, current) = (chars(base), chars(current));
+        let (start, end, typed) = splice(&base, &chars(to_text));
+        let (their_start, their_end, theirs) = splice(&base, &current);
+        let (start, end) = if their_end <= start {
+            let grown = their_start + theirs.len();
+            (start + grown - their_end, end + grown - their_end)
+        } else if end <= their_start {
+            (start, end)
+        } else {
+            return None;
+        };
+        Some(
+            current[..start]
+                .iter()
+                .chain(&typed)
+                .chain(&current[end..])
+                .collect(),
+        )
+    }
+
+    /// `base` with one range replaced, the replacement drawn from the chars
+    /// `base` is made of, so an edit can extend a prefix or suffix it meets.
+    fn edited(base: &str) -> impl Strategy<Value = String> + use<> {
+        let base: Vec<char> = base.chars().collect();
+        (0..=base.len(), 0..=base.len(), text()).prop_map(move |(a, b, typed)| {
+            let (head, tail) = (&base[..a.min(b)], &base[a.max(b)..]);
+            head.iter()
+                .copied()
+                .chain(typed.chars())
+                .chain(tail.iter().copied())
+                .collect()
+        })
+    }
+
     fn apply(base: &[char], (start, end, typed): &(usize, usize, String)) -> String {
         let (head, tail) = (base[..*start].iter(), base[*end..].iter());
         head.copied()
@@ -214,6 +272,21 @@ mod tests {
             if !tie {
                 prop_assert_eq!(onto_current, onto_sent);
             }
+        }
+
+        /// Byte offsets cut where `char` offsets do: the mock, which counts
+        /// code points, writes the same text.
+        #[test]
+        fn bytes_and_chars_give_the_same_text(
+            (base, sent, current) in text().prop_flat_map(|base| {
+                let (sent, current) = (edited(&base), edited(&base));
+                (Just(base), sent, current)
+            })
+        ) {
+            prop_assert_eq!(
+                rebase_edit(&base, &sent, &current),
+                rebase_by_chars(&base, &sent, &current)
+            );
         }
 
         /// Two edits of a text of distinct chars: apart, both are in the

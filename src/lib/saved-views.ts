@@ -181,7 +181,7 @@ export async function saveView(
 export async function renameSavedView(spaceId: string, id: string, name: string): Promise<boolean> {
   if (await nameRefused(spaceId, id, name)) return false
   try {
-    unwrap(await commands.editBlock(id, name))
+    unwrap(await commands.editBlock(id, name, null))
   } catch (err) {
     // An alias another page holds, or a title that arrived since the check.
     if (validationCode(err) === ValidationCode.DuplicatePageTitle) return false

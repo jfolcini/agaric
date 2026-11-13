@@ -1,4 +1,4 @@
-# Session 3988 — `edit_block` rebases a stale editor's text onto the current text
+# Session 4022 — `edit_block` rebases a stale editor's text onto the current text
 
 `Refs #6533` (the last open item: a dirty editor's commit no longer overwrites a peer's edit to the
 other end of the same block).
@@ -39,7 +39,16 @@ Decisions and traps:
   debounce and clicks Sync from script, because a pointer press blurs and saves first.
 - `CONFORMANCE_UPDATE=1` dirties four fixtures committed in non-canonical form (key order,
   compacted arrays). They hold no drift; restore them.
+- The mock counts code points and the backend cuts bytes on char boundaries. A property test
+  holds `rebase_edit` to a `char`-counted twin of the mock's algorithm, and the fixture gained the
+  case where UTF-16 units would decide otherwise: `😀😁`, the peer deletes the first, the editor
+  types between them. Counted in units the deletion reaches past the insertion and nothing is
+  merged; the mock written with `split('')` goes red on it (`😀x😁` for `x😁`).
+- `main` gained a caller while the branch waited (`renameSavedView`); it sends no base.
 
-Ran: the edit, rebase, conformance and bindings Rust tests, clippy over the workspace, full
-vitest, both typechecks, the `@editor` and `@sync` Playwright specs, and
-`e2e-tauri/sync-two-device.e2e.ts` on the real backend, shown red with the rebase removed.
+Ran, on the tree that merges `main`: clippy over the workspace with all targets, the
+`SQLX_OFFLINE` check, the workspace nextest, the doc-tests, full vitest, typecheck, lint, and the
+Playwright specs that touch `edit_block` (`reload-keeps-editor`, `page-mode`, `page-source-edit`,
+`history-keyboard-controls`, `pdf-annotation-1452`, `unlinked-references`). `just e2e-related`
+selects both whole lanes, which are CI's; `e2e-tauri/sync-two-device.e2e.ts` was run on the real
+backend by the builder, shown red with the rebase removed, and not again here.

@@ -119,11 +119,30 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "x😁",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 9,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 17,
+      "count": 19,
       "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
         {
           "op_type": "edit_block"
         },
@@ -282,6 +301,18 @@
       "error": null,
       "name": "an_edit_the_block_holds_is_written_once",
       "returns": ["B9#content=Buy milk today"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_peer_deletes_the_first_of_two_emoji",
+      "returns": ["B10#content=😁"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_stale_insertion_where_a_deleted_emoji_ended",
+      "returns": ["B10#content=x😁"]
     }
   ],
   "name": "edit_block_rebase",
@@ -464,6 +495,27 @@
       "comment": "The block already holds the text sent: it is written once, not appended twice.",
       "name": "an_edit_the_block_holds_is_written_once",
       "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "toText": "😁"
+      },
+      "command": "edit_block",
+      "comment": "S10, two emoji that share their first UTF-16 unit, loses the first.",
+      "name": "a_peer_deletes_the_first_of_two_emoji",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseText": "😀😁",
+        "blockId": "S10",
+        "toText": "😀x😁"
+      },
+      "command": "edit_block",
+      "comment": "The editor typed between them. Counted in characters the peer's deletion ends where the insertion starts, and both land; counted in UTF-16 units it would reach past it, and the text sent would be written.",
+      "name": "a_stale_insertion_where_a_deleted_emoji_ended",
+      "via": "command"
     }
   ],
   "seed": {
@@ -530,6 +582,13 @@
         "id": "S9",
         "parent_id": "S1",
         "position": 8
+      },
+      {
+        "block_type": "content",
+        "content": "😀😁",
+        "id": "S10",
+        "parent_id": "S1",
+        "position": 9
       }
     ],
     "properties": [],
