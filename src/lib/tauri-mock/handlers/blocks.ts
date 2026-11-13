@@ -1602,7 +1602,8 @@ export const blocksHandlers = {
       return { cohort: viewCohort, op: pushOp('delete_block', { block_id: viewId }) }
     })
     const now = nextCohortMarker()
-    const cohort = [...swept.flatMap((view) => view.cohort), ...deleteCohort(blocks, blockId, now)]
+    // The response lists the seed's own cohort, then each swept view's.
+    const cohort = [...deleteCohort(blocks, blockId, now), ...swept.flatMap((view) => view.cohort)]
     const op = pushOp('delete_block', { block_id: blockId })
     // #4523 — the PAGE members of the cohort the walk just tombstoned. The
     // walk does NOT stop at a nested page, exactly as the backend cascade does
@@ -1641,13 +1642,11 @@ export const blocksHandlers = {
     // The same monotonic marker `delete_block` mints: `list_trash` orders on
     // it, and two deletes in one millisecond must not share it.
     const now = nextCohortMarker()
-    // Resolve live roots (skip missing or already-deleted); the saved views of
-    // any space among them go first (#6544), as `load_deletable_roots_in_tx`.
-    const resolved = inputIds.filter((id) => {
+    // Resolve live roots (skip missing or already-deleted).
+    const liveRoots = inputIds.filter((id) => {
       const b = blocks.get(id)
       return b && !b['deleted_at']
     })
-    const liveRoots = [...resolved.flatMap(savedViewsOfSpace), ...resolved]
     // BFS from every root, soft-delete every reachable descendant whose
     // `deleted_at` is currently NULL.
     //

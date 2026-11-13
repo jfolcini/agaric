@@ -444,22 +444,91 @@ impl Vault {
         .await
         .unwrap()
     }
+
+    /// Whether the space's Loro engine holds `block` deleted.
+    fn engine_deleted(&self, block: &BlockId) -> bool {
+        let space = SpaceId::from_trusted(&self.space);
+        let mut guard = self
+            .mat
+            .loro_state()
+            .registry
+            .for_space(&space, DEV)
+            .expect("the space's engine");
+        guard
+            .engine_mut()
+            .read_deleted(block.as_str())
+            .expect("the engine holds the block")
+    }
+
+    /// The `fts_blocks` rows of `block`.
+    async fn indexed(&self, block: &BlockId) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?")
+            .bind(block.as_str())
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+
+    /// The space and the view, in id order: the pages a delete of the space
+    /// takes.
+    fn space_and_view(&self) -> Vec<&str> {
+        let mut pages = vec![self.space.as_str(), self.view.as_str()];
+        pages.sort_unstable();
+        pages
+    }
+}
+
+fn sorted(ids: &[String]) -> Vec<&str> {
+    let mut ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    ids.sort_unstable();
+    ids
 }
 
 /// A space whose only live pages are saved views reads as empty in the Spaces
-/// tab, so it deletes, and each view goes with it as its own delete.
+/// tab, so it deletes, and each view goes with it as its own delete, blocks
+/// under it too, in SQL, in the engine and in the search index.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_space_holding_only_saved_views_deletes_with_them() {
     let v = vault().await;
+    let note = create_block_inner(
+        &v.pool,
+        DEV,
+        &v.mat,
+        "content".into(),
+        "a note".into(),
+        Some(v.view.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    settle(&v.mat).await;
     delete_block_inner(&v.pool, DEV, &v.mat, v.plan.clone())
         .await
         .unwrap();
-    delete_block_inner(&v.pool, DEV, &v.mat, BlockId::from_trusted(&v.space))
+    assert_eq!(v.indexed(&note).await, 1, "the note is searchable");
+
+    let deleted = delete_block_inner(&v.pool, DEV, &v.mat, BlockId::from_trusted(&v.space))
         .await
         .expect("a space holding only views deletes");
     settle(&v.mat).await;
+
     assert_eq!(v.live_in_space().await, 0, "the view went with its space");
     assert_eq!(v.delete_ops(&v.view).await, 1, "the view's delete is an op");
+    assert_eq!(
+        deleted.descendants_affected, 3,
+        "the space, the view, its note"
+    );
+    assert_eq!(sorted(&deleted.affected_page_ids), v.space_and_view());
+    assert!(
+        v.engine_deleted(&v.view),
+        "the engine took the view's delete"
+    );
+    assert!(
+        v.engine_deleted(&note),
+        "and the delete of the note under it"
+    );
+    assert_eq!(v.indexed(&note).await, 0, "the note left the search index");
     v.mat.shutdown();
 }
 
@@ -470,12 +539,59 @@ async fn a_batch_delete_of_a_space_holding_only_saved_views_takes_them() {
     delete_block_inner(&v.pool, DEV, &v.mat, v.plan.clone())
         .await
         .unwrap();
-    delete_blocks_by_ids_inner(&v.pool, DEV, &v.mat, vec![BlockId::from_trusted(&v.space)])
-        .await
-        .expect("a space holding only views deletes");
+    let deleted =
+        delete_blocks_by_ids_inner(&v.pool, DEV, &v.mat, vec![BlockId::from_trusted(&v.space)])
+            .await
+            .expect("a space holding only views deletes");
     settle(&v.mat).await;
+
     assert_eq!(v.live_in_space().await, 0, "the view went with its space");
     assert_eq!(v.delete_ops(&v.view).await, 1, "the view's delete is an op");
+    assert_eq!(deleted.deleted_count, 2, "the space and the view");
+    assert_eq!(sorted(&deleted.affected_page_ids), v.space_and_view());
+    assert!(
+        v.engine_deleted(&v.view),
+        "the engine took the view's delete"
+    );
+    v.mat.shutdown();
+}
+
+/// A delete of a space that fails after its views went rolls them back: they
+/// are live in SQL and in the engine, and their delete ops are not in the log.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_space_delete_leaves_its_views_live() {
+    let v = vault().await;
+    delete_block_inner(&v.pool, DEV, &v.mat, v.plan.clone())
+        .await
+        .unwrap();
+    // The views' ops are appended before the space's, so the space's is the
+    // one that fails. The id is a ULID this test just minted, not user input.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER fail_space_delete BEFORE INSERT ON op_log \
+         WHEN NEW.op_type = 'delete_block' AND NEW.block_id = '{}' \
+         BEGIN SELECT RAISE(ABORT, 'injected space delete failure'); END",
+        v.space
+    )))
+    .execute(&v.pool)
+    .await
+    .unwrap();
+
+    let err = delete_block_inner(&v.pool, DEV, &v.mat, BlockId::from_trusted(&v.space))
+        .await
+        .expect_err("the space's own op is refused");
+    assert!(
+        err.to_string().contains("injected space delete failure"),
+        "{err}"
+    );
+    settle(&v.mat).await;
+
+    assert_eq!(v.live_in_space().await, 1, "the view stayed");
+    assert_eq!(
+        v.delete_ops(&v.view).await,
+        0,
+        "its delete op was rolled back"
+    );
+    assert!(!v.engine_deleted(&v.view), "the engine rewound with SQL");
     v.mat.shutdown();
 }
 
