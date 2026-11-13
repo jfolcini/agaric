@@ -85,7 +85,7 @@ use agaric_lib::commands::{
     load_page_subtree_inner, preview_property_type_change_inner, preview_space_move_inner,
     query_by_property_inner, restore_block_inner, revert_ops_inner, search_blocks_inner,
 };
-use agaric_lib::db::init_pool;
+use agaric_lib::db::{init_pool, init_pools};
 use agaric_lib::materializer::Materializer;
 use agaric_store::cache::{
     rebuild_block_tag_refs_cache, rebuild_projected_agenda_cache, rebuild_tags_cache,
@@ -3161,16 +3161,23 @@ fn bench_move_block(c: &mut Criterion) {
 /// other call of the pair and the shape check run untimed. Each probe also
 /// reports its call with the `flush_background` after it (`settled`): the
 /// write-lock work the call's whole-vault rebuilds do once it has returned
-/// (#6522). The shape check runs per call, not once before
-/// the loop, because a mutator must not preflight the measured fixture.
+/// (#6522). The materializer has the app's read pool, so its rebuilds run the
+/// forms the app runs, and each settle also reports the slowest foreground
+/// write issued while it drained ([`worst_write_during_settle`]). The shape
+/// check runs per call, not once before the loop, because a mutator must not
+/// preflight the measured fixture.
 /// Measurement only: no budget until `bench-slo` has measured them.
 fn bench_delete_restore_block(c: &mut Criterion) {
     const DELETE: &str = "delete_block (leaf of 2K-block page) @ 100K";
     const RESTORE: &str = "restore_block (leaf of 2K-block page) @ 100K";
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
-    let pool = rt.block_on(fresh_pool(&dir, "slo_delete_restore_block"));
-    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    let pools = rt
+        .block_on(init_pools(&dir.path().join("slo_delete_restore_block.db")))
+        .unwrap();
+    let pool = pools.write.clone();
+    let materializer =
+        rt.block_on(async { Materializer::with_read_pool(pool.clone(), pools.read.clone()) });
     let children = rt.block_on(seed_write_path_fixture(&pool, &materializer));
     let target = children[WRITE_PATH_PAGE_CHILDREN / 2].clone();
     let fallbacks = agaric_lib::materializer::sql_only_fallback_count();
@@ -3178,19 +3185,22 @@ fn bench_delete_restore_block(c: &mut Criterion) {
     let (pool_ref, materializer_ref, target_ref) = (&pool, &materializer, &target);
     let (delete_acc, restore_acc) = (Acc::new(), Acc::new());
     let (delete_settled, restore_settled) = (Acc::new(), Acc::new());
+    let (delete_write, restore_write) = (Acc::new(), Acc::new());
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);
-    for (name, acc, settled_acc, times_delete) in [
+    for (name, acc, settled_acc, write_acc, times_delete) in [
         (
             "delete_block_2k_page_in_100k",
             &delete_acc,
             &delete_settled,
+            &delete_write,
             true,
         ),
         (
             "restore_block_2k_page_in_100k",
             &restore_acc,
             &restore_settled,
+            &restore_write,
             false,
         ),
     ] {
@@ -3198,6 +3208,7 @@ fn bench_delete_restore_block(c: &mut Criterion) {
             b.to_async(&rt).iter_custom(|iters| async move {
                 let mut elapsed = Duration::ZERO;
                 let mut settled = Duration::ZERO;
+                let mut worst_write = Duration::ZERO;
                 for _ in 0..iters {
                     let start = Instant::now();
                     let deleted = delete_block_inner(
@@ -3209,7 +3220,8 @@ fn bench_delete_restore_block(c: &mut Criterion) {
                     .await
                     .unwrap();
                     let delete_time = start.elapsed();
-                    materializer_ref.flush_background().await.unwrap();
+                    let delete_write_time =
+                        worst_write_during_settle(pool_ref, materializer_ref).await;
                     let delete_settled_time = start.elapsed();
                     let start = Instant::now();
                     let restored = restore_block_inner(
@@ -3222,7 +3234,8 @@ fn bench_delete_restore_block(c: &mut Criterion) {
                     .await
                     .unwrap();
                     let restore_time = start.elapsed();
-                    materializer_ref.flush_background().await.unwrap();
+                    let restore_write_time =
+                        worst_write_during_settle(pool_ref, materializer_ref).await;
                     let restore_settled_time = start.elapsed();
                     assert_eq!(
                         (
@@ -3238,16 +3251,18 @@ fn bench_delete_restore_block(c: &mut Criterion) {
                         (target_ref.as_str(), 1),
                         "restore_block @ 100K: a leaf restore revives the leaf alone (#5691)"
                     );
-                    let (command_time, settled_time) = if times_delete {
-                        (delete_time, delete_settled_time)
+                    let (command_time, settled_time, write_time) = if times_delete {
+                        (delete_time, delete_settled_time, delete_write_time)
                     } else {
-                        (restore_time, restore_settled_time)
+                        (restore_time, restore_settled_time, restore_write_time)
                     };
                     elapsed += command_time;
                     settled += settled_time;
+                    worst_write += write_time;
                 }
                 acc.record(elapsed, iters);
                 settled_acc.record(settled, iters);
+                write_acc.record(worst_write, iters);
                 elapsed
             });
         });
@@ -3314,6 +3329,53 @@ fn bench_delete_restore_block(c: &mut Criterion) {
         "restore_block (leaf of 2K-block page) settled @ 100K",
         &restore_settled,
     );
+    report_measurement_only(
+        "delete_block (leaf of 2K-block page) slowest write during settle @ 100K",
+        &delete_write,
+    );
+    report_measurement_only(
+        "restore_block (leaf of 2K-block page) slowest write during settle @ 100K",
+        &restore_write,
+    );
+}
+
+/// How often [`worst_write_during_settle`] issues its write: often enough to
+/// land inside any writer-lock hold worth reporting, rarely enough that the
+/// writes themselves leave the lock free for the rebuilds being measured.
+const SETTLE_WRITE_INTERVAL: Duration = Duration::from_millis(2);
+
+/// Drain the background queue while a one-row write lands on `write_pool`
+/// every [`SETTLE_WRITE_INTERVAL`], and return the longest any of those
+/// writes took: how long a foreground write waits for the writer lock behind
+/// the rebuilds a command left (#6522). The settled time cannot show that,
+/// because nothing else asks for the lock while it is measured.
+async fn worst_write_during_settle(
+    write_pool: &SqlitePool,
+    materializer: &Materializer,
+) -> Duration {
+    let settled = Cell::new(false);
+    let settle = async {
+        materializer.flush_background().await.unwrap();
+        settled.set(true);
+    };
+    let writes = async {
+        let mut worst = Duration::ZERO;
+        while !settled.get() {
+            let start = Instant::now();
+            sqlx::query(
+                "INSERT INTO app_settings (key, value, updated_at) \
+                 VALUES ('bench.settle_write', '', 0) \
+                 ON CONFLICT(key) DO UPDATE SET updated_at = updated_at + 1",
+            )
+            .execute(write_pool)
+            .await
+            .unwrap();
+            worst = worst.max(start.elapsed());
+            tokio::time::sleep(SETTLE_WRITE_INTERVAL).await;
+        }
+        worst
+    };
+    tokio::join!(settle, writes).1
 }
 
 /// `preview_space_move` — the cross-space move's confirmation read: one page
