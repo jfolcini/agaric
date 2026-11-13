@@ -1042,8 +1042,8 @@ pub struct VaultImport {
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
-pub async fn import_markdown(
-    app: tauri::AppHandle,
+pub async fn import_markdown<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     content: String,
     filename: Option<String>,
     space_id: SpaceId,
