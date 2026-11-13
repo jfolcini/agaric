@@ -2559,67 +2559,202 @@ fn format_panic_report(payload: &str, location: &str, backtrace: &str) -> String
     format!("PANIC at {location}: {payload}\nstack backtrace:\n{backtrace}")
 }
 
-/// #2972 / #2919 — show a BLOCKING native OS error dialog for a boot-fatal
-/// failure, independent of the webview (which may not exist yet at these
-/// failure points).
+/// #2972 / #2919 — whether a boot-fatal exit goes without its BLOCKING native
+/// dialog, which it shows itself because the webview may not exist yet.
 ///
-/// Used at the two boot-fatal exit points in [`run`]: a failed Tauri build
-/// (`.build(...)`) and a failed `setup` orchestration (corrupt SQLite page,
-/// failed `sqlx::migrate!` run — e.g. a `MigrateError::VersionMissing` after a
-/// downgrade — or a failed engine reprojection). Both previously called
-/// `exit(1)` after only a `tracing::error!` line, so the user double-clicked
-/// the icon and NOTHING appeared. This surfaces the error before we exit.
-///
-/// Best-effort and non-fatal: it ignores the dialog result and returns. It is a
-/// no-op under `cfg(test)` and on headless hosts (CI / `AGARIC_HEADLESS`, or —
-/// on Linux — no `DISPLAY`/`WAYLAND_DISPLAY`) so unit tests and CI never block
-/// on an un-dismissable window with no display to render it. On Android/iOS
-/// (#3072) `rfd` has no backend, so mobile logs the error and relies on the
-/// platform to surface the crash instead of opening a native dialog.
-fn show_fatal_error_dialog(title: &str, body: &str) {
-    // Never pop a real window from the test binary.
-    #[cfg(test)]
-    {
-        let _ = (title, body);
+/// True, with no window, from the test binary, and on headless hosts (CI /
+/// `AGARIC_HEADLESS`, or — on Linux — no `DISPLAY`/`WAYLAND_DISPLAY`), so unit
+/// tests and CI never block on an un-dismissable window with no display to
+/// render it. True on Android/iOS too (#3072): `rfd` has no backend there, so
+/// mobile logs the error and relies on the platform to surface the crash.
+fn fatal_dialog_suppressed(title: &str) -> bool {
+    if cfg!(test) {
+        return true;
     }
-    // Mobile: `rfd` 0.17 has no Android/iOS backend (#3072). The platform (crash
-    // reporter / system UI) surfaces a boot-fatal exit, so we only log here.
-    #[cfg(all(not(test), any(target_os = "android", target_os = "ios")))]
-    {
+    if cfg!(mobile) {
         tracing::error!(dialog_title = %title, "fatal error (mobile: platform surfaces it, no native dialog)");
-        let _ = (title, body);
+        return true;
     }
-    #[cfg(all(not(test), not(any(target_os = "android", target_os = "ios"))))]
+    // On Linux a GTK dialog needs a display server; treat its absence as
+    // headless so we don't hang/fail trying to open one. Other platforms
+    // always have a windowing system available to a running GUI app.
+    let no_display = cfg!(target_os = "linux")
+        && std::env::var_os("DISPLAY").is_none()
+        && std::env::var_os("WAYLAND_DISPLAY").is_none();
+    // `CI` is set by every major CI provider; `AGARIC_HEADLESS` is our
+    // explicit manual override for automated / no-GUI runs.
+    let headless = std::env::var_os("CI").is_some()
+        || std::env::var_os("AGARIC_HEADLESS").is_some()
+        || no_display;
+    if headless {
+        tracing::warn!(dialog_title = %title, "headless host: skipping fatal-error dialog");
+    }
+    headless
+}
+
+/// The boot-fatal dialog of a failed Tauri build (`.build(...)`) in [`run`]:
+/// the error and an OK button. Best-effort: it ignores the dialog result.
+fn show_fatal_error_dialog(title: &str, body: &str) {
+    if fatal_dialog_suppressed(title) {
+        return;
+    }
+    #[cfg(desktop)]
     {
-        // On Linux a GTK dialog needs a display server; treat its absence as
-        // headless so we don't hang/fail trying to open one. Other platforms
-        // always have a windowing system available to a running GUI app.
-        let no_display = {
-            #[cfg(target_os = "linux")]
-            {
-                std::env::var_os("DISPLAY").is_none()
-                    && std::env::var_os("WAYLAND_DISPLAY").is_none()
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                false
-            }
-        };
-        // `CI` is set by every major CI provider; `AGARIC_HEADLESS` is our
-        // explicit manual override for automated / no-GUI runs.
-        let headless = std::env::var_os("CI").is_some()
-            || std::env::var_os("AGARIC_HEADLESS").is_some()
-            || no_display;
-        if headless {
-            tracing::warn!(dialog_title = %title, "headless host: skipping fatal-error dialog");
-            return;
-        }
         rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Error)
             .set_title(title)
             .set_description(body)
             .set_buttons(rfd::MessageButtons::Ok)
             .show();
+    }
+    #[cfg(mobile)]
+    let _ = body;
+}
+
+/// The title of the dialog a failed [`boot`] shows.
+const BOOT_FAILURE_TITLE: &str = "Agaric failed to start";
+
+/// #6554 — where a failed [`boot`] sends the user: where the backups are, how
+/// to open one, and what not to do with one on a paired device.
+const BOOT_RECOVERY_DOCS_URL: &str = "https://github.com/jfolcini/agaric/blob/main/docs/TROUBLESHOOTING.md#8-agaric-failed-to-start-the-vault-will-not-open";
+
+/// [`setup_app`]'s dialog for a failed [`boot`]: [`boot_failure_dialog_body`],
+/// with *Open data folder* and *Copy details* beside *Close* (#6554). An action
+/// brings the dialog back, so the user can take both, and paste the details
+/// while Agaric still owns the clipboard, which on Linux empties when the
+/// process exits. Desktop only: mobile has no dialog to put them on, nor a file
+/// manager to open.
+fn show_boot_failure_dialog(app: &tauri::App, error: &dyn std::fmt::Display) {
+    if fatal_dialog_suppressed(BOOT_FAILURE_TITLE) {
+        return;
+    }
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_clipboard_manager::ClipboardExt;
+        let body = boot_failure_dialog_body(error);
+        // `None` when the folder cannot be resolved (a broken `AGARIC_DATA_DIR`
+        // override, say): no folder to open, so no button for it.
+        let data_dir = crate::app_paths::resolve_app_data_dir(app).ok();
+        #[cfg(target_os = "linux")]
+        let mut ask = gtk_boot_failure_dialog(app, &body, data_dir.is_some());
+        #[cfg(not(target_os = "linux"))]
+        let mut ask = rfd_boot_failure_dialog(&body, data_dir.is_some());
+        while let Some(action) = ask() {
+            match action {
+                BootFailureAction::OpenDataFolder => {
+                    if let Some(dir) = &data_dir
+                        && let Err(e) = tauri_plugin_opener::open_path(dir, None::<&str>)
+                    {
+                        tracing::warn!(error = %e, "boot-failure dialog: could not open the data folder");
+                    }
+                }
+                BootFailureAction::CopyDetails => {
+                    if let Err(e) = app.clipboard().write_text(boot_failure_details(error)) {
+                        tracing::warn!(error = %e, "boot-failure dialog: could not copy the details");
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(mobile)]
+    let _ = (app, error);
+}
+
+/// A button of the boot-failure dialog other than *Close*.
+#[cfg(desktop)]
+#[derive(Clone, Copy)]
+enum BootFailureAction {
+    OpenDataFolder,
+    CopyDetails,
+}
+
+#[cfg(desktop)]
+const OPEN_DATA_FOLDER: &str = "Open data folder";
+#[cfg(desktop)]
+const COPY_DETAILS: &str = "Copy details";
+#[cfg(desktop)]
+const CLOSE: &str = "Close";
+
+/// The boot-failure dialog on Linux: each call of the returned closure runs it
+/// until a button is pressed, and yields that action, or `None` on *Close*.
+///
+/// GTK's own dialog, run on this thread, not `rfd`'s: `rfd` runs a GTK dialog
+/// on a thread of its own, which waits for the main context that tao's event
+/// loop holds for as long as it runs, setup included, so the dialog never
+/// showed and the process hung. The main window goes out of sight first, since
+/// the dialog's loop would otherwise draw it behind, with no backend.
+#[cfg(target_os = "linux")]
+fn gtk_boot_failure_dialog(
+    app: &tauri::App,
+    body: &str,
+    can_open: bool,
+) -> impl FnMut() -> Option<BootFailureAction> {
+    use gtk::prelude::*;
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("main")
+        && let Err(e) = window.hide()
+    {
+        tracing::warn!(error = %e, "boot-failure dialog: could not hide the main window");
+    }
+    let dialog = gtk::MessageDialog::new(
+        None::<&gtk::Window>,
+        gtk::DialogFlags::MODAL,
+        gtk::MessageType::Error,
+        gtk::ButtonsType::None,
+        BOOT_FAILURE_TITLE,
+    );
+    dialog.set_title(BOOT_FAILURE_TITLE);
+    dialog.set_secondary_text(Some(body));
+    if can_open {
+        dialog.add_button(OPEN_DATA_FOLDER, gtk::ResponseType::Other(0));
+    }
+    dialog.add_button(COPY_DETAILS, gtk::ResponseType::Other(1));
+    dialog.add_button(CLOSE, gtk::ResponseType::Close);
+    move || match dialog.run() {
+        gtk::ResponseType::Other(0) => Some(BootFailureAction::OpenDataFolder),
+        gtk::ResponseType::Other(1) => Some(BootFailureAction::CopyDetails),
+        _ => {
+            dialog.hide();
+            None
+        }
+    }
+}
+
+/// The boot-failure dialog on macOS and Windows, as [`gtk_boot_failure_dialog`]
+/// on Linux.
+#[cfg(desktop)]
+#[cfg_attr(
+    target_os = "linux",
+    expect(dead_code, reason = "built on Linux too, so clippy checks it there")
+)]
+fn rfd_boot_failure_dialog(
+    body: &str,
+    can_open: bool,
+) -> impl FnMut() -> Option<BootFailureAction> + '_ {
+    move || {
+        let buttons = if can_open {
+            rfd::MessageButtons::YesNoCancelCustom(
+                OPEN_DATA_FOLDER.into(),
+                COPY_DETAILS.into(),
+                CLOSE.into(),
+            )
+        } else {
+            rfd::MessageButtons::OkCancelCustom(COPY_DETAILS.into(), CLOSE.into())
+        };
+        let rfd::MessageDialogResult::Custom(label) = rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title(BOOT_FAILURE_TITLE)
+            .set_description(body)
+            .set_buttons(buttons)
+            .show()
+        else {
+            return None;
+        };
+        match label.as_str() {
+            OPEN_DATA_FOLDER => Some(BootFailureAction::OpenDataFolder),
+            COPY_DETAILS => Some(BootFailureAction::CopyDetails),
+            _ => None,
+        }
     }
 }
 
@@ -3052,11 +3187,26 @@ fn boot_failure_dialog_body(error: &dyn std::fmt::Display) -> String {
         "Agaric could not open your vault and had to close.\n\n{error}\n\n\
          This can happen after a failed or downgraded update, where an \
          older version cannot open a vault that a newer one upgraded, \
-         or if the vault database is damaged. A pre-migration backup of \
-         the database is kept next to it when possible, so your data \
-         should be recoverable.\n\n\
-         Details are in the log files under your app data directory \
+         or if the vault database is damaged. Before each update that \
+         changes the database, a backup of it is kept beside it in the \
+         data folder, so your data should be recoverable.\n\n\
+         How to recover, and what not to do on a paired device:\n\
+         {BOOT_RECOVERY_DOCS_URL}\n\n\
+         Details are in the log files in the data folder \
          (the \"logs\" folder, agaric.log)."
+    )
+}
+
+/// What *Copy details* in [`show_boot_failure_dialog`] copies: what a bug
+/// report needs, and the recovery link, which a macOS or Windows dialog does
+/// not let the user select.
+#[cfg(desktop)]
+fn boot_failure_details(error: &dyn std::fmt::Display) -> String {
+    format!(
+        "Agaric {} on {} ({})\n{error}\n\nHow to recover: {BOOT_RECOVERY_DOCS_URL}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
     )
 }
 
@@ -3074,7 +3224,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         tracing::error!(error = %e, "fatal error during application setup");
         // #2919 — a downgrade / failed update, a corrupt vault database,
         // or a failed reprojection reaches here. Show it, then exit.
-        show_fatal_error_dialog("Agaric failed to start", &boot_failure_dialog_body(&e));
+        show_boot_failure_dialog(app, &e);
         std::process::exit(1);
     }
 
@@ -3838,6 +3988,62 @@ mod boot_path_tests {
             "the row holds the write"
         );
         materializer.shutdown();
+    }
+
+    /// GitHub's anchor for a Markdown heading.
+    fn github_anchor(heading: &str) -> String {
+        heading
+            .to_lowercase()
+            .chars()
+            .filter_map(|c| match c {
+                ' ' => Some('-'),
+                c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// #6554 — the boot-failure dialog links the troubleshooting section that
+    /// says where the backups are and how to use one, so renaming that heading
+    /// breaks this test, not the link in a dialog nobody sees until boot fails.
+    #[test]
+    fn the_boot_failure_dialog_links_its_troubleshooting_section_6554() {
+        let body = super::boot_failure_dialog_body(&"boom");
+        let prefix = "https://github.com/jfolcini/agaric/blob/main/docs/TROUBLESHOOTING.md#";
+        let anchor = body
+            .split_once(prefix)
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            .unwrap_or_else(|| panic!("the dialog links docs/TROUBLESHOOTING.md: {body}"));
+        let anchors: Vec<String> = include_str!("../../docs/TROUBLESHOOTING.md")
+            .lines()
+            .filter_map(|line| line.strip_prefix("## "))
+            .map(github_anchor)
+            .collect();
+        assert!(
+            anchors.iter().any(|a| a == anchor),
+            "#{anchor} names no section of docs/TROUBLESHOOTING.md: {anchors:?}"
+        );
+    }
+
+    /// #6554 — *Copy details* carries what a bug report needs, and the link a
+    /// macOS or Windows dialog does not let the user select.
+    #[cfg(desktop)]
+    #[test]
+    fn copy_details_carry_the_version_platform_error_and_link_6554() {
+        let error = "migration 99 was previously applied but is missing";
+        let details = super::boot_failure_details(&error);
+        for part in [
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            error,
+            super::BOOT_RECOVERY_DOCS_URL,
+        ] {
+            assert!(
+                details.contains(part),
+                "the details carry {part:?}: {details}"
+            );
+        }
     }
 }
 
