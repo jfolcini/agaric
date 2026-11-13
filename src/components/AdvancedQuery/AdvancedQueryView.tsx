@@ -177,11 +177,15 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
 
   return (
     <div
-      className="advanced-query-view flex w-full flex-col gap-3"
+      // A list view is capped and centred; only a board spans the view.
+      className={cn(
+        'advanced-query-view mx-auto flex w-full flex-col gap-3',
+        board == null && 'max-w-list',
+      )}
       data-testid="advanced-query-view"
     >
       {/* Builder pane — the #1280 D3 recursive nested-boolean tree. It keeps
-          the list column's width; only a board spans the view. */}
+          the list column's width beside a board. */}
       <div className="advanced-query-builder mx-auto flex w-full max-w-list flex-col gap-3">
         <p className="text-sm text-muted-foreground">{t('advancedQuery.description')}</p>
         <div className="flex flex-col gap-2">
@@ -261,7 +265,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
 
       {/* Results pane. */}
       {board == null && (
-        <div className="advanced-query-results mx-auto w-full max-w-list">
+        <div className="advanced-query-results">
           {/* Polite live region — announces that a query is (re)running so
             screen-reader users get more than silence while the list refetches.
             Mirrors SearchStatusRegion. */}

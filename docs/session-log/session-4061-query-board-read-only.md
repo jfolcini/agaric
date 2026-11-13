@@ -13,6 +13,7 @@ The maintainer opened plan #6542 on 2026-11-13: a design note first, then a firs
 - The browser mock stubs the grouped path (one synthetic bucket), so a board built on it could not have been shown failing in Playwright. The flat path is modelled faithfully, which is the second reason for the design.
 - `EmptyState` is a labelled region. Five empty columns with one message fail axe's `landmark-unique`, so the message names its column.
 - Advanced Query opened every result as an "Untitled" page: it handed `onPageSelect` the id alone. Found when the board's spec asserted the opened page's title. Fixed for the list, the groups and the board, where the titles are already in hand.
+- `e2e/list-view-width.spec.ts` measures the view's root, so the list cap stays on the root and comes off only for a board; moving it to the panes failed that spec.
 - The cloud container's Chromium is one revision behind the pinned Playwright; `docs/BUILD.md` § Cloud container has the symlink recipe.
 
 ## Shipped
@@ -23,7 +24,7 @@ Existing assertions edited, all for the new `view` field: the default controls i
 
 ## What ran
 
-Full vitest, `npm run typecheck`, `npm run lint`, `prek run --all-files` and the manual stage. Playwright on the mock: the new spec, shown red by dropping the column's filter (the DONE card showed up under TODO), and the specs `just e2e-related` selects. Vitest falsifications, each one command that restored on exit: the column filter, the hidden "Other values" column, the page title on open, and the list's query staying off behind the board.
+Full vitest, `npm run typecheck`, `npm run lint`, `prek run --all-files` and the manual stage. Playwright on the mock: the new spec, shown red by dropping the column's filter (the DONE card showed up under TODO), and the 224 specs `just e2e-related` selects: all passed but the two `diagram-legibility` tests, which `docs/BUILD.md` lists as failing on the container's older Chromium and which were not compared against `main` here. Vitest falsifications, each one command that restored on exit: the column filter, the hidden "Other values" column, the page title on open, and the list's query staying off behind the board.
 
 Not run here: the WebdriverIO lane (no `cargo-tauri` in the container), and the issue's 500-card measurement. A column renders one page of 50 at a time, so the board's DOM grows with what the user loads; nothing was measured.
 
