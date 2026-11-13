@@ -22,6 +22,7 @@ mod common;
 mod conformance;
 mod conformance_command;
 mod conformance_fuzz;
+mod conformance_ipc;
 mod conformance_query;
 mod conformance_snapshot;
 mod draft_flush_integration;
