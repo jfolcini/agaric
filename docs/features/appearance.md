@@ -16,7 +16,7 @@ A print stylesheet (`@media print` in `src/index.css`) prints the page alone: no
 
 ## Custom CSS
 
-Settings › Appearance › *Custom CSS* takes a stylesheet of your own, written into one `<style>` element after the app's stylesheet (`src/hooks/useCustomCss.ts`), so your rule wins a tie. The switch beside it turns the stylesheet off; it is read before the stylesheet is applied. If a stylesheet hides the app, open `agaric://settings/safe-mode`: it turns the switch off and opens Settings › Appearance, with the stylesheet kept for you to fix. On Android the link is `https://agaric.app/o/settings/safe-mode`. A remote `@import` or web font does not load: the app's content security policy blocks both.
+Settings › Appearance › *Custom CSS* takes a stylesheet of your own, written into one `<style>` element after the app's stylesheet (`src/hooks/useCustomCss.ts`), so your rule wins a tie. The switch beside it turns the stylesheet off; it is read before the stylesheet is applied. If a stylesheet hides the app, open `agaric://settings/safe-mode`: it turns the switch off and opens Settings › Appearance, with the stylesheet kept for you to fix. Android has no such link yet ([agent-access.md](agent-access.md#agaric-deep-links)). A remote `@import` or web font does not load: the app's content security policy blocks both.
 
 Override a token on `:root`, which beats every theme:
 
