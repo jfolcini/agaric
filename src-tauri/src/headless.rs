@@ -9,10 +9,11 @@
 //! serialization. Only the transport differs.
 //!
 //! [`HeadlessApp::new`] holds the state [`crate::register_managed_state`]
-//! registers and no more. [`HeadlessApp::boot`] adds what [`crate::boot`]
-//! registers around it, except MCP's: nothing here starts a server, a daemon
-//! or a background task, and a command that reads state no one registered is
-//! refused by tauri as unmanaged.
+//! registers and no more; [`HeadlessApp::boot`] adds the recovery status.
+//! Nothing here starts a server, a daemon or a background task, and a command
+//! that reads state [`crate::boot`] registers elsewhere (the mirror, the mDNS
+//! and bind status, MCP) is refused by tauri as unmanaged. Register a state
+//! here when a spec's commands first read it.
 //!
 //! Compiled under `test-util` only, so nothing here ships.
 
@@ -74,15 +75,8 @@ impl HeadlessApp {
         agaric_sync::recovery::reset_recovery_guard();
         let report = crate::recover_and_bootstrap(&pools, &device_id, &materializer)?;
         let headless = Self::over(pools, device_id, materializer, &lifecycle, app_data_dir);
-        let app = &headless.app;
-        crate::surface_recovery_status(app, &report);
-        app.manage(crate::mirror::MirrorState::new(app_data_dir.to_path_buf()));
-        app.manage(agaric_sync::sync_events::MdnsStatusState(
-            std::sync::Mutex::new(agaric_sync::sync_events::MdnsStatus::default()),
-        ));
-        app.manage(agaric_sync::sync_events::BindExposureStatusState(
-            std::sync::Mutex::new(agaric_sync::sync_events::BindExposureStatus::default()),
-        ));
+        // The app asks for it as it boots.
+        crate::surface_recovery_status(&headless.app, &report);
         Ok(headless)
     }
 

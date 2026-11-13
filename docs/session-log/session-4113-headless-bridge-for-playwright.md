@@ -5,7 +5,7 @@ Stage 1b of #6529, after stage 1a (session 4092) landed `HeadlessApp`. One PR. I
 ## Shipped
 
 - **`headless::bridge`** (`src-tauri/src/headless/bridge.rs`, `test-util`): one `HeadlessApp` behind a WebSocket for one Playwright worker. Requests are `invoke`, `listen`, `emit` and `reset`; an app event the page listens to is pushed to it. `reset` drops the open vault and boots a copy of a template booted once at start.
-- **`HeadlessApp::boot` and `shutdown`**, which stage 1a left on the spike branch. `boot` also registers what `crate::boot` registers around `register_managed_state`, except MCP's state.
+- **`HeadlessApp::boot` and `shutdown`**, which stage 1a left on the spike branch.
 - **The `bridge` bin** in `agaric-diagnostics`: a `main` over `bridge::serve`. It prints `{"port":N}` and exits when its stdin closes.
 - **`src/lib/tauri-mock/bridge.ts`**: with `window.__AGARIC_BRIDGE__` set, `setupMock` installs it instead of the mock. App commands go to the bridge; `plugin:*` commands stay on the mock's handlers.
 - **`e2e/bridge.ts`** and two fixtures in `e2e/helpers.ts`: with `AGARIC_E2E_BRIDGE` naming the binary, one bridge per worker, a `reset` before each test, and the URL injected into every page of the context.
@@ -17,6 +17,7 @@ Stage 1b of #6529, after stage 1a (session 4092) landed `HeadlessApp`. One PR. I
 - **The app's thread takes requests in order and only starts an `invoke` there.** `App<MockRuntime>` is not `Send` and a boot blocks on the runtime, so one thread owns the app; `Webview::on_message` returns at once, so commands still run concurrently.
 - **Events before replies.** The client task's `select!` is `biased` with events first. Unbiased, the reply to a command could overtake the event its wrapper emitted before returning; the WebSocket test caught that as a flake on its first run.
 - **Which events to forward is the page's call.** The mocks' own event bus answers `plugin:event|listen` in the browser, so the client wraps `invoke` and sends the bridge a `listen` for each. No list of event names to keep in step.
+- **Managed state: only what the first spec's commands read.** `boot` registers the recovery status, which the app asks for as it boots; without it the spec still passes but `get_recovery_status` is refused as unmanaged. The mirror, mDNS and bind-exposure states the spike registered are left out: the spec passes without them and nothing warns. The next spec that needs one adds it; a registration shared with `crate::boot` waits until that happens twice.
 - **The template is a first boot's vault.** No seed: see below.
 
 ## Not built, and why
@@ -39,7 +40,7 @@ Stage 1b of #6529, after stage 1a (session 4092) landed `HeadlessApp`. One PR. I
 
 ## What ran
 
-`search-nested-result.spec.ts` on the bridge, three times in one worker, and four spec files on the mock with the variable unset. Both halves of `cargo nextest run --workspace`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, clippy on the workspace and on the bin, `just gen-bindings` and `just gen-sqlx` with no diff, the full vitest suite, `npm run typecheck`, `npm run lint`, `prek run --all-files` and the manual stage.
+`search-nested-result.spec.ts` on the bridge, three times in one worker, on the final code; four spec files on the mock with the variable unset. Both halves of `cargo nextest run --workspace` (4041 and 4034 passed; the `command_integration` binary again after the managed-state change), `SQLX_OFFLINE=true cargo check --workspace --all-targets`, clippy on the workspace and on the bin, `just gen-bindings` and `just gen-sqlx` with no diff, the full vitest suite, `npm run typecheck`, `npm run lint`, `prek run --all-files` and the manual stage.
 
 A reset: 49 ms at the median over 15 runs, 44 to 63 ms, debug build, 4 vCPU. `a_reset_stays_within_its_budget` asserts the median stays at or under 300 ms wherever the Rust tests run.
 
