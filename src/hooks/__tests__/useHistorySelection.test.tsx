@@ -25,6 +25,7 @@ function makeEntry(
     payload: '{}',
     created_at: createdAt,
     is_replicated: isReplicated,
+    agent: null,
   }
 }
 

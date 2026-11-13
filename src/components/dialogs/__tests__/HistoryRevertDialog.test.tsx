@@ -46,6 +46,7 @@ const ENTRIES: HistoryEntry[] = [
     payload: '{}',
     created_at: 1_735_689_600_000,
     is_replicated: false,
+    agent: null,
   },
   {
     device_id: 'dev-1',
@@ -54,6 +55,7 @@ const ENTRIES: HistoryEntry[] = [
     payload: '{}',
     created_at: 1_735_689_500_000,
     is_replicated: false,
+    agent: null,
   },
 ]
 
