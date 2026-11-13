@@ -7,8 +7,10 @@
 //! - `…block/<ULID>` → [`EVENT_NAVIGATE_TO_BLOCK`]
 //! - `…page/<ULID>` → [`EVENT_NAVIGATE_TO_PAGE`]
 //! - `…settings/<tab>` → [`EVENT_OPEN_SETTINGS`]
+//! - `…capture?text=<text>` → [`EVENT_CAPTURE`], which opens Quick Capture
+//!   holding the text; the user still presses Capture, so a link never writes
 //!
-//! Two URL shapes map onto the same three routes:
+//! Two URL shapes map onto the same four routes:
 //!
 //! - the `agaric://<host>/<id>` **custom scheme**, registered desktop-only via
 //!   `plugins.deep-link.desktop.schemes` in `tauri.conf.json`; and
@@ -30,6 +32,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Listener, Runtime};
 
 use agaric_core::ulid::BlockId;
+use agaric_engine::block_ops::MAX_CONTENT_LENGTH;
 
 // ---------------------------------------------------------------------------
 // Event name constants
@@ -48,6 +51,9 @@ pub const EVENT_NAVIGATE_TO_PAGE: &str = "deeplink:navigate-to-page";
 
 /// Outbound event for `agaric://settings/<tab>`.  Payload: [`OpenSettingsPayload`].
 pub const EVENT_OPEN_SETTINGS: &str = "deeplink:open-settings";
+
+/// Outbound event for `agaric://capture?text=<text>`.  Payload: [`CapturePayload`].
+pub const EVENT_CAPTURE: &str = "deeplink:capture";
 
 /// The custom-scheme Agaric registers via `tauri.conf.json` (must match the
 /// `plugins.deep-link.desktop.schemes` entry in `tauri.conf.json`).
@@ -86,6 +92,8 @@ pub enum DeepLinkRoute {
     Block(BlockId),
     Page(BlockId),
     Settings(String),
+    /// The decoded `text` query parameter; empty when the link has none.
+    Capture(String),
 }
 
 /// Reasons a URL was rejected.  Logged at `warn` level; never surfaced to
@@ -99,10 +107,10 @@ pub enum DeepLinkError {
     WrongScheme(String),
     /// Authority/host was missing, the `https` authority was not
     /// [`APP_LINK_HOST`], or the route host did not match
-    /// `block` / `page` / `settings`.
+    /// `block` / `page` / `settings` / `capture`.
     UnknownHost(String),
     /// Path did not contain the required identifier (ULID for block/page,
-    /// tab name for settings).
+    /// tab name for settings); `capture` takes none.
     MissingIdentifier,
     /// ULID failed validation (uppercase Crockford base32, 26 chars,
     /// no I/L/O/U).
@@ -111,6 +119,12 @@ pub enum DeepLinkError {
     EmptySettingsTab,
     /// Settings tab name exceeded [`MAX_SETTINGS_TAB_LEN`] after trimming.
     SettingsTabTooLong(usize),
+    /// The capture `text` held a `%` not followed by two hex digits, or
+    /// decoded to bytes that are not UTF-8.
+    MalformedCaptureText,
+    /// The decoded capture `text` is longer, in bytes, than a block can hold
+    /// ([`MAX_CONTENT_LENGTH`]).
+    CaptureTextTooLong(usize),
 }
 
 /// Payload emitted on [`EVENT_NAVIGATE_TO_BLOCK`] / [`EVENT_NAVIGATE_TO_PAGE`].
@@ -129,6 +143,18 @@ pub struct OpenSettingsPayload {
     pub tab: String,
 }
 
+/// Payload emitted on [`EVENT_CAPTURE`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum CapturePayload {
+    /// Open Quick Capture holding `text`.
+    Prefill { text: String },
+    /// The link's text is longer than a block can hold: Quick Capture stays
+    /// closed and the frontend says why, the way an over-long block is
+    /// refused at save rather than cut.
+    TooLong,
+}
+
 // ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
@@ -137,7 +163,8 @@ pub struct OpenSettingsPayload {
 ///
 /// Strict by design: anything outside the documented `agaric://<host>/<id>`
 /// custom-scheme shape or the `https://agaric.app/o/<host>/<id>` App-Link
-/// shape is rejected.  ULIDs are validated via [`BlockId::from_string`]
+/// shape is rejected; `capture` takes no identifier, only its `text` query
+/// parameter (see [`capture_text`]).  ULIDs are validated via [`BlockId::from_string`]
 /// (the canonical parser used everywhere else in the codebase) — never a
 /// regex.  Settings tab names are passed through; the frontend filters
 /// them against the `SettingsTab` union so an unknown tab safely falls
@@ -158,12 +185,11 @@ pub fn parse_deep_link(raw: &str) -> Result<DeepLinkRoute, DeepLinkError> {
 
             // First non-empty path segment is the identifier (ULID or tab).
             // `agaric://block/X` parses with path `/X` → segments [`"X"`].
-            // Empty path (`agaric://block`, `agaric://block/`) yields no
-            // non-empty first segment — rejected as missing identifier.
+            // Empty path (`agaric://block`, `agaric://block/`) yields none,
+            // which the hosts that need one reject as missing.
             let identifier = parsed
                 .path_segments()
-                .and_then(|mut segs| segs.find(|s| !s.is_empty()))
-                .ok_or(DeepLinkError::MissingIdentifier)?;
+                .and_then(|mut segs| segs.find(|s| !s.is_empty()));
 
             (host, identifier)
         }
@@ -195,7 +221,7 @@ pub fn parse_deep_link(raw: &str) -> Result<DeepLinkRoute, DeepLinkError> {
                 .next()
                 .ok_or(DeepLinkError::MissingIdentifier)?
                 .to_ascii_lowercase();
-            let identifier = segs.next().ok_or(DeepLinkError::MissingIdentifier)?;
+            let identifier = segs.next();
 
             (host, identifier)
         }
@@ -203,18 +229,11 @@ pub fn parse_deep_link(raw: &str) -> Result<DeepLinkRoute, DeepLinkError> {
     };
 
     match host.as_str() {
-        "block" => {
-            let id = BlockId::from_string(identifier)
-                .map_err(|e| DeepLinkError::InvalidUlid(e.to_string()))?;
-            Ok(DeepLinkRoute::Block(id))
-        }
-        "page" => {
-            let id = BlockId::from_string(identifier)
-                .map_err(|e| DeepLinkError::InvalidUlid(e.to_string()))?;
-            Ok(DeepLinkRoute::Page(id))
-        }
+        "capture" => capture_text(parsed.query()).map(DeepLinkRoute::Capture),
+        "block" => Ok(DeepLinkRoute::Block(parse_ulid(identifier)?)),
+        "page" => Ok(DeepLinkRoute::Page(parse_ulid(identifier)?)),
         "settings" => {
-            let tab = identifier.trim();
+            let tab = identifier.ok_or(DeepLinkError::MissingIdentifier)?.trim();
             if tab.is_empty() {
                 return Err(DeepLinkError::EmptySettingsTab);
             }
@@ -230,14 +249,73 @@ pub fn parse_deep_link(raw: &str) -> Result<DeepLinkRoute, DeepLinkError> {
     }
 }
 
+/// The ULID a `block` / `page` link names, via [`BlockId::from_string`]
+/// (the canonical parser used everywhere else in the codebase), never a regex.
+fn parse_ulid(identifier: Option<&str>) -> Result<BlockId, DeepLinkError> {
+    let identifier = identifier.ok_or(DeepLinkError::MissingIdentifier)?;
+    BlockId::from_string(identifier).map_err(|e| DeepLinkError::InvalidUlid(e.to_string()))
+}
+
+/// The text a `capture` link carries: its first `text` query parameter,
+/// decoded, or empty when there is none. Other parameters are ignored. Bounded
+/// by the block content cap, since the text is headed for one block.
+fn capture_text(query: Option<&str>) -> Result<String, DeepLinkError> {
+    let raw = query
+        .into_iter()
+        .flat_map(|q| q.split('&'))
+        .find_map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (key == "text").then_some(value)
+        })
+        .unwrap_or_default();
+    let text = decode_form_value(raw)?;
+    if text.len() > MAX_CONTENT_LENGTH {
+        return Err(DeepLinkError::CaptureTextTooLong(text.len()));
+    }
+    Ok(text)
+}
+
+/// Decode a query value as `application/x-www-form-urlencoded` (`+` is a
+/// space, as `URLSearchParams` writes it), strictly: a `%` not followed by two
+/// hex digits, or bytes that are not UTF-8, refuse the link rather than reach
+/// the capture field altered. `url`'s own decoder passes both through.
+fn decode_form_value(raw: &str) -> Result<String, DeepLinkError> {
+    let mut bytes = Vec::with_capacity(raw.len());
+    let mut rest = raw.as_bytes();
+    while let Some((&byte, tail)) = rest.split_first() {
+        rest = tail;
+        bytes.push(match byte {
+            b'+' => b' ',
+            b'%' => {
+                let [hi, lo, tail @ ..] = rest else {
+                    return Err(DeepLinkError::MalformedCaptureText);
+                };
+                rest = tail;
+                (hex_digit(*hi)? << 4) | hex_digit(*lo)?
+            }
+            other => other,
+        });
+    }
+    String::from_utf8(bytes).map_err(|_| DeepLinkError::MalformedCaptureText)
+}
+
+fn hex_digit(byte: u8) -> Result<u8, DeepLinkError> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(DeepLinkError::MalformedCaptureText),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Listener registration
 // ---------------------------------------------------------------------------
 
 /// Register the [`EVENT_DEEP_LINK_NEW_URL`] listener that converts inbound
 /// `agaric://…` URLs into typed [`EVENT_NAVIGATE_TO_BLOCK`] /
-/// [`EVENT_NAVIGATE_TO_PAGE`] / [`EVENT_OPEN_SETTINGS`] events.  Call once
-/// from the Tauri `setup()` hook.
+/// [`EVENT_NAVIGATE_TO_PAGE`] / [`EVENT_OPEN_SETTINGS`] / [`EVENT_CAPTURE`]
+/// events.  Call once from the Tauri `setup()` hook.
 ///
 /// The listener stays registered for the lifetime of the app — the
 /// returned `EventId` is intentionally discarded because there is no
@@ -286,6 +364,14 @@ fn dispatch_url<R: Runtime>(app: &AppHandle<R>, raw: &str) {
         ),
         Ok(DeepLinkRoute::Settings(tab)) => {
             crate::main_thread::emit(app, EVENT_OPEN_SETTINGS, OpenSettingsPayload { tab });
+        }
+        Ok(DeepLinkRoute::Capture(text)) => {
+            crate::main_thread::emit(app, EVENT_CAPTURE, CapturePayload::Prefill { text });
+        }
+        Err(DeepLinkError::CaptureTextTooLong(bytes)) => {
+            // No `url` field: it is the whole over-long text.
+            tracing::warn!(target: "deeplink", bytes, "refusing an over-long capture deep link");
+            crate::main_thread::emit(app, EVENT_CAPTURE, CapturePayload::TooLong);
         }
         Err(e) => {
             tracing::warn!(
@@ -662,6 +748,169 @@ mod tests {
     fn settings_url_with_query_string_keeps_tab_name() {
         let route = parse_deep_link("agaric://settings/sync?force=1").expect("query ignored");
         assert_eq!(route, DeepLinkRoute::Settings("sync".into()));
+    }
+
+    // ── parse_deep_link: capture (#6555) ────────────────────────────────
+
+    fn capture(url: &str) -> Result<DeepLinkRoute, DeepLinkError> {
+        parse_deep_link(url)
+    }
+
+    #[test]
+    fn parses_capture_url_with_percent_encoded_text() {
+        assert_eq!(
+            capture("agaric://capture?text=a%20b"),
+            Ok(DeepLinkRoute::Capture("a b".into())),
+        );
+    }
+
+    #[test]
+    fn capture_text_keeps_utf8_newlines_links_and_tags_as_typed() {
+        let url = "agaric://capture?text=caf%C3%A9%20%23tag%20%5B%5BPage%5D%5D%0Asecond%20line";
+        assert_eq!(
+            capture(url),
+            Ok(DeepLinkRoute::Capture(
+                "café #tag [[Page]]\nsecond line".into()
+            )),
+        );
+    }
+
+    #[test]
+    fn capture_text_reads_plus_as_a_space_and_encoded_plus_as_a_plus() {
+        // Form encoding, as `URLSearchParams` and Python's `quote_plus` write it.
+        assert_eq!(
+            capture("agaric://capture?text=1%2B1+is+2"),
+            Ok(DeepLinkRoute::Capture("1+1 is 2".into())),
+        );
+    }
+
+    #[test]
+    fn capture_ignores_unknown_parameters_and_reads_the_first_text() {
+        assert_eq!(
+            capture("agaric://capture?source=bookmarklet&text=hi&text=again&flag"),
+            Ok(DeepLinkRoute::Capture("hi".into())),
+        );
+    }
+
+    #[test]
+    fn capture_without_text_opens_empty() {
+        for url in [
+            "agaric://capture",
+            "agaric://capture/",
+            "agaric://capture?text",
+            "agaric://capture?text=",
+            "agaric://capture?source=x",
+        ] {
+            assert_eq!(
+                capture(url),
+                Ok(DeepLinkRoute::Capture(String::new())),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_capture_text_with_a_malformed_escape() {
+        // `%+F` would pass `u8::from_str_radix`, which accepts a sign.
+        for url in [
+            "agaric://capture?text=%ZZ",
+            "agaric://capture?text=50%",
+            "agaric://capture?text=%4",
+            "agaric://capture?text=%+F",
+        ] {
+            assert_eq!(
+                capture(url),
+                Err(DeepLinkError::MalformedCaptureText),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_capture_text_that_is_not_utf8() {
+        // A stray byte, a cut-off sequence, an encoded surrogate.
+        for url in [
+            "agaric://capture?text=%FF",
+            "agaric://capture?text=caf%C3",
+            "agaric://capture?text=%ED%A0%80",
+        ] {
+            assert_eq!(
+                capture(url),
+                Err(DeepLinkError::MalformedCaptureText),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn capture_text_at_the_block_content_cap_is_accepted() {
+        // The cap counts bytes: each `é` is two.
+        let text = "é".repeat(MAX_CONTENT_LENGTH / 2);
+        let url = format!(
+            "agaric://capture?text={}",
+            "%C3%A9".repeat(MAX_CONTENT_LENGTH / 2)
+        );
+        assert_eq!(capture(&url), Ok(DeepLinkRoute::Capture(text)));
+    }
+
+    #[test]
+    fn rejects_capture_text_over_the_block_content_cap() {
+        let url = format!(
+            "agaric://capture?text={}",
+            "%C3%A9".repeat(MAX_CONTENT_LENGTH / 2 + 1),
+        );
+        assert_eq!(
+            capture(&url),
+            Err(DeepLinkError::CaptureTextTooLong(MAX_CONTENT_LENGTH + 2)),
+        );
+    }
+
+    #[test]
+    fn capture_payload_serializes_to_the_frontend_contract() {
+        // Mirrors `CapturePayload` in `src/hooks/useDeepLinkRouter.ts`.
+        assert_eq!(EVENT_CAPTURE, "deeplink:capture");
+        assert_eq!(
+            serde_json::to_value(CapturePayload::Prefill { text: "a b".into() }).unwrap(),
+            serde_json::json!({ "kind": "prefill", "text": "a b" }),
+        );
+        assert_eq!(
+            serde_json::to_value(CapturePayload::TooLong).unwrap(),
+            serde_json::json!({ "kind": "tooLong" }),
+        );
+    }
+
+    #[test]
+    fn dispatch_emits_the_capture_text_nothing_for_a_malformed_link_and_a_refusal() {
+        let (app, _) = crate::main_thread::test_support::running_mock_app();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.listen(EVENT_CAPTURE, move |event| {
+            let _ = tx.send(event.payload().to_string());
+        });
+
+        dispatch_url(&app, "agaric://capture?text=%ZZ");
+        dispatch_url(&app, "agaric://capture?text=a%20b");
+        let over_long = format!(
+            "agaric://capture?text={}",
+            "a".repeat(MAX_CONTENT_LENGTH + 1)
+        );
+        dispatch_url(&app, &over_long);
+
+        // Emits run in order, so a payload for the malformed link would come first.
+        let payloads: Vec<serde_json::Value> = (0..2)
+            .map(|_| {
+                let raw = rx
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .expect("capture event never emitted");
+                serde_json::from_str(&raw).expect("payload is JSON")
+            })
+            .collect();
+        assert_eq!(
+            payloads,
+            vec![
+                serde_json::json!({ "kind": "prefill", "text": "a b" }),
+                serde_json::json!({ "kind": "tooLong" }),
+            ],
+        );
     }
 
     // ── Payload serialization ──────────────────────────────────────────

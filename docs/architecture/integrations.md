@@ -108,8 +108,11 @@ External tools can open Agaric to a specific target:
 | `agaric://page/<id>` | Open the page in the active tab. |
 | `agaric://settings/<tab>` | Open Settings to a specific tab. |
 | `agaric://settings/safe-mode` | Turn custom CSS off, then open Settings › Appearance. |
+| `agaric://capture?text=<text>` | Open Quick Capture holding the text; nothing is saved until the user presses Capture. |
 
-The OS-side handler is registered on install. The Rust backend parses the incoming URL and emits a Tauri event (`deeplink:navigate-to-block`, `deeplink:navigate-to-page`, `deeplink:open-settings`); `useDeepLinkRouter` on the frontend listens and dispatches into the nav / tabs stores.
+The OS-side handler is registered on install. The Rust backend parses the incoming URL and emits a Tauri event (`deeplink:navigate-to-block`, `deeplink:navigate-to-page`, `deeplink:open-settings`, `deeplink:capture`); `useDeepLinkRouter` on the frontend listens and dispatches into the nav / tabs stores, except `deeplink:capture`, which `useAppDialogs` listens for because it owns the Quick Capture dialog.
+
+Any app or web page can fire a capture link, so its `text` is decoded strictly (form encoding; a malformed `%` escape or non-UTF-8 bytes drop the link) and bounded by the block content cap, `MAX_CONTENT_LENGTH`: an over-long text opens nothing and the frontend says so in a toast, as a block over the cap is refused at save.
 
 `useDeepLinkRouter` also replays the launch URL (the OS-given URL that started the process), which handles the cold-start case.
 

@@ -15,7 +15,7 @@ Agaric exposes itself to AI agents (Claude Desktop, Cursor, Continue, and any ot
 - **Watch agent activity in real time** in the **ActivityFeed** (Settings → Agent access).
 - **Revert a whole session's edits** with one click (the **SessionRevertControls** action).
 - **Open Agaric from another app** via the `agaric://` deep-link scheme.
-- **Capture quickly into Agaric** via the global Quick Capture hotkey (works even when the app is in the background) — see [editor.md](editor.md) and [keyboard.md](keyboard.md).
+- **Capture quickly into Agaric** via the global Quick Capture hotkey (works even when the app is in the background) — see [editor.md](editor.md) and [keyboard.md](keyboard.md) — or an `agaric://capture?text=…` link from a bookmarklet, a launcher or a script.
 
 ## How agents connect
 
@@ -153,10 +153,13 @@ External tools (and you, from anywhere on the OS) can open Agaric to a specific 
 | `agaric://page/<id>` | Open the page in the active tab. |
 | `agaric://settings/<tab>` | Open Settings to a specific tab (e.g. `agent`, `keyboard`, `data`). |
 | `agaric://settings/safe-mode` | Turn custom CSS off and open Settings › Appearance ([appearance.md](appearance.md#custom-css)). |
+| `agaric://capture?text=<text>` | Open Quick Capture holding the text. Nothing is saved until you press *Capture*. |
 
 The OS handler is registered on app install. From a terminal: `open agaric://...` (macOS), `xdg-open` (Linux), `start` (Windows).
 
 A page's kebab → *Copy app link* copies its `agaric://page/<id>` link, to paste into a calendar entry or a task manager.
+
+The capture link takes one parameter, `text`, percent-encoded as `encodeURIComponent` writes it (`+` also reads as a space); other parameters are ignored. A bookmarklet that captures the page you are reading: `javascript:location.href='agaric://capture?text='+encodeURIComponent(document.title+' '+location.href)`. Without `text` Quick Capture opens empty. Newlines, `[[links]]` and `#tags` arrive as plain text, as if typed. If Quick Capture is already open, the text goes below what you typed. A text longer than a block can hold, or a malformed escape (a `%` not followed by two hex digits, or bytes that are not UTF-8), opens nothing; the first says so in a toast.
 
 On **Android** the custom scheme isn't available, so the same three routes are served as App Links instead: `https://agaric.app/o/block/<id>`, `/o/page/<id>`, `/o/settings/<tab>`. Use those when linking from a mobile app.
 

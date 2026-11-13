@@ -23,7 +23,8 @@
  *
  * The global shortcut opens it on desktop and the floating quick-capture
  * button on a touch phone, which is why its description has a touch
- * wording that names no key.
+ * wording that names no key. An `agaric://capture?text=…` link opens it
+ * holding the link's text (#6555); the link never saves by itself.
  *
  * On phones < 768 px (`useIsMobile() === true`) the dialog
  * renders as a bottom Sheet so the textarea + Capture / Cancel buttons
@@ -51,14 +52,28 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { useSpaceStore } from '@/stores/space'
 
+/** Text an `agaric://capture` link hands the dialog (#6555); a new object per link. */
+export interface QuickCapturePrefill {
+  text: string
+}
+
 interface QuickCaptureDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  prefill?: QuickCapturePrefill | null
+}
+
+/** The field once a link's text arrives: below what the user typed, never over it. */
+function withLinkText(typed: string, linkText: string): string {
+  if (linkText.length === 0) return typed
+  if (typed.trim().length === 0) return linkText
+  return `${typed}\n${linkText}`
 }
 
 export function QuickCaptureDialog({
   open,
   onOpenChange,
+  prefill = null,
 }: QuickCaptureDialogProps): React.ReactElement {
   const { t } = useTranslation()
   const [content, setContent] = useState('')
@@ -82,6 +97,13 @@ export function QuickCaptureDialog({
       })
     }
   }, [open])
+
+  // Declared after the reset above, so a link that opens the dialog lands in the emptied field.
+  useEffect(() => {
+    if (prefill === null) return
+    // oxlint-disable-next-line react/set-state-in-effect -- the link's text merges into the user's edits, which a derive from props would discard
+    setContent((typed) => withLinkText(typed, prefill.text))
+  }, [prefill])
 
   const trimmed = content.trim()
   const isEmpty = trimmed.length === 0
