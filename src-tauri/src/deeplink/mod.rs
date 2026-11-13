@@ -164,7 +164,7 @@ pub enum CapturePayload {
 /// Strict by design: anything outside the documented `agaric://<host>/<id>`
 /// custom-scheme shape or the `https://agaric.app/o/<host>/<id>` App-Link
 /// shape is rejected; `capture` takes no identifier, only its `text` query
-/// parameter (see [`capture_text`]).  ULIDs are validated via [`BlockId::from_string`]
+/// parameter.  ULIDs are validated via [`BlockId::from_string`]
 /// (the canonical parser used everywhere else in the codebase) — never a
 /// regex.  Settings tab names are passed through; the frontend filters
 /// them against the `SettingsTab` union so an unknown tab safely falls
