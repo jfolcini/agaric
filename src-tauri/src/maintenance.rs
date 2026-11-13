@@ -206,7 +206,13 @@ pub async fn wal_checkpoint_truncate(write_pool: &SqlitePool) -> Result<(), AppE
 
 /// Issue #157 sub-item C — periodic op-log compaction, 24 h cadence,
 /// idle predicate.
-pub async fn op_log_compact(write_pool: &SqlitePool) -> Result<(), AppError> {
+pub async fn op_log_compact(
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+) -> Result<(), AppError> {
+    // As in `compact_op_log_cmd`: save first, so the purge drops no op the
+    // engine has not persisted (#6518).
+    agaric_engine::loro::snapshot::save_engines_and_advance_cursor(write_pool, materializer).await;
     let result = crate::commands::compaction::compact_op_log_cmd_inner(write_pool, 90).await?;
     if result.ops_deleted > 0 {
         tracing::info!(
@@ -1232,15 +1238,17 @@ mod tests {
     }
 
     /// Issue #157 sub-item C — `op_log_compact` smoke test.
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn op_log_compact_smoke_test_157_c() {
         let dir = tempfile::TempDir::new().unwrap();
         let pool = crate::db::init_pool(&dir.path().join("test.db"))
             .await
             .unwrap();
-        op_log_compact(&pool)
+        let mat = crate::materializer::Materializer::new(pool.clone());
+        op_log_compact(&pool, &mat)
             .await
             .expect("op_log_compact must succeed on a clean pool with no aged op-log rows");
+        mat.shutdown();
     }
 
     /// Issue #157 sub-item F — `enqueue_cleanup_orphaned_attachments` smoke test.

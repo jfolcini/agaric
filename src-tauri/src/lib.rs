@@ -1754,9 +1754,11 @@ fn wal_checkpoint_truncate_job(
 fn op_log_compact_job(
     lifecycle: &agaric_sync::foreground::LifecycleHooks,
     pools: &db::DbPools,
+    materializer: &materializer::Materializer,
 ) -> maintenance::MaintenanceJob {
     let lifecycle_for_compact = lifecycle.clone();
     let compact_write_pool = pools.write.clone();
+    let materializer_for_compact = materializer.clone();
     maintenance::MaintenanceJob {
         name: "op_log_compact",
         interval: std::time::Duration::from_secs(24 * 3600),
@@ -1770,7 +1772,8 @@ fn op_log_compact_job(
         }),
         run: Box::new(move || {
             let pool = compact_write_pool.clone();
-            Box::pin(async move { maintenance::op_log_compact(&pool).await })
+            let mat = materializer_for_compact.clone();
+            Box::pin(async move { maintenance::op_log_compact(&pool, &mat).await })
         }),
     }
 }
@@ -2007,7 +2010,7 @@ fn build_maintenance_jobs(
 ) -> Vec<maintenance::MaintenanceJob> {
     vec![
         wal_checkpoint_truncate_job(lifecycle, pools),
-        op_log_compact_job(lifecycle, pools),
+        op_log_compact_job(lifecycle, pools, materializer),
         pragma_optimize_tick_job(pools),
         cleanup_orphaned_attachments_tick_job(materializer),
         fts_idle_optimize_job(materializer),
