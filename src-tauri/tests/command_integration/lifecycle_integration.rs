@@ -1440,7 +1440,10 @@ async fn batch_restore_rederives_page_and_space_ids_6522() {
     let restored = restore_blocks_by_ids_inner(&t.pool, DEV, &t.mat, vec![t.child.clone()])
         .await
         .unwrap();
-    assert_eq!(restored.affected_count, 1, "the child; the chain is not counted");
+    assert_eq!(
+        restored.affected_count, 1,
+        "the child; the chain is not counted"
+    );
     assert_restore_rederived_ids_6522(&t, "batch restore").await;
 }
 
