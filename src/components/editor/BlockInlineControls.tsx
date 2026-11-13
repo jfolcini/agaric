@@ -3,6 +3,7 @@ import { Calendar, CalendarDays, ChevronRight, Paperclip, Repeat } from 'lucide-
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { PdfSourceChip } from '@/components/editor/PdfSourceChip'
 import { TaskMarkerButton } from '@/components/editor/TaskMarkerButton'
 import { InlinePropertyChip } from '@/components/properties/InlinePropertyChip'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
@@ -12,6 +13,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useSpacePropertyDefs } from '@/hooks/useSpacePropertyDefs'
 import { dueDateColor, formatCompactDate } from '@/lib/date-utils'
+import { pdfSourceOf } from '@/lib/pdf-highlights'
 import { priorityColor } from '@/lib/priority-color'
 import { isUnfit } from '@/lib/property-fit'
 import { formatRepeatLabel } from '@/lib/repeat-utils'
@@ -447,10 +449,11 @@ BlockInlineControls.displayName = 'BlockInlineControls'
 /**
  * Below-block metadata row (user feedback 2026-06-20): the interactive chips
  * that used to crowd the inline-control cluster — priority badge, due /
- * scheduled date chips, repeat indicator, property chips (+ overflow) and the
- * attachment badge — now render on their own row under the block text,
- * left-aligned with it. They stay fully interactive (priority cycles, dates open
- * pickers, chips edit, attachments toggle) and ALWAYS visible at rest, since
+ * scheduled date chips, repeat indicator, a PDF highlight's source chip,
+ * property chips (+ overflow) and the attachment badge — now render on their
+ * own row under the block text, left-aligned with it. They stay fully
+ * interactive (priority cycles, dates open pickers, chips edit, the source chip
+ * opens the reader, attachments toggle) and ALWAYS visible at rest, since
  * each carries meaningful state worth seeing at a glance.
  *
  * Renders nothing when the block carries no metadata, so leaves add no row.
@@ -499,12 +502,15 @@ export const BlockMetadataRow = React.memo(
 
     // The `repeat` property (if any) drives the repeat indicator chip.
     const repeatValue = properties?.find((p) => p.key === 'repeat')?.value
+    // A PDF highlight's place (#6629) drives its source chip.
+    const pdfSource = pdfSourceOf(properties)
 
     const hasContent =
       Boolean(priority) ||
       Boolean(dueDate) ||
       Boolean(scheduledDate) ||
       repeatValue !== undefined ||
+      pdfSource !== null ||
       filteredProperties.length > 0 ||
       attachmentCount > 0
 
@@ -574,6 +580,8 @@ export const BlockMetadataRow = React.memo(
         )}
 
         {repeatValue !== undefined && <RepeatIndicator repeatValue={repeatValue} />}
+
+        {pdfSource && <PdfSourceChip attachmentId={pdfSource.attachmentId} page={pdfSource.page} />}
 
         {filteredProperties.length > 0 && (
           <InlineProperties

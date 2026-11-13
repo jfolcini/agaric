@@ -24,6 +24,8 @@ Trigrams give substring matching for free — a query of `alp` matches `alpha`, 
 - **Frontend** (`src/components/SearchPanel.tsx`) — a soft hint. When the trimmed query is non-empty but its JavaScript-string length (UTF-16 code units, counted across the *whole* query) is below 3, the panel shows a "type more characters" notice. It does not block the request.
 - **Backend** (`sanitize_fts_query` in `src-tauri/agaric-store/src/fts/search/sanitizer.rs`) — the authoritative drop. Each word token shorter than `TRIGRAM_MIN_LEN` *Unicode scalars* (`word.chars().count()`, so a 2-character CJK word is measured as 2, not by byte length) is dropped from the FTS query; quoted phrases and the boolean operators bypass the floor.
 
+FTS5 addresses rows by rowid only, and `block_id` is `UNINDEXED`, so a writer replacing or removing a block's row looks its rowid up in FTS5's shadow table `fts_blocks_content` (`id` is the rowid, `c0` the `block_id`) through `idx_fts_blocks_content_block` (migration 0131) instead of scanning the index. A migration that drops and recreates `fts_blocks` drops that index with it and must recreate it.
+
 The synchronous primary-state writer does **not** maintain `fts_blocks`. The materializer rebuilds the FTS row asynchronously on every block insert / update / soft-delete, batched through the materializer's retry queue (`materializer_retry_queue`). The search query therefore sees results that lag the write log by one materializer flush — measured in milliseconds at the desk, but never zero. This is the same lag every materialized view in the app pays.
 
 ### `snippet()` rendering

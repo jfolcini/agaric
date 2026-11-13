@@ -8,8 +8,9 @@
  * Owns:
  * `bugReportOpen` + `bugReportPrefill` — bug-report dialog with
  *   optional prefill payload from `FeatureErrorBoundary`.
- * `quickCaptureOpen` — quick-capture dialog opened via the OS
- *   global hotkey registered in App.tsx.
+ * `quickCaptureOpen` + `quickCapturePrefill` — quick-capture dialog opened via
+ *   the OS global hotkey registered in App.tsx, or by an
+ *   `agaric://capture?text=…` link holding its text (#6555).
  * `showNoPeersDialog` — sync-with-no-peers warning gate.
  * `shortcutsOpen` — keyboard-shortcuts reference sheet.
  * `newPageTitle` — the New page dialog's pre-filled title; `null` = closed.
@@ -28,6 +29,10 @@
  * - `OPEN_NEW_PAGE_DIALOG_EVENT` (window) — opens the New page dialog,
  *   pre-filled with the event detail. Every new-page entry point sends it.
  * - `OPEN_NEW_MEETING_DIALOG_EVENT` (window) — opens the New meeting dialog.
+ * - `OPEN_QUICK_CAPTURE_EVENT` (window) — opens Quick Capture holding the
+ *   event's text; `handleCapturePayload` sends it for the Rust router's
+ *   `deeplink:capture` event, listened for here because this hook owns the
+ *   dialog, and `dispatchLaunchUrl` for a cold start's launch URL.
  * - `CLOSE_ALL_OVERLAYS_EVENT` (window) — Esc-key bridge that closes the
  *   shortcuts sheet. The sheet is Radix-managed and already closes on
  *   Escape *inside* it; this listener is the secondary dismiss path for
@@ -40,14 +45,23 @@
 
 import { useEffect, useState } from 'react'
 
+import { DEEPLINK_EVENT_CAPTURE, handleCapturePayload } from '@/hooks/useDeepLinkRouter'
+import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { BUG_REPORT_EVENT, type BugReportEventDetail } from '@/lib/bug-report-events'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { logger } from '@/lib/logger'
 import {
   CLOSE_ALL_OVERLAYS_EVENT,
   OPEN_NEW_MEETING_DIALOG_EVENT,
   OPEN_NEW_PAGE_DIALOG_EVENT,
+  OPEN_QUICK_CAPTURE_EVENT,
   SHOW_SHORTCUTS_EVENT,
 } from '@/lib/overlay-events'
+
+/** Text an `agaric://capture` link hands the dialog (#6555); a new object per link. */
+export interface QuickCapturePrefill {
+  text: string
+}
 
 export interface UseAppDialogsReturn {
   // Bug-report
@@ -58,6 +72,8 @@ export interface UseAppDialogsReturn {
   // Quick-capture
   quickCaptureOpen: boolean
   setQuickCaptureOpen: React.Dispatch<React.SetStateAction<boolean>>
+  quickCapturePrefill: QuickCapturePrefill | null
+  setQuickCapturePrefill: React.Dispatch<React.SetStateAction<QuickCapturePrefill | null>>
   // No-peers warning
   showNoPeersDialog: boolean
   setShowNoPeersDialog: React.Dispatch<React.SetStateAction<boolean>>
@@ -76,6 +92,7 @@ export function useAppDialogs(): UseAppDialogsReturn {
   const [bugReportOpen, setBugReportOpen] = useState<boolean>(false)
   const [bugReportPrefill, setBugReportPrefill] = useState<BugReportEventDetail | null>(null)
   const [quickCaptureOpen, setQuickCaptureOpen] = useState<boolean>(false)
+  const [quickCapturePrefill, setQuickCapturePrefill] = useState<QuickCapturePrefill | null>(null)
   const [showNoPeersDialog, setShowNoPeersDialog] = useState<boolean>(false)
   const [shortcutsOpen, setShortcutsOpen] = useState<boolean>(false)
   const [newPageTitle, setNewPageTitle] = useState<string | null>(null)
@@ -151,6 +168,27 @@ export function useAppDialogs(): UseAppDialogsReturn {
       window.removeEventListener(OPEN_NEW_MEETING_DIALOG_EVENT, handleOpenNewMeetingDialog)
   }, [])
 
+  useTauriEventListener<unknown>(
+    DEEPLINK_EVENT_CAPTURE,
+    (event) => handleCapturePayload(event.payload),
+    {
+      enabled: typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window,
+      onError: (err) => {
+        logger.warn('deeplink', `Failed to listen to ${DEEPLINK_EVENT_CAPTURE}`, undefined, err)
+      },
+    },
+  )
+
+  useEffect(() => {
+    function handleOpenQuickCapture(e: Event) {
+      // A new object per link, so a second link with the same text still reaches the open dialog.
+      setQuickCapturePrefill({ text: (e as CustomEvent<string>).detail })
+      setQuickCaptureOpen(true)
+    }
+    window.addEventListener(OPEN_QUICK_CAPTURE_EVENT, handleOpenQuickCapture)
+    return () => window.removeEventListener(OPEN_QUICK_CAPTURE_EVENT, handleOpenQuickCapture)
+  }, [])
+
   // ── Close the shortcuts sheet when "close all overlays" fires ───────
   // The sheet is Radix-managed and already closes when Escape is
   // pressed *inside* it, but if focus has drifted elsewhere the global
@@ -170,6 +208,8 @@ export function useAppDialogs(): UseAppDialogsReturn {
     setBugReportPrefill,
     quickCaptureOpen,
     setQuickCaptureOpen,
+    quickCapturePrefill,
+    setQuickCapturePrefill,
     showNoPeersDialog,
     setShowNoPeersDialog,
     shortcutsOpen,

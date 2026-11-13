@@ -12,6 +12,9 @@
  *     with `{ tab: <tab name> }`. The tab `safe-mode` turns the custom CSS
  *     off and opens Appearance (#6558), the way back from a stylesheet that
  *     hides the app.
+ *   - `agaric://capture?text=<text>` → emits `deeplink:capture` with a
+ *     `CapturePayload` (#6555). `useAppDialogs` listens for it, since it owns
+ *     the Quick Capture dialog; `handleCapturePayload` here applies it.
  *
  * On Android the same routes arrive as App Links
  * (`https://agaric.app/o/<host>/<id>`); both shapes are handled identically
@@ -43,6 +46,7 @@ import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { openQuickCapture } from '@/lib/overlay-events'
 import { getCurrentDeepLink } from '@/lib/platform/deep-link'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { requireActiveScope } from '@/lib/space-scope'
@@ -70,6 +74,14 @@ export { SETTINGS_ACTIVE_TAB_KEY } from '@/lib/url-state'
 export const DEEPLINK_EVENT_NAVIGATE_TO_BLOCK = 'deeplink:navigate-to-block'
 export const DEEPLINK_EVENT_NAVIGATE_TO_PAGE = 'deeplink:navigate-to-page'
 export const DEEPLINK_EVENT_OPEN_SETTINGS = 'deeplink:open-settings'
+export const DEEPLINK_EVENT_CAPTURE = 'deeplink:capture'
+
+/** Backend `deeplink:capture` payload (`CapturePayload` in the Rust router). */
+export type CapturePayload = { kind: 'prefill'; text: string } | { kind: 'tooLong' }
+
+/** The block content cap in UTF-8 bytes; mirrors `MAX_CONTENT_LENGTH` in
+ *  `src-tauri/agaric-engine/src/block_ops.rs`. */
+export const MAX_CAPTURE_TEXT_BYTES = 256 * 1024
 
 /** HTTPS authority registered for Android App Links — must mirror
  *  `APP_LINK_HOST` in `src-tauri/src/deeplink/mod.rs` and the
@@ -100,6 +112,13 @@ function isOpenSettingsPayload(p: unknown): p is OpenSettingsPayload {
     typeof (p as { tab: unknown }).tab === 'string' &&
     (p as { tab: string }).tab.length > 0
   )
+}
+
+/** Defensive shape check for `CapturePayload`. */
+function isCapturePayload(p: unknown): p is CapturePayload {
+  if (typeof p !== 'object' || p === null || !('kind' in p)) return false
+  if (p.kind === 'tooLong') return true
+  return p.kind === 'prefill' && 'text' in p && typeof p.text === 'string'
 }
 
 /**
@@ -253,6 +272,25 @@ export function handleOpenSettingsPayload(payload: unknown): void {
   } catch (err) {
     logger.warn('deeplink', 'setView("settings") threw', undefined, err)
   }
+}
+
+/**
+ * Apply a `deeplink:capture` event: open Quick Capture holding the link's
+ * text. It only opens the dialog; the user still presses Capture. A text over
+ * the block cap is refused with a toast, as a block over it is refused at save.
+ */
+export function handleCapturePayload(payload: unknown): void {
+  if (!isCapturePayload(payload)) {
+    logger.warn('deeplink', `${DEEPLINK_EVENT_CAPTURE} payload has an unknown shape`, {
+      payload: JSON.stringify(payload),
+    })
+    return
+  }
+  if (payload.kind === 'tooLong') {
+    notify.error(t('quickCapture.linkTooLong'))
+    return
+  }
+  openQuickCapture(payload.text)
 }
 
 /**
@@ -428,6 +466,15 @@ export function dispatchLaunchUrl(raw: string): void {
     return
   }
 
+  if (host === 'capture') {
+    const payload = captureLinkPayload(parsed.search)
+    if (payload === null) {
+      logger.warn('deeplink', 'launch URL capture text is malformed', { url: raw })
+      return
+    }
+    handleCapturePayload(payload)
+    return
+  }
   if (identifier == null || identifier.length === 0) {
     logger.warn('deeplink', 'launch URL missing identifier', { url: raw, host })
     return
@@ -455,4 +502,25 @@ export function dispatchLaunchUrl(raw: string): void {
       logger.warn('deeplink', 'launch URL has unknown host', { url: raw, host })
     }
   }
+}
+
+/**
+ * The payload a capture link's query carries, decoded as the Rust router's
+ * `capture_text` does: the first `text` parameter in form encoding (`+` is a
+ * space), and `null` for a malformed escape or bytes that are not UTF-8, both
+ * of which `decodeURIComponent` throws on.
+ */
+function captureLinkPayload(search: string): CapturePayload | null {
+  const param = search
+    .slice(1)
+    .split('&')
+    .find((pair) => pair === 'text' || pair.startsWith('text='))
+  let text: string
+  try {
+    text = decodeURIComponent((param ?? '').slice('text='.length).replaceAll('+', ' '))
+  } catch {
+    return null
+  }
+  if (new TextEncoder().encode(text).length > MAX_CAPTURE_TEXT_BYTES) return { kind: 'tooLong' }
+  return { kind: 'prefill', text }
 }
