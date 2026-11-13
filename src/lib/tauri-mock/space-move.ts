@@ -167,30 +167,17 @@ export function leaveForSpace(b: Record<string, unknown>, spaceId: string): bool
 }
 
 /**
- * Rank the roots in `arrived` ahead of the residents of `spaceId`'s root group.
- *
- * Arrivals land ahead of residents because the engine ranks the group by each
- * node's legacy position meta, and an arrival's meta is the small per-space
- * rank it was seeded with while a resident's is the `position`
- * `create_block_in_tx` appended over the whole `parent_id IS NULL` set. Among
- * themselves arrivals keep the rank each held when it departed. This is where
- * the mock parts company with the backend, which merely compares metas: the
- * two disagree once a resident's meta falls BELOW an arrival's, which two
- * ordinary moves into one space are enough to produce, because
- * `reproject_dense_positions` rewrites `blocks.position` and never the Loro
- * `FIELD_POSITION` that `legacy_slot` reads, so a meta stays whatever its
- * block was seeded with. Matching that needs a shadow meta per block, more
- * machinery than the mock earns (#5099).
+ * Rank the roots in `arrived` after the residents of `spaceId`'s root group,
+ * in the order they arrived: the engine appends a top-level block entering a
+ * space's doc (`apply_append_root_block`).
  */
 export function rankArrivals(spaceId: string, arrived: ReadonlySet<string>): void {
   if (arrived.size === 0) return
-  // `comparePositionThenId` is exactly `legacy_slot`'s `(sib_pos, sib_id)`, so
-  // two arrivals that left DIFFERENT spaces holding the same rank break their
-  // tie the way the engine does.
-  const group = spaceRootGroup(spaceId).toSorted(comparePositionThenId)
-  const arriving = group.filter((row) => arrived.has(row['id'] as string))
-  const resident = group.filter((row) => !arrived.has(row['id'] as string))
-  ;[...arriving, ...resident].forEach((row, i) => {
+  const resident = spaceRootGroup(spaceId)
+    .filter((row) => !arrived.has(row['id'] as string))
+    .toSorted(comparePositionThenId)
+  const arriving = [...arrived].map((id) => blocks.get(id) as Record<string, unknown>)
+  ;[...resident, ...arriving].forEach((row, i) => {
     row['position'] = i + 1
   })
 }
