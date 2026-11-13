@@ -537,6 +537,16 @@ export const common: Record<string, string> = {
   // #6538 — shown instead of any file save on Android, where nothing writes it.
   'data.fileSaveUnavailableAndroid':
     "Agaric can't save files on Android yet. To get notes or files off this phone, sync it with a computer and export there.",
+  // #6554 — the daily snapshot row: when the last copy of the database was
+  // taken, and on desktop the folder that holds the copies.
+  'data.snapshotLabel': 'Daily snapshot',
+  'data.snapshotDesc':
+    'Once a day Agaric saves a copy of its database beside it and keeps the most recent ones. They are a safety net, not a restore button.',
+  'data.snapshotLast': 'Last snapshot: {{time}}',
+  'data.snapshotNone': 'No snapshot yet. The first is taken shortly after Agaric starts.',
+  'data.snapshotUnreadable': 'The time of the last snapshot could not be read.',
+  'data.snapshotOpenFolder': 'Open folder',
+  'data.snapshotOpenFolderFailed': 'Could not open the data folder',
   // #5363 — the Markdown mirror: one `.md` file per page in a folder this
   // device writes to. A file edited elsewhere is read back into its page.
   'data.mirrorTitle': 'Markdown mirror',

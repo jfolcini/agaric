@@ -46,6 +46,7 @@ pub mod block_cleanup;
 pub mod blocks;
 pub mod bug_report;
 pub mod compaction;
+pub mod daily_snapshot;
 pub mod drafts;
 pub mod history;
 pub mod journal;

@@ -100,6 +100,16 @@ Off by default, desktop only, and set per device: *Choose folder…* turns it on
 - The mirror never empties the vault: while the folder is missing, its marker is gone, or it holds nothing but its marker (an unmounted drive, a folder emptied by hand), it pauses, writing and reading nothing, and Settings says why. Choosing a folder that holds nothing but its marker again is the way out: every page is written there as new, and none is trashed. A space whose folder is gone keeps its pages, which are written again. With *Read changes back* off, a deleted or renamed file is left as it is and listed among the files that changed, and is read in as that delete or rename when reading back is turned on.
 - A file that is empty or not UTF-8, or whose edit is more than one undo can revert, is not read: the page is unchanged, and Settings lists the file under *Could not be written or read* until it changes. A file saved with CRLF line ends or a byte-order mark is read, and written back with LF and none.
 
+### Daily snapshot (Settings → Data)
+
+Agaric keeps its own copies of the database. Each day, shortly after it starts (or after midnight in a session left open), it writes a snapshot beside the database in the data folder, named `notes.db.daily-<YYYY-MM-DD>`, and keeps the newest few (`MAX_KEPT_DAILY_SNAPSHOTS` in `src-tauri/src/db/daily_snapshot.rs`), deleting the older ones. Each is one complete database file holding everything saved up to that moment; attachments are not in it, they are files in the same folder. A snapshot that cannot be written (a full or read-only disk) is logged, its partial file is removed, and the next day or the next launch tries again; Agaric runs either way.
+
+The Data tab's *Daily snapshot* row says when the last one was taken; on desktop its *Open folder* button opens the data folder. On Android the folder is private to the app.
+
+**A snapshot is not a restore button.** Nothing in Agaric reads one back. Copying one over `notes.db` on a device that has synced since the snapshot was taken leaves that device with less history than its paired devices hold for it, and its sync with them then fails for good. The restore that is safe on a synced device is an export imported again ([Export-as-ZIP](#export-as-zip-settings--data)): it writes new blocks under the device's current identity.
+
+The backups taken before an update changes the database (`notes.db.pre-migration-<time>`) sit in the same folder and are kept and deleted on their own. When Agaric will not start, [Troubleshooting](../TROUBLESHOOTING.md#8-agaric-failed-to-start-the-vault-will-not-open) says where the folder is and how to open either kind.
+
 ## Pitfalls to know
 
 - **The first edit of an imported block writes it in Agaric's spelling.** Opening and leaving a block changes nothing, but a block edited is saved as the editor writes Markdown: `_x_` as `*x*`, `* item` as `- item`, a `~~~` fence with backticks, `<url>` as the bare URL, a link or image title quoted `'…'` or `(…)` as `"…"`, and an ordered list's numbers counted on from its first (`5.` / `9.` as `5.` / `6.`). A link's and an image's title, and the number a list starts at, are kept (#6530).
