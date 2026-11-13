@@ -317,13 +317,48 @@ msrv_fallback_version_for() {
   esac
 }
 
+# prebuilt_get <crate> <version|""> <binary> — fetch a prebuilt binary by its
+# release URL, for a box where binstall cannot: a cloud session's proxy 403s
+# api.github.com, which binstall needs to find a release, so every tool there
+# compiled from source (#6560). Release downloads pass that proxy. The tarball
+# is cargo-quickinstall's, the one binstall's quick-install strategy picks;
+# taplo-cli has none there, so it comes from upstream's release. An empty
+# version means the newest on crates.io.
+prebuilt_get() {
+  local crate="$1" version="$2" bin="$3" arch libc tmp
+  local dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+  [ "$OS" = Linux ] || return 1
+  arch="$(uname -m)"
+  [ "$arch" = arm64 ] && arch=aarch64
+  [ -n "$version" ] || version="$(cargo info "$crate" 2>/dev/null | awk '$1 == "version:" { print $2; exit }')"
+  [ -n "$version" ] || return 1
+  mkdir -p "$dest" || return 1
+  if [ "$crate" = taplo-cli ]; then
+    tmp="$(mktemp)"
+    [ -n "$tmp" ] || return 1
+    if curl -fsSL "https://github.com/tamasfe/taplo/releases/download/${version}/taplo-linux-${arch}.gz" 2>/dev/null \
+         | gunzip >"$tmp" 2>/dev/null && install -m 0755 "$tmp" "$dest/taplo"; then
+      rm -f "$tmp"; return 0
+    fi
+    rm -f "$tmp"; return 1
+  fi
+  for libc in gnu musl; do
+    if curl -fsSL "https://github.com/cargo-bins/cargo-quickinstall/releases/download/${crate}-${version}/${crate}-${version}-${arch}-unknown-linux-${libc}.tar.gz" 2>/dev/null \
+         | tar -xzf - -C "$dest" >/dev/null 2>&1 && have "$bin"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # cargo_get <crate> [binary] — install a Rust hook tool at LATEST (with an
 # MSRV-skew fallback). Precedence:
 #   1. Already on PATH: skip. "Some recent version" is fine here — that is
 #      the whole point of this function, and exactly why it is the WRONG
 #      function for a crate whose local/CI version agreement is itself the
 #      property being bought (see cargo_get_pinned's docstring).
-#   2. Not present: install latest (prebuilt via binstall, else from source).
+#   2. Not present: install latest (prebuilt via binstall or `prebuilt_get`,
+#      else from source).
 #   3. Latest failed: `msrv_fallback_version_for`'s pinned-version retry, for
 #      a crate with MSRV skew but no CI pin.
 #
@@ -335,19 +370,24 @@ msrv_fallback_version_for() {
 # its own call site (see sqruff below); `cargo_get` is never called for it.
 # Do not re-add a pin branch here — that is how the same bug comes back one
 # layer up with a different shape.
+#
+# binstall runs without its compile strategy everywhere in this file: when it
+# finds no prebuilt it would build from source and report success, so the
+# faster routes after it were never tried. `cargo install` is the last one.
 cargo_get() {
   local crate="$1" bin="${2:-$1}" msrv_fallback
   if have "$bin"; then ok "$bin (already installed)"; return; fi
 
   msrv_fallback="$(msrv_fallback_version_for "$crate")"
   if have cargo-binstall; then
-    if cargo binstall -y "$crate" >/dev/null 2>&1; then
+    if cargo binstall -y --disable-strategies compile "$crate" >/dev/null 2>&1; then
       ok "$bin (binstall)"; return
     fi
-    if [ -n "$msrv_fallback" ] && cargo binstall -y "${crate}@${msrv_fallback}" >/dev/null 2>&1; then
+    if [ -n "$msrv_fallback" ] && cargo binstall -y --disable-strategies compile "${crate}@${msrv_fallback}" >/dev/null 2>&1; then
       ok "$bin (binstall ${msrv_fallback} — latest release exceeds this box's rustc)"; return
     fi
   fi
+  if prebuilt_get "$crate" "" "$bin"; then ok "$bin (prebuilt)"; return; fi
   if [ -n "$msrv_fallback" ] && cargo install --locked "${crate}@${msrv_fallback}" >/dev/null 2>&1; then
     ok "$bin (cargo install ${msrv_fallback} — pinned fallback)"; return
   fi
@@ -398,9 +438,10 @@ cargo_get_pinned() {
     if [ "$current" = "$version" ]; then ok "$bin $version (already installed)"; return; fi
     note "$bin ${current:-unknown} differs from the pinned $version — reinstalling"
   fi
-  if have cargo-binstall && cargo binstall -y "${crate}@${version}" >/dev/null 2>&1; then
+  if have cargo-binstall && cargo binstall -y --disable-strategies compile "${crate}@${version}" >/dev/null 2>&1; then
     ok "$bin $version (binstall)"; return
   fi
+  if prebuilt_get "$crate" "$version" "$bin"; then ok "$bin $version (prebuilt)"; return; fi
   # zizmor also ships prebuilt wheels on PyPI. Try that before a source
   # build: binstall fails in seconds when a proxy blocks its GitHub lookup,
   # but `cargo install` compiles for minutes before an MSRV mismatch kills it.
@@ -412,12 +453,13 @@ cargo_get_pinned() {
   # cached build lose to the pin. The bin directory is unchanged — `uv tool dir
   # --bin` is ~/.local/bin, where pip --user wrote too — so the `--version`
   # assertion below remains what proves what actually landed.
-  if [ "$crate" = zizmor ] && have uv \
-    && uv tool install --reinstall --quiet "zizmor==${version}" >/dev/null 2>&1; then
+  # prek takes the same route: cargo-quickinstall carries no build of it.
+  if { [ "$crate" = zizmor ] || [ "$crate" = prek ]; } && have uv \
+    && uv tool install --reinstall --quiet "${crate}==${version}" >/dev/null 2>&1; then
     local uv_bin
-    uv_bin="$(uv tool dir --bin 2>/dev/null)/zizmor"
+    uv_bin="$(uv tool dir --bin 2>/dev/null)/$bin"
     if [ -x "$uv_bin" ] && mkdir -p "$HOME/.cargo/bin" \
-      && ln -sf "$uv_bin" "$HOME/.cargo/bin/zizmor" && [ -x "$HOME/.cargo/bin/zizmor" ]; then
+      && ln -sf "$uv_bin" "$HOME/.cargo/bin/$bin" && [ -x "$HOME/.cargo/bin/$bin" ]; then
       ok "$bin $version (uv tool, linked into ~/.cargo/bin)"; return
     fi
   fi
@@ -541,7 +583,7 @@ install_lychee() {
   else
     warn "no prebuilt lychee tarball for $OS-$arch — falling back to cargo binstall"
   fi
-  if have cargo && have cargo-binstall && cargo binstall -y lychee >/dev/null 2>&1; then
+  if have cargo && have cargo-binstall && cargo binstall -y --disable-strategies compile lychee >/dev/null 2>&1; then
     ok "lychee (binstall fallback)"; return
   fi
   if have cargo && cargo install --locked lychee >/dev/null 2>&1; then
@@ -577,9 +619,10 @@ install_nextest() {
 install_sqlx_cli() {
   # sqlx-cli ships both `cargo-sqlx` and `sqlx`; check either so the skip fires.
   if have cargo-sqlx || have sqlx; then ok "sqlx-cli (already installed)"; return; fi
-  if have cargo-binstall && cargo binstall -y sqlx-cli >/dev/null 2>&1; then
+  if have cargo-binstall && cargo binstall -y --disable-strategies compile sqlx-cli >/dev/null 2>&1; then
     ok "sqlx-cli (binstall)"; return
   fi
+  if prebuilt_get sqlx-cli "" sqlx; then ok "sqlx-cli (prebuilt)"; return; fi
   if cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite >/dev/null 2>&1; then
     ok "sqlx-cli (cargo install)"
   else

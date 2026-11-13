@@ -1,6 +1,6 @@
 /**
- * PdfSourceChip — a highlight block's way back to its place (#6629): the PDF's
- * name and the highlight's page, opening the reader on that page. Drawn under
+ * PdfSourceChip — a highlight or comment block's way back to its place (#6629):
+ * the PDF's name and the page, opening the reader on that page. Drawn under
  * the block's text by `BlockMetadataRow`, in block mode and in page mode. The
  * reader opens with the PDF's owning block, so it annotates and saves as it
  * does from the owner's file chip.

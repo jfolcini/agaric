@@ -13,8 +13,8 @@
  * available on the event if a consumer wants to gate to touch.
  *
  * Cancellation: any movement past `moveThreshold` px (a scroll / drag
- * intent), pointer-up before the timer, or pointer-leave cancels the
- * pending long-press. The timer is also cleared on unmount.
+ * intent), a release before the timer, wherever it lands, or pointer-leave
+ * cancels the pending long-press. The timer is also cleared on unmount.
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react'
@@ -66,8 +66,11 @@ export function useLongPress({
         startPos.current = null
         onLongPressRef.current()
       }, delay)
+      // A press that opens a dialog puts its overlay under the pointer, so the
+      // release never reaches the target.
+      document.addEventListener('pointerup', clear, { capture: true, once: true })
     },
-    [delay],
+    [delay, clear],
   )
 
   const onPointerMove = useCallback(

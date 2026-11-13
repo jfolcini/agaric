@@ -37,7 +37,7 @@
 #
 # USAGE
 # -----
-#   scripts/seed-worktree.sh [--mcp]
+#   scripts/seed-worktree.sh [--mcp] [--sccache]
 #
 # Safe to re-run any time: every step detects already-seeded state and
 # skips it instead of redoing or duplicating work.
@@ -46,7 +46,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/seed-worktree.sh [--mcp] [-h|--help]
+Usage: scripts/seed-worktree.sh [--mcp] [--sccache] [-h|--help]
 
 Idempotently seed a freshly-created git worktree so it can build, commit,
 and push without the friction documented in issue #3171:
@@ -70,14 +70,21 @@ Options:
               your diff touches src/mcp/ (pre-push Phase F's MCP UDS smoke
               test needs the resulting binaries/agaric-mcp-$TRIPLE
               artifact). Safe/cheap to skip otherwise.
+  --sccache   Trial (#6560): route this worktree's rustc through sccache, so
+              it reuses the dependency builds of other worktrees seeded the
+              same way. Written only into a .cargo/config.toml this run
+              creates, never into the main checkout's; needs sccache on PATH.
+              It turns incremental compilation off (sccache cannot cache it).
   -h, --help  Show this help.
 EOF
 }
 
 RUN_MCP=0
+USE_SCCACHE=0
 for arg in "$@"; do
   case "$arg" in
     --mcp) RUN_MCP=1 ;;
+    --sccache) USE_SCCACHE=1 ;;
     -h | --help)
       usage
       exit 0
@@ -219,7 +226,9 @@ echo
 echo "▶ [4/5] .cargo/config.toml (mold linker)"
 # shellcheck source=lib/fast-linker.sh
 . "$WORKTREE_ROOT/scripts/lib/fast-linker.sh"
+HAD_CARGO_CONFIG=0
 if [ -f .cargo/config.toml ]; then
+  HAD_CARGO_CONFIG=1
   echo "  .cargo/config.toml already present -- leaving it untouched."
   SKIPPED+=(".cargo/config.toml (already present)")
 else
@@ -230,6 +239,31 @@ else
     DONE+=(".cargo/config.toml written (fast linker wired)")
   else
     SKIPPED+=(".cargo/config.toml (no mold/lld on PATH, or not a Linux host)")
+  fi
+fi
+# sccache trial (#6560): only into a config this run created, so an existing
+# worktree and the main checkout keep building the way they did.
+if [ "$USE_SCCACHE" -eq 1 ]; then
+  if [ "$IS_MAIN_CHECKOUT" -eq 1 ]; then
+    PROBLEMS+=("--sccache is for a worktree, not the main checkout")
+  elif grep -qs '^rustc-wrapper = "sccache"' .cargo/config.toml; then
+    SKIPPED+=("sccache (already wired)")
+  elif [ "$HAD_CARGO_CONFIG" -eq 1 ]; then
+    PROBLEMS+=("--sccache: .cargo/config.toml was already here; delete it and re-run to wire sccache")
+  elif ! command -v sccache > /dev/null 2>&1; then
+    PROBLEMS+=("--sccache: sccache is not on PATH (cargo binstall sccache, or your package manager)")
+  else
+    mkdir -p .cargo
+    cat >> .cargo/config.toml <<'CONFIG'
+
+# sccache trial (#6560), written by `seed-worktree.sh --sccache`. sccache
+# cannot cache an incremental build, so incremental is off here. Delete this
+# block to go back to plain cargo.
+[build]
+rustc-wrapper = "sccache"
+incremental = false
+CONFIG
+    DONE+=(".cargo/config.toml: rustc goes through sccache (trial)")
   fi
 fi
 

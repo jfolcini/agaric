@@ -46,6 +46,7 @@ pub mod block_cleanup;
 pub mod blocks;
 pub mod bug_report;
 pub mod compaction;
+pub mod daily_snapshot;
 pub mod drafts;
 pub mod history;
 pub mod journal;
@@ -1089,6 +1090,11 @@ fn new_error_id() -> String {
 /// wire field) to keep the `{ kind, message }` envelope — and its specta
 /// binding — unchanged.
 ///
+/// A full disk, a read-only vault and a damaged database are the exception
+/// (#6554): [`AppError::storage_failure`] reads them off the collapsed error
+/// and they reach the wire as `storage_full` / `storage_read_only` /
+/// `storage_corrupt`, because the user is the one who can fix them.
+///
 /// User-facing variants (`NotFound`, `Validation`, `InvalidOperation`,
 /// `NonReversible`, `Ulid`, `Conflict`, `PoolTimedOut`) pass through
 /// unchanged — they already carry messages suitable for rendering in
@@ -1118,7 +1124,9 @@ pub fn sanitize_internal_error(err: AppError) -> AppError {
                 error = %err,
                 "internal error suppressed during sanitization"
             );
-            AppError::Internal(format!("an internal error occurred (err: {id})"))
+            err.storage_failure().unwrap_or_else(|| {
+                AppError::Internal(format!("an internal error occurred (err: {id})"))
+            })
         }
         _ => err,
     }
@@ -1168,6 +1176,152 @@ mod sanitize_internal_error_tests {
             }
             other => panic!("Io should sanitize to Internal, got {other:?}"),
         }
+    }
+
+    /// The `kind` the frontend reads off `err` once it has crossed the IPC
+    /// boundary.
+    fn wire_kind(err: impl Into<AppError>) -> String {
+        let wire = serde_json::to_value(sanitize_internal_error(err.into())).unwrap();
+        wire["kind"].as_str().unwrap().to_owned()
+    }
+
+    async fn open(path: &std::path::Path, read_only: bool) -> sqlx::SqliteConnection {
+        use sqlx::ConnectOptions;
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(!read_only)
+            .read_only(read_only)
+            .connect()
+            .await
+            .unwrap()
+    }
+
+    /// A database file whose table `t` spans several pages.
+    async fn seeded_db(dir: &tempfile::TempDir) -> std::path::PathBuf {
+        use sqlx::Connection;
+        let path = dir.path().join("vault.db");
+        let mut conn = open(&path, false).await;
+        sqlx::query("CREATE TABLE t (x BLOB)")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO t VALUES (zeroblob(20000))")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        conn.close().await.unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn a_full_database_reaches_the_wire_as_storage_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conn = open(&seeded_db(&dir).await, false).await;
+        // No page beyond the ones the file holds: the next growth is SQLITE_FULL.
+        sqlx::query("PRAGMA max_page_count = 1")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        let err = sqlx::query("INSERT INTO t VALUES (zeroblob(1000000))")
+            .execute(&mut conn)
+            .await
+            .unwrap_err();
+        assert_eq!(wire_kind(err), "storage_full");
+    }
+
+    #[tokio::test]
+    async fn a_read_only_database_reaches_the_wire_as_storage_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conn = open(&seeded_db(&dir).await, true).await;
+        let err = sqlx::query("INSERT INTO t VALUES (x'00')")
+            .execute(&mut conn)
+            .await
+            .unwrap_err();
+        assert_eq!(wire_kind(err), "storage_read_only");
+    }
+
+    /// The file is removed under the open connection, which SQLite reports
+    /// with an extended code (`SQLITE_READONLY_DBMOVED`).
+    #[tokio::test]
+    async fn an_extended_result_code_is_read_by_its_primary_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = seeded_db(&dir).await;
+        let mut conn = open(&path, false).await;
+        std::fs::remove_file(&path).unwrap();
+        let err = sqlx::query("INSERT INTO t VALUES (x'00')")
+            .execute(&mut conn)
+            .await
+            .unwrap_err();
+        let code = err
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code);
+        assert_eq!(code.as_deref(), Some("1032"));
+        assert_eq!(wire_kind(err), "storage_read_only");
+    }
+
+    #[tokio::test]
+    async fn a_malformed_database_reaches_the_wire_as_storage_corrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = seeded_db(&dir).await;
+        // Keep the header page so the file still opens as a database, and
+        // overwrite every page after it, the table's among them.
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[4096..].fill(0xFF);
+        std::fs::write(&path, bytes).unwrap();
+        let mut conn = open(&path, true).await;
+        let err = sqlx::query("SELECT sum(length(x)) FROM t")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap_err();
+        assert_eq!(wire_kind(err), "storage_corrupt");
+    }
+
+    #[tokio::test]
+    async fn a_file_that_is_no_database_reaches_the_wire_as_storage_corrupt() {
+        use sqlx::ConnectOptions;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.db");
+        std::fs::write(&path, b"not a database ".repeat(400)).unwrap();
+        let opened = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .connect()
+            .await;
+        let err = match opened {
+            Err(err) => err,
+            Ok(mut conn) => sqlx::query("SELECT count(*) FROM sqlite_master")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap_err(),
+        };
+        assert_eq!(wire_kind(err), "storage_corrupt");
+    }
+
+    #[test]
+    fn io_storage_errors_reach_the_wire_with_their_cause() {
+        use std::io::{Error, ErrorKind};
+        assert_eq!(
+            wire_kind(Error::from(ErrorKind::StorageFull)),
+            "storage_full"
+        );
+        assert_eq!(
+            wire_kind(Error::from(ErrorKind::ReadOnlyFilesystem)),
+            "storage_read_only"
+        );
+        assert_eq!(
+            wire_kind(sqlx::Error::Io(Error::from(ErrorKind::StorageFull))),
+            "storage_full"
+        );
+    }
+
+    #[tokio::test]
+    async fn any_other_sql_failure_stays_internal() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conn = open(&seeded_db(&dir).await, false).await;
+        let err = sqlx::query("SELECT * FROM no_such_table")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap_err();
+        assert_eq!(wire_kind(err), "internal");
     }
 
     #[test]

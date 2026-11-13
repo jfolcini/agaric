@@ -63,8 +63,9 @@ Full threat model in `SECURITY.md`. This file documents only the **architectural
 
 Every Tauri command wraps its inner body with `sanitize_internal_error` (`src-tauri/src/commands/mod.rs`). The wrapper:
 
-- Collapses internal `AppError` variants (`Database`, `Migration`, `Io`, `Json`, `Channel`, `Snapshot`) into a generic `InvalidOperation("an internal error occurred")` over the wire.
-- Lets user-facing variants (`Validation`, `NotFound`, `InvalidOperation`, `NonReversible`) pass through with their original message.
+- Collapses internal `AppError` variants (`Database`, `Migration`, `Io`, `Json`, `Channel`, `Internal`, `Snapshot`) into a generic `Internal("an internal error occurred (err: <id>)")` over the wire; the id finds the cause in the log.
+- Names the three storage failures the user can act on, read off that same error by `AppError::storage_failure` (SQLite's primary result code, or the I/O error kind): `storage_full`, `storage_read_only`, `storage_corrupt`. The frontend shows each once ([frontend.md](frontend.md#storage-failures)).
+- Lets user-facing variants (`Validation`, `NotFound`, `InvalidOperation`, `NonReversible`, `Ulid`, `Conflict`, `PoolTimedOut`) pass through with their original message.
 
 The split prevents accidental leakage of file paths, SQL errors, OS error codes, etc. to the frontend (and from there to user-facing toasts, screenshots, bug reports).
 

@@ -41,6 +41,9 @@ import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
+// The lazily imported buffer is loaded with the file, not inside the first
+// test's wait for it (see `PageSourceToolbar.test.tsx`).
+import '@/components/pages/PageSourceBuffer'
 
 vi.mock('@/components/pages/PageSourceToolbar', () => ({ PageSourceToolbar: () => null }))
 

@@ -14,6 +14,9 @@
  * devices (below any quarantined sync changes, #6057) once a device is paired
  * (#5629). Status only: the device list below owns every sync action. It
  * lives here because it shares the metric-card helpers.
+ *
+ * ExportRefusedNotice — names the spaces whose changes are not being sent to
+ * other devices (#6523), in both cards.
  */
 
 import type { TFunction } from 'i18next'
@@ -34,6 +37,7 @@ import type { StatusInfo } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { waitingForPeerLabel } from '@/lib/sync-waiting-label'
 import { cn } from '@/lib/utils'
+import { useSpaceStore } from '@/stores/space'
 import { type SyncState, useSyncStore } from '@/stores/sync'
 
 function queueHealthClasses(depth: number): string {
@@ -205,6 +209,30 @@ function BoundedStalenessNotice({ status }: { status: StatusInfo }): React.React
   )
 }
 
+function ExportRefusedNotice({ className }: { className?: string }): React.ReactElement | null {
+  const { t } = useTranslation()
+  const refused = useSyncStore((s) => s.exportRefusedSpaces)
+  const spaces = useSpaceStore((s) => s.availableSpaces)
+  if (refused.length === 0) return null
+  const names = refused.map((id) => spaces.find((space) => space.id === id)?.name ?? id)
+
+  return (
+    <div
+      className={cn(
+        'flex flex-col gap-1 rounded-md border border-alert-warning-border bg-alert-warning p-4 text-sm text-alert-warning-foreground',
+        className,
+      )}
+      data-testid="export-refused-notice"
+    >
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+        <p>{t('status.exportRefusedMessage', { count: names.length, spaces: names.join(', ') })}</p>
+      </div>
+      <p className="ml-6 text-xs text-muted-foreground">{t('status.exportRefusedHint')}</p>
+    </div>
+  )
+}
+
 export function StatusPanel(): React.ReactElement {
   const queryFn = useCallback(() => commands.getStatus().then(unwrap), [])
   const {
@@ -351,6 +379,8 @@ export function StatusPanel(): React.ReactElement {
             <BoundedStalenessNotice status={status} />
           </div>
         )}
+
+        <ExportRefusedNotice className="mt-4" />
       </CardContent>
     </Card>
   )
@@ -402,6 +432,8 @@ export function SyncStatusCard(): React.ReactElement | null {
               {waitingForPeerLabel(syncPeers, waitingFor, t, now)}
             </p>
           )}
+
+          <ExportRefusedNotice />
 
           <dl className="grid grid-cols-2 gap-4">
             <MetricCard

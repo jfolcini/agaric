@@ -77,19 +77,27 @@ fn unheld_pages() -> std::ops::Range<usize> {
 }
 
 // ---------------------------------------------------------------------------
-// Elapsed accumulator (mirrors `interactive_slo::Acc`)
+// Elapsed accumulator (mirrors `interactive_slo::Acc`); `loro_snapshot_bench`
+// uses this one.
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Default)]
-struct Acc {
+pub(crate) struct Acc {
     total: Rc<Cell<Duration>>,
     iters: Rc<Cell<u64>>,
 }
 
 impl Acc {
-    fn record(&self, elapsed: Duration, iters: u64) {
+    pub(crate) fn record(&self, elapsed: Duration, iters: u64) {
         self.total.set(self.total.get() + elapsed);
         self.iters.set(self.iters.get() + iters);
+    }
+
+    /// Mean seconds per iteration, or `None` when a name filter left the case
+    /// out.
+    pub(crate) fn mean_secs(&self) -> Option<f64> {
+        let iters = self.iters.get();
+        (iters > 0).then(|| self.total.get().as_secs_f64() / iters as f64)
     }
 }
 
@@ -97,12 +105,11 @@ impl Acc {
 /// a warm run has measured the case. A case that ran no iterations was left
 /// out by a name filter: this runs in the outer body, which every run reaches.
 fn report_measurement_only(case: &str, acc: &Acc) {
-    let iters = acc.iters.get();
-    if iters == 0 {
+    let Some(secs) = acc.mean_secs() else {
         println!("sync_import_bench: {case} not selected");
         return;
-    }
-    let mean_ms = (acc.total.get().as_secs_f64() * 1000.0) / iters as f64;
+    };
+    let mean_ms = secs * 1000.0;
     println!("sync_import_bench: {case} @ 100K = {mean_ms:.2} ms (measurement only — no budget)");
 }
 

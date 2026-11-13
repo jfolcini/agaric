@@ -449,7 +449,7 @@ BlockInlineControls.displayName = 'BlockInlineControls'
 /**
  * Below-block metadata row (user feedback 2026-06-20): the interactive chips
  * that used to crowd the inline-control cluster — priority badge, due /
- * scheduled date chips, repeat indicator, a PDF highlight's source chip,
+ * scheduled date chips, repeat indicator, a PDF highlight's or comment's source chip,
  * property chips (+ overflow) and the attachment badge — now render on their
  * own row under the block text, left-aligned with it. They stay fully
  * interactive (priority cycles, dates open pickers, chips edit, the source chip
@@ -502,7 +502,7 @@ export const BlockMetadataRow = React.memo(
 
     // The `repeat` property (if any) drives the repeat indicator chip.
     const repeatValue = properties?.find((p) => p.key === 'repeat')?.value
-    // A PDF highlight's place (#6629) drives its source chip.
+    // A PDF highlight's or comment's place (#6629) drives its source chip.
     const pdfSource = pdfSourceOf(properties)
 
     const hasContent =

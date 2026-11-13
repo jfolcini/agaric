@@ -21,6 +21,9 @@ const baseProps: QueryControlsBarProps = {
   onGroupByChange: noop,
   aggregates: [],
   onAggregatesChange: noop,
+  view: 'list',
+  onViewChange: noop,
+  boardAvailable: false,
 }
 
 describe('QueryControlsBar', () => {
@@ -331,6 +334,40 @@ describe('QueryControlsBar — group by Property / DateBucket (#4553 Phase 2)', 
         onChange={vi.fn()}
       />,
     )
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+})
+
+describe('QueryControlsBar — view (#6542)', () => {
+  const view = () => screen.getByRole('radiogroup', { name: t('advancedQuery.view.label') })
+  const segment = (name: string) => within(view()).getByRole('radio', { name })
+
+  it('offers the board only when the group key has one, and says which do', () => {
+    const { rerender } = render(<QueryControlsBar {...baseProps} boardAvailable={false} />)
+    expect(segment(t('advancedQuery.view.board'))).toBeDisabled()
+    expect(segment(t('advancedQuery.view.list'))).toBeChecked()
+    expect(view()).toHaveAccessibleDescription(t('advancedQuery.view.boardHint'))
+
+    rerender(<QueryControlsBar {...baseProps} boardAvailable />)
+    expect(segment(t('advancedQuery.view.board'))).toBeEnabled()
+    expect(screen.queryByText(t('advancedQuery.view.boardHint'))).not.toBeInTheDocument()
+  })
+
+  it('emits the chosen view, and nothing for a press on the one already chosen', async () => {
+    const user = userEvent.setup()
+    const onViewChange = vi.fn()
+    render(<QueryControlsBar {...baseProps} boardAvailable onViewChange={onViewChange} />)
+
+    await user.click(segment(t('advancedQuery.view.list')))
+    expect(onViewChange).not.toHaveBeenCalled()
+    await user.click(segment(t('advancedQuery.view.board')))
+    expect(onViewChange).toHaveBeenCalledExactlyOnceWith('board')
+  })
+
+  it('has no a11y violations with the board unavailable', async () => {
+    const { container } = render(<QueryControlsBar {...baseProps} boardAvailable={false} />)
     await waitFor(async () => {
       expect(await axe(container)).toHaveNoViolations()
     })

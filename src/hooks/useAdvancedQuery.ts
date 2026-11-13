@@ -70,6 +70,8 @@ interface UseAdvancedQueryOptions {
   groupBy?: GroupSpec | null
   /** Optional global (and per-group, when grouped) aggregates. */
   aggregates?: AggregateSpec[]
+  /** `false` runs nothing: the board's columns each run their own query (#6542). */
+  enabled?: boolean
 }
 
 interface UseAdvancedQueryResult {
@@ -211,7 +213,7 @@ interface AdvancedQueryPage {
 }
 
 export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQueryResult {
-  const { filters, filterExpr, fulltext, sort, groupBy, aggregates } = options
+  const { filters, filterExpr, fulltext, sort, groupBy, aggregates, enabled = true } = options
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
 
   // Serialise every structural input into a value-stable key (the parent churns
@@ -355,6 +357,7 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
       // fetch whenever the surface mounts. In-flight fetches for the same key
       // are still deduped.
       refetchOnMount: 'always',
+      enabled,
     },
     queryClient,
   )

@@ -81,14 +81,28 @@ export interface ImportRunResult {
   navTitle: string | null
 }
 
-/** Options for a single {@link UseImportRunner.run}. */
-export interface RunOptions {
-  /** The change event whose input is reset (`value = ''`) after the run. */
-  event: React.ChangeEvent<HTMLInputElement>
-  /** Target space ULID (already guarded non-null by the caller). */
-  activeSpaceId: string
+/** The units one run imports into one space. */
+export interface RunGroup {
+  /** Target space ULID. */
+  spaceId: string
+  /** The space's name, for a run of several spaces to say which one it asks about. */
+  spaceName?: string | undefined
   /** The per-item units to import, in order. */
   units: ImportUnit[]
+  /** Soft warnings seeded before the loop (e.g. `.jex` skipped-item count). */
+  initialWarnings?: string[] | undefined
+  /**
+   * Soft warnings listed first but worked out after the loop, from the
+   * vault-relative paths of the files the imported units attached (e.g. a
+   * folder's skipped files).
+   */
+  finalWarnings?: ((attached: ReadonlySet<string>) => string[]) | undefined
+}
+
+/** Options for a single {@link UseImportRunner.run}. */
+export type RunOptions = {
+  /** The change event whose input is reset (`value = ''`) after the run. */
+  event: React.ChangeEvent<HTMLInputElement>
   /** #2513 — NOTE-based (`.enex`/`.jex`) vs FILE-based (`.md`) wording. */
   notes: boolean
   /**
@@ -97,17 +111,21 @@ export interface RunOptions {
    * failed'`, `'enex note failed'`, `'jex note import failed'`.
    */
   loggerFailLabel: string
-  /** Soft warnings seeded before the loop (e.g. `.jex` skipped-item count). */
-  initialWarnings?: string[]
-  /**
-   * Soft warnings listed first but worked out after the loop, from the
-   * vault-relative paths of the files the imported units attached (e.g. a
-   * folder's skipped files).
-   */
-  finalWarnings?: (attached: ReadonlySet<string>) => string[]
   /** Failures seeded before the loop (e.g. `.enex`/`.jex` parse failures). */
   initialFailures?: FailedFile[]
-}
+} & (
+  | (Omit<RunGroup, 'spaceId'> & {
+      /** Target space ULID (already guarded non-null by the caller). */
+      activeSpaceId: string
+    })
+  | {
+      /**
+       * Several spaces' units in one run, one result for all of them (#6554);
+       * the run offers no page to view, as it has no one space.
+       */
+      groups: RunGroup[]
+    }
+)
 
 /** What a completed {@link UseImportRunner.run} returns to the caller. */
 export interface RunOutcome {
@@ -129,6 +147,8 @@ export interface RunOutcome {
  */
 export interface MergeQuestion {
   pages: ImportMerge[]
+  /** The space the pages are in, when the run imports into several. */
+  spaceName?: string | undefined
   answer: (go: boolean) => void
 }
 
@@ -158,6 +178,25 @@ export interface UseImportRunner {
   goToImportedPage: (title: string, spaceId: string) => Promise<void>
 }
 
+/** Link a space's imported notes into one another; the warnings that gives. */
+async function linkImported(
+  spaceId: string,
+  anchors: ImportAnchor[],
+  deferred: string[],
+): Promise<string[]> {
+  if (deferred.length === 0) return []
+  try {
+    return unwrap(await commands.linkImportAnchors(spaceId, anchors, deferred))
+  } catch (err) {
+    logger.error('DataSettingsTab', 'linking the imported notes failed', undefined, err)
+    return [t('data.importLinkingFailed', { reason: importErrorReason(err) })]
+  }
+}
+
+function runGroups(opts: RunOptions): RunGroup[] {
+  return 'groups' in opts ? opts.groups : [{ ...opts, spaceId: opts.activeSpaceId }]
+}
+
 export function useImportRunner(): UseImportRunner {
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   // #1927 — abort flag checked between files so a large vault import can
@@ -185,7 +224,7 @@ export function useImportRunner(): UseImportRunner {
 
   // Whether the user lets the run merge `units` into the existing pages of
   // their titles; true when there are none to ask about.
-  const confirmMerges = useCallback(async (spaceId: string, units: ImportUnit[]) => {
+  const confirmMerges = useCallback(async ({ spaceId, spaceName, units }: RunGroup) => {
     const filenames: string[] = []
     // One file's text at a time: a Logseq or Org title is read from it.
     for (const unit of units) {
@@ -198,6 +237,7 @@ export function useImportRunner(): UseImportRunner {
     return new Promise<boolean>((resolve) => {
       setMergeQuestion({
         pages,
+        spaceName,
         answer: (go) => {
           setMergeQuestion(null)
           resolve(go)
@@ -205,6 +245,17 @@ export function useImportRunner(): UseImportRunner {
       })
     })
   }, [])
+
+  // Every space's merges are asked about before any page is written.
+  const confirmAllMerges = useCallback(
+    async (groups: readonly RunGroup[]) => {
+      for (const group of groups) {
+        if (!(await confirmMerges(group))) return false
+      }
+      return true
+    },
+    [confirmMerges],
+  )
 
   // #1927 — navigate to a just-imported page. The run result keeps only the
   // page title (`navTitle`), so resolve the title→id through
@@ -247,38 +298,29 @@ export function useImportRunner(): UseImportRunner {
   }, [])
 
   const run = useCallback(
-    async ({
-      event,
-      activeSpaceId,
-      units,
-      notes,
-      loggerFailLabel,
-      initialWarnings,
-      finalWarnings,
-      initialFailures,
-    }: RunOptions): Promise<RunOutcome> => {
-      setTotalFiles(units.length)
+    async (opts: RunOptions): Promise<RunOutcome> => {
+      const { event, notes, loggerFailLabel, initialFailures } = opts
+      const groups = runGroups(opts)
+      const unitCount = groups.reduce((sum, group) => sum + group.units.length, 0)
+      setTotalFiles(unitCount)
 
       let totalBlocks = 0
       let totalProps = 0
       let totalBytes = 0
       let pagesUpdated = 0
       let pagesUnchanged = 0
-      const allWarnings: string[] = initialWarnings ? [...initialWarnings] : []
+      const allWarnings: string[] = groups.flatMap((group) => group.initialWarnings ?? [])
       // Hard failures: units that threw and produced no page. Seeded with any
       // parse failures the caller recorded, then extended per import failure.
       const failedFiles: FailedFile[] = initialFailures ? [...initialFailures] : []
+      const finalWarnings: string[] = []
       let succeededFiles = 0
-      const importedPageIds = new Set<string>()
-      const attached = new Set<string>()
-      // A folder's notes link into one another once all of them are imported.
-      const anchors: ImportAnchor[] = []
-      const deferred: string[] = []
+      let fileIndex = 0
       let lastTitle = ''
       // #1927 — true once the user hits Cancel mid-loop, or declines the merges.
       let cancelled = false
       try {
-        cancelled = !(await confirmMerges(activeSpaceId, units))
+        cancelled = !(await confirmAllMerges(groups))
       } catch (err) {
         logger.error(
           'DataSettingsTab',
@@ -290,125 +332,130 @@ export function useImportRunner(): UseImportRunner {
         cancelled = true
       }
 
-      for (const [i, unit] of units.entries()) {
-        // #1927 — check the abort flag BETWEEN units. The currently in-flight
-        // `importMarkdown` (if any) still completes, but no further units are
-        // started; we report how many imported.
-        if (cancelled || cancelRef.current) {
-          cancelled = true
-          break
-        }
-        setCurrentFileIndex(i + 1)
-        setCurrentFileName(unit.name)
-        // #128 — reset per-block progress for the new file.
-        setCurrentFileBlocksDone(0)
-        setCurrentFileBlocksTotal(0)
-        try {
-          const { content, path, dialect, vaultFiles, vaultNotes } = await unit.load()
-          const result = await importMarkdown(
-            content,
-            path,
-            activeSpaceId,
-            dialect,
-            (update) => {
-              // #128 — drive the intra-file block bar from the streamed
-              // events. `complete` arrives after the backend commits; we
-              // leave the bar full and let the file-loop advance.
-              switch (update.kind) {
-                case 'started': {
-                  setCurrentFileBlocksDone(0)
-                  setCurrentFileBlocksTotal(update.blocks_total)
-                  break
-                }
-                case 'progress': {
-                  setCurrentFileBlocksDone(update.blocks_done)
-                  setCurrentFileBlocksTotal(update.blocks_total)
-                  break
-                }
-                case 'complete': {
-                  setCurrentFileBlocksDone(update.blocks_created)
-                  break
-                }
-              }
-            },
-            vaultFiles,
-            vaultNotes,
-            // Only a file that can merge needs the run's pages; the rest import as new pages anyway.
-            unit.merges === undefined ? [] : [...importedPageIds],
-          )
-          // A merge is the page's undo step, as an Edit as Markdown save is; one
-          // that appended nothing left its page as it was.
-          if (result.merged?.length === 0) pagesUnchanged += 1
-          else if (result.merged) {
-            pagesUpdated += 1
-            notifyUndoNewAction(result.page_id, result.merged)
+      for (const { spaceId, units, finalWarnings: groupFinalWarnings } of groups) {
+        const importedPageIds = new Set<string>()
+        const attached = new Set<string>()
+        // A folder's notes link into one another once all of them are imported.
+        const anchors: ImportAnchor[] = []
+        const deferred: string[] = []
+        for (const unit of units) {
+          // #1927 — check the abort flag BETWEEN units. The currently in-flight
+          // `importMarkdown` (if any) still completes, but no further units are
+          // started; we report how many imported.
+          if (cancelled || cancelRef.current) {
+            cancelled = true
+            break
           }
-          // Collapse is this device's layout, so the blocks a Logseq page
-          // folded are folded here (#5160 D14).
-          if (result.collapsed.length > 0) {
-            writePreference(PREFERENCES.blockCollapse, result.collapsed, result.page_id)
+          fileIndex += 1
+          setCurrentFileIndex(fileIndex)
+          setCurrentFileName(unit.name)
+          // #128 — reset per-block progress for the new file.
+          setCurrentFileBlocksDone(0)
+          setCurrentFileBlocksTotal(0)
+          try {
+            const { content, path, dialect, vaultFiles, vaultNotes } = await unit.load()
+            const result = await importMarkdown(
+              content,
+              path,
+              spaceId,
+              dialect,
+              (update) => {
+                // #128 — drive the intra-file block bar from the streamed
+                // events. `complete` arrives after the backend commits; we
+                // leave the bar full and let the file-loop advance.
+                switch (update.kind) {
+                  case 'started': {
+                    setCurrentFileBlocksDone(0)
+                    setCurrentFileBlocksTotal(update.blocks_total)
+                    break
+                  }
+                  case 'progress': {
+                    setCurrentFileBlocksDone(update.blocks_done)
+                    setCurrentFileBlocksTotal(update.blocks_total)
+                    break
+                  }
+                  case 'complete': {
+                    setCurrentFileBlocksDone(update.blocks_created)
+                    break
+                  }
+                }
+              },
+              vaultFiles,
+              vaultNotes,
+              // Only a file that can merge needs the run's pages; the rest import as new pages anyway.
+              unit.merges === undefined ? [] : [...importedPageIds],
+            )
+            // A merge is the page's undo step, as an Edit as Markdown save is; one
+            // that appended nothing left its page as it was.
+            if (result.merged?.length === 0) pagesUnchanged += 1
+            else if (result.merged) {
+              pagesUpdated += 1
+              notifyUndoNewAction(result.page_id, result.merged)
+            }
+            // Collapse is this device's layout, so the blocks a Logseq page
+            // folded are folded here (#5160 D14).
+            if (result.collapsed.length > 0) {
+              writePreference(PREFERENCES.blockCollapse, result.collapsed, result.page_id)
+            }
+            totalBlocks += result.blocks_created
+            totalProps += result.properties_set
+            allWarnings.push(...result.warnings)
+            anchors.push(...result.anchors)
+            deferred.push(...result.deferred)
+            succeededFiles += 1
+            importedPageIds.add(result.page_id)
+            for (const file of vaultFiles ?? []) attached.add(file.path)
+            lastTitle = result.page_title
+          } catch (err) {
+            // #1935 — a whole-unit import failure is a real ERROR (not a
+            // recoverable warning), and the message MUST be per-unit distinct:
+            // the logger's rate-limiter keys on `module:message` (logger.ts),
+            // so a constant message would suppress every failure after the 5th
+            // in a multi-unit import. Putting the name IN the message keeps each
+            // key unique.
+            logger.error(
+              'DataSettingsTab',
+              `${loggerFailLabel}: ${unit.name}`,
+              { fileName: unit.name },
+              err,
+            )
+            failedFiles.push({ name: unit.name, reason: importErrorReason(err) })
           }
-          totalBlocks += result.blocks_created
-          totalProps += result.properties_set
-          allWarnings.push(...result.warnings)
-          anchors.push(...result.anchors)
-          deferred.push(...result.deferred)
-          succeededFiles += 1
-          importedPageIds.add(result.page_id)
-          for (const file of vaultFiles ?? []) attached.add(file.path)
-          lastTitle = result.page_title
-        } catch (err) {
-          // #1935 — a whole-unit import failure is a real ERROR (not a
-          // recoverable warning), and the message MUST be per-unit distinct:
-          // the logger's rate-limiter keys on `module:message` (logger.ts),
-          // so a constant message would suppress every failure after the 5th
-          // in a multi-unit import. Putting the name IN the message keeps each
-          // key unique.
-          logger.error(
-            'DataSettingsTab',
-            `${loggerFailLabel}: ${unit.name}`,
-            { fileName: unit.name },
-            err,
-          )
-          failedFiles.push({ name: unit.name, reason: importErrorReason(err) })
+          // Count bytes regardless of success — the user has waited on this unit
+          // either way, so the secondary line reflects forward progress.
+          totalBytes += unit.bytes
+          setBlocksProcessed(totalBlocks)
+          setBytesProcessed(totalBytes)
         }
-        // Count bytes regardless of success — the user has waited on this unit
-        // either way, so the secondary line reflects forward progress.
-        totalBytes += unit.bytes
-        setBlocksProcessed(totalBlocks)
-        setBytesProcessed(totalBytes)
-      }
 
-      // A cancelled run links what it imported too: each note's blocks exist.
-      if (deferred.length > 0) {
-        try {
-          const linked = await commands.linkImportAnchors(activeSpaceId, anchors, deferred)
-          allWarnings.push(...unwrap(linked))
-        } catch (err) {
-          logger.error('DataSettingsTab', 'linking the imported notes failed', undefined, err)
-          allWarnings.push(t('data.importLinkingFailed', { reason: importErrorReason(err) }))
+        // A cancelled run links what it imported too: each note's blocks exist.
+        allWarnings.push(...(await linkImported(spaceId, anchors, deferred)))
+
+        finalWarnings.push(...(groupFinalWarnings?.(attached) ?? []))
+
+        // #5258, #6049 — an imported page, journal day, link or property must not
+        // hide behind a cache filled before the import.
+        if (importedPageIds.size > 0) {
+          invalidateDerivedCaches()
+          // #5740 — and an imported `#tag` chip reads its name only from the
+          // resolve store, which a sync refills the same way.
+          void useResolveStore.getState().preload(spaceId, true, importedPageIds)
         }
       }
 
-      allWarnings.unshift(...(finalWarnings?.(attached) ?? []))
-
-      // #5258, #6049 — an imported page, journal day, link or property must not
-      // hide behind a cache filled before the import.
-      if (succeededFiles > 0) {
-        invalidateDerivedCaches()
-        // #5740 — and an imported `#tag` chip reads its name only from the
-        // resolve store, which a sync refills the same way.
-        void useResolveStore.getState().preload(activeSpaceId, true, importedPageIds)
-      }
+      allWarnings.unshift(...finalWarnings)
 
       // #1927 — the title to navigate to after a successful import. We resolve
       // it to a page id lazily in the View action, so the toast/panel only need
       // the title.
-      const navTitle = totalBlocks > 0 || pagesUpdated > 0 || pagesUnchanged > 0 ? lastTitle : null
+      const navTitle =
+        !('groups' in opts) && (totalBlocks > 0 || pagesUpdated > 0 || pagesUnchanged > 0)
+          ? lastTitle
+          : null
       const upToDate = totalBlocks === 0 && pagesUpdated === 0 && pagesUnchanged > 0
 
       setImportResult({
-        pageTitle: units.length === 1 ? lastTitle : null,
+        pageTitle: unitCount === 1 ? lastTitle : null,
         notes,
         importedCount: succeededFiles,
         cancelled,
@@ -443,7 +490,7 @@ export function useImportRunner(): UseImportRunner {
         navTitle,
       }
     },
-    [confirmMerges],
+    [confirmAllMerges],
   )
 
   return {

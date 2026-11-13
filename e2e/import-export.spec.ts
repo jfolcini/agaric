@@ -9,6 +9,7 @@ import {
   expect,
   getInvokeCalls,
   installIpcRecorder,
+  ipc,
   navigateMobile,
   openPage,
   openSettingsTab,
@@ -439,6 +440,65 @@ test.describe('Folder import of Notion, Org and text files @markdown', () => {
     await page.locator('span[title="Plan"]').click()
     await expect(page.locator('[aria-label="Page title"]')).toHaveText('Plan')
     await expect(page.getByTestId('callout-block')).toContainText('Mind the deadline.')
+  })
+})
+
+// #6554 — a folder pick of an unzipped Export all spaces ZIP restores each
+// space; e2e-tauri/vault-restore.e2e.ts runs it against the backend.
+test.describe('Restore of a whole-vault export @markdown @spaces', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('imports each space folder into the space of its name, created when missing, once confirmed', async ({
+    page,
+  }) => {
+    const root = path.join(mkdtempSync(path.join(os.tmpdir(), 'pw-6554-')), 'Vault')
+    const spaceFile = (name: string, keys: string[]) =>
+      JSON.stringify({
+        name,
+        propertyDefinitions: keys.map((key) => ({ key, value_type: 'number', options: null })),
+        titles: {},
+      })
+    const files: Record<string, string> = {
+      'Personal/.agaric/space.json': spaceFile('Personal', []),
+      'Personal/Restored Roadmap.md': '- from the vault\n',
+      'Travel_x/.agaric/space.json': spaceFile('Travel/x', ['pwrestoreeffort']),
+      'Travel_x/Trip.md': '- go\n',
+      '.agaric/export-report.txt': 'Agaric export report\n',
+    }
+    for (const [name, text] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(root, name)), { recursive: true })
+      writeFileSync(path.join(root, name), text)
+    }
+
+    await navigateToDataSettings(page)
+    await page.locator('[data-testid="import-folder-input"]').setInputFiles(root)
+    const dialog = page.getByTestId('import-vault-dialog')
+    await expect(dialog).toContainText('Personal: imported into the existing space')
+    await expect(dialog).toContainText('Travel/x: created')
+    await dialog.getByRole('button', { name: 'Restore spaces' }).click()
+    await expect(page.locator('[data-testid="import-result"]')).toContainText('2 files')
+
+    const spaces = await ipc<{ id: string; name: string }[]>(page, 'list_spaces', undefined)
+    expect(spaces.map(({ name }) => name).toSorted()).toEqual(['Personal', 'Travel/x'])
+    const spaceId = (name: string) => spaces.find((space) => space.name === name)?.id
+    const titles = async (name: string): Promise<(string | null)[]> =>
+      (
+        await ipc<{ content: string | null }[]>(page, 'list_all_pages_in_space', {
+          scope: { kind: 'active', space_id: spaceId(name) },
+          tagIds: null,
+        })
+      ).map(({ content }) => content)
+    expect(await titles('Travel/x')).toEqual(['Trip'])
+    expect(await titles('Personal')).toContain('Restored Roadmap')
+    expect(await titles('Personal')).not.toContain('Trip')
+    const defs = await ipc<{ items: { key: string; value_type: string }[] }>(
+      page,
+      'list_property_defs',
+      { spaceId: spaceId('Travel/x'), cursor: null, limit: null },
+    )
+    expect(defs.items.find(({ key }) => key === 'pwrestoreeffort')?.value_type).toBe('number')
   })
 })
 
