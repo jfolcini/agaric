@@ -1,6 +1,7 @@
 import {
   BookTemplate,
   Clock,
+  Copy,
   Download,
   ExternalLink,
   FileCode,
@@ -63,6 +64,8 @@ export interface PageHeaderMenuProps {
   onToggleTemplate: () => void
   onToggleJournalTemplate: () => void
   onExport: () => void
+  /** Saves the page as a `.md` file; the row is hidden without it. */
+  onSaveMarkdownFile?: (() => void) | undefined
   /** Copies the page's `agaric://` link; the row is hidden without it. */
   onCopyAppLink?: (() => void) | undefined
   /** Opens source mode; the row is hidden without it. */
@@ -110,6 +113,7 @@ export function PageHeaderMenu({
   onToggleTemplate,
   onToggleJournalTemplate,
   onExport,
+  onSaveMarkdownFile,
   onCopyAppLink,
   onEditSource,
   editMode,
@@ -163,6 +167,7 @@ export function PageHeaderMenu({
     'toggleTemplate',
     'toggleJournalTemplate',
     'export',
+    ...(onSaveMarkdownFile != null ? ['saveMarkdownFile'] : []),
     ...(onEditModeChange != null ? ['editMode'] : []),
     ...(onEditSource != null ? ['editSource'] : []),
     ...(showMoveEntry ? ['moveTo'] : []),
@@ -407,10 +412,21 @@ export function PageHeaderMenu({
         onClick={onExport}
         {...menuItemProps('export')}
       >
-        <Download className="h-3.5 w-3.5" />
+        <Copy className="h-3.5 w-3.5" />
         {t('pageHeader.exportMarkdown')}
         <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('exportPageMarkdown')}</span>
       </button>
+      {onSaveMarkdownFile != null && (
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onSaveMarkdownFile}
+          {...menuItemProps('saveMarkdownFile')}
+        >
+          <Download className="h-3.5 w-3.5" />
+          {t('pageHeader.saveMarkdownFile')}
+        </button>
+      )}
       {onEditModeChange != null && (
         <EditModeItem
           className={MENU_ITEM_CLASS}
