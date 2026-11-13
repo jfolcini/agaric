@@ -533,7 +533,7 @@ fn remember(state: &mut BackoffState, entry: ReportedFailure) {
 /// the jittered wall-clock retry is also `MIN_BACKOFF` (1s), which keeps
 /// the very first jittered retry from dipping below the seed under
 /// adverse jitter.
-const MIN_BACKOFF: Duration = Duration::from_secs(1);
+pub(crate) const MIN_BACKOFF: Duration = Duration::from_secs(1);
 /// How many distinct *reported* failure texts one peer's streak remembers
 /// (#4201).
 ///
@@ -566,7 +566,7 @@ pub const MAX_REMEMBERED_REPORTS: usize = 8;
 /// Cap on the per-peer backoff. Once `state.backoff` reaches `60s` it
 /// stays there — every further failure schedules another retry roughly
 /// 60s out (±10% jitter).
-const MAX_BACKOFF: Duration = Duration::from_secs(60);
+pub(crate) const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// Cap on how many peers the backoff map retains at once (#4231).
 ///
 /// The map's key set is not chosen by the user: entries are created from

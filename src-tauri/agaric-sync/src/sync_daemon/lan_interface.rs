@@ -819,6 +819,8 @@ pub(crate) struct BindDecision {
     pub internet_facing: bool,
     /// How loudly the caller should log.
     pub level: Level,
+    /// The `route_hint` [`decide`] was given, kept for [`Self::log`].
+    pub default_route_source: Option<Ipv4Addr>,
 }
 
 impl BindDecision {
@@ -899,7 +901,10 @@ impl BindDecision {
 ///
 /// Failing to start the daemon instead would take the scheduler, discovery and dormancy
 /// down with it, so the daemon still comes up — but this is never quiet.
-fn loopback_fallback(verdicts: Vec<(LanInterface, Verdict)>) -> BindDecision {
+fn loopback_fallback(
+    verdicts: Vec<(LanInterface, Verdict)>,
+    default_route_source: Option<Ipv4Addr>,
+) -> BindDecision {
     BindDecision {
         bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
         prefix_len: MIN_IPV4_PREFIX_LEN,
@@ -907,6 +912,7 @@ fn loopback_fallback(verdicts: Vec<(LanInterface, Verdict)>) -> BindDecision {
         verdicts,
         internet_facing: false,
         level: Level::Warn,
+        default_route_source,
     }
 }
 
@@ -954,7 +960,7 @@ pub(crate) fn decide(candidates: Vec<LanInterface>, route_hint: Option<Ipv4Addr>
         .map(|(_, _, idx)| idx);
 
     let Some(winner) = winner else {
-        return loopback_fallback(verdicts);
+        return loopback_fallback(verdicts, route_hint);
     };
 
     let winning_class = class(&verdicts[winner].0);
@@ -1047,6 +1053,7 @@ pub(crate) fn decide(candidates: Vec<LanInterface>, route_hint: Option<Ipv4Addr>
         verdicts,
         internet_facing,
         level,
+        default_route_source: route_hint,
     }
 }
 
@@ -1113,53 +1120,57 @@ fn host_candidates() -> Vec<LanInterface> {
         .collect()
 }
 
-/// Enumerate the host, apply [`decide`], and log the outcome.
+/// Enumerate the host and apply [`decide`].
 ///
 /// This is the only impure entry point; everything it decides is decided by [`decide`].
+/// It logs nothing, because the daemon asks again on every resync tick to notice a
+/// network change; [`BindDecision::log`] is called for the decision that gets bound.
 pub(crate) fn select_bind_target() -> BindDecision {
-    let candidates = host_candidates();
-    let route_hint = default_route_source_ipv4();
-    let decision = decide(candidates, route_hint);
+    decide(host_candidates(), default_route_source_ipv4())
+}
 
-    let passed_over = decision.passed_over();
-    if let (true, Some(ip)) = (decision.internet_facing, decision.lan_ip) {
-        // Deliberately its own line rather than a field on the line below: this is the
-        // only outcome that widens the attack surface rather than narrowing the odds of
-        // pairing, and SECURITY.md § In scope names "opens a listening port the user
-        // did not ask for" explicitly. The daemon still starts — a host whose LAN is
-        // numbered out of public space (the reporting hardware) must still be able to
-        // sync — but it never does so quietly. See `BindDecision::internet_facing` for
-        // why no address-shaped rule can tell that host apart from a VPS.
-        tracing::warn!(
-            bind = %ip,
-            prefix_len = decision.prefix_len,
-            "the sync endpoint is bound to a GLOBALLY-ROUTABLE address, so the listener \
-             may be reachable from outside your local network. This is correct when your \
-             LAN is numbered out of public address space, and wrong on a VPS or a cloud \
-             host — in which case disable sync or firewall this port"
-        );
+impl BindDecision {
+    /// Log the decision the endpoint is about to bind.
+    pub(crate) fn log(&self) {
+        let passed_over = self.passed_over();
+        if let (true, Some(ip)) = (self.internet_facing, self.lan_ip) {
+            // Deliberately its own line rather than a field on the line below: this is the
+            // only outcome that widens the attack surface rather than narrowing the odds of
+            // pairing, and SECURITY.md § In scope names "opens a listening port the user
+            // did not ask for" explicitly. The daemon still starts — a host whose LAN is
+            // numbered out of public space (the reporting hardware) must still be able to
+            // sync — but it never does so quietly. See `BindDecision::internet_facing` for
+            // why no address-shaped rule can tell that host apart from a VPS.
+            tracing::warn!(
+                bind = %ip,
+                prefix_len = self.prefix_len,
+                "the sync endpoint is bound to a GLOBALLY-ROUTABLE address, so the listener \
+                 may be reachable from outside your local network. This is correct when your \
+                 LAN is numbered out of public address space, and wrong on a VPS or a cloud \
+                 host — in which case disable sync or firewall this port"
+            );
+        }
+        match (self.level, self.lan_ip) {
+            (_, None) => tracing::warn!(
+                passed_over = %passed_over,
+                "no usable LAN IPv4 interface found; the sync endpoint binds loopback and NO \
+                 PEER WILL BE ABLE TO REACH IT. Sync will appear to start and then time out."
+            ),
+            (Level::Warn, Some(ip)) => tracing::warn!(
+                bind = %ip,
+                prefix_len = self.prefix_len,
+                default_route_source = ?self.default_route_source,
+                passed_over = %passed_over,
+                "sync endpoint bind address selected from several candidates; if peers cannot \
+                 reach this device, compare this address with `ip route get 1.1.1.1`"
+            ),
+            (Level::Info, Some(ip)) => tracing::info!(
+                bind = %ip,
+                prefix_len = self.prefix_len,
+                "sync endpoint bind address selected"
+            ),
+        }
     }
-    match (decision.level, decision.lan_ip) {
-        (_, None) => tracing::warn!(
-            passed_over = %passed_over,
-            "no usable LAN IPv4 interface found; the sync endpoint binds loopback and NO \
-             PEER WILL BE ABLE TO REACH IT. Sync will appear to start and then time out."
-        ),
-        (Level::Warn, Some(ip)) => tracing::warn!(
-            bind = %ip,
-            prefix_len = decision.prefix_len,
-            default_route_source = ?route_hint,
-            passed_over = %passed_over,
-            "sync endpoint bind address selected from several candidates; if peers cannot \
-             reach this device, compare this address with `ip route get 1.1.1.1`"
-        ),
-        (Level::Info, Some(ip)) => tracing::info!(
-            bind = %ip,
-            prefix_len = decision.prefix_len,
-            "sync endpoint bind address selected"
-        ),
-    }
-    decision
 }
 
 // ---------------------------------------------------------------------------

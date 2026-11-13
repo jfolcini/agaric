@@ -128,6 +128,18 @@ A gap a pull cannot close (a refused export, an update parked on a missing depen
 
 If no paired peers exist, the daemon defers mDNS browse + announce and the endpoint service entirely. Boot is cheaper on a fresh install; the daemon spawns a lightweight waiter that triggers full startup when the first pairing completes. The dormant-mode log line in `sync_daemon/mod.rs` names what is actually deferred — "mDNS and QUIC endpoint" — since #3526; nothing about *what* is deferred, or when, changed with the rename.
 
+### The endpoint follows the network
+
+The endpoint is not bound for the daemon's life (#6526). `daemon_loop` is an outer loop around `run_daemon`, one bound endpoint with its accept loop and its mDNS lookup, and binds again in three cases:
+
+- **The endpoint stopped.** iroh stops an endpoint whose bound address leaves the host (an interface that went down, a network left): `accept` returns `None` within seconds, every dial fails with "endpoint stopping", `is_closed` stays `false`, and the same address coming back revives nothing. The accept loop ending is what the daemon sees (Branch F), so it binds again at once, after a one-second pause that also keeps endpoints that stop as they are bound from spinning the loop. Sessions on a stopped endpoint are already lost.
+- **The bind policy picks another address.** The periodic resync tick asks `lan_interface::select_bind_target` again and compares its address with the bound one: Wi-Fi that came up after a launch on the loopback fallback, or a better interface. A live endpoint is closed only when no session is active (`SyncScheduler::has_active_session`); otherwise the next tick asks again.
+- **The bring-up failed.** It is retried from a fresh interface sweep, doubling from `MIN_BACKOFF` to `MAX_BACKOFF`.
+
+Each new endpoint has the same identity (`endpoint_secret`) and, with the internet fallback on, the same relay; the old one is closed first, so two never run side by side. A rebind clears every peer's backoff, since failures booked on the old network say nothing about the new one, and the new loop's first tick dials the peers that are due. `BindPolicy` is the seam the tests move the decision through; production passes `HostBindPolicy`.
+
+What only an interface that goes away can show is the first case's trigger. It was measured by hand with an address alias added and removed, and the tests end the accept loop by closing the endpoint.
+
 ### Lifecycle-aware
 
 `LifecycleHooks` gates the periodic resync tick on `is_foreground`. Backgrounded → skip ticks until `wake.notified()` fires on foreground. This matters most on Android (battery + Doze) but also helps desktop laptops on battery.
