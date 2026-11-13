@@ -183,7 +183,7 @@ describe('mergedTree (#6531)', () => {
       ['B2a', 'B2', 2],
       ['C', 'PAGE', 0],
     ])
-    expect(merged?.blocks.find((b) => b.id === 'A')?.content).toBe('AB')
+    expect(merged?.blocks.map((b) => b.content)).toEqual(['AB', 'A1', 'B1', 'B2', 'B2a', 'C'])
   })
 
   it('lands a first child’s children after its parent’s other children', () => {
@@ -201,6 +201,12 @@ describe('mergedTree (#6531)', () => {
       ['S', 'P', 1],
       ['F1', 'P', 1],
     ])
+  })
+
+  it('refuses a block the page does not hold', () => {
+    const state = stateOf([row('A', 'PAGE', 1, 0)])
+
+    expect(mergedTree(state, 'GONE', 'A', 'AB')).toBeNull()
   })
 
   it('refuses a target that sits under the block', () => {
