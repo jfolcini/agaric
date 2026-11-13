@@ -1,4 +1,4 @@
-# Session 3990 — sync says why: a device that is away, and two versions that cannot sync
+# Session 3993 — sync says why: a device that is away, and two versions that cannot sync
 
 `Refs #6523` (two of four items; a forked history and an engine/SQL disagreement stay open).
 
