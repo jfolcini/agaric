@@ -269,6 +269,14 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["new_parent_id", "new_position"],
         &[],
     ),
+    // #6531 — the block a split creates, and the block a merge writes.
+    (
+        "split_block",
+        "id",
+        &["content", "parent_id", "position"],
+        &[],
+    ),
+    ("merge_blocks", "id", &["content"], &[]),
     // #5140 — the same row list as `create_blocks_batch`: the root copy, then
     // its descendants depth-first, so the order is pinned with the rows.
     (
@@ -534,6 +542,24 @@ pub(super) async fn apply_op_via_command(
     };
     // A block's text, whose link tokens may name labels (`expand_content_labels`).
     let text = |k: &str| expand_content_labels(&req_str(k), created_ids);
+    // #6531 — a command taking one `request` object, whose block ids are
+    // labels as the scalar `blockId` is.
+    let request = || {
+        let mut request = arg("request")
+            .cloned()
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'request'"));
+        for key in ["blockId", "intoId", "newBlockId"] {
+            if let Some(label) = request[key].as_str().map(str::to_owned) {
+                request[key] = json!(resolve_op_arg_id(&label, created_ids));
+            }
+        }
+        for key in ["before", "after", "mergedText"] {
+            if let Some(text) = request[key].as_str() {
+                request[key] = json!(expand_content_labels(text, created_ids));
+            }
+        }
+        request
+    };
     // #5057 — an `OpRef` arg is an `On` label, never a literal: the two
     // runners mint their own `(device_id, seq)`. Mirrors `block_id()` above.
     let op_ref = |k: &str| {
@@ -1331,6 +1357,18 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        // #6531 — the record is the row each command is asked for: the block a
+        // split creates, the block a merge writes; the snapshot pins the rest.
+        "split_block" => to_json(
+            split_block_inner(pool, DEV, mat, from_request(request()))
+                .await
+                .map(|split| split.created),
+        ),
+        "merge_blocks" => to_json(
+            merge_blocks_inner(pool, DEV, mat, from_request(request()))
+                .await
+                .map(|merged| merged.block),
+        ),
         // #5071 — the document is the caller's own text, spelled inline; only
         // the target space is a label. The markdown import's vault-file bytes
         // are left out, so it ingests no attachment.
@@ -1465,6 +1503,11 @@ pub(super) fn project_return(command: &str, response: &Value) -> Vec<String> {
         }
     }
     out
+}
+
+/// A `request` arg as the struct its command takes.
+fn from_request<T: serde::de::DeserializeOwned>(request: Value) -> T {
+    serde_json::from_value(request).unwrap_or_else(|e| panic!("conformance request: {e}"))
 }
 
 /// A declaration key as the wire string it must be; `None` when absent or
@@ -1803,7 +1846,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 69;
+    const MUTATING_ARM_COUNT: usize = 71;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

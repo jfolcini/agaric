@@ -126,6 +126,17 @@ export const commands = {
 	 */
 	moveBlocksBatch: (blockIds: string[], newParentId: string | null, newIndex: number) => typedError<WithOps<MovedBlocks>, AppError>(__TAURI_INVOKE("move_blocks_batch", { blockIds, newParentId, newIndex })),
 	/**
+	 *  Tauri command: Enter inside a block's text. Delegates to [`split_block_inner`];
+	 *  the response carries the refs of the create and the edit, in that order.
+	 */
+	splitBlock: (request: SplitBlockRequest) => typedError<WithOps<SplitResponse>, AppError>(__TAURI_INVOKE("split_block", { request })),
+	/**
+	 *  Tauri command: merge a block into the one above. Delegates to
+	 *  [`merge_blocks_inner`]; the response carries the refs of the edit, each
+	 *  move and the delete, in that order.
+	 */
+	mergeBlocks: (request: MergeBlocksRequest) => typedError<WithOps<MergeResponse>, AppError>(__TAURI_INVOKE("merge_blocks", { request })),
+	/**
 	 *  Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
 	 * 
 	 *  Takes a single [`ListBlocksRequest`] — the intentional per-command IPC
@@ -3021,6 +3032,25 @@ export type MeetingResult = {
 	attachments: AttachmentRow[],
 };
 
+/**  What [`merge_blocks`] joins into what. */
+export type MergeBlocksRequest = {
+	/**  The block merged away. */
+	blockId: BlockId,
+	/**  The block that takes its text and its children. */
+	intoId: BlockId,
+	/**  The target's new text, joined by the caller: the join is Markdown-aware. */
+	mergedText: string,
+	/**  The target's text as the caller knew it, as for `edit_block`. */
+	baseText: string | null,
+};
+
+export type MergeResponse = {
+	/**  The block merged into, as written. */
+	block: BlockRow,
+	/**  The merged-away block's children, now under `block`. */
+	moves: MoveResponse[],
+};
+
 /**  A page whose file could not be written, and why. */
 export type MirrorFailure = {
 	page_id: string,
@@ -4719,6 +4749,25 @@ export type SpeechStatus =
  *  offering *Read aloud*, then speak with [`speak_text`].
  */
 "Native";
+
+/**  What [`split_block`] cuts where. */
+export type SplitBlockRequest = {
+	/**  The block split, which keeps `before`. */
+	blockId: BlockId,
+	before: string,
+	/**  The text of the block created as the next sibling. */
+	after: string,
+	/**  The created block's id, minted by the caller, which has already shown it. */
+	newBlockId: BlockId,
+	/**  The text the editor started from, as for `edit_block`. */
+	baseText: string | null,
+};
+
+export type SplitResponse = {
+	/**  The split block as written: its text is not `before` when it was rebased. */
+	block: BlockRow,
+	created: BlockRow,
+};
 
 /**
  *  Snapshot of materializer + sync observability fields exposed to the

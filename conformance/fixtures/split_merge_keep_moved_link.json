@@ -1,0 +1,247 @@
+{
+  "description": "#6531: `split_block` creates before it edits, and `merge_blocks` edits before it deletes, so a `[[link]]` that \"Move to space\" left pointing into another space survives both: such a token is accepted only while a live block of the page holds it (#5272). The other order refuses each. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "a [[000000000000000000000000S2]] b",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "[[000000000000000000000000S2]] b",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 13,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B4",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "the_source",
+      "returns": [
+        "B3#block_type=content#content=a [[000000000000000000000000S2]] b#parent_id=B1#position=1"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_target_moves_away",
+      "returns": ["move_blocks_to_space#moved=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_split_after_the_link_keeps_it",
+      "returns": ["B5#content=[[000000000000000000000000S2]] b#parent_id=B1#position=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_merge_brings_the_link_back",
+      "returns": ["B3#content=a [[000000000000000000000000S2]] b"]
+    }
+  ],
+  "name": "split_merge_keep_moved_link",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "a [[S2]] b",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "the_source",
+      "via": "command"
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Away"
+      },
+      "command": "create_space",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S2"],
+        "spaceId": "C2"
+      },
+      "command": "move_blocks_to_space",
+      "name": "the_target_moves_away",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "after": "[[S2]] b",
+          "baseText": "a [[S2]] b",
+          "before": "a ",
+          "blockId": "C1",
+          "newBlockId": "S10"
+        }
+      },
+      "command": "split_block",
+      "comment": "The new block takes the token while C1 still holds it.",
+      "name": "a_split_after_the_link_keeps_it",
+      "via": "command"
+    },
+    {
+      "args": {
+        "request": {
+          "baseText": "a ",
+          "blockId": "C3",
+          "intoId": "C1",
+          "mergedText": "a [[S2]] b"
+        }
+      },
+      "command": "merge_blocks",
+      "comment": "C1 takes the token back while the merged-away block still holds it.",
+      "name": "a_merge_brings_the_link_back",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

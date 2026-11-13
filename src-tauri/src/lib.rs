@@ -98,6 +98,8 @@ macro_rules! agaric_commands {
             // per-root `move_block` IPC loop + full page reload into one
             // IMMEDIATE tx (N MoveBlock ops) returning authoritative positions.
             $crate::commands::blocks::move_ops::move_blocks_batch,
+            $crate::commands::blocks::split_merge::split_block,
+            $crate::commands::blocks::split_merge::merge_blocks,
             $crate::commands::blocks::queries::list_blocks,
             $crate::commands::blocks::queries::list_trash,
             $crate::commands::blocks::queries::get_block,
