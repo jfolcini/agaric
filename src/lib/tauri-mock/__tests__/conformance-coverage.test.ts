@@ -256,6 +256,8 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   notify_task: 'no persistent state — OS notification side effect',
   speak_text: 'no persistent state — speaks through the OS text-to-speech engine (#5745)',
   stop_speaking: 'no persistent state — silences the OS text-to-speech engine (#5745)',
+  save_file_to_downloads:
+    'no persistent state — writes a file into Android’s Downloads folder (#6546); the Linux backend a fixture is authored from refuses it',
   mcp_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_disconnect_all: 'no persistent domain state — MCP transport reset',
 
@@ -538,6 +540,7 @@ const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
   'notify_task',
   'speak_text',
   'stop_speaking',
+  'save_file_to_downloads',
   'mcp_set_enabled',
   'mcp_disconnect_all',
   // An OS folder dialog (#5363).

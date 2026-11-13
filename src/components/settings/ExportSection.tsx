@@ -8,7 +8,7 @@
 
 import { Download } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useId, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -17,17 +17,11 @@ import { SettingRow } from '@/components/ui/setting-row'
 import { downloadBlob, exportAllSpacesAsZip, exportGraphAsZip } from '@/lib/export-graph'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { isAndroid } from '@/lib/platform'
 import { sanitizeSpaceNameForFilename } from '@/lib/vault-import'
 import { useSpaceStore } from '@/stores/space'
 
 export function ExportSection(): React.ReactElement {
   const { t } = useTranslation()
-  // #6538 — the Android WebView handles no `blob:` download, so an export
-  // there would write nothing and still toast success.
-  const saveUnavailable = isAndroid()
-  const saveUnavailableId = useId()
-  const describedBy = saveUnavailable ? saveUnavailableId : undefined
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const [exporting, setExporting] = useState(false)
@@ -49,7 +43,7 @@ export function ExportSection(): React.ReactElement {
       const activeSpace = availableSpaces.find((s) => s.id === currentSpaceId)
       const sanitizedSpaceName = sanitizeSpaceNameForFilename(activeSpace?.name ?? '')
       const spacePart = sanitizedSpaceName.length > 0 ? `${sanitizedSpaceName}-` : ''
-      downloadBlob(blob, `agaric-export-${spacePart}${date}.zip`)
+      await downloadBlob(blob, `agaric-export-${spacePart}${date}.zip`)
       // #2965 — `exportGraphAsZip` no longer silently swallows per-page /
       // per-attachment failures behind an unconditional success: surface a
       // warning (with a details ledger already written into the ZIP as
@@ -93,7 +87,7 @@ export function ExportSection(): React.ReactElement {
         notify.warning(t('data.exportAllSpacesNoSpaces'))
       } else {
         const date = new Date().toISOString().slice(0, 10)
-        downloadBlob(blob, `agaric-export-all-spaces-${date}.zip`)
+        await downloadBlob(blob, `agaric-export-all-spaces-${date}.zip`)
         if (skippedPages > 0 || skippedAttachments > 0) {
           const details = [
             skippedPages > 0 ? t('data.exportSkippedPages', { count: skippedPages }) : null,
@@ -123,19 +117,8 @@ export function ExportSection(): React.ReactElement {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {saveUnavailable && (
-          <p id={saveUnavailableId} className="text-sm text-muted-foreground">
-            {t('data.fileSaveUnavailableAndroid')}
-          </p>
-        )}
         <SettingRow label={t('data.exportCurrentSpaceLabel')} description={t('data.exportDesc')}>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={saveUnavailable || exporting}
-            aria-describedby={describedBy}
-            onClick={handleExportAll}
-          >
+          <Button variant="outline" size="sm" disabled={exporting} onClick={handleExportAll}>
             <Download />
             {exporting ? t('data.exporting') : t('data.exportButton')}
           </Button>
@@ -147,8 +130,7 @@ export function ExportSection(): React.ReactElement {
           <Button
             variant="outline"
             size="sm"
-            disabled={saveUnavailable || exportingAllSpaces}
-            aria-describedby={describedBy}
+            disabled={exportingAllSpaces}
             onClick={handleExportAllSpaces}
             data-testid="export-all-spaces-button"
           >

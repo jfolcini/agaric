@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import JSZip from 'jszip'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makePageHeading } from '@/__tests__/fixtures'
 import {
@@ -1572,7 +1572,7 @@ describe('resolveAttachmentRefsForCopy (#2967)', () => {
 })
 
 describe('downloadBlob', () => {
-  it('clicks a temporary anchor while attached, then detaches it and revokes the object URL', () => {
+  it('clicks a temporary anchor while attached, then detaches it and revokes the object URL', async () => {
     // The last mile of every export: without this the ZIP is built and thrown
     // away. Each step is load-bearing — a click on a DETACHED anchor is a
     // no-op in Chromium, a non-anchor element has no `download` behavior at
@@ -1610,7 +1610,7 @@ describe('downloadBlob', () => {
     try {
       const blob = new Blob(['zip bytes'])
 
-      downloadBlob(blob, 'agaric-export.zip')
+      await downloadBlob(blob, 'agaric-export.zip')
 
       expect(createObjectURL).toHaveBeenCalledWith(blob)
       expect(clicks).toEqual([
@@ -1625,26 +1625,57 @@ describe('downloadBlob', () => {
     }
   })
 
-  // #6538 — the Android WebView handles no `blob:` download, so the anchor
-  // would write nothing; the diagram viewer's SVG download reaches this.
-  it('on Android clicks no anchor and says file saving is unavailable', () => {
-    const userAgent = vi
-      .spyOn(navigator, 'userAgent', 'get')
-      .mockReturnValue(
+  // #6546 — the Android WebView handles no `blob:` download, so the anchor
+  // would write nothing: the bytes go to the save command instead.
+  describe('on Android', () => {
+    let clickSpy: ReturnType<typeof vi.spyOn>
+
+    beforeEach(() => {
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
         'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36',
       )
-    __resetPlatformCacheForTests()
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
-    try {
-      downloadBlob(new Blob(['<svg/>']), 'diagram.svg')
-
-      expect(clickSpy).not.toHaveBeenCalled()
-      expect(toast.info).toHaveBeenCalledWith(t('data.fileSaveUnavailableAndroid'))
-    } finally {
-      clickSpy.mockRestore()
-      userAgent.mockRestore()
       __resetPlatformCacheForTests()
-    }
+      clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+      __resetPlatformCacheForTests()
+    })
+
+    it('saves through the save command and clicks no anchor', async () => {
+      const saves: unknown[] = []
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands({
+          save_file_to_downloads: (args) => {
+            saves.push(args)
+            return 'diagram.svg'
+          },
+        }),
+      )
+
+      await downloadBlob(new Blob(['<svg/>'], { type: 'image/svg+xml' }), 'diagram.svg')
+
+      expect(saves).toEqual([
+        { fileName: 'diagram.svg', mimeType: 'image/svg+xml', bytes: 'PHN2Zy8+' },
+      ])
+      expect(clickSpy).not.toHaveBeenCalled()
+      expect(toast.success).toHaveBeenCalledWith(
+        t('data.savedToDownloads', { fileName: 'diagram.svg' }),
+      )
+    })
+
+    it('rejects when the save fails, so a caller toasts no success', async () => {
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands({
+          save_file_to_downloads: () => Promise.reject({ kind: 'io', message: 'no space left' }),
+        }),
+      )
+
+      await expect(downloadBlob(new Blob(['x']), 'a.zip')).rejects.toMatchObject({ kind: 'io' })
+      expect(clickSpy).not.toHaveBeenCalled()
+      expect(toast.success).not.toHaveBeenCalled()
+    })
   })
 })
 

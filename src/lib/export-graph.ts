@@ -4,11 +4,10 @@ import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
 import { ATTACHMENT_REF_SCHEME, parseAttachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
-import { t } from '@/lib/i18n'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
-import { notify } from '@/lib/notify'
 import { isAndroid } from '@/lib/platform'
+import { saveToAndroidDownloads } from '@/lib/platform/android-save'
 import { listAllPropertyDefs } from '@/lib/property-save-utils'
 import { requireActiveScope } from '@/lib/space-scope'
 import { SPACE_FILE_PATH, type SpaceFile, pathTitle } from '@/lib/vault-import'
@@ -720,12 +719,13 @@ export async function pageMarkdownForCopy(pageId: string): Promise<string> {
 }
 
 /**
- * Trigger a browser download of a Blob. On Android it says saving is
- * unavailable instead (#6538): the WebView handles no `blob:` download.
+ * Save a Blob as a file: a browser download, or on Android, whose WebView
+ * handles no `blob:` download, a file in the Downloads folder (#6546). Rejects
+ * when Android saved nothing.
  */
-export function downloadBlob(blob: Blob, filename: string): void {
+export async function downloadBlob(blob: Blob, filename: string): Promise<void> {
   if (isAndroid()) {
-    notify.info(t('data.fileSaveUnavailableAndroid'))
+    await saveToAndroidDownloads(blob, filename)
     return
   }
   const url = URL.createObjectURL(blob)

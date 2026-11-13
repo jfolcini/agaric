@@ -130,6 +130,15 @@ export const systemHandlers = {
   },
   stop_speaking: returnNull,
 
+  // Android's file save (#6546): a spec with an Android user agent reads what was saved from
+  // `__mockSavedFiles`. The name comes back unchanged, as when no file of that name exists.
+  save_file_to_downloads: (args) => {
+    const { fileName, mimeType, bytes } = args as Record<string, unknown>
+    const scope = globalThis as { __mockSavedFiles?: unknown[] }
+    scope.__mockSavedFiles = [...(scope.__mockSavedFiles ?? []), { fileName, mimeType, bytes }]
+    return String(fileName)
+  },
+
   // ---------------------------------------------------------------------------
   // Bug report
   // ---------------------------------------------------------------------------
@@ -214,6 +223,7 @@ export const systemHandlers = {
   | 'get_speech_engine_available'
   | 'speak_text'
   | 'stop_speaking'
+  | 'save_file_to_downloads'
   | 'collect_bug_report_metadata'
   | 'read_logs_for_report'
   | 'compute_reconciliation_report'

@@ -59,6 +59,7 @@ import { downloadBlob } from '@/lib/export-graph'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
+import { isAndroid } from '@/lib/platform'
 
 interface BugReportDialogProps {
   open: boolean
@@ -249,7 +250,7 @@ export function BugReportDialog({
       // #840: thread the redact toggle into the ZIP composer so metadata.json
       // scrubs device_id to the same sentinel the logs use when redaction is on.
       const blob = await buildReportZip(entries, md, r)
-      downloadBlob(blob, zipFileName)
+      await downloadBlob(blob, zipFileName)
       return true
     },
     module: MODULE,
@@ -272,7 +273,8 @@ export function BugReportDialog({
     try {
       const ok = await executeBuildZip({ redact, metadata })
       if (ok === undefined) return
-      notify.success(t('bugReport.zipDownloaded', { fileName: zipFileName }))
+      // Android's save has already said where the file went, under the name the OS gave it.
+      if (!isAndroid()) notify.success(t('bugReport.zipDownloaded', { fileName: zipFileName }))
     } finally {
       setSubmitting(false)
     }

@@ -242,8 +242,9 @@ export function PageHeader({
     const fileName = `${nameToFlatSegment(title.slice(0, read))}.md`
     try {
       const markdown = await pageMarkdownForCopy(pageId)
-      downloadBlob(new Blob([markdown], { type: 'text/markdown' }), fileName)
-      notify.success(t('pageHeader.markdownFileSaved', { fileName }))
+      await downloadBlob(new Blob([markdown], { type: 'text/markdown' }), fileName)
+      // Android's save has already said where the file went, under the name the OS gave it.
+      if (!isAndroid()) notify.success(t('pageHeader.markdownFileSaved', { fileName }))
     } catch (err) {
       logger.error('PageHeader', 'Failed to save the page as a Markdown file', { pageId }, err)
       notify.error(t('pageHeader.markdownFileSaveFailed'))
@@ -641,8 +642,7 @@ export function PageHeader({
               onToggleTemplate={handleToggleTemplate}
               onToggleJournalTemplate={handleToggleJournalTemplate}
               onExport={handleExport}
-              // Not on Android, whose WebView saves no `blob:` download (#6546).
-              onSaveMarkdownFile={isAndroid() ? undefined : handleSaveMarkdownFile}
+              onSaveMarkdownFile={handleSaveMarkdownFile}
               onCopyAppLink={handleCopyAppLink}
               onEditSource={handleEditSource}
               editMode={editMode}

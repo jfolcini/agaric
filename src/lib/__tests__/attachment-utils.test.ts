@@ -1,15 +1,18 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockReadAttachmentMeta = vi.hoisted(() => vi.fn())
 const mockReadAttachment = vi.hoisted(() => vi.fn())
 const mockNotifyError = vi.hoisted(() => vi.fn())
-const mockNotifyInfo = vi.hoisted(() => vi.fn())
+const mockSaveToAndroidDownloads = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', () => ({
   commands: { readAttachmentMeta: mockReadAttachmentMeta },
 }))
 vi.mock('@/lib/ipc-helpers', () => ({ readAttachment: mockReadAttachment }))
-vi.mock('@/lib/notify', () => ({ notify: { error: mockNotifyError, info: mockNotifyInfo } }))
+vi.mock('@/lib/notify', () => ({ notify: { error: mockNotifyError } }))
+vi.mock('@/lib/platform/android-save', () => ({
+  saveToAndroidDownloads: mockSaveToAndroidDownloads,
+}))
 
 import { formatSize, openAttachmentLink } from '@/lib/attachment-utils'
 import { t } from '@/lib/i18n'
@@ -92,28 +95,47 @@ describe('attachment-utils', () => {
       expect(mockNotifyError).toHaveBeenCalledWith(t('attachments.loadFailed'))
     })
 
-    // #6538 — the Android WebView handles no `blob:` download.
-    it('on Android starts no download and says file saving is unavailable', async () => {
-      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
-        'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36',
-      )
-      __resetPlatformCacheForTests()
-      try {
-        const downloads = captureDownloads()
+    // #6546 — the Android WebView handles no `blob:` download.
+    describe('on Android', () => {
+      beforeEach(() => {
+        vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+          'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36',
+        )
+        __resetPlatformCacheForTests()
         mockReadAttachmentMeta.mockResolvedValue({
           status: 'ok',
           data: { filename: 'paper.docx', mime_type: 'application/msword' },
         })
         mockReadAttachment.mockResolvedValue(new Uint8Array([1]))
+      })
+
+      afterEach(() => {
+        mockSaveToAndroidDownloads.mockReset()
+        __resetPlatformCacheForTests()
+      })
+
+      it('saves the attachment to Downloads under its stored name and type, with no anchor', async () => {
+        const downloads = captureDownloads()
+        mockSaveToAndroidDownloads.mockResolvedValue(undefined)
 
         await openAttachmentLink('01ATT')
 
+        expect(mockSaveToAndroidDownloads).toHaveBeenCalledTimes(1)
+        const [blob, name] = mockSaveToAndroidDownloads.mock.calls[0] as [Blob, string]
+        expect(name).toBe('paper.docx')
+        expect(blob.type).toBe('application/msword')
+        expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array([1]))
         expect(downloads).toEqual([])
-        expect(mockNotifyInfo).toHaveBeenCalledWith(t('data.fileSaveUnavailableAndroid'))
         expect(mockNotifyError).not.toHaveBeenCalled()
-      } finally {
-        __resetPlatformCacheForTests()
-      }
+      })
+
+      it('toasts an error when the save fails', async () => {
+        mockSaveToAndroidDownloads.mockRejectedValue({ kind: 'io', message: 'no space left' })
+
+        await openAttachmentLink('01ATT')
+
+        expect(mockNotifyError).toHaveBeenCalledWith(t('attachments.loadFailed'))
+      })
     })
   })
 })

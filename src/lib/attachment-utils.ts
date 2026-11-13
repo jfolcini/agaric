@@ -5,6 +5,7 @@ import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { isAndroid } from '@/lib/platform'
+import { saveToAndroidDownloads } from '@/lib/platform/android-save'
 
 /** Format bytes into a human-readable size string. */
 export function formatSize(bytes: number): string {
@@ -26,13 +27,17 @@ export function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
 }
 
 /**
- * Trigger a browser download of `bytes` as `filename` via a transient anchor.
- * On Android it says saving is unavailable instead (#6538): the WebView
- * handles no `blob:` download.
+ * Save `bytes` as `filename`: a browser download via a transient anchor, or on
+ * Android, whose WebView handles no `blob:` download, a file in the Downloads
+ * folder (#6546). Rejects when Android saved nothing.
  */
-export function triggerDownload(bytes: Uint8Array, mimeType: string, filename: string): void {
+export async function triggerDownload(
+  bytes: Uint8Array,
+  mimeType: string,
+  filename: string,
+): Promise<void> {
   if (isAndroid()) {
-    notify.info(t('data.fileSaveUnavailableAndroid'))
+    await saveToAndroidDownloads(bytesToBlob(bytes, mimeType), filename)
     return
   }
   const url = URL.createObjectURL(bytesToBlob(bytes, mimeType))
@@ -58,7 +63,7 @@ export function triggerDownload(bytes: Uint8Array, mimeType: string, filename: s
 export async function openAttachmentLink(attachmentId: string): Promise<void> {
   try {
     const meta = unwrap(await commands.readAttachmentMeta(attachmentId))
-    triggerDownload(await readAttachment(attachmentId), meta.mime_type, meta.filename)
+    await triggerDownload(await readAttachment(attachmentId), meta.mime_type, meta.filename)
   } catch (err) {
     logger.warn('attachment-utils', 'attachment link download failed', { attachmentId }, err)
     notify.error(t('attachments.loadFailed'))

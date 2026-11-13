@@ -772,6 +772,11 @@ export const commands = {
 	/**  Cuts off the utterance the backend engine is speaking, if any. */
 	stopSpeaking: () => typedError<null, AppError>(__TAURI_INVOKE("stop_speaking")),
 	/**
+	 *  Saves `bytes` to the phone's Downloads folder as `file_name` and returns the
+	 *  name the file has there. Android only: every other build refuses.
+	 */
+	saveFileToDownloads: (fileName: string, mimeType: string, bytes: Base64Bytes) => typedError<string, AppError>(__TAURI_INVOKE("save_file_to_downloads", { fileName, mimeType, bytes })),
+	/**
 	 *  Tauri command: import a Markdown, Logseq or Org file, in the `dialect` its
 	 *  front end read it as, as a page with block hierarchy. Delegates to
 	 *  [`import_markdown_with_progress`].
