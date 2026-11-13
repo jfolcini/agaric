@@ -168,20 +168,18 @@ function endsInVerbatimBlock(prevDoc: DocNode): boolean {
 }
 
 /**
- * #1342 — plan the reparent of a merged-away block's children onto the merge
- * target. Reads the FULL flat tree (`blocks`) — `collapsedVisible` hides a
+ * #4958 — plan the reparent of a deleted blank block's children onto the row
+ * above. Reads the FULL flat tree (`blocks`) — `collapsedVisible` hides a
  * collapsed source's children, so this must not use the visible projection.
  *
  * Returns the source block's DIRECT children, in document order, and the
- * target slot (`newIndex`) at which to land them: the merge target's current
+ * target slot (`newIndex`) at which to land them: the target's current
  * direct-child count, so the children are appended AFTER any children the
- * target already has — matching the Logseq/Workflowy backspace-merge where the
- * absorbed block's children become the tail of the survivor's children.
+ * target already has, as `merge_blocks` places a merged-away block's (#1342).
  *
- * Returns `null` when the source has no children (the merge is a plain
- * childless join — no reparent needed). Each direct child is a "selection
- * root" (none is a descendant of another), so `moveBlocks` carries each one's
- * own subtree along, preserving the full nested structure.
+ * Returns `null` when the source has no children. Each direct child is a
+ * "selection root" (none is a descendant of another), so `moveBlocks` carries
+ * each one's own subtree along, preserving the full nested structure.
  */
 function planChildReparent(
   blocks: FlatBlock[],
@@ -215,11 +213,11 @@ export interface UseBlockActionOrchestrationParams {
    */
   collapsedVisible: MountedBlocks
   /**
-   * #1342 — the FULL flat tree (not the collapsed/visible projection). The
-   * merge handlers need it to find the merged-away block's DIRECT children
-   * (which `collapsedVisible` hides when the source is collapsed) so they can
-   * be reparented onto the merge target instead of soft-deleted by the
-   * backend's `delete_block` cascade.
+   * #4958 — the FULL flat tree (not the collapsed/visible projection). The
+   * delete of a blank block needs it to find the block's DIRECT children
+   * (which `collapsedVisible` hides when the block is collapsed) so they can
+   * be reparented onto the row above instead of soft-deleted by the backend's
+   * `delete_block` cascade.
    */
   blocks: FlatBlock[]
   /**
@@ -254,14 +252,27 @@ export interface UseBlockActionOrchestrationParams {
   pageStore: ReturnType<typeof usePageBlockStoreApi>
   remove: (id: string, options?: DeleteBlockOptions) => Promise<void>
   /**
-   * #1342 — reparent a contiguous run of blocks (in document order) under a
-   * new parent, landing at the given 0-based sibling slot. Used by the merge
-   * handlers to move the merged-away block's children onto the merge target
-   * before the source block is removed. Same action the multi-select drag
-   * uses; it issues one `move_block` per block and reloads the tree.
+   * #4958 — reparent a contiguous run of blocks (in document order) under a
+   * new parent, landing at the given 0-based sibling slot. Used by the delete
+   * of a blank block to move its children onto the row above before the block
+   * is removed. Same action the multi-select drag uses.
    */
   moveBlocks: (ids: string[], newParentId: string | null, newIndex: number) => Promise<void>
-  edit: (id: string, content: string) => Promise<boolean>
+  /** Enter inside a block's text, as the page store's `splitOff`. */
+  splitOff: (
+    blockId: string,
+    before: string,
+    after: string,
+    newId: string,
+    options?: { baseText?: string },
+  ) => Promise<boolean>
+  /** A merge into the row above, as the page store's `mergeInto`. */
+  mergeInto: (
+    blockId: string,
+    intoId: string,
+    mergedText: string,
+    options?: { baseText?: string },
+  ) => Promise<boolean>
   indent: (id: string) => Promise<boolean>
   dedent: (id: string) => Promise<boolean>
   moveUp: (id: string) => Promise<boolean>
@@ -286,8 +297,8 @@ export interface UseBlockActionOrchestrationParams {
   preserveEmptyBlockIds?: RefObject<Set<string>>
   /**
    * Discard any persisted draft for the given block. Called by Discard, and
-   * (#2786) after a successful caret-split `edit()` to drop the departed
-   * block's now-stale pre-split draft row.
+   * (#2786) after a successful caret split to drop the departed block's
+   * now-stale pre-split draft row.
    */
   discardDraft: (blockId: string) => void
   t: TFunction
@@ -323,7 +334,8 @@ export function useBlockActionOrchestration({
   pageStore,
   remove,
   moveBlocks,
-  edit,
+  splitOff,
+  mergeInto,
   indent,
   dedent,
   moveUp,
@@ -349,14 +361,12 @@ export function useBlockActionOrchestration({
   // (`afterEnterSettles`).
   const enterInFlight = useRef<Promise<void> | null>(null)
 
-  // Re-entrancy guard for merges, whose edit, reparent and remove are in flight
-  // until the merge settles. handleMergeById unmounts the roving editor
-  // (resetting its doc to empty) meanwhile, so an autorepeat Backspace matches
-  // the Backspace-on-empty rule and an Enter the create rule, both on the block
-  // being merged away; after a Backspace merge an Enter would send a second
-  // edit of the joined block, which can land before the merge's.
-  // handleDeleteBlock/handleEnterSave honor this flag so no concurrent
-  // structural op races the merge.
+  // Re-entrancy guard for merges, in flight until `merge_blocks` answers.
+  // handleMergeById unmounts the roving editor (resetting its doc to empty)
+  // meanwhile, so an autorepeat Backspace matches the Backspace-on-empty rule
+  // and an Enter the create rule, both on the block being merged away.
+  // handleDeleteBlock/handleEnterSave honor this flag, so an Enter pressed
+  // while a merge settles is dropped (#6559).
   const mergeInProgress = useRef(false)
 
   // #4552 slice 3 — the style `continueListStyle` just wrote to a freshly
@@ -526,12 +536,12 @@ export function useBlockActionOrchestration({
       const prevBlock =
         idx > 0 ? (collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]) : null
       // #4958 — a blank block WITH children reads as empty to the roving editor,
-      // and the backend delete cascades, so reparent the children first exactly
-      // as the merge handlers do (#1342). Planned from the FULL tree: the
-      // collapsed projection hides a collapsed block's children.
+      // and the backend delete cascades, so reparent the children first.
+      // Planned from the FULL tree: the collapsed projection hides a collapsed
+      // block's children.
       if (!prevBlock && blocks.some((b) => (b.parent_id ?? null) === focusedBlockId)) {
         // Nothing above to adopt them: the delete does not proceed, mirroring
-        // the merge handlers' `idx <= 0` bail. Say so — a Backspace that
+        // a merge's `idx <= 0` bail. Say so — a Backspace that
         // silently does nothing reads as a broken key.
         notify.error(t('blockTree.cannotDeleteParentAtTop'))
         announce(t('blockTree.cannotDeleteParentAtTop'))
@@ -802,131 +812,6 @@ export function useBlockActionOrchestration({
     t,
   ])
 
-  /**
-   * Shared merge orchestration: edit `prevBlockId` with the merged content,
-   * remove `removeBlockId`, and revert the edit on remove failure. The
-   * caller supplies the per-handler log messages, log metadata blockIds,
-   * and editor-remount cleanup callbacks so the two handlers preserve
-   * their original log lines (`(edit step)` vs. `by ID (edit step)` etc.)
-   * while sharing the revert + toast error path.
-   *
-   * Returns `true` on success, `false` if edit or remove failed (in which
-   * case cleanup ran and the merge toast was shown).
-   */
-  const mergeBlocksAndHandle = useCallback(
-    async (params: {
-      prevBlockId: string
-      removeBlockId: string
-      prevContent: string
-      mergedContent: string
-      editLogMessage: string
-      editLogBlockId: string
-      removeLogMessage: string
-      removeLogBlockId: string
-      onEditFailureCleanup: () => void
-      onRemoveFailureCleanup: () => void
-      /**
-       * #1342 — reparent the merged-away block's children onto the merge
-       * target. Runs AFTER the content edit commits but BEFORE the source
-       * block is removed, so the children are no longer descendants of the
-       * removed block when the backend's `delete_block` cascade fires (it
-       * would otherwise soft-delete the whole subtree). A no-op when the
-       * source has no children. Failures are treated like a remove failure
-       * (the edit is reverted) so the merge does not commit a half-state.
-       */
-      reparentChildren?: () => Promise<void>
-    }): Promise<boolean> => {
-      // Best-effort revert of the merge edit after a reparent/remove failure.
-      // The store's edit resolves `false` on failure (it never rejects and
-      // toasts its own save error), so honor both failure signals here.
-      const revertEdit = async (): Promise<void> => {
-        let reverted = false
-        try {
-          reverted = await edit(params.prevBlockId, params.prevContent)
-        } catch (revertErr) {
-          logger.warn(
-            'useBlockActionOrchestration',
-            'Failed to revert edit after merge failure',
-            {
-              blockId: params.prevBlockId,
-            },
-            revertErr,
-          )
-          return
-        }
-        if (!reverted) {
-          logger.warn('useBlockActionOrchestration', 'Failed to revert edit after merge failure', {
-            blockId: params.prevBlockId,
-          })
-        }
-      }
-      try {
-        // Store contract (#730 family): pageStore.edit RESOLVES `false` on
-        // failure (it rolls its optimistic write back and toasts internally)
-        // — it NEVER rejects. The boolean is the production failure signal;
-        // ignoring it let a failed merge-edit fall through to remove() and
-        // permanently delete the source block whose merged content was never
-        // saved. Route a false resolution into the shared failure path.
-        if (!(await edit(params.prevBlockId, params.mergedContent))) {
-          throw new Error('edit resolved false (store rolled the merge edit back)')
-        }
-      } catch (err) {
-        logger.error(
-          'useBlockActionOrchestration',
-          params.editLogMessage,
-          {
-            blockId: params.editLogBlockId,
-          },
-          err,
-        )
-        params.onEditFailureCleanup()
-        notify.error(t('blockTree.mergeBlocksFailed'))
-        return false
-      }
-      // #1342 — reparent the source block's children onto the merge target
-      // BEFORE removing the source, so the backend's delete cascade does not
-      // soft-delete the subtree. Treated as a remove-step failure on error:
-      // the edit is reverted and the merge does not commit a partial state.
-      if (params.reparentChildren) {
-        try {
-          await params.reparentChildren()
-        } catch (err) {
-          logger.error(
-            'useBlockActionOrchestration',
-            params.removeLogMessage,
-            {
-              blockId: params.removeLogBlockId,
-            },
-            err,
-          )
-          await revertEdit()
-          params.onRemoveFailureCleanup()
-          notify.error(t('blockTree.mergeBlocksFailed'))
-          return false
-        }
-      }
-      try {
-        await remove(params.removeBlockId)
-      } catch (err) {
-        logger.error(
-          'useBlockActionOrchestration',
-          params.removeLogMessage,
-          {
-            blockId: params.removeLogBlockId,
-          },
-          err,
-        )
-        // Revert the edit to avoid partial state (merged content in prev + original in current)
-        await revertEdit()
-        params.onRemoveFailureCleanup()
-        notify.error(t('blockTree.mergeBlocksFailed'))
-        return false
-      }
-      return true
-    },
-    [edit, remove, t],
-  )
-
   const handleMergeWithPrev = useCallback(async () => {
     if (!focusedBlockId) return
     // Re-entrancy guard (see `mergeInProgress`): a second merge would race
@@ -967,35 +852,10 @@ export function useBlockActionOrchestration({
       const mergedContent = joinMergedContent(prevContent, currentContent)
       const joinPoint = pmEndOfFirstBlock(prevDoc)
 
-      // #1342 — if the merged-away block has children, reparent them onto the
-      // merge target before it is removed (otherwise the backend cascade soft-
-      // deletes the whole subtree). Plan from the FULL flat tree, not the
-      // collapsed/visible projection.
-      const reparent = planChildReparent(blocks, focusedBlockId, prevBlock.id)
-
-      // The merge failed: the user gets the block they merged away back with
-      // its text, unless they have moved on. What they typed at the join has
-      // nowhere to go.
-      const backToSource = () => {
-        if (useBlockStore.getState().focusedBlockId !== prevBlock.id) return
-        rovingEditorRef.current.unmount()
-        rovingEditorRef.current.mount(focusedBlockId, currentContent)
-        setFocused(focusedBlockId)
-      }
-      const merged = mergeBlocksAndHandle({
-        prevBlockId: prevBlock.id,
-        removeBlockId: focusedBlockId,
-        prevContent,
-        mergedContent,
-        editLogMessage: 'Failed to merge blocks (edit step)',
-        editLogBlockId: prevBlock.id,
-        removeLogMessage: 'Failed to merge blocks (remove step)',
-        removeLogBlockId: focusedBlockId,
-        onEditFailureCleanup: backToSource,
-        onRemoveFailureCleanup: backToSource,
-        ...(reparent && {
-          reparentChildren: () => moveBlocks(reparent.childIds, prevBlock.id, reparent.newIndex),
-        }),
+      // One `merge_blocks`: the text, the block's children and its delete land
+      // together or not at all. The store shows the merge at once.
+      const merged = mergeInto(focusedBlockId, prevBlock.id, mergedContent, {
+        baseText: prevContent,
       })
 
       // #6559 — the caret goes to the join now, not once the writes land, so
@@ -1008,16 +868,21 @@ export function useBlockActionOrchestration({
         // As Enter's `focusCreated`: the commit dropped the editor's focus.
         editor.view.focus()
       }
-      await merged
+      if (await merged) return
+      // The store put both blocks back and toasted: the user gets the block
+      // they merged away back with its text, unless they have moved on. What
+      // they typed at the join has nowhere to go.
+      if (useBlockStore.getState().focusedBlockId !== prevBlock.id) return
+      rovingEditorRef.current.unmount()
+      rovingEditorRef.current.mount(focusedBlockId, currentContent)
+      setFocused(focusedBlockId)
     } finally {
       mergeInProgress.current = false
     }
   }, [
     focusedBlockId,
     collapsedVisible,
-    blocks,
-    moveBlocks,
-    mergeBlocksAndHandle,
+    mergeInto,
     setFocused,
     handleFlush,
     focusedListStyle,
@@ -1048,32 +913,13 @@ export function useBlockActionOrchestration({
         // joined-in text stays inline instead of forming a new construct.
         const mergedContent = joinMergedContent(prevContent, currentContent)
 
-        const remountIfNeeded = () => {
-          if (editorContent !== null) {
-            rovingEditorRef.current.mount(blockId, currentContent)
-          }
-        }
-
-        // #1342 — reparent the merged-away block's children onto the merge
-        // target before removal (see handleMergeWithPrev).
-        const reparent = planChildReparent(blocks, blockId, prevBlock.id)
-
-        const ok = await mergeBlocksAndHandle({
-          prevBlockId: prevBlock.id,
-          removeBlockId: blockId,
-          prevContent,
-          mergedContent,
-          editLogMessage: 'Failed to merge blocks by ID (edit step)',
-          editLogBlockId: blockId,
-          removeLogMessage: 'Failed to merge blocks by ID (remove step)',
-          removeLogBlockId: blockId,
-          onEditFailureCleanup: remountIfNeeded,
-          onRemoveFailureCleanup: remountIfNeeded,
-          ...(reparent && {
-            reparentChildren: () => moveBlocks(reparent.childIds, prevBlock.id, reparent.newIndex),
-          }),
+        const merged = await mergeInto(blockId, prevBlock.id, mergedContent, {
+          baseText: prevContent,
         })
-        if (!ok) return
+        if (!merged) {
+          if (editorContent !== null) rovingEditorRef.current.mount(blockId, currentContent)
+          return
+        }
 
         setFocused(prevBlock.id)
         rovingEditorRef.current.mount(prevBlock.id, mergedContent)
@@ -1081,7 +927,7 @@ export function useBlockActionOrchestration({
         mergeInProgress.current = false
       }
     },
-    [collapsedVisible, blocks, moveBlocks, mergeBlocksAndHandle, setFocused],
+    [collapsedVisible, mergeInto, setFocused],
   )
 
   const handleEnterSave = useCallback(async () => {
@@ -1149,47 +995,24 @@ export function useBlockActionOrchestration({
       // path: flush the whole block and create an EMPTY block below.
       const split = rovingEditorRef.current.splitAtCaret?.() ?? null
       if (split && split.after !== '') {
+        // What the block held when the editor took it, for the backend's rebase.
+        const baseText = rovingEditorRef.current.storedMarkdown
         rovingEditorRef.current.unmount()
         // #4729 — Enter at the START of a line leaves the source block empty
         // (`before` is ''), and that blank line is the point of the keystroke.
         // Exempt it from the focus-leave empty-block cleanup before focus
-        // leaves it. Withdrawn on the failure paths, which restore the full
-        // unsplit content.
+        // leaves it. Withdrawn on failure, which restores the unsplit content.
         const leavesSourceEmpty = split.before.trim() === ''
         if (leavesSourceEmpty) preserveEmptyBlockIds?.current.add(focusedBlockId)
-        // #5272 — create the after-text sibling BEFORE shortening the source.
-        // A `[[link]]` whose target lives in another space is accepted only
-        // while a live block of this page still holds it; saving `before`
-        // first removed the only holder of a link sitting after the caret,
-        // and the create was refused.
-        const created = createBelow(focusedBlockId, split.after, createdId)
+        // One `split_block`: the new block and the shortened source land
+        // together or not at all.
+        const splitDone = splitOff(focusedBlockId, split.before, split.after, createdId, {
+          baseText,
+        })
         focusCreated()
         readSplitOffAsTyped(rovingEditorRef.current, createdId, split)
-        if (!(await created)) {
-          // createBelow logged + toasted and nothing was written.
-          if (leavesSourceEmpty) preserveEmptyBlockIds?.current.delete(focusedBlockId)
-          restoreSource()
-          return
-        }
-        // #730 family — edit() RESOLVES false on failure (the store rolled the
-        // optimistic write back and toasted); it never rejects. The source
-        // then still holds the after-text, so delete the sibling just created
-        // instead of leaving that text duplicated below the restored source.
-        if (!(await edit(focusedBlockId, split.before))) {
-          try {
-            await remove(createdId)
-          } catch (err) {
-            // BlockTree's `remove` throws when the block is still in the store
-            // after a failed delete (the store toasted). The after-text is then
-            // held by both blocks, converged with the backend; the user still
-            // needs their editor back.
-            logger.warn(
-              'useBlockActionOrchestration',
-              'Split rollback left the after-text sibling behind',
-              { blockId: focusedBlockId, newBlockId: createdId },
-              err,
-            )
-          }
+        if (!(await splitDone)) {
+          // The store toasted and put the block back whole.
           if (leavesSourceEmpty) preserveEmptyBlockIds?.current.delete(focusedBlockId)
           restoreSource()
           return
@@ -1201,14 +1024,14 @@ export function useBlockActionOrchestration({
         // DEPARTED (split-source) block. Left alone, a debounced
         // `block_drafts` row from before Enter was pressed survives and a
         // later boot-time `flush_all_drafts` would replay it as a stray
-        // `edit_block` op. `split.before` was just committed via `edit()`
-        // above — exactly the same "content already committed, row is now
-        // stale" situation `persistUnmount`'s `deletePrevDraft` cleans up
-        // on its own success path — so mirror that with a plain
-        // `discardDraft` (delete only). Deliberately NOT `flushDraft`: the
-        // stale row may hold the FULL pre-split text, and flushing it would
-        // append a SECOND `edit_block` op that clobbers the split we just
-        // committed with the old, un-split content.
+        // `edit_block` op. `split.before` was just committed by the split —
+        // exactly the same "content already committed, row is now stale"
+        // situation `persistUnmount`'s `deletePrevDraft` cleans up on its own
+        // success path — so mirror that with a plain `discardDraft` (delete
+        // only). Deliberately NOT `flushDraft`: the stale row may hold the
+        // FULL pre-split text, and flushing it would append a SECOND
+        // `edit_block` op that clobbers the split we just committed with the
+        // old, un-split content.
         discardDraft(focusedBlockId)
         announce(t('announce.blockCreated'))
         await continueListStyle(createdId, listStyle)
@@ -1255,8 +1078,7 @@ export function useBlockActionOrchestration({
     focusedBlockId,
     handleFlush,
     createBelow,
-    edit,
-    remove,
+    splitOff,
     setFocused,
     preserveEmptyBlockIds,
     discardDraft,

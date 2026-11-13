@@ -478,6 +478,26 @@ const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
       }),
     ),
   create_blocks_batch: () => withOps({ blocks: [] }),
+  split_block: (args) => {
+    const request = args['request'] as Record<string, string>
+    return withOps({
+      block: makeBlockRow({ id: String(request['blockId']), content: String(request['before']) }),
+      created: makeBlockRow({
+        id: String(request['newBlockId']),
+        content: String(request['after']),
+      }),
+    })
+  },
+  merge_blocks: (args) => {
+    const request = args['request'] as Record<string, string>
+    return withOps({
+      block: makeBlockRow({
+        id: String(request['intoId']),
+        content: String(request['mergedText']),
+      }),
+      moves: [],
+    })
+  },
   edit_block: echoEditBlock,
   delete_block: (args) => deleteResp(argBlockId(args)),
   delete_blocks_by_ids: (args) => ({
@@ -3761,6 +3781,25 @@ describe('BlockTree handleMergeWithPrev', () => {
     stubBlockTree()
   })
 
+  /** Press Backspace-at-start on the focused block and wait for the merge to settle. */
+  async function mergeWithPrev(): Promise<void> {
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.['onMergeWithPrev']).toBeDefined()
+    })
+    await act(async () => {
+      await (
+        capturedBlockKeyboardOpts as { onMergeWithPrev: () => Promise<void> }
+      ).onMergeWithPrev()
+    })
+  }
+
+  /** The old multi-command merge, which #6531 replaced with one `merge_blocks`. */
+  function expectNoPiecewiseMerge(): void {
+    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('move_blocks_batch', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
+  }
+
   it('merge concatenates previous block content with current and removes current', async () => {
     const tree = [
       makeBlock({ id: 'A', content: 'Hello ' }),
@@ -3772,42 +3811,24 @@ describe('BlockTree handleMergeWithPrev', () => {
     stubBlockTree()
 
     renderBlockTree()
+    await mergeWithPrev()
 
-    await waitFor(() => {
-      const handler = capturedBlockKeyboardOpts?.['onMergeWithPrev']
-      expect(handler).toBeDefined()
+    // One `merge_blocks` joins the text into A and deletes B …
+    expect(mockedInvoke).toHaveBeenCalledWith('merge_blocks', {
+      request: { blockId: 'B', intoId: 'A', mergedText: 'Hello World', baseText: 'Hello ' },
     })
-
-    act(() => {
-      ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
-    })
-
-    // Should edit previous block with concatenated content
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-        blockId: 'A',
-        toText: 'Hello World',
-        baseText: null,
-      })
-    })
-
-    // Should delete current block
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'B' })
-    })
-
+    expectNoPiecewiseMerge()
+    // … and the store keeps the merge once the backend has answered.
+    expect(pageStore.getState().blocksById.get('A')?.content).toBe('Hello World')
+    expect(pageStore.getState().blocksById.has('B')).toBe(false)
     // Focus should move to previous block
-    await waitFor(() => {
-      expect(useBlockStore.getState().focusedBlockId).toBe('A')
-    })
+    expect(useBlockStore.getState().focusedBlockId).toBe('A')
   })
 
-  // #1342 — merging away a block that HAS CHILDREN must reparent the children
-  // onto the merge target (via move_block) BEFORE the source is delete_block'd,
-  // so the backend delete cascade can't soft-delete the whole subtree. These
-  // exercise the REAL page store (move_block + reconciling load + the verifying
-  // wrapper), not the hook in isolation.
-  it('reparents the merged-away block’s children onto the target before delete (#1342)', async () => {
+  // #1342 — merging away a block that HAS CHILDREN keeps the children: the
+  // backend moves them onto the merge target inside `merge_blocks` (#6531), so
+  // its delete cannot cascade onto them. These exercise the REAL page store.
+  it('moves the merged-away block’s children onto the target with the merge (#1342)', async () => {
     const tree = [
       makeBlock({ id: 'A', content: 'Alpha', parent_id: 'PAGE_1', position: 0 }),
       makeBlock({ id: 'B', content: 'Beta', parent_id: 'PAGE_1', position: 1 }),
@@ -3816,13 +3837,13 @@ describe('BlockTree handleMergeWithPrev', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    // The MOUNT load reflects the pre-merge tree (B1 still under B) so the merge
-    // handler plans a reparent of B1. #2274 — one batched IPC, and its
-    // authoritative response lets the store reconcile surgically, so there is
-    // no post-move reload for this stub to answer differently.
+    // The MOUNT load reflects the pre-merge tree (B1 still under B).
     stubBlockTree({
-      move_blocks_batch: () =>
-        withOps({ moves: [{ block_id: 'B1', new_parent_id: 'A', new_position: 1 }] }),
+      merge_blocks: () =>
+        withOps({
+          block: makeBlockRow({ id: 'A', content: 'AlphaBeta', parent_id: 'PAGE_1', position: 0 }),
+          moves: [{ block_id: 'B1', new_parent_id: 'A', new_position: 0 }],
+        }),
       load_page_subtree: () => ({
         blocks: [
           { ...makeBlock(tree[0]), parent_id: 'PAGE_1', position: 0 },
@@ -3835,35 +3856,19 @@ describe('BlockTree handleMergeWithPrev', () => {
     })
 
     renderBlockTree()
-    await waitFor(() => {
-      expect(capturedBlockKeyboardOpts?.['onMergeWithPrev']).toBeDefined()
-    })
+    await mergeWithPrev()
 
-    await act(async () => {
-      ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
+    expect(mockedInvoke).toHaveBeenCalledWith('merge_blocks', {
+      request: { blockId: 'B', intoId: 'A', mergedText: 'AlphaBeta', baseText: 'Alpha' },
     })
-
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-        blockId: 'A',
-        toText: 'AlphaBeta',
-        baseText: null,
-      })
-    })
-    // B1 moved under A (slot 0 — A had no children) BEFORE B was deleted.
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('move_blocks_batch', {
-        blockIds: ['B1'],
-        newParentId: 'A',
-        newIndex: 0,
-      })
-    })
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'B' })
-    })
+    expectNoPiecewiseMerge()
+    const after = pageStore.getState().blocksById
+    expect(after.get('A')?.content).toBe('AlphaBeta')
+    expect(after.has('B')).toBe(false)
+    expect(after.get('B1')?.parent_id).toBe('A')
   })
 
-  it('aborts the merge (no delete, edit reverted) when reparenting a child fails (#1342)', async () => {
+  it('keeps the source block and its children when merge_blocks is refused (#1342)', async () => {
     const tree = [
       makeBlock({ id: 'A', content: 'Alpha', parent_id: 'PAGE_1', position: 0 }),
       makeBlock({ id: 'B', content: 'Beta', parent_id: 'PAGE_1', position: 1 }),
@@ -3872,14 +3877,8 @@ describe('BlockTree handleMergeWithPrev', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    // The move_blocks_batch IPC fails. `moveBlocks` swallows the error and
-    // restores the pre-move snapshot (the whole batch rolled back backend-
-    // side), leaving B1 STILL under B. The verifying wrapper must detect the
-    // child did not land under A and throw, so the merge aborts: the edit is
-    // reverted and the source block is NEVER delete_block'd (the subtree
-    // stays intact).
     stubBlockTree({
-      move_blocks_batch: () => Promise.reject(new Error('test: move_blocks_batch rejected')),
+      merge_blocks: () => Promise.reject(new Error('test: merge_blocks rejected')),
       load_page_subtree: () => ({
         blocks: [
           { ...makeBlock(tree[0]), parent_id: 'PAGE_1', position: 0 },
@@ -3892,74 +3891,40 @@ describe('BlockTree handleMergeWithPrev', () => {
     })
 
     renderBlockTree()
-    await waitFor(() => {
-      expect(capturedBlockKeyboardOpts?.['onMergeWithPrev']).toBeDefined()
-    })
+    await mergeWithPrev()
 
-    await act(async () => {
-      ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
-    })
-
-    // The edit committed then reverted (A back to 'Alpha').
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-        blockId: 'A',
-        toText: 'AlphaBeta',
-        baseText: null,
-      })
-    })
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-        blockId: 'A',
-        toText: 'Alpha',
-        baseText: null,
-      })
-    })
-    // CRITICAL: the source is NOT deleted — the child subtree is not lost.
-    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
+    // CRITICAL: nothing else was sent — the child subtree is not lost — and
+    // the store is back to the pre-merge tree.
+    expectNoPiecewiseMerge()
+    const after = pageStore.getState().blocksById
+    expect(after.get('A')?.content).toBe('Alpha')
+    expect(after.get('B')?.content).toBe('Beta')
+    expect(after.get('B1')?.parent_id).toBe('B')
   })
 
-  it('reverts the merge edit and keeps the source block when the delete IPC fails (store remove never rejects)', async () => {
+  it('gives the source block back, with one toast, when merge_blocks is refused', async () => {
+    const { toast } = await import('sonner')
     const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', content: 'Beta' })]
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    // pageStore.remove CATCHES a failed delete_block internally (logs +
-    // toasts) and resolves void — it never rejects. Without the verifying
-    // wrapper the merge would report success, leaving 'Beta' duplicated in
-    // both blocks with no revert.
-    stubBlockTree({ delete_block: () => Promise.reject(new Error('test: delete_block rejected')) })
+    stubBlockTree({ merge_blocks: () => Promise.reject(new Error('test: merge_blocks rejected')) })
 
     renderBlockTree()
-    await waitFor(() => {
-      expect(capturedBlockKeyboardOpts?.['onMergeWithPrev']).toBeDefined()
-    })
+    await mergeWithPrev()
 
-    await act(async () => {
-      ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
-    })
-
-    // The merge edit committed…
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-        blockId: 'A',
-        toText: 'AlphaBeta',
-        baseText: null,
-      })
-    })
-    // …then the failed remove was detected (block still in the store) and the
-    // hook's revert-edit path fired.
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-        blockId: 'A',
-        toText: 'Alpha',
-        baseText: null,
-      })
-    })
-    // The source block was never dropped from the store.
-    expect(pageStore.getState().blocksById.has('B')).toBe(true)
-    // No merge success: focus stays where it was.
+    // Both blocks are back as they were, and nothing was written to undo it.
+    expect(pageStore.getState().blocksById.get('A')?.content).toBe('Alpha')
+    expect(pageStore.getState().blocksById.get('B')?.content).toBe('Beta')
+    expectNoPiecewiseMerge()
+    // No merge success: focus is back on the block the user merged away.
     expect(useBlockStore.getState().focusedBlockId).toBe('B')
+    // The store toasts; the hook does not add a second one. (The suppressed
+    // mount-time load toasts too, under its own message.)
+    const mergeToasts = vi
+      .mocked(toast.error)
+      .mock.calls.filter(([message]) => message === 'Failed to merge blocks')
+    expect(mergeToasts).toHaveLength(1)
   })
 
   it('merge on first block is a no-op', async () => {
@@ -3983,7 +3948,7 @@ describe('BlockTree handleMergeWithPrev', () => {
       ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
     })
 
-    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('merge_blocks', expect.anything())
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
   })
 })
@@ -5789,16 +5754,27 @@ describe('BlockTree leaked-empty-block cleanup', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'STRANDED' })
   })
 
+  /** The `split_block` request a caret split at line start sends for SRC. */
+  const lineStartSplit = {
+    request: {
+      blockId: 'SRC',
+      before: '',
+      after: 'the whole line',
+      newBlockId: expect.any(String),
+      baseText: null,
+    },
+  }
+
+  /** The block the split created, as the store holds it. */
+  function splitOffBlock() {
+    return pageStore.getState().blocks.find((b) => b.id !== 'SRC' && b.id !== 'OTHER')
+  }
+
   it('keeps the source block Enter split at the START of a line', async () => {
     // Enter at position 0 keeps `before = ''` in the source block and moves the
     // whole line into a new sibling below, with focus following the text. That
     // empty source is the user's blank line; deleting it would make the
     // keystroke a visible no-op.
-    mockBareBackend({
-      create_block: () =>
-        withOps(makeBlockRow({ id: 'SERVER_IGNORED', content: 'the whole line' })),
-      edit_block: echoEditBlock,
-    })
     pageStore.setState({
       blocks: [makeBlock({ id: 'SRC', content: 'the whole line', position: 0 })],
       loading: false,
@@ -5818,13 +5794,9 @@ describe('BlockTree leaked-empty-block cleanup', () => {
       await (capturedBlockKeyboardOpts as { onEnterSave: () => Promise<void> }).onEnterSave()
     })
 
-    // The text moved into a new sibling below …
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'create_block',
-        expect.objectContaining({ content: 'the whole line' }),
-      )
-    })
+    // The text moved into a new sibling below, by one `split_block` …
+    expect(mockedInvoke).toHaveBeenCalledWith('split_block', lineStartSplit)
+    expect(splitOffBlock()?.content).toBe('the whole line')
     // … and the source block, now empty, SURVIVES the focus-leave cleanup
     // that `setFocused(newBlockId)` just triggered: it is the blank line the
     // keystroke was for.
@@ -5835,18 +5807,20 @@ describe('BlockTree leaked-empty-block cleanup', () => {
   })
 
   it('keeps the source block when focus leaves it DURING the split round trip', async () => {
-    // Enter at line start creates the after-text sibling (#5272), then empties
-    // the source optimistically and awaits `edit_block`. A click elsewhere
-    // during that round trip moves focus off the already-empty source — so the
-    // exemption must already be registered, or the cleanup deletes the source
-    // and the blank line the keystroke was for is gone.
-    const editGate = deferred<CommandReturns['edit_block']>()
-    const releaseEdit = () => editGate.resolve(withOps(makeBlockRow({ id: 'SRC', content: '' })))
-    mockBareBackend({
-      edit_block: () => editGate.promise,
-      create_block: () =>
-        withOps(makeBlockRow({ id: 'SERVER_IGNORED', content: 'the whole line' })),
-    })
+    // Enter at line start shows the split (source emptied, after-text sibling
+    // below) at once and awaits `split_block`. A click elsewhere during that
+    // round trip moves focus off the already-empty source — so the exemption
+    // must already be registered, or the cleanup deletes the source and the
+    // blank line the keystroke was for is gone.
+    const splitGate = deferred<CommandReturns['split_block']>()
+    const releaseSplit = () =>
+      splitGate.resolve(
+        withOps({
+          block: makeBlockRow({ id: 'SRC', content: '' }),
+          created: makeBlockRow({ id: splitOffBlock()?.id ?? '', content: 'the whole line' }),
+        }),
+      )
+    mockBareBackend({ split_block: () => splitGate.promise })
     pageStore.setState({
       blocks: [
         makeBlock({ id: 'SRC', content: 'the whole line', position: 0 }),
@@ -5869,24 +5843,22 @@ describe('BlockTree leaked-empty-block cleanup', () => {
     await act(async () => {
       enter = (capturedBlockKeyboardOpts as { onEnterSave: () => Promise<void> }).onEnterSave()
     })
-    // The source is already empty in the store and `edit_block` is still in
+    // The source is already empty in the store and `split_block` is still in
     // flight when the user clicks another block.
     expect(pageStore.getState().blocksById.get('SRC')?.content).toBe('')
     await act(async () => {
       useBlockStore.setState({ focusedBlockId: 'OTHER' })
     })
     await act(async () => {
-      releaseEdit()
+      releaseSplit()
       await enter
     })
     await act(async () => {})
 
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'SRC' })
     expect(pageStore.getState().blocksById.get('SRC')?.content).toBe('')
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'create_block',
-      expect.objectContaining({ content: 'the whole line' }),
-    )
+    expect(mockedInvoke).toHaveBeenCalledWith('split_block', lineStartSplit)
+    expect(splitOffBlock()?.content).toBe('the whole line')
   })
 
   // ── Dialogs that empty the block and then write back into it (#4729) ──
