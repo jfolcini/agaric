@@ -112,9 +112,7 @@ export function skippedMatches(
   ranges: ReadonlyArray<{ start: number; end: number }>,
   resolveTitle: (id: string) => string,
 ): number {
-  if (!hasFindText(content) || ranges.length === 0) return 0
-  return selectRanges(findTextPieces(parse(content) as MarkdownNode, resolveTitle).pieces, ranges)
-    .skipped
+  return replaceableRanges(content, ranges, resolveTitle).skipped
 }
 
 /** The `ranges` (over `content`'s find text) a replace rewrites, and how many it leaves as they are. */

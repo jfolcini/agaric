@@ -106,6 +106,36 @@ async fn edit_blocks_batch_leaves_a_block_changed_since_alone() {
     assert_eq!(content(&pool, &c).await, "three pin");
 }
 
+/// A block in no space is in no engine doc, so its row is what is compared.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_blocks_batch_checks_the_row_of_a_block_no_doc_holds() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let mut loose = Vec::new();
+    for text in ["one needle", "two needle, and more"] {
+        let row = create_block_inner(&pool, DEV, &mat, "content".into(), text.into(), None, None)
+            .await
+            .unwrap();
+        loose.push(row.id);
+    }
+
+    let resp = edit_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![
+            edit(&loose[0], "one needle", "one pin"),
+            edit(&loose[1], "two needle", "two pin"),
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp.skipped, vec![loose[1].clone()]);
+    assert_eq!(content(&pool, &loose[0]).await, "one pin");
+    assert_eq!(content(&pool, &loose[1]).await, "two needle, and more");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn edit_blocks_batch_leaves_a_deleted_block_alone() {
     let (pool, _dir) = test_pool().await;
@@ -143,7 +173,10 @@ async fn edit_blocks_batch_refuses_an_empty_or_oversize_list() {
     let before = op_count(&pool).await;
 
     let empty = edit_blocks_batch_inner(&pool, DEV, &mat, vec![]).await;
-    assert!(matches!(empty, Err(AppError::Validation { .. })), "{empty:?}");
+    assert!(
+        matches!(empty, Err(AppError::Validation { .. })),
+        "{empty:?}"
+    );
 
     let over = vec![edit(&a, "one needle", "one pin"); pagination::MAX_BATCH_BLOCK_IDS + 1];
     let err = edit_blocks_batch_inner(&pool, DEV, &mat, over)
@@ -181,15 +214,20 @@ async fn edit_blocks_batch_rolls_back_every_block_when_one_edit_is_refused() {
     )
     .await;
 
-    assert!(matches!(result, Err(AppError::Validation { .. })), "{result:?}");
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "{result:?}"
+    );
     assert_eq!(content(&pool, &a).await, "one needle");
     assert_eq!(content(&pool, &b).await, "two needle");
     assert_eq!(content(&pool, &c).await, "three needle");
     assert_eq!(op_count(&pool).await, before);
 
-    // The engine rolled back with the rows: the same edit now applies cleanly.
-    edit_block_inner(&pool, DEV, &mat, a.clone(), "one pin".into())
+    // The engine rolled back with the rows: it still holds the text the first
+    // edit expects, so the same edit is written, not left alone.
+    let again = edit_blocks_batch_inner(&pool, DEV, &mat, vec![edit(&a, "one needle", "one pin")])
         .await
         .unwrap();
+    assert_eq!(again.skipped, Vec::<BlockId>::new());
     assert_eq!(content(&pool, &a).await, "one pin");
 }

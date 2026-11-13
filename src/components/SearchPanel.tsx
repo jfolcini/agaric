@@ -842,7 +842,7 @@ export function SearchPanel(): React.ReactElement {
         regexError={regexError}
       />
 
-      {aliasMatch && !replaceMode.active && (
+      {aliasMatch && (
         // Expose the alias-match card as a labelled region so it is
         // announced distinctly from the results listbox (it sits outside the
         // roving-listbox model by design).
@@ -886,8 +886,7 @@ export function SearchPanel(): React.ReactElement {
       />
 
       <LoadMoreButton
-        // The replace preview fetches every page itself.
-        hasMore={hasMore && !replaceMode.active}
+        hasMore={hasMore}
         loading={searchLoading}
         onLoadMore={loadMore}
         className="search-load-more"

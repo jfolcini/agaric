@@ -278,7 +278,7 @@ The result list becomes the preview: only the blocks a replace would change, eac
 
 The same code as the in-page [Replace](#replace) computes each block's new text, so the two change the same things: a match in a link, tag or block reference is found and left as it is, and counted in the row. A page title or a tag name holding the text is counted and left too; rename the page or tag for that.
 
-The run is one write (`edit_blocks_batch`, one transaction): every ticked block or none. Each block is sent with the content the search returned, and a block edited or deleted since, on this device or through sync, is left alone and counted in the toast. Typing still pending in an open editor is saved first, so its block counts as edited since. The toast's **Undo** takes the whole run back on every page; after the toast is gone, `Ctrl+Z` on a page opened later undoes that page's part, and History lists the run's edits.
+The run is one write (`edit_blocks_batch`, one transaction): every ticked block or none. Each block is sent with the content the search returned, and a block edited or deleted since, on this device or through sync, is left alone and counted in the toast. The toast's **Undo** takes the whole run back on every page; after the toast is gone, `Ctrl+Z` on a page opened later undoes that page's part, and History lists the run's edits.
 
 ## Regex syntax
 

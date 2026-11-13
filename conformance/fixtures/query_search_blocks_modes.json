@@ -216,6 +216,14 @@
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_fts_quoted_phrases",
+      "rows": ["B6", "B2", "B3"],
+      "total_count": null
+    },
+    {
       "cursor": "v1:{id,rank}",
       "error": null,
       "has_more": true,
@@ -414,6 +422,21 @@
       "command": "search_blocks",
       "comment": "#3938 — arm 4's FALSIFIER. `fts_blocks.stripped` is `strip_for_fts_with_maps`'s output, so S7's `Sprocket **gad**get inventory` is indexed as `Sprocket gadget inventory` and the term `gadget` exists ONLY there — it is absent from the raw `blocks.content` column. That is the one input on which the `!toggles.any()` fast path and its post-filter fallthrough disagree: `compose_literal_pattern` composes `(?i)gadget` and `post_filter_row` runs it against RAW content, which does not match. Delete the fast path (on either stack) and this step returns []. Before #3938 the mock folded over raw content, so it could not express the difference and the arm was declared covered-but-not-falsifiable.",
       "name": "search_fts_stripped_markup"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "\"widget \" \" notes\""
+      },
+      "command": "search_blocks",
+      "comment": "#6608 — a query of quoted phrases, as replace across pages sends its find text: each phrase is a substring test and the phrases are AND-joined, wherever each sits. S2, S3 and S6 hold both `widget ` and ` notes`; S4 holds `widget ` and ` note about`, so it is out. A mock that looks for the whole query, quotes included, answers [].",
+      "name": "search_fts_quoted_phrases"
     },
     {
       "args": {

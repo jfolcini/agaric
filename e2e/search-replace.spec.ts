@@ -12,6 +12,7 @@ import {
   activeAlertDialog,
   expect,
   ipc,
+  navigateToView,
   openPage,
   openSearchView,
   submitSearch,
@@ -103,7 +104,7 @@ test.describe('Replace across pages from Search @search @pages @editor', () => {
     await expect(page.getByText('second needle', { exact: true })).toBeVisible()
 
     // A second run, taken back by its toast.
-    await openSearchView(page)
+    await navigateToView(page, 'Search')
     expect(await stored(page, alpha)).toEqual(['first zorbex', 'second needle'])
     await previewReplace(page, 'zorbex', 'quivex')
     await expect(rows).toHaveCount(2)

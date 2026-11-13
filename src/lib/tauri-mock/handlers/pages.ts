@@ -2006,10 +2006,6 @@ export const pagesHandlers = {
       toText: string
     }>
     if (edits.length === 0) throw validationRejection('edits list cannot be empty')
-    // `MAX_BATCH_BLOCK_IDS`.
-    if (edits.length > 1000) {
-      throw validationRejection(`edits length ${edits.length} exceeds maximum 1000`)
-    }
     const skipped: string[] = []
     const opRefs: Array<{ device_id: string; seq: number }> = []
     for (const { blockId, expected, toText } of edits) {

@@ -369,6 +369,12 @@ export function matchesFtsIndex(stripped: string, query: string): boolean {
   return foldForFtsIndex(stripped).includes(foldForFtsIndex(query))
 }
 
+/** The phrases of a query that is nothing but `"…"` phrases, else `null`. */
+function quotedPhrases(query: string): string[] | null {
+  if (!/^\s*(?:"[^"]*"\s*)+$/.test(query)) return null
+  return Array.from(query.matchAll(/"([^"]*)"/g), (m) => m[1] ?? '')
+}
+
 // ---------------------------------------------------------------------------
 // #3837 — `run_advanced_query` sort + full-text narrowing.
 //
@@ -2532,14 +2538,18 @@ export const searchHandlers = {
     // ONCE here and carried alongside `b` (#4065 item 4) — arm 4 and arm 5
     // below both rank off it via {@link searchFtsRankedPage}, which used to
     // recompute it a second time per hit.
+    //
+    // #6608 — a query of quoted phrases (`tokenize_query`) matches the blocks
+    // holding every phrase, which is what replace across pages sends.
+    const phrases = quotedPhrases(query) ?? [query]
     const ftsCandidates = candidates
       .map((b) => ({ b, stripped: stripForFts(b['content'] as string | null) }))
-      .filter((c) => matchesFtsIndex(c.stripped, query))
+      .filter((c) => phrases.every((phrase) => matchesFtsIndex(c.stripped, phrase)))
 
     // Arm 4 — every toggle off: the FTS5 candidate set IS the answer,
     // rank-ordered and `(rank, id)`-keyset paginated (`search_fts`).
     if (filter['caseSensitive'] !== true && filter['wholeWord'] !== true) {
-      return searchFtsRankedPage(ftsCandidates, foldForFtsIndex(query), cursor, limit)
+      return searchFtsRankedPage(ftsCandidates, foldForFtsIndex(phrases[0] ?? query), cursor, limit)
     }
 
     // Arm 5 — `caseSensitive` and/or `wholeWord` (and NOT `isRegex`): narrow

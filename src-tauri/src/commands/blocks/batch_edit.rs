@@ -5,7 +5,9 @@
 //! applied as a diff from the block's current text, so a text computed from
 //! stale content would revert whatever landed in between: each edit carries
 //! the content it was computed from, and a block that no longer holds it is
-//! left alone and reported.
+//! left alone and reported. It is not rebased as an editor's save is
+//! (`edit_block`'s `base_text`): the user confirmed the change the preview
+//! showed, and a rebase would write a text they never saw.
 
 use std::collections::HashMap;
 
@@ -14,9 +16,10 @@ use specta::Type;
 use tracing::instrument;
 
 use super::super::*;
-use crate::db::{CommandTx, WriteCtx};
 use super::crud::edit_block_in_tx;
 use crate::commands::history::MAX_REVERT_OPS;
+use crate::db::{CommandTx, WriteCtx};
+use agaric_engine::apply::loro_apply::engine_block_content;
 use agaric_store::pagination::MAX_BATCH_BLOCK_IDS;
 
 // One `undo_ops` must be able to revert a whole run.
@@ -62,10 +65,11 @@ pub async fn edit_blocks_batch_inner(
     crate::commands::ensure_batch_within_cap("edits", edits.len())?;
 
     let mut tx = CommandTx::begin_immediate(pool, "edit_blocks_batch").await?;
-    tx.arm_engine_rollback(materializer.loro_state());
+    let state = materializer.loro_state();
+    tx.arm_engine_rollback(state);
 
     let ids_json = serde_json::to_string(&edits.iter().map(|e| &e.block_id).collect::<Vec<_>>())?;
-    let mut current: HashMap<String, Option<String>> = sqlx::query!(
+    let rows: HashMap<String, Option<String>> = sqlx::query!(
         r#"SELECT id, content FROM blocks
            WHERE id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL"#,
         ids_json
@@ -78,21 +82,20 @@ pub async fn edit_blocks_batch_inner(
 
     let mut skipped = Vec::new();
     for edit in edits {
-        match current.get_mut(edit.block_id.as_str()) {
-            Some(content) if content.as_deref() == Some(edit.expected.as_str()) => {
-                // A second edit of the same block sees what the first wrote.
-                *content = Some(edit.to_text.clone());
-                edit_block_in_tx(
-                    &mut tx,
-                    materializer.loro_state(),
-                    device_id,
-                    edit.block_id.into_string(),
-                    edit.to_text,
-                )
-                .await?;
-            }
-            _ => skipped.push(edit.block_id),
+        // The text the edit would be diffed against: the engine's, which a
+        // sync import reaches before the row, else the row's.
+        let held = match rows.get(edit.block_id.as_str()) {
+            Some(row) => engine_block_content(&mut tx, state, device_id, &edit.block_id)
+                .await?
+                .or_else(|| row.clone()),
+            None => None,
+        };
+        if held.as_deref() != Some(edit.expected.as_str()) {
+            skipped.push(edit.block_id);
+            continue;
         }
+        let id = edit.block_id.into_string();
+        edit_block_in_tx(&mut tx, state, device_id, id, edit.to_text, None).await?;
     }
     tx.commit_and_dispatch(materializer).await?;
     Ok(EditBlocksBatchResponse { skipped })

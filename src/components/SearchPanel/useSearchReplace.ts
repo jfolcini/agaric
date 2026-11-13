@@ -18,7 +18,6 @@ import { useTranslation } from 'react-i18next'
 
 import type { SearchToggleState } from '@/components/search/SearchToggleRow'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
-import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { OpRef, SearchBlockRow } from '@/lib/bindings'
@@ -303,9 +302,6 @@ export function useSearchReplace({
     }
     setBusy(true)
     try {
-      // Typing still in an editor's debounce is saved first, so its block no
-      // longer holds what the search returned and is left alone.
-      await flushActiveDraft()
       const edits = ticked.map((row) => ({
         blockId: row.id,
         expected: row.content ?? '',

@@ -27,7 +27,7 @@ describe('replaceableRanges', () => {
     // The same choice the write makes.
     const written = replaceInContent(
       content,
-      ranges.map((r) => ({ ...r, text: 'pin' })),
+      ranges.map(({ start, end }) => ({ start, end, text: 'pin' })),
       resolveTitle,
     )
     expect(written).toEqual({

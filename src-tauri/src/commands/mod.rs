@@ -100,11 +100,11 @@ pub use attachments::{
 };
 pub use blocks::{
     BlockEdit, CreateBlockSpec, EditBlocksBatchResponse, PropertyLoss, PropertyLossValue,
-    batch_resolve, batch_resolve_inner,
-    count_trash, count_trash_inner, create_block, create_block_inner,
-    create_block_inner_with_space, create_blocks_batch, create_blocks_batch_inner, delete_block,
-    delete_block_inner, delete_blocks_by_ids, delete_blocks_by_ids_inner, edit_block,
-    edit_block_inner, edit_block_inner_with_base, edit_blocks_batch, edit_blocks_batch_inner, first_child_for_blocks,
+    batch_resolve, batch_resolve_inner, count_trash, count_trash_inner, create_block,
+    create_block_inner, create_block_inner_with_space, create_blocks_batch,
+    create_blocks_batch_inner, delete_block, delete_block_inner, delete_blocks_by_ids,
+    delete_blocks_by_ids_inner, edit_block, edit_block_inner, edit_block_inner_with_base,
+    edit_blocks_batch, edit_blocks_batch_inner, first_child_for_blocks,
     first_child_for_blocks_inner, get_active_block_inner, get_block, get_block_inner, list_blocks,
     list_blocks_inner, list_property_loss_values, list_property_loss_values_inner, list_trash,
     list_trash_inner, move_block, move_block_inner, move_blocks_batch, move_blocks_batch_inner,

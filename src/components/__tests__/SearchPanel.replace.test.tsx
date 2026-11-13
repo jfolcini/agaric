@@ -16,7 +16,6 @@ import { axe } from '@/__tests__/helpers/axe'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { SearchPanel } from '@/components/SearchPanel'
-import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import type { OpRef, SearchBlockRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { MAX_BATCH_BLOCK_IDS } from '@/lib/ipc-helpers'
@@ -70,6 +69,10 @@ function stubVault(handlers: Readonly<TypedInvokeHandlers> = {}) {
         total_count: null,
       }),
       batch_resolve: () => [],
+      resolve_page_by_alias: () => null,
+      // What the page-store reload after a write asks for.
+      list_spaces: () => [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+      list_all_tags_in_space: () => [],
       edit_blocks_batch: (args) => {
         const { edits } = args as { edits: Edit[] }
         const skipped: string[] = []
@@ -297,10 +300,19 @@ describe('SearchPanel replace across pages', () => {
   })
 
   it('says how many blocks changed since the search and were left alone', async () => {
-    stubVault()
+    // The search keeps answering what it read, however often the panel asks again.
+    const read = structuredClone(vault)
+    stubVault({
+      search_blocks: () => ({
+        items: structuredClone(read),
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+    })
     const { user, run } = await openReplace('needle', 'pin')
     await waitFor(() => expect(run()).toHaveTextContent(runLabel(3, 2)))
-    // Another device edits B1 after the preview read it.
+    // Another device edits B1 after the search read it.
     const b1 = vault.find((r) => r.id === 'B1')
     if (b1) b1.content = 'three needle, edited elsewhere'
 
@@ -318,25 +330,30 @@ describe('SearchPanel replace across pages', () => {
     expect(contentOf('A1')).toBe('one pin here')
   })
 
-  it('saves typing still pending in an editor first, and leaves that block alone', async () => {
-    stubVault()
+  it('offers no Undo when every block changed since the search', async () => {
+    const read = structuredClone(vault)
+    stubVault({
+      search_blocks: () => ({
+        items: structuredClone(read),
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+    })
     const { user, run } = await openReplace('needle', 'pin')
     await waitFor(() => expect(run()).toHaveTextContent(runLabel(3, 2)))
-    // An editor on B1 holds typing its debounce has not saved yet.
-    const unregister = registerActiveDraftFlush('B1', () => {
-      const b1 = vault.find((r) => r.id === 'B1')
-      if (b1) b1.content = 'three needle, typed since'
-      return Promise.resolve()
-    })
-    try {
-      await user.click(run())
-      await user.click(await screen.findByTestId('search-replace-confirm'))
+    for (const r of vault) r.content = `${r.content}, edited elsewhere`
 
-      await waitFor(() => expect(contentOf('A1')).toBe('one pin here'))
-      expect(contentOf('B1')).toBe('three needle, typed since')
-    } finally {
-      unregister()
-    }
+    await user.click(run())
+    await user.click(await screen.findByTestId('search-replace-confirm'))
+
+    await waitFor(() =>
+      expect(vi.mocked(toast.info)).toHaveBeenCalledWith(
+        t('search.replace.changedSince', { count: 3 }),
+      ),
+    )
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+    expect(contentOf('A1')).toBe('one needle here, edited elsewhere')
   })
 
   it('reports a refused write and changes nothing', async () => {
@@ -386,7 +403,6 @@ describe('SearchPanel replace across pages', () => {
     const { run } = await openReplace('needle', 'pin')
 
     await waitFor(() => expect(run()).toHaveTextContent(runLabel(2, 2)))
-    expect(screen.queryByRole('button', { name: t('search.loadMoreButton') })).toBeNull()
   })
 
   it('does not replace in regex mode or under three characters', async () => {
@@ -427,10 +443,12 @@ describe('SearchPanel replace across pages', () => {
     stubVault()
     const { user, run } = await openReplace('needle', 'pin')
     await waitFor(() => expect(run()).toHaveTextContent(runLabel(3, 2)))
-    await waitFor(async () => expect(await axe(document.body)).toHaveNoViolations())
+    // The body, for the dialog's portal; the panel alone is no page, so no landmarks.
+    const page = { rules: { region: { enabled: false } } }
+    await waitFor(async () => expect(await axe(document.body, page)).toHaveNoViolations())
 
     await user.click(run())
     await screen.findByRole('alertdialog')
-    await waitFor(async () => expect(await axe(document.body)).toHaveNoViolations())
+    await waitFor(async () => expect(await axe(document.body, page)).toHaveNoViolations())
   })
 })
