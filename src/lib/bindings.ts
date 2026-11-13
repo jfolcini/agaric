@@ -1157,6 +1157,13 @@ export const commands = {
 	isFlatpak: () => typedError<boolean, AppError>(__TAURI_INVOKE("is_flatpak")),
 };
 
+/* Constants */
+export const EVENT_BLOCKS_CHANGED = "blocks:changed" as const;
+
+export const EVENT_SYNC_COMPLETE = "sync:complete" as const;
+
+export const EVENT_SYNC_ERROR = "sync:error" as const;
+
 /* Types */
 /**
  *  A block ID that has been verified to refer to an active block.
@@ -1888,6 +1895,26 @@ export type BlockRow = {
 	due_date: string | null,
 	scheduled_date: string | null,
 	page_id: BlockId | null,
+};
+
+/**
+ *  Payload for [`EVENT_BLOCKS_CHANGED`].
+ * 
+ *  `changed_page_ids` carries the **identical** semantics as
+ *  [`SyncEvent::Complete`]'s `changed_page_ids` field (#1071): the deduped set
+ *  of owning *page* ids (page-root block ids) touched by the write. The
+ *  frontend routes this through the exact `forEachPageStore` targeted-reload
+ *  machinery `useSyncEvents` already uses for `sync:complete` — mounted stores
+ *  whose id is in the set reload (undo re-anchor first), and an empty/absent
+ *  set falls back to reloading every mounted store. Keeping the payload shape
+ *  (`changed_page_ids: string[]`) equal to the `sync:complete` field is what
+ *  lets the frontend consumer share one code path with no new vocabulary.
+ * 
+ *  A write no page owns (MCP `create_tag`) names the block itself, so the
+ *  frontend still drops its derived caches without the empty set's full reload.
+ */
+export type BlocksChangedEvent = {
+	changed_page_ids?: string[],
 };
 
 /**  Metadata returned by [`collect_bug_report_metadata`]. */
@@ -4966,6 +4993,327 @@ export type StatusInfo = {
 	 */
 	audit_ingest_last_stall: AuditIngestStall | null,
 };
+
+/**  A [`SyncEvent::Error`] the frontend explains in its own words (#5728). */
+export type SyncErrorCode = 
+/**
+ *  The peer runs another engine format (#2130). Updating the older device
+ *  lets them sync again; `peer_is_older` says which one that is (#6523).
+ */
+"engine_format_mismatch" | 
+/**
+ *  The user cancelled the session (`cancel_sync`, #5739): the frontend
+ *  reads it as idle, not as a failure.
+ */
+"cancelled" | 
+/**
+ *  The dial to a paired peer timed out, mDNS is not announcing it, and it
+ *  has not pulled from us lately (#6523): the device is away, and the frontend
+ *  shows a neutral waiting state rather than a failure.
+ */
+"peer_away" | 
+/**
+ *  A peer that has synced with us before ended the session without
+ *  answering our `HeadExchange` (#6523). A build that predates the
+ *  engine-format refusal frame ends a format mismatch exactly so.
+ */
+"handshake_unanswered";
+
+/**
+ *  Payload sent over Tauri events for sync progress/completion/errors.
+ * 
+ *  `Type` puts it in `bindings.ts`, where the frontend's listeners take their
+ *  payload types from (#6539): `ts_bindings_up_to_date` fails on a renamed field.
+ */
+export type SyncEvent = SyncEvent_Serialize | SyncEvent_Deserialize;
+
+/**
+ *  Payload sent over Tauri events for sync progress/completion/errors.
+ * 
+ *  `Type` puts it in `bindings.ts`, where the frontend's listeners take their
+ *  payload types from (#6539): `ts_bindings_up_to_date` fails on a renamed field.
+ */
+export type SyncEvent_Deserialize = ({ type: "progress"; state: string; remote_device_id: string; ops_received: number; ops_sent: number }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never } | ({ type: "complete"; remote_device_id: string; ops_received: number; ops_sent: number; 
+/**
+ *  #1071: deduped set of owning *page* ids (page-root block ids)
+ *  touched by the ops applied during this sync session. The frontend
+ *  reloads ONLY the mounted page stores whose id is in this set (and
+ *  gates the resolve preload on it being non-empty), falling back to
+ *  reloading EVERY mounted store + a full preload when the field is
+ *  absent/empty — preserving backward compatibility with peers on the
+ *  old protocol and the snapshot-catch-up path (which sends empty).
+ */
+changed_page_ids?: string[]; 
+/**
+ *  #4305: how many blocks this session actually changed or purged —
+ *  the **only** field on this event that answers "did anything
+ *  happen", and the only one a "N changes" string may be built from.
+ * 
+ *  `ops_received` / `ops_sent` above are *protocol message* counts,
+ *  one per registered space regardless of whether that space had a
+ *  delta (see [`crate::sync_protocol::SyncSession::changed_blocks`]).
+ *  On a converged pair with two spaces they are `2` on every resync
+ *  tick, forever; a toast built from them said "Synced 2 changes from
+ *  device" once a minute on an idle, fully-converged pair. They stay
+ *  on the event because the status panel labels them honestly, as
+ *  sync messages.
+ * 
+ *  * `Some(0)` — the session completed and moved nothing. The
+ *    frontend **must** stay silent and skip the page-store reload:
+ *    there is nothing to tell and nothing to reload.
+ *  * `Some(n > 0)` — exactly `n` blocks changed. Safe to count.
+ *  * `None` — content changed but the count is not enumerable. Only
+ *    the whole-space snapshot catch-up
+ *    (`sync_daemon::snapshot_transfer`) sends this: it reimports an
+ *    entire space, so every block may have changed and counting them
+ *    is neither cheap nor meaningful. The frontend falls back to a
+ *    countless message plus a full reload — never to silence, so a
+ *    producer that forgets this field is loud, not mute.
+ */
+changed_blocks?: number | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; code?: never; files_done?: never; files_total?: never; message?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; state?: never } | ({ type: "error"; message: string; remote_device_id: string; 
+/**
+ *  `Some` for an error the frontend words itself, in the user's
+ *  language, or reads as something other than a failure (a user cancel,
+ *  [`SyncErrorCode::Cancelled`]); `message` stays the English text for
+ *  logs. Omitted when `None`, so every other error serializes as it
+ *  always has.
+ */
+code: SyncErrorCode | null; 
+/**
+ *  For [`SyncErrorCode::EngineFormatMismatch`]: whether the peer runs the
+ *  older engine format, so the frontend names the device to update (#6523).
+ */
+peer_is_older: boolean | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; files_done?: never; files_total?: never; ops_received?: never; ops_sent?: never; phase?: never; port?: never; reason?: never; reason_key?: never; state?: never } | 
+/**
+ *  Per-frame attachment-transfer progress emitted
+ *  by `sync_files`. The `ChannelEventSink` forwards these to the
+ *  `Channel<SyncProgressUpdate>` as the `Files` variant; the
+ *  production `TauriEventSink` drops them (no `app.emit`
+ *  fallback — file-transfer progress was never on the legacy event
+ *  bus, so the channel is the single canonical source).
+ */
+({ type: "file_progress"; phase: string; remote_device_id: string; files_done: number; files_total: number; bytes_done: number; bytes_total: number }) & { address?: never; blocked?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; port?: never; reason?: never; reason_key?: never; state?: never } | 
+/**
+ *  Emitted when mDNS peer discovery cannot be initialized (e.g. the
+ *  iOS sandbox blocks raw UDP multicast, or the Android app is missing
+ *  its multicast lock). A first-ever pair then needs the QR payload,
+ *  which carries the peer's `endpoint_id` and address (#4037); paired
+ *  peers can still be dialed via their cached `peer_refs.last_address`,
+ *  once bound. The frontend should surface this to the user instead of
+ *  showing an Empty peer list.
+ */
+({ type: "mdns_disabled"; reason: string }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason_key?: never; remote_device_id?: never; state?: never } | 
+/**
+ *  #3864: emitted once per daemon start when the sync endpoint bound a
+ *  **globally-routable** address, so the QUIC listener may be reachable
+ *  from outside the local network.
+ * 
+ *  #3853 had to widen `lan_only`'s locality gate from "RFC 1918" to "an
+ *  address this host holds", because the reporting user's home LAN is
+ *  numbered out of public space (`192.160.160.0/24`). On a host that is
+ *  genuinely internet-facing — a VPS, a cloud box, a non-NAT ISP link —
+ *  that starts a listener where the daemon previously refused to bind at
+ *  all, which is the "opens a listening port the user did not ask for"
+ *  class in `SECURITY.md` § In scope. Nothing observable from inside the
+ *  host separates the two situations, so this event states only what is
+ *  known (the address is outside the private ranges) and leaves the
+ *  verdict to the user. A `tracing::warn!` alone was not a user-visible
+ *  signal, which is what this variant exists to be.
+ */
+({ type: "internet_facing_bind"; 
+/**  The bound IPv4 address, e.g. `"192.160.160.80"`. */
+address: string; 
+/**
+ *  The UDP port the listener actually got. The bind requests port 0,
+ *  so this is assigned by the OS **and differs on every start** — it
+ *  identifies the current listener, it is not a stable firewall rule.
+ */
+port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; reason?: never; reason_key?: never; remote_device_id?: never; state?: never } | 
+/**
+ *  #3852: the operating system says it is blocking (or has stopped
+ *  blocking) **this application's** network traffic.
+ * 
+ *  Android 15+ runs a per-uid background firewall
+ *  (`FIREWALL_CHAIN_BACKGROUND`) that drops every packet for an app that is
+ *  not top-of-stack — including when the app *is* the top activity and the
+ *  screen has merely gone to sleep (`procState=TOP_SLEEPING`). The daemon
+ *  keeps running, keeps its sockets, keeps the multicast lock, and cannot
+ *  send or receive anything. On the reporting Pixel 8 this was measured
+ *  directly: 300 datagrams aimed at the app's bound `0.0.0.0:5353` raised
+ *  `/proc/net/udp`'s drop counter by exactly 300 with `rx_queue` never
+ *  leaving 0, i.e. discarded at the cgroup-BPF ingress hook before enqueue.
+ * 
+ *  The `blocked` flag comes from `NetworkCallback.onBlockedStatusChanged`,
+ *  which is the platform stating this uid's firewall status about itself.
+ *  That matters more than it sounds: every other route to this fact is an
+ *  inference from silence, and silence is also what a quiet LAN, a sleeping
+ *  peer, and a wrong service type look like. #3852 spent three days being
+ *  mistaken for each of those in turn.
+ * 
+ *  `blocked: false` is emitted only as a *recovery* — after a block was
+ *  reported — so a healthy device never emits this event at all.
+ */
+({ type: "network_blocked_by_os"; 
+/**  `true` while the OS is dropping this app's traffic. */
+blocked: boolean; 
+/**
+ *  The **i18n key** naming the explanation the pairing UI shows, not
+ *  the explanation itself. `onBlockedStatusChanged` carries only a
+ *  boolean, so the wording is Agaric's — and wording built in Rust is
+ *  English for every user in every locale, because the daemon has no
+ *  idea what language the window is in. The frontend translates this
+ *  key; see `BLOCKED_REASON_KEY` in
+ *  `sync_daemon::android_network_block` for the constant and for why no
+ *  human-readable twin rides along.
+ * 
+ *  `Some` exactly when `blocked`: a recovery removes the banner, so it
+ *  has no text to name.
+ */
+reason_key: string | null }) & { address?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; remote_device_id?: never; state?: never };
+
+/**
+ *  Payload sent over Tauri events for sync progress/completion/errors.
+ * 
+ *  `Type` puts it in `bindings.ts`, where the frontend's listeners take their
+ *  payload types from (#6539): `ts_bindings_up_to_date` fails on a renamed field.
+ */
+export type SyncEvent_Serialize = ({ type: "progress"; state: string; remote_device_id: string; ops_received: number; ops_sent: number }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never } | ({ type: "complete"; remote_device_id: string; ops_received: number; ops_sent: number; 
+/**
+ *  #1071: deduped set of owning *page* ids (page-root block ids)
+ *  touched by the ops applied during this sync session. The frontend
+ *  reloads ONLY the mounted page stores whose id is in this set (and
+ *  gates the resolve preload on it being non-empty), falling back to
+ *  reloading EVERY mounted store + a full preload when the field is
+ *  absent/empty — preserving backward compatibility with peers on the
+ *  old protocol and the snapshot-catch-up path (which sends empty).
+ */
+changed_page_ids: string[]; 
+/**
+ *  #4305: how many blocks this session actually changed or purged —
+ *  the **only** field on this event that answers "did anything
+ *  happen", and the only one a "N changes" string may be built from.
+ * 
+ *  `ops_received` / `ops_sent` above are *protocol message* counts,
+ *  one per registered space regardless of whether that space had a
+ *  delta (see [`crate::sync_protocol::SyncSession::changed_blocks`]).
+ *  On a converged pair with two spaces they are `2` on every resync
+ *  tick, forever; a toast built from them said "Synced 2 changes from
+ *  device" once a minute on an idle, fully-converged pair. They stay
+ *  on the event because the status panel labels them honestly, as
+ *  sync messages.
+ * 
+ *  * `Some(0)` — the session completed and moved nothing. The
+ *    frontend **must** stay silent and skip the page-store reload:
+ *    there is nothing to tell and nothing to reload.
+ *  * `Some(n > 0)` — exactly `n` blocks changed. Safe to count.
+ *  * `None` — content changed but the count is not enumerable. Only
+ *    the whole-space snapshot catch-up
+ *    (`sync_daemon::snapshot_transfer`) sends this: it reimports an
+ *    entire space, so every block may have changed and counting them
+ *    is neither cheap nor meaningful. The frontend falls back to a
+ *    countless message plus a full reload — never to silence, so a
+ *    producer that forgets this field is loud, not mute.
+ */
+changed_blocks: number | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; code?: never; files_done?: never; files_total?: never; message?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; state?: never } | ({ type: "error"; message: string; remote_device_id: string; 
+/**
+ *  `Some` for an error the frontend words itself, in the user's
+ *  language, or reads as something other than a failure (a user cancel,
+ *  [`SyncErrorCode::Cancelled`]); `message` stays the English text for
+ *  logs. Omitted when `None`, so every other error serializes as it
+ *  always has.
+ */
+code?: SyncErrorCode | null; 
+/**
+ *  For [`SyncErrorCode::EngineFormatMismatch`]: whether the peer runs the
+ *  older engine format, so the frontend names the device to update (#6523).
+ */
+peer_is_older?: boolean | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; files_done?: never; files_total?: never; ops_received?: never; ops_sent?: never; phase?: never; port?: never; reason?: never; reason_key?: never; state?: never } | 
+/**
+ *  Per-frame attachment-transfer progress emitted
+ *  by `sync_files`. The `ChannelEventSink` forwards these to the
+ *  `Channel<SyncProgressUpdate>` as the `Files` variant; the
+ *  production `TauriEventSink` drops them (no `app.emit`
+ *  fallback — file-transfer progress was never on the legacy event
+ *  bus, so the channel is the single canonical source).
+ */
+({ type: "file_progress"; phase: string; remote_device_id: string; files_done: number; files_total: number; bytes_done: number; bytes_total: number }) & { address?: never; blocked?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; port?: never; reason?: never; reason_key?: never; state?: never } | 
+/**
+ *  Emitted when mDNS peer discovery cannot be initialized (e.g. the
+ *  iOS sandbox blocks raw UDP multicast, or the Android app is missing
+ *  its multicast lock). A first-ever pair then needs the QR payload,
+ *  which carries the peer's `endpoint_id` and address (#4037); paired
+ *  peers can still be dialed via their cached `peer_refs.last_address`,
+ *  once bound. The frontend should surface this to the user instead of
+ *  showing an Empty peer list.
+ */
+({ type: "mdns_disabled"; reason: string }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason_key?: never; remote_device_id?: never; state?: never } | 
+/**
+ *  #3864: emitted once per daemon start when the sync endpoint bound a
+ *  **globally-routable** address, so the QUIC listener may be reachable
+ *  from outside the local network.
+ * 
+ *  #3853 had to widen `lan_only`'s locality gate from "RFC 1918" to "an
+ *  address this host holds", because the reporting user's home LAN is
+ *  numbered out of public space (`192.160.160.0/24`). On a host that is
+ *  genuinely internet-facing — a VPS, a cloud box, a non-NAT ISP link —
+ *  that starts a listener where the daemon previously refused to bind at
+ *  all, which is the "opens a listening port the user did not ask for"
+ *  class in `SECURITY.md` § In scope. Nothing observable from inside the
+ *  host separates the two situations, so this event states only what is
+ *  known (the address is outside the private ranges) and leaves the
+ *  verdict to the user. A `tracing::warn!` alone was not a user-visible
+ *  signal, which is what this variant exists to be.
+ */
+({ type: "internet_facing_bind"; 
+/**  The bound IPv4 address, e.g. `"192.160.160.80"`. */
+address: string; 
+/**
+ *  The UDP port the listener actually got. The bind requests port 0,
+ *  so this is assigned by the OS **and differs on every start** — it
+ *  identifies the current listener, it is not a stable firewall rule.
+ */
+port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; reason?: never; reason_key?: never; remote_device_id?: never; state?: never } | 
+/**
+ *  #3852: the operating system says it is blocking (or has stopped
+ *  blocking) **this application's** network traffic.
+ * 
+ *  Android 15+ runs a per-uid background firewall
+ *  (`FIREWALL_CHAIN_BACKGROUND`) that drops every packet for an app that is
+ *  not top-of-stack — including when the app *is* the top activity and the
+ *  screen has merely gone to sleep (`procState=TOP_SLEEPING`). The daemon
+ *  keeps running, keeps its sockets, keeps the multicast lock, and cannot
+ *  send or receive anything. On the reporting Pixel 8 this was measured
+ *  directly: 300 datagrams aimed at the app's bound `0.0.0.0:5353` raised
+ *  `/proc/net/udp`'s drop counter by exactly 300 with `rx_queue` never
+ *  leaving 0, i.e. discarded at the cgroup-BPF ingress hook before enqueue.
+ * 
+ *  The `blocked` flag comes from `NetworkCallback.onBlockedStatusChanged`,
+ *  which is the platform stating this uid's firewall status about itself.
+ *  That matters more than it sounds: every other route to this fact is an
+ *  inference from silence, and silence is also what a quiet LAN, a sleeping
+ *  peer, and a wrong service type look like. #3852 spent three days being
+ *  mistaken for each of those in turn.
+ * 
+ *  `blocked: false` is emitted only as a *recovery* — after a block was
+ *  reported — so a healthy device never emits this event at all.
+ */
+({ type: "network_blocked_by_os"; 
+/**  `true` while the OS is dropping this app's traffic. */
+blocked: boolean; 
+/**
+ *  The **i18n key** naming the explanation the pairing UI shows, not
+ *  the explanation itself. `onBlockedStatusChanged` carries only a
+ *  boolean, so the wording is Agaric's — and wording built in Rust is
+ *  English for every user in every locale, because the daemon has no
+ *  idea what language the window is in. The frontend translates this
+ *  key; see `BLOCKED_REASON_KEY` in
+ *  `sync_daemon::android_network_block` for the constant and for why no
+ *  human-readable twin rides along.
+ * 
+ *  `Some` exactly when `blocked`: a recovery removes the banner, so it
+ *  has no text to name.
+ */
+reason_key: string | null }) & { address?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; remote_device_id?: never; state?: never };
 
 /**
  *  Streaming progress payload carried over the sync channel.

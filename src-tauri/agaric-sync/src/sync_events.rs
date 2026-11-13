@@ -55,7 +55,10 @@ pub enum SyncProgressUpdate {
 }
 
 /// Payload sent over Tauri events for sync progress/completion/errors.
-#[derive(Debug, Clone, Serialize)]
+///
+/// `Type` puts it in `bindings.ts`, where the frontend's listeners take their
+/// payload types from (#6539): `ts_bindings_up_to_date` fails on a renamed field.
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SyncEvent {
     Progress {
@@ -205,8 +208,7 @@ pub enum SyncEvent {
 }
 
 /// A [`SyncEvent::Error`] the frontend explains in its own words (#5728).
-/// Serialized in snake case; `SyncErrorPayload` in `useSyncEvents.ts` mirrors it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncErrorCode {
     /// The peer runs another engine format (#2130). Updating the older device
@@ -399,7 +401,7 @@ pub const EVENT_BLOCKS_CHANGED: &str = "blocks:changed";
 ///
 /// A write no page owns (MCP `create_tag`) names the block itself, so the
 /// frontend still drops its derived caches without the empty set's full reload.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct BlocksChangedEvent {
     #[serde(default)]
     pub changed_page_ids: Vec<String>,
