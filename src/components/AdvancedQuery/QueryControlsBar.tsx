@@ -12,6 +12,7 @@
  *     single-dimension `GroupKey`s, a `Property` key, or a `DateBucket`
  *     source × unit pair — #4553 Phase 2).
  *   - Aggregates → `AdvancedQueryRequest.aggregates` (op + optional column target).
+ *   - View (#6542): list or board; the board only for a group key that has one.
  *
  * Controls are always-visible inline form rows (not behind a popover) so they
  * stay keyboard-reachable and screen-reader-labelled; every control owns an
@@ -34,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import type {
   AggOp,
@@ -47,6 +49,7 @@ import type {
   SortKey,
   SortSource,
 } from '@/lib/bindings'
+import type { QueryViewMode } from '@/stores/advancedQuery'
 
 /** The labelled, closed set of `SortColumn`s offered in the sort source picker. */
 const SORT_COLUMNS: readonly SortColumn[] = [
@@ -104,6 +107,11 @@ export interface QueryControlsBarProps {
   /** Current aggregate specs (controlled). */
   aggregates: AggregateSpec[]
   onAggregatesChange: (aggregates: AggregateSpec[]) => void
+  /** The layout on screen (controlled). */
+  view: QueryViewMode
+  onViewChange: (view: QueryViewMode) => void
+  /** Whether the current group key has a board. */
+  boardAvailable: boolean
 }
 
 /** Serialise a `SortSource` to a stable Select option value. */
@@ -120,10 +128,14 @@ export function QueryControlsBar({
   onGroupByChange,
   aggregates,
   onAggregatesChange,
+  view,
+  onViewChange,
+  boardAvailable,
 }: QueryControlsBarProps): React.ReactElement {
   const { t } = useTranslation()
   const fulltextId = useId()
   const groupId = useId()
+  const viewId = useId()
   const groupKey = groupBy?.key
 
   // Local mirror of the full-text input so typing is responsive while the
@@ -392,6 +404,31 @@ export function QueryControlsBar({
               </SelectContent>
             </Select>
           </div>
+        )}
+      </div>
+
+      {/* View */}
+      <div className="flex flex-col items-start gap-1">
+        <span className="text-xs font-medium text-muted-foreground" id={viewId}>
+          {t('advancedQuery.view.label')}
+        </span>
+        <ToggleGroup
+          type="single"
+          value={view}
+          // Radix reports a press on the checked segment as ''.
+          onValueChange={(v) => v !== '' && onViewChange(v as QueryViewMode)}
+          aria-labelledby={viewId}
+          aria-describedby={boardAvailable ? undefined : `${viewId}-hint`}
+        >
+          <ToggleGroupItem value="list">{t('advancedQuery.view.list')}</ToggleGroupItem>
+          <ToggleGroupItem value="board" disabled={!boardAvailable}>
+            {t('advancedQuery.view.board')}
+          </ToggleGroupItem>
+        </ToggleGroup>
+        {!boardAvailable && (
+          <p className="text-xs text-muted-foreground" id={`${viewId}-hint`}>
+            {t('advancedQuery.view.boardHint')}
+          </p>
         )}
       </div>
 
