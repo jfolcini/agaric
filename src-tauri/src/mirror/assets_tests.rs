@@ -622,3 +622,27 @@ async fn a_save_linking_a_copy_its_page_did_not_link_keeps_that_link() {
         "the file written back keeps its link to the copy"
     );
 }
+
+#[test]
+fn a_destination_with_whitespace_alone_goes_in_angle_brackets() {
+    assert_eq!(
+        destination("assets/x/my file.pdf"),
+        "<assets/x/my file.pdf>"
+    );
+}
+
+#[test]
+fn saved_copies_load_again() {
+    let dir = TempDir::new().unwrap();
+    let mut copies = Copies::load(dir.path());
+    copies.written.insert(
+        "Space/assets/X/cat.png".to_owned(),
+        Copy {
+            id: "X".to_owned(),
+            len: 3,
+            modified_ms: Some(7),
+        },
+    );
+    copies.save().unwrap();
+    assert_eq!(Copies::load(dir.path()).ids(), ["X"]);
+}
