@@ -1,7 +1,8 @@
-use futures_util::TryStreamExt;
 use futures_util::stream::BoxStream;
+use futures_util::{StreamExt, TryStreamExt};
 use sqlx::SqlitePool;
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 
 use crate::db::MAX_SQL_PARAMS;
 use agaric_core::error::AppError;
@@ -13,13 +14,6 @@ use agaric_core::error::AppError;
 // Mirrors the constant in `cache/block_tag_refs.rs`.
 const DELETE_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 const INSERT_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
-
-/// Sort-merge buffer flush threshold (M-19b). The merge loop accumulates
-/// pending deletes / inserts in `Vec`s of up to `STREAM_BATCH` rows
-/// before issuing chunked statements via [`apply_agenda_diff`]. Bounded
-/// at the smaller of `INSERT_CHUNK` (333) and `DELETE_CHUNK` (499) so a
-/// single flush emits at most one chunked DELETE + one chunked INSERT.
-const STREAM_BATCH: usize = INSERT_CHUNK; // 333
 
 /// Apply an agenda diff inside an open transaction in chunks bounded by
 /// [`MAX_SQL_PARAMS`].
@@ -43,6 +37,7 @@ async fn apply_agenda_diff(
             "DELETE FROM agenda_cache WHERE (date, block_id) IN ({})",
             placeholders.join(", ")
         );
+        // dynamic-sql: the placeholder list is as long as the chunk
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (date, block_id) in chunk {
             q = q.bind(date).bind(block_id);
@@ -56,6 +51,7 @@ async fn apply_agenda_diff(
             "INSERT OR IGNORE INTO agenda_cache (date, block_id, source) VALUES {}",
             placeholders.join(", ")
         );
+        // dynamic-sql: the placeholder list is as long as the chunk
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for ((date, block_id), source) in chunk {
             q = q.bind(date).bind(block_id).bind(source);
@@ -71,10 +67,9 @@ async fn apply_agenda_diff(
 // ---------------------------------------------------------------------------
 
 /// 4-source UNION ALL projection that computes the desired state of
-/// `agenda_cache` from the live database. Bound from both
-/// [`rebuild_agenda_cache_impl`] (single-pool) and
-/// [`rebuild_agenda_cache_split_impl`] (read/write-split) so the two
-/// implementations cannot silently diverge — any change to the
+/// `agenda_cache` from the live database. The whole-vault read
+/// ([`DESIRED_AGENDA_SQL`]) and the re-derivation of the stale blocks
+/// ([`DESIRED_AGENDA_OF_SQL`]) are this one text, so any change to the
 /// template-page filter, source semantics, or new column source is made
 /// in exactly one place.
 ///
@@ -97,7 +92,7 @@ async fn apply_agenda_diff(
 ///    `source = 'column:scheduled_date'`, `prio = 3`.
 ///
 /// Output is sorted by `(date, block_id, prio)` so:
-///   - the sort-merge diff in [`apply_sort_merge_rebuild`] can walk this
+///   - the sort-merge diff in [`merge_agenda_streams`] can walk this
 ///     stream alongside `agenda_cache` (also `ORDER BY date, block_id`)
 ///     in lockstep, and
 ///   - duplicate `(date, block_id)` rows produced by multiple sources
@@ -133,7 +128,10 @@ async fn apply_agenda_diff(
 /// alone leap-year correctness) in portable SQLite would add a brittle
 /// nested CASE for marginal benefit — see the issue's \"do not
 /// over-engineer\" note.
-pub(crate) const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio FROM (
+macro_rules! desired_agenda_sql {
+    ($of_property:literal, $of_tag:literal, $of_block:literal) => {
+        concat!(
+            "SELECT date, block_id, source, prio FROM (
             SELECT bp.value_date AS date, bp.block_id, 'property:' || bp.key AS source, 0 AS prio
             FROM block_properties bp
             JOIN blocks b ON b.id = bp.block_id
@@ -142,7 +140,9 @@ pub(crate) const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio
               AND NOT EXISTS (
                 SELECT 1 FROM block_properties tp
                 WHERE tp.block_id = b.page_id AND tp.key = 'template'
-              )
+              )",
+            $of_property,
+            "
             UNION ALL
             SELECT SUBSTR(t.content, 6) AS date, bt.block_id, 'tag:' || bt.tag_id AS source, 1 AS prio
             FROM block_tags bt
@@ -161,7 +161,9 @@ pub(crate) const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio
               AND NOT EXISTS (
                 SELECT 1 FROM block_properties tp
                 WHERE tp.block_id = b.page_id AND tp.key = 'template'
-              )
+              )",
+            $of_tag,
+            "
             UNION ALL
             SELECT b.due_date AS date, b.id AS block_id, 'column:due_date' AS source, 2 AS prio
             FROM blocks b
@@ -170,7 +172,9 @@ pub(crate) const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio
               AND NOT EXISTS (
                 SELECT 1 FROM block_properties tp
                 WHERE tp.block_id = b.page_id AND tp.key = 'template'
-              )
+              )",
+            $of_block,
+            "
             UNION ALL
             SELECT b.scheduled_date AS date, b.id AS block_id, 'column:scheduled_date' AS source, 3 AS prio
             FROM blocks b
@@ -179,100 +183,70 @@ pub(crate) const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio
               AND NOT EXISTS (
                 SELECT 1 FROM block_properties tp
                 WHERE tp.block_id = b.page_id AND tp.key = 'template'
-              )
+              )",
+            $of_block,
+            "
         )
-        ORDER BY date ASC, block_id ASC, prio ASC";
+        ORDER BY date ASC, block_id ASC, prio ASC"
+        )
+    };
+}
+
+pub(crate) const DESIRED_AGENDA_SQL: &str = desired_agenda_sql!("", "", "");
+
+/// [`DESIRED_AGENDA_SQL`] for the blocks in the JSON id array `?1` alone: the
+/// same text with each source narrowed by the column that becomes its row's
+/// `block_id`, so a block's rows here are its rows there.
+const DESIRED_AGENDA_OF_SQL: &str = desired_agenda_sql!(
+    "
+              AND bp.block_id IN (SELECT value FROM json_each(?1))",
+    "
+              AND bt.block_id IN (SELECT value FROM json_each(?1))",
+    "
+              AND b.id IN (SELECT value FROM json_each(?1))"
+);
 
 const CURRENT_AGENDA_SQL: &str =
     "SELECT date, block_id, source FROM agenda_cache ORDER BY date ASC, block_id ASC";
+
+/// [`CURRENT_AGENDA_SQL`] for the blocks in the JSON id array `?1` alone.
+const CURRENT_AGENDA_OF_SQL: &str = "SELECT date, block_id, source FROM agenda_cache \
+     WHERE block_id IN (SELECT value FROM json_each(?1)) ORDER BY date ASC, block_id ASC";
 
 // ---------------------------------------------------------------------------
 // Sort-merge rebuild core (M-19b)
 // ---------------------------------------------------------------------------
 
-/// The desired-agenda row stream — `(date, block_id, source, prio)` as
+/// A desired-agenda row stream — `(date, block_id, source, prio)` as
 /// [`DESIRED_AGENDA_SQL`] yields it.
 type DesiredAgendaStream<'a> = BoxStream<'a, Result<(String, String, String, i64), sqlx::Error>>;
 
-/// The current `agenda_cache` row stream — `(date, block_id, source)` as
+/// A cached `agenda_cache` row stream — `(date, block_id, source)` as
 /// [`CURRENT_AGENDA_SQL`] yields it.
 type CurrentAgendaStream<'a> = BoxStream<'a, Result<(String, String, String), sqlx::Error>>;
 
-/// Stream-walk the desired and current agenda rows in lockstep and
-/// apply the diff via [`apply_agenda_diff`] in batches of
-/// [`STREAM_BATCH`] rows.
+/// One `(date, block_id)` key on which the desired rows and `agenda_cache`
+/// disagree.
+struct StaleAgendaRow<'a> {
+    date: &'a str,
+    block_id: &'a str,
+    /// The source the key should carry; `None` when it should have no row.
+    desired_source: Option<&'a str>,
+    /// Whether `agenda_cache` holds a row for the key now.
+    cached: bool,
+}
+
+/// Walk the desired and cached agenda rows in lockstep and hand every key
+/// they disagree on to `on_stale`. Returns how many keys that was.
 ///
 /// Both inputs share the sort key `(date, block_id)` (with the desired
 /// stream additionally tie-breaking on source priority — see
-/// [`DESIRED_AGENDA_SQL`]) so the merge runs in `O(n)` time and
-/// `O(STREAM_BATCH)` Rust-heap memory. Replaces the pre-M-19b approach
-/// of materialising both sides into `HashMap<(date, block_id), source>`
-/// (peaked at `O(N)` for `N` total agenda rows ≈ 5 MB on a 100 K-block
-/// vault).
-///
-/// Three independent connections are used:
-///   - `desired_conn` — runs the 4-source UNION ALL stream;
-///   - `current_conn` — runs the `agenda_cache` table scan stream;
-///   - `write_conn`  — accumulates the chunked DELETE / INSERT inside
-///     the caller's open transaction.
-///
-/// The connections must be distinct so the two `fetch(...)` borrows do
-/// not conflict and the writer can flush mid-stream without dropping
-/// either reader. Snapshot consistency across the three connections is
-/// not required: this function inherits the "stale-while-revalidate"
-/// semantics of the rebuild path (any concurrent writer mutation
-/// observed by one reader but not the other is corrected on the next
-/// rebuild — same eventual-consistency guarantee documented for the
-/// split-pool TOCTOU window in [`rebuild_agenda_cache_split_impl`]).
-///
-/// Returns the logical change count (deletes + inserts + source-update
-/// rows), preserving the externally-observable count from the pre-M-19b
-/// `to_delete.len() + to_insert.len() + to_update.len()` formula.
-async fn apply_sort_merge_rebuild(
-    desired_conn: &mut sqlx::SqliteConnection,
-    current_conn: &mut sqlx::SqliteConnection,
-    write_conn: &mut sqlx::SqliteConnection,
-) -> Result<u64, AppError> {
-    let mut desired_stream =
-        sqlx::query_as::<_, (String, String, String, i64)>(DESIRED_AGENDA_SQL).fetch(desired_conn);
-    let mut current_stream =
-        sqlx::query_as::<_, (String, String, String)>(CURRENT_AGENDA_SQL).fetch(current_conn);
-
-    let mut deletes: Vec<(String, String)> = Vec::with_capacity(STREAM_BATCH);
-    let mut inserts: Vec<((String, String), String)> = Vec::with_capacity(STREAM_BATCH);
-
-    let changed = merge_agenda_streams(
-        &mut desired_stream,
-        &mut current_stream,
-        write_conn,
-        &mut deletes,
-        &mut inserts,
-    )
-    .await?;
-
-    // Drop both readers before the final flush — defensive, since
-    // `write_conn` is independent of either stream's borrow but
-    // dropping early releases the two read connections sooner.
-    drop(desired_stream);
-    drop(current_stream);
-
-    if !deletes.is_empty() || !inserts.is_empty() {
-        flush_pending_agenda_diff(write_conn, &deletes, &inserts).await?;
-    }
-
-    Ok(changed)
-}
-
-/// The lockstep walk of [`apply_sort_merge_rebuild`]: consumes both streams,
-/// accumulating the diff into `deletes` / `inserts` and flushing whenever
-/// either buffer reaches [`STREAM_BATCH`]. Returns the logical change count;
-/// whatever is left in the buffers is the caller's final flush.
+/// [`DESIRED_AGENDA_SQL`]) so the merge runs in `O(n)` time and holds one
+/// row of each stream.
 async fn merge_agenda_streams(
-    desired_stream: &mut DesiredAgendaStream<'_>,
-    current_stream: &mut CurrentAgendaStream<'_>,
-    write_conn: &mut sqlx::SqliteConnection,
-    deletes: &mut Vec<(String, String)>,
-    inserts: &mut Vec<((String, String), String)>,
+    mut desired_stream: DesiredAgendaStream<'_>,
+    mut current_stream: CurrentAgendaStream<'_>,
+    mut on_stale: impl FnMut(StaleAgendaRow<'_>),
 ) -> Result<u64, AppError> {
     let mut changed: u64 = 0;
 
@@ -304,68 +278,127 @@ async fn merge_agenda_streams(
     let mut next_current = current_stream.try_next().await?;
 
     loop {
-        match (&next_desired, &next_current) {
+        // Which side the smaller key is on: `Less` is a key only the desired
+        // rows have, `Greater` one only the cache has.
+        let side = match (&next_desired, &next_current) {
             (None, None) => break,
-            (Some((d_date, d_block, d_source)), None) => {
-                // Current exhausted — every remaining desired row is a
-                // pure INSERT.
-                inserts.push(((d_date.clone(), d_block.clone()), d_source.clone()));
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (Some((d_date, d_block, _)), Some((c_date, c_block, _))) => {
+                (d_date.as_str(), d_block.as_str()).cmp(&(c_date.as_str(), c_block.as_str()))
+            }
+        };
+        if let (Ordering::Less | Ordering::Equal, Some((date, block_id, source))) =
+            (side, &next_desired)
+        {
+            // Same key on both sides with the same source is the one case
+            // that is not stale. A different source is a row whose upstream
+            // moved (e.g. property → column): one logical change.
+            let cached_source = match (side, &next_current) {
+                (Ordering::Equal, Some((_, _, c_source))) => Some(c_source),
+                _ => None,
+            };
+            if cached_source != Some(source) {
+                on_stale(StaleAgendaRow {
+                    date,
+                    block_id,
+                    desired_source: Some(source.as_str()),
+                    cached: cached_source.is_some(),
+                });
                 changed += 1;
-                next_desired = pull_desired!();
             }
-            (None, Some((c_date, c_block, _))) => {
-                // Desired exhausted — every remaining current row is a
-                // pure DELETE.
-                deletes.push((c_date.clone(), c_block.clone()));
-                changed += 1;
-                next_current = current_stream.try_next().await?;
-            }
-            (Some((d_date, d_block, d_source)), Some((c_date, c_block, c_source))) => {
-                let d_key = (d_date.as_str(), d_block.as_str());
-                let c_key = (c_date.as_str(), c_block.as_str());
-                match d_key.cmp(&c_key) {
-                    Ordering::Less => {
-                        // Desired ahead in the lockstep walk → INSERT.
-                        inserts.push(((d_date.clone(), d_block.clone()), d_source.clone()));
-                        changed += 1;
-                        next_desired = pull_desired!();
-                    }
-                    Ordering::Greater => {
-                        // Current ahead → row no longer in desired set
-                        // → DELETE.
-                        deletes.push((c_date.clone(), c_block.clone()));
-                        changed += 1;
-                        next_current = current_stream.try_next().await?;
-                    }
-                    Ordering::Equal => {
-                        // Same PK — compare source. If different, the
-                        // row's source moved to a different upstream
-                        // (e.g. property → column). Emit DELETE +
-                        // INSERT, equivalent to UPDATE source under a
-                        // PK of `(date, block_id)`. Counts as a single
-                        // logical change to match pre-M-19b
-                        // `to_update.len()` semantics.
-                        if d_source != c_source {
-                            deletes.push((c_date.clone(), c_block.clone()));
-                            inserts.push(((d_date.clone(), d_block.clone()), d_source.clone()));
-                            changed += 1;
-                        }
-                        next_desired = pull_desired!();
-                        next_current = current_stream.try_next().await?;
-                    }
-                }
-            }
+        } else if let Some((date, block_id, _)) = &next_current {
+            on_stale(StaleAgendaRow {
+                date,
+                block_id,
+                desired_source: None,
+                cached: true,
+            });
+            changed += 1;
         }
-
-        // Flush whenever either buffer hits the threshold so peak
-        // Rust-heap stays bounded at `O(STREAM_BATCH)`.
-        if deletes.len() >= STREAM_BATCH || inserts.len() >= STREAM_BATCH {
-            flush_pending_agenda_diff(write_conn, deletes, inserts).await?;
-            deletes.clear();
-            inserts.clear();
+        if side != Ordering::Greater {
+            next_desired = pull_desired!();
+        }
+        if side != Ordering::Less {
+            next_current = current_stream.try_next().await?;
         }
     }
 
+    Ok(changed)
+}
+
+/// The read half of [`rebuild_agenda_cache_split`]: the blocks with a key on
+/// which the whole desired state and the whole cache disagree, in id order.
+///
+/// Two connections, because the two streams are walked together; each has
+/// its own snapshot. A write that lands between the two is seen by one
+/// stream only and at worst names a block that is not stale, which the write
+/// half then finds nothing to change for.
+async fn blocks_with_stale_agenda(read_pool: &SqlitePool) -> Result<Vec<String>, AppError> {
+    let mut desired_conn = read_pool.acquire().await?;
+    let mut current_conn = read_pool.acquire().await?;
+    let mut stale = BTreeSet::new();
+    // dynamic-sql: the projection is a named text, which the derivation golden
+    // hashes and the write half narrows; the cache is read beside it
+    merge_agenda_streams(
+        sqlx::query_as(DESIRED_AGENDA_SQL).fetch(&mut *desired_conn),
+        sqlx::query_as(CURRENT_AGENDA_SQL).fetch(&mut *current_conn),
+        |row| {
+            if !stale.contains(row.block_id) {
+                stale.insert(row.block_id.to_owned());
+            }
+        },
+    )
+    .await?;
+    Ok(stale.into_iter().collect())
+}
+
+/// Blocks re-derived per statement by [`rederive_agenda_of`], which bounds
+/// the rows it holds at once when the whole cache is stale.
+const REDERIVE_CHUNK: usize = 500;
+
+/// The write half of [`rebuild_agenda_cache_split`]: bring the `agenda_cache`
+/// rows of the blocks in `block_ids` to what [`DESIRED_AGENDA_SQL`] gives for
+/// them now. It reads both sides again under the writer lock instead of
+/// applying what the read phase saw, so a write that landed in between is
+/// never undone. Returns the keys changed.
+async fn rederive_agenda_of(
+    conn: &mut sqlx::SqliteConnection,
+    block_ids: &[String],
+) -> Result<u64, AppError> {
+    let mut changed = 0;
+    for chunk in block_ids.chunks(REDERIVE_CHUNK) {
+        let ids_json = serde_json::to_string(chunk)?;
+        // dynamic-sql: `DESIRED_AGENDA_SQL`'s text narrowed to an id list
+        let desired: Vec<(String, String, String, i64)> = sqlx::query_as(DESIRED_AGENDA_OF_SQL)
+            .bind(&ids_json)
+            .fetch_all(&mut *conn)
+            .await?;
+        // dynamic-sql: a named text, which the plan test reads
+        let current: Vec<(String, String, String)> = sqlx::query_as(CURRENT_AGENDA_OF_SQL)
+            .bind(&ids_json)
+            .fetch_all(&mut *conn)
+            .await?;
+
+        // A changed source is a DELETE + INSERT: the PK is `(date, block_id)`.
+        let mut deletes: Vec<(String, String)> = Vec::new();
+        let mut inserts: Vec<((String, String), String)> = Vec::new();
+        changed += merge_agenda_streams(
+            futures_util::stream::iter(desired.into_iter().map(Ok)).boxed(),
+            futures_util::stream::iter(current.into_iter().map(Ok)).boxed(),
+            |row| {
+                let key = (row.date.to_owned(), row.block_id.to_owned());
+                if row.cached {
+                    deletes.push(key.clone());
+                }
+                if let Some(source) = row.desired_source {
+                    inserts.push((key, source.to_owned()));
+                }
+            },
+        )
+        .await?;
+        flush_pending_agenda_diff(conn, &deletes, &inserts).await?;
+    }
     Ok(changed)
 }
 
@@ -392,103 +425,55 @@ async fn flush_pending_agenda_diff(
 // rebuild_agenda_cache (p1-t20)
 // ---------------------------------------------------------------------------
 
-/// Incremental rebuild of `agenda_cache`.
-///
-/// Instead of a full DELETE + INSERT, this function:
-/// 1. Streams the desired state from the same 4 UNION ALL sources
-///    (sorted by `(date, block_id, prio)` — see `DESIRED_AGENDA_SQL`).
-/// 2. Streams the current cache state (sorted by `(date, block_id)`).
-/// 3. Walks the two streams in lockstep (M-19b sort-merge), batching
-///    DELETEs and INSERTs in `O(STREAM_BATCH)` chunks.
+/// Incremental rebuild of `agenda_cache`: [`rebuild_agenda_cache_split`] with
+/// one pool for both halves.
 ///
 /// The four sources are `DESIRED_AGENDA_SQL`'s, which is the single place
 /// they are defined — including the #5074 exclusion of the lifecycle
 /// timestamps (`created_at` / `completed_at` / `repeat-until`) from source 1.
 #[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("agenda", || rebuild_agenda_cache_impl(pool)).await?;
-    crate::derivations::record(pool, crate::derivations::Derivation::Agenda).await
+    rebuild_agenda_cache_split(pool, pool).await
 }
 
-async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    // M-19b: three independent connections — two readers (desired +
-    // current state streams) plus one writer for the diff transaction.
-    // Distinct connections are required so the streams' mutable borrows
-    // don't conflict and the writer can flush mid-stream. The original
-    // single-tx snapshot guarantee is relaxed in exchange for
-    // `O(STREAM_BATCH)` peak heap; any sub-millisecond drift between
-    // snapshots is corrected by the next rebuild — identical
-    // stale-while-revalidate semantics to the split-pool variant.
-    let mut desired_conn = pool.acquire().await?;
-    let mut current_conn = pool.acquire().await?;
-    let mut tx = crate::db::begin_immediate_logged(pool, "cache_agenda_rebuild").await?;
-
-    let changed = apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx).await?;
-
-    if changed == 0 {
-        // No changes — transaction is rolled back on drop.
-        return Ok(0);
-    }
-
-    tx.commit().await?;
-    Ok(changed)
-}
-
-// ---------------------------------------------------------------------------
-// Read/write split variant (Phase 1A)
-// ---------------------------------------------------------------------------
-
-/// Read/write split variant of [`rebuild_agenda_cache`].
+/// Rebuild `agenda_cache` with the whole-vault comparison on `read_pool`.
 ///
-/// Reads desired and current agenda state from `read_pool`, computes a diff,
-/// and applies inserts/deletes/updates on `write_pool`.
-/// Used by the materializer when a separate read pool is available.
+/// 1. Streams the desired state from the 4 UNION ALL sources (sorted by
+///    `(date, block_id, prio)` — see `DESIRED_AGENDA_SQL`) and the cache
+///    (sorted by `(date, block_id)`) and walks them in lockstep, keeping the
+///    ids of the blocks they disagree on.
+/// 2. Takes the writer lock only when there are any, and under it re-derives
+///    those blocks' rows ([`rederive_agenda_of`]).
+///
+/// A block that goes stale after step 1 read it is left to the rebuild its
+/// own write enqueues, which runs after this one.
 pub async fn rebuild_agenda_cache_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
     super::rebuild_with_timing("agenda", || {
-        rebuild_agenda_cache_split_impl(write_pool, read_pool)
+        rebuild_agenda_cache_impl(write_pool, read_pool)
     })
     .await?;
-    crate::derivations::record(write_pool, crate::derivations::Derivation::Agenda).await
+    crate::derivations::record_split(
+        write_pool,
+        read_pool,
+        crate::derivations::Derivation::Agenda,
+    )
+    .await
 }
 
-async fn rebuild_agenda_cache_split_impl(
+async fn rebuild_agenda_cache_impl(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<u64, AppError> {
-    // M-19b sort-merge, split-pool variant. Two reader connections from
-    // `read_pool` (desired stream + current stream); one writer
-    // transaction from `write_pool` for the chunked DELETE / INSERT.
-    //
-    // **TOCTOU window (M-19b).** Each read connection has its own
-    // snapshot started at `acquire()`-time, and the write tx is opened
-    // after the streams finish. Between any of the three snapshots
-    // another writer may mutate `agenda_cache` or `blocks`, so the diff
-    // applied below may be stale relative to the live state at write
-    // time. This is the documented stale-while-revalidate semantics of
-    // the background "rebuild" path (see AGENTS.md "Performance
-    // Conventions / Split read/write pool pattern"): rebuilds are
-    // eventually consistent. The next rebuild fixes any churn from this
-    // window — worst-case the cache flickers an insert+delete on a row
-    // another writer just touched, never a correctness violation. Do
-    // not "tighten" this without also reading the architectural
-    // rationale for the split-pool pattern; lifting the read into the
-    // write tx would defeat the writer-lock-hold-time win the split
-    // exists for.
-    let mut desired_conn = read_pool.acquire().await?;
-    let mut current_conn = read_pool.acquire().await?;
-    let mut tx =
-        crate::db::begin_immediate_logged(write_pool, "cache_agenda_rebuild_write").await?;
-
-    let changed = apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx).await?;
-
-    if changed == 0 {
-        // No changes — nothing to write.
+    let stale = blocks_with_stale_agenda(read_pool).await?;
+    if stale.is_empty() {
         return Ok(0);
     }
-
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_agenda_rebuild_write").await?;
+    let changed = rederive_agenda_of(&mut tx, &stale).await?;
     tx.commit().await?;
     Ok(changed)
 }
@@ -527,7 +512,7 @@ pub async fn rewrite_agenda_cache_once(
         return Ok(false);
     }
 
-    let changed = rebuild_agenda_cache_split_impl(write_pool, read_pool)
+    let changed = rebuild_agenda_cache_impl(write_pool, read_pool)
         .await?
         .to_string();
     let now = crate::db::now_ms();
@@ -739,10 +724,10 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         seed_mixed_fixture(&pool).await;
 
-        let first = rebuild_agenda_cache_impl(&pool).await.unwrap();
+        let first = rebuild_agenda_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(first, 200, "first pass inserts every row");
 
-        let second = rebuild_agenda_cache_impl(&pool).await.unwrap();
+        let second = rebuild_agenda_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(second, 0, "idempotent rebuild must produce zero diff ops");
 
         assert_eq!(
@@ -770,7 +755,7 @@ mod tests {
             set_property(&pool, &id, "due", &date).await;
         }
 
-        let baseline = rebuild_agenda_cache_impl(&pool).await.unwrap();
+        let baseline = rebuild_agenda_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(baseline, 100, "baseline inserts 100 rows");
         assert_eq!(
             snapshot(&pool).await.len(),
@@ -818,7 +803,7 @@ mod tests {
             .unwrap();
         }
 
-        let touched = rebuild_agenda_cache_impl(&pool).await.unwrap();
+        let touched = rebuild_agenda_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(
             touched, 20,
             "diff must touch exactly 10 source-changes + 5 inserts + 5 deletes = 20"
@@ -936,12 +921,360 @@ mod tests {
             .await
             .unwrap();
 
-        let cleared = rebuild_agenda_cache_impl(&pool).await.unwrap();
+        let cleared = rebuild_agenda_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(cleared, 200, "every cache row must be deleted");
         assert_eq!(
             snapshot(&pool).await.len(),
             0,
             "agenda_cache must be empty after source data is removed"
         );
+    }
+
+    /// The rebuild [`rebuild_agenda_cache_split`] replaced, as it was: it
+    /// took the writer lock, then compared the whole desired state with the
+    /// whole cache and wrote the difference. The oracle the split is tested
+    /// against (#6522).
+    mod replaced {
+        use super::super::*;
+
+        const STREAM_BATCH: usize = INSERT_CHUNK;
+
+        async fn apply_sort_merge_rebuild(
+            desired_conn: &mut sqlx::SqliteConnection,
+            current_conn: &mut sqlx::SqliteConnection,
+            write_conn: &mut sqlx::SqliteConnection,
+        ) -> Result<u64, AppError> {
+            let mut desired_stream =
+                sqlx::query_as::<_, (String, String, String, i64)>(DESIRED_AGENDA_SQL)
+                    .fetch(desired_conn);
+            let mut current_stream =
+                sqlx::query_as::<_, (String, String, String)>(CURRENT_AGENDA_SQL)
+                    .fetch(current_conn);
+
+            let mut deletes: Vec<(String, String)> = Vec::with_capacity(STREAM_BATCH);
+            let mut inserts: Vec<((String, String), String)> = Vec::with_capacity(STREAM_BATCH);
+
+            let changed = merge_agenda_streams(
+                &mut desired_stream,
+                &mut current_stream,
+                write_conn,
+                &mut deletes,
+                &mut inserts,
+            )
+            .await?;
+
+            // Drop both readers before the final flush — defensive, since
+            // `write_conn` is independent of either stream's borrow but
+            // dropping early releases the two read connections sooner.
+            drop(desired_stream);
+            drop(current_stream);
+
+            if !deletes.is_empty() || !inserts.is_empty() {
+                flush_pending_agenda_diff(write_conn, &deletes, &inserts).await?;
+            }
+
+            Ok(changed)
+        }
+
+        async fn merge_agenda_streams(
+            desired_stream: &mut DesiredAgendaStream<'_>,
+            current_stream: &mut CurrentAgendaStream<'_>,
+            write_conn: &mut sqlx::SqliteConnection,
+            deletes: &mut Vec<(String, String)>,
+            inserts: &mut Vec<((String, String), String)>,
+        ) -> Result<u64, AppError> {
+            let mut changed: u64 = 0;
+
+            // Pull the next *distinct* desired row, skipping any adjacent
+            // duplicate `(date, block_id)` keys (lower-precedence sources from
+            // the UNION ALL). Dedup must be bound to the desired-advance step —
+            // if we did the skip in the merge loop body using the previously
+            // emitted key, the `Ordering::Greater` arm (which only advances
+            // current) would falsely classify the legitimate next desired row
+            // as a duplicate of the one we just emitted.
+            let mut prev_desired_key: Option<(String, String)> = None;
+            macro_rules! pull_desired {
+                () => {{
+                    let mut out: Option<(String, String, String)> = None;
+                    while let Some((d_date, d_block, d_source, _prio)) =
+                        desired_stream.try_next().await?
+                    {
+                        let key = (d_date.clone(), d_block.clone());
+                        if prev_desired_key.as_ref() == Some(&key) {
+                            continue;
+                        }
+                        prev_desired_key = Some(key);
+                        out = Some((d_date, d_block, d_source));
+                        break;
+                    }
+                    out
+                }};
+            }
+
+            let mut next_desired = pull_desired!();
+            let mut next_current = current_stream.try_next().await?;
+
+            loop {
+                match (&next_desired, &next_current) {
+                    (None, None) => break,
+                    (Some((d_date, d_block, d_source)), None) => {
+                        // Current exhausted — every remaining desired row is a
+                        // pure INSERT.
+                        inserts.push(((d_date.clone(), d_block.clone()), d_source.clone()));
+                        changed += 1;
+                        next_desired = pull_desired!();
+                    }
+                    (None, Some((c_date, c_block, _))) => {
+                        // Desired exhausted — every remaining current row is a
+                        // pure DELETE.
+                        deletes.push((c_date.clone(), c_block.clone()));
+                        changed += 1;
+                        next_current = current_stream.try_next().await?;
+                    }
+                    (Some((d_date, d_block, d_source)), Some((c_date, c_block, c_source))) => {
+                        let d_key = (d_date.as_str(), d_block.as_str());
+                        let c_key = (c_date.as_str(), c_block.as_str());
+                        match d_key.cmp(&c_key) {
+                            Ordering::Less => {
+                                // Desired ahead in the lockstep walk → INSERT.
+                                inserts.push(((d_date.clone(), d_block.clone()), d_source.clone()));
+                                changed += 1;
+                                next_desired = pull_desired!();
+                            }
+                            Ordering::Greater => {
+                                // Current ahead → row no longer in desired set
+                                // → DELETE.
+                                deletes.push((c_date.clone(), c_block.clone()));
+                                changed += 1;
+                                next_current = current_stream.try_next().await?;
+                            }
+                            Ordering::Equal => {
+                                // Same PK — compare source. If different, the
+                                // row's source moved to a different upstream
+                                // (e.g. property → column). Emit DELETE +
+                                // INSERT, equivalent to UPDATE source under a
+                                // PK of `(date, block_id)`. Counts as a single
+                                // logical change to match pre-M-19b
+                                // `to_update.len()` semantics.
+                                if d_source != c_source {
+                                    deletes.push((c_date.clone(), c_block.clone()));
+                                    inserts.push((
+                                        (d_date.clone(), d_block.clone()),
+                                        d_source.clone(),
+                                    ));
+                                    changed += 1;
+                                }
+                                next_desired = pull_desired!();
+                                next_current = current_stream.try_next().await?;
+                            }
+                        }
+                    }
+                }
+
+                // Flush whenever either buffer hits the threshold so peak
+                // Rust-heap stays bounded at `O(STREAM_BATCH)`.
+                if deletes.len() >= STREAM_BATCH || inserts.len() >= STREAM_BATCH {
+                    flush_pending_agenda_diff(write_conn, deletes, inserts).await?;
+                    deletes.clear();
+                    inserts.clear();
+                }
+            }
+
+            Ok(changed)
+        }
+
+        pub(super) async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+            // M-19b: three independent connections — two readers (desired +
+            // current state streams) plus one writer for the diff transaction.
+            // Distinct connections are required so the streams' mutable borrows
+            // don't conflict and the writer can flush mid-stream. The original
+            // single-tx snapshot guarantee is relaxed in exchange for
+            // `O(STREAM_BATCH)` peak heap; any sub-millisecond drift between
+            // snapshots is corrected by the next rebuild — identical
+            // stale-while-revalidate semantics to the split-pool variant.
+            let mut desired_conn = pool.acquire().await?;
+            let mut current_conn = pool.acquire().await?;
+            let mut tx = crate::db::begin_immediate_logged(pool, "cache_agenda_rebuild").await?;
+
+            let changed =
+                apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx).await?;
+
+            if changed == 0 {
+                // No changes — transaction is rolled back on drop.
+                return Ok(0);
+            }
+
+            tx.commit().await?;
+            Ok(changed)
+        }
+    }
+
+    /// Two blocks on dates, one of them on a templated page, a date tag, and
+    /// cache rows that are missing (DUE's), stale in their source (SCHED's),
+    /// and left behind for a block with no date (GONE's).
+    async fn seed_agenda_drift(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES \
+             ('PG', 'page', 'p', NULL, 'PG'), ('TPL', 'page', 't', NULL, 'TPL'), \
+             ('DUE', 'content', 'c', 'PG', 'PG'), ('SCHED', 'content', 'c', 'PG', 'PG'), \
+             ('GONE', 'content', 'c', 'PG', 'PG'), ('RIGHT', 'content', 'c', 'PG', 'PG'), \
+             ('INTPL', 'content', 'c', 'TPL', 'TPL'), ('DTAG', 'tag', 'date/2025-06-01', NULL, NULL)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES ('TPL', 'template', 'true')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        set_due_date(pool, "DUE", "2025-06-02").await;
+        add_tag(pool, "DUE", "DTAG").await;
+        set_scheduled_date(pool, "SCHED", "2025-06-03").await;
+        set_due_date(pool, "RIGHT", "2025-06-04").await;
+        set_due_date(pool, "INTPL", "2025-06-05").await;
+        sqlx::query(
+            "INSERT INTO agenda_cache (date, block_id, source) VALUES \
+             ('2025-06-03', 'SCHED', 'property:scheduled'), ('2025-06-09', 'GONE', 'property:due'), \
+             ('2025-06-04', 'RIGHT', 'column:due_date'), ('2025-06-05', 'INTPL', 'column:due_date')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// #6522: the split rebuild leaves `agenda_cache` where the rebuild it
+    /// replaced does, and changes the same keys.
+    #[tokio::test]
+    async fn rebuild_agenda_cache_split_matches_the_rebuild_it_replaced_6522() {
+        let (oracle_pool, _oracle_dir) = test_pool().await;
+        let (pool, _dir) = test_pool().await;
+        seed_agenda_drift(&oracle_pool).await;
+        seed_agenda_drift(&pool).await;
+
+        let oracle_changed = replaced::rebuild_agenda_cache_impl(&oracle_pool)
+            .await
+            .unwrap();
+        let changed = rebuild_agenda_cache_impl(&pool, &pool).await.unwrap();
+
+        assert_eq!(
+            oracle_changed, 5,
+            "DUE's two rows, SCHED's source, GONE's row and INTPL's"
+        );
+        assert_eq!(changed, oracle_changed);
+        assert_eq!(snapshot(&pool).await, snapshot(&oracle_pool).await);
+        let row = |date: &str, block: &str, source: &str| {
+            (date.to_owned(), block.to_owned(), source.to_owned())
+        };
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![
+                row("2025-06-01", "DUE", "tag:DTAG"),
+                row("2025-06-02", "DUE", "column:due_date"),
+                row("2025-06-03", "SCHED", "column:scheduled_date"),
+                row("2025-06-04", "RIGHT", "column:due_date"),
+            ],
+        );
+        assert_eq!(
+            rebuild_agenda_cache_impl(&pool, &pool).await.unwrap(),
+            0,
+            "a second run finds nothing stale"
+        );
+    }
+
+    /// #6522: the same, after every round of random writes to the tables the
+    /// rebuild reads and to the cache itself.
+    #[tokio::test]
+    async fn rebuild_agenda_cache_split_matches_the_rebuild_it_replaced_on_random_vaults_6522() {
+        crate::cache::random_vault_tests::assert_rebuild_matches_oracle(
+            "agenda_cache",
+            "date, block_id, source",
+            async |pool| replaced::rebuild_agenda_cache_impl(pool).await.unwrap(),
+            async |pool| rebuild_agenda_cache_impl(pool, pool).await.unwrap(),
+        )
+        .await;
+    }
+
+    /// #6522: the write half re-derives only the blocks it is handed, from
+    /// what the tables hold when it runs.
+    #[tokio::test]
+    async fn rederive_agenda_of_touches_only_the_blocks_named_6522() {
+        let (pool, _dir) = test_pool().await;
+        seed_agenda_drift(&pool).await;
+        let stale = blocks_with_stale_agenda(&pool).await.unwrap();
+        assert_eq!(stale, ["DUE", "GONE", "INTPL", "SCHED"]);
+        // A write lands after the read half: DUE's date moves.
+        set_due_date(&pool, "DUE", "2025-07-07").await;
+
+        let mut tx = pool.begin().await.unwrap();
+        let changed = rederive_agenda_of(&mut tx, &["DUE".to_owned(), "RIGHT".to_owned()])
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(changed, 2, "DUE's two rows; RIGHT was not stale");
+        let rows = snapshot(&pool).await;
+        assert!(
+            rows.contains(&(
+                "2025-07-07".to_owned(),
+                "DUE".to_owned(),
+                "column:due_date".to_owned()
+            )),
+            "DUE takes the date it has now, not the one the read half saw: {rows:?}"
+        );
+        assert!(
+            rows.contains(&(
+                "2025-06-09".to_owned(),
+                "GONE".to_owned(),
+                "property:due".to_owned()
+            )),
+            "GONE was not named, so its planted row stays: {rows:?}"
+        );
+    }
+
+    /// #6522: with nothing stale the rebuild never asks for the writer lock,
+    /// so it finishes while another connection holds it.
+    #[tokio::test]
+    async fn rebuild_agenda_cache_takes_no_writer_lock_when_nothing_is_stale_6522() {
+        let (pool, _dir) = test_pool().await;
+        seed_agenda_drift(&pool).await;
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        let _writer = crate::db::begin_immediate_logged(&pool, "test_holds_the_lock")
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            rebuild_agenda_cache(&pool),
+        )
+        .await
+        .expect("the rebuild must not wait for the writer lock")
+        .unwrap();
+    }
+
+    /// #6522: what runs under the writer lock seeks the stale blocks by id;
+    /// it never scans a base table.
+    #[tokio::test]
+    async fn rederive_agenda_of_never_scans_a_base_table_6522() {
+        let (pool, _dir) = test_pool().await;
+        for sql in [DESIRED_AGENDA_OF_SQL, CURRENT_AGENDA_OF_SQL] {
+            let plan: Vec<(i64, i64, i64, String)> =
+                sqlx::query_as(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}")))
+                    .bind("[]")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            let scans: Vec<&str> = plan
+                .iter()
+                .map(|row| row.3.as_str())
+                .filter(|detail| {
+                    detail.starts_with("SCAN")
+                        && !detail.starts_with("SCAN (subquery")
+                        && !detail.contains("json_each")
+                })
+                .collect();
+            assert!(scans.is_empty(), "scans under the writer lock: {scans:?}");
+        }
     }
 }

@@ -24,6 +24,8 @@ mod tags;
 #[cfg(test)]
 mod cascade_tests;
 #[cfg(test)]
+pub(crate) mod random_vault_tests;
+#[cfg(test)]
 mod tests;
 
 // ---------------------------------------------------------------------------

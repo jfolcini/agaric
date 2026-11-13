@@ -2950,7 +2950,7 @@ fn date_tag_date(content: Option<&str>) -> Option<String> {
 /// rebuild may store per key.
 ///
 /// Transcribed from `DESIRED_AGENDA_SQL` (`agaric-store/src/cache/agenda.rs`)
-/// and the dedup in `apply_sort_merge_rebuild`, folded in Rust rather than
+/// and the dedup in `merge_agenda_streams`, folded in Rust rather than
 /// re-expressed as SQL so this is an independent recomputation:
 ///
 ///   * four upstreams, in precedence order — any `block_properties` row with a

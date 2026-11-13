@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT pc.page_id AS \"page_id!\" FROM pages_cache pc WHERE NOT EXISTS ( SELECT 1 FROM blocks b WHERE b.id = pc.page_id AND b.block_type = 'page' AND b.deleted_at IS NULL AND b.content IS NOT NULL)",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c1aea0577399549a80fe3c1a09b3589562e8b4a8ccfae877e17fc3bc340cea00"
+}
