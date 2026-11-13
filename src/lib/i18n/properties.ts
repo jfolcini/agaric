@@ -228,6 +228,10 @@ export const properties: Record<string, string> = {
   'queryBuilder.advanced.empty': 'Add at least one filter to build an advanced query.',
   'queryBuilder.advanced.filterCount_one': '{{count}} filter',
   'queryBuilder.advanced.filterCount_other': '{{count}} filters',
+  'queryBuilder.advanced.notText':
+    "This filter can't be written as text, so the block stores it in a coded form.",
+  'queryBuilder.textOnly':
+    'This query uses a filter the builder has no control for. It can only be edited as text, in the block itself.',
   'property.drawerTitle': 'Block Properties',
   'property.drawerDescription':
     'View, edit and add properties for this block (status, priority, dates, custom fields).',
