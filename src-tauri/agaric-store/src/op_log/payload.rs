@@ -79,7 +79,7 @@ fn extract_str_field_from_payload(payload_json: &str, field: &'static str) -> Op
 /// Parse the payload JSON **once** and extract both indexed-column values
 /// (`block_id` and `attachment_id`) in a single pass.
 ///
-/// `agaric_engine::dag::ingest_remote_record` needs both denormalised columns for every
+/// `agaric_engine::dag::ingest_replicated_record` needs both denormalised columns for every
 /// ingested remote op. Extracting `block_id` and `attachment_id` with two
 /// separate `serde_json::from_str` passes parses the same JSON twice; this
 /// helper parses it once. Remote-op ingest runs per synced op, so halving the
@@ -95,7 +95,7 @@ fn extract_str_field_from_payload(payload_json: &str, field: &'static str) -> Op
 /// (#5387), is indexed under that page, and a definition op under its
 /// `space_id` (#5841): a peer's row then lists as a local one does.
 // `pub` because the engine's remote-ingest path
-// (`agaric_engine::dag::ingest_remote_record`) calls it across the crate
+// (`agaric_engine::dag::ingest_replicated_record`) calls it across the crate
 // boundary to populate the indexed columns in a single parse.
 pub fn extract_indexed_ids_from_payload(payload_json: &str) -> (Option<String>, Option<String>) {
     match serde_json::from_str::<serde_json::Value>(payload_json) {

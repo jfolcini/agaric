@@ -66,7 +66,7 @@ pub fn compute_op_hash(
     // determinism. They are checked here as **dev-time** invariants
     // only — a plain `assert!` would turn a corrupt op into a release
     // panic at the op-log ingest gate (`verify_op_hash` →
-    // `ingest_remote_record`). Callers that ingest untrusted/remote content
+    // `ingest_replicated_record`). Callers that ingest untrusted/remote content
     // MUST reject NUL bytes *gracefully* before reaching this function (see
     // `verify_remote_record_integrity` in `dag.rs`);
     // this is a pure hash function and never panics in release on bad
@@ -554,7 +554,7 @@ mod tests {
     //
     // #1600 — these are `debug_assert!`s (not `assert!`): in release
     // `compute_op_hash` never panics on a NUL byte. The
-    // production-facing rejection lives in `dag::ingest_remote_record`,
+    // production-facing rejection lives in `dag::ingest_replicated_record`,
     // which returns `AppError::InvalidOperation` *before* reaching this
     // function (see the null-byte tests in `agaric-sync/src/dag_tests`). These tests
     // only run under the debug `cfg`, where the `debug_assert!` fires.

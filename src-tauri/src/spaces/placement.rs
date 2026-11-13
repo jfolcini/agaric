@@ -99,8 +99,9 @@ impl SpacePlacementSink {
 
 /// The snapshot pass a sync session ends with (#6525; see the module docs).
 async fn save_engines_after_session(pool: &SqlitePool, materializer: &Materializer) {
-    let saved =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(pool, materializer).await;
+    let saved = agaric_engine::loro::snapshot::save_engines_and_advance_cursor(pool, materializer)
+        .await
+        .saved;
     tracing::info!(saved, "loro: persisted snapshots after a sync session");
 }
 

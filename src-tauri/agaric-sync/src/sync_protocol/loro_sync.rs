@@ -293,7 +293,7 @@ pub async fn prepare_outgoing(
             tracing::warn!(
                 space_id = %space_id.as_str(),
                 device_id = %device_id,
-                stale_block_id = stale.iter().min().map_or("", String::as_str),
+                stale_blocks = stale.len(),
                 "loro_sync: #1257 freshness gate REFUSED export — engine holds a \
                  block SQL has soft-deleted (engine stale vs SQL) and mirroring \
                  SQL's tombstone did not settle it; emitting no sync payload this round"

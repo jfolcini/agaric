@@ -2305,7 +2305,8 @@ fn spawn_save_on_suspend(
     tauri::async_runtime::spawn(async move {
         let saved =
             agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &materializer)
-                .await;
+                .await
+                .saved;
         tracing::info!(saved, "loro: persisted snapshots on suspend");
     })
 }
@@ -3439,7 +3440,8 @@ pub fn run() {
                             &pool.0,
                             &materializer,
                         ),
-                    );
+                    )
+                    .saved;
                     tracing::info!(saved, "loro: persisted snapshots on exit");
                 }
             }

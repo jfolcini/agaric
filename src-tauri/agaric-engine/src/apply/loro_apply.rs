@@ -44,6 +44,9 @@ async fn resolve_doc_space(
 ///
 /// A sync import reaches the doc before it takes the writer lock to project,
 /// so in that gap this text holds a peer's edit the `blocks` row does not.
+/// The engine lock is released on return, so an import landing before the
+/// edit's own apply is still overwritten: the gap is narrowed, not closed
+/// (#6533), and has not been seen.
 pub async fn engine_block_content(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,

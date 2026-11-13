@@ -3415,7 +3415,7 @@ async fn set_repeat_property(
 ///
 /// That is not a contrivance — it is the exact path three real writers take:
 /// a row written by a pre-#3647 build, a `SetProperty` op arriving from a
-/// sync peer (`dag::ingest_remote_record`), and the recurrence
+/// sync peer (`dag::ingest_replicated_record`), and the recurrence
 /// flow copying the parent's rule onto each new sibling
 /// (`recurrence::compute::set_recurrence_property`). The gate is deliberately
 /// at the command boundary so none of those three can be broken by it; the
