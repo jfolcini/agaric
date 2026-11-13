@@ -1323,7 +1323,7 @@ export async function pageSourceClipboard(
  * pressed from the page, since one toast can lie over another's, and pressed
  * again on every poll, since a loading toast has none until it settles.
  */
-async function dismissToasts(): Promise<void> {
+export async function dismissToasts(): Promise<void> {
   await browser.waitUntil(
     () =>
       browser.execute(() => {

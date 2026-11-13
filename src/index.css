@@ -2058,11 +2058,19 @@
   }
 }
 
-/* #6532 — a tag chip in a list row's line (`BlockListItem`) takes a 44 px tall
-   touch area; in block text it would take taps and caret placement from the
-   lines above and below. Only taller, not wider: chips sit side by side, and a
-   tap between two must not land on the farther one. Anchored at the left edge,
-   not centred: a fractional horizontal translate widens the hit box by a pixel. */
+/* #6532 — a tag chip in a list row's text (`BlockListItem`, a projected
+   occurrence) takes a 44 px tall touch area; in block text it would take taps
+   and caret placement from the lines above and below. Only taller, not wider:
+   chips sit side by side, and a tap between two must not land on the farther
+   one. Anchored at the left edge, not centred: a fractional horizontal
+   translate widens the hit box by a pixel. The area lies under the row's own
+   text and chips (`isolate`, `z-index: -1`): where the text wraps, a tap on
+   another line reaches that line, not the chip above or below it. */
+.tag-chip-row {
+  @media (pointer: coarse) {
+    isolation: isolate;
+  }
+}
 .tag-chip-row .tag-ref-chip {
   @apply touch-hit-area;
   @media (pointer: coarse) {
@@ -2070,6 +2078,7 @@
       left: 0;
       width: 100%;
       transform: translateY(-50%);
+      z-index: -1;
     }
   }
 }

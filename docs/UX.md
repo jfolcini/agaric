@@ -9,7 +9,7 @@ Three rules dominate everything below:
 
 1. **Tokens, not literals.** Colours go through OKLCH semantic tokens in `src/index.css`. Durations and easings go through `--duration-*` / `--ease-*`. No `text-gray-500`, no `200ms`.
 2. **i18n everything.** Every user-visible string passes through `t()` — including toast text, `aria-label`, empty states, and `announce()` calls. Keys live in `src/lib/i18n/{namespace}.ts`.
-3. **44 px touch floor.** Every interactive element honours `[@media(pointer:coarse)]:min-h-11` (or equivalent). Enforced in `Button` variants. The `max-sm:` divergence on inline indicators is documented in `docs/UI-MAP.md` § Mobile/a11y. Chips inside block text keep their drawn size, where a taller hit area would take taps and caret placement from the lines above and below; a tag chip in a list row reaches 44 px in height through `touch-hit-area` (#6532).
+3. **44 px touch floor.** Every interactive element honours `[@media(pointer:coarse)]:min-h-11` (or equivalent). Enforced in `Button` variants. The `max-sm:` divergence on inline indicators is documented in `docs/UI-MAP.md` § Mobile/a11y. Chips inside block text keep their drawn size, where a taller hit area would take taps and caret placement from the lines above and below; a tag chip in a list row reaches 44 px in height through `touch-hit-area`, laid under the row's own text and chips so that where the text wraps, a tap on another line reaches that line (#6532).
 
 Source layout:
 
