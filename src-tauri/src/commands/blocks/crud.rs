@@ -725,7 +725,7 @@ pub(crate) async fn reject_duplicate_name(
 /// each alias such a page brings (#6278), run after the writes of a restore,
 /// an undo or a move into a space, so two names one batch brings into a space
 /// see each other (#5281, #6051, #6099). Each space's names are read once for
-/// the batch.
+/// the batch. A saved view (#6544) holds no name, so it clashes with none.
 pub(crate) async fn reject_taken_names(
     conn: &mut sqlx::SqliteConnection,
     blocks: &[impl serde::Serialize],
@@ -736,7 +736,8 @@ pub(crate) async fn reject_taken_names(
         r#"SELECT b.id AS "id!", b.block_type, b.content AS "content!", b.space_id
            FROM json_each(?1) je
            JOIN blocks b ON b.id = je.value
-           WHERE b.block_type IN ('page', 'tag') AND b.content IS NOT NULL"#,
+           WHERE b.block_type IN ('page', 'tag') AND b.content IS NOT NULL
+             AND b.id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')"#,
         blocks_json
     )
     .fetch_all(&mut *conn)
@@ -777,8 +778,11 @@ pub(crate) async fn reject_taken_names(
 
 /// [`delete_block_inner`]'s validation phase, inside its IMMEDIATE tx
 /// (TOCTOU-safe): the block exists, is live, and is not a non-empty space.
-/// Returns its `block_type`.
-async fn verify_deletable_in_tx(tx: &mut CommandTx, block_id: &str) -> Result<String, AppError> {
+/// Returns its `block_type` and, for a space, the saved views it takes along.
+async fn verify_deletable_in_tx(
+    tx: &mut CommandTx,
+    block_id: &str,
+) -> Result<(String, Vec<String>), AppError> {
     // #2037 pt2: also read `block_type` so the post-commit dispatch can
     // narrow the cache-rebuild fan-out for a CONTENT block (skip
     // `RebuildTagsCache`/`RebuildPagesCache`).
@@ -812,25 +816,42 @@ async fn verify_deletable_in_tx(tx: &mut CommandTx, block_id: &str) -> Result<St
     .fetch_optional(&mut ***tx)
     .await?
     .is_some();
-    if is_space_block {
-        // #533 Phase 2: pages in this space carry `blocks.space_id = ?`
-        // (the old `block_properties(key='space')` rows are gone).
-        let child_count: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
-             WHERE b.deleted_at IS NULL \
-             AND b.block_type = 'page' \
-             AND b.space_id = ?",
-            block_id,
-        )
-        .fetch_one(&mut ***tx)
-        .await?;
-        if child_count > 0 {
-            return Err(AppError::InvalidOperation(format!(
-                "cannot delete space '{block_id}': it contains {child_count} pages"
-            )));
-        }
+    let views = if is_space_block {
+        saved_views_of_space_in_tx(tx, block_id).await?
+    } else {
+        Vec::new()
+    };
+    Ok((row.block_type, views))
+}
+
+/// The saved views (#6544) of the space `space_id`, which a delete of the
+/// space takes with it: the Spaces tab, like every page list, does not show
+/// them, so a space holding nothing else reads as empty. Any other live page
+/// refuses the delete, counted as the Spaces tab counts. Pages in a space
+/// carry `blocks.space_id` (#533).
+async fn saved_views_of_space_in_tx(
+    tx: &mut CommandTx,
+    space_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let pages = sqlx::query!(
+        r#"SELECT b.id AS "id!: String",
+                  b.id IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')
+                      AS "saved_view!: bool"
+           FROM blocks b
+           WHERE b.deleted_at IS NULL AND b.block_type = 'page' AND b.space_id = ?1
+           ORDER BY b.id"#,
+        space_id,
+    )
+    .fetch_all(&mut ***tx)
+    .await?;
+    let (views, others): (Vec<_>, Vec<_>) = pages.into_iter().partition(|page| page.saved_view);
+    if !others.is_empty() {
+        return Err(AppError::InvalidOperation(format!(
+            "cannot delete space '{space_id}': it contains {} pages",
+            others.len()
+        )));
     }
-    Ok(row.block_type)
+    Ok(views.into_iter().map(|page| page.id).collect())
 }
 
 /// Soft-delete a block and all its descendants (cascade).
@@ -885,15 +906,22 @@ pub async fn delete_block_inner(
     tx.commit_and_dispatch(materializer).await?;
     dispatch_deletes(pool, materializer, std::slice::from_ref(&deleted)).await;
 
+    // A deleted space's saved views count with it, as in the batch delete.
+    let all = std::iter::once(&deleted).chain(&deleted.swept);
     Ok(DeleteResponse {
         block_id,
         deleted_at: deleted.deleted_at,
         // The cohort INCLUDES the seed (depth-0 anchor of `collect_delete_cohort`'s
         // active CTE), so its length equals the old cascade UPDATE's
         // `rows_affected()` exactly — the same set of rows the UPDATE touched.
-        descendants_affected: deleted.effects.deleted_cohort.len() as u64,
+        descendants_affected: all
+            .clone()
+            .map(|d| d.effects.deleted_cohort.len() as u64)
+            .sum(),
         // #4523 — the PAGE subset of that same cohort; see above.
-        affected_page_ids: deleted.affected_page_ids,
+        affected_page_ids: all
+            .flat_map(|d| d.affected_page_ids.iter().cloned())
+            .collect(),
     })
 }
 
@@ -904,6 +932,8 @@ pub(crate) struct DeleteInTx {
     pub(crate) effects: agaric_engine::apply::kernel::ApplyEffects,
     pub(crate) affected_page_ids: Vec<String>,
     pub(crate) deleted_at: i64,
+    /// The saved views (#6544) a deleted space took with it, one delete each.
+    pub(crate) swept: Vec<DeleteInTx>,
 }
 
 /// Soft-delete ONE block (cascade) inside an already-open [`CommandTx`],
@@ -926,7 +956,11 @@ pub(crate) async fn delete_block_in_tx(
         block_id: BlockId::from_trusted(&block_id),
     });
 
-    let block_type = verify_deletable_in_tx(tx, &block_id).await?;
+    let (block_type, views) = verify_deletable_in_tx(tx, &block_id).await?;
+    let mut swept = Vec::with_capacity(views.len());
+    for view in views {
+        swept.push(Box::pin(delete_block_in_tx(tx, state, device_id, view)).await?);
+    }
 
     // Single timestamp for both op_log and blocks — reverse_delete_block uses
     // record.created_at as deleted_at_ref, so they must match exactly.
@@ -1023,6 +1057,7 @@ pub(crate) async fn delete_block_in_tx(
         effects,
         affected_page_ids,
         deleted_at: now,
+        swept,
     })
 }
 
@@ -1035,6 +1070,7 @@ pub(crate) async fn dispatch_deletes(
     deletes: &[DeleteInTx],
 ) {
     for deleted in deletes {
+        Box::pin(dispatch_deletes(pool, materializer, &deleted.swept)).await;
         // #2344 NEW post-commit engine cohort fan-out — the LOCAL counterpart of
         // the `dispatch_delete_descendants` call `apply_op` runs after ITS commit.
         // The in-tx engine apply of `delete_block_in_tx`
@@ -1064,7 +1100,8 @@ pub(crate) async fn dispatch_deletes(
 
 /// [`delete_blocks_by_ids_inner`]'s validation phase, inside its IMMEDIATE
 /// tx: resolve the live root set and refuse the batch if any root is a
-/// non-empty space. Returns `(id, block_type)` per live root.
+/// non-empty space. Returns `(id, block_type)` per live root, the saved views
+/// of any space among them first.
 async fn load_deletable_roots_in_tx(
     tx: &mut CommandTx,
     ids_json: &str,
@@ -1094,7 +1131,9 @@ async fn load_deletable_roots_in_tx(
     // space. Same reasoning as `delete_block_inner`: a partial delete
     // would silently leak orphan pages whose `space` ref dangles. We
     // surface the FIRST offending space + its child count so the
-    // operator sees actionable detail.
+    // operator sees actionable detail. The saved views of any space among the
+    // roots go first, as the single delete takes a space's views before it.
+    let mut roots = Vec::with_capacity(live_roots.len());
     for (root, _root_block_type) in &live_roots {
         // #708: registry-backed "is a space" check — see the single-row
         // path above.
@@ -1104,24 +1143,12 @@ async fn load_deletable_roots_in_tx(
                 .await?
                 .is_some();
         if is_space_block {
-            // #533 Phase 2: pages in this space carry `blocks.space_id`.
-            let child_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
-                 WHERE b.deleted_at IS NULL \
-                 AND b.block_type = 'page' \
-                 AND b.space_id = ?",
-                root,
-            )
-            .fetch_one(&mut ***tx)
-            .await?;
-            if child_count > 0 {
-                return Err(AppError::InvalidOperation(format!(
-                    "cannot delete space '{root}': it contains {child_count} pages"
-                )));
-            }
+            let views = saved_views_of_space_in_tx(tx, root).await?;
+            roots.extend(views.into_iter().map(|view| (view, "page".to_owned())));
         }
     }
-    Ok(live_roots)
+    roots.extend(live_roots);
+    Ok(roots)
 }
 
 /// One delete root's post-commit engine fan-out inputs: the appended
@@ -1868,11 +1895,9 @@ pub async fn restore_block_inner(
 
     // Refresh `page_id` for the restored subtree synchronously,
     // mirroring the recursive-CTE UPDATE in `move_block_inner` (see
-    // `move_ops.rs:177-234`). The async `RebuildPageIds` task dispatched
-    // via `commit_and_dispatch` below stays in place (idempotent — running
-    // it again is safe), but without this sync update there's a window
-    // where callers reading right after commit see a stale `page_id` — the
-    // restore's own re-derivation is what closes it, and it has to hold
+    // `move_ops.rs:177-234`). No vault-wide `RebuildPageIds` follows a
+    // restore (#6522), so the restore's own re-derivation is what keeps
+    // callers from reading a stale `page_id`, and it has to hold
     // against drift from ANY source (a replayed remote move, a crash between
     // two writes, a repaired-but-not-yet-swept row). This comment used to
     // name ONE such source — "`move_block_inner`'s recursive UPDATE skips
@@ -2341,10 +2366,9 @@ pub async fn restore_all_deleted_inner(
     let count = agaric_engine::block_ops::clear_all_deleted_at(&mut tx).await?;
 
     // (a) + P7 (#346): refresh `page_id` for every restored block
-    // synchronously. The async `RebuildPageIds` materializer task dispatched
-    // via `commit_and_dispatch` below stays in place (idempotent), but
-    // without this sync update callers reading right after commit can see a
-    // stale `page_id`. (This used to cite the move as the source — "a
+    // synchronously. No vault-wide `RebuildPageIds` follows a restore
+    // (#6522), so without this sync update callers would read a stale
+    // `page_id`. (This used to cite the move as the source — "a
     // soft-deleted block keeps its pre-move `page_id` because
     // `move_block_inner`'s recursive UPDATE skips deleted descendants".
     // #3919 dropped that filter, so the move is no longer a source of the
@@ -3371,8 +3395,7 @@ pub async fn purge_blocks_by_ids(
 
 /// One row of [`create_blocks_batch_inner`]'s input list.
 ///
-/// Mirrors the per-block argument set the FE used to send to `create_block`
-/// once per descendant / per markdown line in `template-utils.ts`. The
+/// One block of a `/template` insert (`template-utils.ts`). The
 /// `properties` map carries arbitrary `key -> value_text` pairs that land
 /// as `SetProperty` ops inside the same transaction (mirrors
 /// `import_markdown_inner`'s precedent — see its `set_property_in_tx`
@@ -3391,10 +3414,14 @@ pub struct CreateBlockSpec {
     /// `MAX_CONTENT_LENGTH` per spec.
     pub content: String,
     /// Optional parent block id. When `Some`, the parent must resolve
-    /// to a live (non-deleted, non-conflict) block — including parents
-    /// created EARLIER in the same batch. When `None`, the new block is
-    /// top-level.
+    /// to a live (non-deleted, non-conflict) block. When `None` (and no
+    /// `parent_index`), the new block is top-level.
     pub parent_id: Option<BlockId>,
+    /// The index of an EARLIER spec in the same batch whose block is this
+    /// one's parent: a caller cannot know a server-minted id before the
+    /// batch runs. Exclusive with `parent_id`.
+    #[serde(default)]
+    pub parent_index: Option<u32>,
     /// Optional 1-based sibling position (stable wire field). `None` appends
     /// after the last sibling. #400: converted to the engine's 0-based sibling
     /// `index` at the call site (position 1 → index 0).
@@ -3405,23 +3432,24 @@ pub struct CreateBlockSpec {
     /// `import_markdown_inner` for parsed markdown property lines.
     #[serde(default)]
     pub properties: std::collections::HashMap<String, String>,
+    /// Properties held as a number, date, ref or boolean, each written as
+    /// `set_property` writes it, inside the same transaction.
+    #[serde(default)]
+    pub typed_properties: std::collections::HashMap<String, SetPropertyArgs>,
 }
 
 /// Atomically create N blocks (with optional
 /// per-block properties) in a single `BEGIN IMMEDIATE` transaction.
 ///
-/// Replaces the per-block `create_block` IPC loop the FE used to drive
-/// in `template-utils.ts::insertTemplateBlocks` /
-/// `insertTemplateBlocksFromString` (one IPC per descendant / per
-/// markdown line). The new path is one IPC, one writer-lock window, one
-/// op_log scope.
+/// `template-utils.ts::insertTemplateBlocks` sends a whole template through
+/// it: one IPC, one writer-lock window, one op_log scope.
 ///
 /// Per-spec semantics: each entry in `specs` runs through
 /// [`create_block_in_tx`] (the same helper [`import_markdown_inner`] uses
 /// in `src-tauri/src/commands/pages/markdown.rs`), accumulating
 /// `(BlockRow, OpRecord)` pairs. After
 /// the `CreateBlock` op is appended, every `(key, value)` pair in
-/// `properties` runs through [`set_property_in_tx`] — same precedent as
+/// `properties` and `typed_properties` runs through [`set_property_in_tx`] — same precedent as
 /// the markdown-import loop in `src-tauri/src/commands/pages/markdown.rs`.
 /// All ops enqueue for
 /// background dispatch; one `commit_and_dispatch` at the end drains them
@@ -3441,11 +3469,8 @@ pub struct CreateBlockSpec {
 /// - Empty `specs` list → [`AppError::Validation`].
 /// - `specs.len()` > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) → [`AppError::Validation`].
 ///
-/// **Forward references:** a spec's `parent_id` may reference a block
-/// id created EARLIER in the same batch. `create_block_in_tx`'s parent
-/// validation runs against the live transaction state, so a row
-/// inserted at index `i` is visible to the parent probe at index
-/// `j > i`.
+/// **Nesting:** a spec's `parent_index` names an EARLIER spec whose block
+/// is its parent, so a whole tree lands in one batch (`/template`, #6530).
 #[instrument(skip(pool, device_id, materializer, specs), err)]
 pub async fn create_blocks_batch_inner(
     pool: &SqlitePool,
@@ -3458,74 +3483,35 @@ pub async fn create_blocks_batch_inner(
     }
     crate::commands::ensure_batch_within_cap("specs", specs.len())?;
 
-    // PRE-VALIDATE every spec's pure shape (block_type membership, content
-    // length) BEFORE the loop's first `apply_op_projected` commits a block
-    // into the shared per-space Loro engine. The engine has NO rollback: a
-    // mid-batch shape rejection used to roll back SQL + op_log while specs
-    // `0..k` stayed committed in the LoroDoc — phantom nodes that export
-    // over sync. The loop's own `create_block_in_tx` re-runs these checks
-    // (unchanged), so behaviour is identical for single creates; per-spec
-    // checks that need tx state (parent liveness, depth, cross-space refs,
-    // property validation) still run in-loop and are covered by
-    // `create_block_in_tx`'s validate-before-engine-apply ordering.
-    for spec in &specs {
-        agaric_engine::block_ops::validate_create_block_shape(&spec.block_type, &spec.content)?;
-    }
+    // PRE-VALIDATE every spec's shape (block_type membership, content length,
+    // parent_index) BEFORE the loop's first write. Checks that need tx state
+    // (parent liveness, depth, cross-space refs, property validation) run
+    // in-loop, and the armed engine rollback rewinds what the loop applied.
+    validate_spec_shapes(&specs)?;
 
     let mut tx = CommandTx::begin_immediate(pool, "create_blocks_batch").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
     let mut created: Vec<BlockRow> = Vec::with_capacity(specs.len());
-
     for spec in specs {
-        // Contract — any failure here rolls back the whole tx via
-        // `?`. Mirrors `import_markdown_inner`'s per-block loop.
-        // #400: the spec keeps its stable 1-based `position` wire field;
-        // `create_block_in_tx` now takes a 0-based `index`, so convert
-        // (position 1 → index 0 = first child). `None` still appends.
-        let index = spec.position.map(|p| (p - 1).max(0));
-        let (block, block_op) = create_block_in_tx(
+        let parent_id = match spec.parent_index {
+            Some(index) => usize::try_from(index)
+                .ok()
+                .and_then(|i| created.get(i))
+                .map(|parent| parent.id.clone().into_string()),
+            None => spec.parent_id.clone().map(BlockId::into_string),
+        };
+        // Any failure here rolls back the whole tx via `?`. Boxed: the spec's
+        // create-and-properties future would otherwise inflate every caller's.
+        let block = Box::pin(create_spec_in_tx(
             &mut tx,
-            materializer.loro_state(),
+            materializer,
             device_id,
-            spec.block_type,
-            spec.content,
-            spec.parent_id.map(BlockId::into_string),
-            index,
-            // #2849 PR2: batch creates always mint server ids.
-            None,
-        )
-        .await?;
-        tx.enqueue_background(block_op);
-
-        // Properties — same shape as `import_markdown_inner`. Each
-        // (key, value) pair becomes one `SetProperty` op inside this same
-        // transaction. Reserved keys (`todo_state` / `priority` /
-        // `due_date` / `scheduled_date`) route through the column-write
-        // branch of `set_property_in_tx`, but the date reserved keys need
-        // the `value_date` field shape (not `value_text`) to validate —
-        // #623. The helper types the flat string value per key.
-        for (key, value) in &spec.properties {
-            let (value_text, value_num, value_date, value_ref, value_bool) =
-                agaric_engine::block_ops::typed_property_args_for_string_value(key, value.clone());
-            let (_block, prop_op) = set_property_in_tx(
-                &mut tx,
-                materializer.loro_state(),
-                device_id,
-                block.id.clone().into_string(),
-                key,
-                value_text,
-                value_num,
-                value_date,
-                value_ref,
-                value_bool,
-            )
-            .await?;
-            tx.enqueue_background(prop_op);
-        }
-
-        created.push(block);
+            spec,
+            parent_id,
+        ));
+        created.push(block.await?);
     }
 
     tx.commit_and_dispatch(materializer).await?;
@@ -3533,14 +3519,96 @@ pub async fn create_blocks_batch_inner(
     Ok(created)
 }
 
+/// Refuse a batch whose shape is wrong before its first write: an unknown
+/// `block_type`, oversize content, or a `parent_index` that does not name an
+/// earlier spec or sits beside a `parent_id`.
+fn validate_spec_shapes(specs: &[CreateBlockSpec]) -> Result<(), AppError> {
+    for (i, spec) in specs.iter().enumerate() {
+        agaric_engine::block_ops::validate_create_block_shape(&spec.block_type, &spec.content)?;
+        let Some(parent) = spec.parent_index else {
+            continue;
+        };
+        if spec.parent_id.is_some() {
+            return Err(AppError::validation(format!(
+                "spec {i}: parentId and parentIndex cannot both be set"
+            )));
+        }
+        if usize::try_from(parent).map_or(true, |p| p >= i) {
+            return Err(AppError::validation(format!(
+                "spec {i}: parentIndex {parent} must name an earlier spec"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// One spec of [`create_blocks_batch_inner`]: the block under `parent_id`,
+/// then each of its properties, every op riding `tx`.
+async fn create_spec_in_tx(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    spec: CreateBlockSpec,
+    parent_id: Option<String>,
+) -> Result<BlockRow, AppError> {
+    // #400: the spec keeps its stable 1-based `position` wire field;
+    // `create_block_in_tx` takes a 0-based `index` (position 1 → index 0).
+    // `None` appends.
+    let index = spec.position.map(|p| (p - 1).max(0));
+    let (block, block_op) = create_block_in_tx(
+        tx,
+        materializer.loro_state(),
+        device_id,
+        spec.block_type,
+        spec.content,
+        parent_id,
+        index,
+        // #2849 PR2: batch creates always mint server ids.
+        None,
+    )
+    .await?;
+    tx.enqueue_background(block_op);
+
+    // A flat value is typed by its key: the reserved date keys need the
+    // `value_date` shape, not `value_text`, to validate (#623).
+    let text = spec.properties.into_iter().map(|(key, value)| {
+        let typed = agaric_engine::block_ops::typed_property_args_for_string_value(&key, value);
+        (key, typed)
+    });
+    let typed = spec.typed_properties.into_iter().map(|(key, v)| {
+        let args = (
+            v.value_text,
+            v.value_num,
+            v.value_date,
+            v.value_ref,
+            v.value_bool,
+        );
+        (key, args)
+    });
+    for (key, (value_text, value_num, value_date, value_ref, value_bool)) in text.chain(typed) {
+        let (_block, prop_op) = set_property_in_tx(
+            tx,
+            materializer.loro_state(),
+            device_id,
+            block.id.clone().into_string(),
+            &key,
+            value_text,
+            value_num,
+            value_date,
+            value_ref,
+            value_bool,
+        )
+        .await?;
+        tx.enqueue_background(prop_op);
+    }
+    Ok(block)
+}
+
 /// Tauri command: atomically create a batch of blocks. Delegates to
 /// [`create_blocks_batch_inner`].
 ///
-/// Collapses the per-block `create_block` IPC loop
-/// in `src/lib/template-utils.ts::insertTemplateBlocks` /
-/// `insertTemplateBlocksFromString` into one round-trip and one
-/// writer-lock window. A 10-line template that previously fired 10
-/// IPCs now fires 1.
+/// `src/lib/template-utils.ts::insertTemplateBlocks` inserts a whole
+/// template through it, in one round-trip and one writer-lock window.
 ///
 /// #5140: the response carries the produced op refs (`WithOps`, one per
 /// appended op in append order) so the frontend undo stack can address the

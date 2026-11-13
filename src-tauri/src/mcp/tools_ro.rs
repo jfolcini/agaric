@@ -1296,7 +1296,9 @@ fn tool_desc_query() -> ToolDescription {
         description: "Query one space's blocks with a boolean tree of predicates, optionally \
                       sorted, grouped and aggregated; cursor paginated. Rows carry `page_title` \
                       and the properties the query reads; with `group_by` the result is `groups` \
-                      of { key, title, count, aggregates } instead. Open TODOs with \
+                      of { key, title, count, aggregates } instead. Template pages and their \
+                      blocks are left out unless `where` asks for the `template` property; \
+                      saved views always are. Open TODOs with \
                       estimate > 3: {\"space_id\": \"<ULID>\", \"where\": {\"type\": \"And\", \
                       \"children\": [{\"type\": \"Leaf\", \"primitive\": {\"type\": \"State\", \
                       \"values\": [\"TODO\"]}}, {\"type\": \"Leaf\", \"primitive\": {\"type\": \

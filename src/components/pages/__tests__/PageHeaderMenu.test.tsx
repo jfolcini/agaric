@@ -17,6 +17,7 @@ vi.mock('lucide-react', () => ({
   BookTemplate: (props: React.SVGProps<SVGSVGElement>) => (
     <svg data-testid="book-template-icon" {...props} />
   ),
+  Copy: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="copy-icon" {...props} />,
   Download: (props: React.SVGProps<SVGSVGElement>) => (
     <svg data-testid="download-icon" {...props} />
   ),

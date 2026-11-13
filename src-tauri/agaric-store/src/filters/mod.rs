@@ -28,3 +28,9 @@ pub use primitive::{
     PropertyPredicate, PropertyValue, SEARCH_ALLOWED_KEYS, SearchProjection, WhereClause,
     last_edited_ms_sql,
 };
+
+/// Leaves out a saved view (#6544), a page carrying the internal `saved_view`
+/// property, which the page lists, search and queries never show. Reads `b`;
+/// a `query!` site writes the same text, since the macro takes a literal.
+pub const NOT_SAVED_VIEW: &str =
+    "b.id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')";

@@ -182,10 +182,14 @@ test.describe(' + PageBrowser unified Bookmarks + Pages model @pages @mobile', (
 
     // Star "Quick Notes" then "Meetings". Default sort is alphabetical
     // → starred ordering should be Meetings, Quick Notes (M < Q).
+    const pageRows = page.locator('[data-page-item]')
     await page.locator('[data-page-item]:has-text("Quick Notes") .star-toggle').click()
+    // The list re-sorts a task after the click and keeps each row element at
+    // its position, so a row found before the re-sort shows another page by
+    // the time it is clicked.
+    await expect(pageRows.nth(0)).toContainText('Quick Notes')
     await page.locator('[data-page-item]:has-text("Meetings") .star-toggle').click()
 
-    const pageRows = page.locator('[data-page-item]')
     await expect(pageRows.nth(0)).toContainText('Meetings')
     await expect(pageRows.nth(1)).toContainText('Quick Notes')
   })

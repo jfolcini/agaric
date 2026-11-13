@@ -120,6 +120,9 @@ pub(super) struct DebounceState {
     /// — the union is always correctness-safe. Reset to `false` on disarm.
     /// The inbound-sync debounce never touches this (its fire set is fixed).
     pub(super) needs_full: bool,
+    /// LOCAL-lifecycle debounce only — whether the settled burst fires
+    /// `RebuildPageIds`: OR-accumulated like `needs_full`, set by a purge.
+    pub(super) needs_page_ids: bool,
 }
 
 /// Outcome of a NON-BLOCKING background enqueue

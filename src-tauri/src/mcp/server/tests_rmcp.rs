@@ -27,10 +27,9 @@ use super::{
 };
 use crate::materializer::Materializer;
 use crate::mcp::activity::{ActivityContext, ActivityRing, RecordingEmitter};
-use crate::mcp::agents::{AgentStore, McpAgentMode, delete_agent, insert_agent};
+use crate::mcp::agents::{McpAgentMode, delete_agent, insert_agent};
 use crate::mcp::registry::{ToolDescription, ToolRegistry};
-use crate::mcp::tools_ro::ReadOnlyTools;
-use crate::mcp::tools_rw::ReadWriteTools;
+use crate::mcp::test_support::{DEV, real_server};
 use crate::mcp::{McpLifecycle, TOKEN_PREAMBLE, test_support};
 use agaric_core::error::AppError;
 use agaric_store::task_locals::ActorContext;
@@ -586,35 +585,7 @@ async fn a_first_line_that_never_ends_is_refused_at_the_cap_5667() {
 // #5667 — the agent's mode picks the registry
 // ──────────────────────────────────────────────────────────────────────
 
-const DEV: &str = "dev-5667";
-
 type Client = rmcp::service::RunningService<rmcp::RoleClient, ClientConfig>;
-
-/// The production registries over `pool`, and its agents.
-fn real_server(
-    pool: sqlx::SqlitePool,
-    activity_ctx: Option<ActivityContext>,
-) -> Arc<McpServer<ReadOnlyTools, ReadWriteTools>> {
-    let mat = Materializer::new(pool.clone());
-    Arc::new(McpServer {
-        read_only: Arc::new(ReadOnlyTools::new(
-            pool.clone(),
-            pool.clone(),
-            mat.clone(),
-            DEV.into(),
-            std::env::temp_dir(),
-        )),
-        read_write: Arc::new(ReadWriteTools::new(
-            pool.clone(),
-            pool.clone(),
-            mat,
-            DEV.into(),
-            std::env::temp_dir(),
-        )),
-        agents: AgentStore::new(pool.clone(), pool),
-        activity_ctx,
-    })
-}
 
 /// An rmcp client named `client_name`, on a connection that presented
 /// `token` as the bridge does.

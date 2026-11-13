@@ -156,6 +156,12 @@ export const pages: Record<string, string> = {
   'pageHeader.journalTemplateFailed': 'Failed to update journal template',
   'pageHeader.exportCopied': 'Markdown copied to clipboard',
   'pageHeader.exportFailed': 'Export failed',
+  'pageHeader.saveMarkdownFile': 'Save as Markdown file',
+  'pageHeader.markdownFileSaved': 'Saved {{fileName}} to Downloads',
+  'pageHeader.markdownFileSaveFailed': 'Could not save the Markdown file',
+  'pageHeader.copyAppLink': 'Copy app link',
+  'pageHeader.appLinkCopied': 'App link copied to clipboard',
+  'pageHeader.appLinkCopyFailed': 'Could not copy the app link',
   // #5140 — source mode: the page edited as one markdown buffer.
   'pageSource.edit': 'Edit as Markdown',
   'pageSource.editorLabel': 'Markdown source',
@@ -349,8 +355,12 @@ export const pages: Record<string, string> = {
   'pageBrowser.savedViews.deleted': 'Deleted view "{{name}}"',
   'pageBrowser.savedViews.restored': 'Restored view "{{name}}"',
   'pageBrowser.savedViews.applied': 'Applied view "{{name}}"',
-  'pageBrowser.savedViews.schemaMismatch':
-    'Saved views from a newer version of Agaric could not be loaded and were reset.',
+  'pageBrowser.savedViews.nameTaken':
+    'A page or view named "{{name}}" already exists in this space',
+  'pageBrowser.savedViews.nameIsDate': 'A view cannot be named like a date: "{{name}}"',
+  'pageBrowser.savedViews.saveFailed': 'Could not save the view',
+  'pageBrowser.savedViews.deleteFailed': 'Could not delete the view',
+  'pageBrowser.savedViews.restoreFailed': 'Could not restore the view',
   'pageBrowser.savedViews.dialogTitle': 'Save current view',
   'pageBrowser.savedViews.dialogDescription':
     'Saves the current sort and filters so you can reapply them later.',

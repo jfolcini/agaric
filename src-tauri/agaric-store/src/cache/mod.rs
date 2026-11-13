@@ -181,25 +181,16 @@ pub use block_tag_refs::{
 };
 pub use page_id::{
     PageIdWrite, rebuild_page_ids, rebuild_page_ids_split, rebuild_space_ids,
-    set_block_page_id_from_parent_in_tx, set_block_space_id_from_parent,
+    rebuild_space_ids_split, set_block_page_id_from_parent_in_tx, set_block_space_id_from_parent,
 };
 pub use page_links::{
     rebuild_page_link_cache, rebuild_page_link_cache_split, reindex_page_link_cache_for_block,
 };
 pub use pages::{
     insert_missing_pages_cache_rows, raise_pages_last_edited_ms, rebuild_pages_cache,
-    rebuild_pages_cache_counts, rebuild_pages_cache_split, rekey_title_sort_keys,
-    sync_pages_cache_space_ids,
+    rebuild_pages_cache_counts, rebuild_pages_cache_counts_split, rebuild_pages_cache_split,
+    rekey_title_sort_keys, sync_pages_cache_space_ids,
 };
-// #417: the production RESET path recomputes the two `pages_cache` count
-// columns full-table via the dedicated `rebuild_pages_cache_counts` entry
-// point above; the per-op title/orphan rebuild no longer carries the count
-// UPDATE. The lower-level `recompute_all_pages_cache_counts` (which runs the
-// UPDATE on a caller-supplied connection) is only needed by the test-only
-// `rebuild_all_caches` convenience wrapper and the parity test, so its
-// re-export is gated behind `#[cfg(test)]`.
-#[cfg(test)]
-pub(crate) use pages::recompute_all_pages_cache_counts;
 pub use projected_agenda::{
     rebuild_projected_agenda_cache, rebuild_projected_agenda_cache_split,
     update_projected_agenda_block,
@@ -268,16 +259,9 @@ pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
     rebuild_block_tag_refs_cache(pool).await?;
     rebuild_tags_cache(pool).await?;
     rebuild_pages_cache(pool).await?;
-    // #417: the title/orphan rebuild above no longer carries the count
-    // UPDATE (it was gated out of the per-op path). Production enqueues
-    // `RebuildPagesCacheCounts` separately after `RebuildPagesCache`; this
-    // convenience wrapper mirrors that ordering by recomputing the two
-    // count columns in its own tx right after.
-    {
-        let mut tx = crate::db::begin_immediate_logged(pool, "rebuild_all_pages_counts").await?;
-        recompute_all_pages_cache_counts(&mut tx).await?;
-        tx.commit().await?;
-    }
+    // #417: production enqueues `RebuildPagesCacheCounts` separately after
+    // `RebuildPagesCache`; this wrapper keeps that order.
+    rebuild_pages_cache_counts(pool).await?;
     rebuild_agenda_cache(pool).await?;
     rebuild_projected_agenda_cache(pool).await?;
     rebuild_page_link_cache(pool).await?;

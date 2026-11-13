@@ -24,13 +24,12 @@ import {
   SavedViewsDropdown,
   type SavedViewsDropdownProps,
 } from '@/components/PageBrowser/SavedViewsDropdown'
-import type { SavedPagesView } from '@/lib/preferences'
+import type { SavedPagesView } from '@/lib/saved-pages-views'
 
 function makeView(overrides: Partial<SavedPagesView> = {}): SavedPagesView {
   return {
     id: 'view-1',
     name: 'My view',
-    createdAt: '2026-01-01T00:00:00.000Z',
     sort: 'alphabetical',
     filters: [],
     ...overrides,

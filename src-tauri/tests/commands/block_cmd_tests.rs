@@ -9671,6 +9671,8 @@ async fn create_blocks_batch_inserts_n_blocks_in_one_tx() {
             content: format!("line {i}"),
             parent_id: None,
             position: None,
+            parent_index: None,
+            typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         })
         .collect();
@@ -9743,6 +9745,8 @@ async fn create_blocks_batch_op_refs_undo_the_whole_batch_5140() {
             content: format!("line {i}"),
             parent_id: None,
             position: None,
+            parent_index: None,
+            typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         })
         .collect();
@@ -9822,6 +9826,8 @@ async fn create_blocks_batch_atomic_rollback() {
             content: "valid first".into(),
             parent_id: None,
             position: None,
+            parent_index: None,
+            typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         },
         agaric_lib::commands::CreateBlockSpec {
@@ -9829,6 +9835,8 @@ async fn create_blocks_batch_atomic_rollback() {
             content: "this errors".into(),
             parent_id: None,
             position: None,
+            parent_index: None,
+            typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         },
         agaric_lib::commands::CreateBlockSpec {
@@ -9836,6 +9844,8 @@ async fn create_blocks_batch_atomic_rollback() {
             content: "valid third".into(),
             parent_id: None,
             position: None,
+            parent_index: None,
+            typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         },
     ];
@@ -9889,6 +9899,8 @@ async fn create_blocks_batch_rejects_empty_oversize() {
             content: format!("c{i}"),
             parent_id: None,
             position: None,
+            parent_index: None,
+            typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         })
         .collect();
@@ -9927,6 +9939,8 @@ async fn create_blocks_batch_with_properties() {
             content: "with reserved + non-reserved props".into(),
             parent_id: None,
             position: None,
+            parent_index: None,
+            typed_properties: std::collections::HashMap::new(),
             properties: props_a,
         },
         agaric_lib::commands::CreateBlockSpec {
@@ -9934,6 +9948,8 @@ async fn create_blocks_batch_with_properties() {
             content: "todo block".into(),
             parent_id: None,
             position: None,
+            parent_index: None,
+            typed_properties: std::collections::HashMap::new(),
             properties: props_b,
         },
     ];
@@ -10035,6 +10051,8 @@ async fn create_blocks_batch_with_due_date_stores_as_date() {
         content: "dated task".into(),
         parent_id: None,
         position: None,
+        parent_index: None,
+        typed_properties: std::collections::HashMap::new(),
         properties: props,
     }];
 
@@ -10075,6 +10093,294 @@ async fn create_blocks_batch_with_due_date_stores_as_date() {
         prop_rows, 0,
         "reserved date keys are column-backed, never block_properties rows"
     );
+}
+
+/// #6530 — a template insert as `/template` sends it: one batch whose nested
+/// specs name their parent by its index in the batch, with a typed property
+/// of every kind beside the text ones.
+fn template_spec(
+    content: &str,
+    parent_id: Option<&str>,
+    parent_index: Option<u32>,
+) -> agaric_lib::commands::CreateBlockSpec {
+    agaric_lib::commands::CreateBlockSpec {
+        block_type: "content".into(),
+        content: content.into(),
+        parent_id: parent_id.map(BlockId::from),
+        parent_index,
+        position: None,
+        properties: std::collections::HashMap::new(),
+        typed_properties: std::collections::HashMap::new(),
+    }
+}
+
+/// `(parent_id, position, todo_state, priority, due_date, scheduled_date)`.
+type BlockColumns = (
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+/// `(key, value_text, value_num, value_date, value_ref, value_bool)`.
+type PropertyColumns = (
+    String,
+    Option<String>,
+    Option<f64>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+);
+
+async fn block_and_op_counts(pool: &SqlitePool) -> (i64, i64) {
+    let blocks: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    (blocks, ops)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_lands_a_nested_template_with_typed_properties_6530() {
+    use agaric_lib::commands::SetPropertyArgs;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = create_block_inner(&pool, DEV, &mat, "page".into(), "Monday".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .into_string();
+
+    let mut todo = template_spec("Prepare slides", Some(&page), None);
+    for (key, value) in [
+        ("todo_state", "TODO"),
+        ("priority", "1"),
+        ("due_date", "2026-12-01"),
+        ("owner", "alice"),
+    ] {
+        todo.properties.insert(key.into(), value.into());
+    }
+    for (key, value) in [
+        (
+            "effort",
+            SetPropertyArgs {
+                value_num: Some(3.0),
+                ..Default::default()
+            },
+        ),
+        (
+            "reviewed",
+            SetPropertyArgs {
+                value_bool: Some(true),
+                ..Default::default()
+            },
+        ),
+        (
+            "kickoff",
+            SetPropertyArgs {
+                value_date: Some("2026-11-01".into()),
+                ..Default::default()
+            },
+        ),
+        (
+            "related",
+            SetPropertyArgs {
+                value_ref: Some(page.clone()),
+                ..Default::default()
+            },
+        ),
+    ] {
+        todo.typed_properties.insert(key.into(), value);
+    }
+    let mut child = template_spec("Book the room", None, Some(0));
+    child
+        .properties
+        .insert("scheduled_date".into(), "2026-11-30".into());
+    let specs = vec![
+        todo,
+        child,
+        template_spec("Nested deeper", None, Some(1)),
+        template_spec("Second top", Some(&page), None),
+    ];
+
+    let (_, ops_before) = block_and_op_counts(&pool).await;
+    let created = agaric_lib::commands::create_blocks_batch_inner(&pool, DEV, &mat, specs)
+        .await
+        .unwrap();
+    let ids: Vec<String> = created.iter().map(|b| b.id.as_str().to_owned()).collect();
+    assert_eq!(ids.len(), 4, "one block per spec");
+
+    let mut rows = Vec::new();
+    for id in &ids {
+        let row: BlockColumns = sqlx::query_as(
+            "SELECT parent_id, position, todo_state, priority, due_date, scheduled_date \
+                 FROM blocks WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        rows.push(row);
+    }
+    let parents: Vec<Option<String>> = rows.iter().map(|r| r.0.clone()).collect();
+    assert_eq!(
+        parents,
+        vec![
+            Some(page.clone()),
+            Some(ids[0].clone()),
+            Some(ids[1].clone()),
+            Some(page.clone())
+        ],
+        "each nested spec lands under the block its parent_index names"
+    );
+    assert_eq!(
+        (rows[0].1, rows[3].1),
+        (Some(1), Some(2)),
+        "the top-level specs keep their order under the page"
+    );
+    assert_eq!(
+        (
+            rows[0].2.as_deref(),
+            rows[0].3.as_deref(),
+            rows[0].4.as_deref()
+        ),
+        (Some("TODO"), Some("1"), Some("2026-12-01")),
+        "task state, priority and due date land on the block's columns"
+    );
+    assert_eq!(
+        rows[1].5.as_deref(),
+        Some("2026-11-30"),
+        "the child keeps its scheduled date"
+    );
+
+    let props: Vec<PropertyColumns> = sqlx::query_as(
+        "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
+             FROM block_properties WHERE block_id = ? \
+               AND key IN ('owner', 'effort', 'reviewed', 'kickoff', 'related') ORDER BY key",
+    )
+    .bind(&ids[0])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        props,
+        vec![
+            ("effort".into(), None, Some(3.0), None, None, None),
+            (
+                "kickoff".into(),
+                None,
+                None,
+                Some("2026-11-01".into()),
+                None,
+                None
+            ),
+            ("owner".into(), Some("alice".into()), None, None, None, None),
+            ("related".into(), None, None, None, Some(page.clone()), None),
+            ("reviewed".into(), None, None, None, None, Some(1)),
+        ],
+        "every property lands in the column of its type"
+    );
+
+    let (_, ops_after) = block_and_op_counts(&pool).await;
+    assert_eq!(
+        ops_after - ops_before,
+        4 + 9,
+        "four create_block ops and nine set_property ops, nothing else"
+    );
+}
+
+/// #6530 — the whole template is one transaction: a property the last spec
+/// cannot hold refuses the batch, and nothing before it lands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_failing_last_spec_lands_nothing_6530() {
+    use agaric_lib::commands::SetPropertyArgs;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = create_block_inner(&pool, DEV, &mat, "page".into(), "Monday".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .into_string();
+    let mut last = template_spec("Deeper", None, Some(1));
+    last.typed_properties.insert(
+        "kickoff".into(),
+        SetPropertyArgs {
+            value_date: Some("not-a-date".into()),
+            ..Default::default()
+        },
+    );
+    let specs = vec![
+        template_spec("Top", Some(&page), None),
+        template_spec("Child", None, Some(0)),
+        last,
+    ];
+
+    let before = block_and_op_counts(&pool).await;
+    let result = agaric_lib::commands::create_blocks_batch_inner(&pool, DEV, &mat, specs).await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "an invalid date on the last spec refuses the batch, got {result:?}"
+    );
+    assert_eq!(
+        block_and_op_counts(&pool).await,
+        before,
+        "no block and no op of the batch survives"
+    );
+}
+
+/// #6530 — a `parent_index` must name an earlier spec, and never beside a
+/// `parent_id`; either mistake is refused before the first write.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_refuses_a_bad_parent_index_before_writing_6530() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = create_block_inner(&pool, DEV, &mat, "page".into(), "Monday".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .into_string();
+    let before = block_and_op_counts(&pool).await;
+
+    for (label, specs) in [
+        (
+            "a parent_index naming the spec itself",
+            vec![
+                template_spec("Top", Some(&page), None),
+                template_spec("Self", None, Some(1)),
+            ],
+        ),
+        (
+            "a parent_index naming a later spec",
+            vec![
+                template_spec("Early", None, Some(1)),
+                template_spec("Late", Some(&page), None),
+            ],
+        ),
+        (
+            "a parent_index beside a parent_id",
+            vec![
+                template_spec("Top", Some(&page), None),
+                template_spec("Both", Some(&page), Some(0)),
+            ],
+        ),
+    ] {
+        let result = agaric_lib::commands::create_blocks_batch_inner(&pool, DEV, &mat, specs).await;
+        assert!(
+            matches!(result, Err(AppError::Validation { .. })),
+            "{label} is refused, got {result:?}"
+        );
+        assert_eq!(
+            block_and_op_counts(&pool).await,
+            before,
+            "{label} writes nothing"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
