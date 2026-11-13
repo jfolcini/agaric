@@ -1,4 +1,4 @@
-# Session 4078 — a winget manifest, and why the Flathub draft cannot be submitted (#6660)
+# Session 4084 — a winget manifest, and why the Flathub draft cannot be submitted (#6660)
 
 The maintainer decided on 2026-11-13 to keep Flathub and add winget. The session set out to bring `packaging/flathub/` up to the 0.23.0 release and add a winget manifest, each with a release-checklist line.
 
