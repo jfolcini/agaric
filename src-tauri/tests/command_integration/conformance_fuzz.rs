@@ -31,15 +31,22 @@
 //! vitest — so the two module pipelines are cross-checked on every PR by the
 //! corpus, and only the driver is new here.
 //!
-//! ## Why `#[ignore]`
+//! ## Two runs: a fixed seed on every PR, a random one weekly
 //!
-//! A fuzz lane's runtime is open-ended and it must not gate a PR on a
-//! newly-discovered PRE-EXISTING divergence. It runs in
+//! A random-seed run's findings are open-ended and it must not gate a PR on a
+//! newly-discovered PRE-EXISTING divergence, so it is `#[ignore]`d and runs in
 //! `scheduled-deep-checks.yml` alongside the benches and the mutation sweep:
 //!
 //! ```text
 //! cargo nextest run --workspace --run-ignored all -E 'test(conformance_fuzz)'
 //! ```
+//!
+//! The same body over [`FIXED_SEED`] and [`FIXED_SEED_CASES`] chains is an
+//! ordinary test (#6567): the chains are the same on every run, so it reddens
+//! only on a change to the mock, the backend, or the generator. It runs with
+//! the Rust tests, which `scripts/classify-changes.sh` skips for a PR that
+//! touches only `src/lib/tauri-mock/`: such a divergence shows on the next PR
+//! that runs them.
 //!
 //! ## Known blind spots
 //!
@@ -82,7 +89,7 @@ use agaric_engine::proptest_db_harness::{HARNESS_SPACE_IDS, op_chain_strategy, r
 use agaric_store::op::{OpPayload, SPACE_PROPERTY_KEY};
 use proptest::prelude::{Just, Strategy, any, prop_oneof};
 use proptest::sample::Index;
-use proptest::test_runner::{Config, TestCaseError, TestError, TestRunner};
+use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestError, TestRng, TestRunner};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -96,6 +103,11 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 /// nextest `slow-timeout` override that goes with it: a run does not fit the
 /// default 2x30s window.
 const DEFAULT_CASES: u32 = 256;
+
+/// The per-PR run's chains (#6567): few enough to fit a PR lane, and the same
+/// ones every run. Changing either constant reshuffles them.
+const FIXED_SEED_CASES: u32 = 64;
+const FIXED_SEED: [u8; 32] = [0x67; 32];
 
 /// The name every generated fixture carries.
 const FUZZ_FIXTURE: &str = "conformance_fuzz_generated";
@@ -1047,10 +1059,44 @@ fn write_counterexample(fixture: &Value, backend: &BackendRun, reads: &[usize]) 
 /// equal the real backend's.
 ///
 /// See the module docs for the pipeline, the child-process rationale, and why
-/// this is `#[ignore]`d out of the per-PR lane.
+/// the random-seed run is `#[ignore]`d out of the per-PR lane.
 #[test]
 #[ignore = "#4669 differential-fuzz lane: weekly, needs node_modules (--run-ignored all)"]
 fn mock_matches_backend_on_generated_op_chains_4669() {
+    let mut config = Config::default();
+    if std::env::var_os("PROPTEST_CASES").is_none() {
+        config.cases = DEFAULT_CASES;
+    }
+    // The counter-example file is this lane's artefact; proptest's own
+    // regression file would pin an opaque seed instead of a readable fixture.
+    config.failure_persistence = None;
+    let reached = run_differential_fuzz(TestRunner::new(config));
+    for command in EXPECTED_COMMANDS {
+        assert!(
+            reached.contains_key(*command),
+            "the generator reached {:?}, which does not include '{command}' — the generator or \
+             `chain_to_fixture` narrowed, so this lane is comparing less than it claims",
+            reached.keys().collect::<Vec<_>>(),
+        );
+    }
+}
+
+/// The same comparison over the same chains on every run, so it gates a PR.
+#[test]
+fn mock_matches_backend_on_fixed_seed_op_chains_6567() {
+    let config = Config {
+        cases: FIXED_SEED_CASES,
+        failure_persistence: None,
+        ..Config::default()
+    };
+    let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &FIXED_SEED);
+    run_differential_fuzz(TestRunner::new_with_rng(config, rng));
+}
+
+/// Run `runner`'s chains through the backend and the mock, panic on the first
+/// divergence (shrunk, with its counter-example written out), and return how
+/// often each command was reached.
+fn run_differential_fuzz(mut runner: TestRunner) -> BTreeMap<String, usize> {
     // `RefCell`: `TestRunner::run` takes an `Fn`, and shrinking re-enters the
     // closure, so both the child process and the tally have to be shared
     // rather than moved. Single-threaded — proptest runs cases sequentially
@@ -1059,15 +1105,6 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
     let reached: RefCell<BTreeMap<String, usize>> = RefCell::new(BTreeMap::new());
     let refused: RefCell<BTreeMap<String, usize>> = RefCell::new(BTreeMap::new());
     let read: RefCell<BTreeMap<String, usize>> = RefCell::new(BTreeMap::new());
-    let mut config = Config::default();
-    if std::env::var_os("PROPTEST_CASES").is_none() {
-        config.cases = DEFAULT_CASES;
-    }
-    // The counter-example file is this lane's artefact; proptest's own
-    // regression file would pin an opaque seed instead of a readable fixture.
-    config.failure_persistence = None;
-    let mut runner = TestRunner::new(config);
-
     // One runtime for the whole run, not one per case: `runner.run` invokes this
     // closure 256+ times and again for every shrink re-entry, and each
     // `Runtime::new` spins up a fresh thread pool it then drops.
@@ -1202,14 +1239,7 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
         }
     }
 
-    for command in EXPECTED_COMMANDS {
-        assert!(
-            reached.contains_key(*command),
-            "the generator reached {:?}, which does not include '{command}' — the generator or \
-             `chain_to_fixture` narrowed, so this lane is comparing less than it claims",
-            reached.keys().collect::<Vec<_>>(),
-        );
-    }
+    reached
 }
 
 /// The search term skips a word the read steps would expand as a label: a
