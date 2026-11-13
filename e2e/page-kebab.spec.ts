@@ -109,6 +109,7 @@ test.describe('Page actions menu @pages', () => {
     await waitForBoot(page)
     await openPage(page, 'Quick Notes')
     await pageAction(page, /^Export as Markdown/)
+    await expect(page.getByText('Markdown copied to clipboard', { exact: true })).toBeVisible()
     const copied = await readClipboard(page)
 
     const [download] = await Promise.all([

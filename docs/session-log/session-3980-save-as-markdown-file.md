@@ -22,8 +22,10 @@ Decisions and traps:
   `PageHeaderMenu`'s oxlint complexity warning grows with it.
 - The label has no ellipsis: no dialog asks anything. The toast says "to Downloads", as the
   bug-report toast does; WebKitGTK and WebView2 save there with no download handler.
+- The mock-lane spec reads the clipboard only once the copy's toast shows: the copy lands after
+  an IPC round trip, and under load the read came back empty.
 - `e2e/page-mode-bubbles.spec.ts` ("image dialog") failed once under load for two different
   builders tonight and passed alone each time.
 
-Ran: the pages, export and i18n vitest suites, typecheck, and the Playwright specs
-`just e2e-related` selected. The WebdriverIO selections were left to CI.
+Ran: the full vitest suite, typecheck, lint, every prek hook in both stages, and the Playwright
+specs `just e2e-related` selected. The WebdriverIO selections were left to CI.
