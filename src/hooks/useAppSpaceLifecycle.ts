@@ -22,10 +22,11 @@
  *    changes as well as space changes. `setWindowTitle` no-ops
  *    outside Tauri (vitest jsdom).
  * 4. Once the spaces load, delete their retired text journal
- *    templates (#5373) and move this device's localStorage bookmarks
- *    into the `bookmark` page property (#6544) — once per session,
- *    and done for good once the device records it (each retries on
- *    the next boot if it fails).
+ *    templates (#5373), move this device's localStorage bookmarks
+ *    into the `bookmark` page property, then its localStorage saved
+ *    views into view pages (#6544) — once per session, and done for
+ *    good once the device records it (each retries on the next boot
+ *    if it fails).
  *
  * The hook subscribes internally to `useSpaceStore` for the space
  * inputs (App.tsx already subscribes for AppSidebar; the redundant
@@ -39,6 +40,7 @@ import { useTranslation } from 'react-i18next'
 import { logger } from '@/lib/logger'
 import { NAV_ITEMS } from '@/lib/nav-items'
 import { setWindowTitle } from '@/lib/platform/window'
+import { migrateDeviceSavedViews } from '@/lib/saved-views'
 import { migrateDeviceBookmarks } from '@/lib/starred-pages'
 import { deleteSpaceTextJournalTemplates } from '@/lib/template-utils'
 import { useNavigationStore } from '@/stores/navigation'
@@ -90,14 +92,14 @@ export function useAppSpaceLifecycle(): void {
   }, [currentSpaceId])
 
   // The space list is replaced on every refresh; a second run while the first
-  // is in flight would append a duplicate op for each space or bookmark.
+  // is in flight would append a duplicate op for each space, bookmark or view.
   const spaceMigrationsStartedRef = useRef(false)
   useEffect(() => {
     if (availableSpaces.length === 0 || spaceMigrationsStartedRef.current) return
     spaceMigrationsStartedRef.current = true
     const spaceIds = availableSpaces.map((space) => space.id)
     void deleteSpaceTextJournalTemplates(spaceIds)
-    void migrateDeviceBookmarks(spaceIds)
+    void migrateDeviceBookmarks(spaceIds).then(() => migrateDeviceSavedViews(spaceIds))
   }, [availableSpaces])
 
   // Visual identity. Kept in its own effect (not folded

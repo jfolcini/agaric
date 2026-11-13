@@ -19,13 +19,12 @@
  */
 
 import { isNotFound, isValidation, unwrap } from '@/lib/app-error'
-import { type BlockRow, commands, type PageResponse } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import { loadPagesWithProperty } from '@/lib/pages-with-property'
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import { queryClient } from '@/lib/query-client'
-import { PAGINATION_MAX, paginationLimit } from '@/lib/safe-limit'
-import { requireActiveScope } from '@/lib/space-scope'
 
 const BOOKMARK_PROPERTY_KEY = 'bookmark'
 
@@ -70,37 +69,9 @@ function compareText(a: string, b: string): number {
 
 /** The live bookmarked pages of `spaceId`, in sidebar order. */
 export async function loadBookmarks(spaceId: string): Promise<Bookmark[]> {
-  const rows: Array<Bookmark & { title: string }> = []
-  let cursor: string | null = null
-  do {
-    const page: PageResponse<BlockRow> = unwrap(
-      await commands.queryByProperty(
-        {
-          key: BOOKMARK_PROPERTY_KEY,
-          valueText: null,
-          valueDate: null,
-          operator: null,
-          cursor,
-          limit: paginationLimit(PAGINATION_MAX),
-          excludeParentId: null,
-          contentNonEmpty: null,
-          blockType: 'page',
-          valueTextIn: null,
-          valueDateRange: null,
-          excludeTodoStates: null,
-        },
-        requireActiveScope(spaceId),
-      ),
-    )
-    const ids = page.items.map((block) => block.id)
-    const props = ids.length > 0 ? unwrap(await commands.getBatchProperties(ids)) : {}
-    for (const block of page.items) {
-      const row = props[block.id]?.find((p) => p.key === BOOKMARK_PROPERTY_KEY)
-      if (row === undefined) continue
-      rows.push({ id: block.id, title: block.content ?? '', order: bookmarkOrder(row) })
-    }
-    cursor = page.has_more ? page.next_cursor : null
-  } while (cursor !== null)
+  const rows = (await loadPagesWithProperty(spaceId, BOOKMARK_PROPERTY_KEY)).map(
+    ({ id, title, row }) => ({ id, title, order: bookmarkOrder(row) }),
+  )
   rows.sort((a, b) => a.order - b.order || compareText(a.title, b.title) || compareText(a.id, b.id))
   return rows.map(({ id, order }) => ({ id, order }))
 }

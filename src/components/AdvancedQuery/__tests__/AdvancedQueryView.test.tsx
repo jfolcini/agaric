@@ -1,3 +1,4 @@
+import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -8,9 +9,11 @@ import { axe } from 'vitest-axe'
 import { AdvancedQueryView } from '@/components/AdvancedQuery/AdvancedQueryView'
 import type { ActiveBlockRow, AdvancedQueryResponse } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
-import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { queryClient } from '@/lib/query-client'
-import { parseQuerySpec, useAdvancedQueryStore } from '@/stores/advancedQuery'
+import { loadSavedViews } from '@/lib/saved-views'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { seedBlocks } from '@/lib/tauri-mock/seed'
+import { useAdvancedQueryStore } from '@/stores/advancedQuery'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -70,6 +73,10 @@ function routeInvoke(response: AdvancedQueryResponse): void {
     // The Tag facet is an id-emitting picker (#3339); serve the space's tags
     // so a leaf can be added by NAME and compiles to the tag's ULID.
     if (cmd === 'list_all_tags_in_space') return TAG_ROWS
+    // The space's saved views (#6544): none.
+    if (cmd === 'query_by_property') {
+      return { items: [], next_cursor: null, has_more: false, total_count: null }
+    }
     return null
   })
 }
@@ -827,6 +834,19 @@ describe('AdvancedQueryView', () => {
 })
 
 describe('AdvancedQueryView — saved views (#1460)', () => {
+  // Saved views are view pages (#6544): every IPC but the query itself goes
+  // to the real tauri-mock `dispatch`, so the assertions re-read the store.
+  beforeEach(() => {
+    localStorage.setItem('__mockWorkSpace', 'true')
+    seedBlocks()
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+      cmd === 'run_advanced_query' ? makeResponse() : dispatch(cmd, args),
+    )
+  })
+
+  afterEach(() => localStorage.removeItem('__mockWorkSpace'))
+
   async function saveViewNamed(name: string): Promise<void> {
     const user = userEvent.setup()
     await user.click(
@@ -837,44 +857,85 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
     await user.click(within(dialog).getByRole('button', { name: t('rename.save') }))
   }
 
-  it('saves the current query in this space and lists it after a remount', async () => {
-    localStorage.clear()
+  it('saves the current query as a view page of this space and lists it after a remount', async () => {
     const { unmount } = render(<AdvancedQueryView />)
     await saveViewNamed('My saved query')
 
     const list = await screen.findByTestId('saved-views-list')
     expect(within(list).getByText('My saved query')).toBeInTheDocument()
-    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1))
     unmount()
 
     render(<AdvancedQueryView />)
     const rows = await screen.findAllByTestId('saved-view-row')
     expect(rows.map((row) => row.querySelector('span')?.textContent)).toEqual(['My saved query'])
     // The stored spec is the serialized filter + controls (no pagination).
-    const [view] = readPreference(PREFERENCES.savedQueryViews, SPACE_ID)
-    expect(parseQuerySpec(view?.spec ?? '')).toEqual({
-      filter: { type: 'And', children: [] },
-      sort: [],
-      fulltext: '',
-      group_by: null,
-      aggregates: [],
+    const [view] = await loadSavedViews('SPACE_PERSONAL')
+    expect(view?.payload).toEqual({
+      kind: 'query',
+      spec: {
+        filter: { type: 'And', children: [] },
+        sort: [],
+        fulltext: '',
+        group_by: null,
+        aggregates: [],
+      },
     })
   })
 
+  it('refuses a name a page of the space holds, and stamps nothing', async () => {
+    render(<AdvancedQueryView />)
+    await saveViewNamed('Projects')
+
+    await waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        t('advancedQuery.savedViews.nameTaken', { name: 'Projects' }),
+      ),
+    )
+    expect(await loadSavedViews('SPACE_PERSONAL')).toEqual([])
+  })
+
+  it('refuses a name shaped like a date, telling the user why, and stamps nothing', async () => {
+    render(<AdvancedQueryView />)
+    await saveViewNamed('2031-04-05')
+
+    await waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        t('advancedQuery.savedViews.nameIsDate', { name: '2031-04-05' }),
+      ),
+    )
+    expect(await loadSavedViews('SPACE_PERSONAL')).toEqual([])
+  })
+
+  it('reports a save the backend refuses', async () => {
+    mockedInvoke.mockImplementation((cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'run_advanced_query') return Promise.resolve(makeResponse())
+      if (cmd === 'create_page_in_space') {
+        return Promise.reject({ kind: 'database', message: 'disk I/O error' })
+      }
+      return Promise.resolve(dispatch(cmd, args))
+    })
+    render(<AdvancedQueryView />)
+    await saveViewNamed('Unlucky')
+
+    await waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('advancedQuery.savedViews.saveError')),
+    )
+    expect(await loadSavedViews('SPACE_PERSONAL')).toEqual([])
+  })
+
   it("does not list another space's views", async () => {
-    localStorage.clear()
     const { unmount } = render(<AdvancedQueryView />)
-    await saveViewNamed('Space A view')
-    await screen.findByText('Space A view')
+    await saveViewNamed('Personal view')
+    await screen.findByText('Personal view')
     unmount()
 
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' })
     render(<AdvancedQueryView />)
     expect(await screen.findByText(t('advancedQuery.savedViews.empty'))).toBeInTheDocument()
   })
 
   it('refuses to save with no active space', async () => {
-    localStorage.clear()
     useSpaceStore.setState({ currentSpaceId: null })
     render(<AdvancedQueryView />)
     await saveViewNamed('Doomed view')

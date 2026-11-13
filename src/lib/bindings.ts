@@ -1420,7 +1420,8 @@ export type AddMeetingInput = {
  * 
  *  The `filter` defaults to `And { children: [] }` — the TRUE expression
  *  (`1=1`), i.e. "every block in the space". Template pages and their blocks
- *  are left out unless `filter` names the `template` property. `sort`
+ *  are left out unless `filter` names the `template` property, and saved
+ *  views (#6544) always are. `sort`
  *  defaults to empty (the engine applies its default keyset on `b.id DESC`).
  *  `limit` defaults to the engine's [`engine::DEFAULT_LIMIT`].
  */

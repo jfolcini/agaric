@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT\n               b.id as \"id!: BlockId\",\n               b.content as \"content: String\",\n               b.todo_state as \"todo_state: String\",\n               b.priority as \"priority: String\",\n               b.due_date as \"due_date: String\",\n               b.scheduled_date as \"scheduled_date: String\"\n           FROM blocks b\n           WHERE b.block_type = 'page'\n             AND b.deleted_at IS NULL\n             AND b.space_id = ?1\n           ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC",
+  "query": "SELECT\n               b.id as \"id!: BlockId\",\n               b.content as \"content: String\",\n               b.todo_state as \"todo_state: String\",\n               b.priority as \"priority: String\",\n               b.due_date as \"due_date: String\",\n               b.scheduled_date as \"scheduled_date: String\"\n           FROM blocks b\n           WHERE b.block_type = 'page'\n             AND b.deleted_at IS NULL\n             AND b.space_id = ?1\n             AND b.id NOT IN (SELECT block_id FROM block_properties WHERE key = 'saved_view')\n           ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC",
   "describe": {
     "columns": [
       {
@@ -82,5 +82,5 @@
       true
     ]
   },
-  "hash": "766fc4d91b6373d8cc2d80a205a0d69442301e751e4c26b9b67bac9aae737113"
+  "hash": "3e34dadd3fd401b5899d3e053d6cdcd5fc8804a0974bd9a32f3cdeea808eb9d2"
 }

@@ -18,6 +18,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { setWindowTitle } from '@/lib/platform/window'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
+import { loadSavedViews } from '@/lib/saved-views'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
@@ -325,5 +326,41 @@ describe('useAppSpaceLifecycle — retired text journal templates (#5373)', () =
     })
     const deletes = vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'delete_property')
     expect(deletes).toHaveLength(1)
+  })
+})
+
+describe('useAppSpaceLifecycle — device saved views (#6544)', () => {
+  beforeEach(() => {
+    seedBlocks()
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+      dispatch(cmd, args),
+    )
+  })
+
+  it('moves the device saved views into view pages once the spaces load', async () => {
+    writePreference(PREFERENCES.savedPagesViews, {
+      schemaVersion: 1,
+      views: [
+        {
+          id: 'v1',
+          name: 'Orphans',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          sort: 'alphabetical',
+          filters: [{ type: 'Orphan' }],
+        },
+      ],
+    })
+    useSpaceStore.setState({ availableSpaces: [] })
+    renderHook(() => useAppSpaceLifecycle())
+    act(() => {
+      useSpaceStore.setState({
+        availableSpaces: [
+          { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
+        ],
+      })
+    })
+
+    await waitFor(() => expect(localStorage.getItem('agaric:pages:savedViews:v1')).toBeNull())
+    expect((await loadSavedViews('SPACE_PERSONAL')).map((v) => v.name)).toEqual(['Orphans'])
   })
 })
