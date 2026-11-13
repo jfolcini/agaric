@@ -37,6 +37,12 @@ Decisions and traps:
 - The fixture authoring run writes U+0085 and combining accents raw; they are kept raw so the
   next run does not churn them.
 
-Ran: the new and related Rust tests, clippy over the workspace, full vitest, typecheck, and about
-three hundred related Playwright tests, with `e2e/perf.spec.ts` pinning that neither gesture sends
-the listing. The whole Playwright lane is CI's run.
+Review (cloud continuation): every edited test was judged. The stubs swap the listing for the
+command the issue asked for and keep their behaviour assertions, and the removed frontend cases
+live on as the Rust table cases and the fixture. The perf pin's soft assertion became a hard one.
+
+Ran: the full nextest workspace suite, doc-tests, clippy over the workspace, the related vitest
+suites, typecheck, lint, the manual-stage hooks, and the perf, templates, date-picker and page-name
+Playwright specs. The perf pin went red with a listing put back in the date picker, and the
+`Untitled N` table went red with the numbering started at 2. The whole Playwright lane and the
+WebdriverIO lane are CI's run.
