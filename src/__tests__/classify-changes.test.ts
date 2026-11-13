@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 // @ts-expect-error — no type declarations for the .mjs helper.
-import { initScratchRepo, scrubbedGitEnv } from '../../scripts/lib/git-scratch-guard.mjs'
+import * as scratchGit from '../../scripts/lib/git-scratch-guard.mjs'
 
 // `scripts/classify-changes.sh` decides which CI lanes a PR skips, and
 // `validate-all` trusts it to say when a skip is allowed: a wrong `false`
@@ -567,13 +567,17 @@ describe('classify-changes.sh', () => {
       const root = mkdtempSync(join(tmpdir(), 'classify-changes-'))
       try {
         const dir = join(root, 'repo')
-        const env = scrubbedGitEnv(root)
-        const git = initScratchRepo(dir, env)
-        mkdirSync(join(dir, 'src'), { recursive: true })
-        writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 1\n')
-        git('add', '-A')
-        git('commit', '-qm', 'base')
-        fn(dir, env, git('rev-parse', 'HEAD').trim())
+        const env = scratchGit.scrubbedGitEnv(root)
+        // The pre-push hook exports GIT_DIR, and initScratchRepo refuses a
+        // fixture the process environment would still reach.
+        scratchGit.withScrubbedProcessEnv(root, () => {
+          const git = scratchGit.initScratchRepo(dir, env)
+          mkdirSync(join(dir, 'src'), { recursive: true })
+          writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 1\n')
+          git('add', '-A')
+          git('commit', '-qm', 'base')
+          fn(dir, env, git('rev-parse', 'HEAD').trim())
+        })
       } finally {
         rmSync(root, { recursive: true, force: true })
       }

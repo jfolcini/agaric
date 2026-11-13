@@ -125,6 +125,7 @@ beforeEach(() => {
     list_all_tags_in_space: () => [],
     // A Markdown file's run first asks which existing pages it updates (#6277 G5).
     list_import_merges: () => [],
+    get_last_snapshot_ms: () => null,
     get_mirror_status: () => ({
       supported: false,
       folder: null,
@@ -1782,6 +1783,7 @@ describe('DataTab', () => {
             total_count: null,
           }),
           create_property_def: create,
+          get_last_snapshot_ms: () => null,
           get_mirror_status: () => ({
             supported: false,
             folder: null,

@@ -27,6 +27,7 @@ import {
 } from '@/__tests__/helpers/invoke'
 import { StatusPanel, SyncStatusCard } from '@/components/agenda/StatusPanel'
 import { t } from '@/lib/i18n'
+import { useSpaceStore } from '@/stores/space'
 
 // Mock DeviceManagement to prevent its own IPC calls from interfering
 vi.mock('@/components/peers/DeviceManagement', () => ({
@@ -42,6 +43,7 @@ const { mockSyncStoreState } = vi.hoisted(() => ({
     lastSyncedAt: null as string | null,
     opsReceived: 0,
     opsSent: 0,
+    exportRefusedSpaces: [] as string[],
   },
 }))
 
@@ -113,6 +115,8 @@ beforeEach(() => {
   mockSyncStoreState.lastSyncedAt = null
   mockSyncStoreState.opsReceived = 0
   mockSyncStoreState.opsSent = 0
+  mockSyncStoreState.exportRefusedSpaces = []
+  useSpaceStore.setState({ availableSpaces: [] })
 })
 
 describe('StatusPanel', () => {
@@ -785,6 +789,60 @@ describe('StatusPanel', () => {
 
         const results = await axe(container)
         expect(results).toHaveNoViolations()
+      })
+    })
+
+    // #6523 — a space whose outbound sync is refused is named, in both cards,
+    // until a report without it arrives.
+    describe('a space whose outbound sync is refused', () => {
+      beforeEach(() => {
+        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+        useSpaceStore.setState({
+          availableSpaces: [
+            { id: 'SPACE_WORK', name: 'Work', accent_color: null },
+            { id: 'SPACE_HOME', name: 'Home', accent_color: null },
+          ],
+        })
+      })
+
+      it('names the space in the sync card, and clears once it exports again', async () => {
+        mockSyncStoreState.exportRefusedSpaces = ['SPACE_WORK']
+        const { container, rerender } = render(<SyncStatusCard />)
+
+        const notice = screen.getByTestId('export-refused-notice')
+        expect(notice).toHaveTextContent(
+          t('status.exportRefusedMessage', { count: 1, spaces: 'Work' }),
+        )
+        expect(notice).toHaveTextContent(t('status.exportRefusedHint'))
+        expect(await axe(container)).toHaveNoViolations()
+
+        mockSyncStoreState.exportRefusedSpaces = []
+        rerender(<SyncStatusCard />)
+        expect(screen.queryByTestId('export-refused-notice')).toBeNull()
+      })
+
+      it('names every refused space, and one this device cannot name by its id', () => {
+        mockSyncStoreState.exportRefusedSpaces = ['SPACE_WORK', 'SPACE_GONE']
+        render(<SyncStatusCard />)
+        expect(screen.getByTestId('export-refused-notice')).toHaveTextContent(
+          t('status.exportRefusedMessage', { count: 2, spaces: 'Work, SPACE_GONE' }),
+        )
+      })
+
+      it('shows the same notice in App health', async () => {
+        stubInvoke({ get_status: () => mockStatus })
+        mockSyncStoreState.exportRefusedSpaces = ['SPACE_HOME']
+        render(<StatusPanel />)
+        expect(await screen.findByTestId('export-refused-notice')).toHaveTextContent(
+          t('status.exportRefusedMessage', { count: 1, spaces: 'Home' }),
+        )
+      })
+
+      it('shows nothing in App health while every space exports', async () => {
+        stubInvoke({ get_status: () => mockStatus })
+        render(<StatusPanel />)
+        await screen.findByText(t('status.foregroundQueueLabel'))
+        expect(screen.queryByTestId('export-refused-notice')).toBeNull()
       })
     })
 

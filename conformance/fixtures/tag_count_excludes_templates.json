@@ -1,0 +1,339 @@
+{
+  "description": "#6659 — the Tags list count leaves out what the tag's page leaves out: a template page and the blocks on it. S6 is on four holders: the ordinary block S2, the page S3, its block S4, and S5, which names it inline. The last op makes S3 a template, so the count must drop from 4 to 1 and equal the number of rows the tag page's two `run_advanced_query` panels list. A stack that still counts template blocks reds on the count, and so does one that does not recount when `template` is set.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B2",
+        "tag_id": "B6"
+      },
+      {
+        "block_id": "B3",
+        "tag_id": "B6"
+      },
+      {
+        "block_id": "B4",
+        "tag_id": "B6"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "ordinary note",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Meeting",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Attendees",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Agenda #[000000000000000000000000S6]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "meeting",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "key": "template",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B3",
+        "key": "template",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tags_list_count_skips_the_template",
+      "rows": ["B6#name=meeting#usage_count=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tag_page_lists_content_holders",
+      "rows": ["B2"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tag_page_lists_page_holders",
+      "rows": [],
+      "total_count": 0
+    }
+  ],
+  "name": "tag_count_excludes_templates",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S6"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "tagId": "S6"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "tagId": "S6"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "Agenda #[000000000000000000000000S6]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "template",
+        "value": {
+          "value_text": "true"
+        }
+      },
+      "command": "set_property"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "prefix": "meeting",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "S2 alone: the template page S3 and its blocks S4 (attached) and S5 (inline) are left out.",
+      "name": "tags_list_count_skips_the_template"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "children": [
+              {
+                "primitive": {
+                  "tag": "S6",
+                  "type": "TagOrRef"
+                },
+                "type": "Leaf"
+              },
+              {
+                "primitive": {
+                  "exclude": false,
+                  "type": "BlockType",
+                  "values": ["content"]
+                },
+                "type": "Leaf"
+              }
+            ],
+            "type": "And"
+          },
+          "limit": 50,
+          "sort": [
+            {
+              "desc": true,
+              "source": {
+                "name": "created",
+                "type": "Column"
+              }
+            }
+          ],
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "The tag page's blocks panel: S2. With the pages panel below, as many rows as the count.",
+      "name": "tag_page_lists_content_holders"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "children": [
+              {
+                "primitive": {
+                  "tag": "S6",
+                  "type": "TagOrRef"
+                },
+                "type": "Leaf"
+              },
+              {
+                "primitive": {
+                  "exclude": false,
+                  "type": "BlockType",
+                  "values": ["page"]
+                },
+                "type": "Leaf"
+              }
+            ],
+            "type": "And"
+          },
+          "limit": 50,
+          "sort": [
+            {
+              "desc": true,
+              "source": {
+                "name": "created",
+                "type": "Column"
+              }
+            }
+          ],
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "The tag page's pages panel: none, the template page is left out.",
+      "expect_empty": true,
+      "name": "tag_page_lists_page_holders"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "ordinary note",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Meeting",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Attendees",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Agenda",
+        "id": "S5",
+        "parent_id": "S3",
+        "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "meeting",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

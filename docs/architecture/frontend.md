@@ -44,6 +44,10 @@ Actions whose result gates a caller's follow-up decision resolve a **boolean**; 
 
 `pool_busy` is a first-class `AppError` kind (`src/lib/app-error.ts`) for transient sqlx connection-pool exhaustion. Every mutating IPC call inside `page-blocks-reducers.ts`, plus the autosave writes in `src/hooks/useDraftAutosave.ts` and the failed-save draft re-save in `EditableBlock.tsx`, wraps its `invoke()` in `retryOnPoolBusy` (three attempts, 0/50/150 ms backoff) **before** the surrounding `try/catch`. The policy is uniform, not per-call-site: `retryOnPoolBusy` re-throws every non-`pool_busy` error immediately, and once its own retries are exhausted it throws the last `pool_busy` `AppError` too — at which point it's handled by that action's ordinary catch block exactly like any other backend failure (logged, generic `error.xFailed` toast, rollback). No FE path surfaces `pool_busy` to the user as a distinct case; `isPoolBusy` is used in exactly one place (`useDraftAutosave.ts`) purely to label a post-exhaustion log line, not to branch the user-facing outcome.
 
+### Storage failures
+
+A full disk, a read-only data folder and a damaged database fail every command the same way, so their cause is shown once and not per action. `unwrap` (`src/lib/app-error.ts`), which every `commands.*` result passes through, dispatches `STORAGE_FAILURE_EVENT` on `window` for an error of kind `storage_full`, `storage_read_only` or `storage_corrupt`, and `StorageFailureBanner` under the shell header shows one row per kind until it is dismissed. The failed action still rejects and reports itself as before. An MCP client gets the generic internal error; the cause is in the log.
+
 ### What a new store action must do
 
 1. Wrap the `invoke()` call (via `retryOnPoolBusy` if it's a plain write) in `try/catch`. Never let an IPC rejection propagate out of the action.

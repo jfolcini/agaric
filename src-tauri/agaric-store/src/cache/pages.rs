@@ -6,30 +6,27 @@ use agaric_core::error::AppError;
 // Set-based rebuild core (issue #112 sub-item 2)
 // ---------------------------------------------------------------------------
 
-/// Push the diff down to SQLite: find the page rows that are new, retitled,
-/// still at migration 0123's unfilled defaults, or whose `space_id` no longer
-/// is the page's, compute their keys in Rust (an NFKD `title_sort_key` has no
-/// SQL spelling), UPSERT them, then sweep orphans. Only the stale rows cross
-/// the process boundary.
+/// The page rows that are new, retitled, still at migration 0123's unfilled
+/// defaults, or whose `space_id` no longer is the page's, as the [`PageRow`]
+/// each is upserted with: over every page, or with `among <a JSON id array>`
+/// over those pages. One text, so the pages the read half finds are the pages
+/// the write half rewrites.
 ///
-/// The "skip unchanged → preserve `updated_at`" semantic is kept: an UPSERT
-/// hit refreshes `updated_at` only when the title changed, and a hit that
-/// changes nothing at all writes nothing.
-///
-/// A row is born with `last_edited_ms` = its page's newest op, else the
-/// page's ULID creation time, floored at 1; an existing row only ever has it
-/// raised (#5371).
-///
-/// Returns the rows inserted, updated, or deleted.
-async fn apply_sort_merge_rebuild(
-    write_conn: &mut sqlx::SqliteConnection,
-    now: i64,
-) -> Result<u64, AppError> {
-    // `newest_op_ms` is the per-block MAX over `idx_op_log_block_created`,
-    // folded per page, and is only computed for a row whose
-    // `last_edited_ms` is unfilled.
-    let stale = sqlx::query!(
-        r#"SELECT b.id AS "id!", b.content AS "title!", b.space_id AS "space_id?",
+/// `newest_op_ms` is the per-block MAX over `idx_op_log_block_created`,
+/// folded per page, and is only computed for a row whose `last_edited_ms` is
+/// unfilled. A row is born with `last_edited_ms` = its page's newest op, else
+/// the page's ULID creation time, floored at 1; an existing row only ever has
+/// it raised (#5371).
+macro_rules! stale_page_rows {
+    () => {
+        stale_page_rows!(@scoped "")
+    };
+    (among $ids_json:expr) => {
+        stale_page_rows!(@scoped " AND b.id IN (SELECT value FROM json_each(?))", $ids_json)
+    };
+    (@scoped $scope:literal $(, $ids_json:expr)?) => {
+        sqlx::query!(
+            r#"SELECT b.id AS "id!", b.content AS "title!", b.space_id AS "space_id?",
                   COALESCE(pc.last_edited_ms, 0) = 0 AS "unfilled!: bool",
                   CASE WHEN COALESCE(pc.last_edited_ms, 0) = 0 THEN
                       (SELECT MAX((SELECT MAX(o.created_at) FROM op_log o
@@ -43,26 +40,72 @@ async fn apply_sort_merge_rebuild(
                    OR pc.title != b.content
                    OR (pc.title_sort_key = '' AND b.content != '')
                    OR pc.last_edited_ms = 0
-                   OR pc.space_id IS NOT b.space_id)"#,
-    )
-    .fetch_all(&mut *write_conn)
-    .await?;
-
-    let rows: Vec<PageRow> = stale
-        .into_iter()
+                   OR pc.space_id IS NOT b.space_id)"#
+                + $scope
+            $(, $ids_json)?
+        )
         .map(|r| page_row(r.id, r.title, r.space_id, r.unfilled, r.newest_op_ms))
-        .collect();
+    };
+}
+
+/// The `pages_cache` rows `pc` whose source block was soft deleted, hard
+/// deleted, demoted from `block_type = 'page'`, or had its content cleared:
+/// `select` reads the ids of all of them, `delete among <a JSON id array>`
+/// deletes the ones among those ids. One predicate for the read half and the
+/// write half. It seeks each row's block by id.
+macro_rules! orphaned_page_rows {
+    (select) => {
+        orphaned_page_rows!(
+            @statement query_scalar,
+            "SELECT pc.page_id AS \"page_id!\" FROM pages_cache pc WHERE"
+        )
+    };
+    (delete among $ids_json:expr) => {
+        orphaned_page_rows!(
+            @statement query,
+            "DELETE FROM pages_cache AS pc \
+             WHERE pc.page_id IN (SELECT value FROM json_each(?)) AND",
+            $ids_json
+        )
+    };
+    (@statement $query:ident, $head:literal $(, $ids_json:expr)?) => {
+        sqlx::$query!(
+            $head
+                + " NOT EXISTS ( \
+                     SELECT 1 FROM blocks b \
+                     WHERE b.id = pc.page_id AND b.block_type = 'page' \
+                       AND b.deleted_at IS NULL AND b.content IS NOT NULL)"
+            $(, $ids_json)?
+        )
+    };
+}
+
+/// The write half of [`rebuild_pages_cache_split`]: UPSERT the pages among
+/// `stale_json` that are still stale, with keys computed in Rust (an NFKD
+/// `title_sort_key` has no SQL spelling), then delete the rows among
+/// `orphans_json` that are still orphans. Both read their blocks again under
+/// the writer lock, so a write that landed since the read half is never
+/// undone.
+///
+/// The "skip unchanged → preserve `updated_at`" semantic is kept: an UPSERT
+/// hit refreshes `updated_at` only when the title changed, and a hit that
+/// changes nothing at all writes nothing.
+///
+/// Returns the rows inserted, updated, or deleted.
+async fn rederive_page_rows_of(
+    write_conn: &mut sqlx::SqliteConnection,
+    stale_json: &str,
+    orphans_json: &str,
+    now: i64,
+) -> Result<u64, AppError> {
+    let rows = stale_page_rows!(among stale_json)
+        .fetch_all(&mut *write_conn)
+        .await?;
     let upserted = upsert_page_rows(&mut *write_conn, &rows, now).await?;
 
-    let delete = sqlx::query!(
-        "DELETE FROM pages_cache \
-         WHERE page_id NOT IN ( \
-             SELECT id FROM blocks \
-             WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL \
-         )",
-    )
-    .execute(&mut *write_conn)
-    .await?;
+    let delete = orphaned_page_rows!(delete among orphans_json)
+        .execute(&mut *write_conn)
+        .await?;
 
     // #417: the count recompute was REMOVED from this title/orphan
     // rebuild. It used to run an UNCONDITIONAL full-table correlated-
@@ -247,6 +290,45 @@ pub async fn sync_pages_cache_space_ids(
     Ok(())
 }
 
+/// A statement that opens with `computed(page_id, new_inbound, new_child)`:
+/// both count columns as a page's blocks and links give them now, for the
+/// `pages_cache` rows `p` that `$tail` narrows. `$tail` closes the CTE and is
+/// the statement proper. One text for the read half, the write half and the
+/// oracle the split is tested against, so they cannot count differently.
+///
+/// `+src.space_id`: the unary `+` keeps the planner from driving the inbound
+/// count off `idx_blocks_space_type`, a scan of the whole space per page
+/// (quadratic in the vault) instead of a walk of the page's own links.
+macro_rules! with_computed_page_counts {
+    ($query:ident, $tail:literal $(, $page_ids_json:expr)?) => {
+        sqlx::$query!(
+            "WITH computed(page_id, new_inbound, new_child) AS ( \
+                 SELECT p.page_id, \
+                     ( \
+                         SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                             JOIN blocks descendant ON bl.target_id = descendant.id \
+                             JOIN blocks src ON src.id = bl.source_id \
+                             JOIN blocks page ON page.id = p.page_id \
+                             WHERE descendant.page_id = p.page_id \
+                               AND descendant.deleted_at IS NULL \
+                               AND src.deleted_at IS NULL \
+                               AND src.page_id IS NOT NULL \
+                               AND src.page_id != p.page_id \
+                               AND +src.space_id IS page.space_id \
+                     ), \
+                     ( \
+                         SELECT COUNT(*) FROM blocks descendant \
+                             WHERE descendant.page_id = p.page_id \
+                               AND descendant.deleted_at IS NULL \
+                               AND descendant.id != p.page_id \
+                     ) \
+                 FROM pages_cache p "
+                + $tail
+            $(, $page_ids_json)?
+        )
+    };
+}
+
 /// Recompute both `pages_cache` count columns for the pages named in
 /// `page_ids_json`: the write half of [`rebuild_pages_cache_counts_split`].
 ///
@@ -295,32 +377,9 @@ async fn recompute_pages_cache_counts_of(
     write_conn: &mut sqlx::SqliteConnection,
     page_ids_json: &str,
 ) -> Result<u64, AppError> {
-    // `+src.space_id`: the unary `+` keeps the planner from driving the inbound
-    // count off `idx_blocks_space_type`, a scan of the whole space per page
-    // (quadratic in the vault) instead of a walk of the page's own links.
-    let counts = sqlx::query!(
-        "WITH computed(page_id, new_inbound, new_child) AS ( \
-             SELECT p.page_id, \
-                 ( \
-                     SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
-                         JOIN blocks descendant ON bl.target_id = descendant.id \
-                         JOIN blocks src ON src.id = bl.source_id \
-                         JOIN blocks page ON page.id = p.page_id \
-                         WHERE descendant.page_id = p.page_id \
-                           AND descendant.deleted_at IS NULL \
-                           AND src.deleted_at IS NULL \
-                           AND src.page_id IS NOT NULL \
-                           AND src.page_id != p.page_id \
-                           AND +src.space_id IS page.space_id \
-                 ), \
-                 ( \
-                     SELECT COUNT(*) FROM blocks descendant \
-                         WHERE descendant.page_id = p.page_id \
-                           AND descendant.deleted_at IS NULL \
-                           AND descendant.id != p.page_id \
-                 ) \
-             FROM pages_cache p \
-             WHERE p.page_id IN (SELECT value FROM json_each(?)) \
+    let counts = with_computed_page_counts!(
+        query,
+        "WHERE p.page_id IN (SELECT value FROM json_each(?)) \
          ) \
          UPDATE pages_cache SET \
              inbound_link_count = c.new_inbound, \
@@ -331,7 +390,7 @@ async fn recompute_pages_cache_counts_of(
                pages_cache.inbound_link_count != c.new_inbound \
             OR pages_cache.child_block_count  != c.new_child \
            )",
-        page_ids_json,
+        page_ids_json
     )
     .execute(&mut *write_conn)
     .await?;
@@ -341,116 +400,70 @@ async fn recompute_pages_cache_counts_of(
 
 /// The pages whose cached counts differ from the counts their blocks and
 /// links give now: the read half of [`rebuild_pages_cache_counts_split`].
-/// Same count expressions as [`recompute_pages_cache_counts_of`].
 async fn pages_with_stale_counts(read_pool: &SqlitePool) -> Result<Vec<String>, AppError> {
-    Ok(sqlx::query_scalar!(
-        r#"SELECT c.page_id AS "page_id!" FROM (
-             SELECT p.page_id, p.inbound_link_count, p.child_block_count,
-                 (
-                     SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl
-                         JOIN blocks descendant ON bl.target_id = descendant.id
-                         JOIN blocks src ON src.id = bl.source_id
-                         JOIN blocks page ON page.id = p.page_id
-                         WHERE descendant.page_id = p.page_id
-                           AND descendant.deleted_at IS NULL
-                           AND src.deleted_at IS NULL
-                           AND src.page_id IS NOT NULL
-                           AND src.page_id != p.page_id
-                           AND +src.space_id IS page.space_id
-                 ) AS new_inbound,
-                 (
-                     SELECT COUNT(*) FROM blocks descendant
-                         WHERE descendant.page_id = p.page_id
-                           AND descendant.deleted_at IS NULL
-                           AND descendant.id != p.page_id
-                 ) AS new_child
-             FROM pages_cache p
-         ) c
-         WHERE c.inbound_link_count != c.new_inbound
-            OR c.child_block_count  != c.new_child"#,
+    Ok(with_computed_page_counts!(
+        query_scalar,
+        ") \
+         SELECT pc.page_id AS \"page_id!\" FROM computed c \
+         JOIN pages_cache pc ON pc.page_id = c.page_id \
+         WHERE pc.inbound_link_count != c.new_inbound \
+            OR pc.child_block_count  != c.new_child"
     )
     .fetch_all(read_pool)
     .await?)
-}
-
-/// The whole-vault recompute [`rebuild_pages_cache_counts_split`] replaced,
-/// which counted every page under the writer lock: the oracle the split is
-/// tested against.
-#[cfg(test)]
-async fn recompute_all_pages_cache_counts(
-    write_conn: &mut sqlx::SqliteConnection,
-) -> Result<u64, AppError> {
-    let counts = sqlx::query!(
-        "WITH computed(page_id, new_inbound, new_child) AS ( \
-             SELECT p.page_id, \
-                 ( \
-                     SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
-                         JOIN blocks descendant ON bl.target_id = descendant.id \
-                         JOIN blocks src ON src.id = bl.source_id \
-                         JOIN blocks page ON page.id = p.page_id \
-                         WHERE descendant.page_id = p.page_id \
-                           AND descendant.deleted_at IS NULL \
-                           AND src.deleted_at IS NULL \
-                           AND src.page_id IS NOT NULL \
-                           AND src.page_id != p.page_id \
-                           AND +src.space_id IS page.space_id \
-                 ), \
-                 ( \
-                     SELECT COUNT(*) FROM blocks descendant \
-                         WHERE descendant.page_id = p.page_id \
-                           AND descendant.deleted_at IS NULL \
-                           AND descendant.id != p.page_id \
-                 ) \
-             FROM pages_cache p \
-         ) \
-         UPDATE pages_cache SET \
-             inbound_link_count = c.new_inbound, \
-             child_block_count  = c.new_child \
-         FROM computed c \
-         WHERE pages_cache.page_id = c.page_id \
-           AND ( \
-               pages_cache.inbound_link_count != c.new_inbound \
-            OR pages_cache.child_block_count  != c.new_child \
-           )",
-    )
-    .execute(&mut *write_conn)
-    .await?;
-
-    Ok(counts.rows_affected())
 }
 
 // ---------------------------------------------------------------------------
 // Rebuild_pages_cache (p1-t19,; #112 set-based form)
 // ---------------------------------------------------------------------------
 
-/// Incremental rebuild of `pages_cache`.
-///
-/// 1. UPSERT the rows that are new, retitled, or still unfilled since
-///    migration 0123 (see `apply_sort_merge_rebuild`). Unchanged hits are
-///    no-ops, so their `updated_at` is preserved.
-/// 2. `DELETE FROM pages_cache WHERE page_id NOT IN (live page IDs)` —
-///    sweeps cache rows whose source block was soft-deleted, hard
-///    deleted, demoted from `block_type = 'page'`, or had its content
-///    cleared.
+/// Incremental rebuild of `pages_cache`: [`rebuild_pages_cache_split`] with
+/// one pool for both halves.
 #[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("pages", || rebuild_pages_cache_impl(pool)).await
+    rebuild_pages_cache_split(pool, pool).await
 }
 
-async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    let now = crate::db::now_ms();
-    // Single write connection — the rebuild reads `blocks` and writes
-    // `pages_cache` on the same transaction. No separate reader
-    // connections are needed.
-    let mut tx = crate::db::begin_immediate_logged(pool, "cache_pages_rebuild").await?;
+/// Rebuild the `pages_cache` rows with the whole-vault comparison on
+/// `read_pool`.
+///
+/// 1. Finds the pages whose row is missing, retitled, or still unfilled since
+///    migration 0123 (`stale_page_rows`), and the cache rows whose source
+///    block is no longer a live titled page (`orphaned_page_rows`).
+/// 2. Takes the writer lock only when there are any, and under it UPSERTs
+///    and deletes those rows (`rederive_page_rows_of`). Unchanged hits are
+///    no-ops, so their `updated_at` is preserved.
+///
+/// A page that goes stale after step 1 read it is left to the rebuild its
+/// own write enqueues, which runs after this one.
+pub async fn rebuild_pages_cache_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<(), AppError> {
+    super::rebuild_with_timing("pages", || rebuild_pages_cache_impl(write_pool, read_pool)).await
+}
 
-    let changed = apply_sort_merge_rebuild(&mut tx, now).await?;
-
-    if changed == 0 {
-        // No changes — transaction is rolled back on drop.
+async fn rebuild_pages_cache_impl(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<u64, AppError> {
+    let stale: Vec<String> = stale_page_rows!()
+        .fetch_all(read_pool)
+        .await?
+        .into_iter()
+        .map(|(page_id, ..)| page_id)
+        .collect();
+    let orphans: Vec<String> = orphaned_page_rows!(select).fetch_all(read_pool).await?;
+    if stale.is_empty() && orphans.is_empty() {
         return Ok(0);
     }
-
+    let (stale_json, orphans_json) = (
+        serde_json::to_string(&stale)?,
+        serde_json::to_string(&orphans)?,
+    );
+    let now = crate::db::now_ms();
+    let mut tx = crate::db::begin_immediate_logged(write_pool, "cache_pages_rebuild_write").await?;
+    let changed = rederive_page_rows_of(&mut tx, &stale_json, &orphans_json, now).await?;
     tx.commit().await?;
     Ok(changed)
 }
@@ -547,55 +560,6 @@ async fn rebuild_pages_cache_counts_impl(
     let mut tx =
         crate::db::begin_immediate_logged(write_pool, "cache_pages_counts_rebuild").await?;
     let changed = recompute_pages_cache_counts_of(&mut tx, &stale_json).await?;
-    tx.commit().await?;
-    Ok(changed)
-}
-
-// ---------------------------------------------------------------------------
-// Read/write split variant (Phase 1A)
-// ---------------------------------------------------------------------------
-
-/// Read/write split variant of [`rebuild_pages_cache`].
-///
-/// Reads desired and current page rows from `read_pool` and applies the
-/// incremental diff on `write_pool`. Mirrors the single-pool sort-merge
-/// shape so semantic divergence is impossible.
-///
-/// Stale-while-revalidate: each read connection has its own snapshot;
-/// the write tx is opened independently. Any concurrent writer mutation
-/// observed by one reader but not the other is corrected on the next
-/// rebuild — same eventual-consistency guarantee as
-/// [`super::rebuild_agenda_cache_split`] (AGENTS.md "Performance
-/// Conventions / Split read/write pool pattern").
-pub async fn rebuild_pages_cache_split(
-    write_pool: &SqlitePool,
-    read_pool: &SqlitePool,
-) -> Result<(), AppError> {
-    super::rebuild_with_timing("pages", || {
-        rebuild_pages_cache_split_impl(write_pool, read_pool)
-    })
-    .await
-}
-
-async fn rebuild_pages_cache_split_impl(
-    write_pool: &SqlitePool,
-    _read_pool: &SqlitePool,
-) -> Result<u64, AppError> {
-    let now = crate::db::now_ms();
-    // The rebuild (UPSERT from `blocks` + delete-orphans) runs on a
-    // single write transaction. SQLite
-    // is one file regardless of pool split, so the write connection
-    // already sees `blocks`; the read pool is unused under the new
-    // shape but kept in the signature so call sites in
-    // `rebuild_pages_cache_split` are stable.
-    let mut tx = crate::db::begin_immediate_logged(write_pool, "cache_pages_rebuild_write").await?;
-
-    let changed = apply_sort_merge_rebuild(&mut tx, now).await?;
-
-    if changed == 0 {
-        return Ok(0);
-    }
-
     tx.commit().await?;
     Ok(changed)
 }
@@ -699,6 +663,30 @@ mod tests {
         .unwrap();
     }
 
+    /// The whole-vault recompute [`rebuild_pages_cache_counts_split`]
+    /// replaced, which counted every page under the writer lock: the oracle
+    /// the split is tested against.
+    async fn recompute_all_pages_cache_counts(
+        write_conn: &mut sqlx::SqliteConnection,
+    ) -> Result<u64, AppError> {
+        let counts = with_computed_page_counts!(
+            query,
+            ") \
+             UPDATE pages_cache SET \
+                 inbound_link_count = c.new_inbound, \
+                 child_block_count  = c.new_child \
+             FROM computed c \
+             WHERE pages_cache.page_id = c.page_id \
+               AND ( \
+                   pages_cache.inbound_link_count != c.new_inbound \
+                OR pages_cache.child_block_count  != c.new_child \
+               )"
+        )
+        .execute(&mut *write_conn)
+        .await?;
+        Ok(counts.rows_affected())
+    }
+
     async fn counts(pool: &SqlitePool) -> Vec<(String, i64, i64)> {
         sqlx::query_as(
             "SELECT page_id, inbound_link_count, child_block_count \
@@ -779,7 +767,7 @@ mod tests {
             insert_page(&pool, &id, &title).await;
         }
 
-        let first = rebuild_pages_cache_impl(&pool).await.unwrap();
+        let first = rebuild_pages_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(first, 100, "baseline inserts 100 rows");
         assert_eq!(
             snapshot(&pool).await.len(),
@@ -803,7 +791,7 @@ mod tests {
             insert_page(&pool, &id, &title).await;
         }
 
-        let touched = rebuild_pages_cache_impl(&pool).await.unwrap();
+        let touched = rebuild_pages_cache_impl(&pool, &pool).await.unwrap();
         // 10 updates + 5 deletes + 5 inserts = 20 logical changes.
         assert_eq!(touched, 20, "diff = 10 updates + 5 deletes + 5 inserts");
 
@@ -838,9 +826,9 @@ mod tests {
         for i in 0..50 {
             insert_page(&pool, &format!("IDEM{i:04}"), &format!("t{i}")).await;
         }
-        let first = rebuild_pages_cache_impl(&pool).await.unwrap();
+        let first = rebuild_pages_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(first, 50);
-        let second = rebuild_pages_cache_impl(&pool).await.unwrap();
+        let second = rebuild_pages_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(second, 0, "idempotent rebuild must produce zero diff ops");
         assert_eq!(snapshot(&pool).await.len(), 50);
     }
@@ -883,7 +871,7 @@ mod tests {
         insert_page(&pool, "PAGECCCC", "Gone Title").await;
         insert_page(&pool, "PAGEEEEE", "Cleared Title").await;
 
-        let baseline = rebuild_pages_cache_impl(&pool).await.unwrap();
+        let baseline = rebuild_pages_cache_impl(&pool, &pool).await.unwrap();
         assert_eq!(baseline, 4, "baseline inserts 4 rows");
 
         // Capture the baseline timestamps so we can diff post-rebuild.
@@ -912,7 +900,7 @@ mod tests {
         insert_page(&pool, "PAGEDDDD", "Brand New").await;
         clear_page_content(&pool, "PAGEEEEE").await;
 
-        let touched = rebuild_pages_cache_impl(&pool).await.unwrap();
+        let touched = rebuild_pages_cache_impl(&pool, &pool).await.unwrap();
         // 1 upsert-update (title-changed) + 1 upsert-insert (new) +
         // 2 deletes (soft-deleted + content-cleared) = 4 rows_affected.
         // Unchanged-title hit is a no-op and must NOT contribute.
@@ -989,7 +977,7 @@ mod tests {
         .await
         .unwrap();
 
-        rebuild_pages_cache_impl(&pool).await.unwrap();
+        rebuild_pages_cache_impl(&pool, &pool).await.unwrap();
         let created = ulid_created_ms(page);
         assert_eq!(
             last_edited(&pool, page).await,
@@ -1014,5 +1002,294 @@ mod tests {
             created + 10,
             "an older op never lowers it"
         );
+    }
+
+    /// The rebuild [`rebuild_pages_cache_split`] replaced, as it was: it took
+    /// the writer lock, then found the stale and the orphaned rows over the
+    /// whole vault and wrote them. The oracle the split is tested against
+    /// (#6522).
+    mod replaced {
+        use super::super::*;
+
+        async fn apply_sort_merge_rebuild(
+            write_conn: &mut sqlx::SqliteConnection,
+            now: i64,
+        ) -> Result<u64, AppError> {
+            // `newest_op_ms` is the per-block MAX over `idx_op_log_block_created`,
+            // folded per page, and is only computed for a row whose
+            // `last_edited_ms` is unfilled.
+            let stale = sqlx::query!(
+                r#"SELECT b.id AS "id!", b.content AS "title!", b.space_id AS "space_id?",
+                          COALESCE(pc.last_edited_ms, 0) = 0 AS "unfilled!: bool",
+                          CASE WHEN COALESCE(pc.last_edited_ms, 0) = 0 THEN
+                              (SELECT MAX((SELECT MAX(o.created_at) FROM op_log o
+                                            WHERE o.block_id = d.id))
+                                 FROM blocks d WHERE d.page_id = b.id)
+                          END AS "newest_op_ms?: i64"
+                     FROM blocks b
+                     LEFT JOIN pages_cache pc ON pc.page_id = b.id
+                    WHERE b.block_type = 'page' AND b.deleted_at IS NULL AND b.content IS NOT NULL
+                      AND (pc.page_id IS NULL
+                           OR pc.title != b.content
+                           OR (pc.title_sort_key = '' AND b.content != '')
+                           OR pc.last_edited_ms = 0
+                           OR pc.space_id IS NOT b.space_id)"#,
+            )
+            .fetch_all(&mut *write_conn)
+            .await?;
+
+            let rows: Vec<PageRow> = stale
+                .into_iter()
+                .map(|r| page_row(r.id, r.title, r.space_id, r.unfilled, r.newest_op_ms))
+                .collect();
+            let upserted = upsert_page_rows(&mut *write_conn, &rows, now).await?;
+
+            let delete = sqlx::query!(
+                "DELETE FROM pages_cache \
+                 WHERE page_id NOT IN ( \
+                     SELECT id FROM blocks \
+                     WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL \
+                 )",
+            )
+            .execute(&mut *write_conn)
+            .await?;
+
+            // #417: the count recompute was REMOVED from this title/orphan
+            // rebuild. It used to run an UNCONDITIONAL full-table correlated-
+            // subquery UPDATE here on every `RebuildPagesCache` task — which is
+            // enqueued on every per-op page mutation (create / edit-title /
+            // delete / restore / purge / move), i.e. O(pages) correlated
+            // subqueries on every page edit. For ordinary per-op rebuilds the
+            // affected pages' counts are now maintained in-tx (sync `ApplyOp`
+            // via `maintain_pages_cache_counts_after_op`; local command paths
+            // via `recompute_pages_cache_counts_for_pages`), so the full-table
+            // pass was pure redundant work. It is only genuinely required after
+            // a snapshot/sync RESET that wiped `pages_cache` (counts default to
+            // 0), which now enqueues the dedicated `RebuildPagesCacheCounts`
+            // task (-> [`rebuild_pages_cache_counts`]) separately.
+            Ok(upserted + delete.rows_affected())
+        }
+
+        pub(super) async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+            let now = crate::db::now_ms();
+            // Single write connection — the rebuild reads `blocks` and writes
+            // `pages_cache` on the same transaction. No separate reader
+            // connections are needed.
+            let mut tx = crate::db::begin_immediate_logged(pool, "cache_pages_rebuild").await?;
+
+            let changed = apply_sort_merge_rebuild(&mut tx, now).await?;
+
+            if changed == 0 {
+                // No changes — transaction is rolled back on drop.
+                return Ok(0);
+            }
+
+            tx.commit().await?;
+            Ok(changed)
+        }
+    }
+
+    /// Five pages and cache rows that are missing (NEW's), retitled (OLD's),
+    /// right (SAME's), and orphaned by a soft delete (GONE's), a cleared
+    /// title (BLANK's) and a block that is not a page (NOTE's).
+    async fn seed_page_row_drift(pool: &SqlitePool) {
+        for (id, title) in [
+            ("NEW", "New"),
+            ("OLD", "Retitled"),
+            ("SAME", "Same"),
+            ("GONE", "Gone"),
+            ("BLANK", "Blank"),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+            )
+            .bind(id)
+            .bind(title)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('NOTE', 'content', 'n')")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO pages_cache (page_id, title, title_sort_key, last_edited_ms, updated_at) \
+             VALUES ('OLD', 'Old', 'old', 5, 1), ('SAME', 'Same', 'same', 5, 1), \
+                    ('GONE', 'Gone', 'gone', 5, 1), ('BLANK', 'Blank', 'blank', 5, 1), \
+                    ('NOTE', 'Note', 'note', 5, 1)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        soft_delete(pool, "GONE").await;
+        clear_page_content(pool, "BLANK").await;
+    }
+
+    /// #6522: the split rebuild leaves the `pages_cache` rows where the
+    /// rebuild it replaced does, and changes the same rows.
+    #[tokio::test]
+    async fn rebuild_pages_cache_split_matches_the_rebuild_it_replaced_6522() {
+        let (oracle_pool, _oracle_dir) = test_pool().await;
+        let (pool, _dir) = test_pool().await;
+        seed_page_row_drift(&oracle_pool).await;
+        seed_page_row_drift(&pool).await;
+
+        let oracle_changed = replaced::rebuild_pages_cache_impl(&oracle_pool)
+            .await
+            .unwrap();
+        let changed = rebuild_pages_cache_impl(&pool, &pool).await.unwrap();
+
+        assert_eq!(
+            oracle_changed, 5,
+            "NEW inserted, OLD retitled, GONE, BLANK and NOTE swept"
+        );
+        assert_eq!(changed, oracle_changed);
+        assert_eq!(snapshot(&pool).await, snapshot(&oracle_pool).await);
+        let titled = |id: &str, title: &str| (id.to_owned(), title.to_owned());
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![
+                titled("NEW", "New"),
+                titled("OLD", "Retitled"),
+                titled("SAME", "Same"),
+            ],
+        );
+        assert_eq!(
+            rebuild_pages_cache_impl(&pool, &pool).await.unwrap(),
+            0,
+            "a second run finds nothing stale"
+        );
+    }
+
+    /// #6522: the same, after every round of random writes to the tables the
+    /// rebuild reads and to the cache itself.
+    #[tokio::test]
+    async fn rebuild_pages_cache_split_matches_the_rebuild_it_replaced_on_random_vaults_6522() {
+        crate::cache::random_vault_tests::assert_rebuild_matches_oracle(
+            "pages_cache",
+            "page_id, title, title_sort_key, last_edited_ms, space_id",
+            async |pool| replaced::rebuild_pages_cache_impl(pool).await.unwrap(),
+            async |pool| rebuild_pages_cache_impl(pool, pool).await.unwrap(),
+        )
+        .await;
+    }
+
+    /// #6522: the split count rebuild and the whole-vault recompute it
+    /// replaced agree after every round of random writes. Both are built from
+    /// one count text, so this holds the read half's choice of pages, not the
+    /// counts, to the oracle.
+    #[tokio::test]
+    async fn rebuild_pages_cache_counts_split_matches_the_whole_vault_recompute_on_random_vaults_6522()
+     {
+        crate::cache::random_vault_tests::assert_rebuild_matches_oracle(
+            "pages_cache",
+            "page_id, inbound_link_count, child_block_count",
+            async |pool| {
+                rebuild_pages_cache_impl(pool, pool).await.unwrap();
+                let mut tx = pool.begin().await.unwrap();
+                let changed = recompute_all_pages_cache_counts(&mut tx).await.unwrap();
+                tx.commit().await.unwrap();
+                changed
+            },
+            async |pool| {
+                rebuild_pages_cache_impl(pool, pool).await.unwrap();
+                rebuild_pages_cache_counts_impl(pool, pool).await.unwrap()
+            },
+        )
+        .await;
+    }
+
+    /// #6522: the write half rewrites only the rows it is handed, from what
+    /// the tables hold when it runs.
+    #[tokio::test]
+    async fn rederive_page_rows_of_touches_only_the_rows_named_6522() {
+        let (pool, _dir) = test_pool().await;
+        seed_page_row_drift(&pool).await;
+        // Writes land after the read half: OLD is retitled again, and GONE
+        // comes back from the trash.
+        update_page_title(&pool, "OLD", "Retitled twice").await;
+        sqlx::query("UPDATE blocks SET deleted_at = NULL WHERE id = 'GONE'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        let changed = rederive_page_rows_of(&mut tx, r#"["OLD","SAME"]"#, r#"["GONE","NOTE"]"#, 9)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(changed, 2, "OLD upserted and NOTE swept");
+        let titled = |id: &str, title: &str| (id.to_owned(), title.to_owned());
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![
+                titled("BLANK", "Blank"),
+                titled("GONE", "Gone"),
+                titled("OLD", "Retitled twice"),
+                titled("SAME", "Same"),
+            ],
+            "OLD takes the title it has now, GONE is a live page again and keeps its row, \
+             and NEW and BLANK, not named, are left as they were"
+        );
+    }
+
+    /// #6522: with nothing stale neither rebuild asks for the writer lock, so
+    /// both finish while another connection holds it.
+    #[tokio::test]
+    async fn rebuild_pages_cache_takes_no_writer_lock_when_nothing_is_stale_6522() {
+        let (pool, _dir) = test_pool().await;
+        seed_page_row_drift(&pool).await;
+        rebuild_pages_cache(&pool).await.unwrap();
+        rebuild_pages_cache_counts(&pool).await.unwrap();
+
+        let _writer = crate::db::begin_immediate_logged(&pool, "test_holds_the_lock")
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            rebuild_pages_cache(&pool).await.unwrap();
+            rebuild_pages_cache_counts(&pool).await.unwrap();
+        })
+        .await
+        .expect("the rebuilds must not wait for the writer lock");
+    }
+
+    /// #6522: what runs under the writer lock seeks the stale and the
+    /// orphaned rows by id; it never scans `blocks` or `pages_cache`.
+    #[tokio::test]
+    async fn rederive_page_rows_of_never_scans_a_table_6522() {
+        use sqlx::Execute as _;
+        let (pool, _dir) = test_pool().await;
+        let ids = "[]".to_owned();
+        let statements = [
+            stale_page_rows!(among ids).sql().as_str().to_owned(),
+            orphaned_page_rows!(delete among ids)
+                .sql()
+                .as_str()
+                .to_owned(),
+        ];
+        for sql in statements {
+            let plan: Vec<(i64, i64, i64, String)> =
+                sqlx::query_as(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}")))
+                    .bind("[]")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            let scans: Vec<&str> = plan
+                .iter()
+                .map(|row| row.3.as_str())
+                .filter(|detail| {
+                    detail.starts_with("SCAN")
+                        && !detail.starts_with("SCAN (subquery")
+                        && !detail.contains("json_each")
+                })
+                .collect();
+            assert!(
+                scans.is_empty(),
+                "scans under the writer lock in `{sql}`: {scans:?}"
+            );
+        }
     }
 }

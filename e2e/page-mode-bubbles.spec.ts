@@ -87,6 +87,16 @@ const stored = async (page: Page, id: string | undefined): Promise<string> =>
 
 const bubble = (page: Page, testId: string): Locator => page.getByTestId(testId)
 
+/**
+ * Close the full-screen image with Escape. The press that opened it closes the
+ * button's tooltip, and until that tooltip has left Radix can still hand it the key.
+ */
+async function closeFullScreenImage(page: Page): Promise<void> {
+  await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toBeHidden()
+}
+
 test.describe('page mode bubble menus @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
@@ -198,8 +208,7 @@ test.describe('the image bubble @editor @pages @attachments', () => {
     await block(page, ids[1]).locator('img[alt="a dog"]').click()
     await bar.getByRole('button', { name: 'Open image a dog in full screen' }).click()
     await expect(page.getByRole('dialog').locator('img[alt="a dog"]')).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(page.getByRole('dialog')).toBeHidden()
+    await closeFullScreenImage(page)
     await expect(bar.getByRole('button', { name: 'Remove image' })).toBeVisible()
     await bar.getByRole('button', { name: 'Remove image' }).click()
     await expect(block(page, ids[1]).locator('img')).toHaveCount(0)
@@ -229,8 +238,7 @@ test.describe('the image bubble @editor @pages @attachments', () => {
     await second.locator('img[alt="a dog"]').click()
     await bar.getByRole('button', { name: 'Open image a dog in full screen' }).click()
     await expect(page.getByRole('dialog').locator('img[alt="a dog"]')).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(page.getByRole('dialog')).toBeHidden()
+    await closeFullScreenImage(page)
     await expect(bar.getByRole('button', { name: 'Remove image' })).toBeVisible()
     await bar.getByRole('button', { name: 'Remove image' }).click()
     await expect(second.locator('img')).toHaveCount(0)
@@ -242,6 +250,27 @@ test.describe('the image bubble @editor @pages @attachments', () => {
     const statics = page.locator('[data-testid="block-static"]')
     await expect(statics.locator('img[alt="a lion"]')).toBeVisible()
     await expect(statics.locator('img[alt="a dog"]')).toHaveCount(0)
+  })
+
+  test('in block mode, Escape closes the full-screen image however long after the press', async ({
+    page,
+  }) => {
+    const { ids } = await seedPage(page, 'Bubble image hold', [`pic ![a dog](${IMG}) end`])
+    await openViaPalette(page, 'Bubble image hold')
+    const editor = await focusBlockById(page, ids[0] as string)
+    await editor.locator('img[alt="a dog"]').click()
+    await page.clock.install()
+    await bubble(page, 'image-bubble-menu')
+      .getByRole('button', { name: 'Open image a dog in full screen' })
+      .click()
+    await expect(page.getByRole('dialog').locator('img[alt="a dog"]')).toBeVisible()
+
+    // No click or release reaches the button under the dialog, so its tooltip's
+    // hover and hold timers ran on, and the tooltip opened above the dialog and
+    // took the Escape.
+    await page.clock.fastForward(1000)
+
+    await closeFullScreenImage(page)
   })
 
   test('in block mode, Enter on a focused bubble button presses it, not the block’s Enter', async ({

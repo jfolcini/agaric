@@ -54,6 +54,9 @@ function codedSyncErrorKeys(payload: SyncError): [named: string, unnamed: string
   if (payload.code === 'handshake_unanswered') {
     return ['sync.handshakeUnanswered', 'sync.handshakeUnansweredUnnamed']
   }
+  if (payload.code === 'own_history_fork') {
+    return ['sync.ownHistoryFork', 'sync.ownHistoryForkUnnamed']
+  }
   if (payload.code !== 'engine_format_mismatch') return null
   return payload.peer_is_older === true
     ? ['sync.versionMismatchUpdatePeer', 'sync.versionMismatchUpdatePeerUnnamed']

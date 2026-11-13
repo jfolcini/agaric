@@ -116,7 +116,7 @@ async fn assert_parity(pool: &SqlitePool, context: &str) {
 /// default (zero) counts and no op yet (`last_edited_ms = 0`). Sets
 /// `page_id = id` to mirror what `RebuildPageIds` would compute. Title =
 /// content per the canonical pages_cache contract (see
-/// `cache/pages.rs::apply_sort_merge_rebuild`).
+/// `cache/pages.rs::stale_page_rows`).
 async fn seed_page(pool: &SqlitePool, id: &str, title: &str) {
     sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)")
         .bind(id)

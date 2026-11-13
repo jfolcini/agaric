@@ -14,6 +14,8 @@
  * a large-doc perf floor, and a generative property check.
  */
 
+import { cpuUsage } from 'node:process'
+
 import * as fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
@@ -108,7 +110,7 @@ describe('computeContentDelta — mark-order normalization', () => {
 })
 
 describe('computeContentDelta — large-doc performance', () => {
-  it('handles a 500-block document without an algorithmic blow-up (steady-state median)', () => {
+  it('handles a 500-block document without an algorithmic blow-up (CPU time per call)', () => {
     // 500 ordered-list items, each authored with a non-canonical number so the
     // canonical compare path (serialize(parse(original))) is always exercised.
     const lines: string[] = []
@@ -121,30 +123,19 @@ describe('computeContentDelta — large-doc performance', () => {
     // It IS a no-edit blur (doc === parse(original)), so unchanged.
     expect(computeContentDelta(original, doc).changed).toBe(false)
 
-    // Warm up to discount one-time JIT/module-init cost (the first call can be
-    // ~20x the steady-state cost), then take the MEDIAN of many samples. The
-    // median is robust to the descheduling spikes a loaded box produces — under
-    // full 16-core CPU saturation individual SAMPLES were seen >100ms while the
-    // median stayed ~30ms, so a single hiccup can't flake the run.
+    // Warm up to discount one-time JIT/module-init cost, then time the CPU the
+    // calls use, not the wall clock: on a loaded machine the wall clock mostly
+    // measures how long this process waited for a core.
     for (let w = 0; w < 3; w++) computeContentDelta(original, doc)
-    const samples: number[] = []
-    for (let r = 0; r < 15; r++) {
-      const start = performance.now()
-      computeContentDelta(original, doc)
-      samples.push(performance.now() - start)
-    }
-    samples.sort((a, b) => a - b)
-    const median = samples[Math.floor(samples.length / 2)] ?? Number.POSITIVE_INFINITY
+    const calls = 15
+    const before = cpuUsage()
+    for (let r = 0; r < calls; r++) computeContentDelta(original, doc)
+    const { user, system } = cpuUsage(before)
+    const msPerCall = (user + system) / 1000 / calls
 
-    // This is a REGRESSION ceiling, not a tight perf bound — wall-clock medians
-    // are load-sensitive and the test runs alongside the full parallel suite.
-    // Measured medians: ~4ms idle/isolated, up to ~32ms under full 16-core CPU
-    // saturation, with one observed full-suite run at 54ms (the 50ms ceiling
-    // this replaces flaked there). 250ms is ~4.6x over that worst observed
-    // loaded median yet still ~8x below the hundreds-of-ms / seconds an actual
-    // algorithmic regression (e.g. an accidental O(n²) over the 500 blocks)
-    // would produce. So it catches a real blow-up without flaking on a busy CI box.
-    expect(median).toBeLessThan(250)
+    // A regression ceiling, not a perf bound: a linear pass over the 500 blocks
+    // costs tens of milliseconds, an accidental O(n²) one costs seconds.
+    expect(msPerCall).toBeLessThan(250)
   })
 })
 

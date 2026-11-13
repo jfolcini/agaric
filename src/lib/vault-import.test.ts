@@ -31,7 +31,9 @@ import {
   restoreSpaceFile,
   sanitizeSpaceNameForFilename,
   skippedFiles,
+  type SpaceFile,
   vaultRelativePath,
+  vaultRestoreSpaces,
 } from '@/lib/vault-import'
 
 /** Build a `File` carrying a `webkitRelativePath` (the folder-pick shape). */
@@ -558,6 +560,78 @@ describe('restoring an export', () => {
 
   it('reads a backslash in a path as a folder separator', () => {
     expect(pathTitle('a\\b.md')).toBe('a/b')
+  })
+})
+
+// #6554 — a pick of the whole unzipped *Export all spaces* ZIP restores each space.
+describe('vaultRestoreSpaces', () => {
+  const named = (name: string) =>
+    JSON.stringify({ name, propertyDefinitions: [], titles: {} } satisfies SpaceFile)
+  const spaceJson = (path: string, text: string) => folderFile([text], 'space.json', path, '')
+  const vault = (): File[] => [
+    spaceJson('Vault/Personal_x/.agaric/space.json', named('Personal/x')),
+    folderFile(['- a'], 'a.md', 'Vault/Personal_x/a.md'),
+    // An export from before the space file named its space.
+    spaceJson('Vault/Work/.agaric/space.json', '{"propertyDefinitions": [], "titles": {}}'),
+    folderFile(['- b'], 'b.md', 'Vault/Work/sub/b.md'),
+    folderFile(['report'], 'export-report.txt', 'Vault/.agaric/export-report.txt', 'text/plain'),
+  ]
+  const relPaths = (files: readonly File[]) =>
+    files.map((file) => vaultRelativePath(file.webkitRelativePath))
+
+  it("reads each top-level folder as a space named by its space file, else the folder, with the folder's files as if it were picked", async () => {
+    const spaces = await vaultRestoreSpaces(vault())
+
+    expect(spaces?.map(({ name, files }) => ({ name, paths: relPaths(files) }))).toEqual([
+      { name: 'Personal/x', paths: ['.agaric/space.json', 'a.md'] },
+      { name: 'Work', paths: ['.agaric/space.json', 'sub/b.md'] },
+    ])
+  })
+
+  it('names a space by its folder when its space file names it with anything but text', async () => {
+    const spaces = await vaultRestoreSpaces([
+      spaceJson(
+        'Vault/Work/.agaric/space.json',
+        '{"name": 7, "propertyDefinitions": [], "titles": {}}',
+      ),
+      folderFile(['- b'], 'b.md', 'Vault/Work/b.md'),
+    ])
+
+    expect(spaces?.map(({ name }) => name)).toEqual(['Work'])
+  })
+
+  it('is not put off by a hidden file the system left at the top level', async () => {
+    const spaces = await vaultRestoreSpaces([
+      folderFile(['\0'], '.DS_Store', 'Vault/.DS_Store', ''),
+      ...vault(),
+    ])
+
+    expect(spaces?.map(({ name }) => name)).toEqual(['Personal/x', 'Work'])
+  })
+
+  it.each([
+    [
+      'a single-space export',
+      [spaceJson('Vault/.agaric/space.json', named('Personal')), ...vault()],
+    ],
+    [
+      'a plain Markdown folder',
+      [folderFile(['- a'], 'a.md', 'Notes/A/a.md'), folderFile(['- b'], 'b.md', 'Notes/B/b.md')],
+    ],
+    [
+      'a vault beside a top-level note',
+      [...vault(), folderFile(['- r'], 'README.md', 'Vault/README.md')],
+    ],
+    [
+      'a vault one of whose folders has no space file',
+      [...vault(), folderFile(['- c'], 'c.md', 'Vault/Other/c.md')],
+    ],
+    [
+      'nothing but the root `.agaric/`',
+      [folderFile(['report'], 'export-report.txt', 'Vault/.agaric/export-report.txt')],
+    ],
+  ])('reads %s as no vault', async (_, files) => {
+    expect(await vaultRestoreSpaces(files)).toBeNull()
   })
 })
 

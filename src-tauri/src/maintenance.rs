@@ -66,6 +66,8 @@
 //!   - [`pragma_optimize`] — periodic `PRAGMA optimize` (4 h cadence).
 //!   - [`tombstone_purge`] — purges expired tombstones (24 h cadence,
 //!     idle predicate with an [`IDLE_JOB_GRACE`], 90-day retention).
+//!   - [`crate::db::daily_snapshot::daily_snapshot_tick`] — a snapshot of
+//!     the vault beside it, if the local day has none yet (1 h cadence).
 //!   - `enqueue_cleanup_orphaned_attachments`, `enqueue_fts_idle_optimize`,
 //!     `enqueue_rebuild_page_ids`, [`loro_snapshot_if_dirty`], and
 //!     `projected_agenda_midnight_tick` — the remaining materializer-enqueue /

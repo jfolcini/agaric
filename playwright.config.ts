@@ -1,10 +1,17 @@
-import { defineConfig, devices } from '@playwright/test'
+import { existsSync } from 'node:fs'
+
+import { chromium, defineConfig, devices } from '@playwright/test'
 
 // Parallel worktrees set `PW_PORT` so each one tests its own bundle: with the
 // default port and `reuseExistingServer`, a second worktree would silently run
 // against the first one's server.
 const PORT = process.env['PW_PORT'] ?? '5173'
 const ORIGIN = `http://localhost:${PORT}`
+
+// A Claude cloud session ships one Chromium at this path, often older than the
+// build the pinned Playwright asks for, and Playwright then refuses to launch.
+const CLOUD_CHROMIUM = '/opt/pw-browsers/chromium'
+const useCloudChromium = !existsSync(chromium.executablePath()) && existsSync(CLOUD_CHROMIUM)
 
 export default defineConfig({
   testDir: './e2e',
@@ -21,17 +28,19 @@ export default defineConfig({
   // `timeout-minutes`). At the ceiling Playwright aborts itself and still runs
   // the reporter, so the per-shard report uploads BEFORE the runner kills the
   // job — making any future cascade diagnosable instead of self-obscuring.
-  // Sized for one shard under CI=1: 4–5 min of tests (2026-09-02) plus the
-  // `webServer` build, so 25 min keeps a wide margin. Both CI lanes run the
-  // same four-way shard (`_validate.yml`, and since #4675 the weekly
-  // `full-suite-playwright` in `scheduled-deep-checks.yml`). Unbounded locally.
+  // Sized for one shard under CI=1 plus the `webServer` build, with a wide
+  // margin. Both CI lanes run the same four-way shard (`_validate.yml`, and
+  // since #4675 the weekly `full-suite-playwright` in
+  // `scheduled-deep-checks.yml`). Unbounded locally.
   globalTimeout: process.env['CI'] ? 25 * 60_000 : 0,
   // File-level parallelism via `fullyParallel: true`, with
   // per-suite `test.describe.configure({ mode: 'serial' })` annotations on
   // the specs whose tests share global state (op-log, pairing mock, kebab
   // popover chains). The workers cap below is per-shard — the CI sharding
   // lives in `.github/workflows/_validate.yml`'s playwright job, so the
-  // effective parallelism in CI is `shards × workers` (4 × 2 today).
+  // effective parallelism in CI is `shards × workers`. A CI runner has four
+  // cores and one test keeps more than one busy (the renderer and its raster
+  // threads), so three workers fill them and a fourth mostly adds contention.
   //
   // Locally there is no sharding, so `'50%'` on a 16-core box spawned 8
   // browser contexts against ONE server, and the contention made
@@ -39,7 +48,7 @@ export default defineConfig({
   // the heaviest specs). Cap local parallelism at 4 to keep the server
   // responsive; the suite stays comfortably parallel without thrashing.
   // (#1458: the server is now a static `vite preview` build, not dev+HMR.)
-  workers: process.env['CI'] ? 2 : 4,
+  workers: process.env['CI'] ? 3 : 4,
   // CI: one dot per test, full error and stack for each failure, plus GitHub
   // annotations. `list` printed one line per passing test (hundreds per shard).
   reporter: process.env['CI'] ? [['dot'], ['github']] : 'list',
@@ -81,7 +90,10 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        ...(useCloudChromium ? { launchOptions: { executablePath: CLOUD_CHROMIUM } } : {}),
+      },
     },
   ],
   webServer: {

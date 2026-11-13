@@ -1,10 +1,8 @@
 //! Full-vault rebuild of the `block_tag_inherited` cache table (P-4).
 //!
 //! Used as the materializer's safety-net / initial-population path. The
-//! split variant ([`rebuild_all_split`]) exists for API parity with the
-//! materializer's `crate::materializer::handlers` split/single dispatch
-//! helper but now collapses onto the same single-statement recursive-CTE
-//! `INSERT … SELECT` shape as [`rebuild_all`].
+//! split variant ([`rebuild_all_split`]) runs [`rebuild_all`] only when a
+//! comparison on the read pool finds the table stale.
 //!
 //! See [`crate::tag_inheritance`] for the recursive-CTE policy and macro
 //! family.
@@ -39,10 +37,10 @@ use agaric_core::error::AppError;
 /// No consumer counts the two tables additively: every read is a `UNION` or an
 /// `EXISTS`, so the overlap cannot double-count.
 pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
-    // / issue #117: take the writer lock up-front via BEGIN IMMEDIATE
-    // (same reason as `rebuild_all_split` below). `begin_immediate_logged`
-    // Adds the slow-acquire log so per-rebuild contention is
-    // observable in production traces.
+    // #117: BEGIN IMMEDIATE takes the writer lock up front, so concurrent
+    // `apply_op_tag_inheritance` calls serialise behind the DELETE +
+    // recompute: an incremental update lands wholly before or wholly after
+    // it. `begin_immediate_logged` adds the slow-acquire log.
     let mut tx = crate::db::begin_immediate_logged(pool, "tag_inheritance_rebuild").await?;
 
     sqlx::query("DELETE FROM block_tag_inherited")
@@ -64,55 +62,40 @@ pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Read/write split variant of [`rebuild_all`].
+/// [`rebuild_all`] that first compares the table with what it should hold, on
+/// `read_pool`, and returns without taking the writer lock when they agree.
 ///
-/// Despite the name, the rebuild now runs entirely on `write_pool` inside
-/// a single `BEGIN IMMEDIATE` transaction: DELETE followed by a single
-/// recursive-CTE `INSERT … SELECT` (the same shape used by the unified
-/// [`rebuild_all`]). The `read_pool` argument is retained for API
-/// stability with the `crate::materializer::handlers` split/single
-/// dispatch helper but is intentionally unused.
-///
-/// Closes (no per-row INSERT loop — the recursive CTE writes the
-/// Full tuple set in one statement) and (no read-vs-write race —
-/// `BEGIN IMMEDIATE` serialises the rebuild with concurrent
-/// [`super::apply_op_tag_inheritance`] writers, so any in-flight incremental
-/// update either lands fully before the rebuild's DELETE or commits
-/// after the rebuild commits, never sandwiched between).
+/// Every op maintains `block_tag_inherited` in its own transaction, so on a
+/// restore, which enqueues this as a safety net, the comparison normally
+/// finds nothing. When it finds a difference the rebuild is [`rebuild_all`]
+/// itself, under the lock: it derives every row again there, so nothing the
+/// comparison read is written. A row that goes stale after the comparison is
+/// the business of the write that staled it, as it is after any rebuild.
 pub async fn rebuild_all_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
-    // Rebuild runs entirely on write_pool inside BEGIN IMMEDIATE;
-    // read_pool is retained for API stability with `dispatch_split_or_single`.
-    let _ = read_pool;
-
-    // BEGIN IMMEDIATE eagerly acquires the writer lock so concurrent
-    // `apply_op_tag_inheritance` calls serialise behind us. Combined with
-    // the single-statement recursive-CTE INSERT below, this means the
-    // DELETE + recompute is atomic with respect to incremental updates.
-    // `begin_immediate_logged` adds the slow-acquire log
-    // (consistency with PR #116's cache/ migrations).
-    let mut tx =
-        crate::db::begin_immediate_logged(write_pool, "tag_inheritance_rebuild_split").await?;
-
-    sqlx::query("DELETE FROM block_tag_inherited")
-        .execute(&mut *tx)
-        .await?;
-
-    // Same recursive-CTE INSERT … SELECT used by `rebuild_all` —
-    // no Rust-side tuple materialisation, no per-row INSERT loop.
-    sqlx::query(concat!(
+    // The CTE is the one `rebuild_all` inserts from. It is named twice, so
+    // SQLite materialises it once.
+    let stale: bool = sqlx::query_scalar(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_descendant_tags_full!(),
         ", ",
         crate::tag_inh_rebuild_nearest!(),
-        " INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
-         SELECT block_id, tag_id, inherited_from FROM descendant_tags_nearest",
+        " SELECT EXISTS ( \
+             SELECT block_id, tag_id, inherited_from FROM descendant_tags_nearest \
+             EXCEPT \
+             SELECT block_id, tag_id, inherited_from FROM block_tag_inherited \
+         ) OR EXISTS ( \
+             SELECT block_id, tag_id, inherited_from FROM block_tag_inherited \
+             EXCEPT \
+             SELECT block_id, tag_id, inherited_from FROM descendant_tags_nearest \
+         )",
     ))
-    .execute(&mut *tx)
+    .fetch_one(read_pool)
     .await?;
-
-    tx.commit().await?;
-    Ok(())
+    if !stale {
+        return Ok(());
+    }
+    rebuild_all(write_pool).await
 }

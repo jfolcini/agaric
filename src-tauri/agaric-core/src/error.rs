@@ -37,6 +37,9 @@ pub enum AppErrorKind {
     Validation,
     NonReversible,
     Cancelled,
+    StorageFull,
+    StorageReadOnly,
+    StorageCorrupt,
 }
 
 /// Structured sub-kind for [`AppError::Validation`] (#1061, #2251).
@@ -240,6 +243,21 @@ pub enum AppError {
     /// is the expected case, not an error.
     #[error("Cancelled: request was aborted by the client")]
     Cancelled,
+
+    /// The disk holding the vault is full. Like the two variants below, built
+    /// only by [`AppError::storage_failure`] from the cause a `Database` or
+    /// `Io` error carries, so the frontend can say what to fix once instead of
+    /// one generic failure per action (#6554).
+    #[error("The disk is full")]
+    StorageFull,
+
+    /// The vault's database or its folder cannot be written to.
+    #[error("The vault is read-only")]
+    StorageReadOnly,
+
+    /// SQLite reports the vault's database as malformed, or as no database.
+    #[error("The vault database is damaged")]
+    StorageCorrupt,
 }
 
 impl AppError {
@@ -300,6 +318,39 @@ impl AppError {
             AppError::Validation { .. } => AppErrorKind::Validation,
             AppError::NonReversible { .. } => AppErrorKind::NonReversible,
             AppError::Cancelled => AppErrorKind::Cancelled,
+            AppError::StorageFull => AppErrorKind::StorageFull,
+            AppError::StorageReadOnly => AppErrorKind::StorageReadOnly,
+            AppError::StorageCorrupt => AppErrorKind::StorageCorrupt,
+        }
+    }
+
+    /// The storage failure behind this error, if it is one: a full disk, a
+    /// vault that cannot be written to, or a database SQLite reports as
+    /// damaged. Read off the SQLite primary result code (`extended & 0xFF`,
+    /// so every `SQLITE_READONLY_*` / `SQLITE_CORRUPT_*` is covered) or the
+    /// I/O error kind.
+    #[must_use]
+    pub fn storage_failure(&self) -> Option<AppError> {
+        const SQLITE_READONLY: i32 = 8;
+        const SQLITE_CORRUPT: i32 = 11;
+        const SQLITE_FULL: i32 = 13;
+        const SQLITE_NOTADB: i32 = 26;
+        let io = |e: &std::io::Error| match e.kind() {
+            std::io::ErrorKind::StorageFull => Some(AppError::StorageFull),
+            std::io::ErrorKind::ReadOnlyFilesystem => Some(AppError::StorageReadOnly),
+            _ => None,
+        };
+        match self {
+            AppError::Database(sqlx::Error::Database(db_err)) => {
+                match db_err.code()?.parse::<i32>().ok()? & 0xFF {
+                    SQLITE_FULL => Some(AppError::StorageFull),
+                    SQLITE_READONLY => Some(AppError::StorageReadOnly),
+                    SQLITE_CORRUPT | SQLITE_NOTADB => Some(AppError::StorageCorrupt),
+                    _ => None,
+                }
+            }
+            AppError::Database(sqlx::Error::Io(e)) | AppError::Io(e) => io(e),
+            _ => None,
         }
     }
 }
@@ -700,6 +751,9 @@ mod tests {
         Validation => "validation",
         NonReversible => "non_reversible",
         Cancelled => "cancelled",
+        StorageFull => "storage_full",
+        StorageReadOnly => "storage_read_only",
+        StorageCorrupt => "storage_corrupt",
     }
 
     /// Expands the `AppError` envelope rows into the sweep list and a
@@ -765,6 +819,9 @@ mod tests {
             "non_reversible"
         ),
         AppError::Cancelled => (AppError::Cancelled, "cancelled"),
+        AppError::StorageFull => (AppError::StorageFull, "storage_full"),
+        AppError::StorageReadOnly => (AppError::StorageReadOnly, "storage_read_only"),
+        AppError::StorageCorrupt => (AppError::StorageCorrupt, "storage_corrupt"),
     }
 
     #[test]
