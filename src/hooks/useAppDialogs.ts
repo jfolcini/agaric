@@ -45,7 +45,6 @@
 
 import { useEffect, useState } from 'react'
 
-import type { QuickCapturePrefill } from '@/components/dialogs/QuickCaptureDialog'
 import { DEEPLINK_EVENT_CAPTURE, handleCapturePayload } from '@/hooks/useDeepLinkRouter'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { BUG_REPORT_EVENT, type BugReportEventDetail } from '@/lib/bug-report-events'
@@ -58,6 +57,11 @@ import {
   OPEN_QUICK_CAPTURE_EVENT,
   SHOW_SHORTCUTS_EVENT,
 } from '@/lib/overlay-events'
+
+/** Text an `agaric://capture` link hands the dialog (#6555); a new object per link. */
+export interface QuickCapturePrefill {
+  text: string
+}
 
 export interface UseAppDialogsReturn {
   // Bug-report

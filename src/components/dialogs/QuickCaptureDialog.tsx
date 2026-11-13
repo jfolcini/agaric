@@ -44,6 +44,7 @@ import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
+import type { QuickCapturePrefill } from '@/hooks/useAppDialogs'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { unwrap } from '@/lib/app-error'
@@ -51,11 +52,6 @@ import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { useSpaceStore } from '@/stores/space'
-
-/** Text an `agaric://capture` link hands the dialog (#6555); a new object per link. */
-export interface QuickCapturePrefill {
-  text: string
-}
 
 interface QuickCaptureDialogProps {
   open: boolean
