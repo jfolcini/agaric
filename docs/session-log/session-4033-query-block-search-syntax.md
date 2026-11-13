@@ -1,4 +1,4 @@
-# Session 3995 — a query block written in the search syntax runs and stays text
+# Session 4033 — a query block written in the search syntax runs and stays text
 
 `Refs #6628` (checkbox 2; checkbox 1 is the design note on the issue; checkbox 3, the builder
 writing text, is not built).
@@ -23,9 +23,11 @@ Decisions and traps:
 - Values follow the parser: `state:todo` is invalid and says so; the issue's own example was
   wrong.
 - A `#name` typed in the block becomes a `#[ULID]` chip on save and is read by its id.
-- Rule (4) taken literally reads `tag:work hello` as search syntax. It used to show prefix results
-  with the extra word ignored and now shows an error until free text lands. Raised with the
-  maintainer.
+- Rule (4) taken literally read `tag:work hello` as search syntax: it used to show prefix results
+  with the extra word ignored, and would have shown an error. The older text skips any word
+  without a key, so the classifier now judges only keyed words, and such a block stays on the
+  older path with its old results; the request oracle covers it.
 
-Ran: the new and related vitest suites, typecheck, and nine query and search Playwright specs.
-The rest of the Playwright selection and the WebdriverIO specs were left to CI.
+Ran: the full vitest suite, typecheck, lint, the manual-stage hooks, and the query and search
+Playwright specs. The rest of the Playwright selection (223 specs tagged `@editor @search`) and
+the WebdriverIO specs were left to CI.

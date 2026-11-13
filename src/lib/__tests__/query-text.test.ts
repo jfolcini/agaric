@@ -77,6 +77,10 @@ describe('isLegacyQueryText', () => {
     ['tag:work table:true', true],
     ['tag:work table:true columns:due_date,owner', true],
     ['  tag:work\t tag:x  ', true],
+    // Words without a key, which the older text skips, do not decide.
+    ['tag:work hello', true],
+    [`tag:work #[${TAG_WORK}]`, true],
+    ['tag:"my tag"', true],
     // A `#` makes it the search syntax.
     ['tag:#work', false],
     ['tag:work tag:#home', false],
@@ -86,7 +90,6 @@ describe('isLegacyQueryText', () => {
     // So does any other word: a search token, free text, an unknown key.
     ['tag:work state:TODO', false],
     ['tag:work\nstate:TODO', false],
-    ['tag:work hello', false],
     ['tag:work foo:bar', false],
     ['state:TODO', false],
     ['prop:status=done', false],
@@ -95,7 +98,6 @@ describe('isLegacyQueryText', () => {
     ['hello', false],
     ['todo:TODO', false],
     // Quoting: the older text splits on whitespace, quotes or not.
-    ['tag:"my tag"', false],
     ['"type:tag"', false],
     ['prop:k="x type:y"', true],
     // The block's Markdown escapes are decoded first.

@@ -10,9 +10,10 @@
  * is every tag whose name starts with `work`, attached or written inline, its
  * repeats OR'd; the search syntax's is the tag named `work`, attached, its
  * repeats AND'd. {@link isLegacyQueryText} therefore reads a block as the older
- * text when it uses a key only that text has, or holds nothing but `tag:`
- * words without `#`, which is every such block stored before the search syntax
- * was accepted, so none of them changes its results. The older text is frozen:
+ * text when it uses a key only that text has, or its only keyed words are `tag:`
+ * words without `#` (the older text skips a word with no key), which is every
+ * such block stored before the search syntax was accepted, so none of them
+ * changes its results. The older text is frozen:
  * read, never extended.
  *
  * `table:` and `columns:` are the view words both texts carry
@@ -65,7 +66,9 @@ export function isLegacyQueryText(expression: string): boolean {
     .split(/\s+/)
     .filter((word) => word !== '' && !VIEW_WORD.test(word))
   if (words.some((word) => LEGACY_ONLY_KEYS.has(wordKey(word)))) return true
-  return words.length > 0 && words.every((w) => w.startsWith('tag:') && !w.startsWith('tag:#'))
+  // The older text skips a word without a key, so such words do not decide.
+  const keyed = words.filter((word) => wordKey(word) !== '')
+  return keyed.length > 0 && keyed.every((w) => w.startsWith('tag:') && !w.startsWith('tag:#'))
 }
 
 /** The search-syntax reading of a block's query text, and the text it was read from (for token spans). */
