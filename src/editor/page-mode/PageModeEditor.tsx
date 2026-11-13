@@ -300,8 +300,9 @@ function commandsApi(read: () => Promise<TreeRow[]>): PageSaveApi {
       (await retryOnPoolBusy(() => commands.restoreBlock(id, deletedAt).then(unwrap))).op_refs,
     move: async (id, parentId, index) =>
       (await retryOnPoolBusy(() => commands.moveBlock(id, parentId, index).then(unwrap))).op_refs,
-    edit: async (id, markdown) =>
-      (await retryOnPoolBusy(() => commands.editBlock(id, markdown, null).then(unwrap))).op_refs,
+    edit: async (id, markdown, base) =>
+      (await retryOnPoolBusy(() => commands.editBlock(id, markdown, base ?? null).then(unwrap)))
+        .op_refs,
     remove: async (id) => {
       const deleted = await retryOnPoolBusy(() => commands.deleteBlock(id).then(unwrap))
       return { deletedAt: deleted.deleted_at, refs: deleted.op_refs }
