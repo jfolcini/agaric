@@ -13,6 +13,13 @@
  * block's task state or property once the caret has left it (`page-tasks.ts`,
  * `page-properties.ts`).
  *
+ * HTML holding a list goes the same way (#6727): block mode's conversion writes
+ * it as Document text (`outlineToDocument`), which is then read as above, so
+ * each item is a block where ProseMirror's own paste would put the whole list
+ * in one. It lands at the selection as it is once the conversion, loaded on
+ * first use, answers. Any other HTML, a copy from an editor of ours, and HTML
+ * that reads as no blocks where it lands keep ProseMirror's own paste.
+ *
  * One line (but a list or task line where it starts a block, as block mode
  * reads them), lines with no Markdown in them, a plain-text paste (Shift), and
  * a paste into code, or into a list or a table in a block's content, keep
@@ -50,7 +57,12 @@ import type { Mappable } from '@tiptap/pm/transform'
 import type { EditorProps, EditorView } from '@tiptap/pm/view'
 
 import { inlineSize, posBeforeTail } from '@/components/block-tree/paste-into-block'
-import { needsBlockPath, onlyBlockPathReads, spliceAround } from '@/editor/extensions/html-paste'
+import {
+  needsBlockPath,
+  onlyBlockPathReads,
+  parseUsableHtmlBody,
+  spliceAround,
+} from '@/editor/extensions/html-paste'
 import { parse } from '@/editor/markdown-serializer'
 import { depthOf, insideListOrTable, PAGE_BLOCK } from '@/editor/page-mode/page-document'
 import type { PageListSource } from '@/editor/page-mode/page-lists'
@@ -58,6 +70,7 @@ import { type DocumentBlock, parsePastedText } from '@/editor/source-buffer-docu
 import { blockIdOf, pasteKeepingIds } from '@/editor/token-ids'
 import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import type { ListStyle } from '@/lib/list-style'
+import { logger } from '@/lib/logger'
 import { isTodoState, TASK_STATE_TO_MARKER } from '@/lib/task-states'
 
 export interface PastedBlock {
@@ -311,6 +324,22 @@ export function caretAtJoin(view: EditorView, paste: BlockPathPaste, { ids, afte
   )
 }
 
+/** Clipboard `html` from outside our editors that holds a list, parsed; null for any other. */
+function outsideList(html: string): ParentNode | null {
+  if (html === '' || html.includes('data-pm-slice')) return null
+  const body = parseUsableHtmlBody(html)
+  return body?.querySelector('ul, ol') == null ? null : body
+}
+
+/** `body` as the Document text block mode's HTML paste writes. */
+async function documentText(body: ParentNode): Promise<string> {
+  const [{ createInlineTurndown }, outline] = await Promise.all([
+    import('@/editor/inline-turndown'),
+    import('@/editor/html-to-blocks'),
+  ])
+  return outline.outlineToDocument(outline.htmlBodyToOutline(body, createInlineTurndown().inline))
+}
+
 export interface PagePasteOptions {
   lists: PageListSource | undefined
   /** Takes a paste for block mode's block path; none keeps every paste in the document. */
@@ -334,6 +363,28 @@ export const PagePaste = Extension.create<PagePasteOptions>({
     // Whether the text parsed is a paste's: a drop of text is parsed too, at the drop point, and no
     // `handlePaste` follows it, so a drop claimed here would be lost.
     let pasting = false
+    // ProseMirror's own paste, whose event carries no clipboard, so it is not converted again.
+    const pasteOwn = (view: EditorView, html: string): void => {
+      if (!view.isDestroyed) view.pasteHTML(html)
+    }
+    const pasteHtmlList = async (view: EditorView, html: string, body: ParentNode) => {
+      try {
+        const text = await documentText(body)
+        if (view.isDestroyed) return
+        const pasted = pastedSlice(text, view.state.selection.$from, false)
+        if (pasted === null) {
+          pasteOwn(view, html)
+          return
+        }
+        // Open at both ends, as ProseMirror leaves the slice of a text paste, so the first block
+        // joins the block pasted into, which keeps its id.
+        const slice = Slice.maxOpen(pasted.slice.content)
+        pasteWithStyles(view, slice, pasted.styles, (id, style) => lists?.setStyle(id, style))
+      } catch (err) {
+        logger.warn('pagePaste', 'HTML list conversion failed; pasting it as it is', undefined, err)
+        pasteOwn(view, html)
+      }
+    }
     const parser = (
       text: string,
       $context: ResolvedPos,
@@ -368,12 +419,18 @@ export const PagePaste = Extension.create<PagePasteOptions>({
               return false
             },
           },
-          handlePaste(view, _event, slice) {
+          handlePaste(view, event, slice) {
             pasting = false
             const paste = routed
             routed = null
             if (paste !== null) {
               blockPath?.(paste)
+              return true
+            }
+            const html = event.clipboardData?.getData('text/html') ?? ''
+            const body = view.state.selection.$from.parent.type.spec.code ? null : outsideList(html)
+            if (body !== null) {
+              void pasteHtmlList(view, html, body)
               return true
             }
             const styles = read

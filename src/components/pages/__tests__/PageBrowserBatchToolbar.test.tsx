@@ -106,6 +106,8 @@ function trashReply(
   return {
     deleted_count: rootIds.length + cascadedPageIds.length,
     affected_page_ids: [...rootIds, ...cascadedPageIds],
+    deleted_at: 1,
+    op_refs: [],
   }
 }
 
@@ -862,7 +864,12 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
       // reports only P_LIVE.
       const user = userEvent.setup()
       stubInvoke({
-        delete_blocks_by_ids: () => ({ deleted_count: 1, affected_page_ids: ['P_LIVE'] }),
+        delete_blocks_by_ids: () => ({
+          deleted_count: 1,
+          affected_page_ids: ['P_LIVE'],
+          deleted_at: 1,
+          op_refs: [],
+        }),
       })
       renderToolbar({ selectedIds: ['P_LIVE', 'P_GONE'] })
       await user.click(screen.getByTestId('page-batch-trash-btn'))

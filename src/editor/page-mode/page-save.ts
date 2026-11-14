@@ -27,6 +27,10 @@
  * block is created only once it holds something, or holds a block that does,
  * or is about to take a task state (`keep`).
  *
+ * Two or more creates in a row go out as one batch, and so do two or more
+ * deletes; a batch is all or nothing, so a refused one is sent again one write
+ * at a time, which finds the write refused and holds back only what needs it.
+ *
  * `tree` mirrors the backend's tree of the page as far as page mode knows it,
  * for the sibling index each create and move takes. It also holds blocks the
  * document does not show (a peer's new block, read by a reread). Page mode
@@ -42,6 +46,7 @@ import { serialize } from '@/editor/markdown-serializer'
 import { blockDocJson, depthOf } from '@/editor/page-mode/page-document'
 import { blockIdOf } from '@/editor/token-ids'
 import type { OpRef } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
 
 export interface SavedBlock {
   /** The node last written or read; `null` until a restored block is next compared. */
@@ -76,6 +81,8 @@ export interface TreeRow {
 
 export interface PageSaveApi {
   create: (id: string, parentId: string, index: number, markdown: string) => Promise<OpRef[]>
+  /** The creates in one write, in order, all or none; a later one's parent may be an earlier one. */
+  createBatch: (creates: readonly NewBlock[]) => Promise<OpRef[]>
   restore: (id: string, deletedAt: number) => Promise<OpRef[]>
   move: (id: string, parentId: string, index: number) => Promise<OpRef[]>
   /**
@@ -84,12 +91,21 @@ export interface PageSaveApi {
    */
   edit: (id: string, markdown: string, base?: string) => Promise<OpRef[]>
   remove: (id: string) => Promise<{ deletedAt: number; refs: OpRef[] }>
+  /** The deletes in one write, all or none, every block stamped with the one `deletedAt`. */
+  removeBatch: (ids: readonly string[]) => Promise<{ deletedAt: number; refs: OpRef[] }>
   /** The page's live blocks, read again after a restore. */
   tree: () => Promise<TreeRow[]>
 }
 
+export interface NewBlock {
+  id: string
+  parentId: string
+  index: number
+  markdown: string
+}
+
 export type SaveOp =
-  | { kind: 'create'; id: string; parentId: string; index: number; markdown: string; node: PMNode }
+  | ({ kind: 'create'; node: PMNode } & NewBlock)
   | { kind: 'restore'; id: string; deletedAt: number }
   | { kind: 'move'; id: string; parentId: string; index: number }
   | { kind: 'edit'; id: string; markdown: string; node: PMNode }
@@ -401,7 +417,7 @@ export function planEdits(desired: readonly DesiredBlock[], state: PageSaveState
  * pasted into a block whose create or edit failed): the delete takes the
  * blocks under it along.
  */
-export function planDeletes(desired: readonly DesiredBlock[], state: PageSaveState): SaveOp[] {
+export function planDeletes(desired: readonly DesiredBlock[], state: PageSaveState): DeleteOp[] {
   const shown = new Set(desired.map((block) => block.id))
   const unwritten = desired
     .filter((block) => state.saved.get(block.id)?.node !== block.node)
@@ -421,8 +437,11 @@ export function planDeletes(desired: readonly DesiredBlock[], state: PageSaveSta
   )
   return [...going]
     .filter((id) => !going.has(state.tree.parentOf.get(id) as string))
-    .map((id) => ({ kind: 'delete', id }))
+    .map((id): DeleteOp => ({ kind: 'delete', id }))
 }
+
+type CreateOp = Extract<SaveOp, { kind: 'create' }>
+type DeleteOp = Extract<SaveOp, { kind: 'delete' }>
 
 function applyToTree(tree: PageTree, op: Extract<SaveOp, { kind: 'create' | 'move' }>): void {
   detach(tree, op.id)
@@ -436,8 +455,7 @@ async function run(op: SaveOp, state: PageSaveState, api: PageSaveApi): Promise<
   switch (op.kind) {
     case 'create': {
       const refs = await api.create(op.id, op.parentId, op.index, op.markdown)
-      applyToTree(state.tree, op)
-      state.saved.set(op.id, { node: op.node, markdown: op.markdown })
+      created(state, op)
       return refs
     }
     case 'restore': {
@@ -461,16 +479,26 @@ async function run(op: SaveOp, state: PageSaveState, api: PageSaveApi): Promise<
     }
     case 'delete': {
       const { deletedAt, refs } = await api.remove(op.id)
-      const members = subtreeOf(state.tree, op.id)
-      detach(state.tree, op.id)
-      for (const id of members) {
-        state.saved.delete(id)
-        state.deletedAt.set(id, deletedAt)
-        state.tree.parentOf.delete(id)
-        state.tree.children.delete(id)
-      }
+      deleted(state, op.id, deletedAt)
       return refs
     }
+  }
+}
+
+function created(state: PageSaveState, op: CreateOp): void {
+  applyToTree(state.tree, op)
+  state.saved.set(op.id, { node: op.node, markdown: op.markdown })
+}
+
+/** `id` and the blocks under it, gone from the backend as of `deletedAt`. */
+function deleted(state: PageSaveState, id: string, deletedAt: number): void {
+  const members = subtreeOf(state.tree, id)
+  detach(state.tree, id)
+  for (const member of members) {
+    state.saved.delete(member)
+    state.deletedAt.set(member, deletedAt)
+    state.tree.parentOf.delete(member)
+    state.tree.children.delete(member)
   }
 }
 
@@ -525,6 +553,43 @@ async function runAll(
   return failed
 }
 
+/**
+ * Run two or more creates, or two or more deletes, as one batch, and advance the
+ * save state as running them one at a time would. False when there are fewer,
+ * or the batch was refused: the caller runs them one at a time.
+ */
+async function runBatch(
+  ops: readonly CreateOp[] | readonly DeleteOp[],
+  state: PageSaveState,
+  api: PageSaveApi,
+  result: SaveResult,
+): Promise<boolean> {
+  if (ops.length < 2) return false
+  try {
+    if (ops[0]?.kind === 'create') {
+      const creates = ops as readonly CreateOp[]
+      result.refs.push(...(await api.createBatch(creates)))
+      for (const op of creates) created(state, op)
+    } else {
+      const { deletedAt, refs } = await api.removeBatch(ops.map((op) => op.id))
+      result.refs.push(...refs)
+      for (const op of ops) deleted(state, op.id, deletedAt)
+    }
+  } catch (err) {
+    const count = ops.length
+    logger.warn(
+      'savePage',
+      'A batch write was refused; sending it a write at a time',
+      { count },
+      err,
+    )
+    return false
+  }
+  state.writes += ops.length
+  result.structural = true
+  return true
+}
+
 /** Save what changed in `doc` since `state` last saved it, adding to `result` when given. */
 export async function savePage(
   doc: PMNode,
@@ -554,7 +619,9 @@ export async function savePage(
       continue
     }
     const batch = restoring === undefined ? creates : creates.slice(0, restoreAt + 1)
-    const failed = await runAll(batch, state, api, result, { stopOnFailure: true })
+    const leading = (restoring === undefined ? batch : batch.slice(0, -1)) as CreateOp[]
+    const rest = (await runBatch(leading, state, api, result)) ? batch.slice(leading.length) : batch
+    const failed = await runAll(rest, state, api, result, { stopOnFailure: true })
     if (failed !== null) held.add(failed.id)
     else if (restoring === undefined) break
     else restored.add(restoring)
@@ -562,6 +629,7 @@ export async function savePage(
   const desired = desiredBlocks(doc, state)
   await runAll(planMoves(desired, state), state, api, result, { stopOnFailure: true })
   await runAll(planEdits(desired, state), state, api, result)
-  await runAll(planDeletes(desired, state), state, api, result)
+  const deletes = planDeletes(desired, state)
+  if (!(await runBatch(deletes, state, api, result))) await runAll(deletes, state, api, result)
   return result
 }

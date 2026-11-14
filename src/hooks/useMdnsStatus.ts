@@ -31,6 +31,11 @@ import { logger } from '@/lib/logger'
  *  `src-tauri/agaric-sync/src/sync_events.rs`. */
 export const SYNC_MDNS_DISABLED_EVENT = 'sync:mdns_disabled'
 
+/** Event name — must mirror `EVENT_SYNC_ENDPOINT_BINDING` in
+ *  `src-tauri/agaric-sync/src/sync_events.rs`. The daemon is binding a new
+ *  endpoint, so what it reported about the last one no longer holds. */
+export const SYNC_ENDPOINT_BINDING_EVENT = 'sync:endpoint_binding'
+
 /** Live-event payload shape (`SyncEvent::MdnsDisabled`). */
 interface MdnsDisabledPayload {
   reason: string
@@ -43,7 +48,7 @@ function isMdnsDisabledPayload(p: unknown): p is MdnsDisabledPayload {
 }
 
 export interface UseMdnsStatusResult {
-  /** `true` once mDNS initialization has failed at least once. */
+  /** `true` when mDNS failed to attach to the current endpoint. */
   disabled: boolean
   /** The failure reason, present iff `disabled`. */
   reason: string | null
@@ -80,6 +85,18 @@ export function useMdnsStatus(): UseMdnsStatusResult {
       },
     },
   )
+
+  useTauriEventListener<unknown>(SYNC_ENDPOINT_BINDING_EVENT, () => setStatus(HEALTHY), {
+    enabled,
+    onError: (err) => {
+      logger.warn(
+        'DeviceManagement',
+        `Failed to listen to ${SYNC_ENDPOINT_BINDING_EVENT}`,
+        undefined,
+        err,
+      )
+    },
+  })
 
   // Backfill: the daemon can emit before this listener registers, so query
   // the stored status on mount and adopt it if it reports disabled. A live

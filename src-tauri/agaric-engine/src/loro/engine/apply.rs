@@ -123,6 +123,27 @@ impl LoroEngine {
             Some(position),
         )
     }
+    /// [`Self::apply_create_block`] for a top-level block entering this doc,
+    /// placed after the last root. Nothing arranges top-level blocks, and a
+    /// stamp is a rank the block held outside this doc's roots (among every
+    /// space's, or the space it left), so ranking by it read every root to
+    /// land the block at an arbitrary one.
+    pub fn apply_append_root_block(
+        &mut self,
+        block_id: &str,
+        block_type: &str,
+        content: &str,
+        position: i64,
+    ) -> Result<(), AppError> {
+        self.create_block_impl(
+            block_id,
+            block_type,
+            content,
+            None,
+            usize::MAX,
+            Some(position),
+        )
+    }
     /// Fixture seam (#6527): the node [`Self::apply_create_block`] leaves, at a
     /// tree `slot` the caller already knows. That create finds its slot by
     /// reading every sibling, so seeding the tens of thousands of root pages

@@ -178,7 +178,7 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     (
         "delete_blocks_by_ids",
         HEADED_ID_KEY,
-        &["deleted_count"],
+        &["deleted_at", "deleted_count"],
         &["affected_page_ids"],
     ),
     (
