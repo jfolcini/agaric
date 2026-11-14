@@ -275,7 +275,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
           // `handleCreate` reports its own failure; never rejects.
           void handleCreate()
         }}
-        className="flex flex-col sm:flex-row sm:items-center gap-2"
+        className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2"
       >
         <Input
           value={newKey}
