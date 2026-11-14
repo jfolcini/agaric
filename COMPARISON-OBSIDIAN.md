@@ -24,6 +24,8 @@ Obsidian is ahead wherever files being the truth matters: other editors, any syn
 
 ## Feature by feature
 
+The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) has the row-by-row detail, with a status and the code behind each Agaric cell.
+
 | Area | Obsidian | Agaric |
 | --- | --- | --- |
 | Editing | Live Preview, source mode and reading view over one file | Block mode with the Markdown syntax shown at the cursor; page mode (the whole page as one document, off by default, with a block cap per page); *Edit as Markdown* for the page as plain text |

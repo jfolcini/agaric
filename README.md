@@ -62,6 +62,8 @@ Someone who thinks in outlines, keeps a daily journal, tracks tasks beside their
 
 **History and undo.** Every change is an operation in a log. Undo works per page, the History view shows who changed what and can restore a page to an earlier point, and deleted blocks wait in the Trash before they are purged.
 
+**Fast on a large vault.** Interactive commands are held to latency budgets on a vault of `FIXTURE_SIZE` blocks, checked weekly by [`src-tauri/benches/interactive_slo.rs`](src-tauri/benches/interactive_slo.rs): reading a block within a millisecond, saving an edit or creating a block within a few, loading a page within tens, and the heaviest reads within the product target of 200 ms. The budgets are the `BUDGET_MS` constants in that file; [docs/architecture/operations.md](docs/architecture/operations.md#product-slo) says what the gate measures and which commands it leaves out.
+
 **Templates, tabs, bookmarks, back and forward, a command palette, rebindable shortcuts, themes, a custom stylesheet and printing** are there too. [docs/FEATURE-MAP.md](docs/FEATURE-MAP.md) is the full inventory.
 
 ## Getting notes in and out

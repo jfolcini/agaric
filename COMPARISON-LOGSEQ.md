@@ -26,6 +26,8 @@ Rows below say which one they mean where it matters.
 
 ## Feature by feature
 
+The table is the summary. [The feature matrix](COMPARISON-LOGSEQ-MATRIX.md) has the row-by-row detail, with a status and the code behind each Agaric cell.
+
 | Area | Logseq | Agaric |
 | --- | --- | --- |
 | Outline | An outliner. The file version writes a block's collapsed state into the file (`collapsed::`) | An outliner whose blocks nest to `MAX_BLOCK_DEPTH`. Collapse state is per device and does not sync |
