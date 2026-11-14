@@ -1,12 +1,12 @@
 /**
  * The page kebab's *Save as Markdown file* (#6546): it saves the Markdown
- * *Export as Markdown* copies as `<title>.md` through `saveBlob`, and is
- * absent on Android, whose WebView saves no `blob:` download. And its
- * *Print…* (#6558), absent on Android too.
+ * *Export as Markdown* copies as `<title>.md` through `saveBlob`: the
+ * webview's download, or on macOS and Android a file the backend writes to
+ * Downloads. And its *Print…* (#6558), absent on Android.
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -37,7 +37,7 @@ const ANDROID_UA =
 
 let pageStore: StoreApi<PageBlockState>
 let exportPageMarkdown: () => string
-let saveToDownloads: (args: unknown) => null
+let saveToDownloads: (args: unknown) => string
 
 // The anchor `saveBlob` clicks, read at click time: what the webview saves.
 let saved: { blob: Blob | undefined; download: string }[]
@@ -57,7 +57,7 @@ beforeEach(() => {
     isReady: true,
   })
   // An attachment ref, so the copy's rewrite shows in what is saved.
-  saveToDownloads = () => null
+  saveToDownloads = () => 'Work_Plans_ Q3_.md'
   exportPageMarkdown = () => `# ${TITLE}\n\n- see ![shot](attachment:${ATTACHMENT_ID})\n`
   vi.mocked(invoke).mockImplementation(
     mockInvokeCommands({
@@ -191,7 +191,7 @@ describe('PageHeader Save as Markdown file', () => {
       const calls: unknown[] = []
       saveToDownloads = (args) => {
         calls.push(args)
-        return null
+        return 'Work_Plans_ Q3_.md'
       }
       const user = userEvent.setup()
       renderHeader()
@@ -267,15 +267,43 @@ describe('PageHeader Save as Markdown file', () => {
       __resetPlatformCacheForTests()
     })
 
-    it('leaves the row out of the menu', async () => {
+    // #6546: Android's save says where the file went, under the name the OS
+    // gave it, so the header adds no second toast.
+    it('saves through the backend and names the file once, as the OS saved it', async () => {
+      const calls: unknown[] = []
+      saveToDownloads = (args) => {
+        calls.push(args)
+        // The OS renames a file whose name is taken.
+        return 'Work_Plans_ Q3_ (1).md'
+      }
+      const user = userEvent.setup()
+      renderHeader()
+      await openMenu(user)
+
+      await user.click(screen.getByRole('menuitem', { name: t('pageHeader.saveMarkdownFile') }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+          t('data.savedToDownloads', { fileName: 'Work_Plans_ Q3_ (1).md' }),
+        )
+      })
+      const bytes = new TextEncoder().encode(`# ${TITLE}\n\n- see ![shot](shot.png)\n`)
+      expect(calls).toEqual([
+        { fileName: 'Work_Plans_ Q3_.md', bytes: btoa(String.fromCodePoint(...bytes)) },
+      ])
+      expect(saved).toEqual([])
+      // Let the handler run past the save before counting its toasts.
+      await act(async () => {})
+      expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    })
+
+    it('leaves Print… out of the menu', async () => {
       const user = userEvent.setup()
       renderHeader()
       await openMenu(user)
 
       expect(screen.getByRole('menuitem', { name: /Export as Markdown/ })).toBeInTheDocument()
-      expect(
-        screen.queryByRole('menuitem', { name: t('pageHeader.saveMarkdownFile') }),
-      ).not.toBeInTheDocument()
       expect(
         screen.queryByRole('menuitem', { name: t('pageHeader.print') }),
       ).not.toBeInTheDocument()

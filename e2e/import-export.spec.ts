@@ -2,7 +2,6 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { devices } from '@playwright/test'
 import JSZip from 'jszip'
 
 import {
@@ -10,9 +9,7 @@ import {
   getInvokeCalls,
   installIpcRecorder,
   ipc,
-  navigateMobile,
   openPage,
-  openSettingsTab,
   test,
   waitForBoot,
 } from './helpers'
@@ -231,27 +228,6 @@ test.describe('Export all pages as ZIP @markdown', () => {
       value_type: 'select',
       options: JSON.stringify(['alpha', 'beta', 'gamma']),
     })
-  })
-})
-
-const { defaultBrowserType: _, ...pixel7 } = devices['Pixel 7']
-
-// #6538 — the Android WebView writes no `blob:` download, so the export rows
-// must not run an export that ends in "Export complete" there.
-test.describe('Export on an Android phone @markdown @mobile', () => {
-  test.use(pixel7)
-
-  test('both export rows stay, disabled under a notice that says to sync to a computer', async ({
-    page,
-  }) => {
-    await waitForBoot(page)
-    await navigateMobile(page, 'Settings')
-    await openSettingsTab(page, 'Data')
-
-    await expect(page.getByText(/can't save files on Android yet/)).toBeVisible()
-    for (const name of ['Export this space', 'Export all spaces']) {
-      await expect(page.getByRole('button', { name, exact: true })).toBeDisabled()
-    }
   })
 })
 

@@ -16,14 +16,12 @@
  */
 
 import type React from 'react'
-import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { isAndroid } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 
 export interface BugReportFormProps {
@@ -48,10 +46,6 @@ export function BugReportForm({
   onRedactChange,
 }: BugReportFormProps): React.ReactElement {
   const { t } = useTranslation()
-  // #6538 — logs reach a report only as the saved ZIP, and the Android
-  // WebView handles no `blob:` download, so the ZIP would never be written.
-  const logsUnavailable = isAndroid()
-  const logsUnavailableId = useId()
 
   return (
     <div className="space-y-3">
@@ -85,9 +79,7 @@ export function BugReportForm({
           id="bug-report-include-logs"
           checked={includeLogs}
           onCheckedChange={onIncludeLogsChange}
-          disabled={logsUnavailable}
           aria-label={t('bugReport.includeLogsLabel')}
-          aria-describedby={logsUnavailable ? logsUnavailableId : undefined}
         />
         <div className="space-y-0.5">
           <Label htmlFor="bug-report-include-logs" muted={false}>
@@ -96,11 +88,6 @@ export function BugReportForm({
           <p className="text-xs text-muted-foreground">{t('bugReport.includeLogsHint')}</p>
         </div>
       </div>
-      {logsUnavailable && (
-        <p id={logsUnavailableId} className="text-xs text-muted-foreground">
-          {t('data.fileSaveUnavailableAndroid')}
-        </p>
-      )}
 
       {/* Redact is a sibling row at the same indent as Include
             logs (not nested under it) so it's always visible. When

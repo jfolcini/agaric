@@ -1,10 +1,12 @@
 //! Saving a file the frontend built (an export ZIP, a page's Markdown, an
 //! attachment) into the user's Downloads folder.
 //!
-//! The webview's own download does this everywhere except macOS: WKWebView
-//! cancels a download navigation unless the app registered a download handler,
-//! and this app registers none (#6652). Whether this command saves on a real
-//! Mac is not something CI can show; the check is on #6514.
+//! The webview's own download does this everywhere except macOS and Android.
+//! WKWebView cancels a download navigation unless the app registered a download
+//! handler, and this app registers none (#6652). Whether this command saves on
+//! a real Mac is not something CI can show; the check is on #6514. The Android
+//! WebView handles no `blob:` download either, and there the folder is reached
+//! through `MediaStore` ([`super::file_save`], #6546; the check is on #6513).
 //!
 //! Not tested: the removal of a partly written file. No write here can be
 //! made to fail after its create succeeded.
@@ -17,6 +19,7 @@ use agaric_core::base64_bytes::Base64Bytes;
 use agaric_core::error::AppError;
 use tauri::Manager as _;
 
+use super::file_save::{FileSaveState, save_through};
 use super::sanitize_internal_error;
 
 /// Write `bytes` to a new file in `dir` named `file_name`, or `name (1).ext`,
@@ -33,16 +36,7 @@ pub fn save_to_downloads_inner(
     file_name: &str,
     bytes: &[u8],
 ) -> Result<PathBuf, AppError> {
-    let mut components = Path::new(file_name).components();
-    let bare = matches!(
-        (components.next(), components.next()),
-        (Some(Component::Normal(name)), None) if name == file_name
-    );
-    if !bare {
-        return Err(AppError::validation(format!(
-            "not a file name: {file_name:?}"
-        )));
-    }
+    require_bare_file_name(file_name)?;
     let (stem, extension) = match file_name.rfind('.') {
         Some(dot) if dot > 0 => file_name.split_at(dot),
         _ => (file_name, ""),
@@ -74,26 +68,55 @@ pub fn save_to_downloads_inner(
     Ok(path)
 }
 
-/// Tauri command: save `bytes` as `file_name` in the user's Downloads folder.
-/// Delegates to [`save_to_downloads_inner`].
+/// Refuses a `file_name` that is empty or more than one path component.
+pub(crate) fn require_bare_file_name(file_name: &str) -> Result<(), AppError> {
+    let mut components = Path::new(file_name).components();
+    let bare = matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(name)), None) if name == file_name
+    );
+    if bare {
+        Ok(())
+    } else {
+        Err(AppError::validation(format!(
+            "not a file name: {file_name:?}"
+        )))
+    }
+}
+
+/// Tauri command: save `bytes` as `file_name` in the user's Downloads folder,
+/// and return the name the file has there, which differs when `file_name` was
+/// taken. Delegates to [`save_to_downloads_inner`], or on Android, where the
+/// folder is reached only through `MediaStore`, to
+/// [`save_through`] (#6546).
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip_all, err)]
 pub async fn save_to_downloads<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    android: tauri::State<'_, FileSaveState>,
     file_name: String,
     bytes: Base64Bytes,
-) -> Result<(), AppError> {
+) -> Result<String, AppError> {
     let saved = async {
-        let dir = app
-            .path()
-            .download_dir()
-            .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
-        tokio::task::spawn_blocking(move || save_to_downloads_inner(&dir, &file_name, &bytes.0))
-            .await
-            .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?
+        let path_error = |e: tauri::Error| AppError::Io(std::io::Error::other(e.to_string()));
+        if let Some(saver) = android.saver() {
+            let staging_dir = app.path().app_cache_dir().map_err(path_error)?;
+            return save_through(saver, &staging_dir, &file_name, &bytes).await;
+        }
+        let dir = app.path().download_dir().map_err(path_error)?;
+        let path = tokio::task::spawn_blocking(move || {
+            save_to_downloads_inner(&dir, &file_name, &bytes.0)
+        })
+        .await
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??;
+        Ok(path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned())
     };
-    saved.await.map(|_| ()).map_err(sanitize_internal_error)
+    saved.await.map_err(sanitize_internal_error)
 }
 
 #[cfg(test)]

@@ -189,6 +189,8 @@ The following are explicitly outside this threat model. Reports that fit these c
 
 The `TAURI_SIGNING_PRIVATE_KEY` secret (a `release` environment secret) is the **root of trust for every auto-update**: it signs the updater payload that `release.yml` ships (via tauri-action), and the matching public key embedded in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) (`plugins.updater.pubkey`) is what the in-app updater (`src/hooks/useUpdateCheck.ts`) checks before applying a new bundle. If that private key leaks **and** the attacker can also induce the user's app to fetch a malicious payload (DNS spoofing, GitHub release-asset replacement via account compromise), the in-app signature check passes and the malicious update installs cleanly. The key is long-lived; rotation is the documented response.
 
+**Android installs nothing.** It has no in-app updater. Once a day it fetches the same `latest.json` from the same GitHub Releases endpoint the desktop updater contacts (`check_latest_release` in [`src-tauri/src/commands/release_check.rs`](src-tauri/src/commands/release_check.rs), through the platform's HTTPS client), reads its `version`, and says when a newer release exists, with a button that opens the releases page in the browser. It downloads no bundle, so the signing key plays no part there; a change that makes the Android build download or run anything from that response is in scope.
+
 **Cadence.** Rotate at least annually. Rotate immediately on any suspected compromise (laptop loss, leaked CI logs, suspicious GitHub Actions activity). The annual rotation runs on a calendar reminder kept in the maintainer's personal calendar, not in the repo — there is no in-repo automation for it.
 
 **Procedure.**

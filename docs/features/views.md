@@ -141,7 +141,7 @@ Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed 
   - **Sync & devices** — the sync state once a device is paired, then pair / unpair / rename peers, *Sync all* and per-device *Sync now* (the way to retry), manual addresses, the internet fallback, and this device's ID (see [sync.md](sync.md)).
   - **Data** — import / export (see [import-export.md](import-export.md)), and *Open edit history*, which opens the History view.
 - **Help**
-  - **Help** — *Report a bug*, debug mode, show the welcome tour again, update check.
+  - **Help** — *Report a bug*, debug mode, show the welcome tour again, update check. On Android, which does not update itself, Agaric looks once a day for a newer release, announces one with a toast whose button opens the releases page, and names it in this row.
   - **App health** — the integrity check: *Run check* rebuilds every derived table from your notes, compares your notes with the sync engine's copy, and lists the rows that disagree. A bug report filed from Help afterwards carries the result, until you leave Settings. Materializer metrics follow it (see Status above). The tab's id is still `status`.
 
 Tabs are deep-linkable via `?settings=<tab>` (parsed inside the Settings view itself, no router involved) and via `agaric://settings/<tab>`. The retired `history` id opens Data. The last-used tab persists in `localStorage`.
@@ -158,7 +158,7 @@ The view that opens when you navigate to a single page. Not a sidebar entry — 
 - **Block tree**: the editor proper. See [editor.md](editor.md).
 - **Outline** (TOC): sheet slide-out, opened from the page kebab menu, showing the page's heading hierarchy, each heading with its links, tags and block refs by title and its formatting rendered.
 - **Linked / Unlinked references** below the block tree: see [tags-and-links.md](tags-and-links.md).
-- **Page kebab menu (PageHeaderMenu)**: Undo, Redo, Page history, Open outline, Show in graph, Insert emoji, Move to space, Add alias, Add tag, Export as Markdown, Save as Markdown file (not on Android; see [import-export.md](import-export.md#per-page-export)), Print… (not on Android; see [appearance.md](appearance.md)), Copy app link (the page's `agaric://page/<id>` link; see [agent-access.md](agent-access.md#agaric-deep-links)), Edit as Markdown (the page as one markdown buffer, in place of its blocks; see [editor.md](editor.md#edit-as-markdown)), Send to Trash, Toggle template.
+- **Page kebab menu (PageHeaderMenu)**: Undo, Redo, Page history, Open outline, Show in graph, Insert emoji, Move to space, Add alias, Add tag, Export as Markdown, Save as Markdown file (see [import-export.md](import-export.md#per-page-export)), Print… (not on Android; see [appearance.md](appearance.md)), Copy app link (the page's `agaric://page/<id>` link; see [agent-access.md](agent-access.md#agaric-deep-links)), Edit as Markdown (the page as one markdown buffer, in place of its blocks; see [editor.md](editor.md#edit-as-markdown)), Send to Trash, Toggle template.
 - **Zoom into a block** to focus on a sub-tree: breadcrumb at the top, click parts to zoom out.
 - **Image lightbox / PDF viewer**: opens for inline attachments.
 

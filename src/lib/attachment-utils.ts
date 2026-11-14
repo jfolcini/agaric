@@ -31,19 +31,17 @@ export function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
  * file save takes. Resolves once the save is handed over, rejects when it
  * failed, so a caller claims success only after it.
  *
- * - Android says saving is unavailable instead (#6538): the WebView handles no
- *   `blob:` download.
- * - macOS writes through the backend (#6652): WKWebView cancels a download no
- *   handler claims, and the app registers none.
+ * - Android and macOS write through the backend. The Android WebView handles
+ *   no `blob:` download (#6546), and WKWebView cancels a download no handler
+ *   claims, of which the app registers none (#6652).
+ * - Android shows no download of its own, so the save says where the file
+ *   went, under the name the OS gave it.
  * - Elsewhere the webview downloads a transient anchor's `blob:` URL.
  */
 export async function saveBlob(blob: Blob, filename: string): Promise<void> {
-  if (isAndroid()) {
-    notify.info(t('data.fileSaveUnavailableAndroid'))
-    return
-  }
-  if (isMac()) {
-    unwrap(await commands.saveToDownloads(filename, await blobToBase64(blob)))
+  if (isAndroid() || isMac()) {
+    const savedAs = unwrap(await commands.saveToDownloads(filename, await blobToBase64(blob)))
+    if (isAndroid()) notify.success(t('data.savedToDownloads', { fileName: savedAs }))
     return
   }
   const url = URL.createObjectURL(blob)
