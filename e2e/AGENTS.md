@@ -31,6 +31,24 @@ In CI, `scripts/classify-changes.sh` picks the lanes: a diff of only `e2e/*.spec
 
 `src/lib/tauri-mock/` is an in-memory backend that activates when `window.__TAURI_INTERNALS__` is absent. It seeds fixed pages and blocks and exports `SEED_IDS` and `resetMock()`. `page.reload()` re-seeds it, so a spec verifies persistence by navigating away and back (`reopenPage`), never by reloading. It answers every command at once; `window.__setMockLatency(ms)` makes it answer `ms` later, to race a handler that awaits an IPC and then moves the editor (`enter-merge-latency.spec.ts`).
 
+## The real backend, through the bridge (#6529)
+
+The same specs can run on the real commands instead of the mock. `AGARIC_E2E_BRIDGE` names the `bridge` binary; with it set, each worker starts one bridge (`e2e/bridge.ts`), each test starts on a fresh copy of its template vault, and the page sends every app command to it (`src/lib/tauri-mock/bridge.ts`). Unset, nothing changes.
+
+```sh
+cd src-tauri && cargo build -p agaric-diagnostics --features bridge --bin bridge
+AGARIC_E2E_BRIDGE=$PWD/src-tauri/target/debug/bridge PW_PORT=<port> npx playwright test e2e/search-nested-result.spec.ts
+```
+
+What a spec can rely on there differs from the mock:
+
+- **The vault is a first boot's**: the Personal and Work spaces and nothing else. `SEED_IDS` name nothing, so a spec that reads seed content fails. A spec that makes its own pages runs.
+- **The mock's hooks are absent**: `__injectMockError`, `__setMockLatency` and the `__addMock*` seeds do not exist, and `page.clock` moves the browser's clock only. `emitMockEvent` works: the backend emits the event.
+- **`plugin:*` commands stay in the browser**, on the mock's handlers.
+- **Not carried**: a `Channel` argument's messages (an import's progress) and `read_attachment`'s raw bytes.
+
+No CI lane runs specs this way yet. Show a spec red there by breaking the Rust command it reads, rebuilding the binary and running it.
+
 ## The mock is a contract, not a convenience
 
 Root rule: [AGENTS.md § Testing invariants](../AGENTS.md#testing-invariants-anti-drift). A Playwright green proves nothing about backend parity; the conformance harness does.
