@@ -3077,12 +3077,9 @@ async fn replay_edit_block(
     if let Some(to_text) = payload.get("to_text").and_then(serde_json::Value::as_str) {
         // #2043: route the content UPDATE through the shared
         // projection (`project_edit_block_to_sql`) so its shape
-        // (`SET content = ? WHERE id = ? AND deleted_at IS NULL`)
-        // cannot drift from the engine/sql-only arms. The added
-        // `deleted_at IS NULL` guard is inert here: recovery replays
-        // in `created_at` order, so an `edit_block` always precedes
-        // its block's later `delete_block` — the target row is never
-        // yet soft-deleted when the edit lands. The recovered
+        // (`SET content = ? WHERE id = ?`, with no `deleted_at`
+        // filter, #2909) cannot drift from the engine/sql-only
+        // arms. The recovered
         // `blocks` table's `content` column is `TEXT` under BOTH
         // shapes — plain TEXT in the scaffold, `TEXT` in a STRICT
         // table under the head shape (#3269) — and the projection

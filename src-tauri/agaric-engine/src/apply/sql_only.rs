@@ -84,7 +84,7 @@ pub async fn apply_create_block_sql_only(
 /// #1323 (Step 3): routes the content UPDATE through the shared
 /// [`crate::loro::projection::project_edit_block_to_sql`] projection — the same
 /// fn the engine arm calls — so the UPDATE *shape* (`SET content = ? WHERE id =
-/// ? AND deleted_at IS NULL`) cannot drift between arms. We synthesize the
+/// ?`, with no `deleted_at` filter, #2909) cannot drift between arms. We synthesize the
 /// engine's read-back [`crate::loro::engine::BlockSnapshot`] from the
 /// [`EditBlockPayload`], with `content = p.to_text`.
 ///

@@ -1311,6 +1311,26 @@ async fn project_pass_b(
     Ok(())
 }
 
+/// The projection's write transaction, with FK enforcement deferred to COMMIT
+/// (#4083). Every write in it touches a self-referential `blocks(id)` FK
+/// (`parent_id`, `page_id`) or a FK into `blocks`, and the passes run in an
+/// order chosen for other reasons (properties before tags before soft-delete
+/// before purge). Deferring makes that order irrelevant: a genuinely
+/// inconsistent result still aborts at COMMIT, a merely inconvenient write
+/// order no longer can. The pragma resets at COMMIT/ROLLBACK, so it never
+/// leaks to the next user of the pooled connection.
+async fn begin_projection_tx(
+    pool: &SqlitePool,
+) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>, AppError> {
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "sync_apply_remote").await?;
+    // dynamic-sql: a PRAGMA has no `sqlx::query!` macro form (nothing to
+    // compile-check against the schema).
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
+}
+
 /// Pass C — soft-delete state (Phase 2). Mirrors remote
 /// DeleteBlock / RestoreBlock changes into `blocks.deleted_at`.  Runs
 /// AFTER Pass A so every changed block's `parent_id` row exists — the
@@ -1326,12 +1346,14 @@ async fn project_pass_b(
 /// fan-out below.
 async fn project_pass_c(
     tx: &mut sqlx::SqliteConnection,
+    engine: (&LoroEngineRegistry, &str, &SpaceId),
     changed_blocks: &[agaric_core::ulid::BlockId],
     block_states: &[ProjectedBlockState],
 ) -> Result<Vec<(String, i64)>, AppError> {
     use agaric_engine::loro::projection::reproject_block_deleted_at_from_engine;
 
     let mut swept_tombstones: Vec<(String, i64)> = Vec::new();
+    let mut restored: Vec<String> = Vec::new();
     // Rank-only siblings are skipped (#3162). Their own engine `deleted_at`
     // seed is unchanged by this import (a delete / restore is a meta change,
     // which would have put them in the set through `node_ids`), and their
@@ -1345,13 +1367,37 @@ async fn project_pass_c(
         let Some((_, _, engine_deleted_at, _, _)) = full_state else {
             continue;
         };
-        let stamped = reproject_block_deleted_at_from_engine(
+        let reprojected = reproject_block_deleted_at_from_engine(
             &mut *tx,
             block_id,
             engine_deleted_at.as_deref(),
         )
         .await?;
-        swept_tombstones.extend(stamped);
+        swept_tombstones.extend(reprojected.stamped);
+        restored.extend(reprojected.restored);
+    }
+    if restored.is_empty() {
+        return Ok(swept_tombstones);
+    }
+    // A restore clears the seed's whole cohort, but a member can still carry
+    // its own mark: the peer restored a block under the seed, which brings the
+    // seed back as an ancestor and leaves the seed's other descendants in its
+    // Trash. Their marks did not change, so they are not in `changed_blocks`.
+    let (registry, device_id, space_id) = engine;
+    let marks = registry.with_engine(space_id, device_id, |engine| {
+        restored
+            .iter()
+            .map(|id| engine.read_deleted_at(id))
+            .collect::<Result<Vec<_>, _>>()
+    })??;
+    for (id, mark) in restored.iter().zip(marks) {
+        if mark.is_some() {
+            let block_id = agaric_core::ulid::BlockId::from_trusted(id);
+            let reprojected =
+                reproject_block_deleted_at_from_engine(&mut *tx, &block_id, mark.as_deref())
+                    .await?;
+            swept_tombstones.extend(reprojected.stamped);
+        }
     }
     Ok(swept_tombstones)
 }
@@ -2683,23 +2729,7 @@ async fn import_and_project_saving(
         &rank_only_blocks,
     )?;
 
-    let mut tx = agaric_store::db::begin_immediate_logged(pool, "sync_apply_remote").await?;
-    // #4083: defer FK enforcement to COMMIT for the WHOLE projection tx, not
-    // just the Pass D purge that used to set it locally. Every write below
-    // touches a self-referential `blocks(id)` FK (`parent_id`, `page_id`) or a
-    // FK into `blocks`, and the passes run in an order chosen for other reasons
-    // (properties before tags before soft-delete before purge). Deferring makes
-    // intra-transaction ordering structurally irrelevant and collapses the
-    // whole projection into ONE commit-time check: a genuinely inconsistent
-    // result still aborts (the FK is not weakened — nothing is degraded to
-    // NULL), but a merely inconvenient write order no longer can.
-    // Auto-resets at COMMIT/ROLLBACK, so it never leaks to the next user of
-    // this pooled connection.
-    // dynamic-sql: a PRAGMA has no `sqlx::query!` macro form (nothing to
-    // compile-check against the schema).
-    sqlx::query("PRAGMA defer_foreign_keys = ON")
-        .execute(&mut *tx)
-        .await?;
+    let mut tx = begin_projection_tx(pool).await?;
 
     backfill_missing_ancestors(
         &mut tx,
@@ -2721,7 +2751,8 @@ async fn import_and_project_saving(
 
     project_pass_b(&mut tx, registry, &changed_blocks, &block_states).await?;
 
-    let swept_tombstones = project_pass_c(&mut tx, &changed_blocks, &block_states).await?;
+    let engine = (registry, device_id, space_id);
+    let swept_tombstones = project_pass_c(&mut tx, engine, &changed_blocks, &block_states).await?;
 
     restamp_kept_pages(&mut tx, &kept).await?;
 
