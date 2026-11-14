@@ -837,6 +837,17 @@ pub async fn project_restore_block_to_sql(
     block_id: &str,
     deleted_at_ref: i64,
 ) -> Result<Vec<String>, AppError> {
+    let (_, restored_ancestors) = restore_cohort_to_sql(conn, block_id, deleted_at_ref).await?;
+    Ok(restored_ancestors)
+}
+
+/// [`project_restore_block_to_sql`], returning the cohort it cleared beside
+/// the ancestor chain.
+async fn restore_cohort_to_sql(
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    deleted_at_ref: i64,
+) -> Result<(Vec<String>, Vec<String>), AppError> {
     // The engine fan-out does not read the cleared ids: a `RestoreBlock`'s
     // cohort is captured PRE-UPDATE by `collect_restore_cohort` and fanned out
     // by `dispatch_restore_descendants`. The page rows below do.
@@ -872,7 +883,7 @@ pub async fn project_restore_block_to_sql(
     // R27: the pre-fix #1582 detection-only saturation probe is gone — the
     // batched walk above no longer truncates at the depth-100 cap (crossing
     // it warns loudly inside `collect_subtree_ids_unbounded` instead).
-    Ok(restored_ancestors)
+    Ok((cleared, restored_ancestors))
 }
 
 /// Clear `deleted_at` over the cohort-contiguous subtree rooted at `block_id`
@@ -2115,6 +2126,22 @@ pub async fn reproject_block_tags_from_engine(
     Ok(())
 }
 
+/// What [`reproject_block_deleted_at_from_engine`] wrote for one block.
+#[derive(Debug, Default)]
+pub struct DeletedAtReprojection {
+    /// The `(block_id, deleted_at)` pairs newly stamped into SQL (cascade or
+    /// sweep), so the caller can fan the tombstones out to the per-space
+    /// engine: a block whose engine meta stays "live" while SQL says
+    /// "deleted" trips the #1257 outbound freshness gate.
+    pub stamped: Vec<(String, i64)>,
+    /// The cohort a restore cleared, the block included. A member may carry
+    /// its own delete mark in the engine: a device that restores a block
+    /// under the seed brings the seed back as an ancestor and leaves the rest
+    /// of the seed's cohort in its Trash. The caller re-reads each member's
+    /// mark.
+    pub restored: Vec<String>,
+}
+
 /// Re-project a block's soft-delete state from the engine into SQL
 /// After a sync-pull import (Phase 2).
 ///
@@ -2173,7 +2200,8 @@ pub async fn reproject_block_tags_from_engine(
 ///   nearest tombstoned ancestor:
 ///   - **SQL-deleted, no tombstoned ancestor** — a genuine delete seed
 ///     the remote restored: clear the cohort by `deleted_at` value (via
-///     [`project_restore_block_to_sql`]).
+///     [`project_restore_block_to_sql`]) and return it in
+///     [`DeletedAtReprojection::restored`].
 ///   - **SQL-deleted, tombstoned ancestor** — a descendant of a live
 ///     soft-delete cohort, not a restore target; clearing it would
 ///     resurrect a soft-deleted subtree (the exact bug
@@ -2200,16 +2228,12 @@ pub async fn reproject_block_tags_from_engine(
 /// tombstoned ancestor / moved-in block is reprojected first, the other
 /// branch converges on the same cohort.
 ///
-/// Returns the `(block_id, deleted_at)` pairs this call newly stamped
-/// into SQL (cascade or sweep; empty for restores/no-ops) so the caller
-/// can fan the tombstones out to the per-space engine — a block whose
-/// engine meta stays "live" while SQL says "deleted" trips the #1257
-/// outbound freshness gate.
+/// Returns what it wrote, as a [`DeletedAtReprojection`].
 pub async fn reproject_block_deleted_at_from_engine(
     conn: &mut SqliteConnection,
     block_id: &agaric_core::ulid::BlockId,
     engine_deleted_at: Option<&str>,
-) -> Result<Vec<(String, i64)>, AppError> {
+) -> Result<DeletedAtReprojection, AppError> {
     if let Some(ts) = engine_deleted_at {
         // Cascade soft-delete the seed + active descendants at the
         // engine's timestamp. Re-uses the local delete projection so
@@ -2248,7 +2272,7 @@ pub async fn reproject_block_deleted_at_from_engine(
             },
         };
         let cohort = project_delete_block_to_sql(conn, block_id.as_str(), ts).await?;
-        return Ok(cohort.into_iter().map(|id| (id, ts)).collect());
+        return Ok(stamped_at(cohort, ts));
     }
     // The remote says this block is alive. Read SQL's current
     // soft-delete state: nothing to do if the row is absent.
@@ -2258,7 +2282,7 @@ pub async fn reproject_block_deleted_at_from_engine(
             .fetch_optional(&mut *conn)
             .await?;
     let Some(sql_deleted_at) = current else {
-        return Ok(Vec::new());
+        return Ok(DeletedAtReprojection::default());
     };
 
     // Nearest tombstoned STRICT ancestor (depth-unbounded — R27): drives
@@ -2274,12 +2298,15 @@ pub async fn reproject_block_deleted_at_from_engine(
         // Genuine seed restore: clear the cohort (seed + descendants
         // soft-deleted at the same timestamp).
         (Some(deleted_at_ref), None) => {
-            project_restore_block_to_sql(conn, block_id_str, deleted_at_ref).await?;
-            Ok(Vec::new())
+            let (restored, _) = restore_cohort_to_sql(conn, block_id_str, deleted_at_ref).await?;
+            Ok(DeletedAtReprojection {
+                restored,
+                ..Default::default()
+            })
         }
         // Resurrection guard: a block under a still-deleted ancestor must
         // stay deleted.
-        (Some(_), Some(_)) => Ok(Vec::new()),
+        (Some(_), Some(_)) => Ok(DeletedAtReprojection::default()),
         // R9 sweep: LIVE in both engine and SQL but sitting under a
         // tombstoned ancestor — the concurrent delete-vs-move-in merge.
         // Inherit the nearest tombstoned ancestor's cohort (cascading over
@@ -2296,10 +2323,17 @@ pub async fn reproject_block_deleted_at_from_engine(
                  merge, R9); sweeping it into the ancestor's trash cohort",
             );
             let cohort = project_delete_block_to_sql(conn, block_id_str, ancestor_ts).await?;
-            Ok(cohort.into_iter().map(|id| (id, ancestor_ts)).collect())
+            Ok(stamped_at(cohort, ancestor_ts))
         }
         // Healthy live block on a live chain — nothing to do.
-        (None, None) => Ok(Vec::new()),
+        (None, None) => Ok(DeletedAtReprojection::default()),
+    }
+}
+
+fn stamped_at(cohort: Vec<String>, deleted_at: i64) -> DeletedAtReprojection {
+    DeletedAtReprojection {
+        stamped: cohort.into_iter().map(|id| (id, deleted_at)).collect(),
+        ..Default::default()
     }
 }
 
@@ -3384,7 +3418,8 @@ mod tests {
         let bid = BlockId::from_trusted(BLOCK_B);
         let swept = reproject_block_deleted_at_from_engine(&mut conn, &bid, None)
             .await
-            .expect("reproject");
+            .expect("reproject")
+            .stamped;
         drop(conn);
 
         assert!(
@@ -3439,7 +3474,8 @@ mod tests {
         let bid = BlockId::from_trusted(BLOCK_B);
         let swept = reproject_block_deleted_at_from_engine(&mut conn, &bid, None)
             .await
-            .expect("reproject");
+            .expect("reproject")
+            .stamped;
         drop(conn);
 
         assert!(swept.is_empty(), "healthy live block must not be swept");
