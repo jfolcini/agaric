@@ -4111,7 +4111,7 @@ async fn local_move_is_engine_fresh_and_dense_1257() {
 /// "phantom". PRE-CAPTURES each root's active subtree cohort + space BELOW
 /// the SQL UPDATE (a post-delete `resolve_block_space` would return None for
 /// every now-deleted row) and fans the captured cohort onto the engine
-/// post-commit (`dispatch_delete_descendants`).
+/// before it commits (`dispatch_delete_descendants`).
 ///
 /// Drives the REAL `delete_blocks_by_ids_inner` on a 3-level subtree
 /// (parent→child→grandchild) and asserts, WITHOUT any boot replay:
@@ -4195,9 +4195,7 @@ async fn local_delete_restore_tombstones_cohort_no_phantom_1257() {
         .await
         .expect("delete_blocks_by_ids_inner")
         .deleted_count;
-    // Engine fan-out runs post-commit (after `commit_and_dispatch`); the
-    // command returns once it has fired. Drain background tasks for parity with
-    // the production lifecycle.
+    // Drain background tasks for parity with the production lifecycle.
     settle(&mat).await;
 
     assert_eq!(

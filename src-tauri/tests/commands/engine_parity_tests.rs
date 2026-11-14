@@ -1,8 +1,8 @@
 //! Engine/SQL lockstep regression tests for the block command layer.
 //!
 //! The per-space Loro engine is mutated synchronously inside command
-//! transactions (`apply_op_projected`) or via post-commit fan-outs
-//! (`merge::engine_apply`), but it has NO transactional rollback. These
+//! transactions (`apply_op_projected`, and the cohort fan-outs through
+//! `merge::engine_apply`), but it has NO transactional rollback. These
 //! tests pin the invariant that a command NEVER leaves the shared
 //! in-memory engine diverged from the committed (or rolled-back) SQL
 //! state:

@@ -67,8 +67,8 @@ async fn seed_page(pool: &SqlitePool, state: &LoroState) {
 }
 
 /// Append `payload` to op_log and drive it through the FULL
-/// `apply_op` path — in-tx engine apply, cursor advance, commit,
-/// post-commit fanout — exactly like the production consumer.
+/// `apply_op` path — in-tx engine apply and cohort fanout, cursor advance,
+/// commit — exactly like the production consumer.
 async fn apply(pool: &SqlitePool, state: &crate::loro::shared::LoroState, payload: OpPayload) {
     let record = std::sync::Arc::new(
         agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)

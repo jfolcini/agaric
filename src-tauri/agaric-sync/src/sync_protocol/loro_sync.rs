@@ -332,7 +332,7 @@ pub async fn prepare_outgoing(
             if let Some(stamp) = &stamp
                 && let Err(error) = save_stamp_delta(pool, space_id, stamp).await
             {
-                // As a post-commit cascade's write stands without its row:
+                // As a swept-tombstone fan-out's write stands without its row:
                 // the space is marked, so the next snapshot pass saves it.
                 tracing::warn!(
                     space_id = %space_id.as_str(),
@@ -396,11 +396,6 @@ async fn save_stamp_delta(
 ///   up on projecting it. While either holds a row the engine may hold a
 ///   peer's restore that SQL has yet to see, where SQL is the stale side, so
 ///   nothing is written and the space stays refused.
-///
-/// The delete, restore and purge commands write the engine after they commit
-/// (the list is on `agaric_engine::loro::snapshot::op_log_head`). A restore or
-/// a purge commits SQL first, so its block is not deleted in SQL here; a
-/// delete's fan-out writes the timestamp this does.
 ///
 /// The tombstones are in no op log, so the space is saved before the caller
 /// exports them: after a crash the engine would otherwise mint its next op

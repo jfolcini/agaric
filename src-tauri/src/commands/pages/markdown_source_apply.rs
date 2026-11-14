@@ -16,7 +16,7 @@ use serde::Serialize;
 
 use super::*;
 use crate::commands::blocks::crud::{
-    DeleteInTx, delete_block_in_tx, delete_property_in_tx, dispatch_deletes, edit_block_in_tx,
+    DeleteInTx, delete_block_in_tx, delete_property_in_tx, edit_block_in_tx, remove_deleted_fts,
 };
 use crate::commands::blocks::move_ops::{move_block_in_tx, ordered_live_children};
 use crate::commands::pages::inline_query_md::{query_page_names, query_tag_names};
@@ -184,7 +184,7 @@ pub async fn apply_page_source_inner(
     names_created.extend(tags);
     let deletes = Box::pin(delete_dropped(&mut tx, &mut save, &base, &buffer)).await?;
     tx.commit_and_dispatch(materializer).await?;
-    dispatch_deletes(pool, materializer, &deletes).await;
+    remove_deleted_fts(pool, &deletes).await;
     save.report.names_created = names_created;
     save.report.warnings = warnings;
     Ok(save.report)

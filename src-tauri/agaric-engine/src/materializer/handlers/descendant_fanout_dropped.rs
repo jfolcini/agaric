@@ -1,4 +1,4 @@
-//! #2031 observability hook for the post-commit descendant fan-out.
+//! #2031 observability hook for the descendant fan-out.
 //!
 //! After the apply tx commits,
 //! [`super::apply::dispatch_restore_descendants`],

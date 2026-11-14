@@ -7,7 +7,7 @@ use specta::Type;
 use tracing::instrument;
 
 use super::super::*;
-use super::crud::{delete_block_in_tx, dispatch_deletes, edit_block_in_tx};
+use super::crud::{delete_block_in_tx, edit_block_in_tx, remove_deleted_fts};
 use super::move_ops::{live_placement, move_blocks_batch_in_tx, ordered_live_children};
 use crate::db::{CommandTx, WriteCtx};
 
@@ -171,7 +171,7 @@ pub async fn merge_blocks_inner(
     let deleted = delete_block_in_tx(&mut tx, state, device_id, block_id).await?;
 
     tx.commit_and_dispatch(materializer).await?;
-    dispatch_deletes(pool, materializer, std::slice::from_ref(&deleted)).await;
+    remove_deleted_fts(pool, std::slice::from_ref(&deleted)).await;
     Ok(MergeResponse { block, moves })
 }
 

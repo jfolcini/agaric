@@ -270,11 +270,11 @@ pub async fn apply_move_block_sql_only(
     // invalidated it. Clear it and let the sweep below re-derive the cohort
     // from the new position. This arm has no engine to mirror the clear onto,
     // and off boot replay it is the arm that RUNS for a tombstoned subject —
-    // so #4390 threads the cleared ids OUT to a post-commit mirror instead. See
+    // so #4390 threads the cleared ids OUT to an engine mirror instead. See
     // `unsweep_inherited_cohort_after_move`'s "Why it returns the cleared ids".
     // #4390: the cleared ids are threaded back out to `apply_op_tx`, which
     // reads their FINAL `deleted_at` (the sweep below may re-stamp them) into
-    // `ApplyEffects::unswept_cohort` for the post-commit engine mirror.
+    // `ApplyEffects::unswept_cohort` for the engine mirror.
     let unswept = match inherited {
         Some(inherited_ts) => {
             unsweep_inherited_cohort_after_move(&mut *conn, block_id_str, inherited_ts).await?
@@ -455,7 +455,7 @@ pub(crate) async fn inherited_cohort_before_move(
 /// engine by construction. So #4390 threads the answer OUT instead: this
 /// helper returns the ids it cleared, [`apply_move_block_sql_only`] returns
 /// them to its caller, `apply_op_tx` re-reads their FINAL `deleted_at` into
-/// `ApplyEffects::unswept_cohort`, and the post-commit
+/// `ApplyEffects::unswept_cohort`, and
 /// `materializer::handlers::apply::dispatch_unswept_cohort` mirrors that final
 /// state onto the per-space engine — the shape of #2868's purge fix
 /// (`resolve_soft_deleted_block_space` + a mirror dispatch).

@@ -36,11 +36,11 @@ pub use handlers::purge_block_sql_cascade;
 // `apply_move_block_via_loro` re-export was likewise dropped (the Move arm of
 // `apply_op_tx` and the convergence/reproject proptests still reach the helper
 // via its own module path within `handlers`).
-// #1257 re-export the cohort collectors + the post-commit descendant
+// #1257 re-export the cohort collectors + the descendant
 // fan-out so the LOCAL delete / restore command paths (`commands::blocks::crud`)
 // PRE-CAPTURE each root's subtree cohort + space BEFORE the SQL soft-delete (a
 // post-delete `resolve_block_space` returns None — the #1257 phantom) and then
-// drive the captured cohort onto the per-space Loro engine post-commit, using
+// drive the captured cohort onto the per-space Loro engine before they commit, using
 // the SAME engine apply the boot-replay / sync `ApplyOp` path uses. The
 // command does not advance the apply cursor; the snapshot pass does (#5418). The
 // `apply_*_via_loro` CASCADE helpers' visibility is also raised to `pub(crate)`
@@ -59,19 +59,20 @@ pub use handlers::purge_block_sql_cascade;
 // still reach the helper via its own module path within `handlers`).
 // #3834: `dispatch_restore_ancestors` joins the re-export list. Both LOCAL
 // restore command sites (`restore_block_inner`, `restore_blocks_by_ids_inner`)
-// now drive the restored ancestor chain onto the engine themselves post-commit
-// — the `apply_op` replay arm that used to be cited for it reaches a locally
-// authored op only through boot replay, when the chain is already live in SQL
-// and the arm fans nothing out.
+// drive the restored ancestor chain onto the engine themselves, in their
+// transaction (#6521) — the `apply_op` replay arm that used to be cited for it
+// reaches a locally authored op only through boot replay, when the chain is
+// already live in SQL and the arm fans nothing out.
 // #4285: `reindex_restored_cohort_links` joins it for the same reason — the
 // LOCAL restore paths repair the restored cohort's LINK edges themselves
 // post-commit, because `invalidations_for_op` sees only the seed's id.
 // #4733: the two `*_cohort_fts` helpers are the FTS half of the same repair,
 // on the delete paths as well.
+pub(crate) use handlers::dispatch_cohorts;
 pub use handlers::{
     collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
     dispatch_restore_ancestors, dispatch_restore_descendants, reindex_restored_cohort_fts,
-    reindex_restored_cohort_links, remove_deleted_cohort_fts, saving_fan_out,
+    reindex_restored_cohort_links, remove_deleted_cohort_fts,
 };
 // #2325/#2250: the single collapsed apply-projection entry point the LOCAL
 // command sites route through (`advance_cursor = false`).

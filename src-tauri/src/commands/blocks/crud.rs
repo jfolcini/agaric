@@ -588,7 +588,7 @@ pub(crate) async fn edit_block_in_tx(
     // `apply_edit_block_sql_only`, so the row is never skipped and we never
     // crash. `apply_op_projected` borrows `&op_record` here, BEFORE the
     // `Arc::new(op_record)` move below. The returned `ApplyEffects` is empty for
-    // Edit (LOCAL edit runs no post-commit cohort fan-out), so it is discarded.
+    // Edit (an edit has no cascade), so it is discarded.
     crate::materializer::apply_op_projected(tx, &op_record, state, false).await?;
 
     // 5. Enqueue edit background cache tasks for the caller's commit
@@ -949,7 +949,7 @@ pub async fn delete_block_inner(
     )
     .await?;
     tx.commit_and_dispatch(materializer).await?;
-    dispatch_deletes(pool, materializer, std::slice::from_ref(&deleted)).await;
+    remove_deleted_fts(pool, std::slice::from_ref(&deleted)).await;
 
     // A deleted space's saved views count with it, as in the batch delete.
     let all = std::iter::once(&deleted).chain(&deleted.swept);
@@ -970,10 +970,9 @@ pub async fn delete_block_inner(
     })
 }
 
-/// What [`delete_block_in_tx`] hands its caller for the post-commit fan-out
-/// and the response.
+/// What [`delete_block_in_tx`] hands its caller for the post-commit FTS
+/// removal and the response.
 pub(crate) struct DeleteInTx {
-    pub(crate) op_record: Arc<op_log::OpRecord>,
     pub(crate) effects: agaric_engine::apply::kernel::ApplyEffects,
     pub(crate) affected_page_ids: Vec<String>,
     pub(crate) deleted_at: i64,
@@ -986,10 +985,10 @@ pub(crate) struct DeleteInTx {
 ///
 /// Extracted from [`delete_block_inner`] (#5140) so a multi-op command can run
 /// a delete inside ITS transaction with identical validation, op-log append,
-/// engine apply and background enqueue. The caller owns the transaction
-/// lifecycle (BEGIN / arm / COMMIT) and, after its commit, runs the engine
-/// cohort fan-out and FTS removal on the returned [`DeleteInTx`]; this helper
-/// only enqueues the op via `enqueue_lifecycle_background`.
+/// engine apply (the cohort's with the seed's) and background enqueue. The
+/// caller owns the transaction lifecycle (BEGIN / arm / COMMIT) and, after
+/// its commit, runs the FTS removal on the returned [`DeleteInTx`]; this
+/// helper only enqueues the op via `enqueue_lifecycle_background`.
 #[instrument(skip(tx, state, device_id), err)]
 pub(crate) async fn delete_block_in_tx(
     tx: &mut CommandTx,
@@ -1031,18 +1030,19 @@ pub(crate) async fn delete_block_in_tx(
     // path uses (via `apply_op_tx`'s DeleteBlock arm): the seed's per-space
     // Loro `apply_delete_block`, the IDENTICAL `project_delete_block_to_sql`
     // cascade (stamping `deleted_at = op_record.created_at = now` on the seed
-    // AND every active descendant via `descendants_cte_active!()`), and the
-    // `remove_subtree_inherited` tag sweep — all previously hand-rolled here.
+    // AND every active descendant via `descendants_cte_active!()`), the
+    // `remove_subtree_inherited` tag sweep — all previously hand-rolled here —
+    // and the cohort's tombstones on the engine (#6521).
     // `apply_op_projected` re-derives the `DeleteBlockPayload` from
     // `op_record.payload`. We pass `advance_cursor = false`: the snapshot pass,
     // not the command, moves the apply cursor past LOCAL ops (#5418; see
     // `apply_op_projected`). If the block's space can't be resolved (#2250), the
     // helper internally FALLS BACK to `apply_delete_block_sql_only` (same
     // cascade + sweep), so the row is never skipped and we never crash.
-    // `apply_op_projected` borrows `&op_record` here, BEFORE the `Arc::new`
-    // move below. The returned `ApplyEffects` carries the pre-UPDATE
-    // `deleted_cohort` (seed + descendants) and the pre-UPDATE `delete_space_id`
-    // for the caller's post-commit engine fan-out. The #1582/#2268 depth-cap
+    // `apply_op_projected` borrows `&op_record` here, BEFORE the enqueue
+    // moves it below. The returned `ApplyEffects` carries the pre-UPDATE
+    // `deleted_cohort` (seed + descendants) for the caller's post-commit FTS
+    // removal and its reply. The #1582/#2268 depth-cap
     // saturation warn that used to live here now runs (still gated on the
     // cascade's affected-row count >= SATURATION_PROBE_MIN_ROWS) inside
     // `project_delete_block_to_sql`, so it also covers the sql_only/replay paths.
@@ -1091,14 +1091,9 @@ pub(crate) async fn delete_block_in_tx(
     // the rebuild fan-out for a content-block delete (the page/tag-scoped
     // caches can't change).
     //
-    // Wrap once in `Arc` so the dispatch queue borrows the record by refcount
-    // (atomic increment) rather than deep-cloning the owned `String` payloads,
-    // AND the caller's post-commit cohort fan-out can still reference it.
-    let op_record = Arc::new(op_record);
-    tx.enqueue_lifecycle_background(Arc::clone(&op_record), block_type);
+    tx.enqueue_lifecycle_background(op_record, block_type);
 
     Ok(DeleteInTx {
-        op_record,
         effects,
         affected_page_ids,
         deleted_at: now,
@@ -1106,36 +1101,13 @@ pub(crate) async fn delete_block_in_tx(
     })
 }
 
-/// The post-commit fan-out of each delete [`delete_block_in_tx`] ran, for the
-/// caller whose transaction held them ([`delete_block_inner`] holds one; the
-/// page source save and the MCP `batch` hold several).
-pub(crate) async fn dispatch_deletes(
-    pool: &SqlitePool,
-    materializer: &Materializer,
-    deletes: &[DeleteInTx],
-) {
+/// The post-commit FTS removal of each delete [`delete_block_in_tx`] ran, for
+/// the caller whose transaction held them ([`delete_block_inner`] holds one;
+/// the page source save and the MCP `batch` hold several).
+pub(crate) async fn remove_deleted_fts(pool: &SqlitePool, deletes: &[DeleteInTx]) {
     for deleted in deletes {
-        Box::pin(dispatch_deletes(pool, materializer, &deleted.swept)).await;
-        // #2344 NEW post-commit engine cohort fan-out — the LOCAL counterpart of
-        // the `dispatch_delete_descendants` call `apply_op` runs after ITS commit.
-        // The in-tx engine apply of `delete_block_in_tx`
-        // (`apply_delete_block_via_loro`) reached only the SEED; the per-space
-        // Loro `apply_delete_block` is per-block-id, so the DESCENDANT deletes
-        // never reach the engine without this fan-out (SQL would report them
-        // deleted while the engine still shows them alive). Drives the captured
-        // cohort (seed + descendants) onto the per-space engine using the space
-        // id captured PRE-UPDATE (post-delete `resolve_block_space` returns None
-        // for the now-tombstoned rows). Infallible / log-only, mirroring
-        // `apply_op`'s call shape exactly (args, await, no `?`).
-        crate::materializer::dispatch_delete_descendants(
-            pool,
-            &deleted.op_record,
-            &deleted.effects.deleted_cohort,
-            deleted.effects.delete_space_id.as_ref(),
-            materializer.loro_state(),
-        )
-        .await;
-        // #4733 POST-COMMIT FTS removal for the same cohort. `commit_and_dispatch`
+        Box::pin(remove_deleted_fts(pool, &deleted.swept)).await;
+        // #4733 POST-COMMIT FTS removal for the cohort. `commit_and_dispatch`
         // enqueued a `RemoveFtsBlock` for the SEED alone (`invalidations_for_op`
         // never sees the cohort), so every descendant kept its `fts_blocks` row
         // until the next full rebuild. Same list the soft-delete consumed, same
@@ -1205,9 +1177,9 @@ async fn load_deletable_roots_in_tx(
     Ok(roots)
 }
 
-/// One delete root's post-commit engine fan-out inputs: the appended
-/// `DeleteBlock` op record, the pre-UPDATE subtree cohort ids, and the
-/// root's space resolved while its rows were still live.
+/// One delete root's engine fan-out inputs: the appended `DeleteBlock` op
+/// record, the pre-UPDATE subtree cohort ids, and the root's space resolved
+/// while its rows were still live.
 type DeleteEngineFanout = (
     Arc<op_log::OpRecord>,
     Vec<String>,
@@ -1216,7 +1188,7 @@ type DeleteEngineFanout = (
 
 /// [`delete_blocks_by_ids_inner`]'s op-append phase, inside its IMMEDIATE
 /// tx: one `DeleteBlock` op per live root, each with the pre-UPDATE cohort
-/// and space capture the post-commit engine fan-out needs.
+/// and space capture the engine fan-out needs.
 async fn append_delete_ops_in_tx(
     tx: &mut CommandTx,
     device_id: &str,
@@ -1237,9 +1209,9 @@ async fn append_delete_ops_in_tx(
     // cascade and the #1257 phantom (engine-live-but-SQL-deleted) appears.
     // This mirrors `apply_op_tx`'s DeleteBlock arm exactly: capture cohort +
     // space per root here, then drive the WHOLE captured cohort onto the
-    // engine via the post-commit fan-out (`dispatch_delete_descendants`,
-    // run by the caller after `commit_and_dispatch`). The fan-out is the right
-    // mechanism for this MULTI-ROOT path (rather than the per-seed in-tx
+    // engine via the fan-out (`dispatch_delete_descendants`, run by the
+    // caller before it commits). The fan-out is the right
+    // mechanism for this MULTI-ROOT path (rather than the per-seed
     // `apply_delete_block_via_loro`): the helper's own SQL projection would
     // either double-count the cascade if run before the batch UPDATE, or
     // hit the same dead-space-resolution wall if run after it — the
@@ -1392,7 +1364,7 @@ pub async fn delete_blocks_by_ids_inner(
     // depth-100 boundary — a merged sync tree can legally exceed the local
     // depth bound, and the old single capped CTE silently truncated its
     // cascade there). Stamping exactly the captured union keeps the SQL rows
-    // and the post-commit engine fan-out consuming ONE list, so the two can
+    // and the engine fan-out consuming ONE list, so the two can
     // never diverge on pathological trees. `deleted_at IS NULL` keeps the
     // UPDATE idempotent; overlapping roots (one selected root inside another's
     // subtree) dedupe via the `IN`. Cap crossings warn loudly inside the
@@ -1450,14 +1422,13 @@ pub async fn delete_blocks_by_ids_inner(
     // multi-root subtree delete must not hold the single-writer lock for the
     // O(descendants) count walk. See `delete_block_inner`.
 
-    tx.commit_and_dispatch(materializer).await?;
-
-    // #1257 POST-COMMIT engine fan-out. Drive each root's
-    // pre-captured cohort (seed + active descendants) onto the per-space
-    // Loro engine using the PRE-UPDATE-captured space id. Mirrors
-    // `apply_op`'s `dispatch_delete_descendants` call: the engine's
-    // `apply_delete_block` is per-block-id and idempotent, so re-applying
-    // the seed is harmless, and the captured space sidesteps the
+    // #1257 engine fan-out, in this transaction (#6521): the command's
+    // `loro_doc_delta` row holds it, and a rollback rewinds it. Drive each
+    // root's pre-captured cohort (seed + active descendants) onto the
+    // per-space Loro engine using the PRE-UPDATE-captured space id. Mirrors
+    // `apply_op_tx`'s `dispatch_delete_descendants` call: the engine's
+    // `apply_delete_block` is per-block-id and idempotent, so overlapping
+    // cohorts are harmless, and the captured space sidesteps the
     // dead-space-resolution problem (post-delete `resolve_block_space`
     // returns None for every cohort row). Without this the engine would
     // keep the cohort alive while SQL reports it deleted — the #1257
@@ -1466,14 +1437,15 @@ pub async fn delete_blocks_by_ids_inner(
     // above stands as the durable outcome.
     for (op_record, cohort, delete_space_id) in &delete_fanout {
         crate::materializer::dispatch_delete_descendants(
-            pool,
             op_record,
             cohort,
             delete_space_id.as_ref(),
             materializer.loro_state(),
-        )
-        .await;
+        );
     }
+
+    tx.commit_and_dispatch(materializer).await?;
+
     // #4733: ONE removal over the union the cohort UPDATE consumed, not one
     // per root. `remove_fts_for_blocks` is a single batched DELETE, so a
     // per-root call would repeat it over overlapping id sets for no gain —
@@ -1721,119 +1693,55 @@ async fn verify_restorable_in_tx(
     Ok(block_type)
 }
 
-/// One restored root's post-commit engine and link fan-out: the seed cohort
-/// and the ancestor chain onto the per-space Loro engine, then their link
-/// repair. [`dispatch_restore_fanout`] runs it once; the batch and
-/// restore-all paths loop it.
-async fn dispatch_restore_root_fanout(
-    pool: &SqlitePool,
-    materializer: &Materializer,
+/// One restored root's engine fan-out, in the restore's transaction (#6521):
+/// the seed cohort and the ancestor chain onto the per-space Loro engine. The
+/// command's `loro_doc_delta` row holds it, and a rollback rewinds it.
+///
+/// The restore commands do no other engine work: unlike `delete_block_inner`
+/// they do not route through `apply_op_projected`, so without this every
+/// block they un-delete stays tombstoned in the per-space CRDT and the next
+/// `reproject_block_deleted_at_from_engine` re-deletes it in SQL (#3856), or,
+/// for the #1884 ancestor chain alone, re-deletes a PARENT over its now-live
+/// child (#3834, #2017).
+///
+/// It runs after the command's own cohort UPDATE and upward walk, because
+/// the fan-out resolves the space from the seed, which
+/// `resolve_block_space` answers only once the row is live again.
+/// `apply_restore_block_via_loro` could not have carried the write for the
+/// same reason: it resolves BEFORE the rows are alive, so it anchors on the
+/// seed's PARENT — and in the #1884 shape (child trashed first, parent
+/// trashed after) that parent is itself tombstoned and the apply degrades to
+/// the `sql_only` fallback. Engine `apply_restore_block` is idempotent, so
+/// re-applying an already-live member is a no-op. Infallible / log-only,
+/// descendants first, then ancestors, as `apply_op_tx` orders them.
+async fn restore_root_onto_engine(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
     op_record: &op_log::OpRecord,
     restore_cohort: &[String],
     restored_chain: &[String],
 ) {
-    // #3856 POST-COMMIT engine fan-out for the restored SEED + DESCENDANT
-    // cohort — the LOCAL counterpart of the `dispatch_restore_descendants` call
-    // `apply_op` runs after ITS commit, and the exact fan-out
-    // `restore_blocks_by_ids_inner` has hand-rolled since #1257.
-    //
-    // `restore_block_inner` performs NO in-tx engine work of its own: unlike
-    // `delete_block_inner` it does not route through `apply_op_projected`, so
-    // nothing there reached the engine for the seed or its descendants — its
-    // SQL walk only cleared `deleted_at`. #3834 added the UPWARD half below
-    // and made the asymmetry sharper rather than smaller: the ancestors came
-    // back in the CRDT while the seed and its cohort stayed tombstoned, so the
-    // next `reproject_block_deleted_at_from_engine` re-deleted a CHILD under a
-    // now-live PARENT — the inverse of the #1884 live-orphan the upward walk
-    // exists to prevent.
-    //
-    // Deliberately a POST-COMMIT fan-out rather than an in-tx
-    // `apply_op_projected` route (the other option #3856 lists).
-    //
-    // Stated precisely, because the obvious version of this claim is too
-    // strong: the ROUTE was never the problem. `apply_op_projected` would have
-    // handed back the ingredients either way — its kernel runs
-    // `collect_restore_cohort` before the Loro apply and sets
-    // `effects.restored_cohort` unconditionally, and the sql_only fallback
-    // returns `Ok`, so nothing short-circuits. A caller that routed through it
-    // AND fanned the cohort out post-commit would also have worked. What was
-    // missing was the post-commit fan-out, which is what this is.
-    //
-    // What routing in-tx could NOT have done is carry the engine write itself:
-    // `apply_restore_block_via_loro` resolves the space BEFORE the rows are
-    // alive, so it anchors on the seed's PARENT — and in the #1884 shape (child
-    // trashed first, parent trashed after) that parent is itself tombstoned,
-    // `resolve_block_space` filters `deleted_at IS NULL`, and the apply degrades
-    // to the `sql_only` fallback: no engine work at all, silently. Its in-tx
-    // apply is also seed-only by design, so it could never have reached a
-    // grandchild. Post-commit the cohort is alive again, so the fan-out's inline
-    // resolve always succeeds — the restore/delete asymmetry `ApplyEffects`
-    // documents (delete must capture its space PRE-UPDATE for the mirror
-    // reason). Going through `apply_op_projected` as well would stack a second,
-    // redundant cohort UPDATE on top of the caller's own.
-    // Engine `apply_restore_block` is idempotent, so re-applying an already-live
-    // member is a no-op. Infallible / log-only, mirroring `apply_op`'s call shape
-    // and ordering (descendants first, then ancestors).
-    crate::materializer::dispatch_restore_descendants(
-        pool,
-        op_record,
-        restore_cohort,
-        materializer.loro_state(),
-    )
-    .await;
-
-    // #3834 POST-COMMIT engine fan-out for the restored ANCESTOR chain — the
-    // LOCAL counterpart of the `dispatch_restore_ancestors` call `apply_op`
-    // runs after ITS commit (#2017). Nothing in the caller reached the
-    // engine for the ancestors: its SQL walk only cleared `deleted_at`,
-    // and the replay arm that used to be cited for the fan-out never fires for
-    // a local op (see the `restored_chain` comment in `restore_block_inner`).
-    // Without this the chain is
-    // live in SQL and tombstoned in the CRDT, and the next reproject re-deletes
-    // it. The fan-out resolves the space inline from the pool — valid because
-    // the chain is alive again post-commit — and engine `apply_restore_block`
-    // is idempotent, so an already-live member is a no-op. Empty chain (the
-    // common case: the parent was never tombstoned) returns immediately.
-    // Infallible / log-only, mirroring `apply_op`'s call shape exactly.
-    crate::materializer::dispatch_restore_ancestors(
-        pool,
-        op_record,
-        restored_chain,
-        materializer.loro_state(),
-    )
-    .await;
-
-    // #4285 POST-COMMIT LINK repair for the same two sets. The caller's
-    // `commit_and_dispatch` enqueued a `ReindexBlockLinks` for the SEED
-    // (#4209's fix, via `invalidations_for_op`) and could not enqueue one for
-    // anything else: that function is a pure function of the `OpRecord` and
-    // never sees the cohort, which is walked inside the transaction. So a
-    // referrer waiting on a restored DESCENDANT — and that descendant's own
-    // outbound edges, which a deleted-window reindex diffed away — stayed
-    // stranded on the path most users are actually on. The cohort and the
-    // ancestor chain are both in hand here, which is why the repair belongs at
-    // this site and not only in `handlers::apply` (the remote/replay
-    // counterpart). The seed is repeated (idempotent) rather than filtered out.
-    crate::materializer::reindex_restored_cohort_links(pool, restore_cohort, restored_chain).await;
+    crate::materializer::dispatch_restore_descendants(tx, op_record, restore_cohort, state).await;
+    crate::materializer::dispatch_restore_ancestors(tx, op_record, restored_chain, state).await;
 }
 
-/// [`restore_block_inner`]'s post-commit fan-out: the restored seed cohort
-/// and ancestor chain onto the engine, then their link and FTS re-index.
-async fn dispatch_restore_fanout(
+/// [`restore_block_inner`]'s post-commit repair: the link and FTS re-index of
+/// the restored seed cohort and ancestor chain.
+async fn repair_restored_links_and_fts(
     pool: &SqlitePool,
-    materializer: &Materializer,
-    op_record: &op_log::OpRecord,
     restore_cohort: &[String],
     restored_chain: &[String],
 ) {
-    dispatch_restore_root_fanout(
-        pool,
-        materializer,
-        op_record,
-        restore_cohort,
-        restored_chain,
-    )
-    .await;
+    // #4285 POST-COMMIT LINK repair. The caller's `commit_and_dispatch`
+    // enqueued a `ReindexBlockLinks` for the SEED (#4209's fix, via
+    // `invalidations_for_op`) and could not enqueue one for anything else:
+    // that function is a pure function of the `OpRecord` and never sees the
+    // cohort, which is walked inside the transaction. So a referrer waiting
+    // on a restored DESCENDANT — and that descendant's own outbound edges,
+    // which a deleted-window reindex diffed away — stayed stranded on the
+    // path most users are actually on. The seed is repeated (idempotent)
+    // rather than filtered out.
+    crate::materializer::reindex_restored_cohort_links(pool, restore_cohort, restored_chain).await;
     // #4733: the FTS half of the same two sets — `UpdateFtsBlock` reached the
     // seed alone, and the delete's cohort removal is what created the debt.
     let restored_fts: Vec<&str> = restore_cohort
@@ -1897,7 +1805,7 @@ pub async fn restore_block_inner(
     // re-anchored at the depth-100 boundary) + json_each UPDATE — the SAME
     // shape as `project_restore_block_to_sql` and `collect_restore_cohort`,
     // so the SQL rows this command clears, the replay projection, and the
-    // post-commit engine fan-out all consume one walk definition and cannot
+    // engine fan-out all consume one walk definition and cannot
     // diverge on a merged tree deeper than the cap. Cohort identity stays
     // structural (#1055): each batch's recursive arm only descends through
     // `deleted_at = ?` children, which also keeps conflict copies (independent
@@ -1909,7 +1817,7 @@ pub async fn restore_block_inner(
     )
     .await?;
     // #3856: the walked cohort is KEPT (it used to be CONSUMED building this
-    // JSON payload) — it is exactly the set the post-commit engine fan-out
+    // JSON payload) — it is exactly the set the engine fan-out
     // below must drive, and re-deriving it after the UPDATE is impossible: the
     // `deleted_at = ?` filter no longer identifies a cohort whose rows are all
     // NULL again. `to_string(&…)` serialises the same JSON array the consuming
@@ -1937,7 +1845,7 @@ pub async fn restore_block_inner(
     // when the parent chain was already live), used below as the re-derivation
     // root so the whole reconnected subtree is refreshed.
     // #3834: keep the FULL restored chain, not just `topmost`. The engine
-    // fan-out for it runs POST-COMMIT below (`dispatch_restore_ancestors`), in
+    // fan-out for it runs below (`dispatch_restore_ancestors`), in
     // this command — NOT, as this comment used to claim, in the materializer
     // replay arm (`apply_op` → `dispatch_restore_ancestors`). That arm runs
     // for a locally authored op only if boot replays it (the snapshot pass
@@ -2019,20 +1927,20 @@ pub async fn restore_block_inner(
     // content-block restore.
     //
     // Wrapped once in `Arc` so the dispatch queue borrows the record by
-    // refcount AND the #3834 post-commit ancestor fan-out below can still
-    // reference it (same shape as `delete_block_inner`).
+    // refcount AND the engine fan-out below can still reference it.
     let op_record = Arc::new(op_record);
     tx.enqueue_lifecycle_background(Arc::clone(&op_record), block_type);
-    tx.commit_and_dispatch(materializer).await?;
-
-    dispatch_restore_fanout(
-        pool,
-        materializer,
+    restore_root_onto_engine(
+        &mut tx,
+        materializer.loro_state(),
         &op_record,
         &restore_cohort,
         &restored_chain.chain,
     )
     .await;
+    tx.commit_and_dispatch(materializer).await?;
+
+    repair_restored_links_and_fts(pool, &restore_cohort, &restored_chain.chain).await;
 
     Ok(RestoreResponse {
         block_id,
@@ -2040,7 +1948,7 @@ pub async fn restore_block_inner(
     })
 }
 
-/// One purge root's post-commit engine fan-out inputs: the appended
+/// One purge root's engine fan-out inputs: the appended
 /// `PurgeBlock` op record (for op identity + timestamp), the pre-cascade
 /// subtree cohort ids, and the root's space.
 type PurgeEngineFanout = (
@@ -2049,7 +1957,7 @@ type PurgeEngineFanout = (
     Option<agaric_store::space::SpaceId>,
 );
 
-/// #1257 PRE-CASCADE capture for the post-commit engine purge fan-out.
+/// #1257 PRE-CASCADE capture for the engine purge fan-out.
 ///
 /// Captures a purge root's full subtree COHORT and its SPACE while the SQL
 /// rows still exist — once `purge_subtree_tables` runs they are physically
@@ -2089,50 +1997,42 @@ async fn capture_purge_engine_fanout(
     Ok((cohort, space_id))
 }
 
-/// #1257 POST-COMMIT engine fan-out shared by all three purge variants.
+/// #1257 engine fan-out shared by all three purge variants, run in the
+/// purge's transaction (#6521): the command's `loro_doc_delta` row holds it,
+/// and a rollback rewinds it. The purge commands do no other engine work.
 ///
 /// Drops each purged subtree from the per-space Loro engine using the
-/// PRE-CASCADE-captured cohort + space (the SQL rows are physically gone
-/// by now, so neither could be recovered here). `engine_apply(PurgeBlock)`
-/// removes a block's `blocks`/`block_properties`/`block_tags` entries from
-/// the LoroDoc; it is per-block-id, so the whole captured cohort is
-/// driven. Mirrors the delete/restore fan-out. A no-space root is a no-op;
-/// the SQL cascade stands as the durable outcome.
-async fn dispatch_purge_engine_fanout(
-    pool: &SqlitePool,
-    materializer: &Materializer,
-    fanout: &[PurgeEngineFanout],
-) {
-    let Some((first_record, _, _)) = fanout.first() else {
-        return;
-    };
+/// PRE-CASCADE-captured cohort + space (the SQL rows are gone once the
+/// cascade has run, so neither could be recovered then).
+/// `engine_apply(PurgeBlock)` removes a block's
+/// `blocks`/`block_properties`/`block_tags` entries from the LoroDoc; it is
+/// per-block-id, so the whole captured cohort is driven. Mirrors the
+/// delete/restore fan-out. A no-space root is a no-op; the SQL cascade stands
+/// as the durable outcome.
+fn dispatch_purge_engine_fanout(materializer: &Materializer, fanout: &[PurgeEngineFanout]) {
     let state = materializer.loro_state();
-    crate::materializer::saving_fan_out(pool, first_record, state, |log| {
-        for (op_record, cohort, purge_space_id) in fanout {
-            let Some(space_id) = purge_space_id else {
-                continue;
-            };
-            for cohort_id in cohort {
-                let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
-                    block_id: BlockId::from_trusted(cohort_id),
-                });
-                let op_id = format!(
-                    "{}/{}#cohort/{}",
-                    op_record.device_id, op_record.seq, cohort_id,
-                );
-                agaric_engine::merge::engine_apply(
-                    &op_id,
-                    &payload,
-                    &op_record.device_id,
-                    space_id,
-                    &op_record.created_at.to_string(),
-                    state,
-                    log,
-                );
-            }
+    for (op_record, cohort, purge_space_id) in fanout {
+        let Some(space_id) = purge_space_id else {
+            continue;
+        };
+        for cohort_id in cohort {
+            let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+                block_id: BlockId::from_trusted(cohort_id),
+            });
+            let op_id = format!(
+                "{}/{}#cohort/{}",
+                op_record.device_id, op_record.seq, cohort_id,
+            );
+            agaric_engine::merge::engine_apply(
+                &op_id,
+                &payload,
+                &op_record.device_id,
+                space_id,
+                &op_record.created_at.to_string(),
+                state,
+            );
         }
-    })
-    .await;
+    }
 }
 
 /// Permanently purge a soft-deleted block and all its descendants.
@@ -2220,7 +2120,7 @@ pub async fn purge_block_inner(
 
     // #1257 PRE-CASCADE capture: the purge cohort + space must be read
     // BEFORE the physical delete below erases them — see
-    // `capture_purge_engine_fanout`. Drives the post-commit engine fan-out
+    // `capture_purge_engine_fanout`. Drives the engine fan-out
     // that keeps the per-space LoroDoc in lockstep with the SQL purge
     // (mirroring `purge_blocks_by_ids_inner`).
     let (purge_cohort, purge_space_id) = capture_purge_engine_fanout(&mut tx, &block_id).await?;
@@ -2263,16 +2163,10 @@ pub async fn purge_block_inner(
     // the block's type so the materializer narrows the rebuild fan-out for a
     // content-block purge.
     tx.enqueue_lifecycle_background(Arc::clone(&op_record), block_type);
+    // #1257: drop the purged subtree from the per-space Loro engine (see
+    // `dispatch_purge_engine_fanout`).
+    dispatch_purge_engine_fanout(materializer, &[(op_record, purge_cohort, purge_space_id)]);
     tx.commit_and_dispatch(materializer).await?;
-
-    // #1257 POST-COMMIT engine fan-out: drop the purged subtree from the
-    // per-space Loro engine (see `dispatch_purge_engine_fanout`).
-    dispatch_purge_engine_fanout(
-        pool,
-        materializer,
-        &[(op_record, purge_cohort, purge_space_id)],
-    )
-    .await;
 
     // #85 F2 / #3259: reclaim any bytes this purge orphaned via the
     // refcount-aware GC pass — never by unlinking the purged rows' own
@@ -2393,9 +2287,9 @@ pub async fn restore_all_deleted_inner(
     }
 
     let now = crate::db::now_ms();
-    // #3856: per-root (op record, PRE-UPDATE cohort) pairs for the post-commit
-    // engine fan-out below. Like the other two restore paths, this command does
-    // no engine work in-tx, so without this every block it un-deletes stays
+    // #3856: per-root (op record, PRE-UPDATE cohort) pairs for the engine
+    // fan-out below. Like the other two restore paths, this command does
+    // no other engine work, so without it every block it un-deletes stays
     // tombstoned in the per-space CRDT and the next
     // `reproject_block_deleted_at_from_engine` re-deletes the whole trash in
     // SQL. Capture is per ROOT, not one flat list of every tombstone: the
@@ -2488,23 +2382,27 @@ pub async fn restore_all_deleted_inner(
     agaric_store::cache::rederive_space_ids_in_tx(&mut tx, &restored).await?;
     agaric_store::cache::insert_missing_pages_cache_rows(&mut tx, &restored).await?;
 
+    // #3856 engine fan-out per root, the same `restore_root_onto_engine` the
+    // single and batch restores run. The ancestor chain is EMPTY here and
+    // that is not an omission: this variant clears EVERY tombstone, so an
+    // ancestor chain is either inside a root's cohort or is a root of its own,
+    // so the #1884 upward walk is vacuous on this path (which is what hid
+    // #3818 on the batch path that copied it). Overlapping cohorts are
+    // harmless: engine `apply_restore_block` is idempotent.
+    for (op_record, cohort) in &restore_fanout {
+        restore_root_onto_engine(&mut tx, materializer.loro_state(), op_record, cohort, &[]).await;
+    }
+
     // Commit + drain enqueued background dispatches in FIFO order.
     tx.commit_and_dispatch(materializer).await?;
 
-    // #3856 POST-COMMIT engine + link fan-out per root, the same
-    // `dispatch_restore_root_fanout` the single and batch restores run. The
-    // ancestor chain is EMPTY here and that is not an omission: this variant
-    // clears EVERY tombstone, so an ancestor chain is either inside a root's
-    // cohort or is a root of its own, so the #1884 upward walk is vacuous on
-    // this path (which is what hid #3818 on the batch path that copied it).
-    // The fan-out resolves each root's space inline — valid because the rows
-    // are alive again post-commit — and engine `apply_restore_block` is
-    // idempotent, so overlapping cohorts are harmless. Infallible / log-only.
-    for (op_record, cohort) in &restore_fanout {
-        dispatch_restore_root_fanout(pool, materializer, op_record, cohort, &[]).await;
+    // #4285: the link repair of each root's cohort, as the single restore
+    // runs it.
+    for (_, cohort) in &restore_fanout {
+        crate::materializer::reindex_restored_cohort_links(pool, cohort, &[]).await;
     }
     // #4733: the FTS rows of every restored cohort, in ONE pass. Unlike the
-    // link repair inside the fan-out, `reindex_fts_for_ids` pays a
+    // link repair above, `reindex_fts_for_ids` pays a
     // `load_ref_maps` — a full scan of every tag and page block — per CALL,
     // so a per-root call would cost N of them to reach the same answer. The
     // helper dedupes what it is handed, so overlapping cohorts are free.
@@ -2561,7 +2459,7 @@ pub async fn purge_all_deleted_inner(
         tx.enqueue_lifecycle_background(Arc::clone(&op_record), root.block_type.clone());
 
         // #1257 PRE-CASCADE capture: cohort + space per root, read before
-        // the flat delete below erases the rows — drives the post-commit
+        // the flat delete below erases the rows — drives the
         // engine fan-out (mirroring `purge_blocks_by_ids_inner`).
         let (cohort, space_id) = capture_purge_engine_fanout(&mut tx, &root.id).await?;
         purge_fanout.push((op_record, cohort, space_id));
@@ -2588,14 +2486,13 @@ pub async fn purge_all_deleted_inner(
     )
     .await?;
     let count = purge_counts.blocks;
+    // #1257: drop every purged subtree from the per-space Loro engine (see
+    // `dispatch_purge_engine_fanout`).
+    dispatch_purge_engine_fanout(materializer, &purge_fanout);
     // Commit + drain the queued PurgeBlock op records for background
     // dispatch. The attachment-byte GC is enqueued after dispatch (cache
     // rebuilds are independent of the filesystem side effect).
     tx.commit_and_dispatch(materializer).await?;
-
-    // #1257 POST-COMMIT engine fan-out: drop every purged subtree from the
-    // per-space Loro engine (see `dispatch_purge_engine_fanout`).
-    dispatch_purge_engine_fanout(pool, materializer, &purge_fanout).await;
 
     // + #85 F2 / #3259: post-commit byte reclamation is delegated to the
     // refcount-aware `CleanupOrphanedAttachments` GC pass. "Empty trash"
@@ -2700,8 +2597,8 @@ async fn restore_ancestor_chains_in_tx(
     // snapshot pass moves the cursor past LOCAL ops (#5418) — and by then the
     // chain is already live in SQL and the projection returns an EMPTY chain).
     // It is stashed on this root's `restore_fanout` entry and driven onto the
-    // engine post-commit alongside the descendant cohort, which
-    // `dispatch_restore_batch_fanout` hand-rolls for exactly this reason.
+    // engine alongside the descendant cohort, which
+    // `restore_blocks_by_ids_inner` hand-rolls for exactly this reason.
     //
     // `topmost` becomes the inheritance root, mirroring the single path: when
     // a chain came back with the root, the whole RECONNECTED subtree needs its
@@ -2756,7 +2653,7 @@ async fn restore_ancestor_chains_in_tx(
 
 /// [`restore_blocks_by_ids_inner`]'s op-append phase, inside its IMMEDIATE
 /// tx: one `RestoreBlock` op per root, each with the pre-UPDATE cohort
-/// capture the post-commit engine fan-out needs. Each entry's ancestor-chain
+/// capture the engine fan-out needs. Each entry's ancestor-chain
 /// slot starts empty; the caller's upward walk fills it.
 async fn append_restore_ops_in_tx(
     tx: &mut CommandTx,
@@ -2771,17 +2668,17 @@ async fn append_restore_ops_in_tx(
     // delete cohort (the #1055 `deleted_at_ref`-scoped subtree) BEFORE the
     // UPDATE clears `deleted_at` — once the rows are alive again the
     // `deleted_at = deleted_at_ref` filter no longer identifies the cohort.
-    // We drive the captured cohort onto the engine via the post-commit
-    // `dispatch_restore_descendants` fan-out (run by the caller after
-    // `commit_and_dispatch`), mirroring `apply_op`. The restore fan-out
-    // resolves the space inline post-commit (the cohort is alive by then, so
+    // We drive the captured cohort onto the engine via the
+    // `dispatch_restore_descendants` fan-out (run by the caller before it
+    // commits), mirroring `apply_op_tx`. The restore fan-out
+    // resolves the space inline (the cohort is alive by then, so
     // `resolve_block_space` succeeds — the asymmetry with delete noted in
     // `ApplyEffects`). Engine `apply_restore_block` is idempotent, so the
     // seed re-apply is harmless. The op-log shape (one op per root) and the
     // apply cursor are untouched.
     // #3834: the third element is the restored ANCESTOR chain, filled in by the
     // caller's upward-restore loop (which runs after the cohort UPDATE) and
-    // fanned out post-commit alongside the cohort.
+    // fanned out alongside the cohort.
     let mut restore_fanout: Vec<(Arc<op_log::OpRecord>, Vec<String>, Vec<String>)> =
         Vec::with_capacity(roots.len());
     for root in roots {
@@ -2817,16 +2714,14 @@ async fn append_restore_ops_in_tx(
     Ok(restore_fanout)
 }
 
-/// [`restore_blocks_by_ids_inner`]'s post-commit fan-out: every root's
-/// restored cohort and ancestor chain onto the engine, their link repair,
-/// and one FTS re-index over the union.
-async fn dispatch_restore_batch_fanout(
+/// [`restore_blocks_by_ids_inner`]'s post-commit repair: every root's link
+/// repair, and one FTS re-index over the union.
+async fn repair_restored_batch_links_and_fts(
     pool: &SqlitePool,
-    materializer: &Materializer,
     restore_fanout: &[(Arc<op_log::OpRecord>, Vec<String>, Vec<String>)],
 ) {
-    for (op_record, cohort, ancestors) in restore_fanout {
-        dispatch_restore_root_fanout(pool, materializer, op_record, cohort, ancestors).await;
+    for (_, cohort, ancestors) in restore_fanout {
+        crate::materializer::reindex_restored_cohort_links(pool, cohort, ancestors).await;
     }
     // #4733: the FTS rows of every restored cohort AND ancestor chain, in ONE
     // pass — same reason as `restore_all_deleted_inner`: `reindex_fts_for_ids`
@@ -2933,7 +2828,7 @@ pub async fn restore_blocks_by_ids_inner(
     // sharing the root's `deleted_at_ref` (and is depth-UNBOUNDED per R27
     // — batched capped CTEs re-anchored at the depth-100 boundary — so a
     // merged tree deeper than the cap restores its whole cohort). Stamping
-    // exactly the captured union keeps the SQL rows and the post-commit
+    // exactly the captured union keeps the SQL rows and the
     // engine fan-out consuming ONE list, so the two can never diverge.
     // Overlapping roots dedupe via the `IN`; `deleted_at IS NOT NULL`
     // keeps the UPDATE idempotent.
@@ -2979,10 +2874,15 @@ pub async fn restore_blocks_by_ids_inner(
     // `enqueue_lifecycle_background` above), not synchronously here — see
     // `delete_block_inner`.
 
+    for (op_record, cohort, ancestors) in &restore_fanout {
+        let state = materializer.loro_state();
+        restore_root_onto_engine(&mut tx, state, op_record, cohort, ancestors).await;
+    }
+
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;
 
-    dispatch_restore_batch_fanout(pool, materializer, &restore_fanout).await;
+    repair_restored_batch_links_and_fts(pool, &restore_fanout).await;
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -3051,7 +2951,7 @@ async fn load_purge_roots_in_tx(
 
 /// [`purge_blocks_by_ids_inner`]'s op-append phase, inside its IMMEDIATE
 /// tx: one `PurgeBlock` op per root, each with the pre-cascade cohort and
-/// space capture the post-commit engine fan-out needs.
+/// space capture the engine fan-out needs.
 async fn append_purge_ops_in_tx(
     tx: &mut CommandTx,
     device_id: &str,
@@ -3067,9 +2967,9 @@ async fn append_purge_ops_in_tx(
     // soft-deleted), so it does not itself create the #1257
     // Engine-live-but-SQL-deleted phantom the gate refuses; but the
     // engine must still drop the purged subtree from its LoroDoc to stay in
-    // lockstep. We drive the captured cohort onto the engine via a
-    // post-commit `engine_apply(PurgeBlock)` fan-out (run after
-    // `commit_and_dispatch`), mirroring the delete/restore fan-out and the
+    // lockstep. We drive the captured cohort onto the engine via an
+    // `engine_apply(PurgeBlock)` fan-out (run by the caller before it
+    // commits), mirroring the delete/restore fan-out and the
     // boot-replay path. The roots are soft-deleted, so the canonical
     // `resolve_block_space` (which filters `deleted_at IS NULL`) returns
     // None — we read the denormalized `blocks.space_id` column directly
@@ -3267,14 +3167,13 @@ pub async fn purge_blocks_by_ids_inner(
     // `enqueue_lifecycle_background` above), not synchronously here — see
     // `delete_block_inner`.
 
+    // #1257: drop each purged subtree from the per-space Loro engine using
+    // the PRE-CASCADE-captured cohort + space (see
+    // `dispatch_purge_engine_fanout` — shared by all three purge variants).
+    dispatch_purge_engine_fanout(materializer, &purge_fanout);
+
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;
-
-    // #1257 POST-COMMIT engine fan-out. Drop each purged subtree from the
-    // per-space Loro engine using the PRE-CASCADE-captured cohort + space
-    // (see `dispatch_purge_engine_fanout` — shared by all three purge
-    // variants).
-    dispatch_purge_engine_fanout(pool, materializer, &purge_fanout).await;
 
     // + #85 F2 / #3259: post-commit byte reclamation via the refcount-aware
     // GC pass (mirrors `purge_all_deleted_inner`).

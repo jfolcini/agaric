@@ -481,8 +481,8 @@ pub async fn create_block_in_tx(
     // it: `validate_parent_in_tx` above, `restore_bare_append_position_in_tx`
     // below.
     // `apply_op_projected` borrows `&op_record` here (it is returned to the
-    // caller unmoved, for commit + dispatch). Create runs no post-commit cohort
-    // fan-out, so the returned `ApplyEffects` is empty and discarded.
+    // caller unmoved, for commit + dispatch). Create has no cascade,
+    // so the returned `ApplyEffects` is empty and discarded.
     // #2200: the LOCAL create path is a "chunk of one" — `apply_op_projected`
     // passes `None` so the dense-position reprojection + count recompute run
     // inline here, exactly as before (deferral is a batch-import-only

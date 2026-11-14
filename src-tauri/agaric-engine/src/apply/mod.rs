@@ -21,7 +21,7 @@
 //! What STAYS app-side (reaches these through re-export shims at the old
 //! `crate::materializer::handlers::…` paths): the `Materializer` coordinator /
 //! queue / retry logic, the REMOTE `apply_op` wrapper (observability timer +
-//! the `dispatch_*_descendants` post-commit fan-out), the orphaned-attachment
+//! the `dispatch_*_descendants` cohort fan-out), the orphaned-attachment
 //! GC (`cleanup_orphaned_attachments`), and every `#[tauri::command]` wrapper.
 //! The engine stays Tauri-free.
 //!

@@ -85,8 +85,8 @@ pub use sql_only_fallback::count as sql_only_fallback_count;
 // #1257 the LOCAL delete / restore / purge command paths PRE-CAPTURE each
 // root's subtree COHORT + SPACE below the SQL soft-delete (these collectors)
 // and then drive the captured cohort onto the per-space Loro engine via the
-// post-commit fan-out (`dispatch_*_descendants`) — mirroring `apply_op_tx` +
-// `apply_op`. The cohort + space MUST be captured before the SQL UPDATE (else a
+// fan-out (`dispatch_*_descendants`), before they commit — mirroring
+// `apply_op_tx`. The cohort + space MUST be captured before the SQL UPDATE (else a
 // post-delete `resolve_block_space` returns None → the engine misses the
 // cascade → the #1257 phantom). These paths never move the apply cursor (the
 // snapshot pass and `dispatch_op` do). The `apply_*_via_loro` CASCADE helpers are also
@@ -99,8 +99,10 @@ pub use sql_only_fallback::count as sql_only_fallback_count;
 pub use apply::{
     collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
     dispatch_restore_ancestors, dispatch_restore_descendants, reindex_restored_cohort_fts,
-    reindex_restored_cohort_links, remove_deleted_cohort_fts, saving_fan_out,
+    reindex_restored_cohort_links, remove_deleted_cohort_fts,
 };
+// #6521: the kernel runs an applied op's cohort fan-out in the op's transaction.
+pub(crate) use apply::dispatch_cohorts;
 // #2325/#2250: the single collapsed apply-projection entry point. The LOCAL
 // command sites route through this (`advance_cursor = false`) instead of
 // calling `apply_*_via_loro` directly, so the LOCAL and REMOTE paths share one
