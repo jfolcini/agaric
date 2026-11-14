@@ -48,8 +48,9 @@ vi.mock('@/lib/open-url', () => ({
 }))
 
 const downloadBlobMock = vi.fn<(blob: Blob, filename: string) => Promise<void>>()
-vi.mock('@/lib/export-graph', () => ({
-  downloadBlob: (blob: Blob, name: string) => downloadBlobMock(blob, name),
+vi.mock('@/lib/attachment-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/attachment-utils')>()),
+  saveBlob: (blob: Blob, name: string) => downloadBlobMock(blob, name),
 }))
 
 // Mock the clipboard wrapper so the Copy button path does not depend on
@@ -477,6 +478,27 @@ describe('BugReportDialog', () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false)
   })
 
+  // #6652: the success toast waits for the save.
+  it('Download zip shows the error toast and no success toast when the save fails', async () => {
+    downloadBlobMock.mockRejectedValueOnce(new Error('disk full'))
+    const user = userEvent.setup()
+    render(<BugReportDialog open onOpenChange={vi.fn()} />)
+    await screen.findByText(/## Description/)
+    await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+    await waitFor(() => {
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'read_logs_for_report'),
+      ).toHaveLength(1)
+    })
+
+    await user.click(screen.getByRole('button', { name: t('bugReport.downloadZip') }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('bugReport.buildZipFailed'))
+    })
+    expect(mockedToastSuccess).not.toHaveBeenCalled()
+  })
+
   it('Open GitHub issue (logs ON) opens the URL and keeps the dialog open', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
@@ -523,7 +545,7 @@ describe('BugReportDialog', () => {
     await screen.findByText('agaric.log')
 
     const hint = await screen.findByTestId('bug-report-zip-hint')
-    // Hint text interpolates the same filename that downloadBlob would
+    // Hint text interpolates the same filename that saveBlob would
     // receive — verify the date-stamped zip filename appears.
     expect(hint.textContent ?? '').toMatch(/agaric-bug-report-\d{4}-\d{2}-\d{2}\.zip/)
   })
@@ -569,21 +591,6 @@ describe('BugReportDialog', () => {
       })
       expect(mockedToastSuccess).not.toHaveBeenCalled()
     })
-  })
-
-  it('toasts an error and no success when the ZIP is not saved (#6546)', async () => {
-    const user = userEvent.setup()
-    downloadBlobMock.mockRejectedValueOnce(new Error('no space left'))
-    render(<BugReportDialog open onOpenChange={() => {}} />)
-    await screen.findByText(/## Description/)
-
-    await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
-    await user.click(await screen.findByRole('button', { name: t('bugReport.downloadZip') }))
-
-    await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith(t('bugReport.buildZipFailed'))
-    })
-    expect(mockedToastSuccess).not.toHaveBeenCalled()
   })
 
   it('has no a11y violations', async () => {

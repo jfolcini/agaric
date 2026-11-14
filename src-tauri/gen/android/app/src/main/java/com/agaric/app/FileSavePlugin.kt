@@ -19,12 +19,12 @@ import java.io.IOException
  * `blob:` download, so this is how an export, a bug-report ZIP or a tapped
  * attachment leaves the app.
  *
- * The Rust side is `src-tauri/src/commands/file_save.rs`. It stages the bytes
- * in the app's cache directory and calls `saveToDownloads` with
- * `{ path, fileName, mimeType }`; this copies the staged file into
- * `MediaStore.Downloads` and resolves `{ fileName }`, the name the file has
- * there (MediaStore renames a file whose name is taken). Rust deletes the
- * staged file afterwards.
+ * The Rust side is `src-tauri/src/commands/file_save.rs`, behind the
+ * `save_to_downloads` command. It stages the bytes in the app's cache directory
+ * and calls `saveToDownloads` with `{ path, fileName }`; this copies the staged
+ * file into `MediaStore.Downloads` and resolves `{ fileName }`, the name the
+ * file has there (MediaStore renames a file whose name is taken, and reads the
+ * MIME type from the name's extension). Rust deletes the staged file afterwards.
  *
  * `MediaStore.Downloads` needs no permission for a file the app adds itself
  * (API 29+; the app's minimum is 30).
@@ -39,11 +39,10 @@ class FileSavePlugin(private val activity: Activity) : Plugin(activity) {
     val args = invoke.getArgs()
     val path = args.getString("path")
     val fileName = args.getString("fileName")
-    val mimeType = args.getString("mimeType")
     // A copy can take seconds for a large export; never on the caller's thread.
     Thread {
       try {
-        invoke.resolve(JSObject().put("fileName", copyToDownloads(File(path), fileName, mimeType)))
+        invoke.resolve(JSObject().put("fileName", copyToDownloads(File(path), fileName)))
       } catch (e: Exception) {
         Log.w(TAG, "could not save $fileName to Downloads", e)
         invoke.reject(e.message ?: e.toString())
@@ -51,11 +50,10 @@ class FileSavePlugin(private val activity: Activity) : Plugin(activity) {
     }.start()
   }
 
-  private fun copyToDownloads(source: File, fileName: String, mimeType: String): String {
+  private fun copyToDownloads(source: File, fileName: String): String {
     val resolver = activity.contentResolver
     val values = ContentValues().apply {
       put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-      if (mimeType.isNotBlank()) put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
       put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
       // Hidden from other apps until the bytes are all there.
       put(MediaStore.MediaColumns.IS_PENDING, 1)

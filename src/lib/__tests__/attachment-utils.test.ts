@@ -1,20 +1,20 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const mockReadAttachmentMeta = vi.hoisted(() => vi.fn())
 const mockReadAttachment = vi.hoisted(() => vi.fn())
+const mockSaveToDownloads = vi.hoisted(() => vi.fn())
 const mockNotifyError = vi.hoisted(() => vi.fn())
-const mockSaveToAndroidDownloads = vi.hoisted(() => vi.fn())
+const mockNotifySuccess = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', () => ({
-  commands: { readAttachmentMeta: mockReadAttachmentMeta },
+  commands: { readAttachmentMeta: mockReadAttachmentMeta, saveToDownloads: mockSaveToDownloads },
 }))
 vi.mock('@/lib/ipc-helpers', () => ({ readAttachment: mockReadAttachment }))
-vi.mock('@/lib/notify', () => ({ notify: { error: mockNotifyError } }))
-vi.mock('@/lib/platform/android-save', () => ({
-  saveToAndroidDownloads: mockSaveToAndroidDownloads,
+vi.mock('@/lib/notify', () => ({
+  notify: { error: mockNotifyError, success: mockNotifySuccess },
 }))
 
-import { formatSize, openAttachmentLink } from '@/lib/attachment-utils'
+import { formatSize, openAttachmentLink, saveBlob } from '@/lib/attachment-utils'
 import { t } from '@/lib/i18n'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
 
@@ -94,48 +94,150 @@ describe('attachment-utils', () => {
       expect(downloads).toEqual([])
       expect(mockNotifyError).toHaveBeenCalledWith(t('attachments.loadFailed'))
     })
+  })
 
-    // #6546 — the Android WebView handles no `blob:` download.
-    describe('on Android', () => {
-      beforeEach(() => {
-        vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
-          'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36',
-        )
-        __resetPlatformCacheForTests()
-        mockReadAttachmentMeta.mockResolvedValue({
-          status: 'ok',
-          data: { filename: 'paper.docx', mime_type: 'application/msword' },
+  describe('saveBlob', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+      vi.useRealTimers()
+      mockSaveToDownloads.mockReset()
+      mockNotifySuccess.mockReset()
+      __resetPlatformCacheForTests()
+    })
+
+    function onMac(): void {
+      vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel')
+      __resetPlatformCacheForTests()
+    }
+
+    function onAndroid(): void {
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+        'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36',
+      )
+      __resetPlatformCacheForTests()
+    }
+
+    it('clicks a temporary anchor while attached, detaches it, and revokes the URL a tick later', async () => {
+      vi.useFakeTimers()
+      const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:agaric/x')
+      const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+      // The anchor is detached again after the click, so `attached` is read inside it.
+      const clicks: { tag: string; href: string; download: string; attached: boolean }[] = []
+      vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+        this: HTMLAnchorElement,
+      ) {
+        clicks.push({
+          tag: this.tagName,
+          href: this.getAttribute('href') ?? '',
+          download: this.getAttribute('download') ?? '',
+          attached: document.body.contains(this),
         })
-        mockReadAttachment.mockResolvedValue(new Uint8Array([1]))
+      })
+      const blob = new Blob(['zip bytes'])
+
+      await saveBlob(blob, 'agaric-export.zip')
+
+      expect(createObjectURL).toHaveBeenCalledWith(blob)
+      expect(clicks).toEqual([
+        { tag: 'A', href: 'blob:agaric/x', download: 'agaric-export.zip', attached: true },
+      ])
+      expect(document.body.querySelector('a')).toBeNull()
+      expect(revokeObjectURL).not.toHaveBeenCalled()
+      vi.runAllTimers()
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:agaric/x')
+      expect(mockSaveToDownloads).not.toHaveBeenCalled()
+    })
+
+    // #6652: WKWebView cancels the anchor's download, so macOS saves through the backend.
+    it('on macOS hands the bytes to the backend and clicks no anchor', async () => {
+      onMac()
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+      mockSaveToDownloads.mockResolvedValue({ status: 'ok', data: 'Notes.md' })
+
+      await saveBlob(new Blob(['# Notes\n'], { type: 'text/markdown' }), 'Notes.md')
+
+      expect(mockSaveToDownloads).toHaveBeenCalledWith('Notes.md', btoa('# Notes\n'))
+      expect(click).not.toHaveBeenCalled()
+      // The caller toasts on macOS; only Android's save says where the file went.
+      expect(mockNotifySuccess).not.toHaveBeenCalled()
+    })
+
+    // #6546: the Android WebView handles no `blob:` download, and shows none of
+    // its own, so the save says where the file went.
+    it('on Android hands the bytes to the backend, clicks no anchor, and names the file as the OS saved it', async () => {
+      onAndroid()
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+      // The OS renames a file whose name is taken.
+      mockSaveToDownloads.mockResolvedValue({ status: 'ok', data: 'Notes (1).md' })
+
+      await saveBlob(new Blob(['# Notes\n'], { type: 'text/markdown' }), 'Notes.md')
+
+      expect(mockSaveToDownloads).toHaveBeenCalledWith('Notes.md', btoa('# Notes\n'))
+      expect(click).not.toHaveBeenCalled()
+      expect(mockNotifySuccess).toHaveBeenCalledTimes(1)
+      expect(mockNotifySuccess).toHaveBeenCalledWith(
+        t('data.savedToDownloads', { fileName: 'Notes (1).md' }),
+      )
+    })
+
+    it('on Android rejects and toasts no success when the backend could not save', async () => {
+      onAndroid()
+      const failure = { kind: 'Io', message: 'no space left' }
+      mockSaveToDownloads.mockResolvedValue({ status: 'error', error: failure })
+
+      await expect(saveBlob(new Blob(['x']), 'x.zip')).rejects.toBe(failure)
+      expect(mockNotifySuccess).not.toHaveBeenCalled()
+    })
+
+    it('on Android a failed attachment save is toasted', async () => {
+      onAndroid()
+      mockReadAttachmentMeta.mockResolvedValue({
+        status: 'ok',
+        data: { filename: 'paper.docx', mime_type: 'application/msword' },
+      })
+      mockReadAttachment.mockResolvedValue(new Uint8Array([37, 80]))
+      mockSaveToDownloads.mockResolvedValue({
+        status: 'error',
+        error: { kind: 'Io', message: 'no space left' },
       })
 
-      afterEach(() => {
-        mockSaveToAndroidDownloads.mockReset()
-        __resetPlatformCacheForTests()
+      await openAttachmentLink('01ATT')
+
+      expect(mockSaveToDownloads).toHaveBeenCalledWith('paper.docx', btoa('%P'))
+      expect(mockNotifyError).toHaveBeenCalledWith(t('attachments.loadFailed'))
+      expect(mockNotifySuccess).not.toHaveBeenCalled()
+      mockNotifyError.mockReset()
+      mockReadAttachmentMeta.mockReset()
+      mockReadAttachment.mockReset()
+    })
+
+    it('on macOS rejects when the backend could not save', async () => {
+      onMac()
+      const failure = { kind: 'Io', message: 'disk full' }
+      mockSaveToDownloads.mockResolvedValue({ status: 'error', error: failure })
+
+      await expect(saveBlob(new Blob(['x']), 'x.md')).rejects.toBe(failure)
+    })
+
+    it('on macOS a failed attachment save is toasted', async () => {
+      onMac()
+      mockReadAttachmentMeta.mockResolvedValue({
+        status: 'ok',
+        data: { filename: 'paper.pdf', mime_type: 'application/pdf' },
+      })
+      mockReadAttachment.mockResolvedValue(new Uint8Array([37, 80]))
+      mockSaveToDownloads.mockResolvedValue({
+        status: 'error',
+        error: { kind: 'Io', message: 'disk full' },
       })
 
-      it('saves the attachment to Downloads under its stored name and type, with no anchor', async () => {
-        const downloads = captureDownloads()
-        mockSaveToAndroidDownloads.mockResolvedValue(undefined)
+      await openAttachmentLink('01ATT')
 
-        await openAttachmentLink('01ATT')
-
-        expect(mockSaveToAndroidDownloads).toHaveBeenCalledTimes(1)
-        const [blob, name] = mockSaveToAndroidDownloads.mock.calls[0] as [Blob, string]
-        expect(name).toBe('paper.docx')
-        expect(blob.type).toBe('application/msword')
-        expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array([1]))
-        expect(downloads).toEqual([])
-        expect(mockNotifyError).not.toHaveBeenCalled()
-      })
-
-      it('toasts an error when the save fails', async () => {
-        mockSaveToAndroidDownloads.mockRejectedValue({ kind: 'io', message: 'no space left' })
-
-        await openAttachmentLink('01ATT')
-
-        expect(mockNotifyError).toHaveBeenCalledWith(t('attachments.loadFailed'))
-      })
+      expect(mockSaveToDownloads).toHaveBeenCalledWith('paper.pdf', btoa('%P'))
+      expect(mockNotifyError).toHaveBeenCalledWith(t('attachments.loadFailed'))
+      mockNotifyError.mockReset()
+      mockReadAttachmentMeta.mockReset()
+      mockReadAttachment.mockReset()
     })
   })
 })

@@ -288,8 +288,6 @@ macro_rules! agaric_commands {
             $crate::commands::speech::get_speech_engine_available,
             $crate::commands::speech::speak_text,
             $crate::commands::speech::stop_speaking,
-            // Android's file save (#6546)
-            $crate::commands::file_save::save_file_to_downloads::<tauri::Wry>,
             // Android's check for a newer release (#6546)
             $crate::commands::release_check::check_latest_release::<tauri::Wry>,
             // Logseq/Markdown import (#660)
@@ -346,6 +344,8 @@ macro_rules! agaric_commands {
             // Bug report
             $crate::commands::bug_report::collect_bug_report_metadata::<tauri::Wry>,
             $crate::commands::bug_report::read_logs_for_report::<tauri::Wry>,
+            // File saves on macOS and Android, where the webview saves none (#6652, #6546)
+            $crate::commands::downloads::save_to_downloads::<tauri::Wry>,
             // Reconciliation oracle against the live vault (#4886)
             $crate::commands::reconciliation::compute_reconciliation_report,
             $crate::commands::reconciliation::rebuild_derived_state,
@@ -2969,7 +2969,7 @@ fn build_tauri_builder() -> tauri::Builder<tauri::Wry> {
         // the state the speech commands read on every build.
         .plugin(commands::speech::plugin())
         // Android's file save (#6546): the `MediaStore` plugin, and the state
-        // the save command reads on every build.
+        // `save_to_downloads` reads on every build.
         .plugin(commands::file_save::plugin())
         // Android's check for a newer release (#6546): the HTTPS plugin, and
         // the state the check command reads on every build.

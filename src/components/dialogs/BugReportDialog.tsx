@@ -10,7 +10,7 @@
  *
  * Flow (PEND-bug-report-zip-affordance):
  *   - logs ON:  user clicks t('bugReport.downloadZip') (readLogsForReport →
- *               buildReportZip → downloadBlob → success toast naming the
+ *               buildReportZip → saveBlob → success toast naming the
  *               file), then clicks t('bugReport.openGitHubIssue') (openUrl). The
  *               dialog stays open so the user can re-download if the OS
  *               save dialog is dismissed.
@@ -44,6 +44,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { unwrap } from '@/lib/app-error'
+import { saveBlob } from '@/lib/attachment-utils'
 import { commands } from '@/lib/bindings'
 import type { BugReport, LogFileEntry, ReconciliationReport } from '@/lib/bindings'
 import {
@@ -55,7 +56,6 @@ import {
 import { bugReportZipFilename, buildReportZip } from '@/lib/bug-report-zip'
 import { writeText } from '@/lib/clipboard'
 import { BUG_TRACKER } from '@/lib/config'
-import { downloadBlob } from '@/lib/export-graph'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
@@ -250,7 +250,7 @@ export function BugReportDialog({
       // #840: thread the redact toggle into the ZIP composer so metadata.json
       // scrubs device_id to the same sentinel the logs use when redaction is on.
       const blob = await buildReportZip(entries, md, r)
-      await downloadBlob(blob, zipFileName)
+      await saveBlob(blob, zipFileName)
       return true
     },
     module: MODULE,
@@ -263,7 +263,7 @@ export function BugReportDialog({
   })
 
   // PEND-bug-report-zip-affordance: t('bugReport.downloadZip') footer handler.
-  // readLogsForReport → buildReportZip → downloadBlob, then a toast
+  // readLogsForReport → buildReportZip → saveBlob, then a toast
   // naming the saved file. The dialog stays open so the user can then
   // click t('bugReport.openGitHubIssue') and drag the file in.
   const handleDownloadZip = useCallback(async () => {

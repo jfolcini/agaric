@@ -6,8 +6,6 @@ import { ATTACHMENT_REF_SCHEME, parseAttachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
-import { isAndroid } from '@/lib/platform'
-import { saveToAndroidDownloads } from '@/lib/platform/android-save'
 import { listAllPropertyDefs } from '@/lib/property-save-utils'
 import { requireActiveScope } from '@/lib/space-scope'
 import { SPACE_FILE_PATH, type SpaceFile, pathTitle } from '@/lib/vault-import'
@@ -716,24 +714,4 @@ export async function resolveAttachmentRefsForCopy(md: string): Promise<string> 
 export async function pageMarkdownForCopy(pageId: string): Promise<string> {
   await flushActiveDraft()
   return resolveAttachmentRefsForCopy(unwrap(await commands.exportPageMarkdown(pageId)))
-}
-
-/**
- * Save a Blob as a file: a browser download, or on Android, whose WebView
- * handles no `blob:` download, a file in the Downloads folder (#6546). Rejects
- * when Android saved nothing.
- */
-export async function downloadBlob(blob: Blob, filename: string): Promise<void> {
-  if (isAndroid()) {
-    await saveToAndroidDownloads(blob, filename)
-    return
-  }
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.append(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
 }

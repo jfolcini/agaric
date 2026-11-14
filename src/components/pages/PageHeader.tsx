@@ -35,9 +35,10 @@ import { spaceMoveFailureMessage, useSpaceMove } from '@/hooks/useSpaceMove'
 import { refreshAfterUndoRedo } from '@/hooks/useUndoShortcuts'
 import { announce } from '@/lib/announcer'
 import { unwrap, validationCode } from '@/lib/app-error'
+import { saveBlob } from '@/lib/attachment-utils'
 import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
-import { downloadBlob, nameToFlatSegment, pageMarkdownForCopy } from '@/lib/export-graph'
+import { nameToFlatSegment, pageMarkdownForCopy } from '@/lib/export-graph'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
@@ -242,7 +243,7 @@ export function PageHeader({
     const fileName = `${nameToFlatSegment(title.slice(0, read))}.md`
     try {
       const markdown = await pageMarkdownForCopy(pageId)
-      await downloadBlob(new Blob([markdown], { type: 'text/markdown' }), fileName)
+      await saveBlob(new Blob([markdown], { type: 'text/markdown' }), fileName)
       // Android's save has already said where the file went, under the name the OS gave it.
       if (!isAndroid()) notify.success(t('pageHeader.markdownFileSaved', { fileName }))
     } catch (err) {
@@ -250,6 +251,15 @@ export function PageHeader({
       notify.error(t('pageHeader.markdownFileSaveFailed'))
     }
   }, [pageId, title, t])
+
+  const handlePrint = useCallback(() => {
+    setKebabOpen(false)
+    // On macOS Tauri replaces `window.print` with a command call, whose promise can reject.
+    Promise.resolve(window.print() as unknown).catch((err: unknown) => {
+      logger.warn('PageHeader', 'print failed', { pageId }, err)
+      notify.error(t('pageHeader.printFailed'))
+    })
+  }, [pageId, t])
 
   // The link `useDeepLinkRouter` opens, for a calendar entry or a task manager.
   const handleCopyAppLink = useCallback(async () => {
@@ -643,6 +653,8 @@ export function PageHeader({
               onToggleJournalTemplate={handleToggleJournalTemplate}
               onExport={handleExport}
               onSaveMarkdownFile={handleSaveMarkdownFile}
+              // Not on Android: printing there is out of scope (#6558).
+              onPrint={isAndroid() ? undefined : handlePrint}
               onCopyAppLink={handleCopyAppLink}
               onEditSource={handleEditSource}
               editMode={editMode}

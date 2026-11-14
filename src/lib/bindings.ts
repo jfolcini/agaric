@@ -783,11 +783,6 @@ export const commands = {
 	/**  Cuts off the utterance the backend engine is speaking, if any. */
 	stopSpeaking: () => typedError<null, AppError>(__TAURI_INVOKE("stop_speaking")),
 	/**
-	 *  Saves `bytes` to the phone's Downloads folder as `file_name` and returns the
-	 *  name the file has there. Android only: every other build refuses.
-	 */
-	saveFileToDownloads: (fileName: string, mimeType: string, bytes: Base64Bytes) => typedError<string, AppError>(__TAURI_INVOKE("save_file_to_downloads", { fileName, mimeType, bytes })),
-	/**
 	 *  The version of the newest release when it is newer than this build, else
 	 *  `None`. Android only: every other build refuses, and updates through the
 	 *  Tauri updater.
@@ -1024,6 +1019,14 @@ export const commands = {
 	 *  Delegates to [`read_logs_for_report_inner`].
 	 */
 	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppError>(__TAURI_INVOKE("read_logs_for_report", { redact })),
+	/**
+	 *  Tauri command: save `bytes` as `file_name` in the user's Downloads folder,
+	 *  and return the name the file has there, which differs when `file_name` was
+	 *  taken. Delegates to [`save_to_downloads_inner`], or on Android, where the
+	 *  folder is reached only through `MediaStore`, to
+	 *  [`save_through`](super::file_save::save_through) (#6546).
+	 */
+	saveToDownloads: (fileName: string, bytes: Base64Bytes) => typedError<string, AppError>(__TAURI_INVOKE("save_to_downloads", { fileName, bytes })),
 	/**
 	 *  Tauri command: let the materializer settle, rebuild every derived artefact
 	 *  from base tables, compare `blocks` with the Loro engine, and report where

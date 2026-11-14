@@ -20,6 +20,7 @@ const mockSetProperty = vi.fn().mockResolvedValue({})
 // the sanctioned raw-invoke seam). `vi.hoisted` so the `vi.mock` factory
 // below (itself hoisted to the top of the file) can reference it.
 const mockedReadAttachment = vi.hoisted(() => vi.fn())
+const mockSaveToDownloads = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/lib/ipc-helpers')>()
@@ -35,6 +36,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     ...actual,
     commands: {
       ...actual.commands,
+      saveToDownloads: mockSaveToDownloads,
       setProperty: (...args: unknown[]) =>
         mockSetProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
@@ -45,12 +47,6 @@ import { AttachmentRenderer } from '@/components/attachments/AttachmentRenderer'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
-
-// Android's save (#6546), reached only under an Android user agent.
-const mockSaveToAndroidDownloads = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/platform/android-save', () => ({
-  saveToAndroidDownloads: mockSaveToAndroidDownloads,
-}))
 
 const mockedSetProperty = mockSetProperty
 
@@ -439,68 +435,64 @@ describe('AttachmentRenderer', () => {
     }
   })
 
-  // #6546 — the Android WebView handles no `blob:` download: the chip and the
-  // Markdown preview's Download save to the phone's Downloads folder.
-  describe('on Android (#6546)', () => {
-    let userAgent: ReturnType<typeof vi.spyOn>
-
+  // #6652: macOS saves through the backend, and a save it refuses is not silent.
+  describe('on macOS, a save the backend refuses', () => {
+    let platform: { mockRestore: () => void }
     beforeEach(() => {
-      userAgent = vi
-        .spyOn(navigator, 'userAgent', 'get')
-        .mockReturnValue(
-          'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
-        )
+      platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel')
       __resetPlatformCacheForTests()
+      mockSaveToDownloads.mockResolvedValue({
+        status: 'error',
+        error: { kind: 'Io', message: 'disk full' },
+      })
     })
-
     afterEach(() => {
-      userAgent.mockRestore()
-      mockSaveToAndroidDownloads.mockReset()
+      platform.mockRestore()
       __resetPlatformCacheForTests()
+      mockSaveToDownloads.mockReset()
     })
 
-    const docx = makeAttachment({
-      id: 'att-docx',
-      filename: 'paper.docx',
-      mime_type: 'application/msword',
-    })
-    const notes = makeAttachment({ id: 'att-md', filename: 'notes.md', mime_type: 'text/markdown' })
-
-    it('the file chip saves the file under its name and type, with no anchor download', async () => {
+    it('is toasted from the file chip', async () => {
       mockedReadAttachment.mockResolvedValue(new Uint8Array([1, 2, 3]))
-      mockSaveToAndroidDownloads.mockResolvedValue(undefined)
-      render(<AttachmentRenderer {...baseProps} attachments={[docx]} />)
+      render(
+        <AttachmentRenderer
+          {...baseProps}
+          attachments={[
+            makeAttachment({
+              id: 'att-zip',
+              filename: 'bundle.zip',
+              mime_type: 'application/zip',
+            }),
+          ]}
+        />,
+      )
 
-      fireEvent.click(screen.getByRole('button', { name: 'Open file paper.docx' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Open file bundle.zip' }))
 
-      await waitFor(() => expect(mockSaveToAndroidDownloads).toHaveBeenCalledTimes(1))
-      const [blob, name] = mockSaveToAndroidDownloads.mock.calls[0] as [Blob, string]
-      expect(name).toBe('paper.docx')
-      expect(blob.type).toBe('application/msword')
-      expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]))
-      expect(createSpy).not.toHaveBeenCalled()
-      expect(toast.error).not.toHaveBeenCalled()
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('attachments.loadFailed'))
+      })
+      expect(mockSaveToDownloads).toHaveBeenCalledWith('bundle.zip', 'AQID')
     })
 
-    it('the file chip toasts an error when the save fails', async () => {
-      mockedReadAttachment.mockResolvedValue(new Uint8Array([1]))
-      mockSaveToAndroidDownloads.mockRejectedValue({ kind: 'io', message: 'no space left' })
-      render(<AttachmentRenderer {...baseProps} attachments={[docx]} />)
-
-      fireEvent.click(screen.getByRole('button', { name: 'Open file paper.docx' }))
-
-      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(t('attachments.loadFailed')))
-    })
-
-    it("the Markdown preview's Download toasts an error when the save fails", async () => {
-      mockedReadAttachment.mockResolvedValue(new TextEncoder().encode('# Notes\n'))
-      mockSaveToAndroidDownloads.mockRejectedValue({ kind: 'io', message: 'no space left' })
-      render(<AttachmentRenderer {...baseProps} attachments={[notes]} />)
+    it('is toasted from the Markdown preview’s download button', async () => {
+      mockedReadAttachment.mockResolvedValue(new TextEncoder().encode('# T\n'))
+      render(
+        <AttachmentRenderer
+          {...baseProps}
+          attachments={[
+            makeAttachment({ id: 'att-md', filename: 'notes.md', mime_type: 'text/markdown' }),
+          ]}
+        />,
+      )
       await screen.findByTestId('markdown-attachment-body')
 
       fireEvent.click(screen.getByRole('button', { name: /Download notes\.md/ }))
 
-      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(t('attachments.loadFailed')))
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('attachments.loadFailed'))
+      })
+      expect(mockSaveToDownloads).toHaveBeenCalledWith('notes.md', btoa('# T\n'))
     })
   })
 

@@ -776,9 +776,8 @@ mod tests {
         )
         .await
         .unwrap();
-        // Two pages, because boot replays the newest op (the pass's watermark
-        // withholds it): only the older page can show a miss. Each has a child,
-        // which reaches the engine only through its page's hydrate.
+        // Each page has a child, which reaches the engine only through its
+        // page's hydrate.
         let mut space_less = Vec::new();
         for title in ["Legacy A", "Legacy B"] {
             let page = agaric_core::ulid::BlockId::new().to_string();

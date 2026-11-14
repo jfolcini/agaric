@@ -134,15 +134,6 @@ export const systemHandlers = {
   },
   stop_speaking: returnNull,
 
-  // Android's file save (#6546): a spec with an Android user agent reads what was saved from
-  // `__mockSavedFiles`. The name comes back unchanged, as when no file of that name exists.
-  save_file_to_downloads: (args) => {
-    const { fileName, mimeType, bytes } = args as Record<string, unknown>
-    const scope = globalThis as { __mockSavedFiles?: unknown[] }
-    scope.__mockSavedFiles = [...(scope.__mockSavedFiles ?? []), { fileName, mimeType, bytes }]
-    return String(fileName)
-  },
-
   // ---------------------------------------------------------------------------
   // Bug report
   // ---------------------------------------------------------------------------
@@ -174,6 +165,15 @@ export const systemHandlers = {
   // #6488 — the mock holds no derived cache to fall behind, so a rebuild has
   // nothing to rewrite and leaves the same clean report.
   rebuild_derived_state: cleanReport,
+
+  // #6652, #6546 — the macOS and Android file save. The mock has no disk: a spec reads what
+  // was saved from `__mockSavedFiles`, and the name comes back unchanged, as when it is free.
+  save_to_downloads: (args) => {
+    const { fileName, bytes } = args as Record<string, unknown>
+    const scope = globalThis as { __mockSavedFiles?: unknown[] }
+    scope.__mockSavedFiles = [...(scope.__mockSavedFiles ?? []), { fileName, bytes }]
+    return String(fileName)
+  },
 
   // #5363 — the Markdown mirror. The mock has no disk: the folder is only the
   // `app_settings` rows, so nothing is validated, written, ever diverges or
@@ -228,11 +228,11 @@ export const systemHandlers = {
   | 'get_speech_engine_available'
   | 'speak_text'
   | 'stop_speaking'
-  | 'save_file_to_downloads'
   | 'collect_bug_report_metadata'
   | 'read_logs_for_report'
   | 'compute_reconciliation_report'
   | 'rebuild_derived_state'
+  | 'save_to_downloads'
   | 'pick_mirror_folder'
   | 'set_mirror_folder'
   | 'set_mirror_read_back'

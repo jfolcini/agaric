@@ -47,6 +47,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 
 import { scrollParentY } from '@/lib/scroll-parent'
 
@@ -123,6 +124,8 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
    * notified individually, so a single block's flip re-renders only that row.
    */
   const offscreenIdsRef = useRef<Set<string>>(new Set())
+  /** True between `beforeprint` and `afterprint`: no row is a placeholder then. */
+  const printingRef = useRef(false)
   /**
    * The scroll container the observer uses as its root — the nearest VERTICAL
    * scroller above a mounted row, or `null` for the viewport.
@@ -372,9 +375,29 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
 
   const isOffscreen = useCallback(
     (id: string, startsOffscreen = false) =>
-      offscreenIdsRef.current.has(id) || (startsOffscreen && !elementsByIdRef.current.has(id)),
+      !printingRef.current &&
+      (offscreenIdsRef.current.has(id) || (startsOffscreen && !elementsByIdRef.current.has(id))),
     [],
   )
+
+  // Paper has no viewport, so every row prints in full (#6558). The rows must
+  // be in the DOM when `beforeprint` returns, hence `flushSync`.
+  useEffect(() => {
+    const setPrinting = (printing: boolean) => () => {
+      printingRef.current = printing
+      flushSync(() => {
+        for (const subs of subscribersRef.current.values()) for (const cb of subs) cb()
+      })
+    }
+    const start = setPrinting(true)
+    const end = setPrinting(false)
+    window.addEventListener('beforeprint', start)
+    window.addEventListener('afterprint', end)
+    return () => {
+      window.removeEventListener('beforeprint', start)
+      window.removeEventListener('afterprint', end)
+    }
+  }, [])
 
   const getHeight = useCallback((id: string) => measuredHeights.get(id), [])
 

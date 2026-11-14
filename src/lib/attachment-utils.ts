@@ -1,11 +1,11 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { blobToBase64 } from '@/lib/file-utils'
 import { t } from '@/lib/i18n'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { isAndroid } from '@/lib/platform'
-import { saveToAndroidDownloads } from '@/lib/platform/android-save'
+import { isAndroid, isMac } from '@/lib/platform'
 
 /** Format bytes into a human-readable size string. */
 export function formatSize(bytes: number): string {
@@ -27,32 +27,42 @@ export function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
 }
 
 /**
- * Save `bytes` as `filename`: a browser download via a transient anchor, or on
- * Android, whose WebView handles no `blob:` download, a file in the Downloads
- * folder (#6546). Rejects when Android saved nothing.
+ * Save `blob` as `filename` in the user's Downloads folder: the one path every
+ * file save takes. Resolves once the save is handed over, rejects when it
+ * failed, so a caller claims success only after it.
+ *
+ * - Android and macOS write through the backend. The Android WebView handles
+ *   no `blob:` download (#6546), and WKWebView cancels a download no handler
+ *   claims, of which the app registers none (#6652).
+ * - Android shows no download of its own, so the save says where the file
+ *   went, under the name the OS gave it.
+ * - Elsewhere the webview downloads a transient anchor's `blob:` URL.
  */
-export async function triggerDownload(
-  bytes: Uint8Array,
-  mimeType: string,
-  filename: string,
-): Promise<void> {
-  if (isAndroid()) {
-    await saveToAndroidDownloads(bytesToBlob(bytes, mimeType), filename)
+export async function saveBlob(blob: Blob, filename: string): Promise<void> {
+  if (isAndroid() || isMac()) {
+    const savedAs = unwrap(await commands.saveToDownloads(filename, await blobToBase64(blob)))
+    if (isAndroid()) notify.success(t('data.savedToDownloads', { fileName: savedAs }))
     return
   }
-  const url = URL.createObjectURL(bytesToBlob(bytes, mimeType))
+  const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = filename
   document.body.append(anchor)
   anchor.click()
   anchor.remove()
-  // #2275 — defer the revoke to a later tick. On WebKitGTK (Linux Tauri) and
-  // WKWebView (macOS Tauri) the download can start asynchronously after
-  // `click()`, so revoking the object URL on the next synchronous line races
-  // the fetch and can abort the download. A 0ms timeout lets the browser pick
-  // up the URL before it is freed — the standard blob-download pattern.
+  // #2275: WebKitGTK can start the download after `click()` returns, so a
+  // revoke on the next line races the fetch and can abort it.
   setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+/** {@link saveBlob} for raw bytes. */
+export function triggerDownload(
+  bytes: Uint8Array,
+  mimeType: string,
+  filename: string,
+): Promise<void> {
+  return saveBlob(bytesToBlob(bytes, mimeType), filename)
 }
 
 /**

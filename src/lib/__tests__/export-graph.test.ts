@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import JSZip from 'jszip'
-import { toast } from 'sonner'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makePageHeading } from '@/__tests__/fixtures'
 import {
@@ -10,16 +9,13 @@ import {
   type TypedInvokeHandlers,
 } from '@/__tests__/helpers/invoke'
 import {
-  downloadBlob,
   exportAllSpacesAsZip,
   exportGraphAsZip,
   pageMarkdownForCopy,
   resolveAttachmentRefsForCopy,
   sanitizeSegment,
 } from '@/lib/export-graph'
-import { t } from '@/lib/i18n'
 import { scanAttachmentRefs } from '@/lib/import-attachments'
-import { __resetPlatformCacheForTests } from '@/lib/platform'
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -1568,114 +1564,6 @@ describe('resolveAttachmentRefsForCopy (#2967)', () => {
     expect(result).toContain('![shot](shot.png)')
     expect(result).toContain('- [report.pdf](report.pdf)')
     expect(result).not.toContain('attachment:')
-  })
-})
-
-describe('downloadBlob', () => {
-  it('clicks a temporary anchor while attached, then detaches it and revokes the object URL', async () => {
-    // The last mile of every export: without this the ZIP is built and thrown
-    // away. Each step is load-bearing — a click on a DETACHED anchor is a
-    // no-op in Chromium, a non-anchor element has no `download` behavior at
-    // all, and a leaked object URL pins the whole blob in memory for the
-    // lifetime of the document.
-    const objectUrl = 'blob:agaric/test-object-url'
-    // Spy on the two statics INDIVIDUALLY rather than replacing the `URL`
-    // global. Swapping `URL` wholesale would take the constructor with it, so
-    // anything needing real URL parsing in this window (happy-dom resolving
-    // `a.href`, or a future assertion) would throw.
-    //
-    // `vi.spyOn` + `mockRestore` also restores symmetrically, which a plain
-    // assign-and-restore does not: happy-dom provides these two as INHERITED
-    // properties (checked — `Object.getOwnPropertyDescriptor(URL,
-    // 'createObjectURL')` is `undefined` while `typeof` is `'function'`), so
-    // writing the captured value back would leave a permanent OWN property
-    // shadowing the prototype's.
-    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue(objectUrl)
-    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
-
-    // Snapshot the anchor's state AT CLICK TIME — afterwards it is detached
-    // again, so `attached` can only be observed from inside the click.
-    const clicks: { tag: string; href: string; download: string; attached: boolean }[] = []
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
-      this: HTMLAnchorElement,
-    ) {
-      clicks.push({
-        tag: this.tagName,
-        href: this.getAttribute('href') ?? '',
-        download: this.getAttribute('download') ?? '',
-        attached: document.body.contains(this),
-      })
-    })
-
-    try {
-      const blob = new Blob(['zip bytes'])
-
-      await downloadBlob(blob, 'agaric-export.zip')
-
-      expect(createObjectURL).toHaveBeenCalledWith(blob)
-      expect(clicks).toEqual([
-        { tag: 'A', href: objectUrl, download: 'agaric-export.zip', attached: true },
-      ])
-      expect(document.body.querySelector('a')).toBeNull()
-      expect(revokeObjectURL).toHaveBeenCalledWith(objectUrl)
-    } finally {
-      clickSpy.mockRestore()
-      createObjectURL.mockRestore()
-      revokeObjectURL.mockRestore()
-    }
-  })
-
-  // #6546 — the Android WebView handles no `blob:` download, so the anchor
-  // would write nothing: the bytes go to the save command instead.
-  describe('on Android', () => {
-    let clickSpy: ReturnType<typeof vi.spyOn>
-
-    beforeEach(() => {
-      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
-        'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36',
-      )
-      __resetPlatformCacheForTests()
-      clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
-    })
-
-    afterEach(() => {
-      vi.restoreAllMocks()
-      __resetPlatformCacheForTests()
-    })
-
-    it('saves through the save command and clicks no anchor', async () => {
-      const saves: unknown[] = []
-      mockedInvoke.mockImplementation(
-        mockInvokeCommands({
-          save_file_to_downloads: (args) => {
-            saves.push(args)
-            return 'diagram.svg'
-          },
-        }),
-      )
-
-      await downloadBlob(new Blob(['<svg/>'], { type: 'image/svg+xml' }), 'diagram.svg')
-
-      expect(saves).toEqual([
-        { fileName: 'diagram.svg', mimeType: 'image/svg+xml', bytes: 'PHN2Zy8+' },
-      ])
-      expect(clickSpy).not.toHaveBeenCalled()
-      expect(toast.success).toHaveBeenCalledWith(
-        t('data.savedToDownloads', { fileName: 'diagram.svg' }),
-      )
-    })
-
-    it('rejects when the save fails, so a caller toasts no success', async () => {
-      mockedInvoke.mockImplementation(
-        mockInvokeCommands({
-          save_file_to_downloads: () => Promise.reject({ kind: 'io', message: 'no space left' }),
-        }),
-      )
-
-      await expect(downloadBlob(new Blob(['x']), 'a.zip')).rejects.toMatchObject({ kind: 'io' })
-      expect(clickSpy).not.toHaveBeenCalled()
-      expect(toast.success).not.toHaveBeenCalled()
-    })
   })
 })
 

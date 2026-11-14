@@ -16,7 +16,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { type TypedInvokeHandlers, stubInvoke } from '@/__tests__/helpers/invoke'
@@ -34,7 +34,10 @@ const mockDownloadBlob = vi.fn()
 vi.mock('@/lib/export-graph', () => ({
   exportGraphAsZip: (...args: unknown[]) => mockExportGraphAsZip(...args),
   exportAllSpacesAsZip: (...args: unknown[]) => mockExportAllSpacesAsZip(...args),
-  downloadBlob: (...args: unknown[]) => mockDownloadBlob(...args),
+}))
+vi.mock('@/lib/attachment-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/attachment-utils')>()),
+  saveBlob: (...args: unknown[]) => mockDownloadBlob(...args),
 }))
 
 const mockImportMarkdown = vi.fn()
@@ -477,63 +480,74 @@ describe('DataTab', () => {
     })
   })
 
-  // #6546 — a save that fails (Android's Downloads refusing the file) must not
-  // read as a finished export.
-  it('toasts an error and no success when the file is not saved (#6546)', async () => {
-    const user = userEvent.setup()
-    mockExportGraphAsZip.mockResolvedValueOnce({
-      blob: new Blob(['zip'], { type: 'application/zip' }),
-      skippedPages: 0,
-      skippedAttachments: 0,
+  // #6546 — Android saves through the backend, so the rows work there. The save
+  // itself says where the file went, so the export adds no second toast.
+  describe('on Android (#6546)', () => {
+    let userAgent: ReturnType<typeof vi.spyOn>
+
+    beforeEach(() => {
+      userAgent = vi
+        .spyOn(navigator, 'userAgent', 'get')
+        .mockReturnValue(
+          'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+        )
+      __resetPlatformCacheForTests()
     })
-    mockDownloadBlob.mockRejectedValueOnce(new Error('no space left'))
 
-    render(<DataTab />)
-    await user.click(screen.getByRole('button', { name: t('data.exportButton') }))
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(t('data.exportFailed'))
-    })
-    expect(toast.success).not.toHaveBeenCalled()
-  })
-
-  it('toasts an error and no success when the all-spaces file is not saved (#6546)', async () => {
-    const user = userEvent.setup()
-    mockExportAllSpacesAsZip.mockResolvedValueOnce({
-      blob: new Blob(['zip'], { type: 'application/zip' }),
-      spaceCount: 2,
-      skippedPages: 0,
-      skippedAttachments: 0,
-    })
-    mockDownloadBlob.mockRejectedValueOnce(new Error('no space left'))
-
-    render(<DataTab />)
-    await user.click(screen.getByRole('button', { name: t('data.exportAllSpacesButton') }))
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(t('data.exportAllSpacesFailed'))
-    })
-    expect(toast.success).not.toHaveBeenCalled()
-  })
-
-  // #6546 — Android saves through the save command, so the rows work there too.
-  it('keeps both export buttons enabled on Android (#6546)', () => {
-    const userAgent = vi
-      .spyOn(navigator, 'userAgent', 'get')
-      .mockReturnValue(
-        'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
-      )
-    __resetPlatformCacheForTests()
-    try {
-      render(<DataTab />)
-
-      for (const name of [t('data.exportButton'), t('data.exportAllSpacesButton')]) {
-        expect(screen.getByRole('button', { name })).toBeEnabled()
-      }
-    } finally {
+    afterEach(() => {
       userAgent.mockRestore()
       __resetPlatformCacheForTests()
-    }
+    })
+
+    it.each([
+      [
+        t('data.exportButton'),
+        () =>
+          mockExportGraphAsZip.mockResolvedValueOnce({
+            blob: new Blob(['zip']),
+            skippedPages: 0,
+            skippedAttachments: 0,
+          }),
+      ],
+      [
+        t('data.exportAllSpacesButton'),
+        () =>
+          mockExportAllSpacesAsZip.mockResolvedValueOnce({
+            blob: new Blob(['zip']),
+            spaceCount: 2,
+            skippedPages: 0,
+            skippedAttachments: 0,
+          }),
+      ],
+    ])('%s is enabled, saves, and leaves the success toast to the save', async (name, build) => {
+      const user = userEvent.setup()
+      build()
+      render(<DataTab />)
+      const button = screen.getByRole('button', { name })
+      expect(button).toBeEnabled()
+
+      await user.click(button)
+
+      await waitFor(() => expect(mockDownloadBlob).toHaveBeenCalledTimes(1))
+      // The button is enabled again once the handler, toast and all, has run.
+      await waitFor(() => expect(screen.getByRole('button', { name })).toBeEnabled())
+      expect(toast.success).not.toHaveBeenCalled()
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    it('still warns when an export skipped pages', async () => {
+      const user = userEvent.setup()
+      mockExportGraphAsZip.mockResolvedValueOnce({
+        blob: new Blob(['zip']),
+        skippedPages: 2,
+        skippedAttachments: 0,
+      })
+      render(<DataTab />)
+
+      await user.click(screen.getByRole('button', { name: t('data.exportButton') }))
+
+      await waitFor(() => expect(toast.warning).toHaveBeenCalledTimes(1))
+    })
   })
 
   it('shows error toast on export failure', async () => {
@@ -548,6 +562,29 @@ describe('DataTab', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Export failed')
     })
+  })
+
+  // #6652: the success toast waits for the save, so a save that failed never shows it.
+  it.each([
+    ['Export this space', mockExportGraphAsZip],
+    ['Export all spaces', mockExportAllSpacesAsZip],
+  ])('%s shows the error toast and no success toast when the save fails', async (name, build) => {
+    const user = userEvent.setup()
+    build.mockResolvedValueOnce({
+      blob: new Blob(['zip']),
+      spaceCount: 1,
+      skippedPages: 0,
+      skippedAttachments: 0,
+    })
+    mockDownloadBlob.mockRejectedValueOnce(new Error('disk full'))
+
+    render(<DataTab />)
+    await user.click(screen.getByRole('button', { name }))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Export failed')
+    })
+    expect(toast.success).not.toHaveBeenCalled()
   })
 
   // #2965 — `exportGraphAsZip` no longer silently reports success when it
