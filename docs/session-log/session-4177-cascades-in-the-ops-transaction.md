@@ -44,4 +44,4 @@ Each cell spans the two seedings the harness runs (no edits, and ten edits a blo
 
 ## Suites run
 
-The whole-workspace nextest in two partitions, doc-tests and `cargo clippy --workspace --all-targets -- -D warnings`, on the branch merged with `origin/main`. No SQL changed, so no `gen-sqlx`.
+The whole-workspace nextest in two partitions, doc-tests, `cargo clippy --workspace --all-targets -- -D warnings` and `prek run --hook-stage manual --all-files`, on the branch merged with `origin/main`. No SQL changed, so no `gen-sqlx`. The reworded doc comment on `StatusInfo::descendant_fanout_dropped` is in `bindings.ts`, so the bindings were regenerated: the drift test caught it. The real-backend e2e lane was left to CI: `just e2e-related` selects the whole lane for this range.
