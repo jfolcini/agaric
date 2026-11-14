@@ -174,6 +174,9 @@ describe('a query block in the search syntax', () => {
     const OTHER = id('OTHER')
     const C1 = id('C1') // under B1, so it inherits work; due today
     const O1 = id('O1') // on the other page, TODO, due long ago
+    const TAG_DEEP = id('TAGDEEP') // `work/deep`, nested under `work`
+    const D1 = id('D1') // on the other page, tagged work/deep
+    const D2 = id('D2') // under D1, so it inherits work/deep
 
     beforeEach(() => {
       blocks.set(OTHER, { ...makeBlock(OTHER, 'page', 'Journal Notes', null, 2), space_id: SPACE })
@@ -181,13 +184,18 @@ describe('a query block in the search syntax', () => {
       blocks.set(C1, { ...c1, page_id: PAGE, due_date: formatDate(new Date()) })
       const o1 = makeBlock(O1, 'text', 'review the block list', OTHER, 1)
       blocks.set(O1, { ...o1, page_id: OTHER, todo_state: 'TODO', due_date: '2020-01-10' })
+      blocks.set(TAG_DEEP, { ...makeBlock(TAG_DEEP, 'tag', 'work/deep', null, 3), space_id: SPACE })
+      blocks.set(D1, { ...makeBlock(D1, 'text', 'deep one', OTHER, 2), page_id: OTHER })
+      blocks.set(D2, { ...makeBlock(D2, 'text', 'deep two', D1, 1), page_id: OTHER })
+      blockTags.set(D1, new Set([TAG_DEEP]))
     })
 
     it.each([
-      ['path:journal', [O1, OTHER]],
+      ['path:journal', [D1, D2, O1, OTHER]],
       ['not-path:journal state:TODO', [B1, B7]],
       ['path:journal path:Page priority:1', [B1]],
-      ['under:#work', [B1, B3, B7, C1]],
+      // With the tag nested under it: attached (D1) and inherited (D2).
+      ['under:#work', [B1, B3, B7, C1, D1, D2]],
       ['under:#work review', [C1]],
       ['review', [C1, O1]],
       ['state:TODO review', [O1]],
