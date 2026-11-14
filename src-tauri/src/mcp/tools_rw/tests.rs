@@ -4262,9 +4262,8 @@ async fn batch_notifies_the_pages_and_properties_it_wrote_5399() {
     );
 }
 
-/// The delete's in-transaction apply reaches only the block it names; its
-/// descendants leave the engine in the fan-out after the commit, which a
-/// batch must run as a lone `delete_block` does.
+/// A delete's descendants leave the engine with the block it names, in a
+/// batch as for a lone `delete_block`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_delete_takes_the_descendants_out_of_the_engine_5399() {
     let (tools, mat, pool, space, _dir) = mk_tools().await;

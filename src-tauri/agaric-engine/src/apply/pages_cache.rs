@@ -706,7 +706,7 @@ pub enum PreOpState {
     /// Payload-free on purpose. The three used to carry a cohort, a cohort plus
     /// the #2017 restored-ancestor chain, and nothing — three shapes for one
     /// behaviour, and the two with fields cloned a whole `Vec<String>` per op for
-    /// a value the hook never read. The post-commit fan-out takes its copies from
+    /// a value the hook never read. The cohort fan-out takes its copies from
     /// [`ApplyEffects`], which is the only consumer those cohorts ever had.
     Deferred,
     /// MoveBlock (E4). Captured BEFORE the projection reparents the block

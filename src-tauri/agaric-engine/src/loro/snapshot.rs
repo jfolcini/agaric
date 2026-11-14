@@ -85,24 +85,14 @@ fn now_ms() -> i64 {
 /// The highest locally-authored `op_log.seq`, read before a pass collects any
 /// engine (#5418).
 ///
-/// An op's engine write normally commits with the op, so an export taken after
-/// this read holds every op at or below it. Some engine writes land after the
-/// commit instead:
+/// An op's engine writes, its cascade over its cohort included, commit with
+/// the op, so an export taken after this read holds every op at or below it.
+/// Two engine writes land after the commit instead:
 ///
-/// * the post-commit fan-out of the delete, restore and purge commands
-///   (`commands::blocks::crud`); the batch delete and every restore and purge
-///   make all of their engine writes there. A pass that reads the head before
-///   the fan-out lands persists rows without it and moves the cursor past the
-///   op. The fan-out re-dirties its engine, so the next pass persists it; a
-///   crash before then leaves the engine without it.
 /// * an op parked in `materializer_retry_queue`, durable on its own.
-///
-/// Draft recovery (`recovery::draft_recovery`), the empty-block sweep
-/// (`soft_delete::empty_block_sweep`), the boot repairs (`repair`) and boot
-/// replay's delete and restore cohort fan-outs (`recovery::replay`, #5630,
-/// #5647) also write the engine after commit, but they run only at boot and await those
-/// writes before the periodic pass is spawned, so no pass reads a head between
-/// their commit and their engine write.
+/// * draft recovery (`recovery::draft_recovery`), which runs only at boot and
+///   awaits its engine write before the periodic pass is spawned, so no pass
+///   reads a head between its commit and that write.
 ///
 /// Replicated rows never reach an engine through the op log. A read error
 /// fails the pass: a row stamped below what it holds is an op a replay boot

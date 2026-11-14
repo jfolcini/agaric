@@ -3684,8 +3684,8 @@ async fn replay_timing_5418() {
 
 /// #5418 — apply `payload` the way a LOCAL command does: append it and apply
 /// it to SQL and the engine in one `BEGIN IMMEDIATE` transaction, leaving the
-/// apply cursor where it is, then run a delete's or a restore's post-commit
-/// cohort fan-outs and hand the index fan-out to the background queue.
+/// apply cursor where it is, then hand the index fan-out to the background
+/// queue.
 async fn apply_like_a_command(
     pool: &SqlitePool,
     mat: &Materializer,
@@ -3711,33 +3711,10 @@ async fn apply_like_a_command_at(
         agaric_store::op_log::append_local_op_in_tx(&mut tx, device_id, payload, created_at)
             .await
             .unwrap();
-    let effects =
-        agaric_engine::apply::kernel::apply_op_projected(&mut tx, &record, mat.loro_state(), false)
-            .await
-            .unwrap();
+    agaric_engine::apply::kernel::apply_op_projected(&mut tx, &record, mat.loro_state(), false)
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
-    agaric_engine::materializer::dispatch_delete_descendants(
-        pool,
-        &record,
-        &effects.deleted_cohort,
-        effects.delete_space_id.as_ref(),
-        mat.loro_state(),
-    )
-    .await;
-    agaric_engine::materializer::dispatch_restore_descendants(
-        pool,
-        &record,
-        &effects.restored_cohort,
-        mat.loro_state(),
-    )
-    .await;
-    agaric_engine::materializer::dispatch_restore_ancestors(
-        pool,
-        &record,
-        &effects.restored_ancestors,
-        mat.loro_state(),
-    )
-    .await;
     mat.dispatch_background_or_warn(&record);
     record
 }
@@ -5184,11 +5161,11 @@ async fn bad_op_inside_a_chunk_keeps_the_per_op_outcome_5418() {
     mat.shutdown();
 }
 
-/// #5418 — a delete's descendant cohort reaches the engine only after its
-/// transaction commits. A purge behind it in the same transaction would remove
-/// the subtree first, and the delete's fan-out would then meter each child as
-/// a block missing from the engine; per op it is mirrored before the purge. So
-/// a delete ends its chunk. Counter-delta test on the process-global
+/// #5418, #6521 — a delete's descendant cohort reaches the engine with the
+/// delete, so a purge behind it in the same chunk finds the cohort mirrored.
+/// Mirrored only after the chunk's commit, the purge would have removed the
+/// subtree first and the fan-out would meter each child as a block missing
+/// from the engine. Counter-delta test on the process-global
 /// `sql_only_fallback` count: run under nextest.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_then_purge_meters_no_fallback_5418() {
@@ -5242,8 +5219,8 @@ async fn delete_then_purge_meters_no_fallback_5418() {
 
 /// #5418 — replay `P` with children `C1, C2`, padding edits up to the chunk
 /// boundary, `DeleteBlock(P)` as the last op of the first chunk, then
-/// `RestoreBlock(P)` and a create of `N` under `P` at live index 1. Returns
-/// `P`'s children ordered by `position`.
+/// `RestoreBlock(P)` and a create of `N` under `P` at live index 1, the two
+/// in one chunk. Returns `P`'s children ordered by `position`.
 async fn replay_restore_then_create(per_op: bool) -> Vec<String> {
     use agaric_store::op::{DeleteBlockPayload, RestoreBlockPayload};
 
@@ -5320,10 +5297,11 @@ async fn replay_restore_then_create(per_op: bool) -> Vec<String> {
     children
 }
 
-/// #5418 — a restore's descendant cohort reaches the engine only after its
-/// transaction commits. A create under the restored block in that same
-/// transaction would still see `C1, C2` tombstoned and land after both; per op
-/// it lands at live index 1, between them. So a restore ends its chunk.
+/// #5418, #6521 — a restore's descendant cohort reaches the engine with the
+/// restore, so a create under the restored block in the same chunk lands at
+/// live index 1, between `C1` and `C2`, as it does per op. Mirrored only after
+/// the chunk's commit, the create would still see both tombstoned and land
+/// after them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_after_restore_matches_per_op_oracle_5418() {
     let expected = ["R5418C1", "R5418N", "R5418C2"].map(String::from).to_vec();

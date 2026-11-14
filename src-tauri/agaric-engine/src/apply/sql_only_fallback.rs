@@ -36,7 +36,7 @@
 //! class behind #891). It must NOT come back.
 //!
 //! #4472: the in-transaction handlers above are no longer the only
-//! recorders. The materializer's POST-COMMIT engine fan-outs
+//! recorders. The materializer's engine cohort fan-outs
 //! (`dispatch_delete_descendants`, `dispatch_unswept_cohort`) skip any
 //! cohort member absent from the target space's engine, and record that
 //! skip HERE, with [`SqlOnlyFallbackReason::EngineMissingTarget`], off the
@@ -64,7 +64,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Why an `apply_*_via_loro` handler fell back to its `apply_*_sql_only`
-/// path — or, since #4472, why a post-commit engine fan-out skipped a
+/// path — or, since #4472, why an engine cohort fan-out skipped a
 /// cohort member's mirror. See the module docs.
 ///
 /// Both variants are **intentional soft fallbacks, not errors**: the
@@ -109,8 +109,8 @@ pub enum SqlOnlyFallbackReason {
     ///
     /// The two bullets above enumerate CAUSES, not recorders. More than one
     /// site records this reason — the in-tx `apply_*_via_loro` handlers, and
-    /// (since #4472) the post-commit fan-out, which meters the same decision
-    /// about the same block one transaction later. A new recorder is not a
+    /// (since #4472) the cohort fan-out, which meters the same decision
+    /// about the same block later in the same transaction. A new recorder is not a
     /// new cause, so adding one does not extend this list; adding a third
     /// way for a block to be absent from its space's tree would.
     EngineMissingTarget,
@@ -123,7 +123,7 @@ static SQL_ONLY_FALLBACK_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Record that `op` took a SQL-only outcome for `reason` — either an
 /// `apply_*_via_loro` handler falling back to its `apply_*_sql_only`
-/// projection in-transaction, or (since #4472) a post-commit fan-out skipping
+/// projection in-transaction, or (since #4472) a cohort fan-out skipping
 /// one cohort member's engine mirror. Increments the global counter and emits
 /// a `warn!`. Purely additive — does not alter control flow.
 ///

@@ -315,7 +315,7 @@ pub(crate) async fn move_block_in_tx(
     //    is never skipped and we never crash — preserving #1323 convergence.
     //    `apply_op_projected` borrows `&op_record` here, BEFORE the
     //    `enqueue_background(op_record)` move below. The returned `ApplyEffects`
-    //    is empty for Move (LOCAL move runs no post-commit cohort fan-out), so it
+    //    is empty for Move (LOCAL move has no cohort to fan out), so it
     //    is discarded. #4390 added `unswept_cohort` to that struct and it stays
     //    empty HERE by construction: it is populated only when the move's
     //    subject arrives already TOMBSTONED by a concurrent cascade, and

@@ -88,10 +88,7 @@ use tokio::runtime::Runtime;
 use agaric_engine::apply::kernel::apply_op_tx;
 use agaric_engine::apply::sql_only_fallback;
 
-use crate::materializer::{
-    apply_op_projected, dispatch_delete_descendants, dispatch_restore_ancestors,
-    dispatch_restore_descendants,
-};
+use crate::materializer::apply_op_projected;
 
 /// Low case counts keep the suite fast (the apply pipeline is DB-bound). Raise
 /// these locally for a deeper search.
@@ -526,27 +523,8 @@ impl ChainDriver {
             .expect("apply op");
         tx.commit().await.expect("commit apply");
 
-        // #2681: mirror `apply_op`'s post-commit engine cohort fan-out. The
-        // in-tx `apply_*_via_loro` delete/restore is per-block-id only (it
-        // touches just the SEED in the engine), while the SQL projection cascades
-        // to the whole descendant cohort (and, for restore, the #1884 ancestor
-        // chain). Without replaying that cascade onto the engine, a
-        // cascade-deleted descendant stays engine-LIVE while SQL-deleted — which
-        // the #1257 outbound freshness gate (B4's snapshot export) correctly
-        // REFUSES. Running the same three fan-outs `apply_op` runs keeps the
-        // engine and SQL cohort state in agreement.
-        dispatch_restore_descendants(pool, &record, &effects.restored_cohort, state).await;
-        dispatch_restore_ancestors(pool, &record, &effects.restored_ancestors, state).await;
-        dispatch_delete_descendants(
-            pool,
-            &record,
-            &effects.deleted_cohort,
-            effects.delete_space_id.as_ref(),
-            state,
-        )
-        .await;
         // #4733: `apply_op`'s THREE post-commit FTS cohort fan-outs, mirrored
-        // for the same reason as the engine fan-outs above — the dispatch
+        // because the dispatch
         // table's `RemoveFtsBlock` / `UpdateFtsBlock` reach the seed alone, and
         // its `MoveBlock` arm enqueues nothing at all. Without these the oracle
         // reports every tombstoned descendant's retained row and every revived
@@ -2151,15 +2129,6 @@ async fn run_delete_restore(
         .await
         .expect("delete apply_op_projected");
     tx.commit().await.expect("commit delete");
-    // Cohort fan-out onto the engine (mirrors `apply_op`'s post-commit step).
-    dispatch_delete_descendants(
-        &pool,
-        &del_record,
-        &del_effects.deleted_cohort,
-        del_effects.delete_space_id.as_ref(),
-        state,
-    )
-    .await;
 
     let post_delete_parent = deleted_at_of(&pool, parent_id).await;
     let post_delete_child = deleted_at_of(&pool, child_id).await;
@@ -2184,20 +2153,6 @@ async fn run_delete_restore(
         .await
         .expect("restore apply_op_projected");
     tx.commit().await.expect("commit restore");
-    dispatch_restore_descendants(
-        &pool,
-        &restore_record,
-        &restore_effects.restored_cohort,
-        state,
-    )
-    .await;
-    dispatch_restore_ancestors(
-        &pool,
-        &restore_record,
-        &restore_effects.restored_ancestors,
-        state,
-    )
-    .await;
 
     let post_restore_parent = deleted_at_of(&pool, parent_id).await;
     let post_restore_child = deleted_at_of(&pool, child_id).await;

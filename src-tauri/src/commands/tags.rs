@@ -367,7 +367,7 @@ async fn apply_tag_to_block_resolved(
     // #2325/#2250: route through the collapsed single-entry-point projection
     // (`advance_cursor = false`, as above). `apply_op_projected` re-derives the
     // `AddTagPayload` from `op_record.payload` and runs the SAME
-    // `apply_add_tag_via_loro` (AddTag carries no post-commit cohort fan-out, so
+    // `apply_add_tag_via_loro` (AddTag carries no cohort fan-out, so
     // the returned `ApplyEffects` is empty and discarded).
     crate::materializer::apply_op_projected(tx, &op_record, state, false).await?;
 
@@ -505,7 +505,7 @@ pub(crate) async fn remove_tag_in_tx(
     // #2325/#2250: route through the collapsed single-entry-point projection
     // (`advance_cursor = false`, #1257). It re-derives the `RemoveTagPayload`
     // from `op_record.payload` and runs the SAME `apply_remove_tag_via_loro`;
-    // RemoveTag carries no post-commit cohort fan-out, so the returned
+    // RemoveTag carries no cohort fan-out, so the returned
     // `ApplyEffects` is empty and discarded.
     crate::materializer::apply_op_projected(tx, &op_record, state, false).await?;
     Ok(Some(op_record))

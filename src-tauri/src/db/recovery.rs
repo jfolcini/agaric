@@ -2646,7 +2646,7 @@ async fn unsweep_old_parent(
     // #4390 — the engine mirror is OUT OF SCOPE here, decided
     // explicitly rather than left implicit. #4390 made the
     // materializer's un-sweep durable by threading the ids it
-    // cleared out to a post-commit engine fan-out
+    // cleared out to an engine fan-out
     // (`materializer::handlers::apply::dispatch_unswept_cohort`),
     // so the SQL re-derivation survives a snapshot import. This arm
     // has no such fan-out and cannot have one: it runs BEFORE

@@ -25,8 +25,9 @@ async fn delta_rows(pool: &SqlitePool, space_id: &str) -> i64 {
         .expect("count the space's deltas")
 }
 
-/// Create `block` in `space_id`'s engine the way a post-commit fan-out does:
-/// under the write lock, with its delta. Returns whether the delta was saved.
+/// Create `block` in `space_id`'s engine the way the swept-tombstone fan-out
+/// writes after its commit: under the write lock, with its delta. Returns
+/// whether the delta was saved.
 async fn create_saved(
     pool: &SqlitePool,
     state: &LoroState,

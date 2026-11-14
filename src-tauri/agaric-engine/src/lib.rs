@@ -113,8 +113,7 @@ pub mod spaces;
 /// keeps every boot after the first off a full `blocks` walk. Emits
 /// `DeleteBlock` ops through `apply_op_projected` — never a raw tombstone
 /// write. The app's `soft_delete::empty_block_sweep` drives it after
-/// `bootstrap_spaces`, in a non-fatal `CommandTx` of its own, and runs the
-/// post-commit engine fan-out.
+/// `bootstrap_spaces`, in a non-fatal `CommandTx` of its own.
 pub mod empty_blocks;
 
 /// Replays a stale editor's change on the block's current text, so an

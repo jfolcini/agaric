@@ -3,10 +3,11 @@
 //!
 //! The single collapsed apply-projection entry point (`apply_op_projected`),
 //! the core per-op apply transaction (`apply_op_tx`), the apply cursor
-//! advance, the per-chunk import accumulator, the `ApplyEffects` fan-out
+//! advance, the per-chunk import accumulator, the `ApplyEffects` cascade
 //! descriptor, and the descendant-cohort collectors. The REMOTE wrapper
-//! `apply_op` + the post-commit `dispatch_*_descendants` fan-out stay in the
-//! app crate (they carry the observability timer and the app-side metric).
+//! `apply_op` and the `dispatch_*_descendants` cohort fan-out this kernel
+//! calls live in `materializer::handlers` (they carry the observability timer
+//! and the fan-out metric).
 
 use super::*;
 
@@ -35,10 +36,9 @@ use super::*;
 /// (`loro::snapshot::save_engines_and_advance_cursor`, #5418), and boot
 /// replay re-applies the ones committed after it.
 ///
-/// Returns the [`ApplyEffects`] from `apply_op_tx` UNCHANGED so the caller runs
-/// the post-commit cohort fan-out (restore/delete descendants + ancestors)
-/// AFTER it commits — the LOCAL delete/restore sites consume this instead of
-/// their hand-rolled cohort capture.
+/// Returns the [`ApplyEffects`] from `apply_op_tx` UNCHANGED: the cohorts the
+/// op's cascade reached, already mirrored onto the engine, for the caller's
+/// post-commit link and FTS repair and its reply.
 pub async fn apply_op_projected(
     tx: &mut sqlx::SqliteConnection,
     record: &OpRecord,
@@ -389,19 +389,21 @@ impl ChunkAccumulator {
     }
 }
 
-/// Side-effects an `apply_op_tx` call may produce that the caller needs
-/// to fan out AFTER the SQL transaction commits. The SQL UPDATE for a
+/// The cohorts an `apply_op_tx` call's cascade reached. The SQL UPDATE for a
 /// `RestoreBlock` walks the descendant CTE and clears `deleted_at` for
 /// every block in the matching `deleted_at_ref` cohort, but the per-
 /// space `LoroEngine`'s `apply_restore_block` is per-block-id only —
 /// without fanning out, a 10-descendant subtree restore would leave 9
-/// blocks marked `deleted_at != Null` in the Loro doc.
+/// blocks marked `deleted_at != Null` in the Loro doc. `apply_op_tx` fans
+/// them out onto the engine before it returns, in its caller's transaction
+/// (#6521); the caller's link and FTS repair of the same cohorts follows its
+/// commit.
 ///
-/// The cohort vec INCLUDES the seed `block_id` so the post-commit
-/// helper (`dispatch_restore_descendants`) is the canonical path for
+/// The cohort vec INCLUDES the seed `block_id` so the fan-out helper
+/// (`dispatch_restore_descendants`) is the canonical path for
 /// driving Loro on the whole subtree. The engine's
 /// `apply_restore_block` is idempotent so the duplicate seed-apply
-/// (the in-tx `apply_restore_block_via_loro` also reaches the seed
+/// (`apply_restore_block_via_loro` also reaches the seed
 /// when space resolution is healthy) is harmless. Empty for every op
 /// type other than `RestoreBlock`.
 ///
@@ -415,7 +417,7 @@ impl ChunkAccumulator {
 ///
 /// `delete_space_id` is captured alongside `deleted_cohort` because
 /// `resolve_block_space` filters `deleted_at IS NULL` — once the SQL
-/// UPDATE has stamped the cohort as deleted, a post-commit
+/// UPDATE has stamped the cohort as deleted, a
 /// `resolve_block_space` lookup would return `None` for every row.
 /// This is the asymmetry with `restored_cohort`: post-restore-UPDATE
 /// the cohort is alive again so `dispatch_restore_descendants`
@@ -441,12 +443,12 @@ pub struct ApplyEffects {
     /// fan-out the engine keeps the ancestors tombstoned and the next
     /// `reproject_block_deleted_at` RE-DELETES them in SQL (self-perpetuating
     /// CRDT divergence). `dispatch_restore_ancestors` fans these onto the
-    /// engine post-commit, mirroring `restored_cohort`'s descendant fan-out.
+    /// engine, mirroring `restored_cohort`'s descendant fan-out.
     /// Empty unless the op was `RestoreBlock` and an ancestor chain existed.
     pub restored_ancestors: Vec<String>,
     /// The space both restore fan-outs mirror into, set only when boot
     /// replay rebuilt the cohort from the engine (#5647). `None` resolves the
-    /// seed's space post-commit.
+    /// seed's space once the restore's UPDATE has run.
     pub restore_space_id: Option<agaric_store::space::SpaceId>,
     /// Block ids soft-deleted by a `DeleteBlock` apply — seed AND
     /// every active descendant the SQL CTE walked. Empty unless the op
@@ -461,8 +463,8 @@ pub struct ApplyEffects {
     /// the seed's own `space_id`. `None` for every other op type and for
     /// delete ops on blocks that have no resolvable space (a permitted but rare
     /// state — pre-spaces data). Required because
-    /// `resolve_block_space` filters `deleted_at IS NULL`; a
-    /// post-commit resolve attempt would fail on every cohort row.
+    /// `resolve_block_space` filters `deleted_at IS NULL`; a resolve
+    /// after the UPDATE would fail on every cohort row.
     pub delete_space_id: Option<agaric_store::space::SpaceId>,
     /// #4390: blocks whose INHERITED tombstone a `MoveBlock`'s un-sweep
     /// re-derived, with the `deleted_at` the move's tail settled on. Empty for
@@ -473,8 +475,7 @@ pub struct ApplyEffects {
     ///
     /// The SQL clear is durable on its own; the engine register is not, and
     /// the move that produces the clear runs on the arm with no engine. Fanned
-    /// out post-commit by
-    /// `materializer::handlers::apply::dispatch_unswept_cohort`.
+    /// out by `materializer::handlers::apply::dispatch_unswept_cohort`.
     pub unswept_cohort: Vec<UnsweptBlock>,
     /// Space id for [`Self::unswept_cohort`], resolved with
     /// `resolve_soft_deleted_block_space` — NOT `resolve_block_space`, which
@@ -525,7 +526,7 @@ pub struct ApplyEffects {
 /// The pairing is the point. The un-sweep clears, and then
 /// `sweep_move_under_tombstoned_ancestor` — the tail's other half — may
 /// re-stamp the very same rows at the cohort the block's NEW position implies
-/// (#4188's shape). A post-commit mirror that assumed "un-swept ⇒ restore"
+/// (#4188's shape). A mirror that assumed "un-swept ⇒ restore"
 /// would then leave the engine holding `NULL` while SQL holds the new cohort
 /// ts: #4204's divergence traded for #4188's. So the final SQL value is read
 /// back after the tail, in the same transaction that commits it, and the
@@ -547,10 +548,9 @@ pub struct UnsweptBlock {
 /// (`BatchApplyOps`) delegate here so that a batch can be wrapped in a
 /// single transaction for atomicity.
 ///
-/// Returns an [`ApplyEffects`] describing post-commit fan-out the
-/// caller is responsible for running.  Today the only populated field
-/// is `restored_cohort` (see the struct docs); every other op type
-/// returns the default-empty effects.
+/// Returns an [`ApplyEffects`] naming the cohorts the op's cascade reached,
+/// which this has already mirrored onto the engine; empty for an op with no
+/// cascade.
 /// `chunk`: when `Some`, the caller is applying a multi-op chunk (the
 /// `BatchApplyOps` import path) and wants the two derived maintenance passes
 /// (dense-position reprojection, `pages_cache` count recompute) DEFERRED to a
@@ -737,6 +737,8 @@ pub async fn apply_op_tx_with_mode(
             apply_property_def_op(conn, state, record, op_type).await?;
         }
     }
+    // #6521: the engine half of the op's cascade, in the op's transaction.
+    crate::materializer::dispatch_cohorts(conn, record, &effects, state).await;
     // Maintain `pages_cache.{inbound_link_count,child_block_count}`.
     // Runs after every per-op projection inside the same transaction, so
     // the count UPDATEs commit atomically with the block mutations. The
@@ -831,7 +833,7 @@ async fn apply_delete_block_op(
     // seed (mirrors `restored_cohort`'s shape).
     //
     // The space resolve runs at the same pre-UPDATE moment so
-    // the post-commit fanout has a known-good space id to
+    // the cohort fanout has a known-good space id to
     // pass to `engine_apply` (post-UPDATE every cohort row has
     // `deleted_at IS NOT NULL`, so a fresh `resolve_block_space`
     // call would return `None` — see `ApplyEffects` doc).
@@ -873,11 +875,11 @@ async fn apply_restore_block_op(
     // mirrors the same CTE the UPDATE uses so the captured set
     // is exactly what gets restored.
     //
-    // Keep the seed in the cohort: the post-commit fanout
+    // Keep the seed in the cohort: the cohort fanout
     // (`dispatch_restore_descendants`) is the canonical path
     // that drives Loro for the entire cohort. Including the
     // seed makes the helper self-contained and avoids
-    // depending on the in-tx `apply_restore_block_via_loro`
+    // depending on the `apply_restore_block_via_loro`
     // seed apply also reaching the engine — the duplicate
     // apply on the seed is idempotent (engine's
     // `apply_restore_block` is a no-op on an already-restored
@@ -901,9 +903,9 @@ async fn apply_restore_block_op(
     }
     // #2017: `apply_restore_block_via_loro` returns the contiguous
     // soft-deleted ANCESTOR chain it un-deleted upward (the #1884
-    // live-orphan fix). Surface it so the post-commit fan-out drives
-    // the engine for the ancestors too — the in-tx engine apply only
-    // touched the seed, so without this the ancestors stay tombstoned
+    // live-orphan fix). Surface it so the cohort fan-out drives
+    // the engine for the ancestors too — the engine apply above only
+    // touches the seed, so without this the ancestors stay tombstoned
     // in the CRDT and the next reproject re-deletes them in SQL.
     let restored_ancestors =
         apply_restore_block_via_loro(conn, state, &record.device_id, &p).await?;
@@ -998,7 +1000,7 @@ async fn apply_move_block_op(
     };
     // #4390: the move tail's un-sweep clears an INHERITED tombstone in
     // SQL, on the arm that has no engine. Capture what it cleared, and
-    // the value the tail SETTLED on, so the post-commit fan-out can
+    // the value the tail SETTLED on, so the cohort fan-out can
     // mirror the re-derivation onto the per-space engine — otherwise
     // the next `reproject_block_deleted_at_from_engine` re-trashes the
     // subtree from the stale register.
@@ -1097,9 +1099,7 @@ async fn read_settled_deleted_at(
 /// snapshot reflects the soft-deleted state.
 ///
 /// The list ALWAYS includes the seed `block_id` if it matches the
-/// filter; the caller is responsible for excluding the seed when
-/// constructing the per-descendant fan-out (the seed's engine
-/// dispatch already happens once for the root op record).
+/// filter.
 pub async fn collect_restore_cohort(
     conn: &mut sqlx::SqliteConnection,
     p: &RestoreBlockPayload,
@@ -1160,10 +1160,10 @@ async fn collect_cohort_deleted_at(
 /// `dispatch_delete_descendants` re-applies the seed alongside
 /// the descendants (idempotent — `apply_delete_block` is a no-op on an
 /// already-deleted block) so the helper is the canonical cohort-delete
-/// path regardless of whether the in-tx `apply_delete_block_via_loro`
+/// path regardless of whether the `apply_delete_block_via_loro`
 /// seed apply reached the engine for any specific op record.
 ///
-/// The captured cohort feeds the post-commit
+/// The captured cohort feeds the
 /// `dispatch_delete_descendants` fanout; the SELECT itself is
 /// cheap (single CTE walk; ~µs on small subtrees).
 pub async fn collect_delete_cohort(

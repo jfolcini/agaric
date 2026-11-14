@@ -5065,7 +5065,7 @@ export type StatusInfo = {
 	 */
 	sql_only_fallback_count: number,
 	/**
-	 *  #2031: process-global count of post-commit descendant fan-out
+	 *  #2031: process-global count of descendant fan-out
 	 *  skips that left the Loro engine potentially divergent from SQL.
 	 *  Bumped whenever `super::handlers::apply::dispatch_restore_descendants`,
 	 *  `super::handlers::apply::dispatch_delete_descendants` or — since

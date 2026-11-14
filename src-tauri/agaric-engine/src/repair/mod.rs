@@ -93,7 +93,7 @@ pub const UNREACHABLE_PAGE_TITLE: &str = "Unreachable";
 
 /// One op a repair emitted, with what the app driver needs to dispatch it
 /// after commit. The engine crate has no `CommandTx`, so the driver owns the
-/// enqueue → commit → fan-out sequence; this is the hand-off.
+/// enqueue → commit sequence; this is the hand-off.
 #[derive(Debug)]
 pub enum RepairOp {
     /// `CreateBlock` / `SetProperty` for the `Unreachable` page, or the
@@ -106,8 +106,8 @@ pub enum RepairOp {
     /// false` and the full `page_id`-derived rebuild set runs.
     Move(OpRecord),
     /// A `DeleteBlock` (an emptied duplicate journal page): the lifecycle
-    /// dispatch keyed by `block_type`, then the post-commit engine cohort
-    /// fan-out from `effects`, exactly as `delete_block_inner` runs them.
+    /// dispatch keyed by `block_type`, as `delete_block_inner` runs it.
+    /// `effects` names the cohort the delete took.
     Delete {
         record: OpRecord,
         block_type: String,

@@ -1476,7 +1476,7 @@ mod cohort_cascade_drift_guard {
         // (`collect_delete_cohort` / `collect_restore_cohort`, both backed by
         // the depth-unbounded `collect_subtree_ids_unbounded` walker) and the
         // UPDATEs stamp exactly the captured cohort union via `json_each`, so
-        // the SQL rows and the post-commit engine fan-out cannot diverge.
+        // the SQL rows and the engine fan-out cannot diverge.
         // Pin the new canonical UPDATE shapes (idempotency predicates intact).
         assert!(
             norm.contains(

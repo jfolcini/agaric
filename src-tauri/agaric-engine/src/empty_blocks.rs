@@ -45,7 +45,6 @@ use agaric_store::op::{DeleteBlockPayload, OpPayload};
 use agaric_store::op_log::{self, OpRecord};
 use agaric_store::task_locals::{ACTOR, Actor, ActorContext};
 
-use crate::apply::kernel::ApplyEffects;
 use crate::loro::shared::LoroState;
 use crate::materializer::apply_op_projected;
 
@@ -100,12 +99,11 @@ pub const JS_TRIM_WHITESPACE: &str = "\u{9}\u{A}\u{B}\u{C}\u{D}\u{20}\u{A0}\u{16
 /// bumping the suffix rather than needing a way to clear the old key.
 const SWEEP_CURSOR_KEY: &str = "sweep.empty_blocks.v1.swept_to";
 
-/// One block the sweep soft-deleted: its op record (for the post-commit
-/// cache dispatch) and the apply effects (for the engine cohort fan-out).
+/// One block the sweep soft-deleted: its op record, for the post-commit
+/// cache dispatch.
 #[derive(Debug)]
 pub struct SweptBlock {
     pub record: OpRecord,
-    pub effects: ApplyEffects,
 }
 
 /// What one boot's sweep did.
@@ -399,8 +397,8 @@ async fn soft_delete_through_pipeline(
         block_id: BlockId::from_trusted(block_id),
     });
     let record = op_log::append_local_op_in_tx(tx, device_id, payload, next_delete_ms()).await?;
-    let effects = apply_op_projected(tx, &record, state, false).await?;
-    Ok(SweptBlock { record, effects })
+    apply_op_projected(tx, &record, state, false).await?;
+    Ok(SweptBlock { record })
 }
 
 #[cfg(test)]

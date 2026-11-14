@@ -253,10 +253,10 @@
     "test": "delete_blocks_by_ids_matches_per_block_fold"
   },
   {
-    "fn": "src-tauri/src/commands/blocks/crud.rs::dispatch_restore_batch_fanout",
+    "fn": "src-tauri/src/commands/blocks/crud.rs::repair_restored_batch_links_and_fts",
     "kind": "read-only",
     "status": "converged",
-    "reason": "ALREADY A FOLD: the post-commit half of restore_blocks_by_ids_inner. It loops dispatch_restore_root_fanout, the per-root engine and link fan-out the single path's dispatch_restore_fanout calls once, then runs ONE reindex_fts_for_ids over the union instead of N (#4733), a cost fold on an idempotent re-index, not a state fork. Appends no op_log rows and writes no SQL of its own; the engine agreement it produces is pinned by restore_blocks_by_ids_inner_fans_the_restored_subtree_to_the_engine, and its caller stays `covered`"
+    "reason": "ALREADY A FOLD: the post-commit half of restore_blocks_by_ids_inner. It loops reindex_restored_cohort_links, the per-root link repair the single path's repair_restored_links_and_fts calls once, then runs ONE reindex_fts_for_ids over the union instead of N (#4733), a cost fold on an idempotent re-index, not a state fork. Appends no op_log rows and writes no engine state; the per-root engine fan-out is its caller's, in the restore's transaction (#6521), and the agreement that produces is pinned by restore_blocks_by_ids_inner_fans_the_restored_subtree_to_the_engine. Its caller stays `covered`"
   },
   {
     "fn": "src-tauri/src/commands/blocks/crud.rs::purge_blocks_by_ids",
@@ -450,7 +450,7 @@
     "fn": "src-tauri/src/mcp/tools_rw.rs::run_batch",
     "kind": "mutating",
     "status": "converged",
-    "reason": "ALREADY A FOLD: loops apply_batch_op over the ops inside one tx, each arm the `_in_tx` half its tool's own `*_inner` wraps, and fans out after a delete through dispatch_deletes, which delete_block_inner runs too. What it adds is the product: one tx, one activity entry and one undo, and the cap on the ops one undo reverts"
+    "reason": "ALREADY A FOLD: loops apply_batch_op over the ops inside one tx, each arm the `_in_tx` half its tool's own `*_inner` wraps, and removes a delete's FTS rows after the commit through remove_deleted_fts, which delete_block_inner runs too. What it adds is the product: one tx, one activity entry and one undo, and the cap on the ops one undo reverts"
   },
   {
     "fn": "src-tauri/src/mcp/tools_rw.rs::set_property_in_batch",

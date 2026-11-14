@@ -87,9 +87,9 @@ async fn prepare_outgoing_with_no_peer_vv_returns_snapshot() {
 }
 
 /// The format stamp a first export writes is saved as a delta; when that row
-/// cannot be written the export still goes out, as a post-commit cascade's
-/// write stands without its row: the space is marked, and the next snapshot
-/// pass saves it.
+/// cannot be written the export still goes out, as a swept-tombstone
+/// fan-out's write stands without its row: the space is marked, and the next
+/// snapshot pass saves it.
 #[tokio::test]
 async fn prepare_outgoing_exports_when_its_stamp_delta_cannot_be_saved() {
     let (pool, _dir) = fresh_pool().await;

@@ -31,17 +31,13 @@
 //! `Unreachable` page's create + space stamp (as `create_page_in_space_inner`)
 //! and the `completed_at` stamp/clear (as `set_todo_state_inner`), the move
 //! fan-out with `same_page = false` (`move_block_inner`), and for a delete the
-//! content-narrowed lifecycle rebuild plus the engine cohort fan-out
-//! (`delete_block_inner`).
-
-use std::sync::Arc;
+//! lifecycle rebuild (`delete_block_inner`).
 
 use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
-use agaric_engine::apply::kernel::ApplyEffects;
 use agaric_engine::repair::RepairOp;
 use agaric_engine::repair::attachments::hydrate_attachments_into_engine;
 use agaric_engine::repair::completed_at::repair_completed_at;
@@ -50,7 +46,6 @@ use agaric_engine::repair::journal_duplicates::repair_journal_duplicates;
 use agaric_engine::repair::orphans::repair_orphans;
 use agaric_engine::repair::page_aliases::repair_page_aliases;
 use agaric_engine::repair::property_definitions::repair_property_definitions;
-use agaric_store::op_log::OpRecord;
 
 pub mod name_collisions;
 
@@ -182,8 +177,7 @@ async fn run_or_log(
     }
 }
 
-/// One repair in one transaction: emit + apply in-tx, commit + dispatch, then
-/// the post-commit engine fan-out for each delete.
+/// One repair in one transaction: emit + apply in-tx, commit + dispatch.
 async fn run(
     pool: &SqlitePool,
     device_id: &str,
@@ -231,45 +225,19 @@ async fn run(
             (Vec::new(), format!("hydrated = {}", r.hydrated))
         }
     };
-    let mut deletes: Vec<(Arc<OpRecord>, ApplyEffects)> = Vec::new();
     for op in ops {
         match op {
             RepairOp::Plain(record) => tx.enqueue_background(record),
             RepairOp::Move(record) => tx.enqueue_move_background(record, false),
             RepairOp::Delete {
-                record,
-                block_type,
-                effects,
-            } => {
-                let record = Arc::new(record);
-                tx.enqueue_lifecycle_background(Arc::clone(&record), block_type);
-                deletes.push((record, *effects));
-            }
+                record, block_type, ..
+            } => tx.enqueue_lifecycle_background(record, block_type),
         }
     }
     tx.commit_and_dispatch(materializer).await?;
-    fan_out_deletes(pool, state, &deletes).await;
 
     tracing::info!(repair = repair.label(), %summary, "content repair complete");
     Ok(())
-}
-
-/// The engine fan-out of each committed delete: its cohort's tombstones.
-pub(crate) async fn fan_out_deletes(
-    pool: &SqlitePool,
-    state: &agaric_engine::loro::shared::LoroState,
-    deletes: &[(Arc<OpRecord>, ApplyEffects)],
-) {
-    for (record, effects) in deletes {
-        crate::materializer::dispatch_delete_descendants(
-            pool,
-            record,
-            &effects.deleted_cohort,
-            effects.delete_space_id.as_ref(),
-            state,
-        )
-        .await;
-    }
 }
 
 /// A backfill's ops and the summary its log line carries.
