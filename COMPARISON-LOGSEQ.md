@@ -32,7 +32,7 @@ The table is the summary. [The feature matrix](COMPARISON-LOGSEQ-MATRIX.md) has 
 | --- | --- | --- |
 | Outline | An outliner. The file version writes a block's collapsed state into the file (`collapsed::`) | An outliner whose blocks nest to `MAX_BLOCK_DEPTH`. Collapse state is per device and does not sync |
 | Writing a page as one document | An outliner throughout: a page is edited block by block | Block mode, plus page mode (one editor for the page, off by default) and *Edit as Markdown* (the page as plain text) |
-| Block references | File version: `((uuid))`. DB version: blocks are referenced with `[[ ]]` like pages | `((id))` shows a one-line chip with a hover peek, not the block's content |
+| Block references | File version: `((uuid))`. DB version: blocks are referenced with `[[ ]]` like pages | `((id))` shows a one-line chip with a peek (a hover, or a long press on a phone), not the block's content |
 | Embeds | An embed shows the whole block | An embed shows a block or page live, text only: no checkboxes, properties or attachments in its rows. Text is editable in place after an unlock; structure is not |
 | Properties | DB version: Text, Number, Date, DateTime, Checkbox, Url and Node types; several values per property; defaults and choices; properties that list their reverse side | Text, number, date, select, reference, boolean and URL. One value per property. Definitions are per space, sync, and can be renamed, merged and retyped |
 | Tags | DB version: a tag is a class ("supertag") whose properties its nodes inherit, with parents through `Extends` | A tag is a label with a colour and its own listing page. `/` in a name nests the tag: a filter on the parent finds it, and the Tags view shows the tree. No classes |

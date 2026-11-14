@@ -228,6 +228,10 @@ const DELETED_SENTINEL: &str = "DELETED";
 /// command's SQL filters tombstones. MUST match `BLOCK_ATTRS` in the TS twin.
 const BLOCK_ATTRS: &[&str] = &["parent_id", "page_id", "position", "deleted_at"];
 
+/// An `OutgoingLinkRow` (#6749) after its `source_id` head: every field the
+/// section reads but the source's text, which carries `#` and `[[`.
+const OUTGOING_LINK_ATTRS: &[&str] = &["target_id", "kind", "target_page_id", "target_page_title"];
+
 /// A `TagCacheRow` listing: `tag_id#name=…#usage_count=…`. `updated_at` is a
 /// clock and stays off the token.
 const TAG_ATTRS: &[&str] = &["name", "usage_count"];
@@ -1268,6 +1272,34 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             )
             .await?;
             count_map_result(&serde_json::to_value(&counts).expect("serialize count map"))
+        }
+        // #6746 — the reference counts of a page's blocks: the same keyed
+        // count map as `count_backlinks_batch`, keyed by the page's blocks.
+        "count_backlinks_in_page" => {
+            let counts = count_backlinks_in_page_inner(
+                pool,
+                &arg_req::<PageId>(args, "pageId"),
+                &arg_req::<SpaceScope>(args, "scope"),
+            )
+            .await?;
+            count_map_result(&serde_json::to_value(&counts).expect("serialize count map"))
+        }
+        // #6749 — a page's outgoing links: one row per (source, target), head
+        // the source block, its target, kind and the page it groups under.
+        "list_outgoing_links" => {
+            let resp = list_outgoing_links_inner(
+                pool,
+                &arg_req::<PageId>(args, "pageId"),
+                opt_arg_as::<LinkKind>(args, "kind"),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+                &arg_req::<SpaceScope>(args, "scope"),
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "source_id", OUTGOING_LINK_ATTRS),
+            )
         }
         // ── Op-log history (#3824) ──
         //
@@ -3234,7 +3266,12 @@ mod reader_delegation_tests {
     // #6527 wired `resolve_page_title`: `SpacePageNames::read`'s two
     // `query_scalar!` SELECTs over `blocks` and `page_aliases JOIN blocks`
     // (`commands/spaces.rs`), folded in Rust. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 70;
+    // #6746 / #6749 wired `count_backlinks_in_page` and `list_outgoing_links`:
+    // a `query!` GROUP BY SELECT over `blocks JOIN block_links`
+    // (`commands/queries.rs`) and one `query!` SELECT over `block_links`,
+    // `block_links_unresolved` and `blocks` behind `PageRequest::new`
+    // (`agaric-store/src/pagination/links.rs`). Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 72;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

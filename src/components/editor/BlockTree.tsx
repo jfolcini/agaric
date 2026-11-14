@@ -88,6 +88,7 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import { useScopedBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { BlockRefCountsContext, useBlockRefCounts } from '@/hooks/useBlockRefCounts'
 import { useOpenLinkInNewTab } from '@/hooks/useOpenInBackgroundTab'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
@@ -231,6 +232,11 @@ interface BlockTreeProps {
    * same reason `onRevealSettled` is, so an un-memoized callback is safe.
    */
   onZoomChange?: ((id: string | null) => void) | undefined
+  /**
+   * #6746 — the block to zoom into as the tree mounts: page mode's reference
+   * count opens block mode zoomed on its block. Read once, at mount.
+   */
+  zoomOnMount?: string | null | undefined
 }
 
 export function BlockTree({
@@ -240,6 +246,7 @@ export function BlockTree({
   onRevealSettled,
   revealNonce,
   onZoomChange,
+  zoomOnMount,
 }: BlockTreeProps = {}): React.ReactElement {
   const { t } = useTranslation()
   // Per-page data from context
@@ -798,6 +805,14 @@ export function BlockTree({
     void load()
     zoomToRoot()
   }, [load, parentId, zoomToRoot])
+  // After the reset above, which runs first on mount.
+  const zoomOnMountRef = useRef(zoomOnMount ?? null)
+  useEffect(() => {
+    const blockId = zoomOnMountRef.current
+    if (blockId === null) return
+    zoomOnMountRef.current = null
+    handleZoomIn(blockId)
+  }, [handleZoomIn])
 
   // ── H-9: Auto-create first block on empty pages ─────────────────────
   useBlockAutoCreateFirstBlock({
@@ -1533,6 +1548,9 @@ export function BlockTree({
   // properties with no event naming the block, then reloads, and a reload keeps the rows (#6533).
   const batchPropertiesInvalidationKey = `${propertyInvalidationKey}|${currentSpaceId ?? ''}|${completedLoads}`
 
+  // #6746 — the page's reference counts, one read for the whole page.
+  const refCounts = useBlockRefCounts(parentId ?? null)
+
   // The skeleton covers only the store's first load. A reload (a sync, an MCP
   // write, an undo) keeps every row and the focused editor mounted (#6533).
   const firstLoad = loading && blocks.length === 0
@@ -1620,28 +1638,30 @@ export function BlockTree({
             >
               <BlockActionsProvider value={blockActions}>
                 <BlockResolversProvider value={blockResolvers}>
-                  <BlockListRenderer
-                    visibleItems={dnd.visibleItems}
-                    blocks={blocks}
-                    loading={firstLoad}
-                    rootParentId={rootParentId}
-                    isZoomed={zoomedBlockId !== null}
-                    onExitZoom={zoomToRoot}
-                    focusedBlockId={focusedBlockId}
-                    selectedBlockIds={selectedBlockIds}
-                    cursorBlockId={cursorBlockId}
-                    projected={dnd.projected}
-                    activeId={dnd.activeId}
-                    overId={dnd.overId}
-                    dropAfter={dnd.dropAfter}
-                    viewport={viewport}
-                    rovingEditor={rovingEditor}
-                    onContainerPointerDown={handleContainerPointerDown}
-                    hasChildrenSet={hasChildrenSet}
-                    collapsedIds={collapsedIds}
-                    hiddenMountCount={hiddenMountCount}
-                    onExpandMount={expandMountLimit}
-                  />
+                  <BlockRefCountsContext.Provider value={refCounts}>
+                    <BlockListRenderer
+                      visibleItems={dnd.visibleItems}
+                      blocks={blocks}
+                      loading={firstLoad}
+                      rootParentId={rootParentId}
+                      isZoomed={zoomedBlockId !== null}
+                      onExitZoom={zoomToRoot}
+                      focusedBlockId={focusedBlockId}
+                      selectedBlockIds={selectedBlockIds}
+                      cursorBlockId={cursorBlockId}
+                      projected={dnd.projected}
+                      activeId={dnd.activeId}
+                      overId={dnd.overId}
+                      dropAfter={dnd.dropAfter}
+                      viewport={viewport}
+                      rovingEditor={rovingEditor}
+                      onContainerPointerDown={handleContainerPointerDown}
+                      hasChildrenSet={hasChildrenSet}
+                      collapsedIds={collapsedIds}
+                      hiddenMountCount={hiddenMountCount}
+                      onExpandMount={expandMountLimit}
+                    />
+                  </BlockRefCountsContext.Provider>
                 </BlockResolversProvider>
               </BlockActionsProvider>
               <BlockDndOverlay

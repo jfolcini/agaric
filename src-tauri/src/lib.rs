@@ -252,6 +252,8 @@ macro_rules! agaric_commands {
             // Batch count commands (#604)
             $crate::commands::agenda::count_agenda_batch_by_source,
             $crate::commands::queries::count_backlinks_batch,
+            $crate::commands::queries::count_backlinks_in_page,
+            $crate::commands::queries::list_outgoing_links,
             // Page aliases (#598)
             $crate::commands::pages::set_page_aliases,
             $crate::commands::pages::get_page_aliases,

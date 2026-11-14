@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT bl.target_id AS \"target_id!\", COUNT(*) AS \"count!: i64\"\n             FROM blocks t\n             JOIN block_links bl ON bl.target_id = t.id\n             JOIN blocks s ON s.id = bl.source_id\n            WHERE t.page_id = ?1 AND t.id <> ?1 AND t.deleted_at IS NULL\n              AND s.deleted_at IS NULL AND +s.space_id = ?2\n            GROUP BY bl.target_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "target_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_links",
+            "name": "target_id"
+          }
+        }
+      },
+      {
+        "name": "count!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "f809e92cef54c688754447590c36f42ba78f8ce0c7d17194ec4611a3a7276e46"
+}

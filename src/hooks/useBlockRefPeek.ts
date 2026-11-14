@@ -23,8 +23,13 @@
  *    closes immediately, which would put the peek's own buttons out of reach
  *    of a mouse.
  *
- * Coarse pointers keep the chip's native `title=`: long-press is not wired
- * (it collides with `use-block-touch-long-press.ts`).
+ * On a touch phone (`longPressSheet`) a long press on a `((ref))` chip opens
+ * the peek as a bottom sheet (#6746), with the block row's hold and drift
+ * (`use-block-touch-long-press.ts`); the row's own long press and drag stand
+ * aside for a chip there (`isOnBlockRefChip`). A tap still navigates: only a
+ * press that opened the sheet keeps its release from reaching the chip.
+ * Inside the editor the native long press keeps the gesture, as it does for
+ * the row. Other coarse pointers keep the chip's native `title=`.
  *
  * A `[[page]]` chip peeks too, as Obsidian's page preview does in its editor:
  * only while Ctrl (Cmd) is held, because a page link is what a writer's
@@ -39,12 +44,26 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import {
+  exceedsThreshold,
+  isInsideEditableText,
+  LONG_PRESS_DELAY,
+} from '@/components/block-tree/use-block-touch-long-press'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 
 /** Both the TipTap NodeView chip and the read-only chip carry this pair. */
 const BLOCK_REF_SELECTOR = '[data-type="block-ref"][data-id]'
 const PAGE_LINK_SELECTOR = '[data-type="block-link"][data-id]'
 const CHIP_SELECTOR = `${BLOCK_REF_SELECTOR}, ${PAGE_LINK_SELECTOR}`
+
+/** A touch on a `((ref))` chip outside the editor: on a phone, the peek's long press. */
+export function isOnBlockRefChip(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest(BLOCK_REF_SELECTOR) !== null &&
+    !isInsideEditableText(target)
+  )
+}
 
 const HOVER_INTENT_MS = 350
 /** Grace for the pointer to cross the gap from chip to peek (WCAG 1.4.13). */
@@ -59,6 +78,8 @@ export interface BlockRefPeekState {
   anchorRect: DOMRect | null
   /** True when the open came from the keyboard, so the peek must take focus. */
   fromKeyboard: boolean
+  /** True when a long press opened it, which shows it as a bottom sheet. */
+  asSheet: boolean
   /** Attach to the peek's root — focus and pointer containment key on it. */
   peekRef: React.RefObject<HTMLDivElement | null>
   close: () => void
@@ -80,14 +101,19 @@ const INITIAL = {
   kind: 'block-ref' as PeekKind,
   anchorRect: null,
   fromKeyboard: false,
+  asSheet: false,
 }
 
-export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekState {
+export function useBlockRefPeek(
+  container: HTMLElement | null,
+  longPressSheet = false,
+): BlockRefPeekState {
   const [state, setState] = useState<{
     refId: string | null
     kind: PeekKind
     anchorRect: DOMRect | null
     fromKeyboard: boolean
+    asSheet: boolean
   }>(INITIAL)
 
   const chipRef = useRef<HTMLElement | null>(null)
@@ -98,6 +124,8 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
   /** The page-link chip under the pointer, for a Ctrl (Cmd) pressed after it arrived. */
   const hoveredPageLinkRef = useRef<HTMLElement | null>(null)
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** The touch press on a chip, while a long press may still open the sheet. */
+  const pressRef = useRef<{ x: number; y: number; opened: boolean } | null>(null)
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const clearOpenTimer = useCallback(() => {
@@ -140,7 +168,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
   )
 
   const open = useCallback(
-    (chip: HTMLElement, fromKeyboard: boolean) => {
+    (chip: HTMLElement, fromKeyboard: boolean, asSheet = false) => {
       // A click that navigates inside the dwell unmounts the chip before its timer fires.
       if (!chip.isConnected) return
       clearOpenTimer()
@@ -162,6 +190,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
         kind: chip.matches(PAGE_LINK_SELECTOR) ? 'page-link' : 'block-ref',
         anchorRect: chip.getBoundingClientRect(),
         fromKeyboard,
+        asSheet,
       })
     },
     [clearOpenTimer, clearCloseTimer, releaseChip],
@@ -209,8 +238,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
 
   const handlePointerEnter = useCallback(
     (e: Event) => {
-      // Coarse pointers stay on the chip's `title=` for now — see the module
-      // docblock.
+      // A touch is the long press's (`handleTouchStart`), not a hover.
       const pointer = e as PointerEvent
       if (pointer.pointerType === 'touch') return
       const chip = (e.target as HTMLElement | null)?.closest(CHIP_SELECTOR) as HTMLElement | null
@@ -301,6 +329,79 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     [clearOpenTimer],
   )
 
+  const handleTouchStart = useCallback(
+    (e: TouchEvent) => {
+      clearOpenTimer()
+      pressRef.current = null
+      const touch = e.touches[0]
+      if (e.touches.length !== 1 || !touch || !isOnBlockRefChip(e.target)) return
+      const chip = (e.target as Element).closest(BLOCK_REF_SELECTOR) as HTMLElement
+      const press = { x: touch.clientX, y: touch.clientY, opened: false }
+      pressRef.current = press
+      openTimerRef.current = setTimeout(() => {
+        press.opened = true
+        open(chip, false, true)
+      }, LONG_PRESS_DELAY)
+    },
+    [clearOpenTimer, open],
+  )
+
+  const handleTouchMove = useCallback(
+    (e: TouchEvent) => {
+      const press = pressRef.current
+      const touch = e.touches[0]
+      if (press === null || press.opened || !touch) return
+      if (exceedsThreshold(touch.clientX - press.x, touch.clientY - press.y)) {
+        clearOpenTimer()
+        pressRef.current = null
+      }
+    },
+    [clearOpenTimer],
+  )
+
+  const handleTouchEnd = useCallback(
+    (e: TouchEvent) => {
+      const press = pressRef.current
+      pressRef.current = null
+      if (press?.opened) {
+        // No compat click: the chip would navigate away from the sheet it opened.
+        e.preventDefault()
+        return
+      }
+      clearOpenTimer()
+    },
+    [clearOpenTimer],
+  )
+
+  // Android's own long-press menu fires while the press is held.
+  const handleContextMenu = useCallback((e: Event) => {
+    if (pressRef.current !== null) e.preventDefault()
+  }, [])
+
+  useEffect(() => {
+    if (!container || !longPressSheet) return
+    container.addEventListener('touchstart', handleTouchStart, true)
+    container.addEventListener('touchmove', handleTouchMove, true)
+    container.addEventListener('touchend', handleTouchEnd, true)
+    container.addEventListener('touchcancel', handleTouchEnd, true)
+    container.addEventListener('contextmenu', handleContextMenu, true)
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart, true)
+      container.removeEventListener('touchmove', handleTouchMove, true)
+      container.removeEventListener('touchend', handleTouchEnd, true)
+      container.removeEventListener('touchcancel', handleTouchEnd, true)
+      container.removeEventListener('contextmenu', handleContextMenu, true)
+      pressRef.current = null
+    }
+  }, [
+    container,
+    longPressSheet,
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
+    handleContextMenu,
+  ])
+
   // A click on the chip itself navigates and unmounts the subtree, so neither
   // `pointerleave` nor `focusin` would ever close the peek it left behind.
   // Heard on `window`, ahead of any capture handler between it and the chip
@@ -367,6 +468,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     kind: state.kind,
     anchorRect: state.anchorRect,
     fromKeyboard: state.fromKeyboard,
+    asSheet: state.asSheet,
     peekRef,
     close,
     keepOpen,

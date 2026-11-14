@@ -1376,6 +1376,7 @@ for (const view of LIST_VIEWS) {
  */
 const PAGE_OPEN_IPC = [
   'batch_resolve',
+  'count_backlinks_in_page',
   'count_unlinked_references',
   'get_batch_properties',
   'get_block',
@@ -1399,6 +1400,7 @@ const PAGE_OPEN_IPC = [
 const LINK_CLICK_IPC = [
   'batch_resolve',
   'batch_resolve',
+  'count_backlinks_in_page',
   'count_unlinked_references',
   'get_batch_properties',
   'get_block',

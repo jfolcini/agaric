@@ -58,8 +58,8 @@ const KIND_OPTIONS: ReadonlyArray<{ value: LinkKind | null; labelKey: string }> 
   { value: 'block_ref', labelKey: 'references.kindBlockRefs' },
 ]
 
-/** The All / Page links / Block refs segmented control. */
-function KindToggle({
+/** The All / Page links / Block refs segmented control; the Outgoing links section's too. */
+export function KindToggle({
   kind,
   onKindChange,
 }: {
