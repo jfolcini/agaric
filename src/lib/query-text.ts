@@ -8,8 +8,8 @@
  *
  * The two texts share `tag:` and disagree on it. The older text's `tag:work`
  * is every tag whose name starts with `work`, attached or written inline, its
- * repeats OR'd; the search syntax's is the tag named `work`, attached, its
- * repeats AND'd. {@link isLegacyQueryText} therefore reads a block as the older
+ * repeats OR'd; the search syntax's is the tag named `work` and the tags
+ * nested under it (`work/urgent`), attached, its repeats AND'd. {@link isLegacyQueryText} therefore reads a block as the older
  * text when it uses a key only that text has, or its only keyed words are `tag:`
  * words without `#` (the older text skips a word with no key), which is every
  * such block stored before the search syntax was accepted, so none of them
@@ -223,7 +223,9 @@ function leaves(filters: FilterToken[], tagIds: string[]): FilterPrimitive[] {
  * Compile a block's search-syntax query text to the filter the engine runs, a
  * root `And` over the leaves as the builder writes it; or the tokens it cannot
  * run, each with its column. A tag is looked up by name in `tags` as the
- * search box looks it up (exact, any case), or is a chip's own id.
+ * search box looks it up (exact, any case), or is a chip's own id; the engine
+ * matches it with the tags nested under it. A name no tag holds is an `Or` of
+ * the tags nested under it (`projects` with only `projects/web`).
  */
 export function compileQueryTextWithTags(
   expression: string,
@@ -248,23 +250,33 @@ export function compileQueryTextWithTags(
   }
 
   const tagIds: string[] = []
+  const nestedOnly: FilterExpr[] = []
   for (const token of ast.filters.filter((f) => f.kind === 'tag')) {
     const name = token.value.normalize('NFC').toLowerCase()
     const id = chipTagId(token.value) ?? tags.find((tag) => tag.name.toLowerCase() === name)?.tag_id
-    if (id === undefined) {
-      problems.push({ ...at(token), message: t('query.text.unknownTag', { name: token.value }) })
-    } else {
+    const nested = tags.filter((tag) => tag.name.toLowerCase().startsWith(`${name}/`))
+    if (id !== undefined) {
       tagIds.push(id)
+    } else if (nested.length > 0) {
+      nestedOnly.push({
+        type: 'Or',
+        children: nested.map((tag) => ({
+          type: 'Leaf',
+          primitive: { type: 'Tag', tag: tag.tag_id },
+        })),
+      })
+    } else {
+      problems.push({ ...at(token), message: t('query.text.unknownTag', { name: token.value }) })
     }
   }
 
   if (problems.length > 0) {
     return { ok: false, problems: problems.toSorted((a, b) => a.column - b.column) }
   }
-  const children = leaves(ast.filters, tagIds).map((primitive): FilterExpr => ({
-    type: 'Leaf',
-    primitive,
-  }))
+  const children = [
+    ...leaves(ast.filters, tagIds).map((primitive): FilterExpr => ({ type: 'Leaf', primitive })),
+    ...nestedOnly,
+  ]
   // An empty `And` is every block in the space, never what a block with no filter asked for.
   if (children.length === 0) return { ok: false, problems: [] }
   return { ok: true, filter: { type: 'And', children } }

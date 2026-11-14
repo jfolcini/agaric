@@ -14,7 +14,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Paintbrush, Pencil, Plus, Tag, Trash2, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -42,8 +42,10 @@ import {
   subscribeToNameChanges,
 } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { requireActiveScope } from '@/lib/space-scope'
+import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { resolveTagBackground, TAG_COLOR_PRESETS, tagColorStyle } from '@/lib/tag-colors'
 import { cn } from '@/lib/utils'
 import { renamePage } from '@/stores/page-rename'
@@ -53,11 +55,46 @@ import { useSpaceStore } from '@/stores/space'
 /** Under a desktop `ListItem` row (45 px measured); `measureElement` corrects it. */
 const estimateTagRowHeight = (): number => 40
 
-/** The virtualizer asks only for indices below its `count`, which is `tags.length`. */
-function tagAt(tags: readonly TagCacheRow[], index: number): TagCacheRow {
-  const tag = tags[index]
-  if (tag === undefined) throw new Error(`TagList: no tag at index ${index}`)
-  return tag
+/**
+ * A row of the name tree: a tag under the name it is nested in, or a name
+ * tags are nested under that no tag holds (`projects` with only
+ * `projects/web`).
+ */
+interface TagRow {
+  key: string
+  depth: number
+  /** The last segment of the name, which the indent completes. */
+  label: string
+  tag: TagCacheRow | undefined
+}
+
+/** The tags in the order the Pages view nests page namespaces, each under its parent name. */
+function tagRows(tags: readonly TagCacheRow[]): TagRow[] {
+  const byId = new Map(tags.map((tag) => [tag.tag_id, tag]))
+  const rows: TagRow[] = []
+  const walk = (nodes: PageTreeNode[], depth: number) => {
+    for (const node of nodes) {
+      const tag = node.pageId === undefined ? undefined : byId.get(node.pageId)
+      rows.push({ key: tag?.tag_id ?? `name:${node.fullPath}`, depth, label: node.name, tag })
+      walk(node.children, depth + 1)
+    }
+  }
+  walk(
+    buildPageTree(
+      tags.map((tag) => ({ id: tag.tag_id, content: tag.name || 'Unnamed' })),
+      // A tag filter nests names folding ASCII case (`TAG_AND_NESTED_IDS_SQL`), and so does the tree.
+      foldAsciiUppercase,
+    ),
+    0,
+  )
+  return rows
+}
+
+/** The virtualizer asks only for indices below its `count`, which is `rows.length`. */
+function rowAt(rows: readonly TagRow[], index: number): TagRow {
+  const row = rows[index]
+  if (row === undefined) throw new Error(`TagList: no row at index ${index}`)
+  return row
 }
 
 interface TagListProps {
@@ -84,13 +121,14 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const loadSeqRef = useRef(0)
   const listRef = useRef<HTMLDivElement>(null)
 
+  const rows = useMemo(() => tagRows(tags), [tags])
   // oxlint-disable-next-line react/incompatible-library -- The Compiler skips memoizing a component that calls this API, so nothing virtualizer-derived is cached inside this component. Its values reach only `ListItem`, a plain function component (not `memo`): `measureElement`, assigned once in the Virtualizer constructor, and a `style` rebuilt from `start` every render. (#4409)
   const virtualizer = useVirtualizer({
-    count: tags.length,
+    count: rows.length,
     getScrollElement: () => listRef.current,
     estimateSize: estimateTagRowHeight,
     overscan: 5,
-    getItemKey: (index) => tagAt(tags, index).tag_id,
+    getItemKey: (index) => rowAt(rows, index).key,
   })
 
   const loadTags = useCallback(async () => {
@@ -325,7 +363,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         onRetry={loadTags}
         empty={<EmptyState icon={Tag} message={t('tagList.empty')} />}
       >
-        {(items) => (
+        {() => (
           <ScrollArea
             className={listCardVariants()}
             viewportRef={listRef}
@@ -336,19 +374,33 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           >
             <ul className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
-                const tag = tagAt(items, virtualRow.index)
+                const { tag, depth, label } = rowAt(rows, virtualRow.index)
+                const rowProps = {
+                  ref: virtualizer.measureElement,
+                  'data-index': virtualRow.index,
+                  // The DOM holds only the window; these give assistive tech the whole list.
+                  'aria-setsize': rows.length,
+                  'aria-posinset': virtualRow.index + 1,
+                  'aria-level': depth + 1,
+                  className: 'absolute top-0 left-0 w-full',
+                  style: { transform: `translateY(${virtualRow.start}px)` },
+                }
+                const indent = depth > 0 && (
+                  <span aria-hidden className="shrink-0" style={{ width: `${depth * 16}px` }} />
+                )
+                if (tag === undefined) {
+                  return (
+                    <ListItem key={virtualRow.key} {...rowProps}>
+                      {indent}
+                      <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="truncate text-sm text-muted-foreground">{label}</span>
+                    </ListItem>
+                  )
+                }
                 const color = tagColors[tag.tag_id]
                 return (
-                  <ListItem
-                    key={virtualRow.key}
-                    ref={virtualizer.measureElement}
-                    data-index={virtualRow.index}
-                    // The DOM holds only the window; these give assistive tech the whole list.
-                    aria-setsize={items.length}
-                    aria-posinset={virtualRow.index + 1}
-                    className="absolute top-0 left-0 w-full"
-                    style={{ transform: `translateY(${virtualRow.start}px)` }}
-                  >
+                  <ListItem key={virtualRow.key} {...rowProps}>
+                    {indent}
                     <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <button
                       type="button"
@@ -362,7 +414,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                         style={tagColorStyle(color)}
                         title={tag.name || 'Unnamed'}
                       >
-                        {tag.name || 'Unnamed'}
+                        {label}
                         <span className={cn('ml-1.5', !color && 'text-muted-foreground')}>
                           {tag.usage_count}
                         </span>

@@ -83,7 +83,7 @@ pub struct SearchBlockRow {
 }
 ```
 
-`tag_ids` matches attached tags (`block_tags`). `SearchFilter::tags_match_inline_and_inherited` widens each tag to inline `#[ULID]` references and inherited tags too, through the tag query's own leaf (`tag_query::tag_leaf_subquery_body`). The MCP `search` tool always sets it; the app sets it for a query with an `under:#tag` chip, which the Tags view's "Search everything under #tag" link opens (#5679). It is one flag for the whole filter, so the parser turns a `tag:#` chip beside an `under:` one invalid rather than let it widen silently.
+`tag_ids` matches attached tags (`block_tags`), each id standing for its tag and the tags named under it (`projects` for `projects/web`; `FilterPrimitive::Tag`, `TAG_AND_NESTED_IDS_SQL`). `tag_any_of` adds groups of ids a block passes by matching one of: the app sends one for a `tag:` name no tag holds, with the ids of the tags nested under it. `SearchFilter::tags_match_inline_and_inherited` widens every tag of both to inline `#[ULID]` references and inherited tags too (`add_any_tag_via_projection`). The MCP `search` tool always sets it; the app sets it for a query with an `under:#tag` chip, which the Tags view's "Search everything under #tag" link opens (#5679). It is one flag for the whole filter, so the parser turns a `tag:#` chip beside an `under:` one invalid rather than let it widen silently.
 
 Two invariants ride on this contract:
 

@@ -1156,6 +1156,13 @@ fn apply_structural_filters(
         &tag_ids_active,
         inputs.metadata.tags_match_inline_and_inherited,
     );
+    for group in &inputs.metadata.tag_any_of {
+        fb.add_any_tag_via_projection(
+            prefix,
+            group,
+            inputs.metadata.tags_match_inline_and_inherited,
+        );
+    }
 
     fb.add_space(prefix, inputs.scope);
 

@@ -231,6 +231,8 @@ beforeEach(() => {
         fg_errors: 0,
         bg_errors: 0,
       }
+    // The command answers a flat list, never a page.
+    if (cmd === 'list_all_tags_in_space') return []
     return emptyPage
   })
 })

@@ -37,7 +37,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | Backlinks | Linked and unlinked mentions, and an outgoing links pane | Linked and unlinked references with filters. No outgoing links pane |
 | Properties | In a note's YAML front matter, so per file: text, list, number, checkbox, date, date and time | On any block or page: text, number, date, select, reference, boolean, URL. One value per property: no list type and no date-time |
 | Tables of notes | Bases: table, list, cards and kanban layouts over files, with computed columns ("formulas"), summaries and grouping; dragging a kanban card changes its property | Query blocks as a list or a table whose cells edit their block's properties and task state; Advanced Query with grouping, summaries and a board whose cards move from a menu, not by dragging. Rows are blocks. No computed columns (Bases calls them formulas), no cards layout |
-| Tags | `#tag` and nested `#a/b` | `#tag`, renamed everywhere from one place; `/` in a name is a naming convention with prefix search; boolean tag queries |
+| Tags | `#tag` and nested `#a/b` | `#tag` and nested `#a/b`, renamed everywhere from one place; boolean tag queries |
 | Tasks | Checkboxes and `task:` search in core. The help documents no due dates, priorities or recurrence for tasks; community plugins such as Tasks add them | States, priorities, due and scheduled dates and repeat rules on any block; an Agenda; due-date notifications on desktop. Reads and writes the Tasks plugin's emoji fields on import and export |
 | Daily notes | A core plugin: one note per day from a template | A journal with day, week, month, stream and agenda views |
 | Search | Operators (`file:`, `path:`, `tag:`, `task:`, `[property:value]`), regex, `OR`, negation, embedded queries | Full-text search with typed filters (`tag:`, `state:`, `due:`, `prop:`), regex, find and replace in a page and across pages, query blocks. A term under three characters is not searched |
@@ -105,7 +105,7 @@ An export from Agaric is Markdown that Obsidian reads: wikilinks, `^id` block li
 - **List properties flatten.** `authors: [a, b]` becomes one text value (#6741), and there is no date-and-time type (#6758).
 - **One page at a time.** Tabs, but no split, no pop-out window, no saved workspace (#6550).
 - **Editor habits.** No Vim keys, no multiple cursors, one highlight colour (#6759), and `%%comments%%` show as text (#6751).
-- **Nested tags are names.** Searching `projects/` finds `projects/web`; searching the parent tag does not (#6760). A tag name holds no spaces.
+- **A tag name holds no spaces.**
 - **Sync means the same Wi-Fi, with the phone's app open** (#6519, #6740), on Android only, installed from a file (#79). No iPhone or iPad (#6739).
 - **Capture is thinner.** No web clipper (#6753) and, for now, nothing in Android's share sheet (#6555).
 - **English**, mostly (#6750).

@@ -297,8 +297,9 @@ mod assembly_equivalence {
     /// starting at `?3` (the advanced-query filter's first free slot with no
     /// full-text term: `?1` = space_id, filter binds start at `?2`… here the
     /// harness starts numbering at 3 to mirror the full-text layout).
-    /// `LAST_EDITED` stands for `last_edited_ms_sql("b.id")`.
-    const GOLDEN_NUM: &str = "(b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?3)) AND (EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?4 AND value_num IS NOT NULL AND value_num > ?5)) AND (((b.todo_state IN (?6))) OR (NOT COALESCE((b.block_type IN (?7)), 0))) AND (COALESCE(LAST_EDITED, 0) >= (CAST(strftime('%s', 'now', ?8) AS INTEGER) * 1000)) AND (EXISTS (SELECT 1 FROM block_links l WHERE l.source_id = b.id AND l.target_id = ?9)) AND (EXISTS (SELECT 1 FROM blocks p1 WHERE p1.id = b.parent_id AND ((p1.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?10)) AND (EXISTS (SELECT 1 FROM blocks p2 WHERE p2.id = p1.parent_id AND ((p2.todo_state IS NULL OR p2.todo_state NOT IN (?11))))))))";
+    /// `LAST_EDITED` stands for `last_edited_ms_sql("b.id")`, `NESTED_TAGS_n`
+    /// for `TAG_AND_NESTED_IDS_SQL` bound at `?n`.
+    const GOLDEN_NUM: &str = "(b.id IN (SELECT block_id FROM block_tags WHERE tag_id IN (NESTED_TAGS_3))) AND (EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?4 AND value_num IS NOT NULL AND value_num > ?5)) AND (((b.todo_state IN (?6))) OR (NOT COALESCE((b.block_type IN (?7)), 0))) AND (COALESCE(LAST_EDITED, 0) >= (CAST(strftime('%s', 'now', ?8) AS INTEGER) * 1000)) AND (EXISTS (SELECT 1 FROM block_links l WHERE l.source_id = b.id AND l.target_id = ?9)) AND (EXISTS (SELECT 1 FROM blocks p1 WHERE p1.id = b.parent_id AND ((p1.id IN (SELECT block_id FROM block_tags WHERE tag_id IN (NESTED_TAGS_10))) AND (EXISTS (SELECT 1 FROM blocks p2 WHERE p2.id = p1.parent_id AND ((p2.todo_state IS NULL OR p2.todo_state NOT IN (?11))))))))";
 
     #[test]
     fn structured_assembly_is_byte_identical_to_legacy_renumber() {
@@ -356,7 +357,11 @@ mod assembly_equivalence {
         let fragment = SqlFragment::from_where_clause(wc);
         let mut next = 3usize;
         let rendered = fragment.render(&mut next);
-        let golden = GOLDEN_NUM.replace("LAST_EDITED", &crate::filters::last_edited_ms_sql("b.id"));
+        let nested_tags = crate::filters::primitive::TAG_AND_NESTED_IDS_SQL;
+        let golden = GOLDEN_NUM
+            .replace("LAST_EDITED", &crate::filters::last_edited_ms_sql("b.id"))
+            .replace("NESTED_TAGS_3", &nested_tags.replace('?', "?3"))
+            .replace("NESTED_TAGS_10", &nested_tags.replace('?', "?10"));
         assert_eq!(rendered, golden, "renumbered SQL must be byte-identical");
         assert_eq!(bind_count, 9, "bind count unchanged");
         assert_eq!(fragment.param_count(), 9, "fragment param count == binds");
