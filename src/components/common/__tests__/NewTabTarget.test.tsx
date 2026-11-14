@@ -3,12 +3,10 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
-import {
-  LONG_PRESS_DELAY,
-  useBlockTouchLongPress,
-} from '@/components/block-tree/use-block-touch-long-press'
+import { useBlockTouchLongPress } from '@/components/block-tree/use-block-touch-long-press'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { droppedPageId } from '@/lib/page-drag'
+import { LONG_PRESS_DELAY } from '@/lib/touch-press'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
 

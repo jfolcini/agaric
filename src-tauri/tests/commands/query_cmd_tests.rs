@@ -4187,6 +4187,8 @@ async fn count_backlinks_in_page_counts_each_referenced_block_of_the_page() {
     .await;
     insert_link_of_kind(&pool, "CIP_S1", "CIP_A", "block_ref").await;
     insert_link_of_kind(&pool, "CIP_S2", "CIP_A", "block_ref").await;
+    // A referrer on the page itself is not listed when A is zoomed, so not counted.
+    insert_link_of_kind(&pool, "CIP_B", "CIP_A", "block_ref").await;
     // A deleted source does not count, so C has no count at all.
     insert_link_of_kind(&pool, "CIP_S3", "CIP_C", "block_ref").await;
     soft_delete(&pool, "CIP_S3").await;
@@ -4203,7 +4205,7 @@ async fn count_backlinks_in_page_counts_each_referenced_block_of_the_page() {
     assert_eq!(
         counts,
         HashMap::from([("CIP_A".to_string(), 2)]),
-        "only the page's own blocks with a live referrer are counted"
+        "only the page's own blocks with a live referrer on another page are counted"
     );
 }
 

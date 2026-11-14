@@ -40,6 +40,7 @@ vi.mock('@/components/editor/BlockTree', () => ({
     parentId?: string
     autoCreateFirstBlock?: boolean
     onNavigateToPage?: unknown
+    onZoomChange?: (id: string | null) => void
   }) => (
     <div
       data-testid="block-tree"
@@ -48,6 +49,11 @@ vi.mock('@/components/editor/BlockTree', () => ({
       data-on-navigate={String(!!props.onNavigateToPage)}
     >
       BlockTree
+      {props.onZoomChange && (
+        <button type="button" onClick={() => props.onZoomChange?.('BLOCK_Z')}>
+          zoom into BLOCK_Z
+        </button>
+      )}
     </div>
   ),
 }))
@@ -406,6 +412,16 @@ describe('DaySection', () => {
     expect(screen.getByTestId('due-panel')).toHaveAttribute('data-date', '2025-06-15')
     expect(screen.getByTestId('linked-references')).toHaveAttribute('data-page-id', 'PAGE_1')
     expect(screen.getByTestId('done-panel')).toHaveAttribute('data-date', '2025-06-15')
+  })
+
+  // #6746 — a block's reference count zooms it, where its references list.
+  it("retargets the daily view's linked references onto the zoomed block", async () => {
+    const user = userEvent.setup()
+    render(<DaySection entry={makeDayEntry({ pageId: 'PAGE_1' })} mode="daily" onAddBlock={noop} />)
+
+    await user.click(screen.getByRole('button', { name: 'zoom into BLOCK_Z' }))
+
+    expect(screen.getByTestId('linked-references')).toHaveAttribute('data-page-id', 'BLOCK_Z')
   })
 
   // The add control belongs to the block tree it adds to, not to the agenda

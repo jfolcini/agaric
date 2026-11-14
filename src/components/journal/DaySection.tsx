@@ -166,6 +166,9 @@ function DaySectionInner({
   const { t } = useTranslation()
   /** Delegation container for this day's block-reference peek (#4551). */
   const [sectionEl, setSectionEl] = useState<HTMLElement | null>(null)
+  // The daily view's linked references follow the zoomed block, as a page's do: a block's
+  // reference count zooms it to list its references (#6746).
+  const [zoomedBlockId, setZoomedBlockId] = useState<string | null>(null)
   const navigateToDate = useJournalStore((s) => s.navigateToDate)
   const goToDateAndPanel = useJournalStore((s) => s.goToDateAndPanel)
   const todayStr = useToday()
@@ -442,6 +445,7 @@ function DaySectionInner({
                   actions={dailyActions}
                   onNavigateToPage={onNavigateToPage}
                   onAddBlock={() => onAddBlock(entry.dateStr)}
+                  onZoomChange={setZoomedBlockId}
                 />
               ) : (
                 <BlockTree
@@ -510,7 +514,10 @@ function DaySectionInner({
           </div>
           {entry.pageId && (
             <div id="journal-references-panel">
-              <LinkedReferences targetId={entry.pageId} onNavigateToPage={onNavigateToPage} />
+              <LinkedReferences
+                targetId={zoomedBlockId ?? entry.pageId}
+                onNavigateToPage={onNavigateToPage}
+              />
             </div>
           )}
           <div id="journal-done-panel">

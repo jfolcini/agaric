@@ -10,11 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
-import { LONG_PRESS_DELAY } from '@/components/block-tree/use-block-touch-long-press'
 import type { BlockRow } from '@/lib/bindings'
 import { normalizeBlockRefTitle } from '@/lib/block-title'
 import { t } from '@/lib/i18n'
 import { queryClient } from '@/lib/query-client'
+import { LONG_PRESS_DELAY } from '@/lib/touch-press'
 import { useSpaceStore } from '@/stores/space'
 
 vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => true }))

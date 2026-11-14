@@ -25,7 +25,7 @@
  *
  * On a touch phone (`longPressSheet`) a long press on a `((ref))` chip opens
  * the peek as a bottom sheet (#6746), with the block row's hold and drift
- * (`use-block-touch-long-press.ts`); the row's own long press and drag stand
+ * (`touch-press.ts`); the row's own long press and drag stand
  * aside for a chip there (`isOnBlockRefChip`). A tap still navigates: only a
  * press that opened the sheet keeps its release from reaching the chip.
  * Inside the editor the native long press keeps the gesture, as it does for
@@ -44,12 +44,8 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import {
-  exceedsThreshold,
-  isInsideEditableText,
-  LONG_PRESS_DELAY,
-} from '@/components/block-tree/use-block-touch-long-press'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
+import { exceedsThreshold, isInsideEditableText, LONG_PRESS_DELAY } from '@/lib/touch-press'
 
 /** Both the TipTap NodeView chip and the read-only chip carry this pair. */
 const BLOCK_REF_SELECTOR = '[data-type="block-ref"][data-id]'
