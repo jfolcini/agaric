@@ -8620,3 +8620,207 @@ mod incremental_equals_rebuild_6534 {
         }
     }
 }
+
+// ── #6760: a tag filter finds the tags nested under it by name ───────
+
+use crate::fts::metadata_filter::MetadataPredicates;
+
+const NEST_PARENT: &str = "01HQNEST0000000000000PARENT";
+const NEST_WEB: &str = "01HQNEST00000000000000WEB01";
+const NEST_SITE: &str = "01HQNEST0000000000000SITE01";
+const NEST_API: &str = "01HQNEST00000000000000API01";
+
+/// Tags `projects`, `projects/web`, `projects/web/site` and `Projects/API`
+/// each on one block holding the tag's name as its text, with three tags a filter on `projects`
+/// must not reach: `projectsx` (a name that only starts the same), a trashed
+/// `projects/old`, and `projects/other` in another space.
+async fn seed_nested_tags(pool: &SqlitePool) {
+    insert_space_block_for_fts(pool, FTS_SPACE_A_ID, "Personal").await;
+    for (position, (tag_id, name, block)) in (0..).zip([
+        (NEST_PARENT, "projects", "ON-PROJECTS"),
+        (NEST_WEB, "projects/web", "ON-WEB"),
+        (NEST_SITE, "projects/web/site", "ON-SITE"),
+        (NEST_API, "Projects/API", "ON-API"),
+        ("01HQNEST00000000000000LOOK1", "projectsx", "ON-LOOKALIKE"),
+        ("01HQNEST000000000000TRASHED", "projects/old", "ON-TRASHED"),
+        (
+            "01HQNEST00000000000000OTHER",
+            "projects/other",
+            "ON-OTHER-SPACE",
+        ),
+    ]) {
+        insert_block(pool, tag_id, "tag", name, None, None).await;
+        insert_block(pool, block, "content", name, None, Some(position)).await;
+        new3_tag_block(pool, block, tag_id).await;
+    }
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = '01HQNEST000000000000TRASHED'")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = '01HQNEST00000000000000OTHER'")
+        .bind(FTS_SPACE_A_ID)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// The blocks `query` returns under `tags` (ALL) and `metadata`: blank, the
+/// filter-only scan; text, the FTS match.
+async fn nested_tag_search_for(
+    pool: &SqlitePool,
+    query: &str,
+    tags: &[&str],
+    metadata: MetadataPredicates,
+) -> Vec<String> {
+    let tags: Vec<String> = tags.iter().map(ToString::to_string).collect();
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let mut ids: Vec<String> = search_with_toggles(
+        pool,
+        query,
+        &page,
+        None,
+        Some(&tags),
+        &SearchScope::AllSpaces,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &metadata,
+        None,
+    )
+    .await
+    .unwrap()
+    .items
+    .iter()
+    .map(|r| r.id.as_str().to_owned())
+    .collect();
+    ids.sort();
+    ids
+}
+
+async fn nested_tag_search(
+    pool: &SqlitePool,
+    tags: &[&str],
+    metadata: MetadataPredicates,
+) -> Vec<String> {
+    nested_tag_search_for(pool, "", tags, metadata).await
+}
+
+#[tokio::test]
+async fn tag_filter_matches_the_tags_nested_under_it_6760() {
+    let (pool, _dir) = test_pool().await;
+    seed_nested_tags(&pool).await;
+
+    assert_eq!(
+        nested_tag_search(&pool, &[NEST_PARENT], MetadataPredicates::default()).await,
+        ["ON-API", "ON-PROJECTS", "ON-SITE", "ON-WEB"],
+        "the tag and every live tag of its space named under it, in any case"
+    );
+    assert_eq!(
+        nested_tag_search(&pool, &[NEST_WEB], MetadataPredicates::default()).await,
+        ["ON-SITE", "ON-WEB"],
+        "a nested tag does not find its parent"
+    );
+    // ALL semantics hold across tags: only the `projects/web/site` block is
+    // under both `projects/web` and `projects/web/site`.
+    assert_eq!(
+        nested_tag_search(&pool, &[NEST_WEB, NEST_SITE], MetadataPredicates::default()).await,
+        ["ON-SITE"],
+    );
+}
+
+/// `under:` reaches a nested tag written inline and one inherited from an
+/// ancestor, as it reaches the tag itself.
+#[tokio::test]
+async fn under_tag_matches_nested_tags_inline_and_inherited_6760() {
+    let (pool, _dir) = test_pool().await;
+    seed_nested_tags(&pool).await;
+    insert_block(&pool, "CHILD", "content", "CHILD", Some("ON-WEB"), Some(0)).await;
+    sqlx::query(
+        "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) \
+         VALUES ('CHILD', ?, 'ON-WEB')",
+    )
+    .bind(NEST_WEB)
+    .execute(&pool)
+    .await
+    .unwrap();
+    insert_block(&pool, "INLINE", "content", "INLINE", None, Some(20)).await;
+    sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES ('INLINE', ?)")
+        .bind(NEST_SITE)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let widened = MetadataPredicates {
+        tags_match_inline_and_inherited: true,
+        ..MetadataPredicates::default()
+    };
+    assert_eq!(
+        nested_tag_search(&pool, &[NEST_PARENT], widened).await,
+        [
+            "CHILD",
+            "INLINE",
+            "ON-API",
+            "ON-PROJECTS",
+            "ON-SITE",
+            "ON-WEB"
+        ],
+    );
+    assert_eq!(
+        nested_tag_search(&pool, &[NEST_PARENT], MetadataPredicates::default())
+            .await
+            .len(),
+        4,
+        "without `under:` only attached tags match"
+    );
+}
+
+/// `tag_any_of`: one tag of every group, AND-ed with `tag_ids`; a group alone
+/// is a filter, and an empty group matches nothing.
+#[tokio::test]
+async fn tag_any_of_needs_one_tag_of_every_group_6760() {
+    let (pool, _dir) = test_pool().await;
+    seed_nested_tags(&pool).await;
+    let groups = |groups: &[&[&str]]| MetadataPredicates {
+        tag_any_of: groups
+            .iter()
+            .map(|g| g.iter().map(ToString::to_string).collect())
+            .collect(),
+        ..MetadataPredicates::default()
+    };
+
+    assert_eq!(
+        nested_tag_search(&pool, &[], groups(&[&[NEST_SITE, NEST_API]])).await,
+        ["ON-API", "ON-SITE"],
+    );
+    assert_eq!(
+        nested_tag_search(&pool, &[NEST_WEB], groups(&[&[NEST_SITE, NEST_API]])).await,
+        ["ON-SITE"],
+    );
+    assert_eq!(
+        nested_tag_search(&pool, &[], groups(&[&[NEST_PARENT], &[NEST_API]])).await,
+        ["ON-API"],
+    );
+    assert!(
+        nested_tag_search(&pool, &[NEST_PARENT], groups(&[&[]]))
+            .await
+            .is_empty(),
+    );
+
+    // The FTS match takes the same clauses: all seven blocks hold `projects`.
+    rebuild_fts_index(&pool).await.unwrap();
+    assert_eq!(
+        nested_tag_search_for(&pool, "projects", &[], groups(&[&[NEST_SITE, NEST_API]])).await,
+        ["ON-API", "ON-SITE"],
+    );
+    assert_eq!(
+        nested_tag_search_for(
+            &pool,
+            "projects",
+            &[NEST_WEB],
+            MetadataPredicates::default()
+        )
+        .await,
+        ["ON-SITE", "ON-WEB"],
+    );
+}

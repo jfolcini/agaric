@@ -20,7 +20,7 @@ import {
  */
 
 const PAGE = 'Getting Started'
-const GS1 = '0000000000000000000BLOCK01'
+const GS1 = '0000000000000000000B10CK01'
 const TABLE = '| A | B |\n| --- | --- |\n| one | two |'
 
 async function storedContent(page: Page): Promise<string> {

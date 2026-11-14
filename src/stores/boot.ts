@@ -64,6 +64,15 @@ function logBootResolved(outcome: 'ready' | 'error'): void {
   )
 }
 
+/**
+ * On Android the web view runs while the backend's setup is still registering
+ * its state, so on a slow start (a fresh install running every migration) the
+ * first command is refused with this message. Setup finishes on its own.
+ */
+const BACKEND_STARTING = /state not managed/
+const BACKEND_START_RETRIES = 50
+const BACKEND_START_RETRY_MS = 100
+
 interface BootStore {
   state: BootState
   error: string | null
@@ -82,7 +91,18 @@ export const useBootStore = create<BootStore>((set) => ({
     // `refreshAvailableSpaces` never rejects; it records a hard failure instead.
     prefetchBootJournal()
     await useSpaceStore.getState().refreshAvailableSpaces()
-    const outcome = useSpaceStore.getState().lastRefreshOutcome
+    let outcome = useSpaceStore.getState().lastRefreshOutcome
+    for (
+      let retry = 0;
+      retry < BACKEND_START_RETRIES &&
+      outcome.kind === 'hard-error' &&
+      BACKEND_STARTING.test(String(outcome.error));
+      retry++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, BACKEND_START_RETRY_MS))
+      await useSpaceStore.getState().refreshAvailableSpaces()
+      outcome = useSpaceStore.getState().lastRefreshOutcome
+    }
     if (outcome.kind === 'hard-error') {
       set({
         state: 'error',

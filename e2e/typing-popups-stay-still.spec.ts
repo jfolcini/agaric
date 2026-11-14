@@ -7,7 +7,7 @@ import { expect, ipc, navigateMobile, openPage, test, waitForBoot } from './help
  * results narrow: the command palette and the ref-property value picker.
  */
 
-const GS5 = '0000000000000000000BLOCK05'
+const GS5 = '0000000000000000000B10CK05'
 
 /** Type `text` one key at a time and return the input's top after each key and once `last` shows. */
 async function topsWhileTyping(page: Page, input: Locator, text: string, last: Locator) {

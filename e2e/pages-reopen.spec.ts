@@ -18,7 +18,7 @@ import {
  */
 
 const QUICK_NOTES = '00000000000000000000PAGE02'
-const BLOCK_QN_1 = '0000000000000000000BLOCK08'
+const BLOCK_QN_1 = '0000000000000000000B10CK08'
 
 interface MockWindow extends Window {
   __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> }

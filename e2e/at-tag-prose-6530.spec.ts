@@ -11,7 +11,7 @@ import { expect, focusBlockById, ipc, openPage, reopenPage, test, waitForBoot } 
  */
 
 const PAGE = 'Getting Started'
-const GS1 = '0000000000000000000BLOCK01'
+const GS1 = '0000000000000000000B10CK01'
 const TAG_REF = /^meet #\[([0-9A-Z]{26})\]$/
 
 async function storedContent(page: Page): Promise<string> {

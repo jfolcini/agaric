@@ -821,6 +821,15 @@ describe('searchBlocks', () => {
       },
     })
   })
+
+  it('sends tagAnyOf only when the search has a group (#6760)', async () => {
+    mockedInvoke.mockImplementation(mockInvokeCommands({ search_blocks: () => emptyPage }))
+    await searchBlocks({ query: 'q', tagAnyOf: [['TAG1', 'TAG2']], spaceId: 'SPACE_42' })
+    await searchBlocks({ query: 'q', spaceId: 'SPACE_42' })
+    const filters = mockedInvoke.mock.calls.map(([, args]) => (args as { filter: object }).filter)
+    expect(filters[0]).toMatchObject({ tagAnyOf: [['TAG1', 'TAG2']] })
+    expect(filters[1]).not.toHaveProperty('tagAnyOf')
+  })
 })
 
 describe('search wrappers scope to the active space (#5415)', () => {

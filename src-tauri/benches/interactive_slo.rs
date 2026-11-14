@@ -4427,6 +4427,7 @@ fn slo_search_filter() -> SearchFilter {
         excluded_priority_filter: Vec::new(),
         last_edited: None,
         tags_match_inline_and_inherited: false,
+        tag_any_of: Vec::new(),
     }
 }
 
@@ -4628,6 +4629,7 @@ fn bench_search_blocks_under_tag(c: &mut Criterion) {
     let tag_filter = |widen: bool| SearchFilter {
         tag_ids: vec![UNDER_TAG_ID.to_owned()],
         tags_match_inline_and_inherited: widen,
+        tag_any_of: Vec::new(),
         ..slo_search_filter()
     };
 

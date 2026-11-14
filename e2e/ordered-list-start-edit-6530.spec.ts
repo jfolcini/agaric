@@ -7,7 +7,7 @@ import { expect, focusBlockById, ipc, reopenPage, saveBlock, test, waitForBoot }
  */
 
 const PAGE = 'Getting Started'
-const GS1 = '0000000000000000000BLOCK01'
+const GS1 = '0000000000000000000B10CK01'
 const IMPORTED = '5. five\n6. six'
 
 async function storedContent(page: import('@playwright/test').Page): Promise<string> {

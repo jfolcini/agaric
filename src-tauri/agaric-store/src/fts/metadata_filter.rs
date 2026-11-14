@@ -104,6 +104,9 @@ pub struct MetadataPredicates {
     /// every search surface (FTS / regex / filter-only / partitioned)
     /// alongside the rest of the metadata, with no new function signatures.
     pub last_edited: Option<LastEditedSpec>,
+    /// [`SearchFilter::tag_any_of`], carried here for the same reason as
+    /// [`Self::last_edited`].
+    pub tag_any_of: Vec<Vec<String>>,
     /// [`SearchFilter::tags_match_inline_and_inherited`], carried here for
     /// the same reason as [`Self::last_edited`]. Not a filter by itself, so
     /// [`Self::is_empty`] ignores it.
@@ -139,6 +142,7 @@ impl MetadataPredicates {
             && self.property_includes.is_empty()
             && self.property_excludes.is_empty()
             && self.last_edited.is_none()
+            && self.tag_any_of.is_empty()
     }
 }
 
@@ -241,6 +245,7 @@ pub fn prepare_metadata_with_today(
         spec.validate()?;
     }
     out.last_edited = filter.last_edited.clone();
+    out.tag_any_of = filter.tag_any_of.clone();
 
     Ok(out)
 }

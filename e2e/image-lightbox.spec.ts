@@ -26,7 +26,7 @@
  */
 import { expect, openPage, test, waitForBoot } from './helpers'
 
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 // 120x120 solid-orange PNG (8-bit RGB, zlib-deflated raw scanlines).
 // Generated once via Node's `zlib.deflateSync` + hand-built IHDR/IDAT/IEND

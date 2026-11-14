@@ -31,7 +31,7 @@ test.describe('attachment link (#6032) @attachments @editor', () => {
     const attachmentId = await page.evaluate(async () => {
       const invoke = (window as unknown as InvokeWindow).__TAURI_INTERNALS__.invoke
       const row = (await invoke('add_attachment_with_bytes', {
-        blockId: '0000000000000000000BLOCK01',
+        blockId: '0000000000000000000B10CK01',
         filename: 'paper.pdf',
         mimeType: 'application/pdf',
         bytes: btoa('%PDF'),

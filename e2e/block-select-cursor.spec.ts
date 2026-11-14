@@ -14,10 +14,10 @@ import { expect, focusBlockById, openPage, reopenPage, test, waitForBoot } from 
 
 const PAGE = 'Getting Started'
 // SEED_IDS.BLOCK_GS_1..3 in src/lib/tauri-mock/seed.ts
-const GS1 = '0000000000000000000BLOCK01'
-const GS2 = '0000000000000000000BLOCK02'
-const GS3 = '0000000000000000000BLOCK03'
-const GS5 = '0000000000000000000BLOCK05'
+const GS1 = '0000000000000000000B10CK01'
+const GS2 = '0000000000000000000B10CK02'
+const GS3 = '0000000000000000000B10CK03'
+const GS5 = '0000000000000000000B10CK05'
 
 const row = (page: Page, id: string) => page.locator(`li[data-block-id="${id}"]`)
 // The live region `announce()` writes to (src/lib/announcer.ts).

@@ -27,7 +27,7 @@ import { expect, focusBlock, openPage, reopenPage, test, waitForBoot } from './h
 // Helpers
 // ---------------------------------------------------------------------------
 
-const GS_1 = '0000000000000000000BLOCK01'
+const GS_1 = '0000000000000000000B10CK01'
 
 /** The block's stored properties as `key → value_text`, read from the mock backend. */
 async function storedProperties(page: Page, blockId: string): Promise<Record<string, unknown>> {

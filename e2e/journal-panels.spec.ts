@@ -44,7 +44,7 @@ function localDateStr(d: Date): string {
 
 // Seed id — see src/lib/tauri-mock/seed.ts SEED_IDS.BLOCK_OVERDUE_1
 // ("Submit report", child of PAGE_PROJECTS, TODO, due_date = yesterday).
-const BLOCK_OVERDUE_1 = '0000000000000000000BLOCK19'
+const BLOCK_OVERDUE_1 = '0000000000000000000B10CK19'
 const RESCHEDULE_DRAG_TYPE = 'application/x-block-reschedule'
 
 // ===========================================================================
@@ -235,7 +235,7 @@ test.describe('Projected repeat occurrences @journal', () => {
 // ===========================================================================
 
 // Seed id — BLOCK_DAILY_1 "Morning standup notes", the first block of today.
-const BLOCK_DAILY_1 = '0000000000000000000BLOCK06'
+const BLOCK_DAILY_1 = '0000000000000000000B10CK06'
 
 test('one click on the Due panel header lands while a block above is edited @journal', async ({
   page,

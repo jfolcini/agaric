@@ -22,7 +22,7 @@ import {
  */
 
 /** BLOCK_GS_1, the first child of "Getting Started" in the mock seed. */
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 async function today(page: Page): Promise<string> {
   return page.evaluate(() => {

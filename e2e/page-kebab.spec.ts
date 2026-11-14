@@ -25,8 +25,8 @@ import {
  */
 
 // SEED_IDS.BLOCK_GS_1 / BLOCK_GS_3 and their seed text (src/lib/tauri-mock/seed.ts).
-const GS_1 = '0000000000000000000BLOCK01'
-const GS_3 = '0000000000000000000BLOCK03'
+const GS_1 = '0000000000000000000B10CK01'
+const GS_3 = '0000000000000000000B10CK03'
 const GS_1_TEXT = 'Welcome to Agaric! This is your personal knowledge base.'
 const GS_3_TEXT = 'Create new blocks by pressing Enter at the end of any block.'
 // SEED_IDS.PAGE_QUICK_NOTES.

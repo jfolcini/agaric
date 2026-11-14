@@ -910,7 +910,7 @@ describe('PropertyDefinitionsList', () => {
   // ── #5841 S0: per-space usage count ─────
   describe('usage count', () => {
     const usageBadge = (key: string) => screen.queryByTestId(`property-usage-${key}`)
-    const MTG_1 = '0000000000000000000BLOCK17'
+    const MTG_1 = '0000000000000000000B10CK17'
 
     /** The mock backend: Personal's `context` and `project` are each on two blocks. */
     function seedMock(): void {

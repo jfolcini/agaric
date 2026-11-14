@@ -29,7 +29,7 @@
  *    to the backend log, the milestone `scripts/measure-boot.mjs` times.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { logger } from '@/lib/logger'
 import { setLogBackendSink } from '@/lib/logger-transport'
@@ -109,6 +109,52 @@ describe('useBootStore', () => {
     expect(mockRefreshAvailableSpaces).toHaveBeenCalledTimes(2)
     expect(useBootStore.getState().state).toBe('ready')
     expect(useBootStore.getState().error).toBeNull()
+  })
+
+  describe('a backend still starting (Android)', () => {
+    const notManaged =
+      'state not managed for field `pool` on command `list_spaces`. You must call `.manage()` before using this command'
+
+    afterEach(() => {
+      vi.useRealTimers()
+      mockRefreshAvailableSpaces.mockImplementation(async () => {})
+    })
+
+    it('boot() waits for it and flips to ready without showing the error', async () => {
+      vi.useFakeTimers()
+      mockOutcome = { kind: 'hard-error', error: notManaged }
+      mockRefreshAvailableSpaces.mockImplementation(async () => {
+        if (mockRefreshAvailableSpaces.mock.calls.length === 3) mockOutcome = { kind: 'ok' }
+      })
+      const states: string[] = []
+      const unsubscribe = useBootStore.subscribe((s) => states.push(s.state))
+
+      const booting = useBootStore.getState().boot()
+      await vi.runAllTimersAsync()
+      await booting
+      unsubscribe()
+
+      expect(mockRefreshAvailableSpaces).toHaveBeenCalledTimes(3)
+      expect(states).toEqual(['ready'])
+      expect(mockLogSink.mock.calls).toEqual([
+        ['info', 'stores/boot', 'boot resolved', null, null, JSON.stringify({ outcome: 'ready' })],
+      ])
+    })
+
+    it('boot() gives up after 5 seconds and shows the error', async () => {
+      vi.useFakeTimers()
+      mockOutcome = { kind: 'hard-error', error: notManaged }
+
+      const booting = useBootStore.getState().boot()
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(useBootStore.getState().state).toBe('booting')
+      await vi.advanceTimersByTimeAsync(1)
+      await booting
+
+      expect(mockRefreshAvailableSpaces).toHaveBeenCalledTimes(51)
+      expect(useBootStore.getState().state).toBe('error')
+      expect(useBootStore.getState().error).toBe(notManaged)
+    })
   })
 
   describe('boot resolved milestone (#5419)', () => {

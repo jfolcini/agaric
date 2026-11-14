@@ -1159,8 +1159,7 @@ export const blocksHandlers = {
     const blockType = a['blockType'] as string
     // #2849 PR2 — honor a client-supplied ULID verbatim, else mint one. A
     // colliding id is refused below, as `resolve_block_id_in_tx` refuses it.
-    // The page path mints its own id, so a page ignores it.
-    const clientId = blockType === 'page' ? null : (a['blockId'] as string | null | undefined)
+    const clientId = a['blockId'] as string | null | undefined
     const id = clientId ?? fakeId()
     const parentId = (a['parentId'] as string) ?? null
     // `scope: SpaceScope` mirrors the backend

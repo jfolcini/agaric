@@ -24,9 +24,9 @@ import {
  */
 
 /** The seeded Getting Started block holding the [[Quick Notes]] link. */
-const LINK_BLOCK = '0000000000000000000BLOCK02'
+const LINK_BLOCK = '0000000000000000000B10CK02'
 /** The seeded first block of Quick Notes, "These notes complement…". */
-const QUICK_NOTES_FIRST_BLOCK = '0000000000000000000BLOCK08'
+const QUICK_NOTES_FIRST_BLOCK = '0000000000000000000B10CK08'
 const PAGE_MODE_EDITOR = '[data-testid="page-mode-editor"]'
 
 function tabs(page: Page): Locator {

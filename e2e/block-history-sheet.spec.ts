@@ -17,8 +17,8 @@ import {
  * `keyboard-tabs-drawers.spec.ts` asserts only that the sheet opens.
  */
 
-const GS_1 = '0000000000000000000BLOCK01'
-const GS_3 = '0000000000000000000BLOCK03'
+const GS_1 = '0000000000000000000B10CK01'
+const GS_3 = '0000000000000000000B10CK03'
 
 async function editBlock(page: Page, id: string, text: string) {
   await focusBlockById(page, id)

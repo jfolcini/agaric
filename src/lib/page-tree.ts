@@ -36,6 +36,8 @@ export interface PageTreeNode {
 
 export function buildPageTree(
   pages: Array<{ id: string; content: string | null }>,
+  /** What makes two segments the same node; tag names nest in any case. */
+  segmentKey: (segment: string) => string = (segment) => segment,
 ): PageTreeNode[] {
   const root: PageTreeNode[] = []
   // Keep a parallel `name → node` index per level so the inner
@@ -55,12 +57,12 @@ export function buildPageTree(
       const segment = segments[i] as string
       const fullPath = segments.slice(0, i + 1).join('/')
       const index = indexByLevel.get(current) as Map<string, PageTreeNode>
-      let node = index.get(segment)
+      let node = index.get(segmentKey(segment))
 
       if (!node) {
         node = { name: segment, fullPath, children: [] }
         current.push(node)
-        index.set(segment, node)
+        index.set(segmentKey(segment), node)
         indexByLevel.set(node.children, new Map())
       }
 

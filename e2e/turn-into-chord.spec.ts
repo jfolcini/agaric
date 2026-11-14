@@ -17,7 +17,7 @@ import {
 } from './helpers'
 
 // `SEED_IDS.BLOCK_GS_3` and its content in `src/lib/tauri-mock/seed.ts`.
-const GS_3 = '0000000000000000000BLOCK03'
+const GS_3 = '0000000000000000000B10CK03'
 const GS_3_TEXT = 'Create new blocks by pressing Enter at the end of any block.'
 
 test.describe('Turn into by the Ctrl+Shift+L chord @editor', () => {

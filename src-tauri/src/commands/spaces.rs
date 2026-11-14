@@ -222,6 +222,32 @@ pub async fn create_page_in_space_inner(
     content: String,
     space_id: String,
 ) -> Result<BlockId, AppError> {
+    create_page_in_space_inner_with_id(
+        pool,
+        device_id,
+        materializer,
+        parent_id,
+        content,
+        space_id,
+        None,
+    )
+    .await
+}
+
+/// [`create_page_in_space_inner`] with an optional client-chosen id for the
+/// page, as a tag takes one (#6529). `None` mints one. An id a block already
+/// holds is refused by [`create_block_in_tx`]; a title the space already
+/// holds answers with that page and leaves `client_id` unused.
+#[instrument(skip(pool, materializer, content), err)]
+pub async fn create_page_in_space_inner_with_id(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    parent_id: Option<String>,
+    content: String,
+    space_id: String,
+    client_id: Option<BlockId>,
+) -> Result<BlockId, AppError> {
     // Normalize ULID to uppercase per AGENTS.md invariant #8.
     // Strict ULID-typed args from Tauri are already uppercase by
     // construction (op_log path), but raw String args from MCP tools /
@@ -280,8 +306,7 @@ pub async fn create_page_in_space_inner(
         // `None` means "append after last sibling" — matches the
         // existing `create_block` behaviour for top-level pages.
         None,
-        // #2849 PR2: server-generated id.
-        None,
+        client_id,
     )
     .await?;
     let new_page_id = block.id.clone();

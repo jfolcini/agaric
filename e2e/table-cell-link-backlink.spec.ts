@@ -19,7 +19,7 @@ import {
 } from './helpers'
 
 // `SEED_IDS.BLOCK_GS_1` in src/lib/tauri-mock/seed.ts, the first block of "Getting Started".
-const GS_1 = '0000000000000000000BLOCK01'
+const GS_1 = '0000000000000000000B10CK01'
 
 test.describe('A link in a table cell @editor @pages', () => {
   test('a labelled link typed in a cell lists its block in the target page references', async ({

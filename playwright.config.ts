@@ -13,8 +13,33 @@ const ORIGIN = `http://localhost:${PORT}`
 const CLOUD_CHROMIUM = '/opt/pw-browsers/chromium'
 const useCloudChromium = !existsSync(chromium.executablePath()) && existsSync(CLOUD_CHROMIUM)
 
+// #6529 — with `AGARIC_E2E_BRIDGE` naming the `bridge` binary, the run is the
+// `real-backend` project: these specs on the real commands (`e2e/bridge.ts`),
+// minus every test tagged `@mock-only`, which drives a hook only the mock has.
+// A spec joins the list once it passes there; the nightly `full-suite` lane of
+// `scheduled-deep-checks.yml` runs it. Unset, the run is the mock's and this
+// list is not read.
+const REAL_BACKEND = process.env['AGARIC_E2E_BRIDGE'] !== undefined
+const REAL_BACKEND_SPECS = [
+  'advanced-query-saved-views.spec.ts',
+  'header-search-button.spec.ts',
+  'navigation-history.spec.ts',
+  'query-block-text.spec.ts',
+  'query-hint.spec.ts',
+  'query-table-columns.spec.ts',
+  'search-help.spec.ts',
+  'search-history.spec.ts',
+  'search-nested-result.spec.ts',
+  'search-recent-click.spec.ts',
+  'search-results.spec.ts',
+  'search-sheet-mobile.spec.ts',
+  'search-view-mobile.spec.ts',
+].map((spec) => `**/${spec}`)
+
 export default defineConfig({
   testDir: './e2e',
+  // For its `@/` alias: `e2e/bridge.ts` imports the mock's seed from `src/`.
+  tsconfig: './tsconfig.e2e.json',
   fullyParallel: true,
   forbidOnly: !!process.env['CI'],
   // No retries, in CI or locally: a retry turns a flake into a green run and
@@ -89,7 +114,8 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium',
+      name: REAL_BACKEND ? 'real-backend' : 'chromium',
+      ...(REAL_BACKEND ? { testMatch: REAL_BACKEND_SPECS, grepInvert: /@mock-only/ } : {}),
       use: {
         ...devices['Desktop Chrome'],
         ...(useCloudChromium ? { launchOptions: { executablePath: CLOUD_CHROMIUM } } : {}),

@@ -34,7 +34,7 @@ import {
 
 const PINNED_NOW = new Date('2026-03-11T12:00:00')
 // SEED_IDS.BLOCK_GS_1 in src/lib/tauri-mock/seed.ts: first "Getting Started" block, no dates.
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 test.beforeEach(async ({ page }) => {
   await page.clock.install({ time: PINNED_NOW })

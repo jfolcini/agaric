@@ -9,7 +9,10 @@
  *  - `pending` — at least one name's lookup hasn't settled yet; the caller
  *    must HOLD the search (firing now would run it without the tag
  *    constraint and flash unfiltered results).
- *  - resolved — the name maps to a tag id (included in `tagIds`).
+ *  - resolved — the name maps to a tag id (included in `tagIds`), which the
+ *    backend matches with the tags nested under it; or no tag holds the name
+ *    and tags are nested under it (`projects` with only `projects/web`,
+ *    #6760), and their ids are one group of `tagAnyOf`.
  *  - unresolved — the lookup settled and found no exact match (typo'd or
  *    nonexistent tag). Surfaced via `hasUnresolved`; the caller projects a
  *    matches-nothing sentinel so the query returns empty rather than
@@ -35,8 +38,10 @@ import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { requireActiveScope } from '@/lib/space-scope'
 
 export interface TagResolution {
-  /** Ids for the names that resolved. One entry per resolved input name. */
+  /** Ids for the names a tag holds. One entry per such input name. */
   tagIds: string[]
+  /** One group per name no tag holds: the ids of the tags nested under it. */
+  tagAnyOf: string[][]
   /** True while at least one name's lookup has not settled yet. */
   pending: boolean
   /** True when at least one name settled without a matching tag. */
@@ -47,9 +52,10 @@ export function useTagResolution(
   tagNames: ReadonlyArray<string>,
   currentSpaceId: string | null,
 ): TagResolution {
-  // lowercased name → tag id, or `null` when the lookup settled with no
-  // exact match (#717 — "attempted, definitively unresolved").
-  const [tagNameMap, setTagNameMap] = useState<Map<string, string | null>>(new Map())
+  // lowercased name → its tag's id, or the ids of the tags nested under a name
+  // no tag holds, or `null` when the lookup settled with neither (#717 —
+  // "attempted, definitively unresolved").
+  const [tagNameMap, setTagNameMap] = useState<Map<string, string | string[] | null>>(new Map())
   // #5255 — bumped by the name-change subscriber below. A lookup in flight
   // when a name change lands caches nothing for that subscriber to drop, and
   // may have read the tag list before the change committed: `reloadKey`
@@ -61,6 +67,7 @@ export function useTagResolution(
 
   const resolution = useMemo<TagResolution>(() => {
     const tagIds: string[] = []
+    const tagAnyOf: string[][] = []
     let pending = false
     let hasUnresolved = false
     for (const name of tagNames) {
@@ -69,11 +76,12 @@ export function useTagResolution(
         pending = true
         continue
       }
-      const id = tagNameMap.get(lower)
-      if (id == null) hasUnresolved = true
-      else tagIds.push(id)
+      const resolved = tagNameMap.get(lower)
+      if (resolved == null) hasUnresolved = true
+      else if (typeof resolved === 'string') tagIds.push(resolved)
+      else tagAnyOf.push(resolved)
     }
-    return { tagIds, pending, hasUnresolved }
+    return { tagIds, tagAnyOf, pending, hasUnresolved }
   }, [tagNames, tagNameMap])
 
   // Resolve unsettled tag names from the active space's own tag list, one
@@ -100,7 +108,11 @@ export function useTagResolution(
         const next = new Map(prev)
         for (const lower of unsettled) {
           const exact = tags.find((t) => t.name.toLowerCase() === lower)
-          next.set(lower, exact ? exact.tag_id : null)
+          const nested = tags.filter((t) => t.name.toLowerCase().startsWith(`${lower}/`))
+          next.set(
+            lower,
+            exact ? exact.tag_id : nested.length > 0 ? nested.map((t) => t.tag_id) : null,
+          )
         }
         return next
       })

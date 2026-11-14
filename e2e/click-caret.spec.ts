@@ -23,8 +23,8 @@ const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const TAG_WORK = '000000000000000000000TAG01'
 const PLAIN = 'the quick brown fox jumps over the lazy dog'
 const RICH = `say #[${TAG_WORK}] then **bold words** end`
-const DAILY_1 = '0000000000000000000BLOCK06'
-const DAILY_2 = '0000000000000000000BLOCK07'
+const DAILY_1 = '0000000000000000000B10CK06'
+const DAILY_2 = '0000000000000000000B10CK07'
 
 /** A page titled `title` holding `texts`, top-level; resolves the blocks' ids. */
 async function seedPage(page: Page, title: string, texts: readonly string[]): Promise<string[]> {

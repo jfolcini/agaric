@@ -13,7 +13,7 @@ import { activePopover, expect, test, waitForBoot } from './helpers'
 
 // SEED_IDS.BLOCK_PROJ_2 (src/lib/tauri-mock/seed.ts): "Fix login bug" on Projects, due
 // today with no scheduled date, so a reschedule writes its due date.
-const FIX_LOGIN_BUG = '0000000000000000000BLOCK14'
+const FIX_LOGIN_BUG = '0000000000000000000B10CK14'
 
 const iPhone13 = devices['iPhone 13']
 

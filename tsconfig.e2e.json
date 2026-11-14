@@ -20,7 +20,8 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "noImplicitReturns": true,
-    "noImplicitOverride": true
+    "noImplicitOverride": true,
+    "paths": { "@/*": ["./src/*"] }
   },
   "include": ["e2e/**/*.ts"]
 }

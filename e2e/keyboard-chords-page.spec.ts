@@ -22,8 +22,8 @@ import {
  */
 
 const PAGE = 'Getting Started'
-const GS_3 = '0000000000000000000BLOCK03'
-const GS_4 = '0000000000000000000BLOCK04'
+const GS_3 = '0000000000000000000B10CK03'
+const GS_4 = '0000000000000000000B10CK04'
 
 test.beforeEach(async ({ page }) => {
   await waitForBoot(page)

@@ -3,7 +3,8 @@
  *
  * With `AGARIC_E2E_BRIDGE` naming the `bridge` binary, each worker starts one
  * bridge process and every test runs the app against it: the real commands on
- * a real vault, reset to a copy of the worker's template before each test.
+ * a real vault, reset before each test to a copy of the worker's template,
+ * which holds the mock's seed (`src/lib/tauri-mock/seed-commands.ts`).
  * With the variable unset nothing here runs, and the specs run on the mock.
  *
  * The protocol is in `src-tauri/src/headless/bridge.rs`; the page's half is
@@ -15,6 +16,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
+
+import { seedCommands } from '@/lib/tauri-mock/seed-commands'
 
 /** The `bridge` binary to run the specs against; unset means the mock. */
 export const BRIDGE_BINARY = process.env['AGARIC_E2E_BRIDGE']
@@ -42,6 +45,25 @@ function listeningPort(child: ChildProcess): Promise<number> {
     child.once('error', reject)
     child.once('exit', (code) => reject(new Error(`bridge: exited with ${code} before listening`)))
   })
+}
+
+/**
+ * Write the mock's seed into the open vault's Personal space, through the
+ * app's own commands, and keep that vault as the template every test's copy
+ * is taken from.
+ */
+async function seedVault(request: Bridge['request']): Promise<void> {
+  const spaces = (await request('invoke', { cmd: 'list_spaces', args: {} })) as Array<{
+    id: string
+    name: string
+  }>
+  const personal = spaces.find((space) => space.name === 'Personal')
+  if (personal === undefined) throw new Error('bridge: the vault has no Personal space')
+  for (const { cmd, args } of seedCommands(personal.id)) {
+    // One at a time: a block's parent and its tags exist before it names them.
+    await request('invoke', { cmd, args })
+  }
+  await request('keep')
 }
 
 export async function startBridge(binary: string): Promise<Bridge> {
@@ -77,6 +99,8 @@ export async function startBridge(binary: string): Promise<Bridge> {
       waiting.set(id, { resolve, reject })
       socket.send(JSON.stringify({ id, op, ...fields }))
     })
+
+  await seedVault(request)
 
   return {
     url,

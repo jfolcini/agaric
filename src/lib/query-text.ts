@@ -8,8 +8,8 @@
  *
  * The two texts share `tag:` and disagree on it. The older text's `tag:work`
  * is every tag whose name starts with `work`, attached or written inline, its
- * repeats OR'd; the search syntax's is the tag named `work`, attached, its
- * repeats AND'd. {@link isLegacyQueryText} therefore reads a block as the older
+ * repeats OR'd; the search syntax's is the tag named `work` and the tags
+ * nested under it (`work/urgent`), attached, its repeats AND'd. {@link isLegacyQueryText} therefore reads a block as the older
  * text when it uses a key only that text has, or its only keyed words are `tag:`
  * words without `#` (the older text skips a word with no key), which is every
  * such block stored before the search syntax was accepted, so none of them
@@ -199,9 +199,12 @@ function propertyLeaf(key: string, value: string, exclude: boolean): FilterPrimi
 const leafOf = (primitive: FilterPrimitive): FilterExpr => ({ type: 'Leaf', primitive })
 
 /** The conditions of a text whose every token can run, in the order search adds them. */
-function conditions(filters: FilterToken[], tagIds: string[], today: Date): FilterExpr[] {
-  // The parser refuses `tag:` beside `under:`, so one `under:` means every tag is one.
-  const type = filters.some((f) => f.kind === 'under') ? 'TagUnder' : 'Tag'
+function conditions(
+  filters: FilterToken[],
+  tagIds: string[],
+  type: 'Tag' | 'TagUnder',
+  today: Date,
+): FilterExpr[] {
   const out: FilterExpr[] = [...new Set(tagIds)].map((tag) => leafOf({ type, tag }))
   // Search ORs the page names to keep and drops a block on any name to leave out.
   const keep = filters
@@ -251,8 +254,10 @@ function isTextOnly(token: FilterToken): boolean {
  * `And` over its conditions, as the builder writes it, and its free text as
  * the full-text term; or the tokens it cannot run, each with its column. A tag
  * is looked up by name in `tags` as the search box looks it up (exact, any
- * case), or is a chip's own id. A relative date is resolved on `today`, so on
- * every run.
+ * case), or is a chip's own id; the engine matches it with the tags nested
+ * under it. A name no tag holds is an `Or` of the tags nested under it
+ * (`projects` with only `projects/web`). A relative date is resolved on
+ * `today`, so on every run.
  */
 export function compileQueryTextWithTags(
   expression: string,
@@ -271,27 +276,40 @@ export function compileQueryTextWithTags(
   }
 
   const tagIds: string[] = []
+  const nestedOnly: FilterExpr[] = []
+  // The parser refuses `tag:` beside `under:`, so one `under:` means every tag is one.
+  const tagLeaf = ast.filters.some((f) => f.kind === 'under') ? 'TagUnder' : 'Tag'
   for (const token of ast.filters.filter((f) => f.kind === 'tag' || f.kind === 'under')) {
     const name = token.value.normalize('NFC').toLowerCase()
     const id = chipTagId(token.value) ?? tags.find((tag) => tag.name.toLowerCase() === name)?.tag_id
-    if (id === undefined) {
-      problems.push({ ...at(token), message: t('query.text.unknownTag', { name: token.value }) })
-    } else {
+    const nested = tags.filter((tag) => tag.name.toLowerCase().startsWith(`${name}/`))
+    if (id !== undefined) {
       tagIds.push(id)
+    } else if (nested.length > 0) {
+      nestedOnly.push({
+        type: 'Or',
+        children: nested.map((tag) => ({
+          type: 'Leaf',
+          primitive: { type: tagLeaf, tag: tag.tag_id },
+        })),
+      })
+    } else {
+      problems.push({ ...at(token), message: t('query.text.unknownTag', { name: token.value }) })
     }
   }
 
   if (problems.length > 0) {
     return { ok: false, problems: problems.toSorted((a, b) => a.column - b.column) }
   }
-  const children = conditions(ast.filters, tagIds, today)
+  const children = [...conditions(ast.filters, tagIds, tagLeaf, today), ...nestedOnly]
   // An empty `And` alone is every block in the space, never what an empty block asked for.
   if (children.length === 0 && ast.freeText === '') return { ok: false, problems: [] }
   return {
     ok: true,
     filter: { type: 'And', children },
     fulltext: ast.freeText,
-    textOnly: ast.freeText !== '' || ast.filters.some(isTextOnly),
+    // A name standing for its nested tags would be saved as today's tags.
+    textOnly: ast.freeText !== '' || nestedOnly.length > 0 || ast.filters.some(isTextOnly),
   }
 }
 

@@ -15,7 +15,7 @@ import { expect, focusBlockById, openPage, reopenPage, test, waitForBoot } from 
  */
 
 /** `SEED_IDS.BLOCK_GS_1` in `src/lib/tauri-mock/seed.ts`. */
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 /** `ATTACH_PROGRESS_THRESHOLD_BYTES` in `EditableBlock.tsx`: the smallest file with a progress toast. */
 const ONE_MB = 1_048_576

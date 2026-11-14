@@ -154,62 +154,68 @@ test.describe('Tall search group — scroll geometry via ::before spacer (#737) 
   // cap (~34px/row vs a 400px viewport) with headroom under the page limit.
   const SEEDED = 40
 
-  test('scrollHeight equals totalSize and the last row is reachable', async ({ page }) => {
-    await openSearchView(page)
-    // Bulk-seed the content blocks under PAGE_PROJECTS — one group far
-    // taller than the listbox's `max-h` viewport cap.
-    await page.evaluate((n) => {
-      ;(
-        window as unknown as { __addMockAgendaItems: (c: number) => string[] }
-      ).__addMockAgendaItems(n)
-    }, SEEDED)
-    const region = await runSearch(page, 'Agenda load item')
-    const listbox = region.locator('[role="listbox"]').first()
-    await expect(listbox).toBeVisible()
-    await expect(listbox.locator('[role="option"]').first()).toBeVisible()
+  // `@mock-only`: `__addMockAgendaItems` writes the mock's store directly.
+  const mockOnly = { tag: '@mock-only' }
+  test(
+    'scrollHeight equals totalSize and the last row is reachable',
+    mockOnly,
+    async ({ page }) => {
+      await openSearchView(page)
+      // Bulk-seed the content blocks under PAGE_PROJECTS — one group far
+      // taller than the listbox's `max-h` viewport cap.
+      await page.evaluate((n) => {
+        ;(
+          window as unknown as { __addMockAgendaItems: (c: number) => string[] }
+        ).__addMockAgendaItems(n)
+      }, SEEDED)
+      const region = await runSearch(page, 'Agenda load item')
+      const listbox = region.locator('[role="listbox"]').first()
+      await expect(listbox).toBeVisible()
+      await expect(listbox.locator('[role="option"]').first()).toBeVisible()
 
-    // Virtualization sanity: only a window of the 60 rows is mounted.
-    const mounted = await listbox.locator('[role="option"]').count()
-    expect(mounted).toBeGreaterThan(0)
-    expect(mounted).toBeLessThan(SEEDED)
+      // Virtualization sanity: only a window of the 60 rows is mounted.
+      const mounted = await listbox.locator('[role="option"]').count()
+      expect(mounted).toBeGreaterThan(0)
+      expect(mounted).toBeLessThan(SEEDED)
 
-    // The load-bearing geometry: the ::before spacer makes the scroll
-    // container's scrollHeight track the virtualizer's totalSize even
-    // though only the window is mounted. Poll — `measureElement` refines
-    // row heights (and thus totalSize) shortly after first paint.
-    await expect
-      .poll(async () =>
-        listbox.evaluate((el) => {
-          const totalSize = Number.parseFloat(
-            (el as HTMLElement).style.getPropertyValue('--vrl-total-size'),
-          )
-          return Math.abs(el.scrollHeight - totalSize)
-        }),
-      )
-      .toBeLessThanOrEqual(2)
-    const geo = await listbox.evaluate((el) => ({
-      scrollHeight: el.scrollHeight,
-      clientHeight: el.clientHeight,
-    }))
-    // The group genuinely overflows its max-h cap (the bug's trigger).
-    expect(geo.scrollHeight).toBeGreaterThan(geo.clientHeight)
+      // The load-bearing geometry: the ::before spacer makes the scroll
+      // container's scrollHeight track the virtualizer's totalSize even
+      // though only the window is mounted. Poll — `measureElement` refines
+      // row heights (and thus totalSize) shortly after first paint.
+      await expect
+        .poll(async () =>
+          listbox.evaluate((el) => {
+            const totalSize = Number.parseFloat(
+              (el as HTMLElement).style.getPropertyValue('--vrl-total-size'),
+            )
+            return Math.abs(el.scrollHeight - totalSize)
+          }),
+        )
+        .toBeLessThanOrEqual(2)
+      const geo = await listbox.evaluate((el) => ({
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+      }))
+      // The group genuinely overflows its max-h cap (the bug's trigger).
+      expect(geo.scrollHeight).toBeGreaterThan(geo.clientHeight)
 
-    // Far scroll: every offset must be reachable, mounting the final row.
-    // Under the old collapsed-scrollHeight geometry this clamped well
-    // short of the end and the last rows could never mount.
-    await listbox.evaluate((el) => {
-      el.scrollTop = el.scrollHeight
-    })
-    await expect
-      .poll(async () =>
-        listbox
-          .locator('[role="option"]')
-          .evaluateAll((els) =>
-            Math.max(...els.map((el) => Number(el.getAttribute('data-index') ?? -1))),
-          ),
-      )
-      .toBe(SEEDED - 1)
-  })
+      // Far scroll: every offset must be reachable, mounting the final row.
+      // Under the old collapsed-scrollHeight geometry this clamped well
+      // short of the end and the last rows could never mount.
+      await listbox.evaluate((el) => {
+        el.scrollTop = el.scrollHeight
+      })
+      await expect
+        .poll(async () =>
+          listbox
+            .locator('[role="option"]')
+            .evaluateAll((els) =>
+              Math.max(...els.map((el) => Number(el.getAttribute('data-index') ?? -1))),
+            ),
+        )
+        .toBe(SEEDED - 1)
+    },
+  )
 })
 
 test.describe('Search alias-match card (E2E-9) @search', () => {

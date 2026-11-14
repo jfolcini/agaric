@@ -18,9 +18,9 @@ import {
  * empty runs the page's undo (redo) and keeps editing, instead of doing nothing.
  */
 
-const GS_2 = '0000000000000000000BLOCK02'
-const GS_3 = '0000000000000000000BLOCK03'
-const GS_1 = '0000000000000000000BLOCK01'
+const GS_2 = '0000000000000000000B10CK02'
+const GS_3 = '0000000000000000000B10CK03'
+const GS_1 = '0000000000000000000B10CK01'
 const GS_3_TEXT = 'Create new blocks by pressing Enter at the end of any block.'
 
 const rows = (page: Page) => page.locator('[data-testid="sortable-block"]')

@@ -335,7 +335,7 @@ test.describe('Journal template toggle @editor @pages', () => {
 
 test.describe('Journal template button @editor @pages', () => {
   const SPACE_SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
-  const BLOCK_TMPL_ATTENDEES = '0000000000000000000BLOCK20'
+  const BLOCK_TMPL_ATTENDEES = '0000000000000000000B10CK20'
   const NESTED = 'Nested under attendees'
 
   interface Row {

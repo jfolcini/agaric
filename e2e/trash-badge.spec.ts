@@ -14,8 +14,8 @@ import {
  * from its live block map, so a wrong count or a missing breadcrumb shows here.
  */
 
-const GS_1 = '0000000000000000000BLOCK01'
-const QN_1 = '0000000000000000000BLOCK08'
+const GS_1 = '0000000000000000000B10CK01'
+const QN_1 = '0000000000000000000B10CK08'
 
 test.beforeEach(async ({ page }) => {
   await waitForBoot(page)

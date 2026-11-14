@@ -117,7 +117,9 @@ pub struct SearchFilter {
     #[serde(default)]
     pub parent_id: Option<String>,
     /// Restrict results to blocks carrying every tag in this list
-    /// (`ALL` semantics — see `fts::search_fts`).
+    /// (`ALL` semantics — see `fts::search_fts`). A tag is carried through a
+    /// tag nested under it too: `projects` matches a block tagged
+    /// `projects/web`.
     #[serde(default)]
     pub tag_ids: Vec<String>,
     /// The spaces the search covers. Required: an omitted scope fails to
@@ -238,6 +240,12 @@ pub struct SearchFilter {
     /// ("Search everything under #tag", #5679).
     #[serde(default)]
     pub tags_match_inline_and_inherited: bool,
+    /// Tag-id groups: a block must match at least one tag of every group,
+    /// matched as [`Self::tag_ids`] are. The app sends one for a `tag:` name
+    /// no tag holds while tags are nested under it (`projects` with only
+    /// `projects/web`, #6760).
+    #[serde(default)]
+    pub tag_any_of: Vec<Vec<String>>,
 }
 
 /// Match span emitted by the toggle pipeline.

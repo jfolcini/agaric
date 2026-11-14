@@ -30,8 +30,8 @@ import {
 
 const GETTING_STARTED = '00000000000000000000PAGE01'
 const QUICK_NOTES = '00000000000000000000PAGE02'
-const GS_1 = '0000000000000000000BLOCK01'
-const MTG_1 = '0000000000000000000BLOCK17'
+const GS_1 = '0000000000000000000B10CK01'
+const MTG_1 = '0000000000000000000B10CK17'
 
 function blockRow(page: Page, blockId: string): Locator {
   return page.locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`)

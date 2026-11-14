@@ -16,7 +16,7 @@ import {
  */
 
 const PAGE = 'Getting Started'
-const GS1 = '0000000000000000000BLOCK01'
+const GS1 = '0000000000000000000B10CK01'
 const DELIMITER = '| :--- | ---: | :---: | --- |'
 const TABLE = `| Item | Qty | Note | Code |\n${DELIMITER}\n| tae | 2 | hot | x |`
 

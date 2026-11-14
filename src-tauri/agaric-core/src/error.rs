@@ -172,9 +172,10 @@ pub enum AppError {
     #[error("Not found: {0}")]
     NotFound(String),
 
-    /// Issue #106 — `sqlx::Error::PoolTimedOut`.  Distinct from
-    /// `Database` because the frontend can offer a "try again"
-    /// affordance: the writer is genuinely busy, not broken.
+    /// Issue #106 — `sqlx::Error::PoolTimedOut`, or SQLite's own
+    /// `SQLITE_BUSY`: the wait for a connection or for the write lock ran
+    /// out.  Distinct from `Database` because the frontend retries it: the
+    /// writer is genuinely busy, not broken.
     /// Serializes as `kind: "pool_busy"`.
     #[error("Database pool timed out (writer busy)")]
     PoolTimedOut,
@@ -342,7 +343,7 @@ impl AppError {
         };
         match self {
             AppError::Database(sqlx::Error::Database(db_err)) => {
-                match db_err.code()?.parse::<i32>().ok()? & 0xFF {
+                match sqlite_primary_code(db_err.as_ref())? {
                     SQLITE_FULL => Some(AppError::StorageFull),
                     SQLITE_READONLY => Some(AppError::StorageReadOnly),
                     SQLITE_CORRUPT | SQLITE_NOTADB => Some(AppError::StorageCorrupt),
@@ -357,35 +358,40 @@ impl AppError {
     /// Whether another writer held the database: nothing is wrong with the
     /// write that was refused, and it never ran.
     ///
-    /// Classified on the SQLite PRIMARY result code (`extended & 0xFF`), so
-    /// every extended `SQLITE_BUSY_*` / `SQLITE_LOCKED_*` variant (261, 262,
-    /// 517, 518, 773, …) is covered without enumerating a list that a future
-    /// SQLite release can extend. [`AppError::PoolTimedOut`] is the same signal
-    /// one layer out — every write connection in the pool is already occupied,
-    /// so the write never even reached SQLite.
+    /// [`AppError::PoolTimedOut`] is a busy pool or SQLite's `SQLITE_BUSY`
+    /// (`From<sqlx::Error>` routes both there). `SQLITE_LOCKED` stays a
+    /// `Database` error and is matched here, as is a busy code on an error
+    /// built without that conversion.
     ///
     /// Constraint and trigger failures are not matched: they belong to the
     /// rows written, and retrying behind the same writer does not clear them.
     #[must_use]
     pub fn is_write_contention(&self) -> bool {
-        const SQLITE_BUSY: i32 = 5;
         const SQLITE_LOCKED: i32 = 6;
         match self {
             AppError::PoolTimedOut => true,
-            AppError::Database(sqlx::Error::Database(db_err)) => db_err
-                .code()
-                .and_then(|code| code.parse::<i32>().ok())
-                .is_some_and(|code| matches!(code & 0xFF, SQLITE_BUSY | SQLITE_LOCKED)),
+            AppError::Database(sqlx::Error::Database(db_err)) => matches!(
+                sqlite_primary_code(db_err.as_ref()),
+                Some(SQLITE_BUSY | SQLITE_LOCKED)
+            ),
             _ => false,
         }
     }
+}
+
+const SQLITE_BUSY: i32 = 5;
+
+/// SQLite's primary result code (`extended & 0xFF`), so every extended
+/// variant of a code is covered without a list a SQLite release can extend.
+fn sqlite_primary_code(db_err: &dyn sqlx::error::DatabaseError) -> Option<i32> {
+    Some(db_err.code()?.parse::<i32>().ok()? & 0xFF)
 }
 
 /// Manual `From<sqlx::Error>` (issue #106).
 ///
 /// Replaces the previous `#[from] sqlx::Error` blanket conversion so
 /// the IPC layer can discriminate three call-site-recoverable cases
-/// (`RowNotFound`, `PoolTimedOut`, unique-constraint conflict) from
+/// (`RowNotFound`, a busy pool or writer, unique-constraint conflict) from
 /// the generic "something went wrong in SQL" bucket.  Routing happens
 /// here — *not* at the call site — so existing `?` propagation gains
 /// the discrimination for free and no downstream code has to learn
@@ -395,6 +401,11 @@ impl From<sqlx::Error> for AppError {
         match e {
             sqlx::Error::RowNotFound => AppError::NotFound("row not found".into()),
             sqlx::Error::PoolTimedOut => AppError::PoolTimedOut,
+            sqlx::Error::Database(ref db_err)
+                if sqlite_primary_code(db_err.as_ref()) == Some(SQLITE_BUSY) =>
+            {
+                AppError::PoolTimedOut
+            }
             sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
                 AppError::Conflict(db_err.to_string())
             }

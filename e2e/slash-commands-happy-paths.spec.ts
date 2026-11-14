@@ -22,7 +22,7 @@ import {
 const PINNED_NOW = new Date('2026-03-11T12:00:00')
 const PAGE = 'Getting Started'
 // SEED_IDS.BLOCK_GS_1 in src/lib/tauri-mock/seed.ts: a plain "Getting Started" block.
-const GS1 = '0000000000000000000BLOCK01'
+const GS1 = '0000000000000000000B10CK01'
 const BULLET_LIST = 'BULLET LIST — Insert unordered list'
 
 test.beforeEach(async ({ page }) => {

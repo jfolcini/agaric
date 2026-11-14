@@ -26,7 +26,7 @@ import {
 
 /** `SEED_IDS` in `src/lib/tauri-mock/seed.ts`. */
 const GETTING_STARTED = '00000000000000000000PAGE01'
-const GS1 = '0000000000000000000BLOCK01'
+const GS1 = '0000000000000000000B10CK01'
 
 async function createTag(page: Page, name: string): Promise<string> {
   const { id } = await ipc<{ id: string }>(page, 'create_block', {

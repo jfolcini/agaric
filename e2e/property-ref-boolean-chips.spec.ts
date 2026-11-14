@@ -23,7 +23,7 @@ import {
  * Getting Started and carries no properties.
  */
 
-const GS_1 = '0000000000000000000BLOCK01'
+const GS_1 = '0000000000000000000B10CK01'
 
 function blockRow(page: Page, blockId: string): Locator {
   return page.locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`)

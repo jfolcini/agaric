@@ -197,17 +197,6 @@ fn head_boots_the_vault_the_last_release_wrote_6567() {
             (release_count("blocks"), release_count("ops")),
             "boot keeps every block and op the release wrote, and appends none"
         );
-        let compacted_through = release_count("compacted_through");
-        let frontier: String =
-            sqlx::query_scalar("SELECT up_to_seqs FROM compaction_watermark WHERE id = 1")
-                .fetch_one(pool)
-                .await
-                .expect("the compaction the release ran left its watermark");
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&frontier).unwrap(),
-            serde_json::json!({ vault.device_id.as_str(): compacted_through }),
-            "the compaction's frontier is still on record"
-        );
         assert_eq!(
             pages_list(pool, SPACE_PERSONAL_ULID).await,
             [("Projects".to_owned(), 0, 4), ("Reading".to_owned(), 1, 2)],

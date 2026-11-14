@@ -45,7 +45,7 @@ test.describe('Block lists on a phone (#5928) @editor @journal @mobile', () => {
     await page.evaluate(() =>
       (
         window as unknown as { __addMockAttachment: (...args: unknown[]) => unknown }
-      ).__addMockAttachment('0000000000000000000BLOCK15', 'notes.pdf', 'application/pdf', 100),
+      ).__addMockAttachment('0000000000000000000B10CK15', 'notes.pdf', 'application/pdf', 100),
     )
     await openPageMobile(page, 'Projects')
     const row = page.locator('[data-testid="sortable-block"]', { hasText: 'Fix login bug' })

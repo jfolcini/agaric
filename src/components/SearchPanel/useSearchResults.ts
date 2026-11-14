@@ -130,18 +130,19 @@ export function useSearchResults({
   // so the first debounced search can't fire before resolution settles and
   // flash unfiltered results; a settled-but-unresolved name makes
   // `astFilterParams` project the matches-nothing sentinel.
-  const { tagIds, pending: tagResolutionPending } = useTagResolution(
-    debouncedProjection.tagNames,
-    currentSpaceId,
-  )
+  const {
+    tagIds,
+    tagAnyOf,
+    pending: tagResolutionPending,
+  } = useTagResolution(debouncedProjection.tagNames, currentSpaceId)
 
   // The two search modes are symmetric. In BOTH modes the
   // structural filters are projected and applied as SQL filters server-side;
   // the only difference is the `isRegex` flag and how the backend interprets
   // the free-text remainder.
   const filterParams = useMemo(
-    () => astFilterParams(debouncedProjection, tagIds),
-    [debouncedProjection, tagIds],
+    () => astFilterParams(debouncedProjection, tagIds, tagAnyOf),
+    [debouncedProjection, tagIds, tagAnyOf],
   )
   // #2634 — migrated off `usePaginatedQuery` onto TanStack `useInfiniteQuery`
   // directly (staged retirement of the generic hook; matching the merged
