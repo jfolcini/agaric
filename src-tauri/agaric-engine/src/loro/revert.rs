@@ -201,8 +201,10 @@ fn revert_entries(entries: Vec<RevertEntry>) {
     // unwind, where inner scopes drop before the outer scope — cannot deadlock.
     // Errors can only be logged, not propagated, from these drop/consume paths.
     for entry in entries {
-        {
+        let past_an_import = {
             let mut engine = entry.engine.lock();
+            // Unreadable counts as yes: the cost is one boot through the replay.
+            let past_an_import = engine.imported_since(&entry.since).unwrap_or(true);
             if let Err(err) = engine.revert_to_frontier(&entry.frontier) {
                 tracing::error!(
                     space_id = %entry.space_id,
@@ -211,14 +213,15 @@ fn revert_entries(entries: Vec<RevertEntry>) {
                      ahead of committed SQL until the next reproject/replay reconciles it"
                 );
             }
-        }
+            past_an_import
+        };
         // #6521: a snapshot pass may have exported this engine with the
         // rolled-back writes in it. Counted before `entry` drops, so a pass
         // that waited for the checkpoint to close sees the rewind and writes
         // nothing (`LoroEngineRegistry::no_rewind_since`). Marked after the
         // rewind, so whichever stamp that pass captured is the older one: the
         // space stays dirty and the next pass saves the engine as it now is.
-        entry.dirty.engine_rewound();
+        entry.dirty.engine_rewound(past_an_import);
         entry.dirty.mark(&entry.space_id);
     }
 }

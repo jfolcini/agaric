@@ -97,7 +97,19 @@ async fn save_and_commit(
     pending: &DetachedRevert,
 ) -> Result<(), AppError> {
     save_deltas(&mut tx, registry, pending).await?;
-    Ok(tx.commit().await?)
+    // #6521: see `LoroEngineRegistry::take_rewound_past_an_import`.
+    let rows_outlive_an_engine = registry.take_rewound_past_an_import();
+    let committed = async {
+        if rows_outlive_an_engine {
+            clear_marker(&mut tx).await?;
+        }
+        tx.commit().await
+    }
+    .await;
+    if committed.is_err() && rows_outlive_an_engine {
+        registry.put_back_rewound_past_an_import();
+    }
+    Ok(committed?)
 }
 
 /// Run `write`, the engine writes that follow a commit and belong to no SQL
@@ -139,9 +151,13 @@ const BOOTS_FROM_SAVED_ROWS_KEY: &str = "loro.boots_from_saved_rows";
 /// Whether every engine write that committed is in a saved row, so that boot
 /// builds the engines from the rows alone.
 ///
-/// Absent on a vault no boot of this build has finished recovering, and while
-/// a local op is in the op log and in no engine: during a replay boot, and
-/// while boot writes back a draft, whose op commits before its engine apply.
+/// Absent on a vault no boot of this build has finished recovering; while an
+/// op's own engine write is in no engine (during a replay boot, and while boot
+/// writes back a draft, whose op commits before its engine apply); and after a
+/// rollback rewound an engine past a sync import. It does not cover the engine
+/// writes that follow a commit ([`write_engines`]): a kill between a delete, a
+/// restore or a purge and its cascade leaves the marker set and the cascade in
+/// no row.
 pub async fn boots_from_saved_rows(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar!(
         r#"SELECT EXISTS(SELECT 1 FROM app_settings WHERE key = ?) AS "set!: bool""#,
@@ -163,13 +179,18 @@ pub async fn set_boots_from_saved_rows(pool: &SqlitePool, set: bool) -> Result<(
         .execute(pool)
         .await?;
     } else {
-        sqlx::query!(
-            "DELETE FROM app_settings WHERE key = ?",
-            BOOTS_FROM_SAVED_ROWS_KEY,
-        )
-        .execute(pool)
-        .await?;
+        clear_marker(&mut *pool.acquire().await?).await?;
     }
+    Ok(())
+}
+
+async fn clear_marker(conn: &mut SqliteConnection) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "DELETE FROM app_settings WHERE key = ?",
+        BOOTS_FROM_SAVED_ROWS_KEY,
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 
@@ -181,12 +202,7 @@ pub async fn set_boots_from_saved_rows(pool: &SqlitePool, set: bool) -> Result<(
 pub async fn start_replay_boot(pool: &SqlitePool) -> Result<(), AppError> {
     // allow-raw-tx: engine persistence (`loro_doc_delta`, its marker); no op_log write.
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "loro_start_replay_boot").await?;
-    sqlx::query!(
-        "DELETE FROM app_settings WHERE key = ?",
-        BOOTS_FROM_SAVED_ROWS_KEY,
-    )
-    .execute(&mut *tx)
-    .await?;
+    clear_marker(&mut tx).await?;
     sqlx::query!("DELETE FROM loro_doc_delta")
         .execute(&mut *tx)
         .await?;

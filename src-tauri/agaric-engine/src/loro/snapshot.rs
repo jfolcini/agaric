@@ -220,10 +220,15 @@ pub async fn rehydrate_registry(
     let imported = match from_saved_rows {
         Some(imported) => imported,
         None => {
-            crate::loro::delta::start_replay_boot(pool).await?;
-            import_spaces(pool, registry, device_id, false)
+            // The snapshots are imported before the rows are deleted: one
+            // that will not import stops boot with nothing deleted.
+            let imported = import_spaces(pool, registry, device_id, false)
                 .await?
-                .unwrap_or_default()
+                .ok_or_else(|| {
+                    AppError::Snapshot("a saved snapshot leaves changes pending".to_owned())
+                })?;
+            crate::loro::delta::start_replay_boot(pool).await?;
+            imported
         }
     };
     tracing::info!(
@@ -276,8 +281,8 @@ struct SavedRows {
 }
 
 /// Import every space's snapshot, and with `with_deltas` its `loro_doc_delta`
-/// rows after it. `Ok(None)` when a space's rows leave changes pending, which
-/// only rows can: the engines must then be built without them.
+/// rows after it. `Ok(None)` when a space's rows leave changes pending: the
+/// engines must then be built without the rows.
 async fn import_spaces(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -320,12 +325,11 @@ async fn import_spaces(
             Ok(rows) => rows,
             Err(e) => return Err(unreadable_snapshot(&space_id, &engine, &e)),
         };
-        if with_deltas && !rows.complete {
+        if !rows.complete {
             tracing::error!(
                 space_id,
                 rows = deltas.len(),
-                "loro: a space's saved rows depend on engine writes no row holds; \
-                 discarding every space's rows and replaying the op log instead (#6521)",
+                "loro: a space's saved rows depend on engine writes no row holds (#6521)",
             );
             return Ok(None);
         }
@@ -2323,6 +2327,101 @@ mod tests {
             "both rows are in the engine, whichever was imported first"
         );
         assert_eq!(delta_spaces(&pool).await, [SPACE_A, SPACE_A]);
+    }
+
+    /// #6521 — rows that leave changes pending send boot to the snapshots,
+    /// which are imported before any row is deleted: one that will not import
+    /// stops boot with every row still there.
+    #[tokio::test]
+    async fn an_unreadable_snapshot_stops_boot_before_any_row_is_discarded_6521() {
+        let (pool, _dir) = vault_that_boots_from_saved_rows().await;
+        let state = crate::loro::shared::LoroState::new();
+        // SPACE_A's snapshot row is written first, so it is imported first.
+        create_saving_its_delta(&pool, &state, SPACE_A, "IN_SNAPSHOT").await;
+        assert_eq!(save_all_engines(&pool, &state.registry).await.saved, 1);
+        for block in ["FIRST", "LOST", "THIRD"] {
+            create_saving_its_delta(&pool, &state, SPACE_A, block).await;
+        }
+        let lost = sqlx::query(
+            "DELETE FROM loro_doc_delta \
+             WHERE id = (SELECT id FROM loro_doc_delta ORDER BY id LIMIT 1 OFFSET 1)",
+        )
+        .execute(&pool)
+        .await
+        .expect("lose the middle row");
+        assert_eq!(lost.rows_affected(), 1);
+        // A snapshot no build can read, in a space imported after SPACE_A.
+        seed_row(&pool, SPACE_B, 0).await;
+
+        let refused = rehydrate_registry(&pool, &LoroEngineRegistry::new(), "device-1").await;
+
+        assert!(
+            matches!(refused, Err(AppError::Snapshot(_))),
+            "the unreadable snapshot stops boot: {refused:?}"
+        );
+        assert_eq!(
+            delta_spaces(&pool).await,
+            [SPACE_A, SPACE_A],
+            "no row was deleted on the way"
+        );
+        assert!(
+            crate::loro::delta::boots_from_saved_rows(&pool)
+                .await
+                .expect("read the marker"),
+            "nor the marker"
+        );
+    }
+
+    /// #6521 — a sync import writes the engine outside the write lock. When a
+    /// transaction that touched the engine first rolls back, the rewind drops
+    /// the import's ops too, while the import's row is saved all the same. The
+    /// next commit clears the marker, so boot does not build from rows the
+    /// engine never held together. A rollback with no import under it does not.
+    #[tokio::test]
+    async fn a_commit_after_a_rewind_past_an_import_clears_the_marker_6521() {
+        let (pool, _dir) = vault_that_boots_from_saved_rows().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let state = crate::loro::shared::LoroState::new();
+        let marker = async || {
+            crate::loro::delta::boots_from_saved_rows(&pool)
+                .await
+                .expect("read the marker")
+        };
+        let write_and_roll_back = |import: Option<&[u8]>| {
+            let scope = crate::loro::revert::RevertScope::arm(&state);
+            state
+                .registry
+                .for_space_recording(&space, "device-1", &state.revert)
+                .expect("engine")
+                .engine_mut()
+                .apply_create_block("ROLLED_BACK", "content", "never committed", None, 0)
+                .expect("create");
+            if let Some(update) = import {
+                state
+                    .registry
+                    .with_engine(&space, "device-1", |engine| engine.import(update))
+                    .expect("engine")
+                    .expect("import");
+            }
+            scope.detach().revert();
+        };
+
+        write_and_roll_back(None);
+        create_saving_its_delta(&pool, &state, SPACE_A, "AFTER_A_ROLLBACK").await;
+        assert!(
+            marker().await,
+            "a rollback that dropped only its own writes leaves the rows usable"
+        );
+
+        let mut peer = LoroEngine::with_peer_id("device-2").expect("engine");
+        peer.apply_create_block("FROM_PEER", "content", "peer", None, 0)
+            .expect("create");
+        write_and_roll_back(Some(&peer.export_snapshot().expect("export")));
+        create_saving_its_delta(&pool, &state, SPACE_A, "AFTER_THE_LOST_IMPORT").await;
+        assert!(
+            !marker().await,
+            "the import's row outlived its ops in the engine: the next boot must replay"
+        );
     }
 
     /// Whether `space`'s saved row holds `block`.

@@ -148,11 +148,12 @@ pub async fn recover_at_boot(
     // A draft's op commits before its engine apply, so while one is written
     // back the saved rows do not hold every op: a kill in between must boot
     // through the replay.
-    if saved_rows_hold_every_op && !get_all_drafts(pool).await?.is_empty() {
+    let drafts = get_all_drafts(pool).await?;
+    if saved_rows_hold_every_op && !drafts.is_empty() {
         agaric_engine::loro::delta::set_boots_from_saved_rows(pool, false).await?;
         saved_rows_hold_every_op = false;
     }
-    let drafts = recover_drafts(pool, device_id, materializer).await?;
+    let drafts = recover_drafts(pool, device_id, materializer, drafts).await?;
     every_op_applied &= drafts.applied;
 
     // -----------------------------------------------------------------
@@ -357,9 +358,8 @@ async fn recover_drafts(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
+    drafts: Vec<agaric_engine::draft::Draft>,
 ) -> Result<DraftRecoveryOutcome, AppError> {
-    let drafts = get_all_drafts(pool).await?;
-
     let mut drafts_recovered: Vec<String> = Vec::new();
     let mut drafts_already_flushed: u64 = 0;
     let mut draft_errors: Vec<String> = Vec::new();

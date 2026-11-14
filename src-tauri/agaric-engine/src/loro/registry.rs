@@ -119,6 +119,9 @@ pub(crate) struct DirtySpaces {
     open_checkpoints: AtomicUsize,
     /// Engines rewound so far.
     rewinds: AtomicU64,
+    /// A rewind dropped ops a sync import had added to its engine. See
+    /// [`LoroEngineRegistry::take_rewound_past_an_import`].
+    rewound_past_an_import: std::sync::atomic::AtomicBool,
 }
 
 impl DirtySpaces {
@@ -139,8 +142,11 @@ impl DirtySpaces {
         self.open_checkpoints.fetch_sub(1, Ordering::AcqRel);
     }
 
-    pub(crate) fn engine_rewound(&self) {
+    pub(crate) fn engine_rewound(&self, past_an_import: bool) {
         self.rewinds.fetch_add(1, Ordering::AcqRel);
+        if past_an_import {
+            self.rewound_past_an_import.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -310,6 +316,28 @@ impl LoroEngineRegistry {
     /// [`Self::no_rewind_since`].
     pub(crate) fn rewinds(&self) -> u64 {
         self.dirty.rewinds.load(Ordering::Acquire)
+    }
+
+    /// Whether a rollback has rewound an engine past ops a sync import added
+    /// to it, and clear the answer; `put_back` restores it when the caller's
+    /// transaction did not commit (#6521).
+    ///
+    /// An import writes the engine outside the write lock and saves its delta
+    /// later. When a transaction that touched the engine first rolls back,
+    /// the rewind drops the import's ops with its own, the row is saved all
+    /// the same, and the next commits reuse the op ids of whatever this
+    /// device's ops in that row were built on. A boot from those rows would
+    /// build another engine, so the next commit clears the saved-rows marker.
+    pub(crate) fn take_rewound_past_an_import(&self) -> bool {
+        self.dirty
+            .rewound_past_an_import
+            .swap(false, Ordering::AcqRel)
+    }
+
+    pub(crate) fn put_back_rewound_past_an_import(&self) {
+        self.dirty
+            .rewound_past_an_import
+            .store(true, Ordering::Release);
     }
 
     /// Whether no engine was rewound since `rewinds` was read, once every

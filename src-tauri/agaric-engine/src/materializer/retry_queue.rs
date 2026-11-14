@@ -2638,18 +2638,6 @@ mod tests {
         );
     }
 
-    /// #2509: every persistent-enqueue event is classified onto the
-    /// per-class + backoff-tier telemetry counters so the field can answer
-    /// "is the durable retry tier earning its keep?" without guessing. This
-    /// pins the wiring end-to-end through `record_failure`:
-    ///   - a per-block cache task bumps `retry_persist_cache` only,
-    ///   - a global cache task bumps `retry_persist_cache` AND
-    ///     `retry_persist_cache_global`,
-    ///   - an `ApplyOp` (correctness class) bumps `retry_persist_apply_op`
-    ///     and leaves the cache counters untouched,
-    ///   - repeated failures of one task escalate `attempts`, and only once
-    ///     the row reaches the 1h-cap tier (`attempts >= 4`) does
-    ///     `retry_persist_capped` bump — measure-item 2's signal.
     /// #6521 — only a parked op counts: a cache rebuild waiting for its retry
     /// is not an op missing from an engine.
     #[tokio::test]
@@ -2687,6 +2675,18 @@ mod tests {
         );
     }
 
+    /// #2509: every persistent-enqueue event is classified onto the
+    /// per-class + backoff-tier telemetry counters so the field can answer
+    /// "is the durable retry tier earning its keep?" without guessing. This
+    /// pins the wiring end-to-end through `record_failure`:
+    ///   - a per-block cache task bumps `retry_persist_cache` only,
+    ///   - a global cache task bumps `retry_persist_cache` AND
+    ///     `retry_persist_cache_global`,
+    ///   - an `ApplyOp` (correctness class) bumps `retry_persist_apply_op`
+    ///     and leaves the cache counters untouched,
+    ///   - repeated failures of one task escalate `attempts`, and only once
+    ///     the row reaches the 1h-cap tier (`attempts >= 4`) does
+    ///     `retry_persist_capped` bump — measure-item 2's signal.
     #[tokio::test]
     async fn record_failure_classifies_persistent_enqueue_telemetry_2509() {
         use agaric_store::op_log::OpRecord;
