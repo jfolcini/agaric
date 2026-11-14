@@ -1,4 +1,4 @@
-# Session 4117 — the sync peer's pull runs past a backoff
+# Session 4126 — the sync peer's pull runs past a backoff
 
 The real-backend spec "unpairing refuses the peer's next sync and drops only this device's row" (`e2e-tauri/sync-two-device.e2e.ts`) failed once on a PR that touches no sync code: `waited 60s for the app to refuse this vault's pull; the daemon reported no error`. The task was the root cause, not a retry.
 
