@@ -186,6 +186,7 @@ async fn create_blocks_batch_mid_batch_rejection_leaves_engine_in_lockstep_with_
             parent_id: Some("CBB_P".into()),
             position: None,
             parent_index: None,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::default(),
         },
@@ -195,6 +196,7 @@ async fn create_blocks_batch_mid_batch_rejection_leaves_engine_in_lockstep_with_
             parent_id: Some("CBB_P".into()),
             position: None,
             parent_index: None,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::default(),
         },
@@ -240,6 +242,7 @@ async fn create_blocks_batch_failing_nested_typed_property_leaves_engine_in_lock
             parent_id: parent_id.map(Into::into),
             position: None,
             parent_index,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::default(),
         };

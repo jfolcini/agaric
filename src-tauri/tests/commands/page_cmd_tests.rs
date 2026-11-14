@@ -5740,6 +5740,7 @@ async fn duplicate_block_over_one_undo_of_ops_is_refused_and_writes_nothing() {
             parent_id: Some(original.clone()),
             position: None,
             parent_index: None,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: [("todo_state".to_owned(), "TODO".to_owned())].into(),
         })

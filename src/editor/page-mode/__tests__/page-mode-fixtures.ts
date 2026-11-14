@@ -15,7 +15,7 @@ import { serialize } from '@/editor/markdown-serializer'
 import { blockDocJson, depthOf, pageDocContent } from '@/editor/page-mode/page-document'
 import type { PageListSource } from '@/editor/page-mode/page-lists'
 import { pageModeExtensions } from '@/editor/page-mode/page-mode-extensions'
-import type { PageSaveApi, TreeRow } from '@/editor/page-mode/page-save'
+import type { NewBlock, PageSaveApi, TreeRow } from '@/editor/page-mode/page-save'
 import type { PageTaskSource } from '@/editor/page-mode/page-tasks'
 import { blockIdOf } from '@/editor/token-ids'
 import type { OpRef } from '@/lib/bindings'
@@ -214,13 +214,46 @@ export class FakeBackend implements PageSaveApi {
     return out
   }
 
-  create = (id: string, parentId: string, index: number, markdown: string): Promise<OpRef[]> => {
+  /** Run `writes` as one transaction: a refused one leaves nothing behind, its calls neither. */
+  private atomically<T>(writes: () => T): T {
+    const blocks = [...this.blocks].map(([id, block]) => [id, { ...block }] as const)
+    const order = [...this.order].map(([id, ids]): [string, string[]] => [id, [...ids]])
+    const { seq, clock } = this
+    const calls = this.calls.length
+    try {
+      return writes()
+    } catch (err) {
+      this.blocks.clear()
+      for (const [id, block] of blocks) this.blocks.set(id, block)
+      this.order.clear()
+      for (const [id, ids] of order) this.order.set(id, ids)
+      this.seq = seq
+      this.clock = clock
+      this.calls.length = calls
+      throw err
+    }
+  }
+
+  private createNow({ id, parentId, index, markdown }: NewBlock): OpRef[] {
     this.check('create', id)
     if (this.blocks.has(id)) throw new Error(`create: block ${id} already exists`)
     if (!this.isLive(parentId)) throw new Error(`create: parent ${parentId} is not live`)
     this.blocks.set(id, { id, parentId, content: markdown, deletedAt: null })
     this.place(parentId, id, index)
-    return Promise.resolve(this.ref())
+    return this.ref()
+  }
+
+  create = (id: string, parentId: string, index: number, markdown: string): Promise<OpRef[]> =>
+    Promise.resolve(this.createNow({ id, parentId, index, markdown }))
+
+  /** Each batch sent, refused or not: its kind and ids. */
+  readonly batches: string[] = []
+
+  createBatch = (creates: readonly NewBlock[]): Promise<OpRef[]> => {
+    this.batches.push(`create ${creates.map((create) => create.id).join(' ')}`)
+    return Promise.resolve(
+      this.atomically(() => creates.flatMap((create) => this.createNow(create))),
+    )
   }
 
   move = (id: string, parentId: string, index: number): Promise<OpRef[]> => {
@@ -244,14 +277,27 @@ export class FakeBackend implements PageSaveApi {
     return Promise.resolve(this.ref())
   }
 
-  remove = (id: string): Promise<{ deletedAt: number; refs: OpRef[] }> => {
+  private removeNow(id: string, deletedAt: number): OpRef[] {
     this.check('delete', id)
     if (!this.isLive(id)) throw new Error(`delete: ${id} is not live`)
-    this.clock += 1
     for (const member of this.subtree(id, (block) => block.deletedAt === null)) {
-      ;(this.blocks.get(member) as FakeBlock).deletedAt = this.clock
+      ;(this.blocks.get(member) as FakeBlock).deletedAt = deletedAt
     }
-    return Promise.resolve({ deletedAt: this.clock, refs: this.ref() })
+    return this.ref()
+  }
+
+  remove = (id: string): Promise<{ deletedAt: number; refs: OpRef[] }> => {
+    const refs = this.removeNow(id, this.clock + 1)
+    this.clock += 1
+    return Promise.resolve({ deletedAt: this.clock, refs })
+  }
+
+  removeBatch = (ids: readonly string[]): Promise<{ deletedAt: number; refs: OpRef[] }> => {
+    this.batches.push(`delete ${ids.join(' ')}`)
+    const deletedAt = this.clock + 1
+    const refs = this.atomically(() => ids.flatMap((id) => this.removeNow(id, deletedAt)))
+    this.clock = deletedAt
+    return Promise.resolve({ deletedAt, refs })
   }
 
   restore = (id: string, deletedAt: number): Promise<OpRef[]> => {
@@ -295,6 +341,7 @@ export class FakeBackend implements PageSaveApi {
   /** Clear the call log. */
   reset(): void {
     this.calls.length = 0
+    this.batches.length = 0
     this.failing = null
   }
 }

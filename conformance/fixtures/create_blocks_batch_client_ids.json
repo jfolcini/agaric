@@ -1,0 +1,408 @@
+{
+  "description": "#6559 — page mode sends its creates as one `create_blocks_batch` under the ids its document gave them, and its deletes as one `delete_blocks_by_ids`. A spec's client id is taken verbatim, a later spec may sit under an earlier one's, and an id a block holds (live or trashed) or an earlier spec took rolls the whole batch back with `conflict`, as `create_block` refuses it. S7, S8 and S9 are purged first, so no row holds their ids. A batch delete stamps every root with one `deleted_at`, and a `restore_block` with it brings back that one root's cohort, not the other roots'.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "trashed",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "parent",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "child, edited",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B4",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "after",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 14,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "restore_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "client_ids_are_the_block_ids",
+      "returns": [
+        "B4#block_type=content#content=parent#parent_id=B1#position=1",
+        "B5#block_type=content#content=child#parent_id=B4#position=1",
+        "B6#block_type=content#content=after#parent_id=B1#position=3"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_child_answers_to_its_client_id",
+      "returns": ["B5#content=child, edited"]
+    },
+    {
+      "code": null,
+      "error": "conflict",
+      "name": "a_live_id_rolls_the_batch_back",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "conflict",
+      "name": "a_trashed_id_rolls_the_batch_back",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "conflict",
+      "name": "an_id_twice_in_one_batch_rolls_it_back",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "one_batch_delete_stamps_one_deleted_at",
+      "returns": ["delete_blocks_by_ids#deleted_at=DELETED#deleted_count=3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_restore_brings_back_one_root",
+      "returns": ["B6#restored_count=1"]
+    }
+  ],
+  "name": "create_blocks_batch_client_ids",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S7"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S7"
+      },
+      "command": "purge_block"
+    },
+    {
+      "args": {
+        "blockId": "S8"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S8"
+      },
+      "command": "purge_block"
+    },
+    {
+      "args": {
+        "blockId": "S9"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S9"
+      },
+      "command": "purge_block"
+    },
+    {
+      "args": {
+        "specs": [
+          {
+            "blockId": "S7",
+            "blockType": "content",
+            "content": "parent",
+            "parentId": "S1",
+            "position": 1
+          },
+          {
+            "blockId": "S8",
+            "blockType": "content",
+            "content": "child",
+            "parentId": "S7",
+            "position": 1
+          },
+          {
+            "blockId": "S9",
+            "blockType": "content",
+            "content": "after",
+            "parentId": "S1",
+            "position": 3
+          }
+        ]
+      },
+      "command": "create_blocks_batch",
+      "comment": "S8 sits under S7, created by the spec before it; S9 takes the slot after alpha, its position counted with S7 in place.",
+      "name": "client_ids_are_the_block_ids",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "toText": "child, edited"
+      },
+      "command": "edit_block",
+      "comment": "Addressed by the client's id, so a batch that minted its own refuses this edit as `not_found`.",
+      "name": "the_child_answers_to_its_client_id",
+      "via": "command"
+    },
+    {
+      "args": {
+        "specs": [
+          {
+            "blockId": "S10",
+            "blockType": "content",
+            "content": "fresh",
+            "parentId": "S1",
+            "position": null
+          },
+          {
+            "blockId": "S2",
+            "blockType": "content",
+            "content": "usurper",
+            "parentId": "S1",
+            "position": null
+          }
+        ]
+      },
+      "command": "create_blocks_batch",
+      "comment": "S10 comes first and is fresh, but the batch is all or nothing: the snapshot holds no S10.",
+      "expect_error": "conflict",
+      "name": "a_live_id_rolls_the_batch_back",
+      "via": "command"
+    },
+    {
+      "args": {
+        "specs": [
+          {
+            "blockId": "S11",
+            "blockType": "content",
+            "content": "fresh",
+            "parentId": "S1",
+            "position": null
+          },
+          {
+            "blockId": "S3",
+            "blockType": "content",
+            "content": "usurper",
+            "parentId": "S1",
+            "position": null
+          }
+        ]
+      },
+      "command": "create_blocks_batch",
+      "expect_error": "conflict",
+      "name": "a_trashed_id_rolls_the_batch_back",
+      "via": "command"
+    },
+    {
+      "args": {
+        "specs": [
+          {
+            "blockId": "S12",
+            "blockType": "content",
+            "content": "once",
+            "parentId": "S1",
+            "position": null
+          },
+          {
+            "blockId": "S12",
+            "blockType": "content",
+            "content": "twice",
+            "parentId": "S1",
+            "position": null
+          }
+        ]
+      },
+      "command": "create_blocks_batch",
+      "expect_error": "conflict",
+      "name": "an_id_twice_in_one_batch_rolls_it_back",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S7", "S9"]
+      },
+      "command": "delete_blocks_by_ids",
+      "comment": "Two roots, three rows: S8 rides S7's cascade.",
+      "name": "one_batch_delete_stamps_one_deleted_at",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S9"
+      },
+      "command": "restore_block",
+      "comment": "S9 shares S7's `deleted_at`, yet only S9's cohort comes back: S7 and S8 stay in the trash.",
+      "name": "a_restore_brings_back_one_root",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "trashed",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "purged S7",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "purged S8",
+        "id": "S8",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "purged S9",
+        "id": "S9",
+        "parent_id": "S1",
+        "position": 5
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
