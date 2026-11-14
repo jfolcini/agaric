@@ -1,11 +1,22 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key, value_type, options, created_at, 0 AS \"builtin!: bool\"\n           FROM property_definitions WHERE space_id = ? AND key = ?",
+  "query": "SELECT space_id, key, value_type, options, multiple AS \"multiple: bool\"\n           FROM property_definitions ORDER BY space_id, key",
   "describe": {
     "columns": [
       {
-        "name": "key",
+        "name": "space_id",
         "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "key",
+        "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -16,7 +27,7 @@
       },
       {
         "name": "value_type",
-        "ordinal": 1,
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "options",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -37,33 +48,27 @@
         }
       },
       {
-        "name": "created_at",
-        "ordinal": 3,
-        "type_info": "Text",
+        "name": "multiple: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
         "origin": {
           "Table": {
             "table": "property_definitions",
-            "name": "created_at"
+            "name": "multiple"
           }
         }
-      },
-      {
-        "name": "builtin!: bool",
-        "ordinal": 4,
-        "type_info": "Integer",
-        "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 0
     },
     "nullable": [
       false,
       false,
-      true,
       false,
+      true,
       false
     ]
   },
-  "hash": "d88ed0a7dcd45f7e16c8e5d114ab52402f4cfd0d7d7de99ce385fc172cb7e87e"
+  "hash": "9ae070ef9623af1c4e9673f6b5f73bc8acddf6cf302e688f1cebd6aefe64b22f"
 }

@@ -4979,7 +4979,7 @@ pub(super) async fn dup_storage(pool: &SqlitePool, id: &BlockId) -> Vec<String> 
         "columns todo={todo:?} priority={priority:?} scheduled={scheduled:?} due={due:?}"
     )];
     let rows: Vec<PropertyRow> = sqlx::query_as(
-        "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
+        "SELECT key, value_text, value_num, value_date, value_ref, value_bool, value_list \
          FROM block_properties WHERE block_id = ? AND key NOT IN ('created_at', 'completed_at') \
          ORDER BY key",
     )

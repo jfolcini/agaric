@@ -1,22 +1,11 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key AS \"key!\", value_type, options FROM property_definitions\n               WHERE space_id = ?",
+  "query": "SELECT value_type, options, multiple AS \"multiple: bool\"\n           FROM property_definitions WHERE space_id = ? AND key = ?",
   "describe": {
     "columns": [
       {
-        "name": "key!",
-        "ordinal": 0,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "property_definitions",
-            "name": "key"
-          }
-        }
-      },
-      {
         "name": "value_type",
-        "ordinal": 1,
+        "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +16,7 @@
       },
       {
         "name": "options",
-        "ordinal": 2,
+        "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -35,16 +24,27 @@
             "name": "options"
           }
         }
+      },
+      {
+        "name": "multiple: bool",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "multiple"
+          }
+        }
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false,
-      false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "288fe444aa193f9b4b8cd858a8408c390e439fcd387b3f7df07cf33e587fd62a"
+  "hash": "00014a9d24b29ce39e52457cba16199a978c69b4864af003fa8d3f064630e1c5"
 }

@@ -1,22 +1,11 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool\n           FROM block_properties\n           WHERE block_id IN (SELECT value FROM json_each(?1))",
+  "query": "SELECT key, value_text, value_num, value_date, value_ref, value_bool,\n                  value_list AS \"value_list: agaric_store::op::PropertyList\"\n                 FROM block_properties WHERE block_id = ?",
   "describe": {
     "columns": [
       {
-        "name": "block_id",
-        "ordinal": 0,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "block_properties",
-            "name": "block_id"
-          }
-        }
-      },
-      {
         "name": "key",
-        "ordinal": 1,
+        "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +16,7 @@
       },
       {
         "name": "value_text",
-        "ordinal": 2,
+        "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +27,7 @@
       },
       {
         "name": "value_num",
-        "ordinal": 3,
+        "ordinal": 2,
         "type_info": "Float",
         "origin": {
           "Table": {
@@ -49,7 +38,7 @@
       },
       {
         "name": "value_date",
-        "ordinal": 4,
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -60,7 +49,7 @@
       },
       {
         "name": "value_ref",
-        "ordinal": 5,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -71,12 +60,23 @@
       },
       {
         "name": "value_bool",
-        "ordinal": 6,
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
             "table": "block_properties",
             "name": "value_bool"
+          }
+        }
+      },
+      {
+        "name": "value_list: agaric_store::op::PropertyList",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_list"
           }
         }
       }
@@ -86,7 +86,7 @@
     },
     "nullable": [
       false,
-      false,
+      true,
       true,
       true,
       true,
@@ -94,5 +94,5 @@
       true
     ]
   },
-  "hash": "a756b1314e6efcfd6f55669bcc0e5af3de3e1f51b3f191e64af2f41169b2e1e6"
+  "hash": "04d405b1c1e8f352ff21ba200279e231bd8b989221ff957cb794b7a94d884bb4"
 }

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT CAST(h.key AS TEXT) AS \"block_id!: String\"\n           FROM json_each(?1) h\n           WHERE EXISTS (\n               SELECT 1 FROM json_each(h.value) item\n               WHERE EXISTS (SELECT 1 FROM blocks WHERE id = item.value)\n                 AND NOT EXISTS (\n                     SELECT 1 FROM block_properties bp, json_each(bp.value_list) held\n                     WHERE bp.block_id = h.key AND bp.key = ?2\n                       AND held.value = item.value))",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a6a542fe750e23fc883887f45dc943fd895816225323eebd504dd8d8dd1d4362"
+}
