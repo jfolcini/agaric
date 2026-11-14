@@ -132,7 +132,7 @@ export function PropertyChip({
         // click; opening a link must not move the roving editor there.
         e.stopPropagation()
         // The predicate tolerates surrounding whitespace (the URL parser strips
-        // it); the shell plugin's URL scope does not.
+        // it); the opener plugin's URL scope does not.
         void openUrl(value.trim())
       }}
     >

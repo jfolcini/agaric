@@ -12,6 +12,17 @@ use loro::Counter;
 /// past `clippy::type_complexity`'s threshold inline.
 type CapturedImport = (DiffCapture, Vec<(PeerID, Counter, Counter)>);
 
+/// What [`LoroEngine::import_saved_rows`] found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SavedRowsImport {
+    /// The import appended ops, so the index is stale until
+    /// [`LoroEngine::rebuild_index_after_import`] runs.
+    pub needs_index: bool,
+    /// No change is left pending. `false` when a row depends on ops no row
+    /// holds: the engine then lacks them and every later write of their peer.
+    pub complete: bool,
+}
+
 impl LoroEngine {
     /// A reference-clone of the engine's underlying `LoroDoc`.
     ///
@@ -174,6 +185,40 @@ impl LoroEngine {
         // `rebuild_index` + one-time sibling-order migration scan are pure
         // waste. Frontiers compare equal iff nothing was appended to the oplog.
         Ok(self.doc.oplog_frontiers() != before_frontiers)
+    }
+    /// [`Self::import_deferring_index`] for a boot from saved rows (#6521):
+    /// the space's `snapshot`, if it has one, then its `loro_doc_delta` rows.
+    pub fn import_saved_rows(
+        &mut self,
+        snapshot: Option<&[u8]>,
+        deltas: &[Vec<u8>],
+    ) -> Result<SavedRowsImport, AppError> {
+        let before_frontiers = self.doc.oplog_frontiers();
+        let import_failed = |e| AppError::validation(format!("loro: import: {e}"));
+        let mut pending = false;
+        if let Some(snapshot) = snapshot {
+            pending |= self
+                .doc
+                .import(snapshot)
+                .map_err(import_failed)?
+                .pending
+                .is_some();
+        }
+        // One batch: a row can depend on a later one (a sync import's delta
+        // commits after a local write made on top of it), and the batch
+        // reports what is pending once all of them are in.
+        pending |= self
+            .doc
+            .import_batch(deltas)
+            .map_err(import_failed)?
+            .pending
+            .is_some();
+        self.reject_legacy_v1_snapshot()?;
+        self.reject_unknown_format_version()?;
+        Ok(SavedRowsImport {
+            needs_index: self.doc.oplog_frontiers() != before_frontiers,
+            complete: !pending,
+        })
     }
     /// The second half of [`Self::import`]: rebuild the index and run the
     /// one-time sibling-order migration. Loro decodes container state lazily,

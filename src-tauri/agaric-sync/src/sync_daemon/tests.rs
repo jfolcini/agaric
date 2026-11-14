@@ -3633,7 +3633,7 @@ fn resolve_peer_address_returns_discovered_peer() {
     };
     discovered.insert("PEER_A".into(), (dp, Instant::now()));
 
-    let result = resolve_peer_address("PEER_A", Some("192.168.1.1:8080"), None, &discovered);
+    let result = resolve_peer_address("PEER_A", Some("192.168.1.1:8080"), None, &discovered, false);
     assert!(result.is_some(), "must return discovered peer");
     let peer = result.unwrap();
     assert_eq!(peer.device_id, "PEER_A");
@@ -3659,6 +3659,7 @@ fn resolve_peer_address_falls_back_to_cached_address() {
         Some("192.168.1.42:9443"),
         Some(&"a".repeat(64)),
         &discovered,
+        false,
     );
     assert!(
         result.is_some(),
@@ -3694,6 +3695,7 @@ async fn absent_paired_peer_is_dialled_through_the_relay_only_when_the_fallback_
         Some("192.168.1.42:9443"),
         Some(&key.to_string()),
         &discovered,
+        false,
     )
     .expect("a paired peer with a cached key and address resolves without mDNS");
 
@@ -3735,11 +3737,95 @@ fn resolve_peer_address_returns_none_when_both_unavailable() {
 
     let discovered: HashMap<String, (mdns::DiscoveredPeer, Instant)> = HashMap::new();
 
-    let result = resolve_peer_address("PEER_C", None, None, &discovered);
+    let result = resolve_peer_address("PEER_C", None, None, &discovered, false);
     assert!(
         result.is_none(),
         "must return None when neither discovered nor cached"
     );
+}
+
+/// #6764: a device that only answered its pairing session holds the peer's key
+/// and no address. A relay dial names the key alone, so with the fallback on
+/// the peer resolves; LAN-only there is still nothing to dial.
+#[test]
+fn a_bound_peer_with_no_address_resolves_only_for_the_relay_6764() {
+    let discovered = HashMap::new();
+    let key = mdns::test_endpoint_id("PEER_KEY_ONLY");
+
+    let via_relay = resolve_peer_address(
+        "PEER_KEY_ONLY",
+        None,
+        Some(&key.to_string()),
+        &discovered,
+        true,
+    )
+    .expect("a bound key is all a relay dial needs");
+    assert_eq!(via_relay.endpoint_id, Some(key));
+    assert_eq!(via_relay.addresses, Vec::<std::net::IpAddr>::new());
+
+    assert_eq!(
+        resolve_peer_address(
+            "PEER_KEY_ONLY",
+            None,
+            Some(&key.to_string()),
+            &discovered,
+            false,
+        ),
+        None,
+        "LAN-only, a key with no address is not dialable"
+    );
+    assert_eq!(
+        resolve_peer_address("PEER_KEY_ONLY", None, None, &discovered, true),
+        None,
+        "the relay cannot dial a peer with no bound key"
+    );
+}
+
+/// A session with a peer resolved for the relay alone reached it at no address,
+/// and `0.0.0.0:0` written over the row would be dialled on the next round.
+#[tokio::test]
+async fn a_relay_only_peer_leaves_the_cached_address_alone_6764() {
+    let (pool, _dir) = test_pool().await;
+    let materializer: Arc<dyn crate::apply_host::ApplyHost> =
+        Arc::new(Materializer::new(pool.clone()));
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let cancel = AtomicBool::new(false);
+    let harness = ServiceHarness::new().await;
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_DEV",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    peer_refs::upsert_peer_ref(&pool, "PEER_RELAYED")
+        .await
+        .unwrap();
+    let cached = || async {
+        peer_refs::get_peer_ref(&pool, "PEER_RELAYED")
+            .await
+            .unwrap()
+            .and_then(|row| row.last_address)
+    };
+    let mut peer = mdns::DiscoveredPeer {
+        device_id: "PEER_RELAYED".into(),
+        endpoint_id: Some(mdns::test_endpoint_id("PEER_RELAYED")),
+        addresses: Vec::new(),
+        port: 0,
+    };
+
+    session_supervisor::cache_peer_address(&ctx, &peer).await;
+    assert_eq!(cached().await, None);
+
+    peer.addresses = vec!["192.168.1.42".parse().unwrap()];
+    peer.port = 9443;
+    session_supervisor::cache_peer_address(&ctx, &peer).await;
+    assert_eq!(cached().await.as_deref(), Some("192.168.1.42:9443"));
 }
 
 #[test]
@@ -3755,7 +3841,7 @@ fn resolve_peer_address_prefers_discovered_over_fallback() {
     };
     discovered.insert("PEER_D".into(), (dp, Instant::now()));
 
-    let result = resolve_peer_address("PEER_D", Some("192.168.1.1:8080"), None, &discovered);
+    let result = resolve_peer_address("PEER_D", Some("192.168.1.1:8080"), None, &discovered, false);
     assert!(result.is_some(), "must return discovered peer");
     let peer = result.unwrap();
     assert_eq!(
@@ -4456,7 +4542,7 @@ async fn change_round_ignores_unpaired_discovered_peer_when_not_pairing() {
     let no_refs: Vec<PeerRef> = vec![];
     let discovered: HashMap<_, _> = [discovered_entry("UNPAIRED_PEER")].into_iter().collect();
 
-    let round = peers_for_change_round(&no_refs, &discovered, false, None);
+    let round = peers_for_change_round(&no_refs, &discovered, false, None, false);
 
     assert!(
         round.is_empty(),
@@ -4479,7 +4565,7 @@ async fn change_round_dials_discovered_unpaired_peer_while_pairing_pending() {
     let no_refs: Vec<PeerRef> = vec![];
     let discovered: HashMap<_, _> = [discovered_entry("UNPAIRED_PEER")].into_iter().collect();
 
-    let round = peers_for_change_round(&no_refs, &discovered, true, None);
+    let round = peers_for_change_round(&no_refs, &discovered, true, None, false);
 
     assert_eq!(
         round
@@ -4504,7 +4590,7 @@ async fn change_round_does_not_duplicate_a_paired_and_discovered_peer() {
         .into_iter()
         .collect();
 
-    let round = peers_for_change_round(&refs, &discovered, true, None);
+    let round = peers_for_change_round(&refs, &discovered, true, None, false);
 
     assert_eq!(
         round
@@ -4527,7 +4613,7 @@ async fn change_round_dials_the_scanned_host_when_mdns_found_nothing_4037() {
     let no_mdns = DiscoveredPeers::new();
     let scanned = discovered_peer("SCANNED_HOST_4037");
 
-    let round = peers_for_change_round(&no_refs, &no_mdns, true, Some(&scanned));
+    let round = peers_for_change_round(&no_refs, &no_mdns, true, Some(&scanned), false);
 
     assert_eq!(
         round
@@ -4552,7 +4638,7 @@ async fn change_round_ignores_the_scanned_host_outside_a_pairing_window_4037() {
     let no_mdns = DiscoveredPeers::new();
     let scanned = discovered_peer("SCANNED_HOST_4037");
 
-    let round = peers_for_change_round(&no_refs, &no_mdns, false, Some(&scanned));
+    let round = peers_for_change_round(&no_refs, &no_mdns, false, Some(&scanned), false);
 
     assert!(
         round.is_empty(),
@@ -4576,7 +4662,7 @@ async fn change_round_does_not_duplicate_a_scanned_host_mdns_already_found_4037(
         .collect();
     let scanned = discovered_peer("SCANNED_HOST_4037");
 
-    let round = peers_for_change_round(&no_refs, &discovered, true, Some(&scanned));
+    let round = peers_for_change_round(&no_refs, &discovered, true, Some(&scanned), false);
 
     assert_eq!(
         round
@@ -12882,6 +12968,155 @@ async fn a_joiner_binding_its_scanned_host_caches_the_scanned_address_6353() {
         row.last_address.as_deref(),
         Some(scanned_address),
         "the scanned address must survive the bind that closes the window"
+    );
+
+    host_mat.shutdown();
+    joiner_mat.shutdown();
+}
+
+/// #6764: a host that showed its code scanned nothing, and its joiner dials it.
+/// The host binds the joiner as the responder, and without the address that
+/// session came from it could never dial the joiner back to pull from it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_responder_binding_a_peer_it_did_not_scan_caches_the_address_it_dialled_from_6764() {
+    let (dialler_pool, _dialler_dir) = test_pool().await;
+    let dialler_mat = Materializer::new(dialler_pool.clone());
+    let (responder_pool, _responder_dir) = test_pool().await;
+    let responder_mat = Materializer::new(responder_pool.clone());
+    let responder_sched = Arc::new(SyncScheduler::new());
+    publish_daemon_endpoint(&responder_sched, DIALLED_JOINER);
+    let passphrase = crate::pairing::start_pairing_armed(
+        &responder_pool,
+        &std::sync::Mutex::new(None),
+        &responder_sched,
+        DIALLED_JOINER,
+    )
+    .await
+    .expect("the responder arms its pairing window")
+    .passphrase;
+    let dialler_sched = Arc::new(SyncScheduler::new());
+    crate::pairing::confirm_pairing(
+        &dialler_pool,
+        &std::sync::Mutex::new(None),
+        &dialler_sched,
+        passphrase,
+        None,
+    )
+    .await
+    .expect("the dialler types the responder's code");
+
+    let harness = ServiceHarness::new().await;
+    let responder_task = spawn_responder(
+        &harness,
+        responder_pool.clone(),
+        DIALLED_JOINER,
+        responder_mat.clone(),
+        responder_sched,
+        Arc::new(RecordingEventSink::new()),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let apply: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(dialler_mat.clone());
+    let cancel = AtomicBool::new(false);
+    let ctx = SyncSessionContext {
+        pool: &dialler_pool,
+        device_id: DIALLING_HOST,
+        materializer: &apply,
+        scheduler: &dialler_sched,
+        event_sink: &sink,
+        cancel: &cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(
+            &ctx,
+            &discovered_service_peer(DIALLED_JOINER, &harness),
+            &[],
+            None,
+        ),
+    )
+    .await
+    .expect("try_sync_with_peer timed out");
+    tokio::time::timeout(std::time::Duration::from_secs(40), responder_task)
+        .await
+        .expect("responder task timed out")
+        .expect("responder task panicked")
+        .expect("the responder session succeeds");
+
+    let row = peer_refs::get_peer_ref(&responder_pool, DIALLING_HOST)
+        .await
+        .unwrap()
+        .expect("the responder holds a row for the dialler");
+    assert_eq!(
+        row.endpoint_id,
+        Some(client_key(&harness)),
+        "precondition: the responder bound the dialler's key"
+    );
+    let cached: std::net::SocketAddr = row
+        .last_address
+        .expect("the responder caches the address the session came from")
+        .parse()
+        .unwrap();
+    assert!(
+        harness.client_endpoint.bound_sockets().contains(&cached),
+        "{cached} must be a socket the dialler is bound to"
+    );
+
+    dialler_mat.shutdown();
+    responder_mat.shutdown();
+}
+
+/// #6764: the peer's address moves (a new lease, a port taken at launch), and a
+/// responder mDNS does not reach learns the new one only from the sessions the
+/// peer opens. So a routine session replaces the cached address too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_routine_inbound_session_replaces_the_cached_address_6764() {
+    let (host_pool, _host_dir) = test_pool().await;
+    let host_mat = Materializer::new(host_pool.clone());
+    let (joiner_pool, _joiner_dir) = test_pool().await;
+    let joiner_mat = Materializer::new(joiner_pool.clone());
+
+    let harness = ServiceHarness::new().await;
+    peer_refs::bind_endpoint_id(
+        &host_pool,
+        DIALLED_JOINER,
+        &harness.service.endpoint_id().to_string(),
+    )
+    .await
+    .unwrap();
+    bind_client_as(&joiner_pool, DIALLING_HOST, &harness).await;
+    peer_refs::update_last_address(&joiner_pool, DIALLING_HOST, "192.0.2.1:1")
+        .await
+        .unwrap();
+
+    let events = host_dials_joiner(
+        &harness,
+        &discovered_service_peer(DIALLED_JOINER, &harness),
+        &host_pool,
+        &host_mat,
+        &SyncScheduler::new(),
+        &joiner_pool,
+        &joiner_mat,
+    )
+    .await;
+    assert!(
+        saw_complete_3507(&events),
+        "precondition: the routine sync completed, got {events:?}"
+    );
+
+    let cached: std::net::SocketAddr = peer_refs::get_peer_ref(&joiner_pool, DIALLING_HOST)
+        .await
+        .unwrap()
+        .and_then(|row| row.last_address)
+        .expect("the row keeps an address")
+        .parse()
+        .unwrap();
+    assert!(
+        harness.client_endpoint.bound_sockets().contains(&cached),
+        "{cached} must be a socket the dialler is bound to, not the stale address"
     );
 
     host_mat.shutdown();

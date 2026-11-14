@@ -563,6 +563,9 @@ export const properties: Record<string, string> = {
   // #3315 item 3 — accessible name for the same header when more pages remain
   // unloaded: the sort is over the loaded rows, not the column.
   'queryResult.sortByPartial': 'Sort by {{column}} (loaded rows only)',
+  'queryResult.cell.edit': 'Edit {{column}}: {{value}}',
+  'queryResult.cell.set': 'Set {{column}}',
+  'queryResult.cell.updated': '{{column}} updated',
   'queryResult.columns.trigger': 'Choose columns',
   'queryResult.columns.moveUp': 'Move {{column}} up',
   'queryResult.columns.moveDown': 'Move {{column}} down',

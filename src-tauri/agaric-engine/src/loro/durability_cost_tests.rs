@@ -224,9 +224,10 @@ async fn delta_per_write(
     Timings(writes).report("delta row write, in an open transaction", scale, "");
 }
 
-/// Boot under a delta per write: the snapshot, then `TAIL` deltas, against the
-/// same tail re-applied op by op as boot replay does today. Returns the tail
-/// as the one update a sync session would have delivered.
+/// Boot from saved rows, as `rehydrate_registry` builds an engine (the
+/// snapshot, then `TAIL` deltas in one batch), against the same tail
+/// re-applied op by op as the replay boot does. Returns the tail as the one
+/// update a sync session would have delivered.
 fn boot_with_a_tail(snapshot: &[u8], ids: &[String], scale: &str) -> Vec<u8> {
     let mut live = rehydrate(snapshot);
     let before = live.version_vector();
@@ -249,10 +250,10 @@ fn boot_with_a_tail(snapshot: &[u8], ids: &[String], scale: &str) -> Vec<u8> {
     Timings::of(5, || {
         let (engine, took) = timed(|| {
             let mut engine = LoroEngine::with_peer_id(DEVICE).expect("engine");
-            engine.import_deferring_index(snapshot).expect("import");
-            for delta in &deltas {
-                engine.import_deferring_index(delta).expect("import delta");
-            }
+            let rows = engine
+                .import_saved_rows(Some(snapshot), &deltas)
+                .expect("import");
+            assert!(rows.complete, "no row is missing");
             engine.rebuild_index_after_import();
             engine
         });

@@ -16,7 +16,7 @@ import {
  * "Copy URL" context-menu action had no coverage at all. This spec closes both:
  *
  *   • Ctrl+Click on an `a.external-link` opens the URL via `openUrl` →
- *     `@tauri-apps/plugin-shell` → `plugin:shell|open`, and the IPC `path`
+ *     `@tauri-apps/plugin-opener` → `plugin:opener|open_url`, and the IPC `url`
  *     arg equals the link href.
  *   • Right-click → "Copy URL" (BlockContextMenu, only rendered when a
  *     `linkUrl` is present) routes through `writeText` →
@@ -56,12 +56,12 @@ test.describe('External link actions in editor (#924 f5) @editor', () => {
     await installIpcRecorder(page)
     await link.click({ modifiers: ['Control'] })
 
-    // openUrl → shell plugin → `plugin:shell|open` with `path` = href.
+    // openUrl → opener plugin → `plugin:opener|open_url` with `url` = href.
     await expect
-      .poll(async () => (await getInvokeCalls(page, 'plugin:shell|open')).length)
+      .poll(async () => (await getInvokeCalls(page, 'plugin:opener|open_url')).length)
       .toBeGreaterThan(0)
-    const calls = await getInvokeCalls(page, 'plugin:shell|open')
-    expect(calls.some((args) => args['path'] === URL)).toBe(true)
+    const calls = await getInvokeCalls(page, 'plugin:opener|open_url')
+    expect(calls.some((args) => args['url'] === URL)).toBe(true)
   })
 
   test('right-click → "Copy URL" writes the href to the clipboard', async ({ page }) => {

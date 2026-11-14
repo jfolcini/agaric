@@ -33,9 +33,14 @@ export interface SelectEditorProps {
   ariaLabel: string
   /** The stored value when it is none of the options, else null. */
   unfitValue: string | null
+  /**
+   * Given by an editor that exists only while its options show (a query table
+   * cell): the list starts open, and this hears it close.
+   */
+  onClose?: (() => void) | undefined
 }
 
-export function SelectEditor({ state, ariaLabel, unfitValue }: SelectEditorProps) {
+export function SelectEditor({ state, ariaLabel, unfitValue, onClose }: SelectEditorProps) {
   const { t } = useTranslation()
   const { localValue, options, handleSelectChange } = state
   // The number 1 beside the option "1" would give two items one value: the option could not be
@@ -43,7 +48,14 @@ export function SelectEditor({ state, ariaLabel, unfitValue }: SelectEditorProps
   const unfitItem = unfitValue !== null && options.includes(unfitValue) ? '__unfit__' : unfitValue
   const selected = unfitItem !== null && localValue === unfitValue ? unfitItem : localValue
   return (
-    <Select value={selected || '__none__'} onValueChange={handleSelectChange}>
+    <Select
+      value={selected || '__none__'}
+      onValueChange={handleSelectChange}
+      defaultOpen={onClose !== undefined}
+      onOpenChange={(open) => {
+        if (!open) onClose?.()
+      }}
+    >
       <SelectTrigger className="w-full" aria-label={ariaLabel}>
         <SelectValue />
       </SelectTrigger>

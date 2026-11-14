@@ -11,7 +11,7 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { announce } from '@/lib/announcer'
-import type { PropertyRow } from '@/lib/bindings'
+import type { OpRef, PropertyRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import {
@@ -38,6 +38,8 @@ export interface UsePropertySaveOptions {
   announceOnDelete?: string
   /** When provided, errors are logged via logger.error(logTag, ...). */
   logTag?: string
+  /** Hears the ops a save or delete appended, for a caller that offers to undo it. */
+  onWritten?: (refs: OpRef[]) => void
 }
 
 export interface UsePropertySaveReturn {
@@ -52,6 +54,7 @@ export function usePropertySave({
   announceOnSave,
   announceOnDelete,
   logTag,
+  onWritten,
 }: UsePropertySaveOptions): UsePropertySaveReturn {
   const { t } = useTranslation()
 
@@ -59,8 +62,13 @@ export function usePropertySave({
     async (key: string, value: string, type: string) => {
       if (!blockId) return
       try {
-        const ok = await handleSaveProperty(blockId, key, value, type, (props) =>
-          setProperties(props),
+        const ok = await handleSaveProperty(
+          blockId,
+          key,
+          value,
+          type,
+          (props) => setProperties(props),
+          onWritten,
         )
         if (!ok) {
           notify.error(t(toasts?.invalidNumber ?? 'property.invalidNumber'))
@@ -91,21 +99,35 @@ export function usePropertySave({
       }
     },
     // oxlint-disable-next-line react/preserve-manual-memoization -- deliberately depends on individual `toasts` string fields, not the `toasts` object itself: src/components/pages/PagePropertyTable.tsx:113 passes a fresh `toasts` object literal on every render, so keying on the object identity (the dependency this rule reports as inferred) would rebuild handleSave/handleDelete on every render and defeat the memoization the property-level deps exist to preserve. Lint hygiene only, NOT Compiler reasoning: this file is `.ts`, outside the babel include in vite.config.ts (`/\.[jt]sx(?:$|\?)/`), so the React Compiler never processes it and this manual `useCallback` is the only memoization in play (#4409)
-    [blockId, t, setProperties, toasts?.invalidNumber, toasts?.saveFailed, announceOnSave, logTag],
+    [
+      blockId,
+      t,
+      setProperties,
+      toasts?.invalidNumber,
+      toasts?.saveFailed,
+      announceOnSave,
+      logTag,
+      onWritten,
+    ],
   )
 
   const handleDelete = useCallback(
     async (key: string) => {
       if (!blockId) return
       try {
-        await handleDeleteProperty(blockId, key, () => {
-          // Removing the rule removes its bounds with it (`delete_property`).
-          setProperties((prev) =>
-            prev.filter(
-              (p) => p.key !== key && !(key === 'repeat' && REPEAT_RULE_BOUNDS.has(p.key)),
-            ),
-          )
-        })
+        await handleDeleteProperty(
+          blockId,
+          key,
+          () => {
+            // Removing the rule removes its bounds with it (`delete_property`).
+            setProperties((prev) =>
+              prev.filter(
+                (p) => p.key !== key && !(key === 'repeat' && REPEAT_RULE_BOUNDS.has(p.key)),
+              ),
+            )
+          },
+          onWritten,
+        )
         if (announceOnDelete) {
           announce(t(announceOnDelete))
         }
@@ -135,7 +157,7 @@ export function usePropertySave({
     // what triggers the mismatch there. Confirmed by mirroring handleSave's
     // two-field, two-branch shape onto this callback: the same error then
     // reproduces here too.
-    [blockId, t, setProperties, toasts?.deleteFailed, announceOnDelete, logTag],
+    [blockId, t, setProperties, toasts?.deleteFailed, announceOnDelete, logTag, onWritten],
   )
 
   return { handleSave, handleDelete }

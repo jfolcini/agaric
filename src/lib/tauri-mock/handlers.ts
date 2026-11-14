@@ -181,11 +181,10 @@ export const PLUGIN_HANDLERS: Record<string, Handler> = {
     const url = globalThis.localStorage?.getItem('__mockLaunchUrl')
     return url == null ? null : [url]
   },
-  // Clipboard / opener / shell are registered on desktop AND mobile;
+  // Clipboard / opener are registered on desktop AND mobile;
   // copy-link and external-link e2e flows rely on the success path.
   'plugin:clipboard-manager|write_text': clipboardWriteText,
   'plugin:clipboard-manager|read_text': clipboardReadText,
-  'plugin:shell|open': returnNull,
   'plugin:opener|open_url': returnNull,
   // Global-shortcut is desktop-only but the browser harness emulates a
   // desktop UA, where registration succeeds — modeling success keeps the

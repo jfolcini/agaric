@@ -20,6 +20,7 @@ import { useQueryExecution } from '@/hooks/useQueryExecution'
 import { useQuerySorting } from '@/hooks/useQuerySorting'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import type { PropertyRow } from '@/lib/bindings'
 import { countFilterLeaves, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { buildCustomPropsMap } from '@/lib/query-result-columns'
 import { chipTagId, isLegacyQueryText, readQueryText } from '@/lib/query-text'
@@ -33,6 +34,14 @@ import { useResolveStore } from '@/stores/resolve'
 const QueryBuilderModal = lazy(() =>
   import('@/components/dialogs/QueryBuilderModal').then((m) => ({ default: m.QueryBuilderModal })),
 )
+
+/** The result blocks' properties: as stored, and as the display values the columns show. */
+interface ResultProperties {
+  rows: Record<string, PropertyRow[]>
+  customProps: Map<string, Map<string, string>>
+}
+
+const NO_PROPERTIES: ResultProperties = { rows: {}, customProps: new Map() }
 
 /** A tag chip's token (`#[ULID]`, a `#name` typed in the block) as the tag's name. */
 function TagChipPill({ id }: { id: string }): React.ReactElement {
@@ -252,10 +261,10 @@ export function QueryResult({
 
   // Custom (non-reserved) properties are not carried on `BlockRow`; fetch them
   // for the result blocks only in table mode, where they become columns.
-  const [customProps, setCustomProps] = useState<Map<string, Map<string, string>>>(new Map())
+  const [{ rows: propertyRows, customProps }, setProperties] = useState(NO_PROPERTIES)
   useEffect(() => {
     if (!tableMode || results.length === 0) {
-      setCustomProps(new Map())
+      setProperties(NO_PROPERTIES)
       return
     }
     let cancelled = false
@@ -263,12 +272,12 @@ export function QueryResult({
       .getBatchProperties(results.map((b) => b.id))
       .then(unwrap)
       .then((batch) => {
-        if (!cancelled) setCustomProps(buildCustomPropsMap(batch))
+        if (!cancelled) setProperties({ rows: batch, customProps: buildCustomPropsMap(batch) })
       })
       .catch((err) => {
         // A property-fetch failure should not blank the table; fall back to
         // the fixed columns and surface the error to the IPC reporter.
-        if (!cancelled) setCustomProps(new Map())
+        if (!cancelled) setProperties(NO_PROPERTIES)
         reportIpcError('QueryResult', 'queryBuilder.propertiesFailed', err, t, { blockId })
       })
     return () => {
@@ -442,6 +451,7 @@ export function QueryResult({
               onNavigate={onNavigate}
               resolveBlockTitle={resolveBlockTitle}
               customProps={customProps}
+              propertyRows={propertyRows}
               // #3315 item 3 — the sort is client-side over the loaded pages.
               partial={hasMore}
             />
