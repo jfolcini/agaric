@@ -8535,6 +8535,11 @@ mod incremental_equals_rebuild_6534 {
                     .execute(pool)
                     .await
                     .unwrap();
+                // A write while the block was deleted dropped its links; the
+                // restore re-derives them first, as
+                // `materializer::handlers::apply::reindex_restored_cohort_links`
+                // does at every restore site.
+                crate::cache::reindex_block_links(pool, id).await.unwrap();
                 let mut ids = vec![id.to_string()];
                 ids.extend(page_and_tag_referrers(pool, &[id]).await.unwrap());
                 reindex_fts_for_ids(pool, &ids).await.unwrap();

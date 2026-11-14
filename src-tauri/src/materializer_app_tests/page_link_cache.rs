@@ -2690,3 +2690,89 @@ async fn a_snapshot_sized_import_relinks_every_changed_block_4293() {
 
     mat.shutdown();
 }
+
+/// A block edited while in the Trash has no `block_links` rows (a reindex
+/// reads a tombstoned source as content-less), and a page rename finds the
+/// blocks to re-strip through `block_links`. So the restore's link reindex is
+/// what lets a later rename of a page the block links reach its `fts_blocks`
+/// row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rename_reaches_the_fts_row_of_a_block_edited_in_the_trash_then_restored() {
+    use agaric_store::op::{DeleteBlockPayload, EditBlockPayload};
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = RESTORE_PAGE_P;
+    let block = RESTORE_SOURCE_S;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) \
+         VALUES (?, 'page', 'Plain café page', ?)",
+    )
+    .bind(page)
+    .bind(page)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', NULL, ?, ?, 1)",
+    )
+    .bind(block)
+    .bind(page)
+    .bind(page)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let edit = |id: &'static str, to_text: String| {
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(id),
+            to_text,
+            prev_edit: None,
+            prior_text: None,
+        })
+    };
+    let delete = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::test_id(block),
+    });
+    for payload in [delete, edit(block, format!("see [[{page}]]"))] {
+        let record = make_op_record(&pool, payload).await;
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+    }
+    let deleted_at: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(block)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        all_edges(&pool).await.is_empty(),
+        "seed: the edit in the Trash leaves the block without its link"
+    );
+
+    let restore = OpPayload::RestoreBlock(RestoreBlockPayload {
+        block_id: BlockId::test_id(block),
+        deleted_at_ref: deleted_at.expect("seed: the block is in the Trash"),
+    });
+    for payload in [restore, edit(page, "rust".to_string())] {
+        let record = make_op_record(&pool, payload).await;
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+    }
+
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT block_id, stripped FROM fts_blocks ORDER BY block_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (page.to_string(), "rust".to_string()),
+            (block.to_string(), "see rust".to_string()),
+        ]
+    );
+
+    mat.shutdown();
+}
