@@ -11758,11 +11758,15 @@ async fn create_blocks_batch_refused_client_id_rolls_back_6559() {
         .unwrap();
     let twice = BlockId::new();
 
-    for (second, malformed) in [
-        (live.id.clone(), false),
-        (trashed.id.clone(), false),
-        (twice.clone(), false),
-        (BlockId::from_trusted("not-a-valid-ulid"), true),
+    for (case, second, malformed) in [
+        ("a live block's id", live.id.clone(), false),
+        ("a trashed block's id", trashed.id.clone(), false),
+        ("an id given twice", twice.clone(), false),
+        (
+            "a malformed id",
+            BlockId::from_trusted("not-a-valid-ulid"),
+            true,
+        ),
     ] {
         let fresh = BlockId::new();
         let first = if second == twice {
@@ -11782,9 +11786,9 @@ async fn create_blocks_batch_refused_client_id_rolls_back_6559() {
         .await
         .expect_err("a refused client id refuses the batch");
         if malformed {
-            assert!(matches!(err, AppError::Ulid(_)), "{second}: {err:?}");
+            assert!(matches!(err, AppError::Ulid(_)), "{case}");
         } else {
-            assert!(matches!(err, AppError::Conflict(_)), "{second}: {err:?}");
+            assert!(matches!(err, AppError::Conflict(_)), "{case}");
         }
         let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?)")
             .bind(fresh.as_str())
@@ -11792,7 +11796,7 @@ async fn create_blocks_batch_refused_client_id_rolls_back_6559() {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(held, 0, "{second}: nothing of the batch is created");
+        assert_eq!(held, 0, "{case}: nothing of the batch is created");
     }
     let ops_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
         .fetch_one(&pool)

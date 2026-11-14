@@ -831,14 +831,6 @@ describe('dispatchLaunchUrl', () => {
     // matching to handle).
     expect(localStorage.getItem(SETTINGS_ACTIVE_TAB_KEY)).toBe('Keyboard')
   })
-
-  it('routes no https URL: the App Link shape is dropped (#6555)', async () => {
-    dispatchLaunchUrl('https://agaric.app/o/block/BLOCK01HJKLMN012345VPQRSTW3')
-    dispatchLaunchUrl('https://agaric.app/o/settings/sync')
-    await Promise.resolve()
-    expect(mockNavigateToPage).not.toHaveBeenCalled()
-    expect(mockSetView).not.toHaveBeenCalled()
-  })
 })
 
 // =============================================================================

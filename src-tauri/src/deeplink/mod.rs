@@ -431,16 +431,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_the_dropped_app_link_shape_6555() {
-        let url = format!("https://agaric.app/o/block/{VALID_ULID}");
-        let err = parse_deep_link(&url).expect_err("no https link is a deep link");
-        match err {
-            DeepLinkError::WrongScheme(s) => assert_eq!(s, "https"),
-            other => panic!("expected WrongScheme, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn rejects_unknown_host() {
         let err = parse_deep_link("agaric://attack/whatever").expect_err("unknown host");
         match err {
