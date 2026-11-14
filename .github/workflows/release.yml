@@ -133,17 +133,9 @@ jobs:
   build-and-release:
     needs: [verify-version, validate]
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' }}
-    # PEND-41 R1 — based on ci.yml build observations (run 25966040732,
-    # 2026-05-16, n=1) + ~10 min signing/attest/upload overhead per platform:
-    # macos 50 + 10 = 60, windows 65 + 10 = 75. Linux's old 60-minute
-    # budget assumed the rust-release cache restored by the now-deleted step.
-    # Removing that publishing-lane cache (#3573) makes its first build cold
-    # and unmeasured,
-    # so give Linux 50% headroom (60 -> 90) until a cold tag run can replace
-    # this estimate with observed whole-job timing.
-    # macOS's 60 had no headroom: on the 0.24.0 tag (run 43591828865) the
-    # aarch64 job was cancelled at 60 minutes in its last upload step and the
-    # x86_64 one took 51, so macOS gets Linux's 90.
+    # Windows 75: its measured 65-minute build (run 25966040732) plus 10 for signing and upload.
+    # Linux and macOS 90: Linux builds with no cache (#3573), and on the 0.24.0 tag
+    # (run 43591828865) macOS aarch64 was cancelled at 60 minutes in its last upload step.
     timeout-minutes: ${{ matrix.platform == 'windows-2025-vs2026' && 75 || 90 }}
     # Reads TAURI_SIGNING_PRIVATE_KEY(_PASSWORD), stored as environment secrets:
     # the job waits for the maintainer to approve the `release` environment.

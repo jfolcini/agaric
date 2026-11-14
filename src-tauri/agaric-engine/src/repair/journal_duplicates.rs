@@ -332,7 +332,7 @@ mod tests {
         let state = LoroState::new();
         let (_keeper, _) =
             page_with_children(&pool, "2026-05-07", SPACE_WORK_ULID, "keeper", 1).await;
-        let (_dup, kids) = page_with_children(&pool, "2026-05-07", SPACE_WORK_ULID, "d", 3).await;
+        let (_, kids) = page_with_children(&pool, "2026-05-07", SPACE_WORK_ULID, "d", 3).await;
 
         run(&pool, &state).await;
 

@@ -72,22 +72,24 @@ pub(crate) fn normalize_tag_ids(tag_ids: Option<&[String]>) -> Vec<String> {
 }
 
 /// The spellings of `term` to hand `LIKE`, which folds ASCII case only while
-/// the trigram index folds every script: a term with a non-ASCII letter is
-/// also tried lowercased, uppercased and capitalised.
+/// the trigram index folds every script: each non-ASCII letter is tried as
+/// typed, lowercased and uppercased, in every combination. Only a term under
+/// the trigram floor comes here, so that is at most nine spellings.
 fn like_case_forms(term: &str) -> Vec<String> {
-    let mut forms = vec![term.to_owned()];
-    if !term.is_ascii() {
-        let lower = term.to_lowercase();
-        let mut rest = lower.chars();
-        let capitalised: String = rest
-            .next()
-            .map(|first| first.to_uppercase().chain(rest).collect())
-            .unwrap_or_default();
-        for form in [lower, term.to_uppercase(), capitalised] {
-            if !forms.contains(&form) {
-                forms.push(form);
+    let mut forms = vec![String::new()];
+    for c in term.chars() {
+        let mut cases = vec![c.to_string()];
+        if !c.is_ascii() {
+            for case in [c.to_lowercase().collect(), c.to_uppercase().collect()] {
+                if !cases.contains(&case) {
+                    cases.push(case);
+                }
             }
         }
+        forms = forms
+            .iter()
+            .flat_map(|form| cases.iter().map(move |case| format!("{form}{case}")))
+            .collect();
     }
     forms
 }
