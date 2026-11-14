@@ -131,7 +131,7 @@ Logseq 2.0 turned this into its strongest domain. Agaric is behind, not ahead.
 | Grouping | 2.0: group-by in the Views system | Every `GroupKey` is reachable in the builder (#4804, `src/components/AdvancedQuery/QueryControlsBar.tsx`). The list layout shows a bounded preview per group with no expand. Grouped by state or a select property, *View › Board* (`src/components/AdvancedQuery/QueryBoard.tsx`) lays the groups out as columns that load more on their own, with a *Move to…* menu that sets the state or property, undoable (#6542) | Done |
 | Aggregation | `{{function (sum :qty)}}` + arbitrary SCI functions | count/sum/avg/min/max, global + per-group; the target can be a property (#4804) | Partial |
 | Sorting | `sort-by`, table-header sort; 2.0.2 sorts missing values last (#13485) | Multi-key over a closed column set + bm25 relevance | Done |
-| Query result table | `query-table:: true` + column picker; 2.0: Table/List/Gallery views with pinned, resizable columns and inline editing | Columns derived from the loaded rows' properties until picked; a column picker chooses and orders them, kept in the block; no widths or inline editing (#6743) | Partial |
+| Query result table | `query-table:: true` + column picker; 2.0: Table/List/Gallery views with pinned, resizable columns and inline editing | Columns derived from the loaded rows' properties until picked; a column picker chooses and orders them, kept in the block; a cell edits its block's property or task state in place, with Undo (`src/components/query/QueryTableCell.tsx`, #6743); no column widths, and a block's text is not edited in its cell | Partial |
 | Live-updating results | Yes (DataScript reactivity) | Inline queries refetch on property and graph-structure events, including ones arriving by sync (`src/hooks/useQueryExecution.ts`, #5316) | Done |
 | Saved queries | Query nodes live in the graph | Each saved view is a page of its space carrying the internal `saved_view` property (`src/lib/saved-views.ts`, #6544): it syncs, a deleted one waits in the Trash, and it stays out of page lists, the `[[` picker, the graph and search. The Pages view and Advanced Query both use them | Done |
 | User-facing query language | Text you can read, diff, paste, version | **Partial.** A query block takes the search box's filter syntax as typed text (`{{query tag:#work state:TODO}}`, `src/lib/query-text.ts`), its tokens joined by AND, with no OR, groups, relative dates, free text, `path:` or `under:` yet (#6742); the builder writes that text for a filter it can say and `v2:<base64url(JSON)>` for the rest (#6628) | Partial |
@@ -319,7 +319,7 @@ A judgment, not a count: each product is scored 1 to 10 per category on what it 
 | Linking system | 10 | 9 | 7 | No inline reference content, no count on the referenced block, a pages-only link picker |
 | Properties | 6 | 10 | 8 | One value per property, no defaults or display control |
 | Tags | 8 | 10 | 7 | Labels, not classes |
-| Query system | 9 | 9 | 8 | A board, picked columns, text queries and synced views; no Datalog, AND-only text |
+| Query system | 9 | 9 | 8 | A board, picked columns, editable table cells, text queries and synced views; no Datalog, AND-only text |
 | Task management | 7 | 8 | 8 | Fixed states, no time tracking |
 | Daily journal | 8 | 7 | 9 | |
 | Search | 5 | 7 | 9 | Terms under three characters are dropped |

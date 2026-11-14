@@ -23,7 +23,7 @@ export const CUSTOM_COLUMN_PREFIX = 'prop:'
 /** Keys never surfaced as a custom column: the reserved block fields (already
  * shown as `KNOWN_PROPERTY_KEYS`), the app's bookkeeping keys, and the space
  * membership. */
-const EXCLUDED_COLUMN_KEYS: ReadonlySet<string> = new Set<string>([
+export const EXCLUDED_COLUMN_KEYS: ReadonlySet<string> = new Set<string>([
   ...APP_MANAGED_BUILTIN_KEYS,
   ...INTERNAL_PROPERTY_KEYS,
 ])
