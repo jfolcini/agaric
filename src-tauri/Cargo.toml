@@ -198,7 +198,6 @@ agaric-observability = { path = "agaric-observability", version = "0.1.0" }
 # interaction (one trace across the IPC boundary). The feature only adds
 # debug/trace-level spans, captured solely by the OTel layer (off by default).
 tauri = { version = "2", features = ["image-png", "tracing"] }
-tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
 # Cross-platform platform/version/arch/locale/hostname API.

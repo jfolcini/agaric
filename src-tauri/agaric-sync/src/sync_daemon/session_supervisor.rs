@@ -465,7 +465,13 @@ async fn run_change_round(
     // own, and on a LAN where multicast never arrives it is the
     // only one — `discovered` is empty there by construction.
     let scanned = scheduler.scanned_peer();
-    let round = peers_for_change_round(&refs, discovered, pairing_pending, scanned.as_ref());
+    let round = peers_for_change_round(
+        &refs,
+        discovered,
+        pairing_pending,
+        scanned.as_ref(),
+        ctx.relay_url.is_some(),
+    );
     let mut join_set = tokio::task::JoinSet::new();
     for peer in round {
         // Each spawned task owns clones of the shared state.
@@ -564,11 +570,13 @@ pub(super) async fn run_resync_round(
         // underlying data (references are Copy).
         let refs_by_id = &refs_by_id;
         let refs = &refs;
+        let relay = ctx.relay_url.is_some();
         async move {
             let stored = refs_by_id.get(pid.as_str());
             let last_addr = stored.and_then(|r| r.last_address.as_deref());
             let bound_key = stored.and_then(|r| r.endpoint_id.as_deref());
-            if let Some(peer) = resolve_peer_address(&pid, last_addr, bound_key, discovered) {
+            if let Some(peer) = resolve_peer_address(&pid, last_addr, bound_key, discovered, relay)
+            {
                 let seen_at = mdns_last_seen(discovered, &pid);
                 let cancelled = try_sync_with_peer(ctx, &peer, refs, seen_at).await;
                 if cancelled {
@@ -593,7 +601,7 @@ pub(super) async fn run_resync_round(
     // Empty `peer_refs`, so the composition yields only the window's tail
     // (discovered peers plus the scanned host); the paired ones were the round above.
     let scanned = ctx.scheduler.scanned_peer();
-    for peer in peers_for_change_round(&[], discovered, true, scanned.as_ref()) {
+    for peer in peers_for_change_round(&[], discovered, true, scanned.as_ref(), false) {
         if refs.iter().any(|r| r.peer_id == peer.device_id) {
             continue;
         }
@@ -2084,7 +2092,11 @@ async fn run_initiator_session(
 /// the sequential loop and its "try this one first" optimisation are both
 /// gone); it is a cached candidate path, and it is only usable in company
 /// with the bound key. See `discovery::resolve_peer_address`.
-async fn cache_peer_address(ctx: &SyncSessionContext<'_>, peer: &DiscoveredPeer) {
+pub(super) async fn cache_peer_address(ctx: &SyncSessionContext<'_>, peer: &DiscoveredPeer) {
+    // A peer resolved for the relay alone has no address to remember.
+    if peer.addresses.is_empty() {
+        return;
+    }
     let peer_id = &peer.device_id;
     if let Err(e) = peer_refs::update_last_address(ctx.pool, peer_id, &last_address_of(peer)).await
     {
