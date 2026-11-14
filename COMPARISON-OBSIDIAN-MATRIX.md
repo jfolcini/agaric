@@ -318,3 +318,44 @@
 | If the project stops | The app keeps working offline; the files stay Markdown; Sync and Publish stop | The app keeps working; the source stays; the data is SQLite plus an export | Tie |
 | Bus factor | A company with a named team and paying customers | **One** | Partial |
 | Roadmap transparency | Public roadmap and changelog | Public issues | Tie |
+
+## Scorecard
+
+No points are awarded. Each line counts the rows of one section by the status Agaric earned there against Obsidian core: **Ahead** is any Better, qualified or not; **Level** is Done or Tie; **Behind** is Partial or Gap; **Not ranked** is Design choice or Unverified. A count is not a weight: "Plugin API" and "Highlight colours" are one row each, and the choice of rows is this document's. `node scripts/comparison-scorecard.mjs --write` recounts the table from the rows above.
+
+<!-- scorecard:start -->
+| Section | Ahead | Level | Behind | Not ranked |
+| --- | :---: | :---: | :---: | :---: |
+| 1. Notes, Files and Data Ownership | 2 | 0 | 4 | 3 |
+| 2. Editor | 1 | 9 | 9 | 2 |
+| 3. Linking and Transclusion | 0 | 5 | 6 | 0 |
+| 4. Properties and Bases | 3 | 3 | 5 | 0 |
+| 5. Tags | 1 | 2 | 2 | 0 |
+| 6. Search | 0 | 4 | 3 | 1 |
+| 7. Queries | 1 | 1 | 4 | 0 |
+| 8. Tasks and Agenda | 3 | 1 | 3 | 0 |
+| 9. Daily Notes and Journal | 1 | 1 | 2 | 1 |
+| 10. Templates | 0 | 2 | 1 | 1 |
+| 11. Graph and Canvas | 0 | 1 | 4 | 0 |
+| 12. Workspace, Windows and Navigation | 0 | 3 | 6 | 1 |
+| 13. Commands, Hotkeys and Vim | 0 | 2 | 4 | 0 |
+| 14. Themes and CSS | 0 | 0 | 4 | 0 |
+| 15. Plugins and API | 0 | 0 | 2 | 3 |
+| 16. Mobile | 0 | 2 | 3 | 1 |
+| 17. Sync | 2 | 0 | 5 | 3 |
+| 18. Publish, Sharing and Collaboration | 0 | 0 | 3 | 1 |
+| 19. Capture and Web Clipper | 0 | 1 | 3 | 0 |
+| 20. Import and Export | 0 | 1 | 3 | 0 |
+| 21. Attachments, PDF, History and Recovery | 2 | 2 | 2 | 1 |
+| 22. Encryption and Privacy | 0 | 3 | 0 | 1 |
+| 23. AI and Agents | 1 | 0 | 5 | 0 |
+| 24. Performance, Accessibility and Localisation | 0 | 0 | 2 | 2 |
+| 25. Platforms, Packaging and Updates | 0 | 1 | 3 | 1 |
+| 26. Licence, Governance and Longevity | 1 | 2 | 1 | 0 |
+| **Total (175 rows)** | **18** | **46** | **89** | **22** |
+<!-- scorecard:end -->
+
+How to read it:
+
+- **On breadth Obsidian core is well ahead.** Agaric is behind in most ranked rows, and several of its leads (tag rename, query granularity, task dates and recurrence, the agenda) are over core only: a popular community plugin answers each.
+- **Agaric's leads are structural**: addressable blocks, properties on any block, a CRDT, an op log, the licence. **Obsidian's are reach and surface**: platforms, stores, views, plugins, sync on any network. A structural lead does not close a reach gap by itself.

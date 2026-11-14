@@ -227,7 +227,7 @@ Agaric's MCP is scoped per agent. Logseq 2.0's MCP is served over a local HTTP p
 | Snapshots / compaction | 2.0: **automated backups** on desktop and in the browser only, the newest ones kept (docs) | The whole-vault zstd-CBOR blob is gone (#4699); catch-up is a per-space Loro merge with bounded payloads (#5838); compaction saves the engines, then purges ops past the retention window (`save_engines_then_compact` in `src-tauri/src/commands/compaction.rs`, `DEFAULT_RETENTION_DAYS`). Residual: the disaster-path op-log replay buffers the whole log; peak RAM unmeasured | Done |
 | **Backup / restore** | 2.0: automated on desktop and in the browser, and a CLI `graph backup` command that restores one (docs); none on mobile | A daily snapshot of the database beside it, the newest few kept (`MAX_KEPT_DAILY_SNAPSHOTS` in `src-tauri/src/db/daily_snapshot.rs`), plus a copy before each migration (`MAX_KEPT_BACKUPS` in `src-tauri/src/db/pool.rs`); **nothing in the app reads a snapshot back** (#6744). Restore is an export imported again: a folder pick of an unzipped *Export all spaces* ZIP restores every space (#6554) with typed properties, attachments, block refs, embeds, templates and done dates, but without history, block ids, trash or device state. On desktop the Markdown mirror is a standing plain-file copy | Partial |
 | Crash recovery | Filesystem journaling | Boot recovery (`recover_at_boot`: replay unmaterialized ops, reconcile drafts) plus a disaster path that ends engine-first (`reproject_blocks_from_engine`); an integrity check in Settings › App health (#5360, #5361); engine vs SQL audits (#5671); derived tables carry a version checked at boot, and the report says which tables are stale caches and which rows disagree with the engine (#6488, #6497) | Better |
-| Encryption at rest | OG's Logseq Sync: age end-to-end. 2.0: encryption password (Settings › Encryption); E2EE key wrapping merged (#13671), deployment unconfirmed | **None.** Database, attachments and the ed25519 key sit behind filesystem permissions | Logseq |
+| Encryption at rest | OG's Logseq Sync: age end-to-end. 2.0: encryption password (Settings › Encryption); E2EE key wrapping merged (#13671), deployment unconfirmed | **None.** Database, attachments and the ed25519 key sit behind filesystem permissions | Gap |
 | Supply-chain assurance | Standard CI | SLSA provenance, Scorecard, CodeQL, blocking `cargo-deny`/`cargo-audit`, threat model; a release publishes only after the real-backend lane passes (`.github/workflows/release.yml`). **No desktop code signing** | Better |
 
 ## 14. Templates
@@ -276,3 +276,67 @@ Agaric's MCP is scoped per agent. Logseq 2.0's MCP is served over a local HTTP p
 | PDF highlight-to-block | OG: highlights become blocks on an `hls__` page. 2.0: `#PDF Annotation` tag; 2.0.2 imports annotations | pdf.js reader with highlight + comment; saving bakes annotations into a new attachment, moves the owning block's `attachment:<id>` links to it and deletes the original (#6629); a link copied into another block still names the original. Each new highlight or pinned comment becomes a child block of the PDF's owner on Save, with a source chip that reopens the reader on its page (#6629); no existing annotation is imported |
 | Zotero | OG: built-in. **2.0: REMOVED**, community plugin | BibTeX/CSL-JSON importer to typed reference pages |
 | Org-mode | OG only; 2.0 dropped it | Design choice: `.org` files import as an outline (`docs/features/import-export.md`); no `.org` export, and Org is not an editing format |
+
+## Scorecard
+
+Two readings of the tables above.
+
+### By row
+
+Each line counts the rows of one section by the status Agaric earned there: **Ahead** is any Better, qualified or not; **Level** is Done or Tie; **Behind** is Partial or Gap; **Not ranked** is Design choice. A status with a qualifier ("Better vs OG; tie vs 2.0") counts by its first word. `node scripts/comparison-scorecard.mjs --write` recounts the table from the rows above.
+
+<!-- scorecard:start -->
+| Section | Ahead | Level | Behind | Not ranked |
+| --- | :---: | :---: | :---: | :---: |
+| 1. Block Model | 2 | 5 | 6 | 0 |
+| 2. Page Model | 2 | 7 | 1 | 0 |
+| 3. Editor & Formatting | 7 | 11 | 3 | 1 |
+| 4. Linking System | 2 | 3 | 8 | 0 |
+| 5. Properties | 0 | 4 | 5 | 0 |
+| 6. Tags | 1 | 2 | 2 | 1 |
+| 7. Query System | 1 | 5 | 6 | 0 |
+| 8. Task Management | 4 | 4 | 4 | 0 |
+| 9. Daily Journal | 4 | 1 | 3 | 0 |
+| 10. Search | 6 | 1 | 1 | 0 |
+| 11. Spaces (Workspaces) | 6 | 0 | 1 | 0 |
+| 12. AI / Agent Integration | 1 | 2 | 3 | 0 |
+| 13. Sync & Storage | 5 | 8 | 4 | 1 |
+| 14. Templates | 3 | 2 | 1 | 0 |
+| 15. Import / Export | 2 | 1 | 6 | 0 |
+| 16. Mobile & Platforms | 0 | 4 | 2 | 0 |
+| **Total (165 rows)** | **46** | **60** | **56** | **3** |
+<!-- scorecard:end -->
+
+### By category, in points
+
+A judgment, not a count: each product is scored 1 to 10 per category on what it ships. Logseq is scored on its latest release and Agaric on `main`, so a Logseq release that carries its master's work would move its columns. Unweighted sums treat "Extensibility" and "Data integrity" as equally important, which they are not for one person's notes.
+
+| Category | Logseq OG | Logseq 2.0 (beta) | Agaric | What holds Agaric's score where it is |
+| --- | :---: | :---: | :---: | --- |
+| Block CRUD | 9 | 9 | 9 | |
+| Page management | 9 | 9 | 9 | Names made on two devices settle after a sync |
+| Editor formatting | 8 | 8 | 9 | Page mode is opt-in and capped |
+| Linking system | 10 | 9 | 7 | No inline reference content, no count on the referenced block, a pages-only link picker |
+| Properties | 6 | 10 | 8 | One value per property, no defaults or display control |
+| Tags | 8 | 10 | 7 | Labels, not classes |
+| Query system | 9 | 9 | 8 | A board, picked columns, text queries and synced views; no Datalog, AND-only text |
+| Task management | 7 | 8 | 8 | Fixed states, no time tracking |
+| Daily journal | 8 | 7 | 9 | |
+| Search | 5 | 7 | 9 | Terms under three characters are dropped |
+| Templates | 7 | 8 | 8 | `/template` is one transaction and carries properties; not offered in page mode |
+| Spaces | 2 | 3 | 9 | |
+| AI / agent access | 2 | 8 | 9 | |
+| Sync / storage | 4 | 5 | 7 | One network, foreground-only on Android, a snapshot nothing restores |
+| Data integrity | 3 | 4 | 8 | |
+| Performance | 3 | 7 | 7 | Page mode's per-key cost grows with the page; `loro` is held back (#3161) |
+| Import / export | 9 | 8 | 8 | No structured export, no Roam import |
+| Mobile | 5 | 4 | 5 | Sideloaded Android, no iOS |
+| Extensibility / ecosystem | 9 | 6 | 3 | A stylesheet, MCP, links and the mirror's files; no plugin API |
+| Project risk | 4 | 5 | 3 | One maintainer |
+| **Total** | **127** | **144** | **150** | |
+
+How to read it:
+
+- **Agaric's lead over Logseq 2.0 in points is inside this instrument's noise.** One 2.0 release carrying its REST API, its import preview and a store listing for either native app closes it.
+- **Weighted for one person's journal, tasks and project notes with no cloud, Agaric is ahead**: journal, search, spaces, sync, data integrity and agent access. Its losses are linking, properties, tags, queries and ecosystem.
+- **Sync is the differentiator, within one network.** Elsewhere Agaric's devices cannot find each other.

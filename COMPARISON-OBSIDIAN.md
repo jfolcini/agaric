@@ -24,7 +24,7 @@ Obsidian is ahead wherever files being the truth matters: other editors, any syn
 
 ## Feature by feature
 
-The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) has the row-by-row detail, with a status and the code behind each Agaric cell.
+The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) has the row-by-row detail, with a status and the code behind each Agaric cell, and ends with a [scorecard](COMPARISON-OBSIDIAN-MATRIX.md#scorecard) that counts the rows by status. Counted that way, Agaric is behind Obsidian core in more rows than it is level or ahead; its leads are structural (addressable blocks, properties on any block, merging sync, history, the licence) and Obsidian's are reach and surface.
 
 | Area | Obsidian | Agaric |
 | --- | --- | --- |
@@ -95,6 +95,20 @@ Settings › Data has an *Obsidian vault* button. [docs/features/import-export.m
 - A link becomes an id. Every text surface (export, copy, *Edit as Markdown*, the mirror) writes it back as `[[Title]]`.
 
 An export from Agaric is Markdown that Obsidian reads: wikilinks, `^id` block links, `![[ ]]` embeds, front matter and Tasks-style fields.
+
+### What you will miss, or trip over, at first
+
+- **The vault is no longer a folder.** Git, iCloud, Syncthing, a second editor and every script that walks your files stop applying. The desktop mirror writes files back out, but cannot take over the vault you already have (#6540).
+- **Every paragraph is a block.** A page is an outline, with a handle per paragraph, until you turn on page mode (off by default). There is no reading view, and long pages past the page-mode cap stay in blocks.
+- **Your plugins do not come with you.** Dataview and Templater blocks arrive as code, and there is no Canvas, Excalidraw, or community theme. Tasks-plugin dates, priorities and recurrence are the exception: Agaric reads them as its own.
+- **No folders.** A note in `Projects/Plan.md` becomes the page `Projects/Plan`; spaces, not folders, separate work from personal.
+- **List properties flatten.** `authors: [a, b]` becomes one text value (#6741), and there is no date-and-time type.
+- **One page at a time.** Tabs, but no split, no pop-out window, no saved workspace (#6550).
+- **Editor habits.** No Vim keys, no multiple cursors, one highlight colour, and `%%comments%%` show as text (#6751).
+- **Nested tags are names.** Searching `projects/` finds `projects/web`; searching the parent tag does not. A tag name holds no spaces.
+- **Sync means the same Wi-Fi, with the phone's app open**, on Android only, installed from a file. No iPhone or iPad.
+- **Capture is thinner.** No web clipper (#6753) and, for now, nothing in Android's share sheet (#6555).
+- **English**, mostly.
 
 ## Sources
 

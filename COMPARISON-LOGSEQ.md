@@ -26,7 +26,7 @@ Rows below say which one they mean where it matters.
 
 ## Feature by feature
 
-The table is the summary. [The feature matrix](COMPARISON-LOGSEQ-MATRIX.md) has the row-by-row detail, with a status and the code behind each Agaric cell.
+The table is the summary. [The feature matrix](COMPARISON-LOGSEQ-MATRIX.md) has the row-by-row detail, with a status and the code behind each Agaric cell, and ends with a [scorecard](COMPARISON-LOGSEQ-MATRIX.md#scorecard): the rows counted by status, and each product scored by category. In points Agaric comes out slightly ahead of Logseq's DB version, inside the margin of such a sum, and well ahead of the file version; by category it leads on journal, search, spaces, sync, data integrity and agent access, and trails on linking, properties, tags, queries and ecosystem.
 
 | Area | Logseq | Agaric |
 | --- | --- | --- |
@@ -92,6 +92,18 @@ Pick a graph folder in Settings › Data. [docs/features/import-export.md](docs/
 - Links become ids. Every text surface (export, copy, *Edit as Markdown*, the mirror) writes them back as `[[Title]]`.
 
 Import on one device and let sync carry the result; two devices that each import the same graph end up with doubled pages.
+
+### What you will miss, or trip over, at first
+
+- **Your notes stop being files.** No `git log`, no `grep`, no other editor, no Syncthing over the graph folder. The desktop mirror gives files back as a copy Agaric keeps current; it is off by default and starts from an empty folder.
+- **A block reference is a chip, not the block.** `((ref))` shows one line and a hover peek. To see the content in place you embed the block, and an embedded task shows its text without a checkbox (#6746, #6747).
+- **A tag is not a page.** `#project` and `[[project]]` are two things: a tag has a listing page you cannot write on, and no properties that its blocks inherit. If your graph leans on tags-as-pages, decide per tag which one it becomes.
+- **Your queries need rebuilding.** `{{query}}` macros and Datalog arrive as text. The builder, or `{{query tag:#work state:TODO}}`, covers filters; nothing covers custom views or result transforms.
+- **Task habits change.** `LATER`, `NOW` and `WAITING` become `TODO` and `DOING`, there are no keywords of your own, and clock entries are dropped (#6745).
+- **Links and tags are picked, not typed as text you can edit later.** In a block they are chips; *Edit as Markdown* is where a page reads as `[[Title]]` again.
+- **Folding is per device**, and there is no pane to keep a second page open beside the first (#6550).
+- **No plugins, themes from a marketplace, flashcards or whiteboards.** A stylesheet of your own is the one styling hook.
+- **Sync means the same Wi-Fi, with the phone's app open.** There is no iPhone app.
 
 ## Sources
 
