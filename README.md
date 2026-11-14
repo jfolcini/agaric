@@ -15,254 +15,152 @@
 
 # Agaric
 
-A local-first, block-based note-taking app for **Linux** (primary), **Windows**, **macOS**, and **Android**. Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine, syncs over local WiFi. **AI-ready** — ships an MCP integration so Claude Desktop, Cursor, Continue, and other agents talk directly to your local vault.
+Agaric is a note-taking app for one person and their own devices. Notes are blocks in an outline, the default view is a daily journal, and everything lives in a local database that syncs directly between your devices over your own network. There is no account, no server and no cloud copy. It runs on **Linux**, **Windows**, **macOS** and **Android**, and takes its ideas from Org-mode and Logseq.
 
-## What is it?
+It is free software (GPL-3.0-or-later), pre-1.0, and has [one maintainer](GOVERNANCE.md).
 
-Agaric treats everything as a **block** — paragraphs, headings, code snippets, tasks. Blocks live in a tree: pages contain blocks, and blocks nest up to a fixed depth (`MAX_BLOCK_DEPTH`). Tags and links are first-class citizens that connect your knowledge graph.
+## Who it is for
 
-Think Logseq or Notion, but:
+Someone who thinks in outlines, keeps a daily journal, tracks tasks beside their notes, and wants a phone and a computer to hold the same notes without a subscription or a third party in between.
 
-- **Local-first** — SQLite database on your filesystem, no server required
-- **Offline-first** — works without internet, syncs peer-to-peer over local WiFi
-- **Fast** — Rust backend, instant search via FTS5, sub-millisecond operations
-- **Private** — no cloud telemetry, no external analytics, no cloud. Your vault is a plain SQLite file on disk (no at-rest encryption) — rely on OS full-disk encryption (LUKS / FileVault / BitLocker) for confidentiality. (The local logger in `src/lib/logger.ts` writes errors to disk so the in-app `BugReportDialog` can attach them — nothing leaves your machine.)
+## What it does not do
 
-## Core Concepts
+- **No cloud and no sync from anywhere.** Devices find each other on one local network. An off-by-default internet fallback relays between devices that have already paired; it is not a hosted service.
+- **No iOS build**, and none is planned for now.
+- **No plugins or scripting.** What you can change is the keyboard shortcuts, the theme, a custom stylesheet, and what an agent does through MCP.
+- **No collaboration, sharing or publishing.** One user, their devices.
+- **Your notes are not Markdown files.** They are rows in a SQLite database. A Markdown export, an import and an optional desktop mirror folder are the routes to and from files.
+- **No encryption at rest.** The database is a plain file; use your operating system's disk encryption (LUKS, FileVault, BitLocker).
+- **No built-in AI.** An agent connects from outside, through MCP, if you turn that on.
+- **English interface.** Spanish covers error messages only so far.
 
-### Blocks and Pages
+## What you can do
 
-Everything is a block. A **page** is just a special block type that acts as a container. Blocks nest via parent-child relationships with drag-and-drop reordering. Pages support namespaced titles (`work/meetings/standup`) with breadcrumb navigation. The Pages view adds metadata-rich page rows, six sort modes, and compound grooming filters (orphan / stub / no-inbound-links / last-edited + shared tag / path / property / priority) — see [`docs/PAGES.md`](docs/PAGES.md).
+**Outline.** Every paragraph, heading, task or code snippet is a block with its own id. Blocks nest (to `MAX_BLOCK_DEPTH`), fold, drag, zoom and multi-select. A page is a block that holds blocks; page titles can be namespaced (`work/meetings/standup`).
 
-### Journal
+**Write.** *Block mode* edits one block at a time, with the Markdown syntax shown around the cursor. *Page mode* (off by default; `Ctrl+E`, or Settings › Editor) edits the whole page as one document while each block keeps its id. *Edit as Markdown* opens the page as plain Markdown text, with a preview and a diff before you save. All three write the same blocks.
 
-The default view is a **daily journal** — one page per day, created automatically. Viewing modes:
+**Format.** Bold, italic, strikethrough, highlight, underline, inline code, headings, bulleted, numbered and task lists, quotes and callouts, tables, footnotes, code blocks with highlighting, math (KaTeX) and Mermaid diagrams. Pasted Markdown or HTML becomes blocks.
 
-- **Day** — single day with full editing
-- **Week** — Mon-Sun overview, click any day heading to jump to its daily view
-- **Month** — calendar grid with content indicator dots, click a day to switch to daily view, configurable week start
-- **Stream** — one continuous column, today pinned at the top and older days loading in as you scroll
-- **Agenda** — tasks grouped by date (Overdue / Today / Tomorrow / future) with stackable filters across eight dimensions (status, priority, due date, scheduled date, completed date, created date, tag, property), sort and group controls, projected recurring task occurrences
+**Link.** `[[page]]` links and `#tags` are stored by id, so a rename breaks nothing. `((block))` references show as a chip with a peek; `/embed` shows a block or a page live inside another page. Each page lists what links to it, and what mentions it without linking. A graph shows pages and their links.
 
-> See [docs/UX.md](docs/UX.md) for UI patterns and conventions, and [docs/UI-MAP.md](docs/UI-MAP.md) for the surface tree and shared glossary.
+**Journal.** One page per day, made from your journal template, shown as a day, a week, a month, a continuous stream, or an agenda of tasks.
 
-### Spaces
+**Tasks.** A block can be `TODO`, `DOING`, `DONE` or `CANCELLED` (`Ctrl+Enter` cycles), with a priority, due and scheduled dates, and a repeat rule. The Agenda filters, sorts and groups tasks and lists the future occurrences of repeating ones. On desktop, an optional reminder notifies you of tasks on their due date while the app is running.
 
-Partition your notes into independent contexts — **Personal**, **Work**, custom — each with its own data scope and visual identity. Switching space swaps the journal, tabs, recent pages, and link resolution. Pages never leak between spaces.
+**Properties.** Typed values on any block or page: text, number, date, select, reference, boolean, URL. Definitions belong to a space and can be renamed, merged and retyped.
 
-- **Per-space journal** — each space has its own daily-note timeline keyed by `(date, space)`
-- **Per-space tabs and recents** — switching space swaps the open-tab strip and recent-pages MRU
-- **Quick switching** — `Alt+1` … `Alt+9` (or `⌥+1` … `⌥+9`) jumps to the Nth space alphabetically
-- **Visual identity** — accent colour, status-bar chip, window-title prefix per space
-- **Cross-space links** — `[[ULID]]` to a foreign space renders as a broken-link chip (no auto-navigation, no leakage)
+**Query.** A `{{query tag:#work state:TODO}}` block lists the matching blocks live inside a page, as a list or as a table with the columns you pick. The Advanced Query view filters by tags, properties, task state, dates and links with nested AND / OR / NOT, sorts, groups and summarises, and can lay the results out as a board with one column per task state or select option, where *Move to…* moves a card. A query can be saved as a view.
 
-### Tags and Links
+**Search.** Full-text search over every block (SQLite FTS5) with filters such as `tag:`, `state:` and `due:`; find and replace in the open page; replace across pages with a preview and an undo. See [docs/SEARCH.md](docs/SEARCH.md).
 
-- **Tags** (`#[ULID]`) — categorize blocks. Rendered as named chips, backed by ULIDs so renaming propagates everywhere. Tag inheritance: child blocks inherit parent tags for queries.
-- **Page links** (`[[ULID]]`) — link to a page. Shows the resolved title as a clickable chip.
-- **Block references** (`((ULID))`) — a one-line chip titled by another block, not an embed of its content. Hover to peek at it, click to navigate; the `/embed` command transcludes content.
-- **Backlinks** — see everything that links to the current block, grouped by source page with filtering.
+**Spaces.** Separate contexts such as Personal and Work in one database, each with its own journal, pages, tags, property definitions, tabs and accent colour. `Alt+1` … `Alt+9` switch between them.
 
-### Properties
+**Files and media.** Attach files to blocks. Images show inline; audio plays inline, and `/voice` records a voice note. A PDF opens in a reader whose highlights and pinned comments become blocks under the PDF's block when you save. Where the operating system has a voice (macOS, Windows, Android), Agaric reads a block or a page aloud.
 
-Blocks can have typed properties (text, number, date, select, reference, boolean, URL). A built-in **priority** property shows color-coded badges. Properties panel for inline editing. Properties are queryable — the agenda view uses them to find and filter tasks across eight dimensions.
+**Capture.** A system-wide Quick Capture hotkey on desktop (`Ctrl+Alt+N`), and `agaric://` links that open a page, a block, or Quick Capture with text (desktop only).
 
-### Editor
+**History and undo.** Every change is an operation in a log. Undo works per page, the History view shows who changed what and can restore a page to an earlier point, and deleted blocks wait in the Trash before they are purged.
 
-WYSIWYG editing powered by TipTap. A single roving editor instance mounts into whichever block you click — all other blocks render as static text. Supports:
+**Templates, tabs, bookmarks, back and forward, a command palette, rebindable shortcuts, themes, a custom stylesheet and printing** are there too. [docs/FEATURE-MAP.md](docs/FEATURE-MAP.md) is the full inventory.
 
-- Markdown bold (`**`), italic (`*`), inline code (`` ` ``), strikethrough (`~~`), highlight (`==`), headings, code blocks, tables
-- Tag picker (`#` in editor), block link picker (`[[`), block reference picker (`((`)
-- Task cycling (`Ctrl+Enter`: none -> TODO -> DOING -> DONE -> CANCELLED -> none); the task states are fixed
-- Indent/dedent (`Tab` / `Shift+Tab`)
-- Templates with dynamic variables (via `/template` slash command)
-- Inline queries (`{{query ...}}` syntax) with visual query builder
-- Multi-selection with batch operations (Ctrl+Click / Shift+Click)
-- Drag-and-drop + clipboard paste for file attachments
+## Getting notes in and out
 
-### Sync
+- **Import** Markdown files and folders, an Obsidian vault, a Logseq graph, Org files, a Notion export, Evernote (`.enex`), Joplin (`.jex`) and BibTeX / CSL-JSON bibliographies. Importing a file again updates its page in place.
+- **Export** one page as Markdown, or a space or every space as a ZIP of Markdown files with their attachments. A folder import of that ZIP, unzipped, restores the spaces. It does not restore history or the Trash.
+- **Markdown mirror** (desktop, off by default): keeps every page as a `.md` file in a folder you choose, and reads edits made there back into the page. The database stays the source of truth.
 
-Peer-to-peer sync over local WiFi — no cloud server needed. Every operation is applied through a per-space Loro CRDT document, so concurrent edits converge automatically — no conflict dialogs.
+Details and limits: [docs/features/import-export.md](docs/features/import-export.md).
 
-- **Discovery** — mDNS automatic peer discovery on the local network
-- **Pairing** — QR code or 4-word passphrase; a paired device is then recognised by its key
-- **Transport** — QUIC over UDP ([iroh](https://www.iroh.computer/)), each device authenticated by its own key, no certificates
-- **Merge** — CRDT merge engine (Loro): concurrent edits converge automatically — per-key property LWW, move-as-CRDT, delete-vs-edit resurrection guards. No manual conflict-resolution UI
-- **Auto-sync** — background daemon with change-triggered and periodic sync, exponential backoff on failure
+## Sync
 
-### More Features
+Two of your devices pair once, by QR code or a four-word passphrase, and then sync whenever both are running on the same local network. An edit reaches the other device a few seconds after you stop typing.
 
-- **Search** — three surfaces: in-page find (`Ctrl+F`), find across pages (`Ctrl+Shift+F`), and the `Cmd+K` command palette. Full-text engine is FTS5 (trigram index). In-app help via the `?` button in the search toolbar; user guide at [docs/SEARCH.md](docs/SEARCH.md).
-- **Graph view** — force-directed page relationship visualization (d3-force), click-to-navigate, zoom/pan, keyboard-accessible
-- **History view** — browse the operation log for any block, point-in-time page restore
-- **Visual query builder** — modal for constructing inline queries by tag, property, or backlinks
-- **Mermaid diagrams** — code blocks with `mermaid` language auto-render as diagrams
-- **Keyboard customization** — customize all keyboard shortcuts via settings, conflict detection
-- **Status panel** — materializer queue stats, FTS health, sync state, op log compaction
-- **Attachments** — attach files to any block (drag-and-drop, paste), MIME validation, size limits
-- **Import / Export** — import from Markdown, Logseq, Org, Obsidian, Notion, Evernote, Joplin and BibTeX / CSL-JSON bibliographies; Markdown export with ULID-to-name resolution; an optional desktop Markdown mirror that keeps every page as a `.md` file in a folder you choose (see [docs/features/import-export.md](docs/features/import-export.md))
-- **Trash** — soft delete with 90-day auto-purge, restore at any time
-- **Recurring tasks** — three repeat modes (+, .+, ++), end conditions (count, date), agenda projection
+- **Direct.** Devices discover each other by mDNS and talk over QUIC ([iroh](https://www.iroh.computer/)), each identified by its own key. Nothing is stored anywhere else.
+- **No conflicts to resolve.** Edits merge through a CRDT ([Loro](https://loro.dev/)): text, the block tree, properties, tags and attachments converge without a dialog.
+- **Limits.** Both devices must be on one network to pair, and normally to sync. Android syncs only while the app is in the foreground. Two devices on different versions of Agaric do not sync until both are updated. A network that isolates its clients, or a VPN that captures the LAN, stops it; [docs/features/sync.md](docs/features/sync.md) lists the cases and the fixes.
+- **Internet fallback** (off by default, set on both devices): when the direct path fails, traffic goes through a relay run by iroh's maintainers, which forwards encrypted data it cannot read but sees which devices talk and when.
 
-## Tech Stack
+## How your notes are stored
 
-| Layer | Technology |
-| ----- | ---------- |
-| Desktop shell | [Tauri 2](https://v2.tauri.app/) |
-| Frontend | React 19 + Vite + TipTap + Tailwind CSS 4 |
-| Backend | Rust + SQLite (via sqlx) |
-| Database | SQLite in WAL mode + an FTS5 virtual table for full-text search |
-| State | Zustand stores |
-| Linting | OXC — oxlint + oxfmt (no ESLint/Prettier/Biome) |
-| Testing | Vitest + vitest-axe + fast-check (frontend), cargo-nextest + insta + Criterion (backend), Playwright (E2E) |
+Three layers, each with one job ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):
 
-## System requirements
+1. **The op log** is the history: an append-only, hash-chained list of typed operations. Undo, the History view and attribution read it.
+2. **The Loro engine** is the merge truth: one CRDT document per space holding text, the block tree and properties. Sync exchanges its changes, and recovery rebuilds from it.
+3. **The SQLite tables** are the query view: what every list, search, agenda and backlink reads, derived from the engine and rebuilt from it in recovery.
 
-| OS | Minimum |
+All three live in one SQLite file, `notes.db`.
+
+Safety nets: a daily snapshot of the database kept beside it, a copy before each update that changes the schema, an integrity check in Settings › App health, and, when the vault will not open, a dialog that links the [recovery steps](docs/TROUBLESHOOTING.md#8-agaric-failed-to-start-the-vault-will-not-open). None of these is a backup on another disk; the export ZIP and a second paired device are.
+
+The data folder holds `notes.db`, the attachments, the snapshots and the log:
+
+| Platform | Data folder |
 | --- | --- |
-| **Windows** | Windows 10 version 1803 (April 2018 Update) or later. WebView2 is installed automatically by the bundled installer; older Windows (7, 8, 8.1) is not supported because Microsoft does not ship WebView2 for it. |
-| **macOS** | macOS 11 Big Sur or later (Apple Silicon native; Intel via Rosetta-free SDK build). |
-| **Linux** | glibc 2.31+ (Ubuntu 20.04+ / Debian 11+ / Fedora 33+); `libwebkit2gtk-4.1` runtime. The AppImage bundles GTK; the `.deb` declares the WebKit dep. |
-| **Android** | Android 11 (API 30) and above, **64-bit ARM (`arm64-v8a`) only** — x86 / x86-64 (most emulators, some Chromebooks) and 32-bit-only devices are not supported. |
+| Linux | `~/.local/share/com.agaric.app/` (under `$XDG_DATA_HOME` when set) |
+| macOS | `~/Library/Application Support/com.agaric.app/` |
+| Windows | `%APPDATA%\com.agaric.app\` |
+| Android | `/data/data/com.agaric.app/`, private to the app |
 
-There is no iOS build, and none is planned for now.
+**What leaves your device.** No telemetry and no analytics. Besides sync with your paired devices, the desktop app asks GitHub at start, at most once a day, whether a newer release exists, and a web link in your notes is fetched from its own site for a preview when you paste or hover it (Settings › Editor turns the hover fetch off).
 
 ## Install
 
-Download the latest installer for your OS from the [**GitHub Releases**](https://github.com/jfolcini/agaric/releases) page (`.AppImage` / `.deb` / `.rpm` for Linux, `.dmg` for macOS, `.msi` for Windows, `.apk` for Android).
+Download the installer for your system from [**GitHub Releases**](https://github.com/jfolcini/agaric/releases).
 
-Desktop bundles are **not code-signed** (see [docs/BUILD.md § Signing posture](docs/BUILD.md#signing-posture)), so the OS will warn on first launch:
+| System | Needs | File |
+| --- | --- | --- |
+| **Linux** (x86-64) | A distribution at least as new as the one releases are built on (Ubuntu 24.04, Debian 13, Fedora 40) and `libwebkit2gtk-4.1` | `.deb`, `.rpm` or `.AppImage` |
+| **Windows** (x64) | Windows 10 or later. The installer fetches WebView2 when it is missing | `-setup.exe` or `.msi` |
+| **macOS** | Apple Silicon or Intel | `.dmg` (`aarch64` or `x64`) |
+| **Android** | Android 11 (API 30) or later, 64-bit ARM (`arm64-v8a`) only | `.apk` |
 
-- **macOS (Gatekeeper)** — try to open the app once, then open *System Settings* → *Privacy & Security*, scroll to *Security*, click *Open Anyway*, and click *Open* when the warning returns (Apple's documented steps, [support.apple.com/102445](https://support.apple.com/en-us/102445)). Alternatively, clear the quarantine flag from a terminal: `xattr -dr com.apple.quarantine /Applications/Agaric.app`.
-- **Windows (SmartScreen)** — click *More info* → *Run anyway*. WebView2 is installed automatically by the bundled installer.
-- **Linux** — the AppImage bundles GTK; the `.deb` declares the `libwebkit2gtk-4.1` runtime dependency.
+The desktop app updates itself from GitHub Releases. Agaric is in no app store or package repository yet: a winget manifest is written but not submitted ([packaging/winget](packaging/winget/README.md)), and Flathub is not submitted either ([packaging/flathub](packaging/flathub/README.md)).
 
-The Android `.apk` **is** signed, but it is distributed outside the Play Store, so first install requires sideloading:
+Desktop installers are **not code-signed** ([docs/BUILD.md § Signing posture](docs/BUILD.md#signing-posture)), so the system warns on first launch:
 
-- **Android** — enable *Install unknown apps* for the browser or file manager you use to open the `.apk`, then tap the downloaded file. Updates must be signed with the same key; if an update is rejected with a signature error, **sync the phone with a computer first: uninstalling deletes every note on the phone**, and Agaric keeps them out of Android backups. Then uninstall the previous build, install the new one, and pair it again; the first sync brings the notes back. A new phone is set up the same way, by pairing: Android's backup and phone-to-phone transfer do not carry Agaric's notes or its device identity. [Obtainium](https://obtainium.imranr.dev/) can track the signed `.apk` on GitHub Releases and notify you of updates, with nothing to build.
+- **macOS (Gatekeeper):** try to open the app once, then open *System Settings* → *Privacy & Security*, scroll to *Security*, click *Open Anyway*, and click *Open* when the warning returns ([Apple's steps](https://support.apple.com/en-us/102445)). Or clear the quarantine flag: `xattr -dr com.apple.quarantine /Applications/Agaric.app`.
+- **Windows (SmartScreen):** click *More info* → *Run anyway*.
+
+The Android `.apk` is signed but distributed outside the Play Store:
+
+- Enable *Install unknown apps* for the browser or file manager you open the `.apk` with, then tap the file. [Obtainium](https://obtainium.imranr.dev/) can track the releases and tell you about updates.
+- Updates must carry the same signature. If one is rejected with a signature error, **sync the phone with a computer first: uninstalling deletes every note on the phone**, and Agaric keeps its data out of Android backups. Then uninstall, install the new build and pair again; the first sync brings the notes back.
+- A new phone is set up the same way, by installing and pairing. Android's backup and phone-to-phone transfer carry neither the notes nor the device's identity.
+
+## Using Agaric with MCP clients
+
+Agaric can serve its notes to MCP clients such as Claude Desktop, Claude Code, Cursor and Continue. It is **off by default**, listens on a local socket (never a network port), and is desktop only.
+
+1. Turn it on in Settings › Agent access and add an agent: a name, read-only or read-write, the spaces it may use. Each agent gets its own token.
+2. Copy the config from the agent's row into your client. It runs the `agaric-mcp` bridge that ships beside the app (`/usr/bin/agaric-mcp` from the `.deb` or `.rpm`, `/Applications/Agaric.app/Contents/MacOS/agaric-mcp` on macOS, the install folder on Windows) with `--socket <path>` and `--token <token>`.
+
+Agents read, search, query and write through the same operations the app uses, so their edits are attributed in History and can be undone. `agaric-mcp call <tool> <json>` runs one tool from a script. Tools and limits: [docs/features/agent-access.md](docs/features/agent-access.md).
+
+## Compared with
+
+- [Agaric and Logseq](COMPARISON-LOGSEQ.md)
+- [Agaric and Obsidian](COMPARISON-OBSIDIAN.md)
 
 ## Development
 
-See **[docs/BUILD.md](docs/BUILD.md)** for the complete build guide — prerequisites, platform-specific setup, Android signing, CI pipeline, and troubleshooting. See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the architecture deep-dive.
-
-### Quick Start
+React 19, TipTap and Tailwind on [Tauri 2](https://v2.tauri.app/), with a Rust backend over SQLite (sqlx) and Loro.
 
 ```bash
-bash scripts/setup.sh        # One command: provisions Node + deps + .env + dev DB + prek hook toolchain
-cargo tauri dev              # Launch app with hot reload
+bash scripts/setup.sh                            # Node, dependencies, .env, dev database, git hooks
+cargo tauri dev                                  # the desktop app with hot reload
+npm run dev                                      # the frontend alone in a browser, on a mock backend
+npm test                                         # frontend tests (Vitest)
+cd src-tauri && cargo nextest run --workspace    # Rust tests
+npx playwright test                              # end-to-end tests on the mock backend
 ```
 
-**One command sets up the whole dev environment.** `bash scripts/setup.sh` (equivalently `npm run setup`, or `just setup` if you have [`just`](#just-task-runner-optional)) is idempotent and handles everything: it provisions the Node version pinned in [`.nvmrc`](.nvmrc) via `nvm` if your `node` does not satisfy the `engines.node` range, runs `npm ci`, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` from it at compile time — without this a fresh clone fails to compile), seeds the sidecar placeholder, provisions the local dev DB, and installs the **prek hook toolchain** (`prek` plus every host binary the commit/push hooks call — cargo-deny, sqruff, typos, zizmor, taplo, lychee, shellcheck, … — then `prek install`). The toolchain step is best-effort; re-run `scripts/setup-hooks.sh` to fill any gaps it reports. See [docs/BUILD.md](docs/BUILD.md#after-clone-setup) for details and the manual fallback.
+Each desktop platform is built on that platform; Android builds on Linux. Releases are cut by the maintainer with `scripts/release.sh`.
 
-On **Claude Code on the web / cloud VMs** this runs automatically on session start (via the committed `SessionStart` hook), so a fresh cloud session is ready with no manual step — see [docs/BUILD.md → Claude Code on the web](docs/BUILD.md#claude-code-on-the-web).
-
-#### `just` task runner (optional)
-
-A [`justfile`](justfile) provides a discoverable façade over the day-to-day commands — `cargo install --locked just` (or let `npm run setup` install it), then `just` (or `just --list`) shows every recipe grouped by purpose:
-
-```bash
-just setup                   # = npm run setup (full bootstrap, incl. hook toolchain)
-just install-hooks           # (re)install the prek toolchain + git hooks
-just dev                     # cargo tauri dev
-just test                    # Vitest + cargo nextest + Rust doc-tests
-just check                   # prek run --all-files (pre-commit-stage hooks only, not all of CI)
-just verify                  # pre-push verifier (range-scoped tests; clippy/knip/lychee run in the pre-push hook)
-just push                    # verify-then-push (use instead of raw `git push`)
-```
-
-`just` is optional — nothing in the build, CI, or git hooks depends on it; each recipe just shells out to the canonical `npm`/`cargo`/`prek`/`scripts/*` entry point.
-
-**Prefer `just push` (or [`scripts/push.sh`](scripts/push.sh)) over raw `git push` for anything that changes `.rs`.** A raw `git push` holds the SSH connection open while the multi-minute pre-push verify runs, so GitHub drops the idle connection and the upload fails (`Connection to github.com closed by remote host`) even though the local gate passed. `just push` runs the verifier *first*, then pushes on a fresh connection; it forwards all `git push` args (`just push -- -u origin my-branch`, `just push -- --force-with-lease`).
-
-### Testing
-
-```bash
-npm test                     # Frontend tests (Vitest)
-cd src-tauri && cargo nextest run --workspace   # Rust tests (bare form is package-scoped only, #3212)
-npx playwright test          # E2E tests (Playwright + Chromium)
-```
-
-### Building
-
-```bash
-cargo tauri build             # Linux: .deb + .rpm + .AppImage (~9 MB)
-                              # Windows: .msi + .exe (run on Windows)
-                              # macOS: .dmg + .app (run on macOS)
-
-cargo tauri android build --target aarch64           # Release APK (~24 MB, Pixel 8 / ARM)
-cargo tauri android build --target aarch64 --debug   # Debug APK (400 MB)
-```
-
-No cross-compilation — each desktop platform must be built on that platform. Android builds run on Linux. CI handles the full matrix automatically.
-
-### Releasing
-
-Maintainers cut a release with a single command from a clean `main`:
-
-```bash
-scripts/release.sh <new-version>      # e.g. scripts/release.sh 0.2.1
-```
-
-It runs a local release-build check, bumps every version manifest in lockstep, GPG-signs and pushes the tag, and the tag triggers CI to build every platform and **draft** the GitHub Release (which a maintainer then reviews and publishes). Full details — provenance/SBOM artifacts, flags, and why the bump runs locally — in [docs/BUILD.md § Releasing](docs/BUILD.md#releasing).
-
-### Android
-
-Both debug and release APKs build and run successfully. Release APKs are 24 MB (vs 402 MB debug) thanks to R8/ProGuard minification. Requires Android SDK, NDK 27, and JDK 17. See [docs/BUILD.md](docs/BUILD.md#android) for signing and emulator setup.
-
-### Using Agaric with MCP clients
-
-Agaric ships an `agaric-mcp` stub binary that MCP clients (Claude Desktop, Claude Code, Cursor, Continue, …) invoke as a stdio subprocess. The stub bridges stdio to Agaric's local MCP socket, so the client talks to the running app without any network hop.
-
-After installing Agaric, point your MCP client's `command` field at the stub:
-
-| Platform | Path |
-| -------- | ---- |
-| Linux `.deb` | `/usr/bin/agaric-mcp` |
-| Linux AppImage | `<mount>/usr/bin/agaric-mcp` (inside the extracted AppImage) |
-| macOS `.app` | `/Applications/Agaric.app/Contents/MacOS/agaric-mcp` |
-| Windows installer | `C:\Program Files\Agaric\agaric-mcp.exe` |
-
-Each client connects as an agent with its own token, read-only or read-write mode and spaces: add one in Settings → Agent access and copy its config, which passes the stub `--socket <path>` and `--token <token>`. The socket is gated by a switch on that tab that ships **off by default**; turn it on before an MCP client can connect.
-
-### Project Structure
-
-```text
-src/                         # React frontend
-  components/                #   UI components (JournalPage, BlockTree, GraphView, etc.)
-    ui/                      #   Design system primitives (Button, Dialog, FilterPill, etc.)
-    journal/                 #   Journal-specific components (MonthlyDayCell, etc.)
-  editor/                    #   TipTap editor setup and extensions
-    extensions/              #   Custom TipTap extensions (tag-ref, block-link, etc.)
-  stores/                    #   Zustand state stores (blocks, journal, navigation, page-blocks, tabs, sync, …)
-  hooks/                     #   Custom React hooks
-  lib/                       #   Tauri API wrappers, utilities, and bindings
-  index.css                  #   Tailwind theme (OKLch colors, semantic tokens)
-src-tauri/                   # Rust backend
-  src/                       #   Commands, database, materializer, sync, merge
-  migrations/                #   SQLite migrations (auto-run on startup)
-  tests/                     #   Integration tests
-  benches/                   #   Criterion benchmarks
-  icons/                     #   App icons (all platforms)
-  tauri.conf.json            #   Tauri configuration
-e2e/                         # Playwright E2E tests
-public/                      # Static assets (agaric.svg icon)
-docs/BUILD.md                     # Complete build guide
-AGENTS.md                    # Developer conventions
-docs/ARCHITECTURE.md              # Architecture deep-dive
-docs/FEATURE-MAP.md               # Complete feature inventory
-GitHub issues                # Deferred items and tech debt
-```
-
-## Database
-
-SQLite database stored at the platform's app data directory. WAL mode with foreign keys enforced. 2 writers + 4 readers (6 total) connection pool.
-
-| Platform | Path |
-| -------- | ---- |
-| Linux | `~/.local/share/com.agaric.app/notes.db` |
-| Windows | `C:\Users\<User>\AppData\Local\com.agaric.app\notes.db` |
-| macOS | `~/Library/Application Support/com.agaric.app/notes.db` |
-| Android | `/data/data/com.agaric.app/notes.db` |
+- [docs/BUILD.md](docs/BUILD.md): prerequisites per platform, Android, testing, CI, releasing, troubleshooting. The optional [`justfile`](justfile) wraps the same commands (`just --list`).
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the data model, the op log, the editor, sync, search.
+- [AGENTS.md](AGENTS.md): conventions and invariants for contributors, human or not. [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) cover the rest.
+- [docs/UX.md](docs/UX.md) and [docs/UI-MAP.md](docs/UI-MAP.md): interface conventions and vocabulary.
 
 ## License
 
