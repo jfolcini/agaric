@@ -133,7 +133,7 @@ The Android `.apk` is signed but distributed outside the Play Store:
 Agaric can serve its notes to MCP clients such as Claude Desktop, Claude Code, Cursor and Continue. It is **off by default**, listens on a local socket (never a network port), and is desktop only.
 
 1. Turn it on in Settings › Agent access and add an agent: a name, read-only or read-write, the spaces it may use. Each agent gets its own token.
-2. Copy the config from the agent's row into your client. It runs the `agaric-mcp` bridge that ships beside the app (`/usr/bin/agaric-mcp` from the `.deb` or `.rpm`, `/Applications/Agaric.app/Contents/MacOS/agaric-mcp` on macOS, the install folder on Windows) with `--socket <path>` and `--token <token>`.
+2. Copy the config from the agent's row into your client. It runs the `agaric-mcp` bridge that ships beside the app, with `--socket <path>` and `--token <token>`. The config names the bridge without a path, which works where it is on your `PATH` (`/usr/bin/agaric-mcp` from the `.deb` or `.rpm`). Elsewhere, put its full path in the config's `command`: `/Applications/Agaric.app/Contents/MacOS/agaric-mcp` on macOS, `agaric-mcp.exe` in the install folder on Windows.
 
 Agents read, search, query and write through the same operations the app uses, so their edits are attributed in History and can be undone. `agaric-mcp call <tool> <json>` runs one tool from a script. Tools and limits: [docs/features/agent-access.md](docs/features/agent-access.md).
 

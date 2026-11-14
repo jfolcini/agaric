@@ -12,6 +12,8 @@ The maintainer asked whether the README still reflects the app, and for it and t
 - **Merged session logs still say `COMPARISON.md`.** They are immutable and name it in prose, not as a link, so nothing breaks.
 - `docs/ARCHITECTURE.md` principle 2 still called the op log "the truth"; it now states the three layers as `AGENTS.md` invariant 2 does.
 - Not fixed, reported in the PR: `packaging/flathub/README.md` and the MetaInfo draft list a Google Calendar push that migration 0091 removed.
+- The second commit's message says the README "described a transport" the app no longer has. It did not: its sync section already named QUIC and iroh. What was wrong is listed in the PR body.
+- `docs/features/views.md` still described the Agent access tab as two switches; it has one, plus the agents.
 
 ## Shipped
 
