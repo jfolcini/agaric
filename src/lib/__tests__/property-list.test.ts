@@ -31,8 +31,12 @@ describe('joinListItems', () => {
     )
   })
 
+  it('quotes an item that leaves a [ open, which would take the next comma', () => {
+    expect(joinListItems(['[draft', 'b'])).toBe('"[draft", b')
+  })
+
   it('reads back as the items it was given', () => {
-    const items = ['Doe, Jane', '[[A, B]]', 'say "hi"', ' pad ', 'plain']
+    const items = ['Doe, Jane', '[[A, B]]', 'say "hi"', ' pad ', 'plain', '[open', 'next']
     expect(splitListItems(joinListItems(items))).toEqual(items)
   })
 })

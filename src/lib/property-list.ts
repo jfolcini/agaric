@@ -53,9 +53,23 @@ function readItem(item: string): string {
 }
 
 /**
- * The text of `items`, joined by `, `: an item that holds a comma or a double quote, or
- * begins or ends with whitespace, is written as a JSON string.
+ * The text of `items`, joined by `, `: an item that holds a comma or a double quote, begins or
+ * ends with whitespace, or leaves a `[` open, which would take the next comma, is written as a
+ * JSON string.
  */
 export function joinListItems(items: readonly string[]): string {
-  return items.map((item) => (/[,"]|^\s|\s$/.test(item) ? JSON.stringify(item) : item)).join(', ')
+  return items
+    .map((item) =>
+      /[,"]|^\s|\s$/.test(item) || leavesBracketOpen(item) ? JSON.stringify(item) : item,
+    )
+    .join(', ')
+}
+
+function leavesBracketOpen(item: string): boolean {
+  let depth = 0
+  for (const c of item) {
+    if (c === '[') depth += 1
+    else if (c === ']') depth = Math.max(0, depth - 1)
+  }
+  return depth > 0
 }
