@@ -30,23 +30,69 @@ describe('agentServerName', () => {
   })
 })
 
+// What `get_mcp_status` reports on each desktop package (`mcp::bridge_invocation`).
+const MAC = {
+  bridge_command: '/Applications/Agaric.app/Contents/MacOS/agaric-mcp',
+  bridge_args: [],
+  socket_path: SOCKET,
+}
+const WINDOWS = {
+  bridge_command: String.raw`C:\Users\Jo Doe\AppData\Local\Agaric\agaric-mcp.exe`,
+  bridge_args: [],
+  socket_path: String.raw`\\.\pipe\agaric-mcp`,
+}
+const DEB = {
+  bridge_command: '/usr/bin/agaric-mcp',
+  bridge_args: [],
+  socket_path: '/home/me/.local/share/com.agaric.app/mcp.sock',
+}
+const APPIMAGE = {
+  bridge_command: '/home/me/My Apps/Agaric.AppImage',
+  bridge_args: ['agaric-mcp'],
+  socket_path: '/home/me/.local/share/com.agaric.app/mcp.sock',
+}
+
 describe('claudeDesktopConfig', () => {
-  it('passes the socket path and the token as separate args, the path unquoted', () => {
-    expect(JSON.parse(claudeDesktopConfig(agent('Planner'), SOCKET))).toEqual({
+  it.each([
+    ['macOS', MAC],
+    ['Windows', WINDOWS],
+    ['the .deb', DEB],
+    ['an AppImage', APPIMAGE],
+  ])('runs the bridge %s reports, then the socket path and the token', (_, bridge) => {
+    expect(JSON.parse(claudeDesktopConfig(agent('Planner'), bridge))).toEqual({
       mcpServers: {
         'agaric-planner-00x7k2': {
-          command: 'agaric-mcp',
-          args: ['--socket', SOCKET, '--token', TOKEN],
+          command: bridge.bridge_command,
+          args: [...bridge.bridge_args, '--socket', bridge.socket_path, '--token', TOKEN],
         },
       },
     })
   })
+
+  it('escapes the backslashes of a Windows path for JSON', () => {
+    expect(claudeDesktopConfig(agent('Planner'), WINDOWS)).toContain(
+      String.raw`"command": "C:\\Users\\Jo Doe\\AppData\\Local\\Agaric\\agaric-mcp.exe"`,
+    )
+  })
 })
 
 describe('claudeCodeCommand', () => {
-  it('quotes the socket path, puts the server name before --, and appends the token', () => {
-    expect(claudeCodeCommand(agent('Claude Code'), SOCKET)).toBe(
-      `claude mcp add -s user agaric-claude-code-00x7k2 -- agaric-mcp --socket "${SOCKET}" --token ${TOKEN}`,
+  it('quotes the bridge and socket paths, puts the server name before --, and appends the token', () => {
+    expect(claudeCodeCommand(agent('Claude Code'), MAC)).toBe(
+      `claude mcp add -s user agaric-claude-code-00x7k2 -- "/Applications/Agaric.app/Contents/MacOS/agaric-mcp" --socket "${SOCKET}" --token ${TOKEN}`,
+    )
+  })
+
+  it('keeps a Windows path with a space in one quoted argument', () => {
+    expect(claudeCodeCommand(agent('Claude Code'), WINDOWS)).toBe(
+      String.raw`claude mcp add -s user agaric-claude-code-00x7k2 -- "C:\Users\Jo Doe\AppData\Local\Agaric\agaric-mcp.exe" --socket "\\.\pipe\agaric-mcp" --token ` +
+        TOKEN,
+    )
+  })
+
+  it('runs an AppImage with the bridge argument before the bridge options', () => {
+    expect(claudeCodeCommand(agent('Claude Code'), APPIMAGE)).toBe(
+      `claude mcp add -s user agaric-claude-code-00x7k2 -- "/home/me/My Apps/Agaric.AppImage" agaric-mcp --socket "${APPIMAGE.socket_path}" --token ${TOKEN}`,
     )
   })
 })

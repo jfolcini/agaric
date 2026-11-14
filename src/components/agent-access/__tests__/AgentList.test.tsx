@@ -25,6 +25,8 @@ vi.mock('@/lib/logger', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 const SOCKET = '/data/com.agaric.app/mcp.sock'
+const BRIDGE_PATH = '/opt/Agaric Apps/agaric-mcp'
+const BRIDGE = { socket_path: SOCKET, bridge_command: BRIDGE_PATH, bridge_args: [] }
 const TOKEN = `agt_${'a'.repeat(32)}`
 
 let agents: McpAgent[]
@@ -103,7 +105,7 @@ async function auditClean(container: Element): Promise<void> {
 
 describe('AgentList — empty', () => {
   it('shows the empty state with the migration sentence and Add agent', async () => {
-    const { container } = render(<AgentList socketPath={SOCKET} />)
+    const { container } = render(<AgentList bridge={BRIDGE} />)
 
     expect(await screen.findByText('No agents yet')).toBeInTheDocument()
     expect(screen.getByText(/replace that client's agaric-ro and agaric-rw entries/)).toBeVisible()
@@ -116,7 +118,7 @@ describe('AgentList — empty', () => {
 describe('AgentList — create', () => {
   it('creates a read-write agent in one space, then lists it from a re-read', async () => {
     const user = userEvent.setup()
-    render(<AgentList socketPath={SOCKET} />)
+    render(<AgentList bridge={BRIDGE} />)
     await user.click(await screen.findByRole('button', { name: 'Add agent' }))
 
     const dialog = await screen.findByRole('dialog')
@@ -137,7 +139,7 @@ describe('AgentList — create', () => {
 
   it('defaults to read-only in every space, and Enter in the name submits', async () => {
     const user = userEvent.setup()
-    render(<AgentList socketPath={SOCKET} />)
+    render(<AgentList bridge={BRIDGE} />)
     await user.click(await screen.findByRole('button', { name: 'Add agent' }))
 
     const dialog = await screen.findByRole('dialog')
@@ -153,7 +155,7 @@ describe('AgentList — create', () => {
   it('keeps the dialog open on a duplicate name, with an alert, a log and a toast', async () => {
     agents = [makeAgent()]
     const user = userEvent.setup()
-    render(<AgentList socketPath={SOCKET} />)
+    render(<AgentList bridge={BRIDGE} />)
     await user.click(await screen.findByRole('button', { name: 'Add agent' }))
 
     const dialog = await screen.findByRole('dialog')
@@ -175,7 +177,7 @@ describe('AgentList — create', () => {
 
   it('has no axe violations with the dialog open and the spaces revealed', async () => {
     const user = userEvent.setup()
-    render(<AgentList socketPath={SOCKET} />)
+    render(<AgentList bridge={BRIDGE} />)
     await user.click(await screen.findByRole('button', { name: 'Add agent' }))
     const dialog = await screen.findByRole('dialog')
     await user.click(
@@ -199,7 +201,7 @@ describe('AgentList — rows', () => {
         last_used_ms: Date.now() - 5 * 60_000,
       }),
     ]
-    const { container } = render(<AgentList socketPath={SOCKET} />)
+    const { container } = render(<AgentList bridge={BRIDGE} />)
 
     const rows = await screen.findAllByTestId('mcp-agent-row')
     expect(rows[0]).toHaveTextContent('No spaces left · Never used')
@@ -210,17 +212,18 @@ describe('AgentList — rows', () => {
   it('copies configs that carry the token, which the DOM never holds', async () => {
     agents = [makeAgent()]
     const user = userEvent.setup()
-    render(<AgentList socketPath={SOCKET} />)
+    render(<AgentList bridge={BRIDGE} />)
 
     await user.click(
       await screen.findByRole('button', { name: 'Copy Claude Code command for Planner' }),
     )
     expect(vi.mocked(writeText)).toHaveBeenLastCalledWith(
-      `claude mcp add -s user agaric-planner-000000 -- agaric-mcp --socket "${SOCKET}" --token ${TOKEN}`,
+      `claude mcp add -s user agaric-planner-000000 -- "${BRIDGE_PATH}" --socket "${SOCKET}" --token ${TOKEN}`,
     )
 
     await user.click(screen.getByRole('button', { name: 'Copy Claude Desktop config for Planner' }))
     const desktop = vi.mocked(writeText).mock.lastCall?.[0] ?? ''
+    expect(JSON.parse(desktop).mcpServers['agaric-planner-000000'].command).toBe(BRIDGE_PATH)
     expect(JSON.parse(desktop).mcpServers['agaric-planner-000000'].args).toEqual([
       '--socket',
       SOCKET,
@@ -231,10 +234,22 @@ describe('AgentList — rows', () => {
     expect(document.body.innerHTML).not.toContain(TOKEN)
   })
 
+  it('offers no config to copy until the bridge is known', async () => {
+    agents = [makeAgent()]
+    render(<AgentList bridge={null} />)
+
+    expect(
+      await screen.findByRole('button', { name: 'Copy Claude Code command for Planner' }),
+    ).toBeDisabled()
+    expect(
+      screen.getByRole('button', { name: 'Copy Claude Desktop config for Planner' }),
+    ).toBeDisabled()
+  })
+
   it('revokes only after confirmation; Cancel keeps the row', async () => {
     agents = [makeAgent()]
     const user = userEvent.setup()
-    render(<AgentList socketPath={SOCKET} />)
+    render(<AgentList bridge={BRIDGE} />)
 
     await user.click(await screen.findByRole('button', { name: 'Revoke Planner' }))
     const confirm = await screen.findByRole('alertdialog', { name: 'Revoke Planner?' })
@@ -260,7 +275,7 @@ describe('AgentList — rows', () => {
       }),
     )
     const user = userEvent.setup()
-    render(<AgentList socketPath={SOCKET} />)
+    render(<AgentList bridge={BRIDGE} />)
 
     await user.click(await screen.findByRole('button', { name: 'Revoke Planner' }))
     await user.click(
@@ -286,7 +301,7 @@ describe('AgentList — rows', () => {
         list_mcp_agents: () => Promise.reject({ kind: 'database', message: 'boom' }),
       }),
     )
-    render(<AgentList socketPath={SOCKET} />)
+    render(<AgentList bridge={BRIDGE} />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load agents')
     expect(vi.mocked(logger.error)).toHaveBeenCalledWith(

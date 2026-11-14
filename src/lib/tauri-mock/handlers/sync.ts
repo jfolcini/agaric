@@ -371,6 +371,8 @@ export const syncHandlers = {
   get_mcp_status: () => ({
     enabled: mcpEnabled.on,
     socket_path: '/mock/agaric/mcp.sock',
+    bridge_command: '/mock/agaric/agaric-mcp',
+    bridge_args: [],
     active_connections: 0,
   }),
 
