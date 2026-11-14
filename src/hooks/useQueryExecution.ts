@@ -219,6 +219,7 @@ export async function fetchRichInlineQuery(
   filter: FilterExpr,
   pageCursor?: string,
   spaceId?: string | null,
+  fulltext = '',
 ): Promise<QueryFetchResult> {
   if (!spaceId) return EMPTY_FETCH_RESULT
   const response = unwrap(
@@ -226,6 +227,7 @@ export async function fetchRichInlineQuery(
       spaceId,
       filter,
       limit: PAGE_SIZE,
+      ...(fulltext !== '' ? { fulltext } : {}),
       ...(pageCursor != null ? { cursor: pageCursor } : {}),
     }),
   )
@@ -238,7 +240,8 @@ export async function fetchRichInlineQuery(
 
 /**
  * Execute a query block written in the search syntax (#6628): compiled to the
- * engine's filter (`compileQueryText`) and run like a `v2:` payload. A token
+ * engine's filter and full-text term (`compileQueryText`) and run like a `v2:`
+ * payload. A token
  * the block cannot run is a validation error naming each one and its column,
  * never an empty result.
  */
@@ -258,7 +261,7 @@ export async function fetchTextInlineQuery(
         : compiled.problems.map((problem) => t('query.text.problem', { ...problem })).join('; ')
     throw new QueryValidationError(message)
   }
-  return await fetchRichInlineQuery(compiled.filter, pageCursor, spaceId)
+  return await fetchRichInlineQuery(compiled.filter, pageCursor, spaceId, compiled.fulltext)
 }
 
 /**

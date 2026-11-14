@@ -58,12 +58,46 @@ test.describe('Query blocks in the search syntax @editor @search', () => {
     )
   })
 
-  test('a token a query block cannot run shows the error naming it', async ({ page }) => {
-    const result = await writeQuery(page, 'state:TODO under:#work')
+  test('a token the parser refuses shows the error naming it', async ({ page }) => {
+    const result = await writeQuery(page, 'state:TODO due:<2026-0')
     const alert = result.getByRole('alert')
-    await expect(alert).toContainText('under:#work')
+    await expect(alert).toContainText('due:<2026-0')
     await expect(alert).toContainText('column 12')
     await expect(result.getByTestId('query-result-item')).toHaveCount(0)
+  })
+
+  // #6742: what the search box runs, a query block runs.
+  test('runs free text, a page name, under: and a relative date', async ({ page }) => {
+    // `tag:#work` is the attached tag; `under:` also the block that writes it inline.
+    await expect(await writeQuery(page, 'tag:#work tagging')).toContainText('No results')
+    await expect(
+      (await writeQuery(page, 'under:#work tagging')).getByTestId('query-result-item'),
+    ).toHaveText([/Try tagging blocks/])
+
+    // The seed's overdue task is due yesterday, whatever day this runs.
+    await expect(
+      (await writeQuery(page, 'state:TODO due:overdue')).getByTestId('query-result-item'),
+    ).toHaveText([/Submit report/])
+
+    // Free text narrowed to a page: the one block on Meetings holding the word.
+    const result = await writeQuery(page, 'path:Meetings standup')
+    const items = result.getByTestId('query-result-item')
+    await expect(items).toHaveText([/Weekly standup notes/])
+
+    await reopenPage(page, PAGE)
+    await expect(items).toHaveText([/Weekly standup notes/])
+    await items.first().click()
+    await expect(page.locator('[data-testid="block-editor"] [contenteditable="true"]')).toHaveText(
+      '{{query path:Meetings standup}}',
+    )
+  })
+
+  test('the builder leaves a text it has no control for to the block', async ({ page }) => {
+    const result = await writeQuery(page, 'state:TODO due:this-week')
+    await result.getByRole('button', { name: 'Edit query' }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toContainText('It can only be edited as text')
+    await expect(dialog.getByRole('button', { name: /Query$/ })).toBeDisabled()
   })
 
   test('the older text still matches tags by name prefix, inline ones too', async ({ page }) => {

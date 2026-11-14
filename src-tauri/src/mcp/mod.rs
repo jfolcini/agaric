@@ -90,8 +90,8 @@ macro_rules! read_tools_primer {
          its description has the grammar. E.g. LastEdited {spec: Range {start, end}}, \
          DueDate {predicate: Between {from, to}}, HasProperty {key, predicate: Gt \
          {value: {type: Num, value: 3}}}, State {values: [TODO]} with group_by \
-         {type: Page}. Tag matches attached tags, TagOrRef also inline #refs; neither \
-         matches inherited ones.\n"
+         {type: Page}. Tag matches attached tags, TagOrRef also inline #refs, \
+         TagUnder also inherited ones.\n"
     };
 }
 

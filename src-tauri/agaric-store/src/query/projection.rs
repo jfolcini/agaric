@@ -6,12 +6,14 @@
 //! DELEGATES to `PagesProjection`'s compiler so the SQL is byte-shape-
 //! identical to the Pages surface (mirroring how
 //! [`crate::filters::SearchProjection`] delegates `compile_has_property` /
-//! `compile_space`). The exception is `last-edited`, which delegates to
-//! `SearchProjection`: Pages reads `pages_cache`, which a block row lacks.
+//! `compile_space`). The exceptions delegate to `SearchProjection`, whose
+//! rows are blocks too: `last-edited` (Pages reads `pages_cache`, which a
+//! block row lacks) and `path` (Pages matches the page row; a query matches
+//! every block on the page).
 //!
 //! What the advanced query supports:
 //!
-//! * **Shared:** `tag`, `path`, `has-property` (incl. typed Num/Date and the
+//! * **Shared:** `tag`, `tag-under` (search's `under:`), `path`, `has-property` (incl. typed Num/Date and the
 //!   ordered/`Contains`/`StartsWith` predicates), `last-edited`, `space`,
 //!   `priority`.
 //! * **Metadata (#1280):** `state`, `block-type`, `due-date`, `scheduled`,
@@ -36,7 +38,7 @@ use crate::filters::{
 
 /// The advanced-query projection. Compiles every shared + #1280-metadata
 /// leaf by delegating to [`PagesProjection`] (both compile on the `b`
-/// alias), except `last-edited` (see the module docs). Pages-only physical
+/// alias), except `last-edited` and `path` (see the module docs). Pages-only physical
 /// leaves and Search-only leaves fall through to the trait's `unsupported()`
 /// default.
 #[derive(Debug, Clone, Copy, Default)]
@@ -53,6 +55,7 @@ pub static QUERY_ALLOWED_KEYS: std::sync::LazyLock<HashSet<&'static str>> =
         HashSet::from([
             // Shared.
             "tag",
+            "tag-under",
             "path",
             "has-property",
             "last-edited",
@@ -85,11 +88,23 @@ impl Projection for QueryProjection {
     fn compile_tag_or_ref(&self, tag: &str, alias: &str) -> WhereClause {
         PagesProjection.compile_tag_or_ref(tag, alias)
     }
+    fn compile_tag_under(&self, tag: &str, alias: &str) -> WhereClause {
+        // The leaf search runs for `under:`, which binds the tag once per arm.
+        WhereClause::new(
+            format!(
+                "{alias}.id IN ({})",
+                crate::tag_query::tag_leaf_subquery_body(true)
+            ),
+            vec![Bind::Text(tag.to_string()); 3],
+        )
+    }
     fn compile_child_of(&self, parent: &str, alias: &str) -> WhereClause {
         PagesProjection.compile_child_of(parent, alias)
     }
     fn compile_path_glob(&self, pattern: &str, exclude: bool, alias: &str) -> WhereClause {
-        PagesProjection.compile_path_glob(pattern, exclude, alias)
+        // A query's rows are blocks: the glob is on the title of the block's
+        // page, as in search. Pages matches the page row itself.
+        SearchProjection.compile_path_glob(pattern, exclude, alias)
     }
     fn compile_has_property(
         &self,

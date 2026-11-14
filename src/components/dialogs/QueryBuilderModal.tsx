@@ -216,12 +216,12 @@ export function QueryBuilderModal({
       })
         .then((compiled) => {
           if (cancelled) return
-          if (compiled.ok) {
+          if (compiled.ok && !compiled.textOnly) {
             setMode('advanced')
             setBuilderRoot(filterExprToBuilderTree(compiled.filter, nextId))
           } else {
             // No problem at all is a text with no filter word: the empty form.
-            setTextOnly(compiled.problems.length > 0)
+            setTextOnly(compiled.ok || compiled.problems.length > 0)
           }
           setShowAsTable(parsed.params['table'] === 'true')
         })

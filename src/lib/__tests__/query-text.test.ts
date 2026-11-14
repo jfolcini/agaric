@@ -289,6 +289,127 @@ describe('compileQueryText: each token is the leaf the builder writes', () => {
   })
 })
 
+describe('compileQueryText: the tokens a query block refused before #6742', () => {
+  const tags = [
+    { tag_id: TAG_WORK, name: 'Work' },
+    { tag_id: TAG_HOME, name: 'home' },
+  ]
+  // A Wednesday.
+  const today = new Date(2026, 10, 18)
+  const run = (text: string) => {
+    const result = compileQueryTextWithTags(text, tags, today)
+    if (!result.ok) throw new Error(`"${text}" did not compile: ${JSON.stringify(result.problems)}`)
+    return result
+  }
+  const glob = (pattern: string, exclude = false): FilterExpr => ({
+    type: 'Leaf',
+    primitive: { type: 'PathGlob', pattern, exclude },
+  })
+
+  it.each<[string, FilterPrimitive['type'], object]>([
+    ['today', 'DueDate', { type: 'Between', from: '2026-11-18', to: '2026-11-18' }],
+    ['yesterday', 'DueDate', { type: 'Between', from: '2026-11-17', to: '2026-11-17' }],
+    ['overdue', 'DueDate', { type: 'Before', date: '2026-11-18' }],
+    ['older', 'DueDate', { type: 'Before', date: '2026-10-19' }],
+    ['this-week', 'DueDate', { type: 'Between', from: '2026-11-16', to: '2026-11-22' }],
+    ['next-week', 'DueDate', { type: 'Between', from: '2026-11-23', to: '2026-11-29' }],
+    ['this-month', 'DueDate', { type: 'Between', from: '2026-11-01', to: '2026-11-30' }],
+    ['this-week', 'Scheduled', { type: 'Between', from: '2026-11-16', to: '2026-11-22' }],
+  ])(
+    'a relative date, %s, is the dates it names on the day the query runs',
+    (name, type, predicate) => {
+      const result = run(`${type === 'DueDate' ? 'due' : 'scheduled'}:${name}`)
+      expect(result.filter).toEqual(built({ type, predicate } as FilterPrimitive))
+      expect(result.textOnly).toBe(true)
+    },
+  )
+
+  it('a relative date moves with the day: the week of a Sunday ends on it, the next starts after', () => {
+    const due = (day: Date) => compileQueryTextWithTags('due:this-week', [], day)
+    expect(due(new Date(2026, 10, 22))).toMatchObject({
+      filter: built({
+        type: 'DueDate',
+        predicate: { type: 'Between', from: '2026-11-16', to: '2026-11-22' },
+      }),
+    })
+    expect(due(new Date(2026, 10, 23))).toMatchObject({
+      filter: built({
+        type: 'DueDate',
+        predicate: { type: 'Between', from: '2026-11-23', to: '2026-11-29' },
+      }),
+    })
+  })
+
+  it('free text is the full-text term, beside the filters and alone', () => {
+    expect(run('state:TODO meeting notes')).toEqual({
+      ok: true,
+      filter: built({ type: 'State', values: ['TODO'], is_null: false, exclude: false }),
+      fulltext: 'meeting notes',
+      textOnly: true,
+    })
+    expect(run('meeting')).toEqual({
+      ok: true,
+      filter: { type: 'And', children: [] },
+      fulltext: 'meeting',
+      textOnly: true,
+    })
+  })
+
+  it('under: is the tag attached, inline or inherited', () => {
+    const result = run('under:#work under:#home')
+    expect(result.filter).toEqual(
+      built({ type: 'TagUnder', tag: TAG_WORK }, { type: 'TagUnder', tag: TAG_HOME }),
+    )
+    expect(result.textOnly).toBe(true)
+    expect(compileQueryTextWithTags('under:#nope', tags, today)).toEqual({
+      ok: false,
+      problems: [
+        { token: 'under:#nope', column: 1, message: t('query.text.unknownTag', { name: 'nope' }) },
+      ],
+    })
+  })
+
+  it('path: is the patterns search binds; several page names are any of them', () => {
+    expect(run('path:Journal').filter).toEqual({ type: 'And', children: [glob('*journal*')] })
+    expect(run('path:"Old Notes/*"').filter).toEqual({
+      type: 'And',
+      children: [glob('old notes/*')],
+    })
+    expect(run('path:{Work,Home}/* path:Inbox state:TODO')).toEqual({
+      ok: true,
+      filter: {
+        type: 'And',
+        children: [
+          { type: 'Or', children: [glob('work/*'), glob('home/*'), glob('*inbox*')] },
+          {
+            type: 'Leaf',
+            primitive: { type: 'State', values: ['TODO'], is_null: false, exclude: false },
+          },
+        ],
+      },
+      fulltext: '',
+      textOnly: true,
+    })
+  })
+
+  it('not-path: leaves out a block on any of its page names', () => {
+    expect(run('not-path:Journal/*,Archive not-path:Old').filter).toEqual({
+      type: 'And',
+      children: [glob('journal/*', true), glob('*archive*', true), glob('*old*', true)],
+    })
+  })
+
+  it('a page name search would refuse is named with its column', () => {
+    // Each entry expands to the cap; together they pass it.
+    const wide = `path:${'{a,b}'.repeat(6)},${'{c,d}'.repeat(6)}`
+    const result = compileQueryTextWithTags(`state:TODO ${wide}`, tags, today)
+    expect(result).toEqual({
+      ok: false,
+      problems: [{ token: wide, column: 12, message: expect.stringContaining('InvalidGlob') }],
+    })
+  })
+})
+
 describe('compileQueryText: what it cannot run, named with its column', () => {
   it('a token the parser refuses, with its message: states are written as the parser spells them', async () => {
     expect(await problems('tag:#work state:todo')).toEqual([
@@ -310,24 +431,6 @@ describe('compileQueryText: what it cannot run, named with its column', () => {
     ])
   })
 
-  it('the filters only the search box runs', async () => {
-    expect(await problems('under:#work path:Journal/* not-path:"Old Notes/*"')).toEqual([
-      { token: 'under:#work', column: 1, message: t('query.text.cannotRun') },
-      { token: 'path:Journal/*', column: 13, message: t('query.text.cannotRun') },
-      { token: 'not-path:"Old Notes/*"', column: 28, message: t('query.text.cannotRun') },
-    ])
-  })
-
-  it('a relative date, and free text, not yet', async () => {
-    expect(await problems('due:this-week state:TODO my tasks')).toEqual([
-      { token: 'due:this-week', column: 1, message: t('query.text.relativeDate') },
-      { token: 'my tasks', column: 26, message: t('query.text.freeText') },
-    ])
-    expect(await problems('scheduled:today')).toEqual([
-      { token: 'scheduled:today', column: 1, message: t('query.text.relativeDate') },
-    ])
-  })
-
   it('a tag the space has no tag of that name for', async () => {
     expect(await problems('state:TODO tag:#nope')).toEqual([
       { token: 'tag:#nope', column: 12, message: t('query.text.unknownTag', { name: 'nope' }) },
@@ -335,8 +438,8 @@ describe('compileQueryText: what it cannot run, named with its column', () => {
   })
 
   it('counts columns in the text as the editor shows it, view words included', async () => {
-    expect(await problems('table:true prop:a\\_b=c under:#x')).toEqual([
-      { token: 'under:#x', column: 23, message: t('query.text.cannotRun') },
+    expect(await problems('table:true prop:a\\_b=c tag:#x')).toEqual([
+      { token: 'tag:#x', column: 23, message: t('query.text.unknownTag', { name: 'x' }) },
     ])
   })
 
@@ -404,7 +507,12 @@ describe('filterToQueryText: the text the builder saves', () => {
   ])('%j is %s, and reads back as itself', (primitive, expected) => {
     const filter = built(primitive)
     expect(filterToQueryText(filter)).toBe(expected)
-    expect(compileQueryTextWithTags(expected, [])).toEqual({ ok: true, filter })
+    expect(compileQueryTextWithTags(expected, [])).toEqual({
+      ok: true,
+      filter,
+      fulltext: '',
+      textOnly: false,
+    })
   })
 
   it('writes the leaves in the builder order; the builder reopens the same filter', () => {

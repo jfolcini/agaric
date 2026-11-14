@@ -1316,13 +1316,15 @@ fn tool_desc_query() -> ToolDescription {
                     "type": "object",
                     "description": "{type: And|Or, children: [...]}, {type: Not, child} or \
                                     {type: Leaf, primitive}. Primitives: Tag {tag} (attached), \
-                                    TagOrRef {tag} (attached or inline), HasProperty {key, \
+                                    TagOrRef {tag} (attached or inline), TagUnder {tag} \
+                                    (attached, inline or inherited), HasProperty {key, \
                                     predicate}, State {values}, Priority {values}, BlockType \
                                     {values, exclude}, DueDate {predicate}, Scheduled \
                                     {predicate}, Created {after?, before?}, LastEdited {spec}, \
                                     LinksTo {target}, LinkedFrom {source}, ChildOf {parent}, \
                                     HasParentMatching {matcher: <where>}, PathGlob {pattern, \
-                                    exclude} (pages whose lower-case title matches the GLOB). \
+                                    exclude} (blocks on a page whose lower-case title matches the \
+                                    GLOB). \
                                     Property predicate: Exists, \
                                     NotExists, or Eq|Ne|Lt|Gt|Lte|Gte|Contains|StartsWith \
                                     {value: {type: Text|Num|Date|Ref, value}}. Date predicate: \

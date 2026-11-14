@@ -44,6 +44,9 @@ pub enum FilterPrimitive {
     /// semantics the legacy `query_by_tags`/`filtered_blocks_query` paths use;
     /// `Tag` is attached-only.
     TagOrRef { tag: String },
+    /// Block carries `tag` attached, written inline, or inherited from an
+    /// ancestor: the search syntax's `under:`.
+    TagUnder { tag: String },
     /// Shared — block's `parent_id` equals `parent` (its direct children).
     ChildOf { parent: String },
     /// Shared — page name matches the GLOB pattern. `exclude=true`
@@ -583,6 +586,10 @@ pub trait Projection {
         alias: &str,
     ) -> WhereClause;
 
+    fn compile_tag_under(&self, _tag: &str, _alias: &str) -> WhereClause {
+        WhereClause::unsupported()
+    }
+
     // #1280 — shared metadata primitives; default to `unsupported` so a
     // projection only opts in by overriding (currently `BacklinkProjection`).
     fn compile_state(
@@ -684,6 +691,7 @@ pub trait Projection {
         match p {
             FilterPrimitive::Tag { tag } => self.compile_tag(tag, alias),
             FilterPrimitive::TagOrRef { tag } => self.compile_tag_or_ref(tag, alias),
+            FilterPrimitive::TagUnder { tag } => self.compile_tag_under(tag, alias),
             FilterPrimitive::ChildOf { parent } => self.compile_child_of(parent, alias),
             FilterPrimitive::PathGlob { pattern, exclude } => {
                 self.compile_path_glob(pattern, *exclude, alias)
@@ -780,6 +788,8 @@ impl FilterPrimitive {
             // index-backed sub-selects (`block_tags.tag_id` +
             // `idx_block_tag_refs_tag`) — same index-backed tier as `Tag`.
             | FilterPrimitive::TagOrRef { .. }
+            // One more index-backed arm, over `block_tag_inherited`.
+            | FilterPrimitive::TagUnder { .. }
             // `ChildOf` is `b.parent_id = ?`, served by the `parent_id`
             // index — an index-backed equality, same tier as `Tag`.
             | FilterPrimitive::ChildOf { .. }
@@ -837,6 +847,7 @@ impl FilterPrimitive {
             FilterPrimitive::Tag { .. } => "tag",
             // Ref-inclusive tag leaf — shares the `tag` allowed-key with `Tag`.
             FilterPrimitive::TagOrRef { .. } => "tag",
+            FilterPrimitive::TagUnder { .. } => "tag-under",
             // Direct-children structural leaf — advanced-query-only key
             // (see `QUERY_ALLOWED_KEYS`).
             FilterPrimitive::ChildOf { .. } => "child-of",
@@ -1697,6 +1708,7 @@ mod tests {
         let all = [
             FilterPrimitive::Tag { tag: "t".into() },
             FilterPrimitive::TagOrRef { tag: "t".into() },
+            FilterPrimitive::TagUnder { tag: "t".into() },
             FilterPrimitive::ChildOf { parent: "p".into() },
             FilterPrimitive::PathGlob {
                 pattern: "p".into(),
@@ -1777,6 +1789,7 @@ mod tests {
             match prim {
                 FilterPrimitive::Tag { .. }
                 | FilterPrimitive::TagOrRef { .. }
+                | FilterPrimitive::TagUnder { .. }
                 | FilterPrimitive::ChildOf { .. }
                 | FilterPrimitive::PathGlob { .. }
                 | FilterPrimitive::HasProperty { .. }

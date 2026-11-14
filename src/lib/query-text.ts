@@ -33,7 +33,9 @@ import type {
 import { t } from '@/lib/i18n'
 import { type FilterToken, parse, type SearchQueryAST, tokenize } from '@/lib/search-query'
 import type { DateFilterValue } from '@/lib/search-query'
+import { prepareGlobs } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
+import { resolveNamedDate } from '@/lib/search-query/resolve-date'
 import { quoteValueIfNeeded } from '@/lib/search-query/serialize'
 
 /** The keys only the older query text reads (`parseQueryExpression` and its resolver). */
@@ -91,9 +93,15 @@ export interface QueryTextProblem {
   message: string
 }
 
-/** The filter to run, or why not: the tokens the block cannot run, none when it holds no filter at all. */
+/**
+ * What to run, or why not: the tokens the block cannot run, none when it holds
+ * nothing to run at all. `fulltext` is the text outside every filter, empty for
+ * none. `textOnly` marks what the builder's form has no control for (free text,
+ * `under:`, a page-name glob, and a relative date, which the form would save as
+ * today's dates).
+ */
 export type CompiledQueryText =
-  | { ok: true; filter: FilterExpr }
+  | { ok: true; filter: FilterExpr; fulltext: string; textOnly: boolean }
   | { ok: false; problems: QueryTextProblem[] }
 
 export interface QueryTextDeps {
@@ -117,9 +125,9 @@ function inferPropertyValue(raw: string): PropertyValue {
   return { type: 'Text', value: raw }
 }
 
-/** `meta_date_to_primitive` (Rust) over a date token; `null` for a relative bucket a query block cannot run yet. */
-function datePredicate(value: DateFilterValue): DatePredicate | null {
-  if (value.kind === 'named') return value.name === 'none' ? { type: 'IsNull' } : null
+/** `resolve_date_filter` + `meta_date_to_primitive` (Rust): a date token as search runs it on `today`. */
+function datePredicate(value: DateFilterValue, today: Date): DatePredicate | null {
+  if (value.kind === 'named') return resolveNamedDate(value.name, today)
   const { date } = value
   switch (value.op) {
     case '<': {
@@ -140,32 +148,25 @@ function datePredicate(value: DateFilterValue): DatePredicate | null {
   }
 }
 
-/** Why `token` cannot run in a query block, or `null` when it can. */
-function tokenProblem(token: FilterToken): string | null {
-  switch (token.kind) {
-    case 'invalid': {
-      return token.error
-    }
-    case 'under':
-    case 'pathInclude':
-    case 'pathExclude': {
-      return t('query.text.cannotRun')
-    }
-    case 'due':
-    case 'scheduled': {
-      return datePredicate(token.value) ? null : t('query.text.relativeDate')
-    }
-    default: {
-      return null
-    }
-  }
+/**
+ * A `path:` / `not-path:` token as the prepared patterns search binds
+ * (`prepare_globs`): the engine binds a `PathGlob` pattern as it stands.
+ */
+function pathPatterns(token: FilterToken): string[] {
+  return token.kind === 'pathInclude' || token.kind === 'pathExclude'
+    ? prepareGlobs([token.value])
+    : []
 }
 
-/** The free text's first word: free text is the source left over once every filter's span is out. */
-function freeTextColumn(source: string, ast: SearchQueryAST): number {
-  const filterStarts = new Set(ast.filters.map((f) => f.span[0]))
-  const first = tokenize(source).find((tok) => !filterStarts.has(tok.span[0]))
-  return (first?.span[0] ?? 0) + 1
+/** Why `token` cannot run in a query block, or `null` when it can. */
+function tokenProblem(token: FilterToken): string | null {
+  if (token.kind === 'invalid') return token.error
+  try {
+    pathPatterns(token)
+    return null
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
 }
 
 /** One `State` / `Priority` leaf over `values`, `none` as the null bucket, as search builds it. */
@@ -195,39 +196,68 @@ function propertyLeaf(key: string, value: string, exclude: boolean): FilterPrimi
   return { type: 'HasProperty', key: key.trim(), predicate }
 }
 
-/** The leaves of a text whose every token can run, in the order search adds them. */
-function leaves(filters: FilterToken[], tagIds: string[]): FilterPrimitive[] {
-  const out: FilterPrimitive[] = [...new Set(tagIds)].map((tag) => ({ type: 'Tag', tag }))
-  for (const leaf of [
+const leafOf = (primitive: FilterPrimitive): FilterExpr => ({ type: 'Leaf', primitive })
+
+/** The conditions of a text whose every token can run, in the order search adds them. */
+function conditions(filters: FilterToken[], tagIds: string[], today: Date): FilterExpr[] {
+  // The parser refuses `tag:` beside `under:`, so one `under:` means every tag is one.
+  const type = filters.some((f) => f.kind === 'under') ? 'TagUnder' : 'Tag'
+  const out: FilterExpr[] = [...new Set(tagIds)].map((tag) => leafOf({ type, tag }))
+  // Search ORs the page names to keep and drops a block on any name to leave out.
+  const keep = filters
+    .filter((f) => f.kind === 'pathInclude')
+    .flatMap(pathPatterns)
+    .map((pattern) => leafOf({ type: 'PathGlob', pattern, exclude: false }))
+  if (keep.length === 1) out.push(...keep)
+  else if (keep.length > 1) out.push({ type: 'Or', children: keep })
+  for (const pattern of filters.filter((f) => f.kind === 'pathExclude').flatMap(pathPatterns)) {
+    out.push(leafOf({ type: 'PathGlob', pattern, exclude: true }))
+  }
+  for (const primitive of [
     membership('State', valuesOf(filters, 'state'), false),
     membership('State', valuesOf(filters, 'notState'), true),
     membership('Priority', valuesOf(filters, 'priority'), false),
     membership('Priority', valuesOf(filters, 'notPriority'), true),
   ]) {
-    if (leaf) out.push(leaf)
+    if (primitive) out.push(leafOf(primitive))
   }
   for (const f of filters) {
     if (f.kind === 'prop' || f.kind === 'notProp') {
-      out.push(propertyLeaf(f.key, f.value, f.kind === 'notProp'))
+      out.push(leafOf(propertyLeaf(f.key, f.value, f.kind === 'notProp')))
     }
   }
   for (const f of filters) {
     // `parse` leaves one valid `due:` and one `scheduled:` at most.
-    const predicate = f.kind === 'due' || f.kind === 'scheduled' ? datePredicate(f.value) : null
-    if (predicate) out.push({ type: f.kind === 'due' ? 'DueDate' : 'Scheduled', predicate })
+    const predicate =
+      f.kind === 'due' || f.kind === 'scheduled' ? datePredicate(f.value, today) : null
+    if (predicate) out.push(leafOf({ type: f.kind === 'due' ? 'DueDate' : 'Scheduled', predicate }))
   }
   return out
 }
 
+/** Whether the builder's form has no control for `token`. */
+function isTextOnly(token: FilterToken): boolean {
+  if (token.kind === 'pathInclude' || token.kind === 'pathExclude') return true
+  if (token.kind === 'under') return true
+  return (
+    (token.kind === 'due' || token.kind === 'scheduled') &&
+    token.value.kind === 'named' &&
+    token.value.name !== 'none'
+  )
+}
+
 /**
- * Compile a block's search-syntax query text to the filter the engine runs, a
- * root `And` over the leaves as the builder writes it; or the tokens it cannot
- * run, each with its column. A tag is looked up by name in `tags` as the
- * search box looks it up (exact, any case), or is a chip's own id.
+ * Compile a block's search-syntax query text to what the engine runs: a root
+ * `And` over its conditions, as the builder writes it, and its free text as
+ * the full-text term; or the tokens it cannot run, each with its column. A tag
+ * is looked up by name in `tags` as the search box looks it up (exact, any
+ * case), or is a chip's own id. A relative date is resolved on `today`, so on
+ * every run.
  */
 export function compileQueryTextWithTags(
   expression: string,
   tags: ReadonlyArray<{ tag_id: string; name: string }>,
+  today: Date = new Date(),
 ): CompiledQueryText {
   const { ast, source } = readQueryText(expression)
   const problems: QueryTextProblem[] = []
@@ -239,16 +269,9 @@ export function compileQueryTextWithTags(
     const message = tokenProblem(token)
     if (message !== null) problems.push({ ...at(token), message })
   }
-  if (ast.freeText !== '') {
-    problems.push({
-      token: ast.freeText,
-      column: freeTextColumn(source, ast),
-      message: t('query.text.freeText'),
-    })
-  }
 
   const tagIds: string[] = []
-  for (const token of ast.filters.filter((f) => f.kind === 'tag')) {
+  for (const token of ast.filters.filter((f) => f.kind === 'tag' || f.kind === 'under')) {
     const name = token.value.normalize('NFC').toLowerCase()
     const id = chipTagId(token.value) ?? tags.find((tag) => tag.name.toLowerCase() === name)?.tag_id
     if (id === undefined) {
@@ -261,13 +284,15 @@ export function compileQueryTextWithTags(
   if (problems.length > 0) {
     return { ok: false, problems: problems.toSorted((a, b) => a.column - b.column) }
   }
-  const children = leaves(ast.filters, tagIds).map((primitive): FilterExpr => ({
-    type: 'Leaf',
-    primitive,
-  }))
-  // An empty `And` is every block in the space, never what a block with no filter asked for.
-  if (children.length === 0) return { ok: false, problems: [] }
-  return { ok: true, filter: { type: 'And', children } }
+  const children = conditions(ast.filters, tagIds, today)
+  // An empty `And` alone is every block in the space, never what an empty block asked for.
+  if (children.length === 0 && ast.freeText === '') return { ok: false, problems: [] }
+  return {
+    ok: true,
+    filter: { type: 'And', children },
+    fulltext: ast.freeText,
+    textOnly: ast.freeText !== '' || ast.filters.some(isTextOnly),
+  }
 }
 
 /** {@link compileQueryTextWithTags} over the space's tags, listed only when the text names one. */
@@ -276,7 +301,7 @@ export async function compileQueryText(
   deps: QueryTextDeps,
 ): Promise<CompiledQueryText> {
   const namesATag = readQueryText(expression).ast.filters.some(
-    (f) => f.kind === 'tag' && chipTagId(f.value) === null,
+    (f) => (f.kind === 'tag' || f.kind === 'under') && chipTagId(f.value) === null,
   )
   return compileQueryTextWithTags(expression, namesATag ? await deps.listTags() : [])
 }

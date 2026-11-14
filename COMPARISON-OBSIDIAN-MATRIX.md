@@ -94,7 +94,7 @@
 | Nested tags | `#a/b` is a real hierarchy: `tag:a` matches `#a/b`, the Tags view nests them (help, *Tags*) | A naming convention: `projects/` is a prefix query that does **not** match the bare parent tag (`docs/features/tags-and-links.md`, #6760) | Partial |
 | Tag rename | Not in the *Tags* or *Tags view* help pages; the community Tag Wrangler plugin | Built in; chips hold the id, so one rename updates everything | Better vs core |
 | Boolean tag queries | Search operators | `TagExpr` with And / Or / Not / Prefix | Done |
-| Inherited tags | A file's tags apply to the file | A tag on a block can apply to its descendants, opt-in in the Tags view and `under:` in search; not in the inline query vocabulary | Partial |
+| Inherited tags | A file's tags apply to the file | A tag on a block can apply to its descendants, opt-in in the Tags view and `under:` in search and in a typed query block (#6742); not in the query builder's form | Partial |
 
 ## 6. Search
 
@@ -114,7 +114,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Core query surface | Embedded search queries; Bases filters and formulas with a function library (help, *Functions*) | `{{query}}` blocks with a structured payload over the `FilterPrimitive` set (`src-tauri/agaric-store/src/filters/primitive.rs`), live results, a visual builder. Template pages and their blocks are left out unless a filter names the `template` property (#6643) | Done |
-| A query language you can read | Bases YAML; the community Dataview plugin's query language (**unverified**) | **No full one.** A query block takes the search box's filter syntax as text (`{{query tag:#work state:TODO}}`, AND only; `src/lib/query-text.ts`, #6628); `under:`, `path:`, relative dates and free text do not run there yet (#6742). The builder writes that text for a plain AND list, else `v2:<base64url(JSON)>` (`src/lib/inline-query-spec.ts`) | Partial |
+| A query language you can read | Bases YAML; the community Dataview plugin's query language (**unverified**) | **No full one.** A query block takes the search box's filter syntax as text (`{{query tag:#work state:TODO}}`, `src/lib/query-text.ts`, #6628) and runs every token the search box runs, free text and relative dates included; its tokens join by AND only, with no OR or groups yet (#6742). The builder writes that text for a plain AND list, else `v2:<base64url(JSON)>` (`src/lib/inline-query-spec.ts`) | Partial |
 | Computed columns | Bases formulas | Fixed aggregates (count, sum, average, minimum, maximum); no computed columns (#6757) | Gap |
 | Scripting | Community plugins such as Dataview and Templater (**unverified**) | None | Gap |
 | Granularity | Bases: files. Dataview: files, list items, tasks | Blocks, with page and tag context | Better vs core |
