@@ -58,10 +58,12 @@
 //!
 //! [`checkpoint_frontiers`]: crate::loro::engine::LoroEngine::checkpoint_frontiers
 
+use std::sync::Arc;
+
 use loro::Frontiers;
 use parking_lot::Mutex;
 
-use crate::loro::registry::SharedEngine;
+use crate::loro::registry::{DirtySpaces, SharedEngine};
 use agaric_store::space::SpaceId;
 
 /// One recorded rollback checkpoint: the exact engine `Arc` a speculative op was
@@ -73,6 +75,8 @@ struct RevertEntry {
     /// replaced/removed (a detached engine; see registry "Detached engines").
     engine: SharedEngine,
     frontier: Frontiers,
+    /// The dirty set of the registry `engine` came from.
+    dirty: Arc<DirtySpaces>,
 }
 
 /// Per-tx engine-rollback log (#2604). `Some` == a [`RevertScope`] is armed;
@@ -104,6 +108,7 @@ impl RevertLog {
         &self,
         space_id: &SpaceId,
         engine: &SharedEngine,
+        dirty: &Arc<DirtySpaces>,
         frontier: impl FnOnce() -> Frontiers,
     ) {
         let mut slot = self.inner.lock();
@@ -117,6 +122,7 @@ impl RevertLog {
             space_id: space_id.clone(),
             engine: SharedEngine::clone(engine),
             frontier: frontier(),
+            dirty: Arc::clone(dirty),
         });
     }
 
@@ -162,9 +168,9 @@ impl RevertLog {
     }
 }
 
-/// Rewind every recorded engine to its checkpoint. Shared by the two abort
-/// paths: [`DetachedRevert::revert`] (commit/apply failure) and
-/// [`RevertScope`]'s panic-net `Drop`.
+/// Rewind every recorded engine to its checkpoint and mark its space dirty.
+/// Shared by the two abort paths: [`DetachedRevert::revert`] (commit/apply
+/// failure) and [`RevertScope`]'s panic-net `Drop`.
 fn revert_entries(entries: Vec<RevertEntry>) {
     // The `O(n)` `fork_at` rewind is paid ONLY here, and only on the exceptional
     // abort. Any handler's engine guard was already dropped (the guard is
@@ -172,15 +178,22 @@ fn revert_entries(entries: Vec<RevertEntry>) {
     // unwind, where inner scopes drop before the outer scope — cannot deadlock.
     // Errors can only be logged, not propagated, from these drop/consume paths.
     for entry in entries {
-        let mut engine = entry.engine.lock();
-        if let Err(err) = engine.revert_to_frontier(&entry.frontier) {
-            tracing::error!(
-                space_id = %entry.space_id,
-                error = %err,
-                "loro: #2604 engine rollback failed on tx abort — engine may be \
-                 ahead of committed SQL until the next reproject/replay reconciles it"
-            );
+        {
+            let mut engine = entry.engine.lock();
+            if let Err(err) = engine.revert_to_frontier(&entry.frontier) {
+                tracing::error!(
+                    space_id = %entry.space_id,
+                    error = %err,
+                    "loro: #2604 engine rollback failed on tx abort — engine may be \
+                     ahead of committed SQL until the next reproject/replay reconciles it"
+                );
+            }
         }
+        // #6521: a snapshot pass may have exported this engine with the
+        // rolled-back writes in it. Marked after the rewind, so whichever
+        // stamp that pass captured is the older one: the space stays dirty and
+        // the next pass saves the engine as it now is.
+        entry.dirty.mark(&entry.space_id);
     }
 }
 
