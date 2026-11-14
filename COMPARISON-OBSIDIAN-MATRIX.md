@@ -45,7 +45,7 @@
 | Callouts | `> [!type]`, custom titles, foldable with `+` / `-`, custom types through CSS | The built-in styles (`CALLOUT_TYPES` in `src/components/RichContentRenderer/context.ts`); Obsidian's and GitHub's type names map to the nearest of them. A `-` or `+` after the type folds or opens the callout with a toggle; the fold is not saved (`src/editor/extensions/callout-blockquote.ts`) | Partial |
 | Footnotes | `[^id]`, plus a Footnotes view core plugin | `[^label]` references numbered by first use and `[^label]:` definition blocks (`src/editor/extensions/footnote.ts`). No footnotes panel | Done |
 | Comments | `%%hidden%%` | **None** (#6751). No handling of `%%` was found under `src/editor/`; an imported comment presumably stays visible text (**unverified**) | Gap |
-| Highlight colours | Six colours (help, *Basic formatting syntax*; roadmap: October 2026) | One highlight (`==`) | Gap |
+| Highlight colours | Six colours (help, *Basic formatting syntax*; roadmap: October 2026) | One highlight (`==`) (#6759) | Gap |
 | Folding | Headings and lists fold | Blocks collapse; the state is per device, not synced | Partial |
 | Find in note | Find and replace | `Ctrl+F` with case, whole-word and regex; `Ctrl+H` replaces one or all matches in the open page, `$1` groups in regex mode; the Search view replaces literal text across pages, with a preview and an Undo (`docs/SEARCH.md`) | Done |
 | Multiple cursors | Yes (help, *Multiple cursors*) | None | Gap |
@@ -75,7 +75,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Where properties live | YAML front matter: **per file only** | On any block or page (`block_properties`), with `key:: value` typing and a drawer | Better |
-| Types | Text, List, Number, Checkbox, Date, Date & time, and Tags for the `tags` property (help, *Properties*) | Text, Number, Date, Boolean, Select, Ref, URL (`docs/features/properties.md`). **No list and no date-time** | Partial |
+| Types | Text, List, Number, Checkbox, Date, Date & time, and Tags for the `tags` property (help, *Properties*) | Text, Number, Date, Boolean, Select, Ref, URL (`docs/features/properties.md`). **No list (#6741) and no date-time (#6758)** | Partial |
 | Multi-value | List is a first-class type | **Absent** as a type (#6741). `PRIMARY KEY (block_id, key)`; on import a YAML list other than `tags` / `aliases` is joined into one comma-separated value (`docs/features/import-export.md` § Pitfalls) | Gap |
 | Typed references | No reference type; a link is text in a Text or List property | `ref` type, rename-safe, with a chip that opens the target | Better |
 | Enumerations | No select type among the types the help lists; that values autocomplete from use is **unverified** | `select` with options on the definition, option rename across the space | Better |
@@ -91,7 +91,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Inline tags | `#tag` in text or the `tags` property | `#[ULID]` chips; typed `#name` converts; `#[[multi word]]` reads as the existing tag of that name, else `multi-word`, and a new tag name holds no whitespace (#6334); same boundary rule as Obsidian on import | Done |
-| Nested tags | `#a/b` is a real hierarchy: `tag:a` matches `#a/b`, the Tags view nests them (help, *Tags*) | A naming convention: `projects/` is a prefix query that does **not** match the bare parent tag (`docs/features/tags-and-links.md`) | Partial |
+| Nested tags | `#a/b` is a real hierarchy: `tag:a` matches `#a/b`, the Tags view nests them (help, *Tags*) | A naming convention: `projects/` is a prefix query that does **not** match the bare parent tag (`docs/features/tags-and-links.md`, #6760) | Partial |
 | Tag rename | Not in the *Tags* or *Tags view* help pages; the community Tag Wrangler plugin | Built in; chips hold the id, so one rename updates everything | Better vs core |
 | Boolean tag queries | Search operators | `TagExpr` with And / Or / Not / Prefix | Done |
 | Inherited tags | A file's tags apply to the file | A tag on a block can apply to its descendants, opt-in in the Tags view and `under:` in search; not in the inline query vocabulary | Partial |
@@ -115,7 +115,7 @@
 | --- | --- | --- | --- |
 | Core query surface | Embedded search queries; Bases filters and formulas with a function library (help, *Functions*) | `{{query}}` blocks with a structured payload over the `FilterPrimitive` set (`src-tauri/agaric-store/src/filters/primitive.rs`), live results, a visual builder. Template pages and their blocks are left out unless a filter names the `template` property (#6643) | Done |
 | A query language you can read | Bases YAML; the community Dataview plugin's query language (**unverified**) | **No full one.** A query block takes the search box's filter syntax as text (`{{query tag:#work state:TODO}}`, AND only; `src/lib/query-text.ts`, #6628); `under:`, `path:`, relative dates and free text do not run there yet (#6742). The builder writes that text for a plain AND list, else `v2:<base64url(JSON)>` (`src/lib/inline-query-spec.ts`) | Partial |
-| Computed columns | Bases formulas | Fixed aggregates (count, sum, average, minimum, maximum); no computed columns | Gap |
+| Computed columns | Bases formulas | Fixed aggregates (count, sum, average, minimum, maximum); no computed columns (#6757) | Gap |
 | Scripting | Community plugins such as Dataview and Templater (**unverified**) | None | Gap |
 | Granularity | Bases: files. Dataview: files, list items, tasks | Blocks, with page and tag context | Better vs core |
 | Graph predicates | Search `file:` / link operators; Dataview's link fields (**unverified**) | `LinksTo`, `LinkedFrom`, `HasParentMatching`, `Orphan`, `Stub`, `HasNoInboundLinks`; one hop, no joins | Partial |

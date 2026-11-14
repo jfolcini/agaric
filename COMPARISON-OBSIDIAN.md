@@ -99,16 +99,16 @@ An export from Agaric is Markdown that Obsidian reads: wikilinks, `^id` block li
 ### What you will miss, or trip over, at first
 
 - **The vault is no longer a folder.** Git, iCloud, Syncthing, a second editor and every script that walks your files stop applying. The desktop mirror writes files back out, but cannot take over the vault you already have (#6540).
-- **Every paragraph is a block.** A page is an outline, with a handle per paragraph, until you turn on page mode (off by default). There is no reading view, and long pages past the page-mode cap stay in blocks.
+- **Every paragraph is a block.** A page is an outline, with a handle per paragraph, until you turn on page mode (off by default, #6536). There is no reading view, and long pages past the page-mode cap stay in blocks (#6224).
 - **Your plugins do not come with you.** Dataview and Templater blocks arrive as code, and there is no Canvas, Excalidraw, or community theme. Tasks-plugin dates, priorities and recurrence are the exception: Agaric reads them as its own.
 - **No folders.** A note in `Projects/Plan.md` becomes the page `Projects/Plan`; spaces, not folders, separate work from personal.
-- **List properties flatten.** `authors: [a, b]` becomes one text value (#6741), and there is no date-and-time type.
+- **List properties flatten.** `authors: [a, b]` becomes one text value (#6741), and there is no date-and-time type (#6758).
 - **One page at a time.** Tabs, but no split, no pop-out window, no saved workspace (#6550).
-- **Editor habits.** No Vim keys, no multiple cursors, one highlight colour, and `%%comments%%` show as text (#6751).
-- **Nested tags are names.** Searching `projects/` finds `projects/web`; searching the parent tag does not. A tag name holds no spaces.
-- **Sync means the same Wi-Fi, with the phone's app open**, on Android only, installed from a file. No iPhone or iPad.
+- **Editor habits.** No Vim keys, no multiple cursors, one highlight colour (#6759), and `%%comments%%` show as text (#6751).
+- **Nested tags are names.** Searching `projects/` finds `projects/web`; searching the parent tag does not (#6760). A tag name holds no spaces.
+- **Sync means the same Wi-Fi, with the phone's app open** (#6519, #6740), on Android only, installed from a file (#79). No iPhone or iPad (#6739).
 - **Capture is thinner.** No web clipper (#6753) and, for now, nothing in Android's share sheet (#6555).
-- **English**, mostly.
+- **English**, mostly (#6750).
 
 ## Sources
 
