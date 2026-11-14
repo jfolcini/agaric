@@ -229,9 +229,9 @@ async fn run(
         match op {
             RepairOp::Plain(record) => tx.enqueue_background(record),
             RepairOp::Move(record) => tx.enqueue_move_background(record, false),
-            RepairOp::Delete {
-                record, block_type, ..
-            } => tx.enqueue_lifecycle_background(record, block_type),
+            RepairOp::Delete { record, block_type } => {
+                tx.enqueue_lifecycle_background(record, block_type);
+            }
         }
     }
     tx.commit_and_dispatch(materializer).await?;

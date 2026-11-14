@@ -376,7 +376,7 @@ export function buildPropertyParams(
 
 /**
  * Save a property value: validates type, calls setProperty, then
- * refreshes the property list via `onRefresh`.
+ * refreshes the property list via `onRefresh` when the caller has one.
  *
  * Returns `false` when validation fails (e.g. invalid number) so the
  * caller can show an appropriate error toast. `onWritten` hears the ops the
@@ -387,7 +387,7 @@ export async function handleSaveProperty(
   key: string,
   value: string,
   valueType: string,
-  onRefresh: (props: PropertyRow[]) => void,
+  onRefresh: ((props: PropertyRow[]) => void) | undefined,
   onWritten?: (refs: OpRef[]) => void,
 ): Promise<boolean> {
   const result = buildPropertyParams(blockId, key, value, valueType)
@@ -402,8 +402,7 @@ export async function handleSaveProperty(
     }),
   )
   onWritten?.(written.op_refs)
-  const updated = unwrap(await commands.getProperties(blockId))
-  onRefresh(updated)
+  if (onRefresh) onRefresh(unwrap(await commands.getProperties(blockId)))
   return true
 }
 
