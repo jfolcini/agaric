@@ -185,3 +185,20 @@ describe('the image node keeps a title (#6530)', () => {
     expect(serialize(editor.getJSON() as DocNode)).toBe('see ![i](p.png "pic")')
   })
 })
+
+// An HTML paste reads `<img>` through the node's parse rule, not the input rule (#6714).
+describe('an <img> read from HTML is gated like a typed one (#6714)', () => {
+  it('makes no image node for a javascript: src, and keeps the text around it', () => {
+    const editor = freshEditor()
+    editor.commands.setContent('<p>before <img src="javascript:alert(1)" alt="evil"> after</p>')
+    expect(hasImageNode(editor)).toBe(false)
+    expect(editor.state.doc.textContent).toBe('before after')
+  })
+
+  it('makes the image node for an https src, with its alt', () => {
+    const editor = freshEditor()
+    editor.commands.setContent('<p><img src="https://x.com/c.png" alt="cat"></p>')
+    expect(firstImageSrc(editor)).toBe('https://x.com/c.png')
+    expect(serialize(editor.getJSON() as DocNode)).toBe('![cat](https://x.com/c.png)')
+  })
+})

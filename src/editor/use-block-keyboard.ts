@@ -14,6 +14,7 @@ import { useCallback, useEffect } from 'react'
 
 import { focusViewToolbar } from '@/editor/editor-portal'
 import { getSelectionProbe } from '@/editor/pm-selection-probe'
+import { readDomSelection } from '@/editor/read-dom-selection'
 import { linkAtCaret, markerBesideCaret } from '@/editor/revealed-markers'
 import { isTabIndentEnabled } from '@/lib/editor-preferences'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
@@ -681,6 +682,9 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       // browser + ProseMirror until the composition commits. `keyCode === 229`
       // is the legacy signal for engines that don't set `isComposing`.
       if (event.isComposing || event.keyCode === 229) return
+
+      // Before the rules below read the caret.
+      readDomSelection(editor.view)
 
       // When a suggestion popup is visible, let Enter, Escape, and
       // Backspace pass through to ProseMirror so the Suggestion plugin can

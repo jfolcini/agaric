@@ -47,6 +47,7 @@ pub mod blocks;
 pub mod bug_report;
 pub mod compaction;
 pub mod daily_snapshot;
+pub mod downloads;
 pub mod drafts;
 pub mod history;
 pub mod journal;
@@ -579,6 +580,10 @@ pub struct BatchDeleteResponse {
     /// pre-#4480 "evict everything I asked for" behaviour must union this with
     /// its own input list; `handleTrash` does exactly that.
     pub affected_page_ids: Vec<String>,
+    /// The `deleted_at` every root and descendant was stamped with, which
+    /// `restore_block` takes to bring back one root's cohort; `None` when no
+    /// id was live to delete.
+    pub deleted_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]

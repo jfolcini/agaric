@@ -89,6 +89,8 @@ function stubMultiSelectInvoke(overrides: TypedInvokeHandlers = {}): void {
     delete_blocks_by_ids: (args) => ({
       deleted_count: batchIds(args).length,
       affected_page_ids: [],
+      deleted_at: 1,
+      op_refs: [],
     }),
     ...overrides,
   })
@@ -588,7 +590,12 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
       ],
     })
     stubMultiSelectInvoke({
-      delete_blocks_by_ids: () => ({ deleted_count: 2, affected_page_ids: ['NESTED_PAGE'] }),
+      delete_blocks_by_ids: () => ({
+        deleted_count: 2,
+        affected_page_ids: ['NESTED_PAGE'],
+        deleted_at: 1,
+        op_refs: [],
+      }),
     })
     const { result } = renderHook(
       () => useBlockMultiSelect(makeDefaultParams({ selectedBlockIds: ['BLOCK_1'] })),
@@ -754,7 +761,7 @@ describe('useBlockMultiSelect reentrancy guard (#)', () => {
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      first.resolve({ deleted_count: 1, affected_page_ids: [] })
+      first.resolve({ deleted_count: 1, affected_page_ids: [], deleted_at: 1, op_refs: [] })
       await firstDone
     })
   })
@@ -864,6 +871,8 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
       delete_blocks_by_ids: (args) => ({
         deleted_count: batchIds(args).length,
         affected_page_ids: cohort,
+        deleted_at: 1,
+        op_refs: [],
       }),
     })
   }
@@ -1088,7 +1097,7 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
       })
 
       await act(async () => {
-        inFlight.resolve({ deleted_count: 1, affected_page_ids: [] })
+        inFlight.resolve({ deleted_count: 1, affected_page_ids: [], deleted_at: 1, op_refs: [] })
         await done
       })
 
@@ -1217,6 +1226,8 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
       delete_blocks_by_ids: () => ({
         deleted_count: 2,
         affected_page_ids: ['P_ROOT', 'P_NESTED'],
+        deleted_at: 1,
+        op_refs: [],
       }),
     })
 
@@ -1266,6 +1277,8 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
       delete_blocks_by_ids: () => ({
         deleted_count: 2,
         affected_page_ids: ['P_ROOT', 'P_MOVED'],
+        deleted_at: 1,
+        op_refs: [],
       }),
     })
 
@@ -1328,7 +1341,12 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
         pageRow('P_ROOT', 'Root Page'),
         pageRow('P_STAYS', 'Stays Page'),
       ],
-      delete_blocks_by_ids: () => ({ deleted_count: 1, affected_page_ids: ['P_ROOT'] }),
+      delete_blocks_by_ids: () => ({
+        deleted_count: 1,
+        affected_page_ids: ['P_ROOT'],
+        deleted_at: 1,
+        op_refs: [],
+      }),
       // `refreshAfterUndoRedo`'s best-effort title refresh. A CONTENTLESS row
       // keeps the bus stream to the invalidation alone: with no content there
       // is no `renamePage` fan-out, so a passing assertion cannot be crediting
@@ -1388,7 +1406,12 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
         pageRow('P_ROOT', 'Root Page'),
         pageRow('P_STAYS', 'Stays Page'),
       ],
-      delete_blocks_by_ids: () => ({ deleted_count: 1, affected_page_ids: ['P_ROOT'] }),
+      delete_blocks_by_ids: () => ({
+        deleted_count: 1,
+        affected_page_ids: ['P_ROOT'],
+        deleted_at: 1,
+        op_refs: [],
+      }),
       get_block: (args) => makeBlockRow({ id: args['blockId'] as string, block_type: 'page' }),
       // The backend still knows the page: the undo restored the row, which is
       // exactly why this path cannot see the cache bug.

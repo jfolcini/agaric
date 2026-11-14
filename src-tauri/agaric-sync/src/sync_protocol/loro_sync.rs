@@ -118,6 +118,10 @@ pub enum ApplyOutcome {
         /// cross-doc ordering) — the frontend falls back to a full reload
         /// when the set is empty.
         changed_page_ids: Vec<String>,
+        /// #6561: the Trash pages this import created for blocks its purge
+        /// would have taken; the caller reports them with
+        /// [`local_text_kept_report`].
+        kept: Vec<agaric_engine::loro::engine::KeptLocalText>,
     },
     /// The message was a [`LoroSyncMessage::Update`] whose `from_vv`
     /// is not reachable from our current `oplog_vv()` — applying the
@@ -667,7 +671,7 @@ pub async fn apply_remote(
     // below is conditional on the op-log actually having reached it.
     let require_covered = [(inbox_id, screen.declared_end_vv)];
 
-    let changed_blocks = import_and_project(
+    let (changed_blocks, kept) = import_and_project(
         pool,
         registry,
         device_id,
@@ -710,6 +714,64 @@ pub async fn apply_remote(
         space_id,
         changed_blocks,
         changed_page_ids,
+        kept,
+    })
+}
+
+/// An import that changed, purged and retyped nothing (#2264).
+fn is_noop_diff(
+    changed: &[agaric_core::ulid::BlockId],
+    purged: &[agaric_core::ulid::BlockId],
+    def_keys: &[String],
+    tag_scope: &agaric_engine::loro::engine::TagScope,
+) -> bool {
+    changed.is_empty()
+        && purged.is_empty()
+        && def_keys.is_empty()
+        && matches!(tag_scope, agaric_engine::loro::engine::TagScope::Subtrees(roots) if roots.is_empty())
+}
+
+/// #6561: the ops that keep a block are in no op log, so the space is saved
+/// before a concurrent session can export them, as for a mirrored tombstone
+/// ([`mirror_sql_tombstones_onto_engine`]). The inbox row outlives a failure.
+async fn save_kept_blocks(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    kept: &[agaric_engine::loro::engine::KeptLocalText],
+) -> Result<(), AppError> {
+    if !kept.is_empty()
+        && agaric_engine::loro::snapshot::save_all_engines(pool, registry)
+            .await
+            .persisted_through
+            .is_none()
+    {
+        return Err(AppError::Snapshot(
+            "the blocks kept from a purge were not saved".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// #6561: a kept block's `page_id` named the purged page until now, and the
+/// sweep deletes that page before any cache rebuild restamps the block.
+async fn restamp_kept_pages(
+    tx: &mut sqlx::SqliteConnection,
+    kept: &[agaric_engine::loro::engine::KeptLocalText],
+) -> Result<(), AppError> {
+    for page in kept {
+        agaric_store::block_descendants::rederive_page_and_space_ids(tx, page.page_id.as_str())
+            .await?;
+    }
+    Ok(())
+}
+
+/// #6561: the notice for the Trash pages an import created, `None` when it
+/// kept nothing.
+pub fn local_text_kept_report(
+    kept: &[agaric_engine::loro::engine::KeptLocalText],
+) -> Option<crate::sync_events::SyncEvent> {
+    (!kept.is_empty()).then(|| crate::sync_events::SyncEvent::LocalTextKept {
+        page_titles: kept.iter().map(|page| page.title.clone()).collect(),
     })
 }
 
@@ -2377,7 +2439,13 @@ pub(crate) async fn import_and_project(
     // nothing or whose metadata would not decode.
     require_covered: &[(i64, Vec<(PeerID, Counter)>)],
     delivery: InboundDeliveryKind,
-) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+) -> Result<
+    (
+        Vec<agaric_core::ulid::BlockId>,
+        Vec<agaric_engine::loro::engine::KeptLocalText>,
+    ),
+    AppError,
+> {
     // Phase 1 — import bytes into the engine, capture changed AND purged
     // blocks. #2128: a remote `PurgeBlock` removes the seed + its whole
     // subtree from the engine index and so never appears in `changed_blocks`
@@ -2403,7 +2471,10 @@ pub(crate) async fn import_and_project(
         // enforced against `oplog_vv()` below, which is the stronger statement
         // (a pending change is exactly one the op-log did not advance over).
         pending: pending_changes,
+        kept,
     } = import_payload_into_engine(registry, device_id, space_id, payload)?;
+
+    save_kept_blocks(pool, registry, &kept).await?;
 
     let clearable_ids = clearable_slot_ids(
         registry,
@@ -2425,10 +2496,7 @@ pub(crate) async fn import_and_project(
     // slot (#535) with a single autocommit DELETE (no `BEGIN IMMEDIATE`
     // writer lock); the DELETE is a no-op if the row is already gone,
     // preserving the double-replay safety of the tx-coupled path below.
-    let noop_diff = changed_blocks.is_empty()
-        && purged_blocks.is_empty()
-        && def_keys.is_empty()
-        && matches!(&tag_scope, agaric_engine::loro::engine::TagScope::Subtrees(roots) if roots.is_empty());
+    let noop_diff = is_noop_diff(&changed_blocks, &purged_blocks, &def_keys, &tag_scope);
     // `changed_blocks` is `mut` for the #4083 ancestor backfill below, which may
     // prepend engine ancestors SQL has no row for.
     let (mut changed_blocks, rank_only_blocks, tag_scope, def_keys) = if noop_diff {
@@ -2447,7 +2515,7 @@ pub(crate) async fn import_and_project(
                     .execute(pool)
                     .await?;
             }
-            return Ok(changed_blocks);
+            return Ok((changed_blocks, kept));
         }
         healing_fallback_delta(registry, device_id, space_id)?
     } else {
@@ -2504,6 +2572,8 @@ pub(crate) async fn import_and_project(
 
     let swept_tombstones = project_pass_c(&mut tx, &changed_blocks, &block_states).await?;
 
+    restamp_kept_pages(&mut tx, &kept).await?;
+
     project_pass_d(&mut tx, registry, &purged_blocks, tombstone_purged).await?;
 
     let (healed, tagged) = project_pass_dropped(&mut tx, registry, new_rows).await?;
@@ -2516,7 +2586,7 @@ pub(crate) async fn import_and_project(
 
     refresh_tag_inheritance(pool, tag_scope, &tagged).await;
 
-    Ok(with_reprojected(changed_blocks, retyped, healed))
+    Ok((with_reprojected(changed_blocks, retyped, healed), kept))
 }
 
 /// Boot-recovery entry point: re-run `import_and_project` for a single
@@ -2685,6 +2755,7 @@ pub async fn replay_inbox_row(
         InboundDeliveryKind::RecoveryReplay,
     )
     .await
+    .map(|(changed, _kept)| changed)
 }
 
 /// One leftover write-ahead inbox slot, as handed to [`replay_inbox_batch`].
@@ -3038,7 +3109,7 @@ pub async fn replay_inbox_batch(
     )
     .await
     {
-        Ok(changed) => {
+        Ok((changed, _kept)) => {
             // The tx committed ⇒ every projection landed AND every slot whose
             // blob the op-log demonstrably reached is gone. Both halves of #535,
             // together.

@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -19,6 +20,7 @@ const mockSetProperty = vi.fn().mockResolvedValue({})
 // the sanctioned raw-invoke seam). `vi.hoisted` so the `vi.mock` factory
 // below (itself hoisted to the top of the file) can reference it.
 const mockedReadAttachment = vi.hoisted(() => vi.fn())
+const mockSaveToDownloads = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/lib/ipc-helpers')>()
@@ -34,6 +36,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     ...actual,
     commands: {
       ...actual.commands,
+      saveToDownloads: mockSaveToDownloads,
       setProperty: (...args: unknown[]) =>
         mockSetProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
@@ -43,6 +46,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 import { AttachmentRenderer } from '@/components/attachments/AttachmentRenderer'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
 
 const mockedSetProperty = mockSetProperty
 
@@ -429,6 +433,67 @@ describe('AttachmentRenderer', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // #6652: macOS saves through the backend, and a save it refuses is not silent.
+  describe('on macOS, a save the backend refuses', () => {
+    let platform: { mockRestore: () => void }
+    beforeEach(() => {
+      platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel')
+      __resetPlatformCacheForTests()
+      mockSaveToDownloads.mockResolvedValue({
+        status: 'error',
+        error: { kind: 'Io', message: 'disk full' },
+      })
+    })
+    afterEach(() => {
+      platform.mockRestore()
+      __resetPlatformCacheForTests()
+      mockSaveToDownloads.mockReset()
+    })
+
+    it('is toasted from the file chip', async () => {
+      mockedReadAttachment.mockResolvedValue(new Uint8Array([1, 2, 3]))
+      render(
+        <AttachmentRenderer
+          {...baseProps}
+          attachments={[
+            makeAttachment({
+              id: 'att-zip',
+              filename: 'bundle.zip',
+              mime_type: 'application/zip',
+            }),
+          ]}
+        />,
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Open file bundle.zip' }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('attachments.loadFailed'))
+      })
+      expect(mockSaveToDownloads).toHaveBeenCalledWith('bundle.zip', 'AQID')
+    })
+
+    it('is toasted from the Markdown preview’s download button', async () => {
+      mockedReadAttachment.mockResolvedValue(new TextEncoder().encode('# T\n'))
+      render(
+        <AttachmentRenderer
+          {...baseProps}
+          attachments={[
+            makeAttachment({ id: 'att-md', filename: 'notes.md', mime_type: 'text/markdown' }),
+          ]}
+        />,
+      )
+      await screen.findByTestId('markdown-attachment-body')
+
+      fireEvent.click(screen.getByRole('button', { name: /Download notes\.md/ }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('attachments.loadFailed'))
+      })
+      expect(mockSaveToDownloads).toHaveBeenCalledWith('notes.md', btoa('# T\n'))
+    })
   })
 
   // ---- #1451: inline rich-text preview for .md / text attachments ----

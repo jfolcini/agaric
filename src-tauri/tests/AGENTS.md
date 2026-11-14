@@ -9,6 +9,7 @@
 | Unit | `#[cfg(test)] mod tests` in the module, or a sibling `tests.rs` | Single-module logic |
 | Integration | `src-tauri/src/integration_tests.rs`, `src-tauri/tests/command_integration/` | Cross-module pipelines; every `*_inner` command's API contract (happy path, error variants, edge cases, op-log verification) |
 | Conformance | `src-tauri/tests/command_integration/conformance.rs`, `conformance_query.rs` | Backend-authored fixtures asserted by both the Rust backend and the TS mock |
+| Headless bridge | `src-tauri/tests/command_integration/headless_bridge.rs` | `headless::bridge` (#6529): the vault swap behind a reset, pushed events, its WebSocket, and a reset's 300 ms budget. Plain `#[test]`s: a boot blocks on the app's runtime |
 | Sync | `src-tauri/agaric-sync/src/` (inline `mod tests`), `src-tauri/agaric-sync/src/sync_daemon/tests.rs`, `src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer_tests.rs` | mDNS wire format, transport, discovery lifecycle, peer flows, snapshot transfer. A pairing or handshake test runs both dial directions: which side dials first is an mDNS race. A pull spanning several spaces runs both import orders through `apply_remote`: the responder sends spaces in `HashMap` order |
 | Bench | `src-tauri/benches/*.rs` (`harness = false`) | Criterion microbenchmarks; weekly CI lane only, see `src-tauri/benches/AGENTS.md` |
 

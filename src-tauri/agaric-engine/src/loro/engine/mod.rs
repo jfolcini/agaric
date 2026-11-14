@@ -613,6 +613,10 @@ pub use attachments::{AttachmentFields, EngineAttachment};
 /// `count_alive_blocks`).
 mod reads;
 
+/// What a remote purge must not take (#6561).
+mod keep;
+pub use keep::KeptLocalText;
+
 /// Snapshot import/export I/O and the legacy-v1 rejection (#332).
 mod snapshot;
 /// #2036: how the caller should refresh the inherited-tag cache after an import.
@@ -625,6 +629,8 @@ mod sync;
 /// #3164: batched boot-replay blob gate verdict — `pub` for the same
 /// cross-crate reason as `TagScope` (the sync crate drives the batch).
 pub use sync::{InboundBlobScreen, ReplayBlobGate};
+#[cfg(any(test, feature = "test-util"))]
+pub use tree::sibling_read_spy;
 
 /// #2604 — rollback-safe engine-apply staging primitives (`fork_staging`).
 mod staging;

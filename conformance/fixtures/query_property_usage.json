@@ -63,7 +63,7 @@
         "id": "B5",
         "page_id": "B5",
         "parent_id": null,
-        "position": 1,
+        "position": 2,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -89,7 +89,7 @@
         "id": "B7",
         "page_id": "B7",
         "parent_id": null,
-        "position": 2,
+        "position": 1,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null

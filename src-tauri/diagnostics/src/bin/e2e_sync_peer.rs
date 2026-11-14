@@ -17,8 +17,9 @@
 //! `move_blocks_to_space_inner`, `add_attachment_with_bytes_inner`,
 //! `get_active_block_inner`, `get_property_inner`, `list_attachments_inner`,
 //! `read_attachment_inner` and `list_peer_refs_inner`, and
-//! `start_pairing_armed_inner` for the pairing this vault hosts. `sync` wakes
-//! the daemon as `start_sync` does; it never runs a session itself.
+//! `start_pairing_armed_inner` for the pairing this vault hosts. `sync` and
+//! `sync_refused` wake the daemon as a press on Sync does (`pull_now`); they
+//! never run a session themselves.
 //!
 //! A session is a pull by the device that dials (#610), so each direction has
 //! its own wait: `sync` for this vault's pull from the app (`synced_at`), and
@@ -274,6 +275,15 @@ struct Attachment {
     size_bytes: i64,
 }
 
+/// Ask the daemon for a pull from `app_id` now, past a backoff, as a press on
+/// Sync does (`start_sync_inner`). A dial that crosses the app's own is refused
+/// as busy and books one; a wake inside it is skipped, and with
+/// `NO_PERIODIC_PULL` nothing dials again.
+fn pull_now(scheduler: &SyncScheduler, app_id: &str) {
+    scheduler.clear_peer_backoff(app_id);
+    scheduler.notify_change();
+}
+
 fn parse_command(line: &str) -> Result<Command, String> {
     serde_json::from_str(line).map_err(|e| format!("unreadable command {line:?}: {e}"))
 }
@@ -498,7 +508,7 @@ impl Peer {
         let before = peer_refs::get_peer_ref(&self.pools.read, app_id)
             .await?
             .and_then(|row| row.synced_at);
-        self.scheduler.notify_change();
+        pull_now(&self.scheduler, app_id);
         self.wait_for_app(
             app_id,
             "this vault's pull from the app",
@@ -511,9 +521,9 @@ impl Peer {
     }
 
     async fn sync_refused(&self) -> Result<Reply, AppError> {
-        self.paired_app()?;
+        let app_id = self.paired_app()?;
         let seen = self.errors.messages().len();
-        self.scheduler.notify_change();
+        pull_now(&self.scheduler, app_id);
         let deadline = tokio::time::Instant::now() + WAIT;
         loop {
             if let Some(message) = self.errors.messages().get(seen) {
@@ -616,6 +626,7 @@ impl Peer {
                     parent_id: Some(page_row.id.clone()),
                     position: None,
                     parent_index: None,
+                    block_id: None,
                     typed_properties: std::collections::HashMap::new(),
                     properties: std::collections::HashMap::new(),
                 })
@@ -1050,6 +1061,29 @@ mod tests {
                 content: "new text".into(),
             }),
             "sync-peer.ts sends an edit as the block id and the block's whole new text"
+        );
+    }
+
+    #[test]
+    fn a_pull_asked_for_is_not_held_back_by_a_backoff() {
+        let scheduler = SyncScheduler::with_intervals(DEBOUNCE, NO_PERIODIC_PULL);
+        scheduler.record_failure("APP");
+        assert!(
+            !scheduler.may_retry("APP"),
+            "a failed dial holds the next one back"
+        );
+        let asked = scheduler.change_count();
+
+        pull_now(&scheduler, "APP");
+
+        assert!(
+            scheduler.may_retry("APP"),
+            "the round the pull wakes may dial the app"
+        );
+        assert_eq!(
+            scheduler.change_count(),
+            asked + 1,
+            "the daemon is woken for one round"
         );
     }
 

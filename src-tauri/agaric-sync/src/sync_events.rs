@@ -165,6 +165,10 @@ pub enum SyncEvent {
         /// The UDP port the listener is bound to.
         port: u16,
     },
+    /// The daemon is about to bind a sync endpoint, so what it reported about the
+    /// previous one ([`Self::MdnsDisabled`], [`Self::InternetFacingBind`]) no longer
+    /// holds. Those that still apply are emitted again once the new endpoint is up.
+    EndpointBinding,
     /// #3852: the operating system says it is blocking (or has stopped
     /// blocking) **this application's** network traffic.
     ///
@@ -207,6 +211,10 @@ pub enum SyncEvent {
     /// SQL disagree about a deleted block (#6523). Each report replaces the
     /// last one, so an empty list says every space exports again.
     ExportRefused { space_ids: Vec<String> },
+    /// A purge that arrived by sync would have taken blocks written on this
+    /// device that the purging device had never received (#6561). They are in
+    /// the Trash instead, under one page per title here.
+    LocalTextKept { page_titles: Vec<String> },
 }
 
 /// A [`SyncEvent::Error`] the frontend explains in its own words (#5728).
@@ -249,11 +257,15 @@ pub const EVENT_SYNC_MDNS_DISABLED: &str = "sync:mdns_disabled";
 /// Emitted when the sync endpoint bound a globally-routable address (#3864).
 /// Payload is [`SyncEvent::InternetFacingBind`].
 pub const EVENT_SYNC_INTERNET_FACING_BIND: &str = "sync:internet_facing_bind";
+/// Payload is [`SyncEvent::EndpointBinding`].
+pub const EVENT_SYNC_ENDPOINT_BINDING: &str = "sync:endpoint_binding";
 /// Emitted when the OS starts or stops blocking this app's network traffic (#3852).
 /// Payload is [`SyncEvent::NetworkBlockedByOs`].
 pub const EVENT_SYNC_NETWORK_BLOCKED: &str = "sync:network_blocked";
 /// Payload is [`SyncEvent::ExportRefused`].
 pub const EVENT_SYNC_EXPORT_REFUSED: &str = "sync:export_refused";
+/// Payload is [`SyncEvent::LocalTextKept`]. In `bindings.ts`, like the payload.
+pub const EVENT_SYNC_LOCAL_TEXT_KEPT: &str = "sync:local_text_kept";
 
 // ---------------------------------------------------------------------------
 // mDNS status (#2506) — backfill for the peers/device-management surface
@@ -270,7 +282,7 @@ pub const EVENT_SYNC_EXPORT_REFUSED: &str = "sync:export_refused";
 /// initialize it yet (e.g. still dormant, waiting for the first pairing).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct MdnsStatus {
-    /// `true` once mDNS initialization has failed at least once.
+    /// `true` when mDNS failed to attach to the current endpoint.
     pub disabled: bool,
     /// The failure reason from the most recent init attempt (the same
     /// string carried by [`SyncEvent::MdnsDisabled`]). `None` while
@@ -281,7 +293,8 @@ pub struct MdnsStatus {
 /// #2506: managed-state holder for the current [`MdnsStatus`].
 ///
 /// Written by `TauriEventSink::on_sync_event` whenever a
-/// `SyncEvent::MdnsDisabled` is emitted, and read by the `get_mdns_status`
+/// `SyncEvent::MdnsDisabled` is emitted, reset on `SyncEvent::EndpointBinding`,
+/// and read by the `get_mdns_status`
 /// command. Wrapped in a `Mutex` only to satisfy `Send + Sync` for Tauri
 /// managed state — mirrors `recovery::RecoveryStatusState`.
 pub struct MdnsStatusState(pub std::sync::Mutex<MdnsStatus>);
@@ -322,14 +335,15 @@ pub struct InternetFacingBind {
 /// nothing to warn about.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct BindExposureStatus {
-    /// `Some` once the daemon has bound a globally-routable address.
+    /// `Some` while the current endpoint is bound to a globally-routable address.
     pub internet_facing: Option<InternetFacingBind>,
 }
 
 /// #3864: managed-state holder for the current [`BindExposureStatus`].
 ///
 /// Written by `TauriEventSink::on_sync_event` whenever a
-/// `SyncEvent::InternetFacingBind` is emitted, and read by the
+/// `SyncEvent::InternetFacingBind` is emitted, reset on
+/// `SyncEvent::EndpointBinding`, and read by the
 /// `get_bind_exposure_status` command. `Mutex` only for `Send + Sync` —
 /// mirrors [`MdnsStatusState`].
 pub struct BindExposureStatusState(pub std::sync::Mutex<BindExposureStatus>);
@@ -872,6 +886,8 @@ mod tests {
         assert_eq!(EVENT_SYNC_COMPLETE, "sync:complete");
         assert_eq!(EVENT_SYNC_ERROR, "sync:error");
         assert_eq!(EVENT_SYNC_MDNS_DISABLED, "sync:mdns_disabled");
+        // Mirrored by `SYNC_ENDPOINT_BINDING_EVENT` in `src/hooks/useMdnsStatus.ts`.
+        assert_eq!(EVENT_SYNC_ENDPOINT_BINDING, "sync:endpoint_binding");
         assert_eq!(EVENT_PROPERTY_CHANGED, "block:properties-changed");
         // #3852 — mirrored by `SYNC_NETWORK_BLOCKED_EVENT` in
         // `src/hooks/useOsNetworkBlock.ts`. The two sides share no type; the

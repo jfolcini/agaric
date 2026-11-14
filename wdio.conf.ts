@@ -1017,6 +1017,14 @@ async function assertVaultReconciled(this: Mocha.Context): Promise<void> {
   }
 }
 
+/**
+ * Specs whose app starts every background materializer batch a second late
+ * (`hold_back_for_e2e`, debug builds): each asserts that a view shows a write
+ * without being asked again, which a view that read before the rebuild and
+ * never after fails (#6567).
+ */
+const SPECS_WITH_A_SLOW_MATERIALIZER = new Set(['agenda-count-after-write.e2e.ts'])
+
 export const config: WebdriverIO.Config = {
   runner: 'local',
 
@@ -1125,7 +1133,7 @@ export const config: WebdriverIO.Config = {
     }
   },
 
-  beforeSession: () => {
+  beforeSession: (_config, _capabilities, specs) => {
     // #3334 — the app inherits its environment from `tauri-driver` (which
     // hands the binary to WebKitWebDriver, which spawns it), so this spawn is
     // the ONE place the sandbox can be injected. Passed explicitly as `env`
@@ -1138,6 +1146,9 @@ export const config: WebdriverIO.Config = {
     // leaks a tauri-driver holding port 4444 and a stale vault directory.
     installShutdownGuard()
     const sandboxEnv = createSandboxEnv()
+    if (specs.some((spec) => SPECS_WITH_A_SLOW_MATERIALIZER.has(path.basename(spec)))) {
+      sandboxEnv['AGARIC_E2E_BACKGROUND_DELAY_MS'] = '1000'
+    }
     tauriDriver = spawn(tauriDriverPath, [], {
       stdio: [null, process.stdout, process.stderr],
       env: sandboxEnv,

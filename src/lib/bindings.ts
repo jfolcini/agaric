@@ -71,9 +71,10 @@ export const commands = {
 	 *  one writer-lock window. Returns a [`BatchDeleteResponse`]: the number of
 	 *  blocks soft-deleted (roots + descendants combined) plus the page ids inside
 	 *  that cascade (#4480 — the frontend cannot see the cascade, so it cannot
-	 *  evict the nested pages the cascade swept out of the `[[` picker's cache).
+	 *  evict the nested pages the cascade swept out of the `[[` picker's cache),
+	 *  and the op refs, one per root in the order given, for the undo stack.
 	 */
-	deleteBlocksByIds: (blockIds: BlockId[]) => typedError<BatchDeleteResponse, AppError>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
+	deleteBlocksByIds: (blockIds: BlockId[]) => typedError<WithOps<BatchDeleteResponse>, AppError>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
 	/**
 	 *  Tauri command: move N blocks to a target space (#81).
 	 *  Delegates to [`move_blocks_to_space_inner`]. Returns the number of
@@ -1014,6 +1015,11 @@ export const commands = {
 	 */
 	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppError>(__TAURI_INVOKE("read_logs_for_report", { redact })),
 	/**
+	 *  Tauri command: save `bytes` as `file_name` in the user's Downloads folder.
+	 *  Delegates to [`save_to_downloads_inner`].
+	 */
+	saveToDownloads: (fileName: string, bytes: Base64Bytes) => typedError<null, AppError>(__TAURI_INVOKE("save_to_downloads", { fileName, bytes })),
+	/**
 	 *  Tauri command: let the materializer settle, rebuild every derived artefact
 	 *  from base tables, compare `blocks` with the Loro engine, and report where
 	 *  the live vault disagrees. Reads through the reader pool and engine exports;
@@ -1203,6 +1209,8 @@ export const EVENT_BLOCKS_CHANGED = "blocks:changed" as const;
 export const EVENT_SYNC_COMPLETE = "sync:complete" as const;
 
 export const EVENT_SYNC_ERROR = "sync:error" as const;
+
+export const EVENT_SYNC_LOCAL_TEXT_KEPT = "sync:local_text_kept" as const;
 
 /* Types */
 /**
@@ -1871,6 +1879,12 @@ export type BatchDeleteResponse = {
 	 *  its own input list; `handleTrash` does exactly that.
 	 */
 	affected_page_ids: string[],
+	/**
+	 *  The `deleted_at` every root and descendant was stamped with, which
+	 *  `restore_block` takes to bring back one root's cohort; `None` when no
+	 *  id was live to delete.
+	 */
+	deleted_at: number | null,
 };
 
 /**
@@ -1890,7 +1904,7 @@ export type BatchDeleteResponse = {
  *  nothing to warn about.
  */
 export type BindExposureStatus = {
-	/**  `Some` once the daemon has bound a globally-routable address. */
+	/**  `Some` while the current endpoint is bound to a globally-routable address. */
 	internet_facing: InternetFacingBind | null,
 };
 
@@ -2114,6 +2128,12 @@ export type CreateBlockSpec = {
 	 *  batch runs. Exclusive with `parent_id`.
 	 */
 	parentIndex?: number | null,
+	/**
+	 *  A client-generated id for the block, refused as [`create_block`]'s is
+	 *  when malformed or already held: page mode creates blocks under the ids
+	 *  its document gave them. `None` mints a server id.
+	 */
+	blockId?: BlockId | null,
 	/**
 	 *  Optional 1-based sibling position (stable wire field). `None` appends
 	 *  after the last sibling. #400: converted to the engine's 0-based sibling
@@ -3080,7 +3100,7 @@ export type McpStatus = {
  *  initialize it yet (e.g. still dormant, waiting for the first pairing).
  */
 export type MdnsStatus = {
-	/**  `true` once mDNS initialization has failed at least once. */
+	/**  `true` when mDNS failed to attach to the current endpoint. */
 	disabled: boolean,
 	/**
 	 *  The failure reason from the most recent init attempt (the same
@@ -5163,7 +5183,7 @@ export type SyncEvent = SyncEvent_Serialize | SyncEvent_Deserialize;
  *  `Type` puts it in `bindings.ts`, where the frontend's listeners take their
  *  payload types from (#6539): `ts_bindings_up_to_date` fails on a renamed field.
  */
-export type SyncEvent_Deserialize = ({ type: "progress"; state: string; remote_device_id: string; ops_received: number; ops_sent: number }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never } | ({ type: "complete"; remote_device_id: string; ops_received: number; ops_sent: number; 
+export type SyncEvent_Deserialize = ({ type: "progress"; state: string; remote_device_id: string; ops_received: number; ops_sent: number }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never } | ({ type: "complete"; remote_device_id: string; ops_received: number; ops_sent: number; 
 /**
  *  #1071: deduped set of owning *page* ids (page-root block ids)
  *  touched by the ops applied during this sync session. The frontend
@@ -5200,7 +5220,7 @@ changed_page_ids?: string[];
  *    countless message plus a full reload — never to silence, so a
  *    producer that forgets this field is loud, not mute.
  */
-changed_blocks?: number | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; code?: never; files_done?: never; files_total?: never; message?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | ({ type: "error"; message: string; remote_device_id: string; 
+changed_blocks?: number | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; code?: never; files_done?: never; files_total?: never; message?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | ({ type: "error"; message: string; remote_device_id: string; 
 /**
  *  `Some` for an error the frontend words itself, in the user's
  *  language, or reads as something other than a failure (a user cancel,
@@ -5213,7 +5233,7 @@ code: SyncErrorCode | null;
  *  For [`SyncErrorCode::EngineFormatMismatch`]: whether the peer runs the
  *  older engine format, so the frontend names the device to update (#6523).
  */
-peer_is_older: boolean | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; files_done?: never; files_total?: never; ops_received?: never; ops_sent?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | 
+peer_is_older: boolean | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; files_done?: never; files_total?: never; ops_received?: never; ops_sent?: never; page_titles?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | 
 /**
  *  Per-frame attachment-transfer progress emitted
  *  by `sync_files`. The `ChannelEventSink` forwards these to the
@@ -5222,7 +5242,7 @@ peer_is_older: boolean | null }) & { address?: never; blocked?: never; bytes_don
  *  fallback — file-transfer progress was never on the legacy event
  *  bus, so the channel is the single canonical source).
  */
-({ type: "file_progress"; phase: string; remote_device_id: string; files_done: number; files_total: number; bytes_done: number; bytes_total: number }) & { address?: never; blocked?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | 
+({ type: "file_progress"; phase: string; remote_device_id: string; files_done: number; files_total: number; bytes_done: number; bytes_total: number }) & { address?: never; blocked?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | 
 /**
  *  Emitted when mDNS peer discovery cannot be initialized (e.g. the
  *  iOS sandbox blocks raw UDP multicast, or the Android app is missing
@@ -5232,7 +5252,7 @@ peer_is_older: boolean | null }) & { address?: never; blocked?: never; bytes_don
  *  once bound. The frontend should surface this to the user instead of
  *  showing an Empty peer list.
  */
-({ type: "mdns_disabled"; reason: string }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+({ type: "mdns_disabled"; reason: string }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
  *  #3864: emitted each time the sync endpoint binds a
  *  **globally-routable** address, so the QUIC listener may be reachable
@@ -5254,7 +5274,13 @@ peer_is_older: boolean | null }) & { address?: never; blocked?: never; bytes_don
 /**  The bound IPv4 address, e.g. `"192.160.160.80"`. */
 address: string; 
 /**  The UDP port the listener is bound to. */
-port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+/**
+ *  The daemon is about to bind a sync endpoint, so what it reported about the
+ *  previous one ([`Self::MdnsDisabled`], [`Self::InternetFacingBind`]) no longer
+ *  holds. Those that still apply are emitted again once the new endpoint is up.
+ */
+({ type: "endpoint_binding" }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
  *  #3852: the operating system says it is blocking (or has stopped
  *  blocking) **this application's** network traffic.
@@ -5295,13 +5321,19 @@ blocked: boolean;
  *  `Some` exactly when `blocked`: a recovery removes the banner, so it
  *  has no text to name.
  */
-reason_key: string | null }) & { address?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+reason_key: string | null }) & { address?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
  *  The spaces whose outbound export this round refused because engine and
  *  SQL disagree about a deleted block (#6523). Each report replaces the
  *  last one, so an empty list says every space exports again.
  */
-({ type: "export_refused"; space_ids: string[] }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; state?: never };
+({ type: "export_refused"; space_ids: string[] }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; state?: never } | 
+/**
+ *  A purge that arrived by sync would have taken blocks written on this
+ *  device that the purging device had never received (#6561). They are in
+ *  the Trash instead, under one page per title here.
+ */
+({ type: "local_text_kept"; page_titles: string[] }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never };
 
 /**
  *  Payload sent over Tauri events for sync progress/completion/errors.
@@ -5309,7 +5341,7 @@ reason_key: string | null }) & { address?: never; bytes_done?: never; bytes_tota
  *  `Type` puts it in `bindings.ts`, where the frontend's listeners take their
  *  payload types from (#6539): `ts_bindings_up_to_date` fails on a renamed field.
  */
-export type SyncEvent_Serialize = ({ type: "progress"; state: string; remote_device_id: string; ops_received: number; ops_sent: number }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never } | ({ type: "complete"; remote_device_id: string; ops_received: number; ops_sent: number; 
+export type SyncEvent_Serialize = ({ type: "progress"; state: string; remote_device_id: string; ops_received: number; ops_sent: number }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never } | ({ type: "complete"; remote_device_id: string; ops_received: number; ops_sent: number; 
 /**
  *  #1071: deduped set of owning *page* ids (page-root block ids)
  *  touched by the ops applied during this sync session. The frontend
@@ -5346,7 +5378,7 @@ changed_page_ids: string[];
  *    countless message plus a full reload — never to silence, so a
  *    producer that forgets this field is loud, not mute.
  */
-changed_blocks: number | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; code?: never; files_done?: never; files_total?: never; message?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | ({ type: "error"; message: string; remote_device_id: string; 
+changed_blocks: number | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; code?: never; files_done?: never; files_total?: never; message?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | ({ type: "error"; message: string; remote_device_id: string; 
 /**
  *  `Some` for an error the frontend words itself, in the user's
  *  language, or reads as something other than a failure (a user cancel,
@@ -5359,7 +5391,7 @@ code?: SyncErrorCode | null;
  *  For [`SyncErrorCode::EngineFormatMismatch`]: whether the peer runs the
  *  older engine format, so the frontend names the device to update (#6523).
  */
-peer_is_older?: boolean | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; files_done?: never; files_total?: never; ops_received?: never; ops_sent?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | 
+peer_is_older?: boolean | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; files_done?: never; files_total?: never; ops_received?: never; ops_sent?: never; page_titles?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | 
 /**
  *  Per-frame attachment-transfer progress emitted
  *  by `sync_files`. The `ChannelEventSink` forwards these to the
@@ -5368,7 +5400,7 @@ peer_is_older?: boolean | null }) & { address?: never; blocked?: never; bytes_do
  *  fallback — file-transfer progress was never on the legacy event
  *  bus, so the channel is the single canonical source).
  */
-({ type: "file_progress"; phase: string; remote_device_id: string; files_done: number; files_total: number; bytes_done: number; bytes_total: number }) & { address?: never; blocked?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | 
+({ type: "file_progress"; phase: string; remote_device_id: string; files_done: number; files_total: number; bytes_done: number; bytes_total: number }) & { address?: never; blocked?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | 
 /**
  *  Emitted when mDNS peer discovery cannot be initialized (e.g. the
  *  iOS sandbox blocks raw UDP multicast, or the Android app is missing
@@ -5378,7 +5410,7 @@ peer_is_older?: boolean | null }) & { address?: never; blocked?: never; bytes_do
  *  once bound. The frontend should surface this to the user instead of
  *  showing an Empty peer list.
  */
-({ type: "mdns_disabled"; reason: string }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+({ type: "mdns_disabled"; reason: string }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
  *  #3864: emitted each time the sync endpoint binds a
  *  **globally-routable** address, so the QUIC listener may be reachable
@@ -5400,7 +5432,13 @@ peer_is_older?: boolean | null }) & { address?: never; blocked?: never; bytes_do
 /**  The bound IPv4 address, e.g. `"192.160.160.80"`. */
 address: string; 
 /**  The UDP port the listener is bound to. */
-port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+/**
+ *  The daemon is about to bind a sync endpoint, so what it reported about the
+ *  previous one ([`Self::MdnsDisabled`], [`Self::InternetFacingBind`]) no longer
+ *  holds. Those that still apply are emitted again once the new endpoint is up.
+ */
+({ type: "endpoint_binding" }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
  *  #3852: the operating system says it is blocking (or has stopped
  *  blocking) **this application's** network traffic.
@@ -5441,13 +5479,19 @@ blocked: boolean;
  *  `Some` exactly when `blocked`: a recovery removes the banner, so it
  *  has no text to name.
  */
-reason_key: string | null }) & { address?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+reason_key: string | null }) & { address?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
  *  The spaces whose outbound export this round refused because engine and
  *  SQL disagree about a deleted block (#6523). Each report replaces the
  *  last one, so an empty list says every space exports again.
  */
-({ type: "export_refused"; space_ids: string[] }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; state?: never };
+({ type: "export_refused"; space_ids: string[] }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; state?: never } | 
+/**
+ *  A purge that arrived by sync would have taken blocks written on this
+ *  device that the purging device had never received (#6561). They are in
+ *  the Trash instead, under one page per title here.
+ */
+({ type: "local_text_kept"; page_titles: string[] }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never };
 
 /**
  *  Streaming progress payload carried over the sync channel.

@@ -9820,6 +9820,7 @@ async fn create_blocks_batch_inserts_n_blocks_in_one_tx() {
             parent_id: None,
             position: None,
             parent_index: None,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         })
@@ -9894,6 +9895,7 @@ async fn create_blocks_batch_op_refs_undo_the_whole_batch_5140() {
             parent_id: None,
             position: None,
             parent_index: None,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         })
@@ -9975,6 +9977,7 @@ async fn create_blocks_batch_atomic_rollback() {
             parent_id: None,
             position: None,
             parent_index: None,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         },
@@ -9984,6 +9987,7 @@ async fn create_blocks_batch_atomic_rollback() {
             parent_id: None,
             position: None,
             parent_index: None,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         },
@@ -9993,6 +9997,7 @@ async fn create_blocks_batch_atomic_rollback() {
             parent_id: None,
             position: None,
             parent_index: None,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         },
@@ -10048,6 +10053,7 @@ async fn create_blocks_batch_rejects_empty_oversize() {
             parent_id: None,
             position: None,
             parent_index: None,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: std::collections::HashMap::new(),
         })
@@ -10088,6 +10094,7 @@ async fn create_blocks_batch_with_properties() {
             parent_id: None,
             position: None,
             parent_index: None,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: props_a,
         },
@@ -10097,6 +10104,7 @@ async fn create_blocks_batch_with_properties() {
             parent_id: None,
             position: None,
             parent_index: None,
+            block_id: None,
             typed_properties: std::collections::HashMap::new(),
             properties: props_b,
         },
@@ -10200,6 +10208,7 @@ async fn create_blocks_batch_with_due_date_stores_as_date() {
         parent_id: None,
         position: None,
         parent_index: None,
+        block_id: None,
         typed_properties: std::collections::HashMap::new(),
         properties: props,
     }];
@@ -10256,6 +10265,7 @@ fn template_spec(
         content: content.into(),
         parent_id: parent_id.map(BlockId::from),
         parent_index,
+        block_id: None,
         position: None,
         properties: std::collections::HashMap::new(),
         typed_properties: std::collections::HashMap::new(),
@@ -11625,4 +11635,327 @@ async fn append_on_sql_only_fallback_lands_after_live_tail_past_tombstones() {
         rank, 4,
         "D's rank is one past the live tail, not the live-child count + 1"
     );
+}
+
+// ======================================================================
+// Page mode's batches (#6559): client ids, and a batch delete as N deletes
+// ======================================================================
+
+/// A content spec under `parent`, at `position` (1-based), named `block_id`.
+fn client_spec(
+    block_id: BlockId,
+    content: &str,
+    parent: &BlockId,
+    position: Option<i64>,
+) -> CreateBlockSpec {
+    CreateBlockSpec {
+        block_type: "content".into(),
+        content: content.into(),
+        parent_id: Some(parent.clone()),
+        parent_index: None,
+        block_id: Some(block_id),
+        position,
+        properties: std::collections::HashMap::new(),
+        typed_properties: std::collections::HashMap::new(),
+    }
+}
+
+/// `(op_type, block_id, created_at)` of each op `refs` names, in order.
+async fn ops_named(
+    pool: &SqlitePool,
+    refs: &[agaric_store::op::OpRef],
+) -> Vec<(String, String, i64)> {
+    let mut out = Vec::with_capacity(refs.len());
+    for r in refs {
+        out.push(
+            sqlx::query_as(
+                "SELECT op_type, block_id, created_at FROM op_log WHERE device_id = ? AND seq = ?",
+            )
+            .bind(&r.device_id)
+            .bind(r.seq)
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        );
+    }
+    out
+}
+
+/// Page mode creates under its own ids: each spec's id is the block's, a
+/// later spec may sit under an earlier one's, and positions count with the
+/// earlier specs in place, all inside the one transaction.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_keeps_client_ids_6559() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = space_page(&pool, &mat).await;
+    let alpha = append_child(&pool, &mat, &page, "alpha").await;
+    let [parent, child, after] = [BlockId::new(), BlockId::new(), BlockId::new()];
+
+    let created = create_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![
+            client_spec(parent.clone(), "parent", &page, Some(1)),
+            client_spec(child.clone(), "child", &parent, Some(1)),
+            client_spec(after.clone(), "after", &page, Some(3)),
+        ],
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let ids: Vec<&str> = created.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(ids, [parent.as_str(), child.as_str(), after.as_str()]);
+    assert_eq!(
+        live_children(&pool, &page).await,
+        [parent.as_str(), alpha.as_str(), after.as_str()]
+    );
+    assert_eq!(live_children(&pool, &parent).await, [child.as_str()]);
+    mat.shutdown();
+}
+
+/// A client id a block holds, live or trashed, one an earlier spec took, or a
+/// malformed one, is refused as `create_block` refuses it, and rolls the whole
+/// batch back: the fresh spec before it is not created either.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_refused_client_id_rolls_back_6559() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = create_block_inner(&pool, DEV, &mat, "page".into(), "P".into(), None, None)
+        .await
+        .unwrap();
+    let live = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "live".into(),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    let trashed = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "trashed".into(),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    delete_block_inner(&pool, DEV, &mat, trashed.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let ops_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let twice = BlockId::new();
+
+    for (case, second, malformed) in [
+        ("a live block's id", live.id.clone(), false),
+        ("a trashed block's id", trashed.id.clone(), false),
+        ("an id given twice", twice.clone(), false),
+        (
+            "a malformed id",
+            BlockId::from_trusted("not-a-valid-ulid"),
+            true,
+        ),
+    ] {
+        let fresh = BlockId::new();
+        let first = if second == twice {
+            twice.clone()
+        } else {
+            fresh.clone()
+        };
+        let err = create_blocks_batch_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![
+                client_spec(first, "fresh", &page.id, None),
+                client_spec(second.clone(), "usurper", &page.id, None),
+            ],
+        )
+        .await
+        .expect_err("a refused client id refuses the batch");
+        if malformed {
+            assert!(matches!(err, AppError::Ulid(_)), "{case}");
+        } else {
+            assert!(matches!(err, AppError::Conflict(_)), "{case}");
+        }
+        let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?)")
+            .bind(fresh.as_str())
+            .bind(twice.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(held, 0, "{case}: nothing of the batch is created");
+    }
+    let ops_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ops_after, ops_before, "no refused batch appends an op");
+    let usurped: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(live.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(usurped, "live");
+    mat.shutdown();
+}
+
+/// Two roots, the first with a child, under a fresh page; returns `(root_a, child_a, root_b)`.
+async fn two_roots(pool: &SqlitePool, mat: &Materializer) -> (BlockId, BlockId, BlockId) {
+    let page = create_block_inner(pool, DEV, mat, "page".into(), "P".into(), None, None)
+        .await
+        .unwrap();
+    let mut made = Vec::new();
+    for (content, parent) in [("a", &page.id), ("b", &page.id)] {
+        made.push(
+            create_block_inner(
+                pool,
+                DEV,
+                mat,
+                "content".into(),
+                content.into(),
+                Some(parent.clone()),
+                None,
+            )
+            .await
+            .unwrap()
+            .id,
+        );
+    }
+    let child = create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "content".into(),
+        "a child".into(),
+        Some(made[0].clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    settle(mat).await;
+    (made[0].clone(), child, made[1].clone())
+}
+
+/// `delete_blocks_by_ids` over N roots appends what N `delete_block` calls
+/// append, one `delete_block` op per root, its refs in the order given, and
+/// stamps every root and descendant with the one `deleted_at` it returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_answers_as_n_deletes_6559() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (a, a_child, b) = two_roots(&pool, &mat).await;
+    let (sa, _, sb) = two_roots(&pool, &mat).await;
+
+    let batch = capture_op_refs(delete_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![b.clone(), a.clone()],
+    ))
+    .await
+    .unwrap();
+    let mut singles = Vec::new();
+    for id in [&sb, &sa] {
+        singles.push(
+            capture_op_refs(delete_block_inner(&pool, DEV, &mat, id.clone()))
+                .await
+                .unwrap(),
+        );
+    }
+    settle(&mat).await;
+
+    let deleted_at = batch.inner.deleted_at.expect("roots were live");
+    let batch_ops = ops_named(&pool, &batch.op_refs).await;
+    assert_eq!(
+        batch_ops,
+        [
+            ("delete_block".to_owned(), b.as_str().to_owned(), deleted_at),
+            ("delete_block".to_owned(), a.as_str().to_owned(), deleted_at),
+        ]
+    );
+    let single_refs: Vec<agaric_store::op::OpRef> =
+        singles.iter().flat_map(|s| s.op_refs.clone()).collect();
+    let single_ops = ops_named(&pool, &single_refs).await;
+    assert_eq!(
+        single_ops
+            .iter()
+            .map(|(op_type, _, _)| op_type.as_str())
+            .collect::<Vec<_>>(),
+        ["delete_block", "delete_block"]
+    );
+    assert_eq!(
+        batch.inner.deleted_count,
+        i64::try_from(
+            singles
+                .iter()
+                .map(|s| s.inner.descendants_affected)
+                .sum::<u64>()
+        )
+        .unwrap()
+    );
+    for id in [&a, &a_child, &b] {
+        let stamped: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            stamped,
+            Some(deleted_at),
+            "{id} carries the batch's deleted_at"
+        );
+    }
+
+    let again = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![a.clone(), b.clone()])
+        .await
+        .unwrap();
+    assert_eq!((again.deleted_count, again.deleted_at), (0, None));
+    mat.shutdown();
+}
+
+/// The roots of one batch delete share its `deleted_at`, yet `restore_block`
+/// with it brings back one root's cohort, as after N single deletes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_after_a_batch_delete_brings_back_one_root_6559() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (a, a_child, b) = two_roots(&pool, &mat).await;
+    let deleted_at = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![a.clone(), b.clone()])
+        .await
+        .unwrap()
+        .deleted_at
+        .expect("roots were live");
+    settle(&mat).await;
+
+    let restored = restore_block_inner(&pool, DEV, &mat, a.clone(), deleted_at)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(restored.restored_count, 2);
+    let mut states = Vec::new();
+    for id in [&a, &a_child, &b] {
+        let stamped: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        states.push(stamped);
+    }
+    assert_eq!(states, [None, None, Some(deleted_at)]);
+    mat.shutdown();
 }

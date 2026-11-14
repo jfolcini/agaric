@@ -129,8 +129,16 @@ ci-smoke = []
 # the moved suites and the two remaining in-lib test modules both use) to that
 # set, which is why the feature now pulls `tempfile` — the same shape as
 # `agaric-store`'s `test-util = ["dep:tempfile"]` for its `test_support`.
-# `tauri/test` is for `headless`, the app on `tauri::test::MockRuntime` (#6529).
-test-util = ["dep:tempfile", "agaric-store/test-util", "tauri/test"]
+# `tauri/test` is for `headless`, the app on `tauri::test::MockRuntime` (#6529);
+# `agaric-sync/test-util` for the recovery guard a second boot in one process
+# resets, and `tokio-tungstenite` for `headless::bridge`'s WebSocket.
+test-util = [
+    "dep:tempfile",
+    "dep:tokio-tungstenite",
+    "agaric-store/test-util",
+    "agaric-sync/test-util",
+    "tauri/test",
+]
 # #645 — the `diagnostics` feature (formerly built the
 # `audit_cross_space_refs` / `op_log_histogram` bins) is retired: those
 # bins moved to the `agaric-diagnostics` workspace member, so the feature
@@ -170,6 +178,10 @@ agaric-sync = { path = "agaric-sync", version = "0.1.0" }
 # `cargo build` neither compiles nor links it; the `[dev-dependencies]` entry
 # below stays for the test targets' own direct use.
 tempfile = { version = "3.27.0", optional = true }
+# #6529 — the WebSocket `headless::bridge` serves the real commands to
+# Playwright over. Optional and reached only through `test-util`, like
+# `tempfile` above. No TLS: the bridge listens on loopback.
+tokio-tungstenite = { version = "0.30.0", optional = true, default-features = false, features = ["handshake"] }
 # agaric-observability — OpenTelemetry trace/log/metric pipelines (#2878). The
 # `observability` module + its heavy OTel dep tree moved into this leaf crate;
 # re-exported below via `pub use agaric_observability as observability;` so
@@ -350,6 +362,8 @@ flate2 = "1.1.9"
 insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"
+# The bridge tests are its WebSocket client; see the optional entry above.
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
 
 # #4283 — `O_NOFOLLOW` / `O_NONBLOCK` for the bug-report log reader

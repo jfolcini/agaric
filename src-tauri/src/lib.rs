@@ -342,6 +342,8 @@ macro_rules! agaric_commands {
             // Bug report
             $crate::commands::bug_report::collect_bug_report_metadata::<tauri::Wry>,
             $crate::commands::bug_report::read_logs_for_report::<tauri::Wry>,
+            // File saves on macOS, where the webview saves none (#6652)
+            $crate::commands::downloads::save_to_downloads::<tauri::Wry>,
             // Reconciliation oracle against the live vault (#4886)
             $crate::commands::reconciliation::compute_reconciliation_report,
             $crate::commands::reconciliation::rebuild_derived_state,
@@ -3472,7 +3474,7 @@ mod specta_tests {
     fn specta_builder() -> Builder<tauri::Wry> {
         use agaric_sync::sync_events::{
             BlocksChangedEvent, EVENT_BLOCKS_CHANGED, EVENT_SYNC_COMPLETE, EVENT_SYNC_ERROR,
-            SyncEvent,
+            EVENT_SYNC_LOCAL_TEXT_KEPT, SyncEvent,
         };
 
         // tauri-specta 2.0.0-rc.25 forbids BigInt-style integer types
@@ -3496,6 +3498,7 @@ mod specta_tests {
             .constant("EVENT_SYNC_COMPLETE", EVENT_SYNC_COMPLETE)
             .constant("EVENT_SYNC_ERROR", EVENT_SYNC_ERROR)
             .constant("EVENT_BLOCKS_CHANGED", EVENT_BLOCKS_CHANGED)
+            .constant("EVENT_SYNC_LOCAL_TEXT_KEPT", EVENT_SYNC_LOCAL_TEXT_KEPT)
             .dangerously_cast_bigints_to_number()
     }
 

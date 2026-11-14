@@ -21,6 +21,7 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  editAtEnd,
   invoke,
   navigateTo,
   openNewPage,
@@ -37,7 +38,6 @@ import {
 } from './helpers'
 
 const TASK = runScopedMarker('wdio-due-task')
-const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 const DATE_PICKER = '[data-testid="date-picker-popup"]'
 
 let taskId = ''
@@ -145,10 +145,7 @@ describe('Agaric real-backend due date in the agenda (#5365) @journal', () => {
     // `/due` opens the date picker (BlockDatePicker); "today" in its text
     // field and Enter pick the date. One key per call: WebKit coalesces
     // identical adjacent keys sent together.
-    await $(`[data-testid="block-static"][data-block-id="${taskId}"]`).click()
-    await $(EDITOR).waitForDisplayed({ timeout: ACTION_TIMEOUT })
-    await browser.keys(['End'])
-    await browser.keys([' '])
+    await editAtEnd(taskId)
     for (const ch of '/due') await browser.keys([ch])
     // SuggestionList ids each item `suggestion-<id>` (slash command `due`).
     const dueItem = $('#suggestion-due')

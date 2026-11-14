@@ -13,9 +13,10 @@ import { axe } from 'vitest-axe'
 
 const writeText = vi.fn<(text: string) => Promise<void>>()
 vi.mock('@/lib/clipboard', () => ({ writeText: (text: string) => writeText(text) }))
-const downloadBlob = vi.fn<(blob: Blob, name: string) => void>()
-vi.mock('@/lib/export-graph', () => ({
-  downloadBlob: (blob: Blob, name: string) => downloadBlob(blob, name),
+const saveBlob = vi.fn<(blob: Blob, name: string) => Promise<void>>()
+vi.mock('@/lib/attachment-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/attachment-utils')>()),
+  saveBlob: (blob: Blob, name: string) => saveBlob(blob, name),
 }))
 const notifyError = vi.fn()
 vi.mock('@/lib/notify', () => ({
@@ -81,7 +82,8 @@ describe('DiagramViewer', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     writeText.mockReset()
-    downloadBlob.mockReset()
+    saveBlob.mockReset()
+    saveBlob.mockResolvedValue()
     notifyError.mockReset()
   })
 
@@ -115,11 +117,20 @@ describe('DiagramViewer', () => {
     await user.click(screen.getByRole('button', { name: 'Copy source' }))
     expect(writeText).toHaveBeenCalledWith('graph LR; A-->B')
     await user.click(screen.getByRole('button', { name: 'Download SVG' }))
-    await waitFor(() => expect(downloadBlob).toHaveBeenCalledTimes(1))
-    const [blob, name] = downloadBlob.mock.calls[0] ?? []
+    await waitFor(() => expect(saveBlob).toHaveBeenCalledTimes(1))
+    const [blob, name] = saveBlob.mock.calls[0] ?? []
     expect(name).toBe('diagram.svg')
     expect(blob?.type).toBe('image/svg+xml')
     expect(await blob?.text()).toBe('<svg/>')
+  })
+
+  it('reports a failed SVG download', async () => {
+    saveBlob.mockRejectedValue(new Error('disk full'))
+    const user = userEvent.setup()
+    renderViewer()
+    await user.click(expandButton())
+    await user.click(screen.getByRole('button', { name: 'Download SVG' }))
+    await waitFor(() => expect(notifyError).toHaveBeenCalledWith("Couldn't download the SVG"))
   })
 
   it('reports a failed copy instead of failing silently', async () => {

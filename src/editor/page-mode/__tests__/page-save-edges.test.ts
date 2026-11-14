@@ -97,6 +97,8 @@ function stubApi(rows: TreeRow[]) {
     move: (id) => log(`move ${id}`),
     edit: (id) => log(`edit ${id}`),
     remove: (id) => log(`delete ${id}`).then((refs) => ({ deletedAt: 1, refs })),
+    createBatch: (creates) => log(`create ${creates.map((create) => create.id).join(' ')}`),
+    removeBatch: (ids) => log(`delete ${ids.join(' ')}`).then((refs) => ({ deletedAt: 1, refs })),
     tree: () => Promise.resolve(rows),
   }
   return { api, calls }

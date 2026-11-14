@@ -4,11 +4,8 @@ import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
 import { ATTACHMENT_REF_SCHEME, parseAttachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
-import { t } from '@/lib/i18n'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
-import { notify } from '@/lib/notify'
-import { isAndroid } from '@/lib/platform'
 import { listAllPropertyDefs } from '@/lib/property-save-utils'
 import { requireActiveScope } from '@/lib/space-scope'
 import { SPACE_FILE_PATH, type SpaceFile, pathTitle } from '@/lib/vault-import'
@@ -717,23 +714,4 @@ export async function resolveAttachmentRefsForCopy(md: string): Promise<string> 
 export async function pageMarkdownForCopy(pageId: string): Promise<string> {
   await flushActiveDraft()
   return resolveAttachmentRefsForCopy(unwrap(await commands.exportPageMarkdown(pageId)))
-}
-
-/**
- * Trigger a browser download of a Blob. On Android it says saving is
- * unavailable instead (#6538): the WebView handles no `blob:` download.
- */
-export function downloadBlob(blob: Blob, filename: string): void {
-  if (isAndroid()) {
-    notify.info(t('data.fileSaveUnavailableAndroid'))
-    return
-  }
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.append(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
 }
