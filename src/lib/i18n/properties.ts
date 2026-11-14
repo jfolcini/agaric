@@ -274,6 +274,10 @@ export const properties: Record<string, string> = {
   'property.booleanTrue': 'Yes',
   'property.booleanFalse': 'No',
   'property.openRefTarget': 'Open {{title}}',
+  // #6741 — the items of a property that holds several values.
+  'property.addListItem': 'Add an item to {{key}}',
+  'property.addListItemPlaceholder': 'Add an item',
+  'property.removeListItem': 'Remove {{item}}',
   'property.unfitReview': "{{value}} doesn't fit {{key}}: review its values",
   'property.unfitChipLabel': "{{key}}: {{value}}, doesn't fit",
   'property.selectProperty': 'Select property...',

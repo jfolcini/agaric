@@ -4,7 +4,8 @@
  * Supports text, number, date, select, boolean, and ref value types with
  * inline editing. For select properties, includes a popover to manage the
  * set of allowed options (add / remove / save). For ref properties, includes
- * a page picker popover to search and select a linked page.
+ * a page picker popover to search and select a linked page. A definition that
+ * holds several values (#6741) gets the list editor (`ListEditor`) instead.
  *
  * The shared state (`localValue`, the date hook, the select-options popover
  * state, the ref-picker state, and the various callbacks) lives in
@@ -20,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { BooleanEditor } from '@/components/properties/PropertyRowEditor/BooleanEditor'
 import { DateEditor } from '@/components/properties/PropertyRowEditor/DateEditor'
+import { ListEditor } from '@/components/properties/PropertyRowEditor/ListEditor'
 import { NumberEditor } from '@/components/properties/PropertyRowEditor/NumberEditor'
 import { RefEditor } from '@/components/properties/PropertyRowEditor/RefEditor'
 import {
@@ -46,7 +48,10 @@ export interface PropertyRowEditorProps {
   onSave: (rawValue: string) => void
   onDelete?: (() => void) | undefined
   onDefUpdated?: (updatedDef: PropertyDefinition) => void
-  /** Called after a ref property value is saved (page selected via picker). */
+  /**
+   * Called after the editor wrote the value itself, with the ops: a ref's page
+   * picked, or a list's items (#6741) added or removed.
+   */
   onRefSaved?: () => void
   /**
    * When provided, the ref-picker empty state offers a "Create new
@@ -96,14 +101,26 @@ export function PropertyRowEditor({
         {formatPropertyName(prop.key)}
       </Badge>
       <div className="flex-1">
-        <EditorSlot
-          bag={bag}
-          prop={prop}
-          onSave={onSave}
-          valueLabel={valueLabel}
-          hasCreateNewPage={onCreateNewPage != null}
-          unfit={unfit}
-        />
+        {def?.multiple ? (
+          <ListEditor
+            blockId={blockId}
+            prop={prop}
+            def={def}
+            refPicker={bag.refPicker}
+            ariaLabel={valueLabel}
+            hasCreateNewPage={onCreateNewPage != null}
+            onWritten={onRefSaved}
+          />
+        ) : (
+          <EditorSlot
+            bag={bag}
+            prop={prop}
+            onSave={onSave}
+            valueLabel={valueLabel}
+            hasCreateNewPage={onCreateNewPage != null}
+            unfit={unfit}
+          />
+        )}
       </div>
       {unfit && <UnfitValueMark propKey={prop.key} value={refTitle ?? bag.currentValue} />}
       {bag.valueType === 'select' && !def?.builtin && (

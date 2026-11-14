@@ -24,9 +24,9 @@
  * Built-in fields are filtered out because they already render via the
  * dedicated badges (TodoToggle, PriorityBadge, DueChip, ScheduleChip).
  * Empty values are dropped so the row UI doesn't render empty rows. A value
- * not stored as text carries its `kind`: a ref's and a boolean's chip draw it
- * (`InlinePropertyChip`), and every chip is checked by it against its key's
- * definition (`isUnfit`).
+ * not stored as text carries its `kind`: a ref's, a boolean's and a list's
+ * chip draw it (`InlinePropertyChip`), and every chip is checked by it against
+ * its key's definition (`isUnfit`).
  *
  * Identity invariants (PEND/perf): the derived map keeps prior per-block
  * array references when their content is unchanged so downstream
@@ -40,7 +40,7 @@
 import { useMemo, useRef } from 'react'
 
 import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
-import type { PropertyRow } from '@/lib/bindings'
+import type { PropertyList, PropertyRow } from '@/lib/bindings'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
 
 const BUILTIN_PROPERTY_KEYS: ReadonlySet<string> = new Set([
@@ -56,13 +56,15 @@ const BUILTIN_PROPERTY_KEYS: ReadonlySet<string> = new Set([
 
 /**
  * A property as the row's chip draws it. `value` is the text, date or number;
- * for a `ref`, the target's block id; for a `boolean`, `'true'` or `'false'`.
- * `kind` is the slot the value is stored in; none is text.
+ * for a `ref`, the target's block id; for a `boolean`, `'true'` or `'false'`;
+ * for a `list` (#6741), its `items` joined by `, `. `kind` is the slot the
+ * value is stored in; none is text.
  */
 export interface InlineProperty {
   key: string
   value: string
-  kind?: 'number' | 'date' | 'ref' | 'boolean' | undefined
+  kind?: 'number' | 'date' | 'ref' | 'boolean' | 'list' | undefined
+  items?: PropertyList | undefined
 }
 
 export type BlockPropertiesMap = Record<string, InlineProperty[]>
@@ -103,6 +105,10 @@ export function extraPropertiesOf(rows: readonly PropertyRow[]): InlineProperty[
   return rows
     .filter((p) => !BUILTIN_PROPERTY_KEYS.has(p.key))
     .map((p): InlineProperty => {
+      if (p.value_list != null) {
+        const items = p.value_list
+        return { key: p.key, value: items.map(String).join(', '), kind: 'list', items }
+      }
       if (p.value_ref != null) return { key: p.key, value: p.value_ref, kind: 'ref' }
       if (p.value_bool != null) {
         return { key: p.key, value: p.value_bool === 0 ? 'false' : 'true', kind: 'boolean' }

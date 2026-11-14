@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from '@/__tests__/helpers/axe'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { InlinePropertyChip } from '@/components/properties/InlinePropertyChip'
+import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
 import { unresolvedBlockLabel } from '@/lib/block-title'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -25,11 +26,12 @@ function cacheTitle(title: string) {
 }
 
 function renderChip(
-  property: { key: string; value: string; kind?: 'ref' | 'boolean' },
+  property: InlineProperty,
   handlers: Partial<{
     onEditProp: (prop: { key: string; value: string }) => void
     onNavigate: (id: string) => void
     onShowProperties: (blockId: string) => void
+    refItems: boolean
   }> = {},
 ) {
   return render(
@@ -40,6 +42,7 @@ function renderChip(
       onEditKey={vi.fn()}
       onNavigate={handlers.onNavigate}
       onShowProperties={handlers.onShowProperties}
+      refItems={handlers.refItems}
     />,
   )
 }
@@ -185,9 +188,53 @@ describe('InlinePropertyChip', () => {
       expect(onEditProp).not.toHaveBeenCalled()
     })
 
-    it('has no a11y violations', async () => {
+    it('has no a11y violations (boolean)', async () => {
       const { container } = renderChip(
         { key: 'billable', value: 'false', kind: 'boolean' },
+        { onShowProperties: vi.fn() },
+      )
+      await waitFor(async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      })
+    })
+  })
+
+  // #6741 — a list shows its items joined, a ref list its targets' titles,
+  // and opens the drawer, where its items are edited.
+  describe('list value', () => {
+    it("shows a ref list's targets by title", () => {
+      useResolveStore.setState({
+        cache: new Map([
+          [keyFor(null, TARGET), { title: 'Roadmap', deleted: false, resolved: true }],
+          [keyFor(null, 'PAGE_B'), { title: 'Budget', deleted: false, resolved: true }],
+        ]),
+        version: useResolveStore.getState().version + 1,
+      })
+      renderChip(
+        { key: 'links', value: `${TARGET}, PAGE_B`, kind: 'list', items: [TARGET, 'PAGE_B'] },
+        { refItems: true },
+      )
+      expect(screen.getByRole('group', { name: 'Links: Roadmap, Budget' })).toBeInTheDocument()
+    })
+
+    it("opens the block's property drawer on click, not the text editor", async () => {
+      const user = userEvent.setup()
+      const onShowProperties = vi.fn()
+      const onEditProp = vi.fn()
+      renderChip(
+        { key: 'tags', value: 'a, b', kind: 'list', items: ['a', 'b'] },
+        { onShowProperties, onEditProp },
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Tags: a, b' }))
+
+      expect(onShowProperties).toHaveBeenCalledExactlyOnceWith('BLOCK_1')
+      expect(onEditProp).not.toHaveBeenCalled()
+    })
+
+    it('has no a11y violations (list)', async () => {
+      const { container } = renderChip(
+        { key: 'tags', value: 'a, b', kind: 'list', items: ['a', 'b'] },
         { onShowProperties: vi.fn() },
       )
       await waitFor(async () => {

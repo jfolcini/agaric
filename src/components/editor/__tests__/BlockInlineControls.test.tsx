@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { t } from '@/lib/i18n'
@@ -151,7 +151,11 @@ import {
 } from '@/components/editor/BlockInlineControls'
 import { TaskCheckbox } from '@/components/editor/TaskMarkerButton'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { propertyDefsQueryKey } from '@/lib/property-caches'
+import { queryClient } from '@/lib/query-client'
 import { useBlockStore } from '@/stores/blocks'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 function renderControls(props: BlockInlineControlsProps) {
   return render(
@@ -653,6 +657,42 @@ describe('BlockMetadataRow', () => {
     expect(screen.getByTestId('property-chip-c')).toBeInTheDocument()
     expect(screen.queryByTestId('property-chip-d')).not.toBeInTheDocument()
     expect(screen.getByTestId('property-overflow')).toHaveTextContent('+1')
+  })
+
+  // #6741 — a list's chip shows its items; a key declared `ref` shows its
+  // targets by title, read from the space's definitions.
+  it("shows a ref list's chip by its targets' titles, and a text list's by its items", () => {
+    const spaceBefore = useSpaceStore.getState().currentSpaceId
+    onTestFinished(() => {
+      useSpaceStore.setState({ currentSpaceId: spaceBefore })
+    })
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_CHIPS' })
+    queryClient.setQueryData(propertyDefsQueryKey('SPACE_CHIPS'), [
+      {
+        key: 'links',
+        value_type: 'ref',
+        options: null,
+        created_at: '2026-01-01T00:00:00Z',
+        builtin: false,
+        multiple: true,
+      },
+    ])
+    useResolveStore.setState({
+      cache: new Map([
+        [keyFor('SPACE_CHIPS', 'PAGE_A'), { title: 'Roadmap', deleted: false, resolved: true }],
+      ]),
+      version: useResolveStore.getState().version + 1,
+    })
+    renderMetadata(
+      makeMetaProps({
+        filteredProperties: [
+          { key: 'links', value: 'PAGE_A', kind: 'list', items: ['PAGE_A'] },
+          { key: 'tags', value: 'a, b', kind: 'list', items: ['a', 'b'] },
+        ],
+      }),
+    )
+    expect(screen.getByTestId('property-chip-links')).toHaveTextContent('Roadmap')
+    expect(screen.getByTestId('property-chip-tags')).toHaveTextContent('a, b')
   })
 
   describe('property overflow button', () => {

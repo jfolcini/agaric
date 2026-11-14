@@ -33,7 +33,7 @@ import type { ReactElement, ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 import { unwrap } from '@/lib/app-error'
-import type { PropertyRow } from '@/lib/bindings'
+import type { PropertyList, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 
@@ -73,8 +73,8 @@ interface ProviderProps {
 }
 
 /**
- * True iff two `PropertyRow`s are field-wise equal. `PropertyRow` is a flat
- * POJO (no nested objects), so a shallow field comparison is sufficient.
+ * True iff two `PropertyRow`s are field-wise equal: the scalar slots by value,
+ * a list (#6741) item by item.
  */
 function propertyRowEqual(a: PropertyRow, b: PropertyRow): boolean {
   return (
@@ -83,8 +83,14 @@ function propertyRowEqual(a: PropertyRow, b: PropertyRow): boolean {
     a.value_num === b.value_num &&
     a.value_date === b.value_date &&
     a.value_ref === b.value_ref &&
-    a.value_bool === b.value_bool
+    a.value_bool === b.value_bool &&
+    listsEqual(a.value_list ?? null, b.value_list ?? null)
   )
+}
+
+function listsEqual(a: PropertyList | null, b: PropertyList | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.length === b.length && a.every((item, i) => item === b[i])
 }
 
 function rowsEqual(a: readonly PropertyRow[], b: readonly PropertyRow[]): boolean {

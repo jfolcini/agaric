@@ -299,7 +299,7 @@ function isRecordingPlaceholder(content: string): boolean {
  * The task state, priority and dates of a template block, and its properties
  * the copy keeps (the app's stamps and the template marker are not): text
  * values as `create_blocks_batch`'s `properties`, values held as a number,
- * date, ref or boolean as its `typedProperties`.
+ * date, ref, boolean or list as its `typedProperties`.
  */
 function copiedProperties(
   block: BlockRow,
@@ -315,9 +315,15 @@ function copiedProperties(
     if (INLINE_PROPERTY_RESERVED_KEYS.has(row.key)) continue
     if (row.value_text != null) properties[row.key] = row.value_text
     else {
-      const { value_num, value_date, value_ref, value_bool } = row
+      const { value_num, value_date, value_ref, value_bool, value_list } = row
       const bool = value_bool == null ? null : value_bool !== 0
-      typedProperties[row.key] = { value_num, value_date, value_ref, value_bool: bool }
+      typedProperties[row.key] = {
+        value_num,
+        value_date,
+        value_ref,
+        value_bool: bool,
+        ...(value_list == null ? {} : { value_list }),
+      }
     }
   }
   return { properties, typedProperties }
