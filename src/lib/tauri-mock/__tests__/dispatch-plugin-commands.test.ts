@@ -89,7 +89,6 @@ describe('dispatch — modeled plugin:* commands resolve (#760)', () => {
     'plugin:webview|set_webview_zoom',
     'plugin:deep-link|get_current',
     'plugin:clipboard-manager|write_text',
-    'plugin:shell|open',
     'plugin:opener|open_url',
     'plugin:global-shortcut|register',
     'plugin:global-shortcut|unregister',

@@ -286,7 +286,7 @@ export function BugReportDialog({
     try {
       // PEND-bug-report-zip-affordance: handleSubmit only opens the GitHub
       // URL — the zip download happens via the dedicated footer button.
-      // OpenUrl resolves false when the Tauri shell errored AND
+      // OpenUrl resolves false when the Tauri opener errored AND
       // window.open was popup-blocked / null. In that case neither path
       // actually opened a tab, so we must NOT claim success — surface an
       // error toast, copy the issue URL as a manual escape hatch, and

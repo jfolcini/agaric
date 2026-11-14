@@ -2,9 +2,9 @@ import { isAllowedUrl } from '@/lib/url-validation'
 
 /**
  * Opens `url` in the system browser. Returns `true` if the browser
- * actually opened (Tauri shell succeeded OR `window.open` returned a
+ * actually opened (the Tauri opener succeeded OR `window.open` returned a
  * non-null handle). Returns `false` when both paths failed (Tauri
- * shell errored AND `window.open` was popup-blocked / returned
+ * opener errored AND `window.open` was popup-blocked / returned
  * `null`) OR when `url` carries a blocked scheme (see
  * `isAllowedUrl`). Never rejects — callers can gate UI feedback on the
  * boolean without try/catch.
@@ -25,8 +25,8 @@ import { isAllowedUrl } from '@/lib/url-validation'
 export async function openUrl(url: string): Promise<boolean> {
   if (!isAllowedUrl(url)) return false
   try {
-    const { open } = await import('@tauri-apps/plugin-shell')
-    await open(url)
+    const opener = await import('@tauri-apps/plugin-opener')
+    await opener.openUrl(url)
     return true
   } catch {
     const handle = window.open(url, '_blank', 'noopener,noreferrer')

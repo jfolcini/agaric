@@ -124,7 +124,7 @@ test.describe('page mode bubble menus @editor @pages', () => {
     await installIpcRecorder(page)
     await link.getByRole('button', { name: 'Open link' }).click()
     await expect
-      .poll(async () => (await getInvokeCalls(page, 'plugin:shell|open')).map((c) => c['path']))
+      .poll(async () => (await getInvokeCalls(page, 'plugin:opener|open_url')).map((c) => c['url']))
       .toEqual(['https://example.com'])
 
     await link.getByRole('button', { name: 'Remove', exact: true }).click()

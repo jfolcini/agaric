@@ -13,8 +13,8 @@ import {
  * finding 1 secondary half). This is the discoverable, non-modifier counterpart
  * to the Ctrl/Cmd+Click open path (`external-link-open.spec.ts`): right-clicking
  * an external link inside a block surfaces the block context menu with an
- * "Open link" item that routes through `openUrl` → Tauri shell plugin, asserted
- * via the `plugin:shell|open` IPC recorder.
+ * "Open link" item that routes through `openUrl` → Tauri opener plugin, asserted
+ * via the `plugin:opener|open_url` IPC recorder.
  */
 
 const PAGE = 'Getting Started'
@@ -53,9 +53,9 @@ test.describe('Open external link via block context menu (#924) @editor', () => 
 
     await menu.locator('[role="menuitem"]', { hasText: 'Open link' }).click()
 
-    // openUrl → Tauri shell plugin → `plugin:shell|open` IPC.
+    // openUrl → Tauri opener plugin → `plugin:opener|open_url` IPC.
     await expect
-      .poll(async () => (await getInvokeCalls(page, 'plugin:shell|open')).length)
+      .poll(async () => (await getInvokeCalls(page, 'plugin:opener|open_url')).length)
       .toBeGreaterThan(0)
   })
 
