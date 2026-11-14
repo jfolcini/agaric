@@ -51,3 +51,11 @@ Finishes stage 1b of #6529 (session 4121 left its seed, `Channel` messages and `
 - **`e2e/AGENTS.md` § "The real backend, through the bridge"** still says the vault is a first boot's, that `SEED_IDS` name nothing and that no CI lane runs specs this way. This session was told not to edit any `AGENTS.md`.
 - **The auto-filed issue names the lane, not the spec.** `file-scheduled-failures.mjs` reads job results only; the spec's name is in the run's annotations. Stage 1c's "done when" asks for the spec in the issue.
 - **A green scheduled run** exists only after the first night on `main`.
+
+## What ran
+
+Before `main` moved: `cargo nextest run --workspace` (8174 passed), the full vitest suite, `npm run typecheck`, `npm run lint`, clippy on the workspace and on the bin, `just gen-bindings` with no diff, `prek run --all-files` and the manual stage. The `real-backend` project twice on a bridge built from the final code, 43 passed each time. On the mock: four spec files, two of which name seed ids, and `--list` showing the same 2054 tests as before the change.
+
+After merging `main` (one commit, which removed a Tauri plugin): both clippy runs, `just gen-bindings` with no diff, the `command_integration` binary (358 passed), `npm run typecheck`, vitest over `src/lib` and `src/components/properties`, the `real-backend` project on a rebuilt bridge and bundle (43 passed), and six mock spec files that name seed ids (79 passed). The whole Playwright lane did not run locally; 80 spec files changed, so CI runs it.
+
+The scheduled workflow's new steps have not run: they are reachable only from `main`'s cron or a dispatch.
