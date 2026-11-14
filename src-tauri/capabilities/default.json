@@ -5,10 +5,14 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "shell:allow-open",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://*" }]
+      "allow": [
+        { "url": "https://*" },
+        { "url": "http://*" },
+        { "url": "mailto:*" },
+        { "url": "tel:*" }
+      ]
     },
     "process:default",
     "clipboard-manager:allow-write-text",

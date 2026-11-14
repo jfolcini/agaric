@@ -18,8 +18,6 @@ body:
       options:
         - label: I searched [open and closed issues](https://github.com/jfolcini/agaric/issues?q=is%3Aissue) and could not find a duplicate.
           required: true
-        - label: I checked [`REVIEW-LATER.md`](https://github.com/jfolcini/agaric/blob/main/REVIEW-LATER.md) and could not find this item already triaged there.
-          required: true
         - label: I am running the latest tagged release on `main`, or I have included the exact commit SHA below.
           required: true
 

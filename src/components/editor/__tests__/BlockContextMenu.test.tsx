@@ -84,7 +84,7 @@ vi.mock('@/lib/clipboard', () => ({
 const mockedWriteText = vi.mocked(writeText)
 
 // Mock the openUrl wrapper used by the "Open link" menu item so the test does
-// not depend on `@tauri-apps/plugin-shell` IPC.
+// not depend on `@tauri-apps/plugin-opener` IPC.
 vi.mock('@/lib/open-url', () => ({
   openUrl: vi.fn().mockResolvedValue(true),
 }))

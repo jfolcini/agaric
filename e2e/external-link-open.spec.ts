@@ -12,8 +12,8 @@ import {
  * E2E for opening an external link while editing (#924). `openOnClick:false` is
  * intentional (a plain click places the caret so the link text stays editable);
  * the editor now opens the URL on Ctrl/Cmd+Click via the ExternalLink
- * `handleClick` plugin prop. `openUrl` routes through the Tauri shell plugin, so
- * we assert the `plugin:shell|open` IPC fires (or not) via the recorder.
+ * `handleClick` plugin prop. `openUrl` routes through the Tauri opener plugin, so
+ * we assert the `plugin:opener|open_url` IPC fires (or not) via the recorder.
  */
 
 const PAGE = 'Getting Started'
@@ -44,9 +44,9 @@ test.describe('Open external link in editor (#924) @editor', () => {
     await installIpcRecorder(page)
     await link.click({ modifiers: ['Control'] })
 
-    // openUrl → Tauri shell plugin → `plugin:shell|open` IPC.
+    // openUrl → Tauri opener plugin → `plugin:opener|open_url` IPC.
     await expect
-      .poll(async () => (await getInvokeCalls(page, 'plugin:shell|open')).length)
+      .poll(async () => (await getInvokeCalls(page, 'plugin:opener|open_url')).length)
       .toBeGreaterThan(0)
   })
 
@@ -58,6 +58,6 @@ test.describe('Open external link in editor (#924) @editor', () => {
 
     // Give any erroneous open a moment to fire, then assert none did.
     await page.waitForTimeout(400)
-    expect((await getInvokeCalls(page, 'plugin:shell|open')).length).toBe(0)
+    expect((await getInvokeCalls(page, 'plugin:opener|open_url')).length).toBe(0)
   })
 })

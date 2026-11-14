@@ -229,11 +229,16 @@ fn strip_ipv6_scope_id(addr: &str) -> Option<String> {
 /// periodic round's `if let Some(peer)` (`session_supervisor.rs`) and
 /// [`peers_for_change_round`]'s `filter_map` below — so a paired peer that
 /// resolves to nothing is skipped on every round with no trace of why.
+///
+/// `relay` is whether dials name the internet fallback's relay. A relay dial
+/// needs only the key, so with it on a bound peer with no usable cached address
+/// still resolves, with no addresses (#6764).
 pub fn resolve_peer_address(
     peer_id: &str,
     last_address: Option<&str>,
     endpoint_id: Option<&str>,
     discovered: &DiscoveredPeers,
+    relay: bool,
 ) -> Option<DiscoveredPeer> {
     let resolved = discovered
         .get(peer_id)
@@ -254,7 +259,16 @@ pub fn resolve_peer_address(
             // without a cached address a restart cannot reach a paired peer until one
             // arrives.
             let key = endpoint_id?.parse::<EndpointId>().ok()?;
-            build_fallback_peer(peer_id, last_address?, Some(key))
+            last_address
+                .and_then(|address| build_fallback_peer(peer_id, address, Some(key)))
+                .or_else(|| {
+                    relay.then(|| DiscoveredPeer {
+                        device_id: peer_id.to_string(),
+                        endpoint_id: Some(key),
+                        addresses: Vec::new(),
+                        port: 0,
+                    })
+                })
         });
     if resolved.is_none() {
         // Kept on ONE line and byte-identical to its `STABLE_MESSAGES` entry in
@@ -334,6 +348,7 @@ pub fn peers_for_change_round(
     discovered: &DiscoveredPeers,
     pairing_pending: bool,
     scanned: Option<&DiscoveredPeer>,
+    relay: bool,
 ) -> Vec<DiscoveredPeer> {
     let mut round: Vec<DiscoveredPeer> = peer_refs
         .iter()
@@ -343,6 +358,7 @@ pub fn peers_for_change_round(
                 peer_ref.last_address.as_deref(),
                 peer_ref.endpoint_id.as_deref(),
                 discovered,
+                relay,
             )
         })
         .collect();

@@ -898,23 +898,44 @@ async fn bind_peer_to_key(
     }
 }
 
-/// #6353: the bind that pairs a host this device scanned also closes the window
-/// the scan was offered to the daemon in (`peers_for_change_round`), so without
-/// mDNS the scanned address is the only path back to the host. Kept only when
-/// the scan names the key the handshake just authenticated, and only at that
-/// bind: the scan is never cleared, and a later session must not put the QR's
-/// address back over one a completed dial cached since.
-async fn cache_scanned_address(ctx: &ResponderCtx<'_>, scheduler: &SyncScheduler, peer_id: &str) {
-    let Some(scanned) = scheduler.scanned_peer() else {
+/// Remember an address that reaches the peer, so this device can dial it back
+/// without mDNS: a session is a pull, and a peer that only ever dials in would
+/// otherwise never be pulled from (#6764).
+///
+/// At the bind that pairs a host this device scanned, the scanned address when
+/// the scan names the key the handshake just authenticated (#6353). The scan is
+/// never cleared, so a later session must not put it back over a newer address.
+/// Otherwise the address the session's own direct path came from; a session
+/// carried by the relay names none.
+async fn cache_peer_address(
+    ctx: &ResponderCtx<'_>,
+    scheduler: &SyncScheduler,
+    conn: &iroh::endpoint::Connection,
+    peer_id: &str,
+    at_pairing_bind: bool,
+) {
+    let scanned = at_pairing_bind
+        .then(|| scheduler.scanned_peer())
+        .flatten()
+        .filter(|scanned| scanned.endpoint_id == Some(ctx.endpoint_id))
+        .map(|scanned| super::session_supervisor::last_address_of(&scanned));
+    let Some(address) = scanned.or_else(|| observed_address(conn)) else {
         return;
     };
-    if scanned.endpoint_id != Some(ctx.endpoint_id) {
-        return;
-    }
-    let address = super::session_supervisor::last_address_of(&scanned);
     if let Err(e) = peer_refs::update_last_address(ctx.pool, peer_id, &address).await {
-        tracing::warn!(peer_id, error = %e, "failed to save the scanned peer's address");
+        tracing::warn!(peer_id, error = %e, "failed to save the peer's address");
     }
+}
+
+/// The peer's end of the connection's selected direct path. iroh sends from the
+/// socket it accepts on, so this is the address the peer can be dialled at.
+fn observed_address(conn: &iroh::endpoint::Connection) -> Option<String> {
+    conn.paths()
+        .iter()
+        .find_map(|path| match path.remote_addr() {
+            iroh::TransportAddr::Ip(addr) if path.is_selected() => Some(addr.to_string()),
+            _ => None,
+        })
 }
 
 /// Record what the peer calls itself (#4298).
@@ -1219,6 +1240,28 @@ async fn lock_peer_or_reject(
     Ok(Some(guard))
 }
 
+/// What a completed session leaves in the peer's row: the key bound to it, an
+/// address to dial it back at, and the name it offered.
+async fn record_settled_peer(
+    ctx: &ResponderCtx<'_>,
+    scheduler: &SyncScheduler,
+    conn: &iroh::endpoint::Connection,
+    settled_remote_id: &str,
+    pairing_pending: bool,
+    heads_ambiguous: bool,
+    offered_device_name: Option<&str>,
+) {
+    let bound_to_this_key =
+        bind_peer_to_key(ctx, settled_remote_id, pairing_pending, heads_ambiguous).await;
+    // The two outcomes where the id and the handshake key belong together; see
+    // `record_advertised_name`.
+    let authenticated = !pairing_pending || bound_to_this_key;
+    if authenticated {
+        cache_peer_address(ctx, scheduler, conn, settled_remote_id, pairing_pending).await;
+    }
+    record_advertised_name(ctx, settled_remote_id, authenticated, offered_device_name).await;
+}
+
 /// `Ok(true)` when the session completed for a peer that
 /// [holds news](SyncOrchestrator::peer_holds_news).
 async fn handle_incoming_sync_inner(
@@ -1323,16 +1366,13 @@ async fn handle_incoming_sync_inner(
         spoke_last = false;
     }
 
-    let settled_remote_id = orch.session().remote_device_id.clone();
-    let bound_to_this_key =
-        bind_peer_to_key(&ctx, &settled_remote_id, pairing_pending, heads_ambiguous).await;
-    if bound_to_this_key && pairing_pending {
-        cache_scanned_address(&ctx, &scheduler, &settled_remote_id).await;
-    }
-    record_advertised_name(
+    record_settled_peer(
         &ctx,
-        &settled_remote_id,
-        !pairing_pending || bound_to_this_key,
+        &scheduler,
+        &session.conn,
+        &orch.session().remote_device_id,
+        pairing_pending,
+        heads_ambiguous,
         parts.offered_device_name.as_deref(),
     )
     .await;

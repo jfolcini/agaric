@@ -2950,7 +2950,6 @@ fn build_tauri_builder() -> tauri::Builder<tauri::Wry> {
         // router; `register_deeplink_handlers` is wired from the setup
         // hook below.  No `#[cfg(desktop)]` gate on purpose.
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
