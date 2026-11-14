@@ -559,9 +559,9 @@ describe('BugReportDialog', () => {
     ).not.toBeInTheDocument()
   })
 
-  // #6538 — logs reach a report only as a saved ZIP, which Android cannot
-  // write; the switch stays, disabled, under a notice saying why.
-  describe('on Android (#6538)', () => {
+  // #6546 — Android writes the ZIP through its save command, which says where
+  // the file went itself.
+  describe('on Android (#6546)', () => {
     beforeEach(() => {
       vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
         'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
@@ -574,45 +574,23 @@ describe('BugReportDialog', () => {
       __resetPlatformCacheForTests()
     })
 
-    it('offers copy and no ZIP: the logs switch is disabled and described by the notice', async () => {
+    it('saves the ZIP and leaves the where-it-went toast to the save', async () => {
       const user = userEvent.setup()
       render(<BugReportDialog open onOpenChange={() => {}} />)
       await screen.findByText(/## Description/)
 
-      const logsSwitch = screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') })
-      const notice = screen.getByText(t('data.fileSaveUnavailableAndroid'))
-      expect(logsSwitch).toBeDisabled()
-      expect(logsSwitch).toHaveAttribute('aria-describedby', notice.id)
-      await user.click(logsSwitch)
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+      await user.click(await screen.findByRole('button', { name: t('bugReport.downloadZip') }))
 
-      expect(logsSwitch).not.toBeChecked()
-      expect(
-        screen.queryByRole('button', { name: t('bugReport.downloadZip') }),
-      ).not.toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('bugReport.copy') })).toBeEnabled()
-      expect(mockedInvoke).not.toHaveBeenCalledWith('read_logs_for_report', expect.anything())
+      await waitFor(() => {
+        expect(downloadBlobMock).toHaveBeenCalledTimes(1)
+      })
+      // The button is enabled again once the handler, toast and all, has run.
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: t('bugReport.downloadZip') })).toBeEnabled()
+      })
+      expect(mockedToastSuccess).not.toHaveBeenCalled()
     })
-
-    it('has no a11y violations with the notice shown', async () => {
-      const { container } = render(<BugReportDialog open onOpenChange={() => {}} />)
-      await screen.findByText(/## Description/)
-
-      await waitFor(
-        async () => {
-          const results = await axe(container)
-          expect(results).toHaveNoViolations()
-        },
-        { timeout: 5000 },
-      )
-    })
-  })
-
-  it('shows no Android notice and an enabled logs switch on desktop (#6538)', async () => {
-    render(<BugReportDialog open onOpenChange={() => {}} />)
-    await screen.findByText(/## Description/)
-
-    expect(screen.queryByText(t('data.fileSaveUnavailableAndroid'))).not.toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') })).toBeEnabled()
   })
 
   it('has no a11y violations', async () => {

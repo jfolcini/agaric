@@ -59,6 +59,7 @@ import { BUG_TRACKER } from '@/lib/config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
+import { isAndroid } from '@/lib/platform'
 
 interface BugReportDialogProps {
   open: boolean
@@ -272,7 +273,8 @@ export function BugReportDialog({
     try {
       const ok = await executeBuildZip({ redact, metadata })
       if (ok === undefined) return
-      notify.success(t('bugReport.zipDownloaded', { fileName: zipFileName }))
+      // Android's save has already said where the file went, under the name the OS gave it.
+      if (!isAndroid()) notify.success(t('bugReport.zipDownloaded', { fileName: zipFileName }))
     } finally {
       setSubmitting(false)
     }

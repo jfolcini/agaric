@@ -16,7 +16,7 @@ Agaric exposes itself to AI agents (Claude Desktop, Cursor, Continue, and any ot
 - **Revert a whole session's edits** with one click (the **SessionRevertControls** action).
 - **Run one tool from a script** with `agaric-mcp call` (see [From a script](#from-a-script)).
 - **Open Agaric from another app** via the `agaric://` deep-link scheme.
-- **Capture quickly into Agaric** via the global Quick Capture hotkey (works even when the app is in the background) — see [editor.md](editor.md) and [keyboard.md](keyboard.md) — or an `agaric://capture?text=…` link from a bookmarklet, a launcher or a script.
+- **Capture quickly into Agaric** via the global Quick Capture hotkey (works even when the app is in the background) — see [editor.md](editor.md) and [keyboard.md](keyboard.md) — or an `agaric://capture?text=…` link from a bookmarklet, a launcher or a script. On Android, Agaric is in the share sheet for text: sharing a link or a paragraph from another app opens Quick Capture holding it, and nothing is saved until you press *Capture* (images and files are not accepted).
 
 ## How agents connect
 

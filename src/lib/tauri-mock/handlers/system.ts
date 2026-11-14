@@ -93,6 +93,10 @@ export const systemHandlers = {
   // sandbox, so the boot-time update check should proceed unimpeded.
   is_flatpak: () => false,
 
+  // Android's check for a newer release (#6546): none, unless a spec with an Android user
+  // agent names one in `localStorage['__mockNewerRelease']`.
+  check_latest_release: () => globalThis.localStorage?.getItem('__mockNewerRelease') ?? null,
+
   // ---------------------------------------------------------------------------
   // Properties & tags queries
   // ---------------------------------------------------------------------------
@@ -162,8 +166,14 @@ export const systemHandlers = {
   // nothing to rewrite and leaves the same clean report.
   rebuild_derived_state: cleanReport,
 
-  // #6652 — the macOS file save. The mock has no disk, so nothing is written.
-  save_to_downloads: () => null,
+  // #6652, #6546 — the macOS and Android file save. The mock has no disk: a spec reads what
+  // was saved from `__mockSavedFiles`, and the name comes back unchanged, as when it is free.
+  save_to_downloads: (args) => {
+    const { fileName, bytes } = args as Record<string, unknown>
+    const scope = globalThis as { __mockSavedFiles?: unknown[] }
+    scope.__mockSavedFiles = [...(scope.__mockSavedFiles ?? []), { fileName, bytes }]
+    return String(fileName)
+  },
 
   // #5363 — the Markdown mirror. The mock has no disk: the folder is only the
   // `app_settings` rows, so nothing is validated, written, ever diverges or
@@ -211,6 +221,7 @@ export const systemHandlers = {
   | 'set_trace_sampling'
   | 'get_status'
   | 'is_flatpak'
+  | 'check_latest_release'
   | 'get_recovery_status'
   | 'log_frontend'
   | 'get_speech_status'

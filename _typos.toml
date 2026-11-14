@@ -66,7 +66,7 @@ ois = "ois"
 # / token fixture, not the English word "model" / "nodal".
 NODEL = "NODEL"
 # Org-mode repeater syntax — `.+Nd`, `+Nw`, `+Nm` etc. (N days/weeks/
-# months) appear in `ARCHITECTURE.md`, `COMPARISON.md`, and the
+# months) appear in `ARCHITECTURE.md`, `COMPARISON-LOGSEQ.md`, and the
 # `repeat`-property docs. `Nd` is also a valid Crockford-base32
 # character pair in deterministic test ULIDs.
 Nd = "Nd"
@@ -74,7 +74,7 @@ ND = "ND"
 Nw = "Nw"
 Nm = "Nm"
 # `config.edn` — Logseq's Clojure EDN config file extension, cited
-# repeatedly in `COMPARISON.md` when comparing Logseq features.
+# repeatedly in `COMPARISON-LOGSEQ.md` when comparing Logseq features.
 edn = "edn"
 # Test-ULID prefixes used as deterministic fixtures across the Rust
 # integration tests (`PURGE_ANC`, `M81PN_*`, `01TESTNONE…MISSNG`,

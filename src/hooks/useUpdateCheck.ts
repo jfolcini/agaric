@@ -11,9 +11,12 @@
  *   - **Later** — dismisses the toast (sonner handles this via the
  *     `cancel` field).
  *
- * Desktop-only — Android updates by installing a newer APK from the releases
- * page, and has no Tauri updater plugin; the boot check short-circuits on the
- * shared `isMobilePlatform()` capability check from `../lib/platform`.
+ * Android has no Tauri updater plugin: it updates by installing a newer APK
+ * from the releases page. There the same once-a-day check asks the backend
+ * whether the newest release is newer than this build
+ * (`commands.checkLatestRelease`, #6546) and, when it is, raises the toast
+ * with one action that opens the releases page. Nothing is downloaded. Any
+ * other mobile platform checks nothing.
  *
  * Flatpak builds are also skipped: Flathub requires apps NOT to
  * self-update (updates flow through Flathub's own repo/CI instead), so
@@ -49,10 +52,12 @@ import { useEffect, useSyncExternalStore } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { RELEASES_URL } from '@/lib/config'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { isMobilePlatform } from '@/lib/platform'
+import { openUrl } from '@/lib/open-url'
+import { isAndroid, isMobilePlatform } from '@/lib/platform'
 import type { UpdateStatusValue } from '@/lib/preferences'
 import {
   DEFAULT_UPDATE_STATUS,
@@ -353,6 +358,63 @@ async function runUpdateCheckInner(silentOnNoUpdate: boolean): Promise<void> {
   }
 }
 
+// ── Android (#6546) ──────────────────────────────────────────────────────────
+
+let inFlightAndroidCheck: Promise<void> | null = null
+
+/**
+ * Ask the backend whether a newer release exists and say so, with a button to
+ * the releases page. A check that fails logs a warning and shows nothing: the
+ * phone is often offline, and the next launch or resume asks again.
+ */
+async function runAndroidReleaseCheck(runningVersion: string | undefined): Promise<void> {
+  let newer: string | null
+  try {
+    newer = unwrap(await commands.checkLatestRelease())
+  } catch (err) {
+    logger.warn('updater', 'Android release check failed', undefined, err)
+    return
+  }
+  const nowIso = new Date().toISOString()
+  writeLastCheckIso(nowIso)
+  if (newer == null) {
+    setUpdateStatus({ status: 'up-to-date', currentVersion: runningVersion, lastCheckedAt: nowIso })
+    return
+  }
+  setUpdateStatus({
+    status: 'available',
+    currentVersion: runningVersion,
+    availableVersion: newer,
+    lastCheckedAt: nowIso,
+  })
+  notify.message(i18n.t('help.updateAvailableToast', { version: newer }), {
+    id: UPDATE_AVAILABLE_TOAST_ID,
+    duration: Number.POSITIVE_INFINITY,
+    action: {
+      label: i18n.t('help.updateOpenReleasesButton'),
+      onClick: () => {
+        void openUrl(RELEASES_URL)
+      },
+    },
+  })
+}
+
+/**
+ * Android's once-a-day attempt, behind the debounce the desktop check uses.
+ * A stored "update available" that was recorded by another build is about a
+ * version the user has since installed, so it is checked again at once.
+ */
+async function attemptAndroidReleaseCheck(): Promise<void> {
+  const runningVersion = await resolveCurrentVersion()
+  const recordedByAnotherBuild =
+    currentStatus.status === 'available' && currentStatus.currentVersion !== runningVersion
+  if (!recordedByAnotherBuild && isWithinDebounceWindow(Date.now())) return
+  inFlightAndroidCheck ??= runAndroidReleaseCheck(runningVersion).finally(() => {
+    inFlightAndroidCheck = null
+  })
+  await inFlightAndroidCheck
+}
+
 /**
  * Manual `t('help.updateCheckNowButton')` entry point — bypasses the 24 h debounce and
  * always shows a toast (either update-available or the no-update
@@ -363,10 +425,11 @@ export async function checkForUpdatesNow(): Promise<void> {
 }
 
 /**
- * Empty-deps boot effect. Skips entirely (registers nothing) when the UA
- * sniff says we're on mobile (`isMobilePlatform()`) or the backend reports
- * we're running inside a Flatpak sandbox (Flathub's no-self-update
- * requirement — see `isRunningUnderFlatpak`).
+ * Empty-deps boot effect. Skips entirely (registers nothing) when the backend
+ * reports we're running inside a Flatpak sandbox (Flathub's no-self-update
+ * requirement — see `isRunningUnderFlatpak`) or on a mobile platform other
+ * than Android. On Android it runs `attemptAndroidReleaseCheck` at boot and
+ * each time the app comes back to the front.
  *
  * Otherwise, in addition to firing an initial `runUpdateCheck` in
  * silent mode, this registers a 24 h `setInterval` re-check plus
@@ -384,6 +447,14 @@ export async function checkForUpdatesNow(): Promise<void> {
  */
 export function useUpdateCheck(): void {
   useEffect(() => {
+    if (isAndroid()) {
+      const attemptOnResume = (): void => {
+        if (document.visibilityState === 'visible') void attemptAndroidReleaseCheck()
+      }
+      void attemptAndroidReleaseCheck()
+      document.addEventListener('visibilitychange', attemptOnResume)
+      return () => document.removeEventListener('visibilitychange', attemptOnResume)
+    }
     if (isMobilePlatform()) return
 
     const attemptCheck = (): void => {

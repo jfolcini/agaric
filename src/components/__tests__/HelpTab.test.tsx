@@ -161,6 +161,38 @@ describe('HelpTab', () => {
     )
   })
 
+  // #6546 — Android's daily check found a newer release: the row names it.
+  it('on Android names a newer release beside the releases button, and nothing otherwise', () => {
+    setUserAgent(ANDROID_UA)
+    mockUseUpdateStatus.mockReturnValue({ status: 'available', availableVersion: '0.24.0' })
+    const { unmount } = render(<HelpTab onReportBugClick={vi.fn()} />)
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      t('help.updateAvailableStatus', { version: '0.24.0' }),
+    )
+    expect(
+      screen.getByRole('button', { name: t('help.updateOpenReleasesButton') }),
+    ).toBeInTheDocument()
+    unmount()
+
+    mockUseUpdateStatus.mockReturnValue({ status: 'up-to-date', currentVersion: '0.24.0' })
+    render(<HelpTab onReportBugClick={vi.fn()} />)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations on Android with a newer release named', async () => {
+    setUserAgent(ANDROID_UA)
+    mockUseUpdateStatus.mockReturnValue({ status: 'available', availableVersion: '0.24.0' })
+    const { container } = render(<HelpTab onReportBugClick={vi.fn()} />)
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
+
   it('clicking Check now invokes checkForUpdatesNow', async () => {
     const user = userEvent.setup()
     const { checkForUpdatesNow } = await import('@/hooks/useUpdateCheck')

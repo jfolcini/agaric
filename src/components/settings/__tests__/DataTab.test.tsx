@@ -480,59 +480,74 @@ describe('DataTab', () => {
     })
   })
 
-  // #6538 — the Android WebView handles no `blob:` download, so an export
-  // there writes nothing. The rows stay, disabled, under a notice saying why.
-  describe('on Android (#6538)', () => {
-    const ANDROID_UA =
-      'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36'
+  // #6546 — Android saves through the backend, so the rows work there. The save
+  // itself says where the file went, so the export adds no second toast.
+  describe('on Android (#6546)', () => {
+    let userAgent: ReturnType<typeof vi.spyOn>
 
     beforeEach(() => {
-      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(ANDROID_UA)
+      userAgent = vi
+        .spyOn(navigator, 'userAgent', 'get')
+        .mockReturnValue(
+          'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+        )
       __resetPlatformCacheForTests()
     })
 
     afterEach(() => {
-      vi.restoreAllMocks()
+      userAgent.mockRestore()
       __resetPlatformCacheForTests()
     })
 
-    it('keeps both export buttons, disabled and described by the notice, and never toasts success', async () => {
+    it.each([
+      [
+        t('data.exportButton'),
+        () =>
+          mockExportGraphAsZip.mockResolvedValueOnce({
+            blob: new Blob(['zip']),
+            skippedPages: 0,
+            skippedAttachments: 0,
+          }),
+      ],
+      [
+        t('data.exportAllSpacesButton'),
+        () =>
+          mockExportAllSpacesAsZip.mockResolvedValueOnce({
+            blob: new Blob(['zip']),
+            spaceCount: 2,
+            skippedPages: 0,
+            skippedAttachments: 0,
+          }),
+      ],
+    ])('%s is enabled, saves, and leaves the success toast to the save', async (name, build) => {
       const user = userEvent.setup()
+      build()
       render(<DataTab />)
-
-      const notice = screen.getByText(t('data.fileSaveUnavailableAndroid'))
-      for (const name of [t('data.exportButton'), t('data.exportAllSpacesButton')]) {
-        const button = screen.getByRole('button', { name })
-        expect(button).toBeDisabled()
-        expect(button).toHaveAttribute('aria-describedby', notice.id)
-        await user.click(button)
-      }
-
-      expect(mockExportGraphAsZip).not.toHaveBeenCalled()
-      expect(mockExportAllSpacesAsZip).not.toHaveBeenCalled()
-      expect(mockDownloadBlob).not.toHaveBeenCalled()
-      expect(toast.success).not.toHaveBeenCalled()
-    })
-
-    it('has no a11y violations with the notice shown', async () => {
-      const { container } = render(<DataTab />)
-
-      await waitFor(async () => {
-        const results = await axe(container)
-        expect(results).toHaveNoViolations()
-      })
-    })
-  })
-
-  it('shows no Android notice and enabled export buttons on desktop (#6538)', () => {
-    render(<DataTab />)
-
-    expect(screen.queryByText(t('data.fileSaveUnavailableAndroid'))).not.toBeInTheDocument()
-    for (const name of [t('data.exportButton'), t('data.exportAllSpacesButton')]) {
       const button = screen.getByRole('button', { name })
       expect(button).toBeEnabled()
-      expect(button).not.toHaveAttribute('aria-describedby')
-    }
+
+      await user.click(button)
+
+      await waitFor(() => expect(mockDownloadBlob).toHaveBeenCalledTimes(1))
+      // The button is enabled again once the handler, toast and all, has run.
+      await waitFor(() => expect(screen.getByRole('button', { name })).toBeEnabled())
+      expect(toast.success).not.toHaveBeenCalled()
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    it('still warns when an export skipped pages', async () => {
+      const user = userEvent.setup()
+      mockExportGraphAsZip.mockResolvedValueOnce({
+        blob: new Blob(['zip']),
+        skippedPages: 2,
+        skippedAttachments: 0,
+      })
+      render(<DataTab />)
+
+      await user.click(screen.getByRole('button', { name: t('data.exportButton') }))
+
+      await waitFor(() => expect(toast.warning).toHaveBeenCalledTimes(1))
+    })
   })
 
   it('shows error toast on export failure', async () => {

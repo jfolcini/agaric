@@ -13,9 +13,21 @@
 //! it, [`MulticastLock::acquire`]'s "is there an Android context at all?"
 //! check, is compiled on the host under `cfg(test)` too, so the degrade path
 //! can be tested off-device (#3847). It bridges into Java via JNI using the
-//! Application context recorded by [`crate::android_context`]. The acquired
-//! lock is kept alive for the daemon's lifetime by storing a `Global`
-//! reference in [`MulticastLock`]; `Drop` releases it.
+//! Application context recorded by [`crate::android_context`]. An acquired
+//! lock is a `Global` reference in [`MulticastLock`]; `Drop` releases it.
+//!
+//! ### When the lock is held (#6526)
+//!
+//! Only while the daemon runs and the app is not suspended. A suspended app's
+//! packets are dropped by Android anyway, so a lock held then keeps the Wi-Fi
+//! radio answering multicast for nothing. [`hold_for_daemon`] and the app's
+//! `Suspended` / `Resumed` handler ([`app_suspended`], [`app_resumed`]) feed
+//! one [`Hold`], which acquires and releases on each change. The release runs
+//! in the handler itself, not on the daemon's tick: Android freezes a
+//! suspended process before the tick comes round.
+//!
+//! [`Hold`] is tested on the host against a fake lock. Its three call sites
+//! are `cfg(target_os = "android")` and run only on a device (#6513).
 //!
 //! ### Manifest permissions required
 //!
@@ -38,6 +50,8 @@
 #![allow(unsafe_code)]
 
 use std::fmt;
+#[cfg(target_os = "android")]
+use std::sync::{Mutex, PoisonError};
 
 #[cfg(target_os = "android")]
 use jni::objects::{JObject, JValue};
@@ -257,13 +271,223 @@ impl Drop for MulticastLock {
     }
 }
 
+/// Whether the lock is wanted, and the lock while it is held: exactly while the
+/// daemon runs and the app is not suspended. Generic over the lock so the
+/// transitions are tested on the host.
+struct Hold<L> {
+    daemon_running: bool,
+    suspended: bool,
+    lock: Option<L>,
+}
+
+impl<L> Hold<L> {
+    const fn new() -> Self {
+        Self {
+            daemon_running: false,
+            suspended: false,
+            lock: None,
+        }
+    }
+
+    fn set_daemon_running(&mut self, running: bool, acquire: impl FnOnce() -> Option<L>) {
+        self.daemon_running = running;
+        self.settle(acquire);
+    }
+
+    fn set_suspended(&mut self, suspended: bool, acquire: impl FnOnce() -> Option<L>) {
+        self.suspended = suspended;
+        self.settle(acquire);
+    }
+
+    /// Acquires a wanted lock that is not held, and drops (releases) a held
+    /// one that is not wanted. An `acquire` that fails leaves it unheld, and
+    /// the next change tries again.
+    fn settle(&mut self, acquire: impl FnOnce() -> Option<L>) {
+        if self.daemon_running && !self.suspended {
+            if self.lock.is_none() {
+                self.lock = acquire();
+            }
+        } else {
+            self.lock = None;
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+static HOLD: Mutex<Hold<MulticastLock>> = Mutex::new(Hold::new());
+
+#[cfg(target_os = "android")]
+fn with_hold(change: impl FnOnce(&mut Hold<MulticastLock>)) {
+    change(&mut HOLD.lock().unwrap_or_else(PoisonError::into_inner));
+}
+
+/// A missing context degrades to no lock, and the daemon carries on without
+/// peer discovery (#3847).
+#[cfg(target_os = "android")]
+fn acquire_or_warn() -> Option<MulticastLock> {
+    MulticastLock::acquire()
+        .inspect_err(|e| {
+            tracing::warn!(
+                error = %e,
+                "failed to acquire Android WiFi multicast lock; mDNS peer discovery may not work"
+            );
+        })
+        .ok()
+}
+
+/// The daemon's claim on the lock, for as long as this is alive.
+#[cfg(target_os = "android")]
+pub(crate) struct DaemonHold;
+
+/// Wants the lock for the daemon until the returned value drops, and takes it
+/// now unless the app is suspended.
+#[cfg(target_os = "android")]
+pub(crate) fn hold_for_daemon() -> DaemonHold {
+    with_hold(|hold| hold.set_daemon_running(true, acquire_or_warn));
+    DaemonHold
+}
+
+#[cfg(target_os = "android")]
+impl Drop for DaemonHold {
+    fn drop(&mut self) {
+        with_hold(|hold| hold.set_daemon_running(false, acquire_or_warn));
+    }
+}
+
+/// The app was suspended: release the lock.
+#[cfg(target_os = "android")]
+pub fn app_suspended() {
+    with_hold(|hold| hold.set_suspended(true, acquire_or_warn));
+}
+
+/// The app is back: take the lock again if the daemon runs.
+#[cfg(target_os = "android")]
+pub fn app_resumed() {
+    with_hold(|hold| hold.set_suspended(false, acquire_or_warn));
+}
+
 #[cfg(test)]
 mod tests {
     //! Host-target tests. Real JNI acquisition needs a running Android JVM
     //! and cannot be exercised here; what *can* be exercised — and is the
     //! regression under test (#3847) — is that a missing Android context
     //! degrades to an `Err` instead of aborting the process.
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use super::*;
+
+    /// Counts the locks acquired and released; a lock releases on drop, as
+    /// [`MulticastLock`] does.
+    #[derive(Default)]
+    struct Radio {
+        acquired: Cell<usize>,
+        released: Rc<Cell<usize>>,
+        /// The next acquire fails, as with no Android context.
+        refuses: Cell<bool>,
+    }
+
+    struct FakeLock(Rc<Cell<usize>>);
+
+    impl Drop for FakeLock {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    impl Radio {
+        fn acquire(&self) -> Option<FakeLock> {
+            if self.refuses.get() {
+                return None;
+            }
+            self.acquired.set(self.acquired.get() + 1);
+            Some(FakeLock(Rc::clone(&self.released)))
+        }
+
+        /// (acquired, released) so far.
+        fn counts(&self) -> (usize, usize) {
+            (self.acquired.get(), self.released.get())
+        }
+    }
+
+    #[test]
+    fn the_lock_is_acquired_released_on_suspend_and_acquired_again_on_resume() {
+        let radio = Radio::default();
+        let mut hold = Hold::new();
+
+        hold.set_daemon_running(true, || radio.acquire());
+        assert_eq!(radio.counts(), (1, 0));
+
+        hold.set_suspended(true, || radio.acquire());
+        assert_eq!(radio.counts(), (1, 1));
+
+        hold.set_suspended(false, || radio.acquire());
+        assert_eq!(radio.counts(), (2, 1));
+    }
+
+    #[test]
+    fn a_resume_while_the_lock_is_held_acquires_no_second_lock() {
+        let radio = Radio::default();
+        let mut hold = Hold::new();
+        hold.set_daemon_running(true, || radio.acquire());
+
+        hold.set_suspended(false, || radio.acquire());
+
+        assert_eq!(radio.counts(), (1, 0));
+    }
+
+    #[test]
+    fn a_daemon_that_starts_while_suspended_takes_the_lock_only_on_resume() {
+        let radio = Radio::default();
+        let mut hold = Hold::new();
+        hold.set_suspended(true, || radio.acquire());
+
+        hold.set_daemon_running(true, || radio.acquire());
+        assert_eq!(radio.counts(), (0, 0));
+
+        hold.set_suspended(false, || radio.acquire());
+        assert_eq!(radio.counts(), (1, 0));
+    }
+
+    #[test]
+    fn a_resume_with_no_daemon_running_takes_no_lock() {
+        let radio = Radio::default();
+        let mut hold = Hold::new();
+
+        hold.set_suspended(true, || radio.acquire());
+        hold.set_suspended(false, || radio.acquire());
+
+        assert_eq!(radio.counts(), (0, 0));
+    }
+
+    #[test]
+    fn a_daemon_that_stops_releases_the_lock_and_a_later_resume_takes_none() {
+        let radio = Radio::default();
+        let mut hold = Hold::new();
+        hold.set_daemon_running(true, || radio.acquire());
+
+        hold.set_daemon_running(false, || radio.acquire());
+        assert_eq!(radio.counts(), (1, 1));
+
+        hold.set_suspended(true, || radio.acquire());
+        hold.set_suspended(false, || radio.acquire());
+        assert_eq!(radio.counts(), (1, 1));
+    }
+
+    #[test]
+    fn an_acquire_that_fails_is_tried_again_on_the_next_resume() {
+        let radio = Radio::default();
+        let mut hold = Hold::new();
+        radio.refuses.set(true);
+        hold.set_daemon_running(true, || radio.acquire());
+        assert_eq!(radio.counts(), (0, 0));
+
+        radio.refuses.set(false);
+        hold.set_suspended(true, || radio.acquire());
+        hold.set_suspended(false, || radio.acquire());
+
+        assert_eq!(radio.counts(), (1, 0));
+    }
 
     #[test]
     fn acquire_degrades_to_an_error_without_an_android_context() {

@@ -37,6 +37,7 @@ const READ_ONLY_EXACT: ReadonlySet<string> = new Set<string>([
   'preview_property_merge',
   'preview_property_type_change',
   'preview_unfit_property_move',
+  'check_latest_release',
 ])
 
 /** True when the snake_case IPC `command` has no persistent effect. */
