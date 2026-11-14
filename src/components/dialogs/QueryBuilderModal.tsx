@@ -216,7 +216,15 @@ export function QueryBuilderModal({
       })
         .then((compiled) => {
           if (cancelled) return
-          if (compiled.ok) {
+          // A name standing for the tags nested under it compiles to an `Or`
+          // the builder would save as today's tags: that text is edited as text.
+          if (
+            compiled.ok &&
+            compiled.filter.type === 'And' &&
+            compiled.filter.children.some((c) => c.type !== 'Leaf')
+          ) {
+            setTextOnly(true)
+          } else if (compiled.ok) {
             setMode('advanced')
             setBuilderRoot(filterExprToBuilderTree(compiled.filter, nextId))
           } else {

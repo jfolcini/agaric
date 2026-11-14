@@ -30,6 +30,7 @@ export const UNRESOLVED_TAG_SENTINEL = '__unresolved-tag__'
 export interface SearchFilterParams {
   tagIds?: string[] | undefined
   tagsMatchInlineAndInherited?: boolean | undefined
+  tagAnyOf?: string[][] | undefined
   includePageGlobs?: string[] | undefined
   excludePageGlobs?: string[] | undefined
   stateFilter?: string[] | undefined
@@ -51,6 +52,7 @@ export interface SearchFilterParams {
 export function astFilterParams(
   projection: AstFilterProjection,
   tagIds: string[],
+  tagAnyOf: string[][] = [],
 ): SearchFilterParams {
   // Issue #2258 — the search surface emits its IPC bundle directly from the
   // parsed `AstFilterProjection`. It previously round-tripped the projection
@@ -60,14 +62,15 @@ export function astFilterParams(
   // `astFilterParams canonical-adapter parity` suite still pins the emitted
   // byte shape against the direct mapping.
   // #717 — `useTagResolution` yields exactly one settled entry per input
-  // name, so fewer ids than names means at least one name is definitively
-  // unresolved (callers hold the search while resolution is pending).
+  // name, an id or a group of the tags nested under it, so fewer of them than
+  // names means at least one name is definitively unresolved (callers hold the search while resolution is pending).
   // Project the matches-nothing sentinel instead of dropping the filter.
   // The unresolved-tag check uses the canonical-projected `tagNames`, which is
   // identical to the input (`tag` predicates round-trip losslessly).
-  const hasUnresolvedTag = projection.tagNames.length > tagIds.length
+  const hasUnresolvedTag = projection.tagNames.length > tagIds.length + tagAnyOf.length
   return {
     tagIds: hasUnresolvedTag ? [UNRESOLVED_TAG_SENTINEL] : tagIds.length === 0 ? undefined : tagIds,
+    tagAnyOf: tagAnyOf.length === 0 ? undefined : tagAnyOf,
     tagsMatchInlineAndInherited: projection.tagsMatchInlineAndInherited || undefined,
     includePageGlobs:
       projection.includePageGlobs.length === 0 ? undefined : projection.includePageGlobs,

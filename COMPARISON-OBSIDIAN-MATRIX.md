@@ -91,7 +91,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Inline tags | `#tag` in text or the `tags` property | `#[ULID]` chips; typed `#name` converts; `#[[multi word]]` reads as the existing tag of that name, else `multi-word`, and a new tag name holds no whitespace (#6334); same boundary rule as Obsidian on import | Done |
-| Nested tags | `#a/b` is a real hierarchy: `tag:a` matches `#a/b`, the Tags view nests them (help, *Tags*) | A naming convention: `projects/` is a prefix query that does **not** match the bare parent tag (`docs/features/tags-and-links.md`, #6760) | Partial |
+| Nested tags | `#a/b` is a real hierarchy: `tag:a` matches `#a/b`, the Tags view nests them (help, *Tags*) | `/` nests by name: `tag:#a` matches `#a/b` in search, query blocks and the query builder, and the Tags view nests them (`docs/features/tags-and-links.md`); no filter for the one tag without its nested tags | Done |
 | Tag rename | Not in the *Tags* or *Tags view* help pages; the community Tag Wrangler plugin | Built in; chips hold the id, so one rename updates everything | Better vs core |
 | Boolean tag queries | Search operators | `TagExpr` with And / Or / Not / Prefix | Done |
 | Inherited tags | A file's tags apply to the file | A tag on a block can apply to its descendants, opt-in in the Tags view and `under:` in search; not in the inline query vocabulary | Partial |
@@ -330,7 +330,7 @@ No points are awarded. Each line counts the rows of one section by the status Ag
 | 2. Editor | 1 | 9 | 9 | 2 |
 | 3. Linking and Transclusion | 0 | 5 | 6 | 0 |
 | 4. Properties and Bases | 3 | 3 | 5 | 0 |
-| 5. Tags | 1 | 2 | 2 | 0 |
+| 5. Tags | 1 | 3 | 1 | 0 |
 | 6. Search | 0 | 4 | 3 | 1 |
 | 7. Queries | 1 | 1 | 4 | 0 |
 | 8. Tasks and Agenda | 3 | 1 | 3 | 0 |
@@ -352,7 +352,7 @@ No points are awarded. Each line counts the rows of one section by the status Ag
 | 24. Performance, Accessibility and Localisation | 0 | 0 | 2 | 2 |
 | 25. Platforms, Packaging and Updates | 0 | 1 | 3 | 1 |
 | 26. Licence, Governance and Longevity | 1 | 2 | 1 | 0 |
-| **Total (175 rows)** | **18** | **46** | **89** | **22** |
+| **Total (175 rows)** | **18** | **47** | **88** | **22** |
 <!-- scorecard:end -->
 
 How to read it:

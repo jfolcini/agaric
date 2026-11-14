@@ -45,6 +45,11 @@ cross-surface; the Pages-only and Search-only groups are surface specialties.
 
 ### Value sub-types
 
+- **`Tag`** matches the tag and every live tag of its space named under it
+  (`projects` finds `projects/web`, ASCII case folded): the names are the only
+  hierarchy, read by `TAG_AND_NESTED_IDS_SQL`. Pages, Search and the advanced
+  query share the leaf. `TagOrRef`, the leaf a tag's own page lists by, matches
+  the one tag, attached or written inline.
 - **`PropertyPredicate`** — an internally-tagged enum that fuses the operator
   with its operand, so an `Eq`-without-value or `Exists`-with-value state is
   unrepresentable (D8). The vocabulary is `Exists` / `NotExists` /

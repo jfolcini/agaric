@@ -37,12 +37,14 @@ use std::collections::HashSet;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type")]
 pub enum FilterPrimitive {
-    /// Shared — block carries this tag id directly.
+    /// Shared — block carries this tag, or a tag named under it
+    /// (`projects/web` under `projects`), attached.
     Tag { tag: String },
     /// Shared — block carries `tag` via an ATTACHED `block_tags` row OR an
     /// inline `block_tag_refs` reference (`source_id`). The ref-inclusive tag
     /// semantics the legacy `query_by_tags`/`filtered_blocks_query` paths use;
-    /// `Tag` is attached-only.
+    /// `Tag` is attached-only. This leaf is the one tag: a tag nested under
+    /// it does not match.
     TagOrRef { tag: String },
     /// Shared — block's `parent_id` equals `parent` (its direct children).
     ChildOf { parent: String },
@@ -1189,15 +1191,33 @@ impl PagesProjection {
     }
 }
 
+/// The tag ids a `Tag` leaf matches: the tag, and every live tag of its space
+/// named under it (`projects` finds `projects/web`, in any case). The names
+/// are the only hierarchy (#6760).
+pub(crate) const TAG_AND_NESTED_IDS_SQL: &str = "SELECT n.id FROM blocks p JOIN blocks n \
+     ON n.id = p.id OR (n.block_type = 'tag' AND n.deleted_at IS NULL \
+     AND n.space_id IS p.space_id \
+     AND substr(n.content, 1, length(p.content) + 1) = (p.content || '/') COLLATE NOCASE) \
+     WHERE p.id = ?";
+
+/// The `Tag` leaf Pages and Search share: the block carries the tag or one
+/// nested under it, attached.
+fn compile_tag_and_nested(tag: &str, alias: &str) -> WhereClause {
+    WhereClause::new(
+        format!(
+            "{alias}.id IN (SELECT block_id FROM block_tags \
+             WHERE tag_id IN ({TAG_AND_NESTED_IDS_SQL}))"
+        ),
+        vec![Bind::Text(tag.to_string())],
+    )
+}
+
 impl Projection for PagesProjection {
     fn allowed_keys() -> &'static HashSet<&'static str> {
         &PAGES_ALLOWED_KEYS
     }
     fn compile_tag(&self, tag: &str, alias: &str) -> WhereClause {
-        WhereClause::new(
-            format!("{alias}.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?)"),
-            vec![Bind::Text(tag.to_string())],
-        )
+        compile_tag_and_nested(tag, alias)
     }
     fn compile_tag_or_ref(&self, tag: &str, alias: &str) -> WhereClause {
         WhereClause::new(
@@ -1504,10 +1524,7 @@ impl Projection for SearchProjection {
         &SEARCH_ALLOWED_KEYS
     }
     fn compile_tag(&self, tag: &str, alias: &str) -> WhereClause {
-        WhereClause::new(
-            format!("{alias}.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?)"),
-            vec![Bind::Text(tag.to_string())],
-        )
+        compile_tag_and_nested(tag, alias)
     }
     fn compile_tag_or_ref(&self, tag: &str, alias: &str) -> WhereClause {
         // Mirrors `compile_tag`'s `b.id` alias (Search's tag leaf, like Pages,
@@ -2254,11 +2271,10 @@ mod tests {
         }
 
         // `TagOrRef` is ref-INCLUSIVE; plain `Tag` stays attached-only (no
-        // UNION / no `block_tag_refs`).
+        // `block_tag_refs`).
         let attached_only = PagesProjection.compile(&FilterPrimitive::Tag {
             tag: "01TAG000000000000000000T1".into(),
         });
-        assert!(!attached_only.sql.contains("UNION"));
         assert!(!attached_only.sql.contains("block_tag_refs"));
     }
 

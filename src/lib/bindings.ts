@@ -2443,13 +2443,17 @@ export type FilterExpr =
  *  rather than a bare positional value).
  */
 export type FilterPrimitive = 
-/**  Shared — block carries this tag id directly. */
+/**
+ *  Shared — block carries this tag, or a tag named under it
+ *  (`projects/web` under `projects`), attached.
+ */
 { type: "Tag"; tag: string } | 
 /**
  *  Shared — block carries `tag` via an ATTACHED `block_tags` row OR an
  *  inline `block_tag_refs` reference (`source_id`). The ref-inclusive tag
  *  semantics the legacy `query_by_tags`/`filtered_blocks_query` paths use;
- *  `Tag` is attached-only.
+ *  `Tag` is attached-only. This leaf is the one tag: a tag nested under
+ *  it does not match.
  */
 { type: "TagOrRef"; tag: string } | 
 /**  Shared — block's `parent_id` equals `parent` (its direct children). */
@@ -4478,7 +4482,9 @@ export type SearchFilter = {
 	parentId?: string | null,
 	/**
 	 *  Restrict results to blocks carrying every tag in this list
-	 *  (`ALL` semantics — see `fts::search_fts`).
+	 *  (`ALL` semantics — see `fts::search_fts`). A tag is carried through a
+	 *  tag nested under it too: `projects` matches a block tagged
+	 *  `projects/web`.
 	 */
 	tagIds?: string[],
 	/**
@@ -4615,6 +4621,13 @@ export type SearchFilter = {
 	 *  ("Search everything under #tag", #5679).
 	 */
 	tagsMatchInlineAndInherited?: boolean,
+	/**
+	 *  Tag-id groups: a block must match at least one tag of every group,
+	 *  matched as [`Self::tag_ids`] are. The app sends one for a `tag:` name
+	 *  no tag holds while tags are nested under it (`projects` with only
+	 *  `projects/web`, #6760).
+	 */
+	tagAnyOf?: string[][],
 };
 
 /**

@@ -50,6 +50,7 @@ import { invalidateNameCaches, notifyPageRenamed, notifyTagAdded } from '@/lib/n
 const NO_NAMES: string[] = []
 const WIP: string[] = ['wip']
 const TYPO: string[] = ['typo']
+const PROJECTS: string[] = ['projects']
 const WIP_AND_TYPO: string[] = ['wip', 'typo']
 const WIP_AND_CASE_VARIANTS: string[] = ['wip', 'Foo', 'foo']
 
@@ -72,7 +73,12 @@ beforeEach(() => {
 describe('useTagResolution', () => {
   it('reports no pending work and no ids for an empty name list', () => {
     const { result } = renderHook(() => useTagResolution(NO_NAMES, 'SPACE_A'))
-    expect(result.current).toEqual({ tagIds: [], pending: false, hasUnresolved: false })
+    expect(result.current).toEqual({
+      tagIds: [],
+      tagAnyOf: [],
+      pending: false,
+      hasUnresolved: false,
+    })
     expect(mockedListTags).not.toHaveBeenCalled()
   })
 
@@ -96,7 +102,12 @@ describe('useTagResolution', () => {
       resolveLookup([wipTag])
     })
     await waitFor(() => {
-      expect(result.current).toEqual({ tagIds: ['TAG_WIP'], pending: false, hasUnresolved: false })
+      expect(result.current).toEqual({
+        tagIds: ['TAG_WIP'],
+        tagAnyOf: [],
+        pending: false,
+        hasUnresolved: false,
+      })
     })
   })
 
@@ -144,6 +155,37 @@ describe('useTagResolution', () => {
     expect(result.current.hasUnresolved).toBe(true)
   })
 
+  it('resolves a name no tag holds to the tags nested under it (#6760)', async () => {
+    mockedListTags.mockResolvedValue([
+      makeTag({ tag_id: 'TAG_WEB', name: 'projects/web' }),
+      makeTag({ tag_id: 'TAG_API', name: 'Projects/API' }),
+      makeTag({ tag_id: 'TAG_LOOKALIKE', name: 'projectsx' }),
+    ])
+
+    const { result } = renderHook(() => useTagResolution(PROJECTS, 'SPACE_A'))
+
+    await waitFor(() => {
+      expect(result.current.pending).toBe(false)
+    })
+    expect(result.current.tagIds).toEqual([])
+    expect(result.current.tagAnyOf).toEqual([['TAG_WEB', 'TAG_API']])
+    expect(result.current.hasUnresolved).toBe(false)
+  })
+
+  it('resolves a name a tag holds to that tag alone: the backend finds the nested ones', async () => {
+    mockedListTags.mockResolvedValue([
+      makeTag({ tag_id: 'TAG_PROJECTS', name: 'projects' }),
+      makeTag({ tag_id: 'TAG_WEB', name: 'projects/web' }),
+    ])
+
+    const { result } = renderHook(() => useTagResolution(PROJECTS, 'SPACE_A'))
+
+    await waitFor(() => {
+      expect(result.current.tagIds).toEqual(['TAG_PROJECTS'])
+    })
+    expect(result.current.tagAnyOf).toEqual([])
+  })
+
   it('matches case-insensitively on the exact name', async () => {
     mockedListTags.mockResolvedValue([makeTag({ name: 'WIP' })])
 
@@ -188,7 +230,12 @@ describe('useTagResolution', () => {
       expect(mockedListTags.mock.calls.length).toBeGreaterThan(settledCallCount)
     })
     await waitFor(() => {
-      expect(result.current).toEqual({ tagIds: ['TAG_WIP'], pending: false, hasUnresolved: false })
+      expect(result.current).toEqual({
+        tagIds: ['TAG_WIP'],
+        tagAnyOf: [],
+        pending: false,
+        hasUnresolved: false,
+      })
     })
   })
 
@@ -204,6 +251,7 @@ describe('useTagResolution', () => {
     await waitFor(() => {
       expect(result.current).toEqual({
         tagIds: ['TAG_WIP', 'TAG_FOO', 'TAG_FOO'],
+        tagAnyOf: [],
         pending: false,
         hasUnresolved: false,
       })
@@ -229,7 +277,12 @@ describe('useTagResolution', () => {
     })
 
     await waitFor(() => {
-      expect(result.current).toEqual({ tagIds: ['TAG_TYPO'], pending: false, hasUnresolved: false })
+      expect(result.current).toEqual({
+        tagIds: ['TAG_TYPO'],
+        tagAnyOf: [],
+        pending: false,
+        hasUnresolved: false,
+      })
     })
   })
 
@@ -273,7 +326,12 @@ describe('useTagResolution', () => {
     })
 
     await waitFor(() => {
-      expect(result.current).toEqual({ tagIds: ['TAG_TYPO'], pending: false, hasUnresolved: false })
+      expect(result.current).toEqual({
+        tagIds: ['TAG_TYPO'],
+        tagAnyOf: [],
+        pending: false,
+        hasUnresolved: false,
+      })
     })
   })
 
@@ -290,7 +348,12 @@ describe('useTagResolution', () => {
     })
 
     await waitFor(() => {
-      expect(result.current).toEqual({ tagIds: ['TAG_TYPO'], pending: false, hasUnresolved: false })
+      expect(result.current).toEqual({
+        tagIds: ['TAG_TYPO'],
+        tagAnyOf: [],
+        pending: false,
+        hasUnresolved: false,
+      })
     })
   })
 
@@ -307,7 +370,12 @@ describe('useTagResolution', () => {
     })
 
     await waitFor(() => {
-      expect(result.current).toEqual({ tagIds: ['TAG_TYPO'], pending: false, hasUnresolved: false })
+      expect(result.current).toEqual({
+        tagIds: ['TAG_TYPO'],
+        tagAnyOf: [],
+        pending: false,
+        hasUnresolved: false,
+      })
     })
   })
 
@@ -339,7 +407,12 @@ describe('useTagResolution', () => {
       invalidateNameCaches()
     })
 
-    expect(result.current).toEqual({ tagIds: ['TAG_WIP'], pending: false, hasUnresolved: false })
+    expect(result.current).toEqual({
+      tagIds: ['TAG_WIP'],
+      tagAnyOf: [],
+      pending: false,
+      hasUnresolved: false,
+    })
     expect(mockedListTags).toHaveBeenCalledTimes(settledCallCount)
   })
 })
