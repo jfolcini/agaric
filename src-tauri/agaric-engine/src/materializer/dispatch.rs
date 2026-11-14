@@ -457,9 +457,8 @@ fn inbound_sync_fts_tasks(changed_blocks: &[agaric_core::ulid::BlockId]) -> Vec<
 /// a changed page, tag or block-ref target): gating them on one threshold
 /// makes a large import cross into single-task territory for all of them at
 /// once. Below it the per-block fan-out is at most four tasks a block, so a
-/// near-threshold import of reference targets can fill the channel; a shed
-/// `ReindexFtsReferences` is not persisted, and its referrers stay stale
-/// until their next edit or a rebuild.
+/// near-threshold import of reference targets can fill the channel; each of
+/// the four leaves a retry row when shed.
 const SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX: usize = SYNC_FTS_PER_BLOCK_MAX;
 
 /// #2667: choose the `block_tag_refs`-reindex task(s) for an inbound-sync
