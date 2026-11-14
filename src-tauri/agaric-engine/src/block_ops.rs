@@ -1102,7 +1102,18 @@ pub async fn set_property_in_tx_with_declaration(
         value_bool,
         value_list: None,
     };
-    set_property_value_in_tx(tx, state, device_id, block_id, key, value, declaration).await
+    // Boxed: inlined, the six-slot write makes every caller's future trip
+    // `clippy::large_futures`.
+    Box::pin(set_property_value_in_tx(
+        tx,
+        state,
+        device_id,
+        block_id,
+        key,
+        value,
+        declaration,
+    ))
+    .await
 }
 
 /// The block ids a value points at: its `value_ref`, or every item of a list

@@ -1196,7 +1196,15 @@ pub async fn delete_property_inner(
             "cannot delete system-managed property '{key}'"
         )));
     }
-    delete_property_core(pool, device_id, materializer, block_id.into_string(), key).await
+    // Boxed: inlined, it makes its callers' futures trip `clippy::large_futures`.
+    Box::pin(delete_property_core(
+        pool,
+        device_id,
+        materializer,
+        block_id.into_string(),
+        key,
+    ))
+    .await
 }
 
 /// Removing the `repeat` rule removes these with it: its end conditions and
@@ -1533,20 +1541,7 @@ async fn conflicting_existing_values(
     if value_type == "select"
         && let Some(opts) = options
     {
-        let out_of_options: i64 = sqlx::query_scalar!(
-            r#"SELECT COUNT(*) AS "n!: i64"
-               FROM block_properties bp
-               JOIN blocks b ON b.id = bp.block_id
-               WHERE bp.key = ?1
-                 AND b.space_id = ?3
-                 AND bp.value_text IS NOT NULL
-                 AND bp.value_text NOT IN (SELECT value FROM json_each(?2))"#,
-            key,
-            opts,
-            space_id,
-        )
-        .fetch_one(&mut *conn)
-        .await?;
+        let out_of_options = count_values_out_of_options(conn, space_id, key, opts).await?;
         if out_of_options > 0 {
             offending += out_of_options;
             parts.push(format!("{out_of_options} not in the declared options"));
@@ -1565,6 +1560,30 @@ async fn conflicting_existing_values(
          key exists there. Clear or convert those values first, or declare '{key}' as the type they \
          already use."
     )))
+}
+
+/// The `value_text` rows `space_id` holds under `key` outside `opts` (a JSON
+/// array): [`conflicting_existing_values`]'s step 5.
+async fn count_values_out_of_options(
+    conn: &mut sqlx::SqliteConnection,
+    space_id: &str,
+    key: &str,
+    opts: &str,
+) -> Result<i64, AppError> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "n!: i64"
+               FROM block_properties bp
+               JOIN blocks b ON b.id = bp.block_id
+               WHERE bp.key = ?1
+                 AND b.space_id = ?3
+                 AND bp.value_text IS NOT NULL
+                 AND bp.value_text NOT IN (SELECT value FROM json_each(?2))"#,
+        key,
+        opts,
+        space_id,
+    )
+    .fetch_one(&mut *conn)
+    .await?)
 }
 
 /// Create a property definition in `space_id` (#5841), as one `SetPropertyDef`
