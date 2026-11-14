@@ -199,6 +199,9 @@ describe('TagList', () => {
       makeTag('T3', 'projects', 3),
       makeTag('T4', 'projects/web', 4),
       makeTag('T5', 'Projects/API', 5),
+      // SQLite's NOCASE folds ASCII only, so the filter keeps these two apart.
+      makeTag('T6', 'été', 6),
+      makeTag('T7', 'Été/x', 7),
     ])
 
     const { container } = render(<TagList />)
@@ -215,6 +218,9 @@ describe('TagList', () => {
       '2 API5',
       '1 area',
       '2 home2',
+      '1 été6',
+      '1 Été',
+      '2 x7',
     ])
     // The full name stays on the tag's button and tooltip; the parent name has no button.
     expect(screen.getByTestId('tag-item-projects/web/site')).toBeInTheDocument()

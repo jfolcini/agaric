@@ -45,6 +45,7 @@ import { notify } from '@/lib/notify'
 import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { requireActiveScope } from '@/lib/space-scope'
+import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { resolveTagBackground, TAG_COLOR_PRESETS, tagColorStyle } from '@/lib/tag-colors'
 import { cn } from '@/lib/utils'
 import { renamePage } from '@/stores/page-rename'
@@ -81,8 +82,8 @@ function tagRows(tags: readonly TagCacheRow[]): TagRow[] {
   walk(
     buildPageTree(
       tags.map((tag) => ({ id: tag.tag_id, content: tag.name || 'Unnamed' })),
-      // A tag filter nests names in any case (`TAG_AND_NESTED_IDS_SQL`), and so does the tree.
-      (segment) => segment.toLowerCase(),
+      // A tag filter nests names folding ASCII case (`TAG_AND_NESTED_IDS_SQL`), and so does the tree.
+      foldAsciiUppercase,
     ),
     0,
   )
