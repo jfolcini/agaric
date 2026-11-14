@@ -20023,3 +20023,113 @@ async fn a_folder_import_links_logseq_refs_across_its_files() {
     );
     mat.shutdown();
 }
+
+/// #6751 — the Obsidian comments of one file: a one-line one, one across
+/// lines, one in a code fence and one inside a sentence.
+const OBSIDIAN_COMMENTS: &str =
+    "%%one line%%\n\n%%\nfirst\nsecond\n%%\n\n```\n%%code%%\n```\n\ntext %%aside%% more\n";
+
+/// #6751 — the blocks [`OBSIDIAN_COMMENTS`] reads as: each whole-block comment
+/// a `comment` callout, the fence and the sentence as written.
+const OBSIDIAN_COMMENT_BLOCKS: [&str; 4] = [
+    "> [!comment]\n> one line",
+    "> [!comment]\n> first\n> second",
+    "```\n%%code%%\n```",
+    "text %%aside%% more",
+];
+
+/// #6751 — an Obsidian comment that is a whole block imports as a `comment`
+/// callout, one in a code fence stays as written, and one inside a sentence
+/// stays text, counted in one warning. An export of the page, imported
+/// again, changes none of its blocks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_obsidian_comment_block_imports_as_a_comment_callout() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let contents = |rows: Vec<(String, String)>| -> Vec<String> {
+        rows.into_iter().map(|(_, text)| text).collect()
+    };
+
+    let result = import_file(&pool, &mat, dir.path(), "Vault.md", OBSIDIAN_COMMENTS).await;
+
+    let page = BlockId::from_trusted(&result.page_id);
+    let imported = dup_children(&pool, &page).await;
+    assert_eq!(contents(imported.clone()), OBSIDIAN_COMMENT_BLOCKS);
+    assert_eq!(
+        result.warnings,
+        ["1 Obsidian %%comment%% inside text kept as text, with its markers"]
+    );
+    let exported = export_page_markdown_inner(&pool, &result.page_id)
+        .await
+        .unwrap();
+    let again = import_file(&pool, &mat, dir.path(), "Vault.md", &exported).await;
+    assert_eq!(
+        again.page_id, result.page_id,
+        "the export re-imports into its page"
+    );
+    let reread = dup_children(&pool, &page).await;
+    assert_eq!(reread, imported, "exported:\n{exported}");
+    mat.shutdown();
+}
+
+/// #6751 — a paste reads Obsidian comments as import does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_paste_reads_obsidian_comments_as_import_does() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Paste").await;
+    let anchor = dup_child(&pool, &mat, &page, "the anchor").await;
+    settle(&mat).await;
+
+    let rows = paste(&pool, &mat, &anchor, paste_text(OBSIDIAN_COMMENTS)).await;
+
+    let contents: Vec<&str> = rows.iter().filter_map(|r| r.content.as_deref()).collect();
+    assert_eq!(contents, OBSIDIAN_COMMENT_BLOCKS);
+}
+
+/// #6751 — a comment pasted into a block's text is among that text, where a
+/// callout cannot stand, so it stays the comment; pasted into an empty block
+/// it is a callout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_comment_pasted_into_text_stays_the_comment() {
+    for (case, stored, cursor, text, expected) in [
+        (
+            "mid-block",
+            "Hello world",
+            ("Hello ", "world"),
+            "%%aside%%",
+            vec!["Hello %%aside%%world"],
+        ),
+        (
+            "first of two blocks",
+            "Hello",
+            ("Hello ", ""),
+            "%%aside%%\n\nnext",
+            vec!["Hello %%aside%%", "next"],
+        ),
+        (
+            "into an empty block",
+            "",
+            ("", ""),
+            "%%aside%%",
+            vec!["> [!comment]\n> aside"],
+        ),
+    ] {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = dup_page(&pool, &mat, "Dest").await;
+        let anchor = dup_child(&pool, &mat, &page, stored).await;
+        settle(&mat).await;
+
+        paste_into(&pool, &mat, &anchor, text, cursor).await;
+
+        let contents: Vec<String> = dup_children(&pool, &page)
+            .await
+            .into_iter()
+            .map(|(_, content)| content)
+            .collect();
+        assert_eq!(contents, expected, "{case}");
+    }
+}
