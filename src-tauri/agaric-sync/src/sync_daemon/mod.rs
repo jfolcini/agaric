@@ -22,13 +22,17 @@ pub mod server;
 mod session_supervisor;
 pub mod snapshot_transfer;
 
-// Android-only: acquire WifiManager.MulticastLock at daemon start so the
-// discovery crate's UDP multicast sockets receive packets. The module carries
+// Android-only: hold WifiManager.MulticastLock while the daemon runs and the
+// app is not suspended, so the discovery crate's UDP multicast sockets receive
+// packets. The module carries
 // its own `#![cfg(any(target_os = "android", test))]`, so it is empty on a
 // non-test host build but still compiles (and is tested) under `cargo test` —
 // that is how the "no Android context" degrade path of #3847 is covered
 // without a device.
 pub(crate) mod android_multicast;
+// The app's `Suspended` / `Resumed` handler releases and retakes the lock (#6526).
+#[cfg(target_os = "android")]
+pub use android_multicast::{app_resumed, app_suspended};
 
 // #3852: report Android's per-uid background firewall to the user instead of
 // spinning. Unlike `android_multicast` this module compiles on every target —

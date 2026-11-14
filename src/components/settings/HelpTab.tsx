@@ -17,9 +17,9 @@
  * "Up to date", "Update available", "Last check failed", or "Checking…" —
  * plus a relative "last checked" time, and calls `checkForUpdatesNow()` when
  * the user clicks the manual button (which also re-surfaces the install toast
- * when an update exists). Mobile builds replace the button and the status with
- * a button that opens the releases page, since the Tauri updater plugin is
- * desktop-only.
+ * when an update exists). Mobile builds replace the button with one that opens
+ * the releases page, since the Tauri updater plugin is desktop-only, and show
+ * the status only when Android's daily check found a newer release (#6546).
  */
 
 import type { TFunction } from 'i18next'
@@ -132,7 +132,11 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
                 </Button>
               )}
             </SettingRow>
-            {mobile ? null : (
+            {mobile ? (
+              updateStatus.status === 'available' && (
+                <output className="block text-sm text-muted-foreground">{statusLabel}</output>
+              )
+            ) : (
               <>
                 {/* Persistent status — `<output>` is an implicit polite live
                     region (role="status"), so a boot check completing (or

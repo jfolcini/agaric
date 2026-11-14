@@ -288,6 +288,8 @@ macro_rules! agaric_commands {
             $crate::commands::speech::get_speech_engine_available,
             $crate::commands::speech::speak_text,
             $crate::commands::speech::stop_speaking,
+            // Android's check for a newer release (#6546)
+            $crate::commands::release_check::check_latest_release::<tauri::Wry>,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown::<tauri::Wry>,
             // The pages an import merges its files into (#6277 G5).
@@ -342,7 +344,7 @@ macro_rules! agaric_commands {
             // Bug report
             $crate::commands::bug_report::collect_bug_report_metadata::<tauri::Wry>,
             $crate::commands::bug_report::read_logs_for_report::<tauri::Wry>,
-            // File saves on macOS, where the webview saves none (#6652)
+            // File saves on macOS and Android, where the webview saves none (#6652, #6546)
             $crate::commands::downloads::save_to_downloads::<tauri::Wry>,
             // Reconciliation oracle against the live vault (#4886)
             $crate::commands::reconciliation::compute_reconciliation_report,
@@ -2283,17 +2285,16 @@ fn register_managed_state<R: tauri::Runtime>(
                     lifecycle_for_listener.apply_state(state);
                 }
                 #[cfg(mobile)]
-                tauri::WindowEvent::Suspended => {
-                    tracing::info!("app suspended by OS — backgrounding");
-                    lifecycle_for_listener.mark_backgrounded();
-                    drop(spawn_save_on_suspend(
-                        pool_for_suspend.clone(),
-                        materializer_for_suspend.clone(),
-                    ));
-                }
+                tauri::WindowEvent::Suspended => on_app_suspended(
+                    &lifecycle_for_listener,
+                    pool_for_suspend.clone(),
+                    materializer_for_suspend.clone(),
+                ),
                 #[cfg(mobile)]
                 tauri::WindowEvent::Resumed => {
                     tracing::info!("app resumed by OS — foregrounding");
+                    #[cfg(target_os = "android")]
+                    agaric_sync::sync_daemon::app_resumed();
                     lifecycle_for_listener.mark_foreground();
                 }
                 _ => {}
@@ -2307,6 +2308,23 @@ fn register_managed_state<R: tauri::Runtime>(
     }
 
     cancel_flag
+}
+
+/// A mobile OS moved the app to the background, and may freeze or kill it
+/// without another word.
+#[cfg(mobile)]
+fn on_app_suspended(
+    lifecycle: &agaric_sync::foreground::LifecycleHooks,
+    pool: sqlx::SqlitePool,
+    materializer: materializer::Materializer,
+) {
+    tracing::info!("app suspended by OS — backgrounding");
+    lifecycle.mark_backgrounded();
+    // Here and not on the daemon's tick: Android freezes a suspended process
+    // before the tick comes round (#6526).
+    #[cfg(target_os = "android")]
+    agaric_sync::sync_daemon::app_suspended();
+    drop(spawn_save_on_suspend(pool, materializer));
 }
 
 /// #6525: a mobile OS kills a suspended app without warning, and the engines
@@ -2949,7 +2967,13 @@ fn build_tauri_builder() -> tauri::Builder<tauri::Wry> {
         .plugin(tauri_plugin_notification::init())
         // Read aloud's engine (#5745): Android's `TextToSpeech` plugin, and
         // the state the speech commands read on every build.
-        .plugin(commands::speech::plugin());
+        .plugin(commands::speech::plugin())
+        // Android's file save (#6546): the `MediaStore` plugin, and the state
+        // `save_to_downloads` reads on every build.
+        .plugin(commands::file_save::plugin())
+        // Android's check for a newer release (#6546): the HTTPS plugin, and
+        // the state the check command reads on every build.
+        .plugin(commands::release_check::plugin());
 
     // Remember window size / position / monitor / maximized
     // state across launches.  Operates entirely Rust-side (no frontend

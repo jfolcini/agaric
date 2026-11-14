@@ -39,7 +39,7 @@ How the system is built. Companion to:
 ## Core principles
 
 1. **Local-first.** SQLite on disk; no cloud, no accounts.
-2. **Event-sourced.** Every state change is an append-only op log entry. Materialized views are derivable; the op log is the truth.
+2. **Event-sourced, in three layers.** Every state change is an append-only op log entry: the typed history. The Loro engine is the merge truth, and the SQLite tables are the view derived from it (`AGENTS.md` invariant 2).
 3. **CRDT convergence.** The Loro engine fans out every op into per-space CRDT state. Concurrent edits converge automatically; no merge dialog, no conflict UI. One honest boundary: character-level merge applies to edits *committed as ops*, and in-progress typing stays frontend-local until it commits (principle 4). See [`architecture/editor-and-content.md`](architecture/editor-and-content.md) § FE / BE authority boundary.
 4. **Roving editor, one per mounted tree.** Exactly one block hosts a mounted TipTap editor surface at a time — focus is global — and everything else renders static. The `Editor` objects behind it are per `BlockTree`, not per app: the journal week and stream views mount one tree (and one lazily-constructed editor) per day — the month view is a calendar grid and mounts none — so app-level code reaches the live editor through the focus-published registry `src/editor/active-editor.ts`. See [`architecture/editor-and-content.md`](architecture/editor-and-content.md) § Roving-editor invariant.
 5. **Type-safe IPC.** Every Tauri command flows through specta-generated TypeScript. The `agaric_commands!` macro is the single source of truth — handler and bindings cannot drift.
