@@ -1471,10 +1471,11 @@ pub fn normalize_foreign_inline(content: &str) -> Cow<'_, str> {
 
 /// The lines of `content`, each closed ```` ```math ```` fence's opening and
 /// closing lines written `$$`, and whether there was one. One inside another
-/// fence or a `$$` block, or holding a line that opens a fence or is `$$`, is
-/// left as written: LaTeX holds neither, and either would pair with the `$$`
-/// lines when the text is read again. Run before the inline pass, so the `$$`
-/// lines it writes pair as they will then.
+/// fence or a `$$` block, or holding a line that opens a fence or is `$$`
+/// (past any `>`, as [`literal_block`] closes a `$$` block), is left as
+/// written: LaTeX holds neither, and either would pair with the `$$` lines
+/// when the text is read again. Run before the inline pass, so the `$$` lines
+/// it writes pair as they will then.
 fn math_fences_as_blocks(content: &str) -> (Vec<&str>, bool) {
     let lines: Vec<&str> = content.split('\n').collect();
     let mut out = Vec::with_capacity(lines.len());
@@ -1488,7 +1489,7 @@ fn math_fences_as_blocks(content: &str) -> (Vec<&str>, bool) {
                     && line[run.len..].trim() == "math"
                     && lines[i + 1..end]
                         .iter()
-                        .all(|l| fence_opener(l).is_none() && l.trim() != "$$") =>
+                        .all(|l| fence_opener(l).is_none() && unquoted(l).trim() != "$$") =>
             {
                 changed = true;
                 out.push("$$");
@@ -9314,6 +9315,21 @@ mod tests_foreign_inline_6033 {
         ] {
             assert_eq!(normalized(text), text, "{text:?}");
         }
+    }
+
+    /// A math fence holding a quoted `$$` line stays a fence: written as a
+    /// `$$` block, its opening line would pair with that line, the fence's
+    /// closing `$$` with a later one, and a second pass would read the rest
+    /// of the text anew.
+    #[test]
+    fn a_math_fence_holding_a_quoted_dollar_line_is_left_as_written() {
+        let text = "\n```math\n\n> $$\n\n```\n^^x^^ \\[\\alpha\\]\n```\n\n$$\n\n~~~math\n\n~~~\n";
+        let once = normalized(text);
+        assert_eq!(normalized(&once), once);
+        assert_eq!(
+            once,
+            "\n```math\n\n> $$\n\n```\n==x== $\\alpha$\n```\n\n$$\n\n~~~math\n\n~~~\n"
+        );
     }
 
     /// Q4: a `\[` is math only when its text holds a LaTeX command, so Logseq's
