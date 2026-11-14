@@ -52,7 +52,9 @@ test.describe('linked image (#6342) @editor @markdown', () => {
     await expect(editorImage).toBeVisible()
     await installIpcRecorder(page)
     await editorImage.click({ modifiers: ['Control'] })
-    await expect.poll(async () => (await getInvokeCalls(page, 'plugin:shell|open')).length).toBe(1)
+    await expect
+      .poll(async () => (await getInvokeCalls(page, 'plugin:opener|open_url')).length)
+      .toBe(1)
 
     await saveBlock(page)
     await reopenPage(page, PAGE)
@@ -69,6 +71,8 @@ test.describe('linked image (#6342) @editor @markdown', () => {
     await expect(staticLink.locator('img[alt="CI"]')).toBeVisible()
     await installIpcRecorder(page)
     await staticLink.click()
-    await expect.poll(async () => (await getInvokeCalls(page, 'plugin:shell|open')).length).toBe(1)
+    await expect
+      .poll(async () => (await getInvokeCalls(page, 'plugin:opener|open_url')).length)
+      .toBe(1)
   })
 })
