@@ -18,7 +18,7 @@ Rows below say which one they mean where it matters.
 | | Logseq | Agaric |
 | --- | --- | --- |
 | Where notes live | File version: Markdown or Org files, which any tool can read. DB version: a SQLite database | A SQLite database. A Markdown mirror folder is optional and desktop only |
-| Sync | DB version: through a server, over the internet, with real-time collaboration between users. A paid feature for Open Collective backers and sponsors, or self-hosted. File version: its docs describe Logseq Sync, a paid beta for the same contributors; the files can also be carried by any file-sync tool | Directly between your own paired devices on one local network. Free, with no account and no server. Single user |
+| Sync | DB version: through a server, over the internet, with real-time collaboration between users. A paid feature for Open Collective backers and sponsors, or self-hosted. File version: its docs describe Logseq Sync, a paid beta for the same contributors; the files can also be carried by any file-sync tool | Directly between your own paired devices on one local network. Free, with no account and no server. Android syncs only in the foreground. Single user |
 | Phones | File version in the App Store and on F-Droid. For the DB version a native iOS app is in testing with backers, and Android testing has been announced | Android as a sideloaded APK. No iOS |
 | Extending it | A plugin API and marketplace, custom CSS and JS, a CLI, a local HTTP API, an MCP server | No plugins or scripting. A custom stylesheet, rebindable keys, and an MCP server |
 | Data model | DB version: tags are classes with inherited properties; properties are typed and can hold several values | Tags are labels. Properties are typed, one value each |

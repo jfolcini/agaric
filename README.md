@@ -32,7 +32,7 @@ Someone who thinks in outlines, keeps a daily journal, tracks tasks beside their
 - **Your notes are not Markdown files.** They are rows in a SQLite database. A Markdown export, an import and an optional desktop mirror folder are the routes to and from files.
 - **No encryption at rest.** The database is a plain file; use your operating system's disk encryption (LUKS, FileVault, BitLocker).
 - **No built-in AI.** An agent connects from outside, through MCP, if you turn that on.
-- **English interface.** Spanish covers error messages only so far.
+- **English interface.** Spanish covers error messages and a few settings so far.
 
 ## What you can do
 

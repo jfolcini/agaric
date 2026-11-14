@@ -36,7 +36,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | Embeds | `![[Note]]`, headings, blocks, images, audio, video, PDF | Pages, headings and blocks, live, text only: an embedded row shows no checkbox, properties or attachments |
 | Backlinks | Linked and unlinked mentions, and an outgoing links pane | Linked and unlinked references with filters. No outgoing links pane |
 | Properties | In a note's YAML front matter, so per file: text, list, number, checkbox, date, date and time | On any block or page: text, number, date, select, reference, boolean, URL. One value per property: no list type and no date-time |
-| Tables of notes | Bases: table, list, cards and kanban layouts over files, with formulas, summaries and grouping; dragging a kanban card changes its property | Query blocks as a list or a table; Advanced Query with grouping, summaries and a board whose cards move from a menu, not by dragging. Rows are blocks. No formulas, no cards layout, no editing in table cells |
+| Tables of notes | Bases: table, list, cards and kanban layouts over files, with computed columns ("formulas"), summaries and grouping; dragging a kanban card changes its property | Query blocks as a list or a table; Advanced Query with grouping, summaries and a board whose cards move from a menu, not by dragging. Rows are blocks. No computed columns (Bases calls them formulas), no cards layout, no editing in table cells |
 | Tags | `#tag` and nested `#a/b` | `#tag`, renamed everywhere from one place; `/` in a name is a naming convention with prefix search; boolean tag queries |
 | Tasks | Checkboxes and `task:` search in core. The help documents no due dates, priorities or recurrence for tasks; community plugins such as Tasks add them | States, priorities, due and scheduled dates and repeat rules on any block; an Agenda; due-date notifications on desktop. Reads and writes the Tasks plugin's emoji fields on import and export |
 | Daily notes | A core plugin: one note per day from a template | A journal with day, week, month, stream and agenda views |
@@ -52,7 +52,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | History and recovery | File recovery snapshots on the device; version history in Sync | Every change is an operation: history per block and page, restore to a point, an in-app Trash. Old operations are compacted after a retention period. A daily copy of the database is kept beside it |
 | Agents and automation | A CLI that drives the running app, `obsidian://` links, a headless Sync client. An agent can also edit the files directly. No first-party MCP server was found | An MCP server with an agent per client: its own token, read-only or read-write mode and spaces, edits named in History and undoable. `agaric-mcp call` for scripts |
 | Importers | An official importer for Notion, Evernote, OneNote, Apple Notes, Google Keep, Bear, Roam, Logseq and more | Markdown, Obsidian vaults, Logseq graphs, Org, Notion, Evernote, Joplin, bibliographies |
-| Languages | Many interface translations; right-to-left layout | English, with Spanish for error messages. Right-to-left paragraphs in notes, not a right-to-left interface |
+| Languages | Many interface translations; right-to-left layout | English, with Spanish for error messages and a few settings. Right-to-left paragraphs in notes, not a right-to-left interface |
 | Encryption at rest | None for the local vault | None for the local database |
 | Telemetry | None | None |
 
