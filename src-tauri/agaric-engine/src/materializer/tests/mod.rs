@@ -26,6 +26,14 @@ pub(super) async fn test_pool() -> (SqlitePool, TempDir) {
     let pool = init_pool(&db_path).await.unwrap();
     (pool, dir)
 }
+/// The dispatch of a commit holding one edit of a content block.
+pub(super) fn dispatch_content_edit(mat: &Materializer, record: &OpRecord) {
+    mat.dispatch_commit(&[CommitOp {
+        record,
+        block_type: Some("content"),
+        move_same_page: None,
+    }]);
+}
 pub(super) fn fake_op_record(op_type: &str, payload: &str) -> OpRecord {
     // Cache the parsed block_id sidecar so dispatch consults
     // the field without re-parsing the (possibly intentionally

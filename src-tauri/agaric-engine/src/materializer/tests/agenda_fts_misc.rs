@@ -438,10 +438,7 @@ async fn adaptive_fts_threshold_small_db() {
         }),
     )
     .await;
-    assert!(
-        mat.dispatch_edit_background(&r, "content").is_ok(),
-        "dispatch_edit_background should succeed for small db"
-    );
+    dispatch_content_edit(&mat, &r);
 
     assert_eq!(
         mat.metrics()
@@ -502,10 +499,7 @@ async fn adaptive_fts_threshold_large_corpus() {
         }),
     )
     .await;
-    assert!(
-        mat.dispatch_edit_background(&r, "content").is_ok(),
-        "dispatch_edit_background should succeed under adaptive threshold"
-    );
+    dispatch_content_edit(&mat, &r);
     assert_eq!(
         mat.metrics()
             .fts_edits_since_optimize
@@ -531,10 +525,7 @@ async fn adaptive_fts_threshold_large_corpus() {
         }),
     )
     .await;
-    assert!(
-        mat.dispatch_edit_background(&r2, "content").is_ok(),
-        "dispatch_edit_background should succeed at adaptive threshold"
-    );
+    dispatch_content_edit(&mat, &r2);
     assert_eq!(
         mat.metrics()
             .fts_edits_since_optimize
@@ -995,8 +986,7 @@ async fn fts_optimize_restamps_fts_last_optimize_ms() {
         }),
     )
     .await;
-    mat.dispatch_edit_background(&r, "content")
-        .expect("the 500th edit must dispatch");
+    dispatch_content_edit(&mat, &r);
 
     let stamped = mat
         .metrics()
