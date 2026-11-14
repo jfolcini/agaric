@@ -782,7 +782,7 @@ fn tool_desc_list_pages() -> ToolDescription {
                 "filters": {
                     "type": "array",
                     "items": { "type": "object" },
-                    "description": "Primitives, all of which a page must match: {type: Orphan} (no links in or out), {type: HasNoInboundLinks}, {type: Stub} (no blocks but its title), {type: Tag, tag} (attached tag ULID), {type: TagOrRef, tag} (attached or inline), {type: PathGlob, pattern, exclude} (title GLOB), {type: LastEdited, spec} (spec: Rolling {days}, OlderThan {days} or Range {start, end}), {type: HasProperty, key, predicate} and {type: Priority, values}, in the `query` tool's shapes. Any other primitive is refused.",
+                    "description": "Primitives, all of which a page must match: {type: Orphan} (no links in or out), {type: HasNoInboundLinks}, {type: Stub} (no blocks but its title), {type: Tag, tag} (attached tag ULID, or a tag nested under it), {type: TagOrRef, tag} (that one tag, attached or inline), {type: PathGlob, pattern, exclude} (title GLOB), {type: LastEdited, spec} (spec: Rolling {days}, OlderThan {days} or Range {start, end}), {type: HasProperty, key, predicate} and {type: Priority, values}, in the `query` tool's shapes. Any other primitive is refused.",
                 },
                 "cursor": { "type": "string", "description": "Opaque pagination cursor from a prior response." },
                 "limit": {
@@ -938,7 +938,7 @@ fn tool_desc_search() -> ToolDescription {
                 "tag_ids": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Tag ULIDs or names. A block must carry every one: attached, as an inline #tag, or inherited from an ancestor such as its page.",
+                    "description": "Tag ULIDs or names. A block must carry every one, or a tag nested under it (`projects/web` under `projects`): attached, as an inline #tag, or inherited from an ancestor such as its page.",
                 },
                 "include_match_offsets": {
                     "type": "boolean",
@@ -1315,8 +1315,8 @@ fn tool_desc_query() -> ToolDescription {
                 "where": {
                     "type": "object",
                     "description": "{type: And|Or, children: [...]}, {type: Not, child} or \
-                                    {type: Leaf, primitive}. Primitives: Tag {tag} (attached), \
-                                    TagOrRef {tag} (attached or inline), HasProperty {key, \
+                                    {type: Leaf, primitive}. Primitives: Tag {tag} (attached, or a tag nested \
+                                    under it), TagOrRef {tag} (that one tag, attached or inline), HasProperty {key, \
                                     predicate}, State {values}, Priority {values}, BlockType \
                                     {values, exclude}, DueDate {predicate}, Scheduled \
                                     {predicate}, Created {after?, before?}, LastEdited {spec}, \
@@ -1839,6 +1839,7 @@ fn search_filter(
         excluded_priority_filter: f.excluded_priority_filter,
         last_edited: f.last_edited,
         tags_match_inline_and_inherited: true,
+        tag_any_of: Vec::new(),
     }
 }
 

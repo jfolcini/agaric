@@ -10,7 +10,7 @@ expression: wire
         description: Opaque pagination cursor from a prior response.
         type: string
       filters:
-        description: "Primitives, all of which a page must match: {type: Orphan} (no links in or out), {type: HasNoInboundLinks}, {type: Stub} (no blocks but its title), {type: Tag, tag} (attached tag ULID), {type: TagOrRef, tag} (attached or inline), {type: PathGlob, pattern, exclude} (title GLOB), {type: LastEdited, spec} (spec: Rolling {days}, OlderThan {days} or Range {start, end}), {type: HasProperty, key, predicate} and {type: Priority, values}, in the `query` tool's shapes. Any other primitive is refused."
+        description: "Primitives, all of which a page must match: {type: Orphan} (no links in or out), {type: HasNoInboundLinks}, {type: Stub} (no blocks but its title), {type: Tag, tag} (attached tag ULID, or a tag nested under it), {type: TagOrRef, tag} (that one tag, attached or inline), {type: PathGlob, pattern, exclude} (title GLOB), {type: LastEdited, spec} (spec: Rolling {days}, OlderThan {days} or Range {start, end}), {type: HasProperty, key, predicate} and {type: Priority, values}, in the `query` tool's shapes. Any other primitive is refused."
         items:
           type: object
         type: array
@@ -160,7 +160,7 @@ expression: wire
         description: "ULID of the space the search runs inside. Required: every FTS5 hit is restricted to blocks whose owning page carries `space = ?space_id`."
         type: string
       tag_ids:
-        description: "Tag ULIDs or names. A block must carry every one: attached, as an inline #tag, or inherited from an ancestor such as its page."
+        description: "Tag ULIDs or names. A block must carry every one, or a tag nested under it (`projects/web` under `projects`): attached, as an inline #tag, or inherited from an ancestor such as its page."
         items:
           type: string
         type: array
@@ -458,7 +458,7 @@ expression: wire
         description: ULID of the space to query.
         type: string
       where:
-        description: "{type: And|Or, children: [...]}, {type: Not, child} or {type: Leaf, primitive}. Primitives: Tag {tag} (attached), TagOrRef {tag} (attached or inline), HasProperty {key, predicate}, State {values}, Priority {values}, BlockType {values, exclude}, DueDate {predicate}, Scheduled {predicate}, Created {after?, before?}, LastEdited {spec}, LinksTo {target}, LinkedFrom {source}, ChildOf {parent}, HasParentMatching {matcher: <where>}, PathGlob {pattern, exclude} (pages whose lower-case title matches the GLOB). Property predicate: Exists, NotExists, or Eq|Ne|Lt|Gt|Lte|Gte|Contains|StartsWith {value: {type: Text|Num|Date|Ref, value}}. Date predicate: IsNull, Before|After|OnOrBefore|OnOrAfter|On {date}, Between {from, to}. LastEdited spec: Rolling {days}, OlderThan {days}, Range {start, end}. Ids are ULIDs, dates YYYY-MM-DD."
+        description: "{type: And|Or, children: [...]}, {type: Not, child} or {type: Leaf, primitive}. Primitives: Tag {tag} (attached, or a tag nested under it), TagOrRef {tag} (that one tag, attached or inline), HasProperty {key, predicate}, State {values}, Priority {values}, BlockType {values, exclude}, DueDate {predicate}, Scheduled {predicate}, Created {after?, before?}, LastEdited {spec}, LinksTo {target}, LinkedFrom {source}, ChildOf {parent}, HasParentMatching {matcher: <where>}, PathGlob {pattern, exclude} (pages whose lower-case title matches the GLOB). Property predicate: Exists, NotExists, or Eq|Ne|Lt|Gt|Lte|Gte|Contains|StartsWith {value: {type: Text|Num|Date|Ref, value}}. Date predicate: IsNull, Before|After|OnOrBefore|OnOrAfter|On {date}, Between {from, to}. LastEdited spec: Rolling {days}, OlderThan {days}, Range {start, end}. Ids are ULIDs, dates YYYY-MM-DD."
         type: object
     required:
       - space_id

@@ -270,6 +270,36 @@ describe('compileQueryText: each token is the leaf the builder writes', () => {
     )
   })
 
+  it('a name no tag holds is any of the tags nested under it (#6760)', async () => {
+    const nested: QueryTextDeps = {
+      listTags: async () => [
+        { tag_id: TAG_WORK, name: 'Projects/web' },
+        { tag_id: TAG_HOME, name: 'projects/api' },
+        { tag_id: 'LOOKALIKE', name: 'projectsx' },
+        { tag_id: 'SITE', name: 'projects/web/site' },
+      ],
+    }
+    const tag = (id: string): FilterExpr => ({ type: 'Leaf', primitive: { type: 'Tag', tag: id } })
+    expect(await compileQueryText('state:TODO tag:#projects', nested)).toEqual({
+      ok: true,
+      filter: {
+        type: 'And',
+        children: [
+          {
+            type: 'Leaf',
+            primitive: { type: 'State', values: ['TODO'], is_null: false, exclude: false },
+          },
+          { type: 'Or', children: [tag(TAG_WORK), tag(TAG_HOME), tag('SITE')] },
+        ],
+      },
+    })
+    // A name a tag holds is that tag's one leaf: the engine finds the nested ones.
+    expect(await compileQueryText('tag:#projects/web', nested)).toEqual({
+      ok: true,
+      filter: { type: 'And', children: [tag(TAG_WORK)] },
+    })
+  })
+
   it('reads the text the block stores: escapes decoded, view words left out', async () => {
     expect(await compiled('prop:a\\_b=c table:true columns:due_date,owner')).toEqual(
       built({

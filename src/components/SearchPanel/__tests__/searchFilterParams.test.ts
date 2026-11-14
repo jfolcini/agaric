@@ -93,6 +93,15 @@ describe('astFilterParams', () => {
     expect(astFilterParams(emptyProjection(), []).tagsMatchInlineAndInherited).toBeUndefined()
   })
 
+  it('#6760 — a name resolved to its nested tags is a group, not an unresolved tag', () => {
+    const projection = { ...emptyProjection(), tagNames: ['projects', 'urgent'] }
+    const params = astFilterParams(projection, ['TAG_URGENT'], [['TAG_WEB', 'TAG_API']])
+    expect(params.tagIds).toEqual(['TAG_URGENT'])
+    expect(params.tagAnyOf).toEqual([['TAG_WEB', 'TAG_API']])
+    expect(astFilterParams(projection, ['TAG_URGENT']).tagIds).toEqual([UNRESOLVED_TAG_SENTINEL])
+    expect(astFilterParams(emptyProjection(), []).tagAnyOf).toBeUndefined()
+  })
+
   // Issue #717 — a `tag:` filter whose name resolved to no existing tag
   // must NOT be silently dropped. `meeting tag:#typo` previously sent
   // `tagIds: undefined` (= no tag filter) and returned all FTS matches

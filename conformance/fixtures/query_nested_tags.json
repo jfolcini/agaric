@@ -1,0 +1,810 @@
+{
+  "description": "#6760 — a `Tag` leaf matches the tag and every tag of its space named under it, read from the names alone (`TAG_AND_NESTED_IDS_SQL`; the mock's `tagAndNestedIds`). Seed: page S1 holds S2 tagged `projects` (S7), S3 tagged `projects/web` (S8), S4 tagged `Projects/Web/Site` (S9, another case), S5 tagged `projectsx` (S10), a name that only starts the same, and S11 tagged `projects/web/site/deep` (S12); S6 sits under S3 and carries no tag of its own. Page S13 holds S14 tagged `projects/elsewhere` (S15); the ops move S13 and S15 to a second space. S16 is tagged `projects/old` (S17), which the ops trash. Every search step uses a blank query, so the result is the filter alone.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B2",
+        "tag_id": "B7"
+      },
+      {
+        "block_id": "B3",
+        "tag_id": "B8"
+      },
+      {
+        "block_id": "B4",
+        "tag_id": "B9"
+      },
+      {
+        "block_id": "B5",
+        "tag_id": "B10"
+      },
+      {
+        "block_id": "B11",
+        "tag_id": "B12"
+      },
+      {
+        "block_id": "B14",
+        "tag_id": "B15"
+      },
+      {
+        "block_id": "B16",
+        "tag_id": "B17"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Nested Tags",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "on projects",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "on web",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "on site",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "on lookalike",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "under the web block",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "projects",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B7",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "projects/web",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B8",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "Projects/Web/Site",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B9",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "projectsx",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B10",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "on deep",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "projects/web/site/deep",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B12",
+        "page_id": "B12",
+        "parent_id": null,
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B13",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "on elsewhere",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B13",
+        "parent_id": "B13",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "projects/elsewhere",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B15",
+        "page_id": "B15",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "on old",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B16",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "projects/old",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B17",
+        "page_id": "B17",
+        "parent_id": null,
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B18",
+        "page_id": "B18",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 17,
+      "ops": [
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B18",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B18"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_nested_tag_and_its_block_move_to_the_second_space",
+      "returns": ["move_blocks_to_space#moved=2"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_parent_tag_finds_nested_tags",
+      "rows": ["B11", "B4", "B3", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_nested_tag_does_not_find_its_parent",
+      "rows": ["B11", "B4", "B3"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_under_parent_tag_reaches_inherited_nested_tags",
+      "rows": ["B11", "B6", "B4", "B3", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_tag_any_of_needs_one_tag_of_the_group",
+      "rows": ["B11", "B5", "B4"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_tag_any_of_and_tag_ids",
+      "rows": ["B11", "B4"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_parent_tag_finds_nested_tags",
+      "rows": ["B11", "B4", "B3", "B2"],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_tag_or_ref_is_the_one_tag",
+      "rows": ["B2"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_nested_under_a_parent_of_another_case",
+      "rows": ["B11", "B4"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_all_spaces_reaches_the_other_spaces_tagged_block",
+      "rows": ["B14"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_all_spaces_parent_tag_nests_its_own_spaces_tags_only",
+      "rows": ["B11", "B4", "B3", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_trashed_tag_still_finds_its_block_by_id",
+      "rows": ["B16"],
+      "total_count": null
+    }
+  ],
+  "name": "query_nested_tags",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Elsewhere"
+      },
+      "command": "create_space",
+      "comment": "The second space, `C1`.",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S13", "S15"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "The page `Elsewhere`, its block S14 and the tag S14 carries, `projects/elsewhere`, leave the harness space together.",
+      "name": "a_nested_tag_and_its_block_move_to_the_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S17"
+      },
+      "command": "delete_block",
+      "comment": "The tag `projects/old` goes to the Trash; S16 keeps its edge to it until a purge.",
+      "name": "a_nested_tag_is_trashed"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagIds": ["S7"]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`tagIds` on `projects` keeps the blocks tagged with it and with the tags under it at any depth, in any case; `projectsx` is not under it, and S6 only inherits.",
+      "name": "search_parent_tag_finds_nested_tags"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagIds": ["S8"]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`projects/web` finds itself and the tags under it, never the parent's block.",
+      "name": "search_nested_tag_does_not_find_its_parent"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagIds": ["S7"],
+          "tagsMatchInlineAndInherited": true
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "With `tagsMatchInlineAndInherited` S6 joins: it inherits `projects/web`, a tag under `projects`.",
+      "name": "search_under_parent_tag_reaches_inherited_nested_tags"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagAnyOf": [["S9", "S10"]]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`tagAnyOf` alone is a filter: a block passes a group by carrying any one of its tags.",
+      "name": "search_tag_any_of_needs_one_tag_of_the_group"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagAnyOf": [["S9", "S10"]],
+          "tagIds": ["S8"]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "A group AND-s with `tagIds`: under `projects/web`, only S4 carries one of the group.",
+      "name": "search_tag_any_of_and_tag_ids"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "tag": "S7",
+              "type": "Tag"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "The advanced query's `Tag` leaf is the same leaf: `projects` finds the blocks of the tags under it.",
+      "name": "advanced_parent_tag_finds_nested_tags"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "tag": "S7",
+              "type": "TagOrRef"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`TagOrRef`, the leaf a tag's own page lists by, stays the one tag: only S2.",
+      "name": "advanced_tag_or_ref_is_the_one_tag"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagIds": ["S9"]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "The parent's own name folds too: `Projects/Web/Site` finds `projects/web/site/deep`.",
+      "name": "search_nested_under_a_parent_of_another_case"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "all_spaces"
+          },
+          "tagIds": ["S15"]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "Vacuity guard for the next step: across every space S14 is reachable by its own tag.",
+      "name": "search_all_spaces_reaches_the_other_spaces_tagged_block"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "all_spaces"
+          },
+          "tagIds": ["S7"]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`projects/elsewhere` belongs to the second space, so the harness space's `projects` does not find S14 even when the search covers both.",
+      "name": "search_all_spaces_parent_tag_nests_its_own_spaces_tags_only"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagIds": ["S17"]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "Vacuity guard for the trashed tag: asked by its own id it still finds S16, so the steps on `projects` leave S16 out because a trashed tag is not nested, not because the edge is gone.",
+      "name": "search_trashed_tag_still_finds_its_block_by_id"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Nested Tags",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "on projects",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "on web",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "on site",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "on lookalike",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "under the web block",
+        "id": "S6",
+        "parent_id": "S3",
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "projects",
+        "id": "S7",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "projects/web",
+        "id": "S8",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "tag",
+        "content": "Projects/Web/Site",
+        "id": "S9",
+        "parent_id": null,
+        "position": 4
+      },
+      {
+        "block_type": "tag",
+        "content": "projectsx",
+        "id": "S10",
+        "parent_id": null,
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "on deep",
+        "id": "S11",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "tag",
+        "content": "projects/web/site/deep",
+        "id": "S12",
+        "parent_id": null,
+        "position": 6
+      },
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "id": "S13",
+        "parent_id": null,
+        "position": 7
+      },
+      {
+        "block_type": "content",
+        "content": "on elsewhere",
+        "id": "S14",
+        "parent_id": "S13",
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "projects/elsewhere",
+        "id": "S15",
+        "parent_id": null,
+        "position": 8
+      },
+      {
+        "block_type": "content",
+        "content": "on old",
+        "id": "S16",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "tag",
+        "content": "projects/old",
+        "id": "S17",
+        "parent_id": null,
+        "position": 9
+      }
+    ],
+    "properties": [],
+    "tags": [
+      {
+        "block_id": "S2",
+        "tag_id": "S7"
+      },
+      {
+        "block_id": "S3",
+        "tag_id": "S8"
+      },
+      {
+        "block_id": "S4",
+        "tag_id": "S9"
+      },
+      {
+        "block_id": "S5",
+        "tag_id": "S10"
+      },
+      {
+        "block_id": "S11",
+        "tag_id": "S12"
+      },
+      {
+        "block_id": "S14",
+        "tag_id": "S15"
+      },
+      {
+        "block_id": "S16",
+        "tag_id": "S17"
+      }
+    ]
+  }
+}

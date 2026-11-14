@@ -480,34 +480,9 @@ impl StructuralFilterBuilder {
         self.add_projection_clause(prefix, &wc.sql, &wc.binds);
     }
 
-    /// #1320 ALL-tags filter routed through [`SearchProjection`]
-    /// instead of the inline `add_tags_all` `COUNT(DISTINCT)` fragment
-    /// (#1320 retired that legacy method; this is now the sole path).
-    /// For each requested tag, compiles a
-    /// [`FilterPrimitive::Tag`] (which `SearchProjection::compile_tag`
-    /// emits as `b.id IN (SELECT block_id FROM block_tags WHERE tag_id =
-    /// ?)`) and splices it through [`add_projection_clause`] under the same
-    /// `prefix`. Because every per-tag fragment is AND-joined with the same
-    /// `AND ` glue prefix, a block must sit in EVERY per-tag set — i.e. it
-    /// must carry every requested tag. That is RESULT-EQUIVALENT to the
-    /// legacy `COUNT(DISTINCT bt.tag_id) = N` ALL-semantics (proved by the
-    /// `tags_via_projection_matches_legacy_*` DB equivalence tests), though
-    /// the emitted SQL SHAPE differs (N IN-subselects vs one
-    /// `COUNT(DISTINCT)` sub-select).
-    ///
-    /// `tags` must already be deduped + UPPERCASE-normalised by the caller
-    /// (/ SQL-A6) — dedup is now a correctness-neutral nicety rather
-    /// than a hard requirement (a duplicated tag id only emits a redundant
-    /// identical IN-subselect), but the caller keeps deduping for SQL
-    /// economy. No-op on an empty slice (mirrors `add_tags_all`). The
-    /// loop calls `add_projection_clause` once per tag, each consuming one
-    /// `?N` placeholder, so `next_param` advances by exactly `tags.len()`.
-    ///
-    /// `inline_and_inherited` widens each tag to the tag query's leaf
-    /// ([`tag_leaf_subquery_body`](crate::tag_query::tag_leaf_subquery_body)):
-    /// attached, inline `#tag` reference, or inherited from an ancestor. That
-    /// leaf binds the tag once per arm, so `next_param` then advances by
-    /// `3 * tags.len()`.
+    /// The ALL-tags filter, through [`SearchProjection`]: one AND-ed clause
+    /// per tag, so a block must match every one. `tags` are deduped and
+    /// uppercased by the caller ([`normalize_tag_ids`]).
     pub(super) fn add_tags_via_projection(
         &mut self,
         prefix: &str,
@@ -515,18 +490,48 @@ impl StructuralFilterBuilder {
         inline_and_inherited: bool,
     ) {
         for tag in tags {
+            self.add_any_tag_via_projection(
+                prefix,
+                std::slice::from_ref(tag),
+                inline_and_inherited,
+            );
+        }
+    }
+
+    /// One AND-ed clause the block passes by matching at least one of `tags`;
+    /// an empty list matches nothing. Each tag is a [`FilterPrimitive::Tag`]
+    /// leaf (the tag or one nested under it, attached), or with
+    /// `inline_and_inherited` the same tags attached, written inline as
+    /// `#tag`, or inherited from an ancestor.
+    pub(super) fn add_any_tag_via_projection(
+        &mut self,
+        prefix: &str,
+        tags: &[String],
+        inline_and_inherited: bool,
+    ) {
+        let mut leaves = Vec::with_capacity(tags.len());
+        let mut binds = Vec::new();
+        for tag in tags {
             if inline_and_inherited {
-                let sql = format!(
-                    "b.id IN ({})",
-                    crate::tag_query::tag_leaf_subquery_body(true)
-                );
-                self.add_projection_clause(prefix, &sql, &vec![Bind::Text(tag.clone()); 3]);
+                leaves.push(format!(
+                    "b.id IN (SELECT block_id FROM block_tags WHERE tag_id IN ({n}) \
+                     UNION SELECT source_id FROM block_tag_refs WHERE tag_id IN ({n}) \
+                     UNION SELECT block_id FROM block_tag_inherited WHERE tag_id IN ({n}))",
+                    n = crate::filters::primitive::TAG_AND_NESTED_IDS_SQL
+                ));
+                binds.extend(vec![Bind::Text(tag.clone()); 3]);
             } else {
-                let prim = FilterPrimitive::Tag { tag: tag.clone() };
-                let wc = SearchProjection.compile(&prim);
-                self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+                let wc = SearchProjection.compile(&FilterPrimitive::Tag { tag: tag.clone() });
+                leaves.push(wc.sql);
+                binds.extend(wc.binds);
             }
         }
+        let sql = if leaves.is_empty() {
+            "0".to_string()
+        } else {
+            format!("({})", leaves.join(" OR "))
+        };
+        self.add_projection_clause(prefix, &sql, &binds);
     }
 
     /// Page-name-glob filter routed through [`SearchProjection`] — the
@@ -808,7 +813,7 @@ mod tests {
     /// Tag filtering is ROUTED through `SearchProjection` in
     /// `fts_fetch_rows` (`add_tags_via_projection`, #1320); the projection
     /// emits N per-tag `b.id IN (SELECT block_id FROM block_tags WHERE
-    /// tag_id = ?N)` sub-selects AND-joined under the same prefix, rather
+    /// tag_id IN (…))` sub-selects AND-joined under the same prefix, rather
     /// than a single `COUNT(DISTINCT bt.tag_id) = N` sub-select. The two
     /// shapes are RESULT-EQUIVALENT (a block in every per-tag set has all
     /// N tags), proved at the DB level by the
@@ -819,6 +824,14 @@ mod tests {
     /// correct placeholder renumbering, and (via the shape-divergence
     /// assertion) that the SQL never regresses to a `COUNT(DISTINCT)`
     /// form.
+    /// The clause one tag adds, its id bound at `?n`.
+    fn tag_leaf(n: usize) -> String {
+        format!(
+            "(b.id IN (SELECT block_id FROM block_tags WHERE tag_id IN ({})))",
+            crate::filters::primitive::TAG_AND_NESTED_IDS_SQL.replace('?', &format!("?{n}"))
+        )
+    }
+
     #[test]
     fn tags_via_projection_routes_and_documents_shape_cutover() {
         // Routed path (the production cutover) — two tags, ALL-semantics.
@@ -836,8 +849,7 @@ mod tests {
         // renumbered `?6` / `?7` placeholders (one bind each).
         assert_eq!(
             routed.sql(),
-            "\n           AND b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?6)\
-             \n           AND b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?7)",
+            format!("{FTS_PREFIX}{}{FTS_PREFIX}{}", tag_leaf(6), tag_leaf(7)),
             "routed Tag emits N AND-joined per-tag IN sub-selects"
         );
         assert_eq!(routed.next_param(), 8, "two tags consume ?6 and ?7");
@@ -1356,6 +1368,7 @@ mod tests {
             }),
             last_edited: Some(crate::filters::LastEditedSpec::Rolling { days: 7 }),
             tags_match_inline_and_inherited: false,
+            tag_any_of: Vec::new(),
         };
         let mut fb = StructuralFilterBuilder::new(6);
         fb.add_parent(FTS_PREFIX, Some("PARENT01"));
@@ -1377,10 +1390,11 @@ mod tests {
             "COALESCE({}, 0) >= (CAST(strftime('%s', 'now', ?30) AS INTEGER) * 1000)",
             crate::filters::last_edited_ms_sql("b.id")
         );
+        let (tag_leaf_7, tag_leaf_8) = (tag_leaf(7), tag_leaf(8));
         let bodies = [
             "b.parent_id = ?6",
-            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?7)",
-            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?8)",
+            tag_leaf_7.as_str(),
+            tag_leaf_8.as_str(),
             "b.space_id IN (SELECT value FROM json_each(?9))",
             "(b.page_id IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?10) OR b.page_id IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?11))",
             "b.page_id NOT IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?12)",

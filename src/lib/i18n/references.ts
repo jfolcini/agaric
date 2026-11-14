@@ -633,10 +633,11 @@ export const references: Record<string, string> = {
     'Filters can be typed directly in the search input or added via the <mono>Add filter</mono> button. Filters AND-combine with the free-text portion.',
   'search.help.filter.col.token': 'Token',
   'search.help.filter.col.meaning': 'Meaning',
-  'search.help.filter.cell.tagName': 'Block carries the tag `name`. Repeats AND.',
+  'search.help.filter.cell.tagName':
+    'Block carries the tag `name` or a tag nested under it (`name/sub`). Repeats AND.',
   'search.help.filter.cell.bareTag': 'Bare alias for tag:#name.',
   'search.help.filter.cell.underTag':
-    'Block carries the tag attached, written inline, or inherited from its page or a parent block.',
+    'Block carries the tag, or a tag nested under it, attached, written inline, or inherited from its page or a parent block.',
   'search.help.filter.cell.path': 'Page-name glob include. Comma-separated values OR-combine.',
   'search.help.filter.cell.notPath': 'Page-name glob exclude.',
   'search.help.filter.cell.state':

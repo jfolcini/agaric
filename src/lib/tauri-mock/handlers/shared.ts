@@ -548,6 +548,33 @@ export function assertValidSetPropertyValue(
 }
 
 /**
+ * The ids a `Tag` leaf matches (`TAG_AND_NESTED_IDS_SQL`,
+ * `agaric-store/src/filters/primitive.rs`): the tag, and every live tag of its
+ * space named under it (`projects` finds `projects/web`), case folded as
+ * SQLite `NOCASE` folds it.
+ */
+export function tagAndNestedIds(tagId: string): Set<string> {
+  const ids = new Set([tagId])
+  const parent = blocks.get(tagId)
+  const name = parent?.['content']
+  if (!parent || typeof name !== 'string') return ids
+  const prefix = foldAsciiUppercase(`${name}/`)
+  for (const b of blocks.values()) {
+    const content = b['content']
+    if (
+      b['block_type'] === 'tag' &&
+      !b['deleted_at'] &&
+      typeof content === 'string' &&
+      ownerSpaceOf(b) === ownerSpaceOf(parent) &&
+      foldAsciiUppercase(content).startsWith(prefix)
+    ) {
+      ids.add(b['id'] as string)
+    }
+  }
+  return ids
+}
+
+/**
  * Ref-INCLUSIVE tag set for a block: ATTACHED tags (`block_tags`) ∪ inline tag
  * REFERENCES (`block_tag_refs`). This is the set legacy tag queries
  * (`query_by_tags`, `filtered_blocks_query`) and the rich `TagOrRef` primitive
@@ -832,7 +859,8 @@ export function metaRowMatchesFilter(
       return r.inboundLinkCount === 0 && !r.hasOutboundLink
     }
     case 'Tag': {
-      return blockTags.get(r.id)?.has(f['tag'] as string) ?? false
+      const wanted = tagAndNestedIds(f['tag'] as string)
+      return [...(blockTags.get(r.id) ?? [])].some((t) => wanted.has(t))
     }
     case 'TagOrRef': {
       // Ref-inclusive: attached `block_tags` ∪ inline `block_tag_refs`.

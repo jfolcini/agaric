@@ -223,24 +223,16 @@ pub(super) fn build_fts_fetch(
     // helper's docs for why the normalisation matters (a mixed-case or
     // duplicate id would otherwise silently zero out the ALL-tags predicate).
     let active_tag_ids = crate::fts::filter_builder::normalize_tag_ids(tag_ids);
-    // #1320 the ALL-tags filter is now compiled through
-    // `SearchProjection` (the cross-surface filter compiler) rather than
-    // the inline `COUNT(DISTINCT)` fragment. `add_tags_via_projection`
-    // emits one per-tag `b.id IN (SELECT block_id FROM block_tags WHERE
-    // tag_id = ?N)` sub-select, AND-joined under `PREFIX`. A block in
-    // EVERY per-tag set carries every requested tag, so this is
-    // result-equivalent to the legacy `COUNT(DISTINCT bt.tag_id) = N`
-    // ALL-semantics (the SQL shape differs; equivalence is proved by the
-    // `tags_via_projection_matches_legacy_*` DB tests in `filter_builder`).
-    // Follows the `Space` cutover. As of #1320 the legacy
-    // `add_tags_all` builder is retired — every search path (this one plus
-    // the toggle-filter `regex_mode_query` / `filter_only_scan` builders) now
-    // routes tags through `add_tags_via_projection`.
+    // The ALL-tags filter, compiled through `SearchProjection`: one AND-ed
+    // clause per tag, each matching the tag or one nested under it.
     fb.add_tags_via_projection(
         PREFIX,
         &active_tag_ids,
         metadata.tags_match_inline_and_inherited,
     );
+    for group in &metadata.tag_any_of {
+        fb.add_any_tag_via_projection(PREFIX, group, metadata.tags_match_inline_and_inherited);
+    }
 
     // Space filter on the first-class `b.space_id` column (#533, migration
     // 0086). Kept inline (via the builder) because the dynamic-SQL shape of
