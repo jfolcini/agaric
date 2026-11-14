@@ -5813,7 +5813,6 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
         &resp_space,
         &record.created_at.to_string(),
         resp_state,
-        &resp_state.revert,
     );
 
     // #602: NO op is hand-seeded into the responder's op_log for the
@@ -6311,7 +6310,6 @@ async fn make_local_edit_602(
         space,
         &record.created_at.to_string(),
         state,
-        &state.revert,
     );
 }
 
@@ -6342,7 +6340,6 @@ async fn apply_local_op_602(
         space,
         &record.created_at.to_string(),
         state,
-        &state.revert,
     );
 }
 
@@ -11195,7 +11192,6 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
         &agaric_store::space::SpaceId::from_trusted("01HZ2140SNAPSPACEXXXXXXXXX"),
         &record.created_at.to_string(),
         &resp.state,
-        &resp.state.revert,
     );
 
     // Simulate compaction: wipe the responder's op_log (H-13 bypass dance).
@@ -11259,7 +11255,6 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
             &snap_space,
             "1736942399000",
             &init.state,
-            &init.state.revert,
         );
     }
 

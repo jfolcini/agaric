@@ -25,10 +25,11 @@
 //! * A transaction that armed the engine rollback log: [`commit_with_deltas`]
 //!   exports each engine's update since the transaction first touched it, and
 //!   a failed save fails the transaction. The app's `CommandTx` commits
-//!   through it.
-//! * The engine writes that follow a commit (the cascade of a delete, a
-//!   restore or a purge): [`write_engines`] runs them under the write lock in
-//!   a transaction of their own.
+//!   through it. The cascade of a delete, a restore, a purge or a move over
+//!   its cohort is written in the op's transaction, so the op's row holds it.
+//! * The one engine write that follows a commit (the tombstones a sync
+//!   import's projection swept): [`write_engines`] runs it under the write
+//!   lock in a transaction of its own.
 //! * A sync import or export, which writes the engine outside the write lock:
 //!   `LoroEngine::capturing_delta` exports what the write added under the
 //!   engine lock, and the caller saves it with [`insert_delta`]; an import
@@ -126,6 +127,10 @@ async fn save_and_commit(
 /// run without it, and when the save or the commit fails they are not
 /// rewound. The `Err` then says no row holds them. Their space is dirty, so
 /// the next snapshot pass saves it.
+///
+/// A kill between the commit and these writes loses them, so only a write
+/// something later repairs belongs here; an op's cascade is written in the
+/// op's transaction (#6521).
 pub async fn write_engines<T>(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -154,10 +159,10 @@ const BOOTS_FROM_SAVED_ROWS_KEY: &str = "loro.boots_from_saved_rows";
 /// Absent on a vault no boot of this build has finished recovering; while an
 /// op's own engine write is in no engine (during a replay boot, and while boot
 /// writes back a draft, whose op commits before its engine apply); and after a
-/// rollback rewound an engine past a sync import. It does not cover the engine
-/// writes that follow a commit ([`write_engines`]): a kill between a delete, a
-/// restore or a purge and its cascade leaves the marker set and the cascade in
-/// no row.
+/// rollback rewound an engine past a sync import. It does not cover the
+/// engine write that follows a commit ([`write_engines`]): a kill between a
+/// sync import's projection and the tombstones it swept leaves the marker set
+/// and those tombstones in no row, until the next export mirrors them.
 pub async fn boots_from_saved_rows(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar!(
         r#"SELECT EXISTS(SELECT 1 FROM app_settings WHERE key = ?) AS "set!: bool""#,

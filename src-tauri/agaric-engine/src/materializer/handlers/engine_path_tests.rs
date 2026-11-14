@@ -361,7 +361,7 @@ async fn apply_op_tx_delete_block_engine_path() {
     // CTE-driven cascade fires — seed + two children are all
     // soft-deleted in SQL after a single DeleteBlock op against
     // the seed. The engine path only sees the seed apply; the
-    // descendant cohort fans out to the engine post-commit.
+    // descendant cohort fans out to the engine after it.
     const CHILD_1: &str = "01HZ00000000000000000000C1";
     const CHILD_2: &str = "01HZ00000000000000000000C2";
 

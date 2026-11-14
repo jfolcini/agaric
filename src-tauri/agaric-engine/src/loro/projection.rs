@@ -718,7 +718,7 @@ pub async fn project_purge_blocks_to_sql(
 /// **Cascade scope.** This projection walks the active-descendant set and
 /// soft-deletes every active descendant. The engine's
 /// `apply_delete_block` is per-block-id only, so the engine-side
-/// fan-out for descendants is handled by the post-commit dispatch
+/// fan-out for descendants is handled by `dispatch_delete_descendants`
 /// (`dispatch_restore_descendants` is the symmetric helper for
 /// restore); SQL state for the cohort is correct as soon as this
 /// projection runs.
@@ -824,7 +824,7 @@ pub async fn project_move_block_to_sql(
 /// **Engine fan-out trade-off.** The engine's `apply_restore_block` is
 /// per-block-id only, so only the SEED block is applied to the engine
 /// here. The descendant cohort's engine state is reconciled by the
-/// post-commit `dispatch_restore_descendants` fanout (SQL state for
+/// `dispatch_restore_descendants` fanout (SQL state for
 /// the full cohort is correct as soon as this projection runs; engine
 /// state for descendants follows).
 ///
@@ -916,7 +916,7 @@ async fn restore_cohort_to_sql(
 /// rows (its engine fan-out takes the cohort `collect_restore_cohort` captured
 /// pre-UPDATE). The un-sweep caller needs them because its cohort has no other
 /// witness: a `MoveBlock` has no `deleted_at_ref` to walk back from once the
-/// clear has run, so without this list the post-commit engine mirror
+/// clear has run, so without this list the engine mirror
 /// (`dispatch_unswept_cohort`) would have nothing to mirror. See
 /// [`crate::apply::sql_only::unsweep_inherited_cohort_after_move`].
 pub(crate) async fn clear_cohort_deleted_at_downward(

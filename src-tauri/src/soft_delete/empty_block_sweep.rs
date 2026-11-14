@@ -7,22 +7,17 @@
 //! boot, not a refusal to start. `bootstrap_spaces` is boot-fatal by design;
 //! sharing its transaction would have made the sweep boot-fatal too.
 //!
-//! Each delete takes the same post-commit steps as
-//! `commands::blocks::crud::delete_block_inner`: the content-narrowed
-//! lifecycle cache rebuild, then the engine cohort fan-out. The engine
-//! rollback is armed (#2604) so a tx abort part-way through a batch rewinds
-//! the in-place engine applies along with the SQL.
-
-use std::sync::Arc;
+//! Each delete gets the content-narrowed lifecycle cache rebuild
+//! `commands::blocks::crud::delete_block_inner` dispatches after its commit.
+//! The engine rollback is armed (#2604) so a tx abort part-way through a
+//! batch rewinds the in-place engine applies along with the SQL.
 
 use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
-use agaric_engine::apply::kernel::ApplyEffects;
 use agaric_engine::empty_blocks::sweep_leaked_empty_blocks;
-use agaric_store::op_log::OpRecord;
 
 /// Sweep leaked empty blocks, logging the outcome. Never fails: an error is
 /// logged and boot continues; the next boot retries the same range, since
@@ -51,19 +46,14 @@ async fn run(
 
     let sweep = sweep_leaked_empty_blocks(&mut tx, state, device_id).await?;
 
-    let swept: Vec<(Arc<OpRecord>, ApplyEffects)> = sweep
-        .swept
-        .into_iter()
-        .map(|s| (Arc::new(s.record), s.effects))
-        .collect();
-    for (record, _) in &swept {
-        tx.enqueue_lifecycle_background(Arc::clone(record), "content");
+    let swept = sweep.swept.len();
+    for block in sweep.swept {
+        tx.enqueue_lifecycle_background(block.record, "content");
     }
     tx.commit_and_dispatch(materializer).await?;
-    crate::repair::fan_out_deletes(pool, state, &swept).await;
 
     tracing::info!(
-        swept = swept.len(),
+        swept,
         examined = sweep.examined,
         held_back = sweep.held_back,
         exhausted = sweep.exhausted,

@@ -1294,9 +1294,9 @@ async fn sql_sibling_ranks(
 /// consistent between the engine and SQL, and lossless across sync.
 /// The cascade (descendant fanout) is handled on the SQL side via the
 /// projection's CTE-driven UPDATE; the engine only sees the seed
-/// block's apply, with the post-commit
+/// block's apply here, with the kernel's
 /// `dispatch_delete_descendants` fanning out the cohort to the
-/// engine. An unresolvable space falls back to the SQL-only path.
+/// engine next. An unresolvable space falls back to the SQL-only path.
 pub async fn apply_delete_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
@@ -1306,7 +1306,7 @@ pub async fn apply_delete_block_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    // Not `replay`: when SQL already holds a replayed delete, the post-commit
+    // Not `replay`: when SQL already holds a replayed delete, the
     // cohort fan-out carries it to the engine, seed and cascade alike
     // (`kernel::apply_delete_block_op`, #5630).
     let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id, false).await? else {
@@ -1432,7 +1432,7 @@ fn move_block_in_engine(
 
 /// [`apply_move_block_via_loro`]'s tombstoned-ancestor arm: mirror the swept
 /// cohort's tombstone onto the per-space engine INLINE rather than through
-/// `ApplyEffects` + the post-commit `dispatch_delete_descendants` fan-out. The
+/// `ApplyEffects` + the `dispatch_delete_descendants` fan-out. The
 /// op arm has no `DeleteBlock` record to hang a cohort off, and inline keeps
 /// the engine mutation inside the caller's `for_space_recording` checkpoint
 /// window, so a tx rollback rewinds it with everything else this op did.
@@ -1503,14 +1503,14 @@ fn mirror_swept_cohort_into_engine(
 /// The consequence used to be the open half of #4204 (its "finding 3"):
 /// because the tombstoned-subject move runs on the engine-LESS arm, nothing
 /// cleared the subject's per-space engine `deleted_at` register, which the
-/// delete's post-commit `dispatch_delete_descendants` fan-out set for the
+/// delete's `dispatch_delete_descendants` fan-out set for the
 /// whole cohort — so the SQL re-derivation did not survive the next snapshot
 /// import (`reproject_block_deleted_at_from_engine` took its `Some(ts)`
 /// branch).
 ///
 /// #4390 closed that, and NOT by bolting the mirror on here: this arm still
 /// never sees a tombstone to un-sweep, so there is no call site here for it to
-/// live at, and a post-commit fan-out belongs outside this function either
+/// live at, and a cohort fan-out belongs outside this function either
 /// way. The fix threads the cleared ids out of the `sql_only` arm instead —
 /// which is why THIS function's return type changed too, forwarding what its
 /// two fallback arms hand back. The engine arm itself always returns an empty
@@ -1612,7 +1612,7 @@ pub async fn apply_move_block_via_loro(
         }
     }
     // #4390: the engine arm un-sweeps nothing (see this function's #4204/#4188
-    // note), so there is never anything for the post-commit mirror to do on
+    // note), so there is never anything for the cohort mirror to do on
     // this path.
     Ok(Vec::new())
 }
@@ -1621,8 +1621,8 @@ pub async fn apply_move_block_via_loro(
 ///
 /// Engine apply for the SEED only + SQL projection that walks the
 /// cohort via the descendants CTE. The per-descendant engine fan-out
-/// lives in the post-commit helper `dispatch_restore_descendants`
-/// (the engine apply is idempotent, so re-running it is safe).
+/// lives in the helper `dispatch_restore_descendants`, which the kernel
+/// runs next (the engine apply is idempotent, so re-running it is safe).
 ///
 /// **Why the engine sees only the seed.** The engine's
 /// `apply_restore_block` is per-block-id; walking descendants would
@@ -1647,7 +1647,7 @@ pub async fn apply_move_block_via_loro(
 /// #2017: returns the restored ANCESTOR chain (the contiguous soft-deleted
 /// ancestors above the block that the projection un-deleted in SQL). The caller
 /// (`apply_op_tx`) surfaces it in `ApplyEffects::restored_ancestors` and fans it
-/// out to the engine post-commit (`dispatch_restore_ancestors`), mirroring the
+/// out to the engine (`dispatch_restore_ancestors`), mirroring the
 /// descendant cohort fan-out. Without this the SQL un-deletes the ancestors but
 /// the engine never hears, so the next reproject re-deletes them in SQL.
 pub async fn apply_restore_block_via_loro(
@@ -1705,7 +1705,7 @@ pub async fn apply_restore_block_via_loro(
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, &inheritance_root).await?;
 
     // #2017: surface the restored ancestor chain so `apply_op_tx` can fan it
-    // out to the per-space engine post-commit. The engine apply above targeted
+    // out to the per-space engine. The engine apply above targeted
     // only the SEED; the ancestors were un-deleted in SQL only.
     Ok(restored_ancestors)
 }

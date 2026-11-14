@@ -22,7 +22,11 @@
 //! transaction goes), and a sync import of one update of `TAIL` edits (with
 //! the delta under
 //! [`capturing_delta`](super::engine::LoroEngine::capturing_delta) and its
-//! row inserted, as `import_and_project` does). Every timing prints as `durability_cost: <case> @ <n>x<m> = median
+//! row inserted, as `import_and_project` does). A last case times the cascade
+//! of a delete over every block of the space as its op's transaction holds
+//! it (#6521): the cohort's tombstones through
+//! `dispatch_delete_descendants`, then the transaction's delta and commit.
+//! Every timing prints as `durability_cost: <case> @ <n>x<m> = median
 //! [min–max]`. Nothing is budgeted; the assertions are on what a rebuilt
 //! engine holds.
 //!
@@ -430,6 +434,77 @@ async fn import_with_its_delta(
     );
 }
 
+/// A delete's cascade over all of `ids`, written in one transaction on the
+/// engine `snapshot` rebuilds: the largest cohort the space can give a delete.
+/// Each sample starts from a new rehydrate, so its containers are not decoded.
+async fn cascade_in_its_transaction(
+    pool: &sqlx::SqlitePool,
+    snapshot: &[u8],
+    ids: &[String],
+    scale: &str,
+) {
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE);
+    let delete = agaric_store::op_log::OpRecord {
+        device_id: DEVICE.into(),
+        seq: 1,
+        parent_seqs: None,
+        hash: String::new(),
+        op_type: "delete_block".into(),
+        payload: String::new(),
+        created_at: 1,
+        block_id: Some(ids[0].clone()),
+    };
+    let (rows_before, bytes_before) = saved_deltas(pool).await;
+    let mut writes = Vec::with_capacity(5);
+    let mut commits = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let state = super::shared::LoroState::new();
+        state
+            .registry
+            .install_engine(space.clone(), rehydrate(snapshot));
+        let tx = agaric_store::db::begin_immediate_logged(pool, "durability_cost")
+            .await
+            .expect("begin");
+        let scope = super::revert::RevertScope::arm(&state);
+        let start = Instant::now();
+        crate::materializer::dispatch_delete_descendants(&delete, ids, Some(&space), &state);
+        writes.push(start.elapsed());
+        let start = Instant::now();
+        super::delta::commit_with_deltas(tx, &state.registry, scope.detach())
+            .await
+            .expect("commit");
+        commits.push(start.elapsed());
+        let last = ids.last().expect("a block");
+        let tombstoned = state
+            .registry
+            .for_space(&space, DEVICE)
+            .expect("engine")
+            .engine_mut()
+            .read_deleted_at(last)
+            .expect("read");
+        assert_eq!(
+            tombstoned.as_deref(),
+            Some("1"),
+            "the cascade reached {last}"
+        );
+    }
+    let (rows, bytes) = saved_deltas(pool).await;
+    assert_eq!(rows - rows_before, 5, "each cascade saved one row");
+    writes.sort();
+    commits.sort();
+    let cohort = ids.len();
+    Timings(writes).report(
+        &format!("cascade of {cohort} blocks, engine writes"),
+        scale,
+        "",
+    );
+    Timings(commits).report(
+        &format!("cascade of {cohort} blocks, delta and commit"),
+        scale,
+        &format!(", {} bytes a row", (bytes - bytes_before) / 5),
+    );
+}
+
 /// `loro_doc_delta`'s row count and total bytes.
 async fn saved_deltas(pool: &sqlx::SqlitePool) -> (i64, i64) {
     sqlx::query_as("SELECT COUNT(*), COALESCE(SUM(LENGTH(bytes)), 0) FROM loro_doc_delta")
@@ -462,6 +537,7 @@ async fn measure(n: usize, rounds: usize) {
 
     edit_transaction(&pool, &snapshot, &ids[ids.len() / 2 + 1], &scale).await;
     import_with_its_delta(&pool, &snapshot, &session, &scale).await;
+    cascade_in_its_transaction(&pool, &snapshot, &ids, &scale).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -259,7 +259,8 @@ async fn dispatch_restore_descendants_empty_list_is_noop() {
     };
 
     // Empty descendant list — no engine mutations expected.
-    super::dispatch_restore_descendants(&pool, &root, &[], &state).await;
+    let mut conn = pool.acquire().await.unwrap();
+    super::dispatch_restore_descendants(&mut conn, &root, &[], &state).await;
 
     // Engine state unchanged: every block is still deleted (we
     // seeded them deleted in seed_engine_with_deleted_subtree).
@@ -317,7 +318,8 @@ async fn dispatch_restore_descendants_parse_failure_bumps_divergence_metric() {
     // between the two reads — see the note on `fresh_loro_state` above for
     // why the `spy-counter-serial` group is not what provides that.
     let before = super::descendant_fanout_dropped::count();
-    super::dispatch_restore_descendants(&pool, &root, &cohort, &state).await;
+    let mut conn = pool.acquire().await.unwrap();
+    super::dispatch_restore_descendants(&mut conn, &root, &cohort, &state).await;
     let after = super::descendant_fanout_dropped::count();
 
     assert_eq!(

@@ -74,7 +74,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use loro::{ExportMode, LoroDoc};
 use parking_lot::lock_api::ArcMutexGuard;
@@ -121,7 +121,7 @@ pub(crate) struct DirtySpaces {
     rewinds: AtomicU64,
     /// A rewind dropped ops a sync import had added to its engine. See
     /// [`LoroEngineRegistry::take_rewound_past_an_import`].
-    rewound_past_an_import: std::sync::atomic::AtomicBool,
+    rewound_past_an_import: AtomicBool,
 }
 
 impl DirtySpaces {
@@ -1778,7 +1778,6 @@ mod tests {
     /// fresh engine and contains its space's seed block.
     #[test]
     fn snapshot_all_engines_during_concurrent_writes_2205() {
-        use std::sync::atomic::AtomicBool;
         use std::thread;
 
         let r = Arc::new(LoroEngineRegistry::new());

@@ -81,7 +81,7 @@ use super::registry::{
 use super::tools_ro::{self, AttachmentListRow, ReadOnlyTools};
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::attachments::{ATTACHMENT_EXTENSIONS, mime_for_extension};
-use crate::commands::blocks::crud::{DeleteInTx, delete_block_in_tx, dispatch_deletes};
+use crate::commands::blocks::crud::{DeleteInTx, delete_block_in_tx, remove_deleted_fts};
 use crate::commands::blocks::move_ops::move_blocks_batch_in_tx;
 use crate::commands::blocks::space_move::describe_losses;
 use crate::commands::meeting_attachments::{
@@ -2376,13 +2376,13 @@ async fn run_batch(
         results.push(result);
     }
     tx.commit_and_dispatch(materializer).await?;
-    dispatch_deletes(pool, materializer, &deletes).await;
+    remove_deleted_fts(pool, &deletes).await;
     Ok(results)
 }
 
 /// `op` written in `tx` as its tool writes it in its own transaction, and the
 /// result that tool returns. A delete also goes on `deletes`, for the
-/// post-commit fan-out.
+/// post-commit FTS removal.
 async fn apply_batch_op(
     mut tx: CommandTx,
     materializer: &Materializer,

@@ -46,7 +46,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 
 use crate::commands::blocks::crud::{
-    delete_block_in_tx, dispatch_deletes, edit_block_in_tx, space_tag_names,
+    delete_block_in_tx, edit_block_in_tx, remove_deleted_fts, space_tag_names,
 };
 use crate::commands::spaces::{SpacePageNames, list_spaces_inner};
 use crate::commands::tags::{apply_tag_to_block_in_tx, remove_tag_in_tx};
@@ -530,7 +530,7 @@ async fn delete_later_tag(
     ))
     .await?;
     tx.commit_and_dispatch(materializer).await?;
-    dispatch_deletes(pool, materializer, std::slice::from_ref(&deleted)).await;
+    remove_deleted_fts(pool, std::slice::from_ref(&deleted)).await;
     tracing::info!(
         tag_id = %tie.later, keeper = %tie.keeper,
         "merged the later tag of a name tie (#6278)"
