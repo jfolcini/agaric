@@ -4,7 +4,7 @@
 //! does not take as they are, after the user has seen which (#6206).
 //!
 //! A change may also turn the key into one that holds a list, or back
-//! (#6741): [`convert`] is the one rule for what each held value becomes.
+//! (#6741): `ConversionRule::convert` is the one rule for what each held value becomes.
 //!
 //! Preview, list and write read the values from the `block_properties` rows.
 //! A value only the space's doc holds (a ref whose block is gone) is left
