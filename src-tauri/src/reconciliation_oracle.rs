@@ -2622,7 +2622,7 @@ fn admissible_rows(
                 })
                 .cloned()
                 .collect();
-            return vec![(!kept.is_empty()).then(|| C::List(PropertyList(kept)))];
+            return vec![(!kept.is_empty()).then_some(C::List(PropertyList(kept)))];
         }
         PropertyValue::Str(s) => s,
     };

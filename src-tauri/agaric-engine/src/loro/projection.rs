@@ -1495,22 +1495,19 @@ fn declared_value_type_or_text<'a>(
     )
 }
 
-/// [`reproject_block_properties_from_engine`]'s per-key row: route the engine
-/// value to its typed `block_properties` column and INSERT it, a string its
-/// key's type does not take to `value_text` (#6206) and a list to `value_list`
-/// ([`list_column_text`]); row-absent for a cleared or dangling value.
-async fn reproject_property_row_from_engine(
-    conn: &mut SqliteConnection,
+/// The column an engine value lands in: a native typed value in its own,
+/// whatever the key's declared type (#5841), and a string where that type
+/// puts it.
+fn engine_value_fields(
     block_id: &agaric_core::ulid::BlockId,
     key: &str,
     value: &crate::loro::engine::PropertyValue,
     value_types: &std::collections::HashMap<String, String>,
-) -> Result<(), AppError> {
+) -> agaric_store::op::PropertyValueFields {
     use crate::loro::coerce::{coerce, value_fields_under};
     use crate::loro::engine::PropertyValue;
     use agaric_store::op::PropertyValueFields;
-    let block_id_str = block_id.as_str();
-    let fields = match value {
+    match value {
         // Native typed values route straight to their column, whatever the
         // key's declared type (#5841).
         PropertyValue::Num(n) => PropertyValueFields {
@@ -1542,7 +1539,22 @@ async fn reproject_property_row_from_engine(
                 |fit| value_fields_under(&fit, value_type),
             )
         }
-    };
+    }
+}
+
+/// [`reproject_block_properties_from_engine`]'s per-key row: route the engine
+/// value to its typed `block_properties` column and INSERT it, a string its
+/// key's type does not take to `value_text` (#6206) and a list to `value_list`
+/// ([`list_column_text`]); row-absent for a cleared or dangling value.
+async fn reproject_property_row_from_engine(
+    conn: &mut SqliteConnection,
+    block_id: &agaric_core::ulid::BlockId,
+    key: &str,
+    value: &crate::loro::engine::PropertyValue,
+    value_types: &std::collections::HashMap<String, String>,
+) -> Result<(), AppError> {
+    let block_id_str = block_id.as_str();
+    let fields = engine_value_fields(block_id, key, value, value_types);
     let value_text = fields.value_text.as_deref();
     let value_num = fields.value_num;
     let value_date = fields.value_date.as_deref();
@@ -5023,7 +5035,7 @@ mod tests {
         let (pool, _dir) = fresh_pool().await;
         seed_ref_holders(&pool).await;
         let value_types = crate::block_ops::load_value_types(
-            &mut *pool.acquire().await.expect("acquire"),
+            &mut pool.acquire().await.expect("acquire"),
             DEFS_SPACE,
         )
         .await

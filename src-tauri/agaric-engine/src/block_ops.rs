@@ -1105,6 +1105,21 @@ pub async fn set_property_in_tx_with_declaration(
     set_property_value_in_tx(tx, state, device_id, block_id, key, value, declaration).await
 }
 
+/// The block ids a value points at: its `value_ref`, or every item of a list
+/// under a key declared `ref`.
+fn ref_targets(
+    value: &PropertyValueFields,
+    declaration: Option<&PropertyDeclaration>,
+) -> Vec<String> {
+    match (&value.value_ref, &value.value_list, declaration) {
+        (Some(target), _, _) => vec![target.as_str().to_owned()],
+        (None, Some(list), Some(decl)) if decl.value_type == "ref" => {
+            list.texts().map(str::to_owned).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// [`set_property_in_tx_with_declaration`] for a value in any of its six
 /// slots, a list among them (#6741).
 pub async fn set_property_value_in_tx(
@@ -1120,13 +1135,7 @@ pub async fn set_property_value_in_tx(
     // Validation logic lives in `validate_property_value`
     //    above. The `property_definitions` row is supplied by the caller so the
     //    helper stays sync and unit-testable.
-    let ref_targets: Vec<String> = match (&value.value_ref, &value.value_list, &declaration) {
-        (Some(target), _, _) => vec![target.as_str().to_owned()],
-        (None, Some(list), Some(decl)) if decl.value_type == "ref" => {
-            list.texts().map(str::to_owned).collect()
-        }
-        _ => Vec::new(),
-    };
+    let ref_targets = ref_targets(&value, declaration.as_ref());
     let value_text = value.value_text.clone();
     let value_date = value.value_date.clone();
     let prop_payload =
