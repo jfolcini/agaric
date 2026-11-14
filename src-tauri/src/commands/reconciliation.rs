@@ -184,9 +184,9 @@ pub async fn compute_reconciliation_report_inner(
 
 /// [`compute_reconciliation_report_inner`] once the materializer has settled
 /// (#6488): an op still in the foreground queue, a background reindex not yet
-/// run, or an inbound-sync rebuild waiting out its debounce leaves a cache
-/// behind its base tables for a moment, and reporting that moment names a
-/// divergence a second run would not reproduce.
+/// run or shed by a full queue, or an inbound-sync rebuild waiting out its
+/// debounce leaves a cache behind its base tables for a moment, and reporting
+/// that moment names a divergence a second run would not reproduce.
 #[instrument(skip(pool, materializer), err)]
 pub async fn settled_reconciliation_report(
     pool: &SqlitePool,
@@ -196,6 +196,7 @@ pub async fn settled_reconciliation_report(
 ) -> Result<ReconciliationReport, AppError> {
     materializer.flush_foreground().await?;
     materializer.flush_inbound_rebuilds().await?;
+    materializer.settle_background().await?;
     compute_reconciliation_report_inner(pool, materializer.loro_state(), app_data_dir, today).await
 }
 

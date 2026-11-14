@@ -292,7 +292,7 @@ async fn extract_block_id_from_payload_truncates_prefix_to_80_chars() {
 
 /// Every op-type that carries a `block_id` must populate the
 /// `OpRecord::block_id` sidecar at append-time so the materializer
-/// hot path (`dispatch::enqueue_background_tasks`) can read it
+/// hot path (`dispatch::collect_fan_out`) can read it
 /// without a second JSON parse.  The only payload variant that
 /// must yield `None` is `delete_attachment` (it identifies its
 /// target by `attachment_id`, not `block_id`).

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::begin_immediate_logged;
 use agaric_core::error::AppError;
+use agaric_engine::materializer::CommitOp;
 use agaric_store::op::OpType;
 
 #[cfg(test)]
@@ -180,8 +181,8 @@ async fn check_space_guard(conn: &mut sqlx::SqliteConnection) -> Result<(), AppE
 ///   CommandTx::commit_and_dispatch) or the explicit
 ///   [`commit_without_dispatch`](CommandTx::commit_without_dispatch)
 ///   escape hatch. Both commit the inner `sqlx::Transaction` first, and
-///   only then (if the commit succeeded) drain the pending queue into
-///   `Materializer::dispatch_background_or_warn` in enqueue order.
+///   only then (if the commit succeeded) hand the pending queue, in enqueue
+///   order, to `Materializer::dispatch_commit`.
 /// - Dropping the `CommandTx` without calling either commit method
 ///   rolls back the transaction (via `sqlx::Transaction`'s own `Drop`)
 ///   and discards the pending queue. No dispatches fire on rollback.
@@ -207,9 +208,8 @@ async fn check_space_guard(conn: &mut sqlx::SqliteConnection) -> Result<(), AppE
 /// A post-commit dispatch queued by [`CommandTx::enqueue_background`]
 /// or [`CommandTx::enqueue_edit_background`]. Drained by
 /// [`CommandTx::commit_and_dispatch`] in FIFO order. Dispatch failures
-/// follow the `_or_warn` convention — logged via
-/// `dispatch_background_or_warn` / a direct `logger.warn` path for the
-/// `Edit` variant, never propagated to the caller.
+/// follow the `_or_warn` convention — logged by
+/// `Materializer::dispatch_commit`, never propagated to the caller.
 ///
 /// + L9: the inner `OpRecord` is held as `Arc<OpRecord>` so
 ///   command sites that need both the dispatch queue and another
@@ -220,10 +220,9 @@ async fn check_space_guard(conn: &mut sqlx::SqliteConnection) -> Result<(), AppE
 ///   (the blanket `impl<T> From<T> for Arc<T>` makes the conversion
 ///   transparent).
 enum PendingDispatch {
-    /// Plain op dispatch — invokes [`Materializer::dispatch_background_or_warn`].
+    /// Plain op dispatch, with no hint.
     Background(Arc<agaric_store::op_log::OpRecord>),
-    /// Edit-op dispatch with a `block_type` hint — invokes
-    /// [`Materializer::dispatch_edit_background`] and warns on error.
+    /// Edit-op dispatch with a `block_type` hint.
     /// The materializer uses the hint to pick a narrower cache-rebuild
     /// fan-out for content vs. tag vs. page edits.
     EditBackground {
@@ -231,8 +230,7 @@ enum PendingDispatch {
         block_type: String,
     },
     /// Lifecycle-op (`delete_block` / `restore_block` / `purge_block`)
-    /// dispatch with a `block_type` hint — invokes
-    /// [`Materializer::dispatch_lifecycle_background`] and warns on error.
+    /// dispatch with a `block_type` hint.
     /// #2037 pt2: the hint lets the materializer skip the
     /// `RebuildTagsCache` + `RebuildPagesCache` rebuilds when the deleted /
     /// restored / purged block is CONTENT (their caches are scoped to
@@ -241,8 +239,7 @@ enum PendingDispatch {
         record: Arc<agaric_store::op_log::OpRecord>,
         block_type: String,
     },
-    /// #2700: `move_block` dispatch with a proven `same_page` hint — invokes
-    /// [`Materializer::dispatch_move_background`] and warns on error. When
+    /// #2700: `move_block` dispatch with a proven `same_page` hint. When
     /// `same_page` is `true` (a same-parent reorder or same-page indent, proven
     /// at the command site by comparing the moved block's `page_id`
     /// before/after the in-tx rederive) the materializer skips the three
@@ -264,6 +261,21 @@ impl PendingDispatch {
             | Self::EditBackground { record, .. }
             | Self::LifecycleBackground { record, .. }
             | Self::MoveBackground { record, .. } => record,
+        }
+    }
+
+    /// The op and its hints, as the materializer's dispatch takes them.
+    fn commit_op(&self) -> CommitOp<'_> {
+        let (block_type, move_same_page) = match self {
+            Self::Background(_) => (None, None),
+            Self::EditBackground { block_type, .. }
+            | Self::LifecycleBackground { block_type, .. } => (Some(block_type.as_str()), None),
+            Self::MoveBackground { same_page, .. } => (None, Some(*same_page)),
+        };
+        CommitOp {
+            record: self.record(),
+            block_type,
+            move_same_page,
         }
     }
 }
@@ -367,7 +379,7 @@ impl CommandTx {
     /// Queue an op record for post-commit background dispatch.
     ///
     /// The record is held on the `CommandTx` value and forwarded to
-    /// `Materializer::dispatch_background_or_warn` only if
+    /// `Materializer::dispatch_commit` only if
     /// [`commit_and_dispatch`](Self::commit_and_dispatch) succeeds. If
     /// the transaction is rolled back or committed via
     /// [`commit_without_dispatch`](Self::commit_without_dispatch), the
@@ -395,8 +407,8 @@ impl CommandTx {
     /// Queue an `edit_block` op record with a `block_type` hint for
     /// post-commit dispatch.
     ///
-    /// Invokes [`Materializer::dispatch_edit_background`](crate::materializer::Materializer::dispatch_edit_background) during
-    /// `commit_and_dispatch`. Dispatch failures are logged at warn level
+    /// `commit_and_dispatch` hands the hint to
+    /// [`Materializer::dispatch_commit`](crate::materializer::Materializer::dispatch_commit). Dispatch failures are logged at warn level
     /// (matching the `_or_warn` convention used for the plain
     /// [`enqueue_background`](Self::enqueue_background) variant) rather
     /// than propagated — the op itself has already committed, so a
@@ -422,8 +434,8 @@ impl CommandTx {
     /// Queue a lifecycle op record (`delete_block` / `restore_block` /
     /// `purge_block`) with a `block_type` hint for post-commit dispatch.
     ///
-    /// Invokes [`Materializer::dispatch_lifecycle_background`](crate::materializer::Materializer::dispatch_lifecycle_background) during
-    /// `commit_and_dispatch`. Dispatch failures are logged at warn level
+    /// `commit_and_dispatch` hands the hint to
+    /// [`Materializer::dispatch_commit`](crate::materializer::Materializer::dispatch_commit). Dispatch failures are logged at warn level
     /// (matching the `_or_warn` convention) rather than propagated — the op
     /// has already committed, so a missed cache rebuild is recoverable.
     ///
@@ -446,8 +458,8 @@ impl CommandTx {
     /// #2700: queue a LOCAL `move_block` op with a proven `same_page` hint for
     /// post-commit dispatch.
     ///
-    /// Invokes [`Materializer::dispatch_move_background`](crate::materializer::Materializer::dispatch_move_background) during
-    /// `commit_and_dispatch`. Dispatch failures are logged at warn level
+    /// `commit_and_dispatch` hands the hint to
+    /// [`Materializer::dispatch_commit`](crate::materializer::Materializer::dispatch_commit). Dispatch failures are logged at warn level
     /// (matching the `_or_warn` convention) rather than propagated — the op has
     /// already committed, so a missed cache rebuild is recoverable.
     ///
@@ -538,50 +550,8 @@ impl CommandTx {
         let drained = std::mem::take(&mut self.pending);
         let count = drained.len();
         self.note_local_edit(materializer, count);
-        for entry in drained {
-            match entry {
-                PendingDispatch::Background(record) => {
-                    materializer.dispatch_background_or_warn(&record);
-                }
-                PendingDispatch::EditBackground { record, block_type } => {
-                    if let Err(e) = materializer.dispatch_edit_background(&record, &block_type) {
-                        tracing::warn!(
-                            op_type = %record.op_type,
-                            seq = record.seq,
-                            device_id = %record.device_id,
-                            block_type = %block_type,
-                            error = %e,
-                            "failed to dispatch edit background cache task"
-                        );
-                    }
-                }
-                PendingDispatch::LifecycleBackground { record, block_type } => {
-                    if let Err(e) = materializer.dispatch_lifecycle_background(&record, &block_type)
-                    {
-                        tracing::warn!(
-                            op_type = %record.op_type,
-                            seq = record.seq,
-                            device_id = %record.device_id,
-                            block_type = %block_type,
-                            error = %e,
-                            "failed to dispatch lifecycle background cache task"
-                        );
-                    }
-                }
-                PendingDispatch::MoveBackground { record, same_page } => {
-                    if let Err(e) = materializer.dispatch_move_background(&record, same_page) {
-                        tracing::warn!(
-                            op_type = %record.op_type,
-                            seq = record.seq,
-                            device_id = %record.device_id,
-                            same_page,
-                            error = %e,
-                            "failed to dispatch move background cache task"
-                        );
-                    }
-                }
-            }
-        }
+        let ops: Vec<CommitOp<'_>> = drained.iter().map(PendingDispatch::commit_op).collect();
+        materializer.dispatch_commit(&ops);
         Ok(count)
     }
 

@@ -29,10 +29,10 @@ pub const TEST_SPACE_B_ID: &str = "01TESTSPACE000000000000002";
 
 // -- Helpers --
 
-/// Wait for background materializer tasks to finish so assertions see
-/// fully-consistent state.
+/// Wait for background materializer tasks to finish, those a full queue shed
+/// included, so assertions see fully-consistent state.
 pub async fn settle(mat: &Materializer) {
-    mat.flush_background().await.unwrap();
+    mat.settle_background().await.unwrap();
 }
 
 /// Creates a temporary SQLite database with all migrations applied.

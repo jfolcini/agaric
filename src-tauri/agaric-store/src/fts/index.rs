@@ -707,7 +707,7 @@ const FTS_MERGE_PAGES: i64 = 256;
 
 /// Periodic FTS5 segment maintenance: a **bounded incremental merge** (#422).
 ///
-/// Enqueued by `Materializer::maybe_enqueue_fts_optimize` (threshold/hourly)
+/// Enqueued by `Materializer::collect_fan_out` (threshold/hourly)
 /// and run on the write pool. It previously issued the FTS5 full-merge
 /// `INSERT INTO fts_blocks(fts_blocks) VALUES('optimize')`, which rewrites the
 /// ENTIRE trigram index into one segment — `O(total index size)` while holding

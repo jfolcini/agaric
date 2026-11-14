@@ -351,7 +351,7 @@ pub(crate) async fn move_block_in_tx(
     // sufficient to treat the move as same-page and the materializer skips the
     // three `page_id`-derived rebuilds (`RebuildPagesCache`,
     // `RebuildPageLinkCache`, `RebuildProjectedAgendaCache`) — see
-    // `dispatch_move_background` / `invalidations_for_op`'s MoveBlock arm. A
+    // `invalidations_for_op`'s MoveBlock arm. A
     // genuine cross-page reparent (page_id changed, including → NULL) keeps the
     // full conservative set — as does a move within a PAGE-LESS subtree, where
     // `page_id` is NULL at both ends but the `COALESCE(page_id, parent_id, id)`

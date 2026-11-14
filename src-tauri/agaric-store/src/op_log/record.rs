@@ -24,7 +24,7 @@ pub struct OpRecord {
     pub payload: String,
     pub created_at: i64,
     /// Rust-only sidecar caching the parsed `block_id` so callers
-    /// on the materializer hot path (`dispatch::enqueue_background_tasks`)
+    /// on the materializer hot path (`dispatch::collect_fan_out`)
     /// do not have to re-parse `payload` for the JSON `block_id` field.
     /// Populated by the local constructors, not by the wire one:
     ///   * `append_local_op_in_tx` reads it from the
