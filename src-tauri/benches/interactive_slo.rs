@@ -4559,7 +4559,7 @@ fn bench_search_blocks_word_query(c: &mut Criterion) {
 /// content newest first: `re` is in the `SEARCH_WORD_BLOCKS` blocks alone, so
 /// the scan reads the whole vault; `ee` is in nearly every block, so it reads
 /// one page; and beside `meeting` the term narrows that word's 10K rows.
-/// Measurement only: no budget until `bench-slo` has measured them.
+/// Each budget is the smallest 1-2-5 step at least 3x its first `bench-slo` mean.
 fn bench_search_blocks_short_terms(c: &mut Criterion) {
     const RARE: &str = "search_blocks (2-char term, 20 matches) @ 100K";
     const COMMON: &str = "search_blocks (2-char term, 100K matches) @ 100K";
@@ -4617,17 +4617,18 @@ fn bench_search_blocks_short_terms(c: &mut Criterion) {
         "{BESIDE_WORD}: the matches overflow one page of 50"
     );
 
-    for (cmd, bench_name, query) in [
-        (RARE, "search_blocks_short_term_rare_100k", "re"),
-        (COMMON, "search_blocks_short_term_common_100k", "ee"),
+    for (cmd, bench_name, query, budget_ms) in [
+        (RARE, "search_blocks_short_term_rare_100k", "re", 200.0),
+        (COMMON, "search_blocks_short_term_common_100k", "ee", 2.0),
         (
             BESIDE_WORD,
             "search_blocks_short_term_beside_word_100k",
             "meeting 99",
+            100.0,
         ),
     ] {
         let acc = time_search_blocks(c, &rt, pool.clone(), bench_name, query, slo_search_filter());
-        report_measurement_only(cmd, &acc);
+        assert_under_budget(cmd, &acc, budget_ms);
     }
 }
 
