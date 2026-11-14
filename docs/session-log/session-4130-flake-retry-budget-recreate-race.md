@@ -34,4 +34,4 @@ Touched `agaric-engine/src/materializer/consumer.rs` (the persist-retry helper o
 
 ## What ran
 
-The `retry_metrics` tests, the loops above, and `cargo clippy --workspace --all-targets -- -D warnings`. `cargo-nextest` was not installed in this container, so the loops ran the test binary directly with `--exact`; the full suite is CI's.
+The `retry_metrics` tests, the loops above (on the test binary directly with `--exact`, one process per run), `cargo clippy --workspace --all-targets -- -D warnings`, and the pre-push verify, whose nextest lane ran 6280 tests green.
