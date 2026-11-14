@@ -1,0 +1,45 @@
+# Session 4103 — Android: files land in Downloads, shared text opens Quick Capture, a newer release is announced, the multicast lock sleeps
+
+Four Android items built without a phone, by the maintainer's decision of 2026-11-13: the code merges now, and what only a device can show becomes checklist lines on #6513. Items: #6546 boxes 1 and 3, #6555 box 2, #6526 box 3.
+
+## Shipped
+
+- **One save path (#6546).** On Android `save_to_downloads`, the command #6721 added for macOS, stages the bytes in the cache directory and `FileSavePlugin.kt` copies the staged file into `MediaStore.Downloads` (`commands/file_save.rs`). `saveBlob` calls it on Android as on macOS and rejects when it fails, so every caller toasts success only after the save. The command now returns the name the file was saved under. The "can't save files on Android yet" notice, its i18n key and the disabled rows are gone; *Save as Markdown file* shows on Android.
+- **Daily release check (#6546).** `check_latest_release` reads the `version` of the `latest.json` the desktop updater fetches and returns it when newer. `useUpdateCheck` asks on Android at boot and on resume behind the desktop's 24-hour debounce, toasts with a button to the releases page, and Settings › About names the version.
+- **Share target (#6555).** A `text/plain` `ACTION_SEND` filter; `MainActivity` keeps the text and hands it over through `AgaricShareBridge.takePendingText()`; `useAndroidShareTarget` pulls it on mount and on `visibilitychange` and opens Quick Capture through `handleCapturePayload`.
+- **Multicast lock (#6526).** `android_multicast::Hold` holds the lock exactly while the daemon runs and the app is not suspended; the app's `Suspended` / `Resumed` handler drives it.
+
+## Decisions
+
+- **MediaStore, not the share sheet.** The issue asked for one of the two. Downloads is where "a file the Files app opens" is, and it needs no permission from API 29.
+- **Bytes are staged in a file.** A mobile plugin's arguments are one JSON string; an export passed that way would sit in the JVM three times.
+- **The release request is made in Kotlin.** Read in the sources, not run: `reqwest`'s verifier on Android (`rustls-platform-verifier`) reaches the JVM through `android.rs::global()`, which `expect`s a handle set by `init_with_env`, and nothing in this app, Tauri, wry or tao calls that. With `panic = "abort"` a panic there is a crash, so the check uses `HttpURLConnection`. If the reading is right, `fetch_link_metadata` has the same hazard on Android; it is untouched here and is a #6513 line.
+- **No setting gates the check.** The issue says "the same setting that gates the desktop check"; the desktop check has none, only the debounce and the Flatpak guard. None was added.
+- **A stored "update available" from another build is rechecked at once**, or Settings › About would name the release the user just installed for up to a day. Desktop has the same staleness and was left alone.
+- **The save toasts where the file went on Android**, which has no download UI of its own. Every caller that toasts success (the two exports, *Save as Markdown file*, the bug-report ZIP) skips its own toast there: it would say the same thing under a name the OS may have changed. The reviewer's note on the exports is in.
+- **One command, not two.** This branch first added `save_file_to_downloads` beside the webview download. #6721 then landed `saveBlob` and `save_to_downloads` for macOS, so the Android saver moved behind that command and the parallel command, its binding, its mock handler and `android-save.ts` were deleted. The MIME type went with it: MediaStore reads it from the file name's extension.
+- **`check_latest_release` is read-only for `local-write-watch`**: its verb reads as a write, and it fires at every boot.
+- **`classify-changes.sh`**: `android_re` gains the two new command files, flat, because `check-android-trigger.mjs` parses no nested group.
+
+## Traps
+
+- A new file under `src-tauri/gen/android/` is ignored (`src-tauri/gen/` in `.gitignore`); it needs `git add -f`, and CI's `android-build` restores only what `git ls-files` lists.
+- The pre-commit `tsc` hook stashes unstaged changes but not untracked files, so an untracked file that imports an unstaged change fails the commit of something else.
+- `just gen-sqlx` empties `.sqlx` and refills it. `git status` mid-run shows a mass deletion; read it only after the recipe exits.
+- A merge commit that also edits a session log fails `session-log-numbering`: the hook then runs and reads the logs `main` brought in as this commit's own additions. Commit the merge first and the log edit after.
+- `register_managed_state` sits at the 70-line cap. The suspend arm moved to `on_app_suspended`.
+- Since #6720 a command that takes an `AppHandle` is generic over the runtime and listed as `cmd::<tauri::Wry>` in `agaric_commands!`. A branch cut before it is green alone and does not compile once merged; the second merge of `main` here caught it.
+- Two PRs opened minutes apart both took session-log number 4100; `session-log-pr-collision` cancels the whole run. The orchestrating session renumbered this log to 4103 on the branch while this session was renumbering it too: fetch the branch before a push, another session may have written to it.
+
+## What ran
+
+- vitest, full: 1113 files green before and after merging `main`. `npm run typecheck`, `npm run lint`.
+- `cargo nextest run --workspace` in two halves, `cargo test --doc --workspace`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `just gen-sqlx` and `just gen-bindings` (no diff after the merge), `prek run --hook-stage manual --all-files`.
+- `SQLX_OFFLINE=true cargo check --target aarch64-linux-android -p agaric --lib` with NDK r27c: the `cfg(target_os = "android")` Rust of all four items type-checks.
+- Playwright: `e2e/android-phone.spec.ts` (new) and the specs that touch export, the page kebab, Settings and the capture link. `just e2e-related` selects the whole lane on both sides, so CI is the check there.
+- Each new test was shown red by one mutation of the code it covers, restored on exit.
+
+## Not run
+
+- Nothing on a device or emulator. The three Kotlin files were not compiled here: CI's `android-build` is the check.
+- `e2e/diagram-legibility.spec.ts` fails two tests in this container on clean `origin/main` too (the older Chromium, `docs/BUILD.md`).

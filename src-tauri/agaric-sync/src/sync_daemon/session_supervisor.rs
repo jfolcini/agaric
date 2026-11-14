@@ -868,23 +868,12 @@ pub(crate) async fn daemon_loop(
         android_context_installed = crate::android_context::is_installed(),
         "sync daemon starting"
     );
-    // Acquire WifiManager.MulticastLock on Android so the
-    // discovery crate's UDP multicast sockets receive packets. Held in
-    // a local binding so `Drop` releases it on function exit. On non-Android
-    // targets this is a no-op.
-    // A missing context degrades to `Err` here, and the daemon carries on
-    // without peer discovery (#3847).
+    // The discovery crate's UDP multicast sockets receive packets on Android
+    // only under a WifiManager.MulticastLock. The daemon wants it until this
+    // binding drops on function exit; the app's suspend handler releases it
+    // meanwhile (#6526).
     #[cfg(target_os = "android")]
-    let _multicast_lock = match super::android_multicast::MulticastLock::acquire() {
-        Ok(lock) => Some(lock),
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "failed to acquire Android WiFi multicast lock; mDNS peer discovery may not work"
-            );
-            None
-        }
-    };
+    let _multicast_hold = super::android_multicast::hold_for_daemon();
 
     // #3852: register for the OS's own statement about this uid's firewall
     // status before anything tries to use the network, so a block that is

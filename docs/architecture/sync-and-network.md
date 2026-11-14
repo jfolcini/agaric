@@ -33,7 +33,7 @@ This is why the v2 payload carries `device_id` as well as `endpoint_id`. `Discov
 
 The daemon's `discovered` map itself is still written by exactly one thing — a real mDNS event (`daemon_loop` Branch A; `start_with_lifecycle_seeded` is `cfg(test-util)`-gated). The scanned candidate is deliberately kept *out* of it: an entry in that map means "mDNS resolved this peer at this instant", which `mdns_last_seen` / `mdns_is_reaching_us` read to decide whether a dial timeout is a captured LAN (#4299). A QR candidate is evidence of no such thing, so it joins the round without joining the map, and its `seen_at` is the honest `None`.
 
-**Android mDNS requires a WifiManager `MulticastLock`** — Android disables multicast by default to save battery. `sync_daemon/android_multicast.rs` holds the lock for the daemon's lifetime via RAII (JNI bridge). Without it, Android peers can broadcast but not receive mDNS replies; symptom is "phones don't find each other on the same network".
+**Android mDNS requires a WifiManager `MulticastLock`** — Android disables multicast by default to save battery. `sync_daemon/android_multicast.rs` holds the lock (JNI bridge) while the daemon runs and the app is not suspended: the app's `Suspended` / `Resumed` handler in `lib.rs` releases and retakes it, because Android drops a backgrounded app's packets and a lock held then only costs battery (#6526). Without it, Android peers can broadcast but not receive mDNS replies; symptom is "phones don't find each other on the same network".
 
 The required Android manifest permissions are `ACCESS_WIFI_STATE` + `CHANGE_WIFI_MULTICAST_STATE`.
 

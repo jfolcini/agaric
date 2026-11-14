@@ -2,7 +2,8 @@
  * Tests for useUpdateCheck — desktop auto-update wire-up.
  *
  * Covers:
- *  - Boot check skipped on mobile (UA sniff)
+ *  - Boot check skipped on a mobile platform other than Android (UA sniff)
+ *  - Android: the once-a-day release check, its toast and its status (#6546)
  *  - 24-h debounce honoured (recent LS timestamp)
  *  - 24-h debounce expired (old LS timestamp triggers check)
  *  - Update available → toast shown with stable id
@@ -54,16 +55,25 @@ vi.mock('@tauri-apps/api/app', () => ({
   getVersion: (...args: unknown[]) => mockGetVersion(...args),
 }))
 
-const { mockIsFlatpak, mockFlushAllDrafts } = vi.hoisted(() => ({
-  mockIsFlatpak: vi.fn(),
-  mockFlushAllDrafts: vi.fn(),
-}))
+const { mockIsFlatpak, mockFlushAllDrafts, mockCheckLatestRelease, mockOpenUrl } = vi.hoisted(
+  () => ({
+    mockIsFlatpak: vi.fn(),
+    mockFlushAllDrafts: vi.fn(),
+    mockCheckLatestRelease: vi.fn(),
+    mockOpenUrl: vi.fn(),
+  }),
+)
 
 vi.mock('@/lib/bindings', () => ({
   commands: {
     isFlatpak: (...args: unknown[]) => mockIsFlatpak(...args),
     flushAllDrafts: (...args: unknown[]) => mockFlushAllDrafts(...args),
+    checkLatestRelease: (...args: unknown[]) => mockCheckLatestRelease(...args),
   },
+}))
+
+vi.mock('@/lib/open-url', () => ({
+  openUrl: (...args: unknown[]) => mockOpenUrl(...args),
 }))
 
 vi.mock('@/lib/logger', () => ({
@@ -106,13 +116,19 @@ vi.mock('@/lib/notify', () => {
   return { notify: fn }
 })
 
+import { RELEASES_URL } from '@/lib/config'
+import { i18n } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
 
 // ── UA helpers ─────────────────────────────────────────────────────
 const DESKTOP_UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'
 const ANDROID_UA =
   'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36'
+const IPHONE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
 
 let originalUA: string
 
@@ -121,6 +137,8 @@ function setUserAgent(ua: string) {
     configurable: true,
     get: () => ua,
   })
+  // `isAndroid()` caches its answer.
+  __resetPlatformCacheForTests()
 }
 
 /**
@@ -148,6 +166,9 @@ beforeEach(() => {
   mockGetVersion.mockResolvedValue('0.9.1')
   mockIsFlatpak.mockReset()
   mockIsFlatpak.mockResolvedValue({ status: 'ok', data: false })
+  mockCheckLatestRelease.mockReset()
+  mockOpenUrl.mockReset()
+  vi.mocked(logger.warn).mockReset()
   vi.mocked(notify.message).mockReset()
   vi.mocked(notify.error).mockReset()
   vi.mocked(notify.success).mockReset()
@@ -158,13 +179,14 @@ afterEach(() => {
 })
 
 describe('useUpdateCheck — boot effect', () => {
-  it('skips the check on mobile (Android UA)', async () => {
-    setUserAgent(ANDROID_UA)
+  it('skips the check on a mobile platform other than Android (iPhone UA)', async () => {
+    setUserAgent(IPHONE_UA)
     renderHook(() => useUpdateCheck())
     // Give microtasks a chance to flush; nothing should have called check.
     await Promise.resolve()
     await Promise.resolve()
     expect(mockCheck).not.toHaveBeenCalled()
+    expect(mockCheckLatestRelease).not.toHaveBeenCalled()
     // The mobile early-return happens before the Flatpak IPC gate, so the
     // backend should never even be asked.
     expect(mockIsFlatpak).not.toHaveBeenCalled()
@@ -439,8 +461,8 @@ describe('useUpdateCheck — periodic re-check', () => {
     removeWindowListenerSpy.mockRestore()
   })
 
-  it('performs zero checks on mobile across interval, visibility, and online triggers', async () => {
-    setUserAgent(ANDROID_UA)
+  it('performs zero checks on a mobile platform other than Android across interval, visibility, and online triggers', async () => {
+    setUserAgent(IPHONE_UA)
     mockCheck.mockResolvedValue(null)
 
     renderHook(() => useUpdateCheck())
@@ -457,6 +479,7 @@ describe('useUpdateCheck — periodic re-check', () => {
     })
 
     expect(mockCheck).not.toHaveBeenCalled()
+    expect(mockCheckLatestRelease).not.toHaveBeenCalled()
     // Mobile bails out before the Flatpak IPC gate is ever reached.
     expect(mockIsFlatpak).not.toHaveBeenCalled()
   })
@@ -606,5 +629,153 @@ describe('update status (#3076)', () => {
 
     expect(result.current.status).toBe('up-to-date')
     expect(result.current.currentVersion).toBe('0.9.1')
+  })
+})
+
+// ── #6546 — Android: a newer release is announced, never installed ───────
+//
+// Android has no updater plugin. Once a day the hook asks the backend's
+// `check_latest_release` and, when a newer release exists, says so with a
+// button to the releases page.
+describe('Android release check (#6546)', () => {
+  const ONE_HOUR_MS = 60 * 60 * 1000
+
+  function setVisibility(state: 'hidden' | 'visible') {
+    Object.defineProperty(document, 'visibilityState', { value: state, configurable: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+  }
+
+  /** The stored last-check time, `ms` ago. */
+  function checkedAgo(ms: number) {
+    localStorage.setItem(LAST_UPDATE_CHECK_STORAGE_KEY, new Date(Date.now() - ms).toISOString())
+  }
+
+  beforeEach(() => {
+    setUserAgent(ANDROID_UA)
+    // The status store outlives a test: re-read it from the cleared storage.
+    window.dispatchEvent(new StorageEvent('storage', { key: PREFERENCES.updateStatus.key }))
+  })
+
+  afterEach(() => {
+    setVisibility('visible')
+  })
+
+  it('announces a newer release with a button that opens the releases page', async () => {
+    mockCheckLatestRelease.mockResolvedValue({ status: 'ok', data: '0.10.0' })
+
+    renderHook(() => useUpdateCheck())
+
+    await waitFor(() => expect(notify.message).toHaveBeenCalledTimes(1))
+    const [text, options] = vi.mocked(notify.message).mock.calls[0] as [
+      string,
+      { id: string; action: { label: string; onClick: () => void } },
+    ]
+    expect(text).toBe(i18n.t('help.updateAvailableToast', { version: '0.10.0' }))
+    expect(options.id).toBe('update-available')
+    expect(options.action.label).toBe(i18n.t('help.updateOpenReleasesButton'))
+    options.action.onClick()
+    expect(mockOpenUrl).toHaveBeenCalledWith(RELEASES_URL)
+
+    expect(readPreference(PREFERENCES.updateStatus)).toMatchObject({
+      status: 'available',
+      currentVersion: '0.9.1',
+      availableVersion: '0.10.0',
+    })
+    expect(localStorage.getItem(LAST_UPDATE_CHECK_STORAGE_KEY)).not.toBeNull()
+    // The desktop updater and its Flatpak gate are never touched.
+    expect(mockCheck).not.toHaveBeenCalled()
+    expect(mockIsFlatpak).not.toHaveBeenCalled()
+  })
+
+  it('records up-to-date and shows nothing when no newer release exists', async () => {
+    mockCheckLatestRelease.mockResolvedValue({ status: 'ok', data: null })
+
+    renderHook(() => useUpdateCheck())
+
+    await waitFor(() =>
+      expect(readPreference(PREFERENCES.updateStatus)).toMatchObject({
+        status: 'up-to-date',
+        currentVersion: '0.9.1',
+      }),
+    )
+    expect(notify.message).not.toHaveBeenCalled()
+  })
+
+  it('makes no request within a day of the last check', async () => {
+    checkedAgo(ONE_HOUR_MS)
+    mockCheckLatestRelease.mockResolvedValue({ status: 'ok', data: '0.10.0' })
+
+    renderHook(() => useUpdateCheck())
+    await waitFor(() => expect(mockGetVersion).toHaveBeenCalled())
+    setVisibility('hidden')
+    setVisibility('visible')
+    await waitFor(() => expect(mockGetVersion).toHaveBeenCalledTimes(2))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(mockCheckLatestRelease).not.toHaveBeenCalled()
+    expect(notify.message).not.toHaveBeenCalled()
+  })
+
+  it('logs a warning and shows nothing when the request fails, and asks again on resume', async () => {
+    const failure = { kind: 'internal', message: 'an internal error occurred' }
+    mockCheckLatestRelease.mockResolvedValueOnce({ status: 'error', error: failure })
+
+    renderHook(() => useUpdateCheck())
+
+    await waitFor(() =>
+      expect(logger.warn).toHaveBeenCalledWith(
+        'updater',
+        'Android release check failed',
+        undefined,
+        failure,
+      ),
+    )
+    expect(notify.message).not.toHaveBeenCalled()
+    expect(notify.error).not.toHaveBeenCalled()
+    expect(readPreference(PREFERENCES.updateStatus).status).toBe('idle')
+    expect(localStorage.getItem(LAST_UPDATE_CHECK_STORAGE_KEY)).toBeNull()
+
+    mockCheckLatestRelease.mockResolvedValue({ status: 'ok', data: '0.10.0' })
+    setVisibility('hidden')
+    expect(mockCheckLatestRelease).toHaveBeenCalledTimes(1)
+    setVisibility('visible')
+    await waitFor(() => expect(notify.message).toHaveBeenCalledTimes(1))
+    expect(mockCheckLatestRelease).toHaveBeenCalledTimes(2)
+  })
+
+  it('checks again at once after the announced release was installed', async () => {
+    mockCheckLatestRelease.mockResolvedValue({ status: 'ok', data: '0.10.0' })
+    const first = renderHook(() => useUpdateCheck())
+    await waitFor(() => expect(readPreference(PREFERENCES.updateStatus).status).toBe('available'))
+    first.unmount()
+
+    // The next launch runs 0.10.0, well inside the day's debounce.
+    mockGetVersion.mockResolvedValue('0.10.0')
+    mockCheckLatestRelease.mockResolvedValue({ status: 'ok', data: null })
+    renderHook(() => useUpdateCheck())
+
+    await waitFor(() =>
+      expect(readPreference(PREFERENCES.updateStatus)).toMatchObject({
+        status: 'up-to-date',
+        currentVersion: '0.10.0',
+      }),
+    )
+    expect(mockCheckLatestRelease).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops asking on resume once unmounted', async () => {
+    mockCheckLatestRelease.mockResolvedValue({ status: 'ok', data: null })
+    const { unmount } = renderHook(() => useUpdateCheck())
+    await waitFor(() => expect(mockCheckLatestRelease).toHaveBeenCalledTimes(1))
+    unmount()
+    localStorage.removeItem(LAST_UPDATE_CHECK_STORAGE_KEY)
+    mockGetVersion.mockClear()
+
+    setVisibility('hidden')
+    setVisibility('visible')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(mockGetVersion).not.toHaveBeenCalled()
+    expect(mockCheckLatestRelease).toHaveBeenCalledTimes(1)
   })
 })

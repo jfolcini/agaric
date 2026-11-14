@@ -444,6 +444,8 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   get_local_sync_address: 'no domain state — the sync endpoint’s bound address',
   get_os_network_block_status: 'no domain state — OS per-uid network-block status',
   is_flatpak: 'no domain state — packaging/environment probe',
+  check_latest_release:
+    'no domain state — asks GitHub whether a newer release exists (#6546); Android only, and the Linux backend a fixture is authored from refuses it',
   get_mcp_status: 'no domain state — MCP server runtime status',
   get_mcp_recent_activity: 'no domain state — in-memory MCP activity ring buffer',
   get_speech_status:
@@ -565,6 +567,7 @@ const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
   'get_local_sync_address',
   'get_os_network_block_status',
   'is_flatpak',
+  'check_latest_release',
   'get_mcp_status',
   'get_mcp_recent_activity',
   'get_speech_status',

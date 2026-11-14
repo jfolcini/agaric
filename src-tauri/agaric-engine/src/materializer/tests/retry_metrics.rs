@@ -187,37 +187,25 @@ async fn record_failure_persist_error_is_metered_pend24_m1() {
 // failure that outlasts one retry still lands in the retry queue.
 //
 // This test makes the persist write fail for longer than a single retry
-// would tolerate: it DROPs the table, then recreates it only once the retry
-// loop has DEMONSTRABLY burned through more than one attempt. The old
-// single-retry budget would have already given up and returned `false`;
-// the widened budget retries again, sees the table back, and persists.
+// would tolerate: it DROPs the table and recreates it at the start of the
+// third attempt, from inside the attempt. The old single-retry budget never
+// makes a third attempt and returns `false`.
 //
-// #2240 hardening — two defects removed:
-//  (a) Determinism. The old version recreated the table after a fixed
-//      `sleep(250ms)` racing the 100ms×4 retry window — flaky under load
-//      (a slow scheduler could let 250ms elapse before attempt 1, or push
-//      the retries past 250ms). We now gate the recreate on the retry
-//      loop's own OBSERVABLE — the `retry_queue_persist_errors` counter each
-//      failed attempt bumps — recreating only after >= 2 observed failures.
-//      That guarantees attempts 1 and 2 fail (table gone) and a later
-//      attempt (3 or 4) succeeds, with no dependence on wall-clock timing.
-//  (b) Single source of truth for the DDL. The old version hand-copied a
-//      `CREATE TABLE ... STRICT` that silently drifts from the migrations
-//      (0028 create + 0044 global-tasks rebuild + 0077 ms-timestamp
-//      rebuild). We instead capture the REAL migrated schema from
-//      `sqlite_master` before the drop and replay that exact statement, so
-//      the recreated table always matches whatever the migration chain
-//      produced.
+// The recreate is not a second task watching `retry_queue_persist_errors`:
+// that task had two backoffs of wall-clock time to notice the count and land
+// a `CREATE TABLE`, and on a starved runner the budget ran out first.
+//
+// The DDL is read from `sqlite_master` before the drop, so the recreated
+// table is whatever the migration chain produced.
 // ──────────────────────────────────────────────────────────────────────
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn persist_recovers_within_bounded_budget_851() {
-    use crate::materializer::consumer::record_failure_with_retry;
+    use crate::materializer::consumer::persist_with_retry;
+    use crate::materializer::retry_queue::record_failure;
 
     let (pool, _dir) = test_pool().await;
     let metrics = StdArc::new(crate::materializer::QueueMetrics::default());
 
-    // #2240(b): capture the actual migrated schema as the single source of
-    // truth (no hand-copied DDL that can drift from migrations).
     let create_sql: String = sqlx::query_scalar(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'materializer_retry_queue'",
     )
@@ -225,54 +213,45 @@ async fn persist_recovers_within_bounded_budget_851() {
     .await
     .unwrap();
 
-    // Drop the table so the first attempt(s) fail deterministically.
     sqlx::query("DROP TABLE materializer_retry_queue")
         .execute(&pool)
         .await
         .unwrap();
 
-    // #2240(a): recreate the table only after the retry loop has observably
-    // failed >= 2 attempts (deterministic trigger off the persist-error
-    // counter), so attempt 3/4 finds the table back — instead of racing a
-    // fixed 250ms sleep against the retry schedule.
-    let recreate_pool = pool.clone();
-    let recreate_metrics = StdArc::clone(&metrics);
-    let recreate = tokio::spawn(async move {
-        // Poll the retry loop's observable until 2 attempts have failed.
-        while recreate_metrics
-            .retry_queue_persist_errors
-            .load(AtomicOrdering::Relaxed)
-            < 2
-        {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-        // `create_sql` is the schema we just read from `sqlite_master`
-        // (our own migrated DDL), never caller input — safe to replay.
-        sqlx::query(sqlx::AssertSqlSafe(create_sql.as_str()))
-            .execute(&recreate_pool)
-            .await
-            .unwrap();
-    });
-
     let task = MaterializeTask::ApplyOp(StdArc::new(fake_op_record("create_block", "{}")));
-    let persisted = record_failure_with_retry(&pool, &task, "boom", &metrics).await;
-    recreate.await.unwrap();
+    let mut attempts = 0;
+    let (pool_ref, task_ref, metrics_ref, create_sql) = (&pool, &task, &metrics, &create_sql);
+    let persisted = persist_with_retry(&metrics, || {
+        attempts += 1;
+        let table_comes_back = attempts == 3;
+        async move {
+            if table_comes_back {
+                // Our own migrated DDL, never caller input.
+                sqlx::query(sqlx::AssertSqlSafe(create_sql.as_str()))
+                    .execute(pool_ref)
+                    .await
+                    .unwrap();
+            }
+            record_failure(pool_ref, task_ref, "boom", metrics_ref).await
+        }
+    })
+    .await;
 
     assert!(
         persisted,
         "#851: the bounded retry budget must recover a transient persist failure \
          that outlasts a single retry (returned false — budget too small / not widened)"
     );
-    // At least the first two attempts failed before the table came back.
-    assert!(
-        metrics
-            .retry_queue_persist_errors
-            .load(AtomicOrdering::Relaxed)
-            >= 2,
-        "each pre-recreate attempt must bump retry_queue_persist_errors (got {})",
+    assert_eq!(
+        attempts, 3,
+        "the attempt that finds the table back must be the last one made"
+    );
+    assert_eq!(
         metrics
             .retry_queue_persist_errors
             .load(AtomicOrdering::Relaxed),
+        2,
+        "each attempt before the recreate must bump retry_queue_persist_errors"
     );
     // The row must actually be present after recovery.
     let row_count: i64 =

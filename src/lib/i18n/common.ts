@@ -545,9 +545,8 @@ export const common: Record<string, string> = {
   'data.exportAllSpacesSuccess_one': 'Exported {{count}} space',
   'data.exportAllSpacesSuccess_other': 'Exported {{count}} spaces',
   'data.exportAllSpacesFailed': 'Export failed',
-  // #6538 — shown instead of any file save on Android, where nothing writes it.
-  'data.fileSaveUnavailableAndroid':
-    "Agaric can't save files on Android yet. To get notes or files off this phone, sync it with a computer and export there.",
+  // #6546 — Android's file save: every export, attachment and report lands in Downloads.
+  'data.savedToDownloads': 'Saved {{fileName}} to Downloads',
   // #6554 — the daily snapshot row: when the last copy of the database was
   // taken, and on desktop the folder that holds the copies.
   'data.snapshotLabel': 'Daily snapshot',
@@ -728,7 +727,7 @@ export const common: Record<string, string> = {
   'help.updateNoneFoundToast': "You're on the latest version",
   'help.updateInstallFailedToast': 'Update install failed',
   'help.updateMobileHint':
-    "Agaric does not update itself on Android. Install the newest APK from Agaric's GitHub releases page.",
+    "Agaric does not update itself on Android. Once a day it looks for a newer version and tells you; install the newest APK from Agaric's GitHub releases page.",
   'help.updateOpenReleasesButton': 'Open releases page',
   'spaceSwitcher.shortcutHint': 'Tip: Alt+1–9 to switch spaces',
   'spaceSwitcher.createAnotherHint': 'Create another space\u2026',

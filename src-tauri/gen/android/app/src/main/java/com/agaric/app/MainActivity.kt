@@ -1,5 +1,6 @@
 package com.agaric.app
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
@@ -11,6 +12,7 @@ import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Keeps the webview out of the status and navigation bars, and keeps the
@@ -80,6 +82,17 @@ import androidx.core.view.WindowInsetsCompat
  * insets themselves never changed. A native layout inset has no document to
  * outlive. (This is about the INSETS specifically; [ThemeBridge] above pushes
  * a COLOUR, in the other direction, through a different mechanism.)
+ *
+ * TEXT SHARED FROM ANOTHER APP: THE `ShareBridge` (#6555)
+ * ---------------------------------------------------------
+ * The manifest puts Agaric in the share sheet for `text/plain`. The share
+ * arrives as an `ACTION_SEND` intent: in [onCreate] when it starts the app,
+ * in [onNewIntent] when the app is running (`launchMode="singleTask"`). Both
+ * keep its text in [pendingSharedText], and the web layer takes it through
+ * `AgaricShareBridge.takePendingText()` when it mounts and each time the page
+ * becomes visible (`src/hooks/useAndroidShareTarget.ts`), then opens Quick
+ * Capture holding it. It is pulled, never pushed, for the reason above: an
+ * intent that starts the app arrives before the document exists.
  */
 class MainActivity : TauriActivity() {
   companion object {
@@ -104,9 +117,30 @@ class MainActivity : TauriActivity() {
    */
   private var pendingBackgroundColor: Int? = null
 
+  /**
+   * Text another app shared that the web layer has not taken yet. Set on the
+   * UI thread, taken on the WebView's JavaScript-interface thread.
+   */
+  private val pendingSharedText = AtomicReference<String?>(null)
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    // An activity Android recreates is handed the intent that first started
+    // it: without this check an old share would open Quick Capture again.
+    if (savedInstanceState == null) keepSharedText(intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    keepSharedText(intent)
+  }
+
+  private fun keepSharedText(intent: Intent?) {
+    if (intent == null || intent.action != Intent.ACTION_SEND) return
+    // Reopening the app from Recents redelivers the intent that started it.
+    if ((intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) return
+    intent.getStringExtra(Intent.EXTRA_TEXT)?.let { pendingSharedText.set(it) }
   }
 
   override fun onWebViewCreate(webView: WebView) {
@@ -114,6 +148,7 @@ class MainActivity : TauriActivity() {
     // `ThemeBridge` to THIS webview instance, so it survives every later
     // navigation — see the class doc's "WEB -> NATIVE call" note.
     webView.addJavascriptInterface(ThemeBridge(), "AgaricThemeBridge")
+    webView.addJavascriptInterface(ShareBridge(), "AgaricShareBridge")
 
     // The listener is attached to the webview rather than to its parent
     // because `setContentView` has not run yet — at this point the webview has
@@ -220,5 +255,16 @@ class MainActivity : TauriActivity() {
         controller.isAppearanceLightNavigationBars = !isDark
       }
     }
+  }
+
+  /**
+   * JS-callable bridge handing the web layer the text another app shared
+   * (#6555) — see the class doc's "TEXT SHARED FROM ANOTHER APP" section.
+   * Bound to the webview in [onWebViewCreate].
+   */
+  private inner class ShareBridge {
+    /** The shared text, or null; taking it clears it, so a share opens Quick Capture once. */
+    @JavascriptInterface
+    fun takePendingText(): String? = pendingSharedText.getAndSet(null)
   }
 }
