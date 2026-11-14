@@ -136,7 +136,7 @@ Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed 
   - **Spaces** — the space this device opens in (*Open on launch*: last used or one space), and create, rename, recolour or delete spaces (see [spaces.md](spaces.md)). The SpaceSwitcher's *Manage spaces…* opens it.
   - **Properties** — the property definitions of the space picked in *Definitions in* (the active space by default), with their type; create a definition, delete an unused one, edit a select key's options, and copy a definition to another space. A built-in definition shows a lock and can't be edited or deleted. The internal `is_space` definition is not listed.
 - **Integrations**
-  - **Agent access** — read-only and read-write switches; each shows its socket path and connections only while it is on. The activity feed with SessionRevertControls is a separate card, shown whether or not access is on (see [agent-access.md](agent-access.md)).
+  - **Agent access** — one switch for the MCP socket, which shows its path and connections while it is on, and the agents, each with its token, mode and spaces. The activity feed with SessionRevertControls is a separate card, shown whether or not access is on (see [agent-access.md](agent-access.md)).
 - **Data & sync**
   - **Sync & devices** — the sync state once a device is paired, then pair / unpair / rename peers, *Sync all* and per-device *Sync now* (the way to retry), manual addresses, the internet fallback, and this device's ID (see [sync.md](sync.md)).
   - **Data** — import / export (see [import-export.md](import-export.md)), and *Open edit history*, which opens the History view.

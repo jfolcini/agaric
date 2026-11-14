@@ -409,8 +409,10 @@ const DOC_ROOTS = [
   'SECURITY.md',
   'README.md',
   'CODE_OF_CONDUCT.md',
-  'COMPARISON.md',
+  'COMPARISON-LOGSEQ.md',
+  'COMPARISON-LOGSEQ-MATRIX.md',
   'COMPARISON-OBSIDIAN.md',
+  'COMPARISON-OBSIDIAN-MATRIX.md',
   'docs',
 ]
 // Doc paths excluded from the audit:
