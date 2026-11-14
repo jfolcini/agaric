@@ -553,9 +553,9 @@ async fn replay_unmaterialized_ops_with(
     // #6521: every saved engine holds this device's ops up to its row's stamp,
     // and a pass commits all its rows under one stamp or none of them
     // (`snapshot::write_pass`), so together they hold the ops up to the lowest.
-    // A pass moves the cursor there only once the queue has drained, and
-    // `mirror_sql_tombstones_onto_engine` and the one-time hydration save rows
-    // without moving it, so the cursor can be behind the rows. The ops in
+    // A pass moves the cursor there only once the queue has drained, and a
+    // direct caller of `save_all_engines` saves rows without moving it, so
+    // the cursor can be behind the rows. The ops in
     // between are not applied again: each would land as a new write, over
     // whatever a peer wrote to the same block since. They still get their
     // index fan-out below, which a kill takes with the queue.

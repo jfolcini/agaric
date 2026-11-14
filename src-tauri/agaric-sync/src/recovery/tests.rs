@@ -3819,9 +3819,8 @@ async fn crash_after_a_snapshot_pass_replays_only_the_tail_5418() {
 }
 
 /// #6521 — a crash that finds rows saved and the cursor behind them: a kill
-/// between a pass's rows and its cursor move, or after one of the saves that
-/// never move it (`mirror_sql_tombstones_onto_engine`, the one-time
-/// hydration). Boot must not apply the ops those rows hold a second time: a
+/// between a pass's rows and its cursor move, or after a save that never
+/// moves it (a direct `save_all_engines`). Boot must not apply the ops those rows hold a second time: a
 /// replayed op is a new write, over whatever a peer wrote to the block since.
 /// It still owes them the index fan-out, which the kill took with the queue.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

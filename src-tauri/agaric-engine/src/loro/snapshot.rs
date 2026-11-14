@@ -1760,10 +1760,9 @@ mod tests {
     }
 
     /// #6521 — a pass started while another is in flight waits for it.
-    /// `mirror_sql_tombstones_onto_engine` and the one-time hydration call
-    /// [`save_all_engines`] themselves; a pass that had already exported a
-    /// space could otherwise write its row after theirs, leaving a row older
-    /// than its engine in a space that reads clean.
+    /// Some callers run [`save_all_engines`] themselves; a pass that had
+    /// already exported a space could otherwise write its row after theirs,
+    /// leaving a row older than its engine in a space that reads clean.
     ///
     /// The pass in flight is played by this test, holding the lock around a
     /// pass's own steps: nothing outside a pass can park it between its export

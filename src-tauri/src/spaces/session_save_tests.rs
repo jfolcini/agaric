@@ -961,8 +961,8 @@ async fn a_restart_keeps_a_peers_edit_made_after_this_devices_last_op_6521() {
 }
 
 /// #6521 — the same when B's rows were saved and its cursor did not move, as
-/// `mirror_sql_tombstones_onto_engine` and the one-time hydration leave them
-/// and as a kill between a pass's rows and its cursor move does. B's edit of X
+/// a direct `save_all_engines` leaves them and as a kill between a pass's rows
+/// and its cursor move does. B's edit of X
 /// is then after the cursor and in the rows, next to A's later edit.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restart_with_rows_saved_and_the_cursor_behind_keeps_a_peers_edit_6521() {
