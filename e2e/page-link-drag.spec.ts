@@ -22,8 +22,8 @@ import {
  */
 
 const PROJECTS = '00000000000000000000PAGE04'
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
-const BLOCK_GS_2 = '0000000000000000000BLOCK02'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
+const BLOCK_GS_2 = '0000000000000000000B10CK02'
 const GS_1_TEXT = 'Welcome to Agaric! This is your personal knowledge base.'
 const PAGE_MODE_EDITOR = '[data-testid="page-mode-editor"]'
 

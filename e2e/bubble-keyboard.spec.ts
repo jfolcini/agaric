@@ -12,7 +12,7 @@ import { expect, focusBlockById, ipc, openPage, test, waitForBoot } from './help
 
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const PAGE_EDITOR = '[data-testid="page-mode-editor"]'
-const SEED_GS_1 = '0000000000000000000BLOCK01'
+const SEED_GS_1 = '0000000000000000000B10CK01'
 
 const stored = async (page: Page, id: string): Promise<string> =>
   (await ipc<{ content: string | null }>(page, 'get_block', { blockId: id })).content ?? ''

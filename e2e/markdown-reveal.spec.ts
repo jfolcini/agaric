@@ -251,7 +251,7 @@ async function shownMarkers(page: Page): Promise<string[]> {
 
 /** Block 2 of Getting Started, the one `typeBlock` edits, once it is static again. */
 const stored = (page: Page) =>
-  page.locator('[data-testid="block-static"][data-block-id="0000000000000000000BLOCK03"]')
+  page.locator('[data-testid="block-static"][data-block-id="0000000000000000000B10CK03"]')
 
 test('each heading level shows its # run while the caret is in the heading, and is saved @editor @markdown @mobile', async ({
   page,

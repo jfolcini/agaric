@@ -41,7 +41,7 @@ test.describe('inline image attachment-ref (#1434) @attachments @editor', () => 
     const attachmentId = await page.evaluate(async (bytes) => {
       const invoke = (window as unknown as InvokeWindow).__TAURI_INTERNALS__.invoke
       const row = (await invoke('add_attachment_with_bytes', {
-        blockId: '0000000000000000000BLOCK01',
+        blockId: '0000000000000000000B10CK01',
         filename: 'pasted.gif',
         mimeType: 'image/gif',
         bytes,

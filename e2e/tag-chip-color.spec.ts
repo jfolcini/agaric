@@ -20,7 +20,7 @@ import {
  * Started" carries a `work` chip.
  */
 
-const GS_4 = '0000000000000000000BLOCK04'
+const GS_4 = '0000000000000000000B10CK04'
 
 interface Paint {
   color: string

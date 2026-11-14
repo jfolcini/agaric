@@ -93,6 +93,32 @@ fn a_reset_opens_a_fresh_copy_of_the_template() {
     );
 }
 
+#[test]
+fn a_kept_vault_is_what_every_later_reset_opens() {
+    let root = tempfile::TempDir::new().unwrap();
+    let mut bridge = Bridge::start(root.path()).expect("start the bridge");
+    let seeded = create_page(&mut bridge, "seeded");
+    call(&mut bridge, json!({ "op": "keep" })).expect("keep");
+    assert_eq!(
+        page_title(&mut bridge, &seeded),
+        Ok(json!("seeded")),
+        "the vault open after a keep holds what was kept"
+    );
+
+    let written = create_page(&mut bridge, "in one test");
+    call(&mut bridge, json!({ "op": "reset" })).expect("reset");
+    assert_eq!(
+        page_title(&mut bridge, &seeded),
+        Ok(json!("seeded")),
+        "a reset opens the kept vault"
+    );
+    assert_eq!(
+        page_title(&mut bridge, &written).unwrap_err()["kind"],
+        "not_found",
+        "and not what a test wrote after the keep"
+    );
+}
+
 /// The payloads of the frames queued for `event`, oldest first. The app emits
 /// on its own schedule too (a write's rebuild follows it with a second
 /// `block:properties-changed`), so a check reads one event's frames, not all.

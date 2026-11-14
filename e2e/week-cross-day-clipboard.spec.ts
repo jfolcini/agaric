@@ -11,7 +11,7 @@ import { blurEditors, expect, readClipboard, test, waitForBoot } from './helpers
  */
 
 // Seed: today's journal page, PAGE03, holds BLOCK06 ("Morning standup notes go here").
-const TODAY_BLOCK = '0000000000000000000BLOCK06'
+const TODAY_BLOCK = '0000000000000000000B10CK06'
 const TODAY_TEXT = 'Morning standup notes go here'
 const TODAY_PAGE = '00000000000000000000PAGE03'
 const OTHER_TEXT = 'Neighbour day note'
