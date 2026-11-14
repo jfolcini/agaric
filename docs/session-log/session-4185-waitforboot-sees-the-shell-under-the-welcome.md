@@ -1,4 +1,4 @@
-# Session 4182 — e2e: waitForBoot sees the shell under the first-run welcome
+# Session 4185 — e2e: waitForBoot sees the shell under the first-run welcome
 
 Set out to find why `e2e/first-run-import-pairing.spec.ts` ("Import notes closes the welcome…") timed out in `waitForBoot` once in `validate / playwright (3)` on #6779, a PR that does not touch boot.
 
