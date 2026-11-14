@@ -38,7 +38,7 @@ cross-surface; the Pages-only and Search-only groups are surface specialties.
 
 | Group | Variants |
 |-------|----------|
-| **Shared** | `Tag`, `PathGlob { pattern, exclude }`, `HasProperty { key, predicate: PropertyPredicate }`, `LastEdited { spec: LastEditedSpec }`, `Space { space_id }`, `Priority { priority }` |
+| **Shared** | `Tag`, `TagOrRef`, `TagUnder` (attached, inline or inherited; advanced query only, key `tag-under`), `PathGlob { pattern, exclude }` (the page's own row on Pages; the title of the block's page on Search and the advanced query), `HasProperty { key, predicate: PropertyPredicate }`, `LastEdited { spec: LastEditedSpec }`, `Space { space_id }`, `Priority { priority }` |
 | **Metadata (#1280)** | `State { values, is_null, exclude }`, `BlockType { values, exclude }`, `DueDate { predicate: DatePredicate }`, `Scheduled { predicate: DatePredicate }`, `Created { after, before }` |
 | **Pages-only** | `Orphan`, `Stub`, `HasNoInboundLinks` |
 | **Search-only** | `Regex`, `CaseSensitive`, `WholeWord`, `Snippet { spec: SnippetSpec }` |

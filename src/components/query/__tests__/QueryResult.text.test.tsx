@@ -49,7 +49,7 @@ describe('QueryResult in the search syntax', () => {
   })
 
   it('names each token it cannot run in the error state, and runs nothing', async () => {
-    const { container } = render(<QueryResult expression="state:todo under:#work" />)
+    const { container } = render(<QueryResult expression="state:todo due:<2026-0" />)
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(
@@ -60,9 +60,9 @@ describe('QueryResult in the search syntax', () => {
           message: t('searchQuery.unknownValue', { noun: 'state', value: 'todo' }),
         }),
         t('query.text.problem', {
-          token: 'under:#work',
+          token: 'due:<2026-0',
           column: 12,
-          message: t('query.text.cannotRun'),
+          message: `InvalidDateFilter: ${t('searchQuery.dateExpectedAfterOperator', { op: '<', rest: '2026-0' })}`,
         }),
       ].join('; '),
     )

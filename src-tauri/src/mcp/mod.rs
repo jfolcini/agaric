@@ -91,7 +91,8 @@ macro_rules! read_tools_primer {
          DueDate {predicate: Between {from, to}}, HasProperty {key, predicate: Gt \
          {value: {type: Num, value: 3}}}, State {values: [TODO]} with group_by \
          {type: Page}. Tag matches attached tags and the tags nested under them (`a/b` under `a`), \
-         TagOrRef one tag and its inline #refs; neither matches inherited ones.\n"
+         TagOrRef one tag and its inline #refs, TagUnder a tag and its nested tags attached, \
+         inline or inherited.\n"
     };
 }
 

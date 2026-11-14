@@ -2456,6 +2456,11 @@ export type FilterPrimitive =
  *  it does not match.
  */
 { type: "TagOrRef"; tag: string } | 
+/**
+ *  Block carries `tag`, or a tag nested under it, attached, written inline
+ *  or inherited from an ancestor: the search syntax's `under:`.
+ */
+{ type: "TagUnder"; tag: string } | 
 /**  Shared — block's `parent_id` equals `parent` (its direct children). */
 { type: "ChildOf"; parent: string } | 
 /**
