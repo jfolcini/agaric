@@ -12,7 +12,7 @@
 import { skipToken, useQuery } from '@tanstack/react-query'
 import { HelpCircle, Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -28,8 +28,10 @@ import { UnfitPropertyValues } from '@/components/properties/UnfitPropertyValues
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { ListItem, listCardVariants } from '@/components/ui/list-item'
 import { SearchInput } from '@/components/ui/search-input'
 import {
@@ -47,7 +49,12 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PROPERTY_DEFS_QUERY_ROOT } from '@/lib/property-caches'
-import { formatPropertyName, selectOptionsJson, VALUE_TYPES } from '@/lib/property-utils'
+import {
+  formatPropertyName,
+  selectOptionsJson,
+  VALUE_TYPES,
+  valueTypeLabel,
+} from '@/lib/property-utils'
 import { queryClient } from '@/lib/query-client'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
@@ -92,6 +99,10 @@ export function PropertyDefinitionsList(): React.ReactElement {
   const [newType, setNewType] = useState<string>('text')
   const [newOptions, setNewOptions] = useState('')
   const newOptionsJson = newType === 'select' ? selectOptionsJson(newOptions) : null
+  // A boolean never holds a list.
+  const [newSeveral, setNewSeveral] = useState(false)
+  const newMultiple = newSeveral && newType !== 'boolean'
+  const severalId = useId()
   const [isCreating, setIsCreating] = useState(false)
 
   // Delete confirmation state
@@ -139,12 +150,19 @@ export function PropertyDefinitionsList(): React.ReactElement {
     setIsCreating(true)
     try {
       const def = unwrap(
-        await commands.createPropertyDef(spaceId, key, newType, newOptionsJson, null),
+        await commands.createPropertyDef(
+          spaceId,
+          key,
+          newType,
+          newOptionsJson,
+          newMultiple ? true : null,
+        ),
       )
       setDefinitions((prev) => [...prev, def])
       setNewKey('')
       setNewType('text')
       setNewOptions('')
+      setNewSeveral(false)
       notifyDefinitionWrite(t('propertiesView.created'), def.op_refs, reload)
       refreshUsage()
     } catch (error) {
@@ -161,7 +179,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorCreate', error, t, { key })
     }
     setIsCreating(false)
-  }, [spaceId, newKey, newType, newOptionsJson, t, refreshUsage, reload])
+  }, [spaceId, newKey, newType, newOptionsJson, newMultiple, t, refreshUsage, reload])
 
   const handleDelete = useCallback(
     async (key: string) => {
@@ -292,6 +310,18 @@ export function PropertyDefinitionsList(): React.ReactElement {
             aria-label={t('properties.newSelectOptions')}
           />
         )}
+        {newType !== 'boolean' && (
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id={severalId}
+              checked={newSeveral}
+              onCheckedChange={(checked) => setNewSeveral(checked === true)}
+            />
+            <Label htmlFor={severalId} muted={false}>
+              {t('properties.holdsSeveralValues')}
+            </Label>
+          </div>
+        )}
         {/* Default size: it shares a row with an h-9 input and select. */}
         <Button
           type="submit"
@@ -340,7 +370,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
                   >
                     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 [@media(pointer:coarse)]:min-h-11">
                       <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
-                      <Badge tone="secondary">{def.value_type}</Badge>
+                      <Badge tone="secondary">{valueTypeLabel(def, t)}</Badge>
                       {usage?.has(def.key) && (
                         <Badge tone="outline" data-testid={`property-usage-${def.key}`}>
                           {t('propertiesView.usageCount', { count: usage.get(def.key)?.count })}

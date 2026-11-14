@@ -665,6 +665,7 @@ describe('restoring a space file', () => {
             options: args['options'] as string | null,
             created_at: CREATED_AT,
             builtin: false,
+            ...(args['multiple'] === true ? { multiple: true } : {}),
           }
           stored.push(def)
           return withOps(def)
@@ -730,6 +731,30 @@ describe('restoring a space file', () => {
     expect(await definitions()).toEqual([
       { key: 'status', value_type: 'select', options: '["open","done"]' },
       { key: 'due', value_type: 'date', options: null },
+    ])
+  })
+
+  // #6741 — a key that holds several values comes back holding several; one
+  // written before the flag, without it, holds one.
+  it('restores whether each definition holds several values', async () => {
+    const stored: PropertyDefinition[] = []
+    serveDefinitions(stored)
+
+    await restoreSpaceFile(
+      spaceFile({
+        propertyDefinitions: [
+          { key: 'authors', value_type: 'text', options: null, multiple: true },
+          { key: 'due', value_type: 'date', options: null },
+        ],
+        titles: {},
+      }),
+      'SPACE',
+    )
+
+    const held = await listAllPropertyDefs('SPACE')
+    expect(held.map(({ key, multiple }) => ({ key, multiple }))).toEqual([
+      { key: 'authors', multiple: true },
+      { key: 'due', multiple: undefined },
     ])
   })
 
@@ -838,6 +863,14 @@ describe('restoring a space file', () => {
       'not a space file',
     ],
     ['a null definition', { propertyDefinitions: [null], titles: {} }, 'not a property definition'],
+    [
+      'a flag that is not a boolean',
+      {
+        propertyDefinitions: [{ key: 'k', value_type: 'text', options: null, multiple: 'yes' }],
+        titles: {},
+      },
+      'not a property definition',
+    ],
   ])('says a space file with %s, and restores nothing from it', async (_, space, reason) => {
     serveDefinitions([])
 

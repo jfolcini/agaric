@@ -249,8 +249,9 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
   const handleAddFromDef = useCallback(
     async (def: PropertyDefinition) => {
-      // #2792 — mirrors `BlockPropertyDrawer.handleAddFromDef` (#2656).
-      if (DRAFT_ROW_VALUE_TYPES.has(def.value_type)) {
+      // #2792 — mirrors `BlockPropertyDrawer.handleAddFromDef` (#2656). A list
+      // has no empty value either (#6741).
+      if (def.multiple === true || DRAFT_ROW_VALUE_TYPES.has(def.value_type)) {
         addDraftRow(def)
         return
       }
@@ -277,17 +278,23 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   )
 
   const handleCreateDef = useCallback(
-    async (key: string, valueType: string, options: string | null) => {
+    async (key: string, valueType: string, options: string | null, multiple: boolean) => {
       if (spaceId === null) return
       try {
         const newDef = unwrap(
-          await commands.createPropertyDef(spaceId, key, valueType, options, null),
+          await commands.createPropertyDef(
+            spaceId,
+            key,
+            valueType,
+            options,
+            multiple ? true : null,
+          ),
         )
         setDefinitions((prev) => [...prev, newDef])
         // #2804 — same rationale as `handleAddFromDef`: a brand-new
         // `DRAFT_ROW_VALUE_TYPES` def has no valid empty initializer, so add a
-        // draft row instead of init-persisting an empty value.
-        if (DRAFT_ROW_VALUE_TYPES.has(newDef.value_type)) {
+        // draft row instead of init-persisting an empty value; nor has a list (#6741).
+        if (newDef.multiple === true || DRAFT_ROW_VALUE_TYPES.has(newDef.value_type)) {
           addDraftRow(newDef)
           return
         }

@@ -5,7 +5,10 @@
  * values given one, in one op the toast can undo, and an empty input leaves
  * its value as it is. A value that doesn't fit is by construction one the
  * type cannot read, so only the user can say what it becomes; a text or url
- * key can hold any text, so its inputs start from the value itself. Each
+ * key can hold any text, so its inputs start from the value itself. A key
+ * that holds several values (#6741) takes its items as one text, `a, b`,
+ * which the backend splits and reads each under the item type; its inputs
+ * start from the value, an item it can read or a list's items. Each
  * value sends the counts it showed as its acknowledgement; when the backend
  * refuses that, the step says so and reads the values again, keeping what
  * was typed for each value.
@@ -105,9 +108,11 @@ export function ConvertUnfitValues({
       queryClient,
     )
   const groups = data?.pages.flatMap((page) => page.items) ?? []
-  const choices = choicesFor(definition, t)
-  const takesAnyText = choices === null && (type === 'text' || type === 'url' || type === 'select')
-  const draftOf = (value: string): string => drafts[value] ?? (takesAnyText ? value : '')
+  const several = definition.multiple === true
+  const choices = several ? null : choicesFor(definition, t)
+  const startsFromValue =
+    several || (choices === null && (type === 'text' || type === 'url' || type === 'select'))
+  const draftOf = (value: string): string => drafts[value] ?? (startsFromValue ? value : '')
   const mapped = groups.filter((group) => draftOf(group.value) !== '')
   const blocks = mapped.reduce((sum, group) => sum + group.unfit + group.unfit_in_trash, 0)
 
@@ -160,7 +165,7 @@ export function ConvertUnfitValues({
               </div>
               <ReplacementInput
                 label={t('propertiesView.convertReplacementLabel', { value: group.value })}
-                type={type}
+                type={several ? 'text' : type}
                 choices={choices}
                 draft={draftOf(group.value)}
                 onDraft={(draft) => setDrafts((prev) => ({ ...prev, [group.value]: draft }))}

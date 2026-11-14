@@ -544,17 +544,17 @@ export const commands = {
 	 *  Tauri command: what changing a space's property to another type would
 	 *  convert and leave unfit. Delegates to [`preview_property_type_change_inner`].
 	 */
-	previewPropertyTypeChange: (spaceId: SpaceId, key: string, valueType: string, options: string | null) => typedError<PropertyTypeChangeCounts, AppError>(__TAURI_INVOKE("preview_property_type_change", { spaceId, key, valueType, options })),
+	previewPropertyTypeChange: (spaceId: SpaceId, key: string, valueType: string, options: string | null, multiple: boolean | null, separator: ListSeparator | null) => typedError<PropertyTypeChangeCounts, AppError>(__TAURI_INVOKE("preview_property_type_change", { spaceId, key, valueType, options, multiple, separator })),
 	/**
 	 *  Tauri command: one page of the values a type change would convert or
 	 *  leave unfit. Delegates to [`list_property_type_change_values_inner`].
 	 */
-	listPropertyTypeChangeValues: (spaceId: SpaceId, key: string, valueType: string, options: string | null, kind: PropertyTypeChangeKind, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyTypeChangeValue>, AppError>(__TAURI_INVOKE("list_property_type_change_values", { spaceId, key, valueType, options, kind, cursor, limit })),
+	listPropertyTypeChangeValues: (spaceId: SpaceId, key: string, valueType: string, options: string | null, multiple: boolean | null, separator: ListSeparator | null, kind: PropertyTypeChangeKind, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyTypeChangeValue>, AppError>(__TAURI_INVOKE("list_property_type_change_values", { spaceId, key, valueType, options, multiple, separator, kind, cursor, limit })),
 	/**
 	 *  Tauri command: change a space's property to another type. Delegates to
 	 *  [`change_property_type_inner`]; the response carries the op ref.
 	 */
-	changePropertyType: (spaceId: SpaceId, key: string, valueType: string, options: string | null, acknowledged: PropertyTypeChangeCounts) => typedError<WithOps<PropertyDefinition_Serialize>, AppError>(__TAURI_INVOKE("change_property_type", { spaceId, key, valueType, options, acknowledged })),
+	changePropertyType: (spaceId: SpaceId, key: string, valueType: string, options: string | null, multiple: boolean | null, separator: ListSeparator | null, acknowledged: PropertyTypeChangeCounts) => typedError<WithOps<PropertyDefinition_Serialize>, AppError>(__TAURI_INVOKE("change_property_type", { spaceId, key, valueType, options, multiple, separator, acknowledged })),
 	/**
 	 *  Tauri command: one page of a key's values that don't fit it. Delegates to
 	 *  [`list_unfit_property_values_inner`].
@@ -3877,6 +3877,9 @@ export type PropertyFilter = {
 	operator?: string,
 };
 
+/**  Where a type change splits one value into a list, or joins a list into one (#6741). */
+export type ListSeparator = "comma" | "semicolon";
+
 /**
  *  A list value (#6741), in the order it was written. `block_properties`
  *  stores it as the JSON array text of `value_list`.
@@ -4123,7 +4126,7 @@ export type PropertyValue = { type: "Text"; value: string } |
 { type: "Date"; value: string };
 
 /**  The column a value is stored in. */
-export type PropertyValueForm = "text" | "number" | "date" | "ref" | "boolean";
+export type PropertyValueForm = "text" | "number" | "date" | "ref" | "boolean" | "list";
 
 export type PurgeResponse = {
 	block_id: string,

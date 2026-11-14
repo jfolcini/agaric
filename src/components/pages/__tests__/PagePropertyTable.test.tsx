@@ -1641,6 +1641,30 @@ describe('PagePropertyTable add-from-definition against the real tauri-mock (#27
     expect(mockedToastError).not.toHaveBeenCalled()
   })
 
+  // #6741 — a number that holds one value writes 0 when added; a list of numbers has no empty value.
+  it('adds a number def that holds several values as a draft, writing no value', async () => {
+    const user = userEvent.setup()
+    await dispatch('create_property_def', {
+      spaceId: 'SPACE_PERSONAL',
+      key: 'scores',
+      valueType: 'number',
+      options: null,
+      multiple: true,
+    })
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await user.click(await screen.findByText('Scores'))
+
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'scores' })),
+      ).toBeInTheDocument()
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+    expect(properties.get(PAGE_ID)?.get('scores')).toBeUndefined()
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+
   it('persists a non-empty text draft save via the real mock', async () => {
     const user = userEvent.setup()
     render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
@@ -1882,6 +1906,33 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
     // The def itself was still created — only the value write was skipped.
     expect(spacePropertyDefs('SPACE_PERSONAL').get('newfield')).toBeTruthy()
     expect(properties.get(PAGE_ID)?.get('newfield')).toBeUndefined()
+  })
+
+  // #6741 D5 — a list has no empty value to write, whatever its item type: a
+  // number that holds one value writes 0 at once (`set_property rejection
+  // during handleCreateDef` above), a list of numbers opens a draft row.
+  it('creates a number def that holds several values and writes no value for it', async () => {
+    const user = userEvent.setup()
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await user.type(await screen.findByLabelText(t('pageProperty.searchLabel')), 'scores')
+    await user.click(await screen.findByText(/Create "scores"/))
+    await user.selectOptions(
+      await screen.findByLabelText(t('pageProperty.valueTypeLabel')),
+      'number',
+    )
+    await user.click(screen.getByRole('checkbox', { name: t('properties.holdsSeveralValues') }))
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+
+    await waitFor(() => {
+      expect(spacePropertyDefs('SPACE_PERSONAL').get('scores')).toMatchObject({
+        value_type: 'number',
+        multiple: true,
+      })
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+    expect(properties.get(PAGE_ID)?.get('scores')).toBeUndefined()
+    expect(mockedToastError).not.toHaveBeenCalled()
   })
 
   // #5449 — the backend refuses a select definition without options.

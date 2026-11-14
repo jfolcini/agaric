@@ -41,8 +41,13 @@ beforeEach(() => {
   mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
 })
 
-async function declare(key: string, valueType: string, options: string | null = null) {
-  await dispatch('create_property_def', { spaceId: PERSONAL.id, key, valueType, options })
+async function declare(
+  key: string,
+  valueType: string,
+  options: string | null = null,
+  multiple: boolean | null = null,
+) {
+  await dispatch('create_property_def', { spaceId: PERSONAL.id, key, valueType, options, multiple })
 }
 
 /** `blockId` holds `fields` under `key` as a peer could write it, whatever the definition. */
@@ -161,6 +166,55 @@ describe('ConvertUnfitValues', () => {
       .map((option) => option.textContent)
     expect(names).toEqual([t('propertiesView.convertLeave'), ...choices])
     expect(picker).toHaveDisplayValue(t('propertiesView.convertLeave'))
+  })
+
+  // #6741 D3 — a list key's replacement is its items, typed as `a, b`.
+  it.each([
+    ['number', null, { value_num: 3 }, '3'],
+    ['date', null, { value_date: '2026-01-05' }, '2026-01-05'],
+    ['select', '["alpha","gamma"]', { value_text: 'alpha' }, 'alpha'],
+  ])(
+    'gives a %s key that holds several values a text input that starts from the value',
+    async (valueType, options, fields, value) => {
+      await declare('probe', valueType, options, true)
+      holds(MTG_1, 'probe', fields)
+      render(<PropertyDefinitionsList />)
+      const dialog = await openConvert('probe')
+      const input = (await within(dialog).findByLabelText(
+        t('propertiesView.convertReplacementLabel', { value }),
+      )) as HTMLInputElement
+      expect(input.tagName).toBe('INPUT')
+      expect(input.type).toBe('text')
+      expect(input.getAttribute('inputmode')).toBeNull()
+      expect(input.value).toBe(value)
+    },
+  )
+
+  it("sends a list key's replacement as its items' text", async () => {
+    const user = userEvent.setup()
+    await declare('probe', 'select', '["alpha","gamma"]', true)
+    holds(MTG_1, 'probe', { value_text: 'alpha' })
+    render(<PropertyDefinitionsList />)
+    const dialog = await openConvert('probe')
+    await within(dialog).findByLabelText(
+      t('propertiesView.convertReplacementLabel', { value: 'alpha' }),
+    )
+    expect(
+      within(dialog).getByText(t('propertiesView.convertIntroList', { type: 'select' })),
+    ).toBeVisible()
+
+    await user.type(replacement(dialog, 'alpha'), ', gamma')
+    await user.click(convertButton(dialog, 1))
+
+    await waitFor(() => {
+      expect(sentReplacements()).toEqual([
+        {
+          value: 'alpha',
+          replacement: 'alpha, gamma',
+          acknowledged: { unfit: 1, unfit_in_trash: 0 },
+        },
+      ])
+    })
   })
 
   it('sends only the values given a replacement, each with the counts it showed', async () => {
