@@ -90,6 +90,7 @@ pub use dispatch::invalidations_for_op;
 #[cfg(any(test, feature = "test-util"))]
 pub use dispatch::SYNC_BLOCK_LINKS_PER_BLOCK_MAX;
 // #6488: the integrity check's Rebuild runs the whole set.
+pub use dispatch::CommitOp;
 pub use dispatch::FULL_CACHE_REBUILD_TASKS;
 // #3886: the `move_same_page` hint PRODUCER, re-exported unconditionally — the
 // local move command (`commands/blocks/move_ops.rs`) is its production caller.
@@ -256,6 +257,13 @@ pub enum MaterializeTask {
     /// Per-content-edit invalidation rolls up
     /// inside the [`MaterializeTask::ReindexBlockLinks`] handler.
     RebuildPageLinkCache,
+    /// The background tasks of every op one commit wrote, in one queue slot
+    /// ([`Materializer::dispatch_commit`]): sent one by one, a batch command at
+    /// its cap offers the channel several times its capacity before the
+    /// consumer runs, and the surplus is shed. The consumer unpacks it into the
+    /// drain it arrived in, so each task inside is deduped, retried and
+    /// persisted on failure as it would be alone.
+    CommitFanOut(Vec<MaterializeTask>),
     Barrier(Arc<tokio::sync::Notify>),
 }
 

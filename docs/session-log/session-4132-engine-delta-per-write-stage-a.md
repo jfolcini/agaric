@@ -38,7 +38,7 @@ After those, the whole suite ran with the oracle and no production path was foun
 
 - The fan-outs save their delta after their op's transaction, so window 5 is as it was.
 - A write whose delta was not saved leaves later rows depending on ops no row holds until a pass saves the space. Harmless while nothing reads the rows; stage B has to decide what a boot does with it.
-- `mirror_sql_tombstones_onto_engine` and #6561's `save_kept_blocks` call `save_all_engines` outside the one-pass lock (window 6). An older export written after a newer one now also deletes deltas the surviving row lacks.
+- A pass can export an engine while a transaction's write sits in it uncommitted. When that transaction rolls back, the row holds its ops until the next pass saves the space over (#6765). The rewind keeps the peer id (`revert_to_frontier`), so a write committed in between saves a delta under the rolled-back ops' ids, and a boot that read the rows then would rebuild another engine. Read from the code, not run.
 
 ## Measurements
 
@@ -65,6 +65,8 @@ One independent read of the commit path by a second model before the gates. Acte
 
 ## Ran
 
-On the merge of `origin/main` at `875512b`: `cargo clippy --workspace --all-targets -- -D warnings`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo nextest run --workspace` in two halves (4068 and 4059 tests pass, none on a retry), the doc-tests, and `just gen-sqlx` and `just gen-bindings`, which leave no diff. On an earlier merge (`67d9b68`): `prek run --hook-stage manual --all-files`, `npm run typecheck`, `npm run lint` and the full vitest (26943 pass); only Markdown changed outside `src-tauri`, and the five `main` commits since touch none of this branch's files. Not run: Playwright and WebdriverIO (no frontend or command-surface change), and no bench lane (no SQL an SLO probe times changed; the per-write cost is the table above).
+On the merge of `origin/main` at `292d5a9c` (#6765 and #6766): `cargo clippy --workspace --all-targets -- -D warnings`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo nextest run --workspace` in two halves (4086 and 4079 tests pass, none on a retry), the doc-tests, and `just gen-sqlx` and `just gen-bindings`, which leave no diff. On an earlier merge (`67d9b68`): `prek run --hook-stage manual --all-files`, `npm run typecheck`, `npm run lint` and the full vitest (26943 pass); only Markdown changed outside `src-tauri`. Not run: Playwright and WebdriverIO (no frontend or command-surface change), and no bench lane (no SQL an SLO probe times changed; the per-write cost is the table above).
+
+That merge moved the pass's delete: #6765 made a pass one transaction over all its rows (`snapshot::write_pass`), so `write_snapshot_row` runs on that transaction's connection and the covered deltas go with the rows, all or none. A pass that cannot read the delta head now writes nothing, as one that cannot read the op-log head does. Passing 0 for the covered id there reddened `a_pass_deletes_the_deltas_of_the_spaces_it_saves_6521`.
 
 Every new test was shown red once, one guarded mutation per command: 24 mutations, each killed on the assertion predicted. Removing the delta write from the post-commit fan-out reddened `delete_block_reports_cascaded_nested_pages_4523`, a test that knows nothing of deltas, through `settle`.

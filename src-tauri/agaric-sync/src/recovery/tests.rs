@@ -3819,6 +3819,195 @@ async fn crash_after_a_snapshot_pass_replays_only_the_tail_5418() {
     boot.shutdown();
 }
 
+/// #6521 — a crash that finds rows saved and the cursor behind them: a kill
+/// between a pass's rows and its cursor move, or after a save that never
+/// moves it (a direct `save_all_engines`). Boot must not apply the ops those rows hold a second time: a
+/// replayed op is a new write, over whatever a peer wrote to the block since.
+/// It still owes them the index fan-out, which the kill took with the queue.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_crash_with_rows_saved_and_the_cursor_behind_replays_only_the_tail_6521() {
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000006521PG";
+    const SAVED: usize = 3;
+    const TAIL: usize = 2;
+    let device_id = "dev-6521-rows";
+    let child_ids = oracle_child_ids(SAVED + TAIL);
+    let mut ids: Vec<&str> = child_ids.iter().map(String::as_str).collect();
+    ids.push(PAGE_ID);
+    let (pool, _dir) = test_pool().await;
+
+    let session = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
+    // A command's commit, without the index fan-out it hands to the queue.
+    let create = async |k: usize| {
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(&child_ids[k]),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: None,
+            index: None,
+            content: format!("findable-{k}"),
+        });
+        let mut tx = agaric_store::db::begin_immediate_logged(&pool, "test_local_apply_6521")
+            .await
+            .unwrap();
+        let record = agaric_store::op_log::append_local_op_in_tx(
+            &mut tx,
+            device_id,
+            payload,
+            agaric_store::db::now_ms(),
+        )
+        .await
+        .unwrap();
+        agaric_engine::apply::kernel::apply_op_projected(
+            &mut tx,
+            &record,
+            session.loro_state(),
+            false,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+    };
+    for k in 0..SAVED {
+        create(k).await;
+    }
+    let pass =
+        agaric_engine::loro::snapshot::save_all_engines(&pool, &session.loro_state().registry)
+            .await;
+    assert_eq!(
+        (pass.persisted_through, read_cursor(&pool).await),
+        (Some(i64::try_from(SAVED).unwrap()), 0),
+        "the fixture: the rows hold the first ops and the cursor did not move"
+    );
+    for k in SAVED..SAVED + TAIL {
+        create(k).await;
+    }
+    let session_engine = engine_blocks(&session, device_id, SPACE, &ids);
+    let session_sql = projected_rows(&pool).await;
+    // dynamic-sql: static SQL, test-only read-back.
+    let indexed_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(indexed_before, 0, "the fixture: no fan-out ran");
+    session.shutdown();
+    drop(session);
+
+    let boot = Materializer::new(pool.clone());
+    let registry = &boot.loro_state().registry;
+    agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id)
+        .await
+        .expect("rehydrate");
+    super::boot::reset_recovery_guard();
+    let report = recover_at_boot(&pool, device_id, &boot, registry)
+        .await
+        .unwrap();
+    boot.flush_background().await.unwrap();
+
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+    assert_eq!(
+        report.ops_replayed,
+        u64::try_from(TAIL).unwrap(),
+        "boot applies the ops no saved row holds, and no other"
+    );
+    assert_eq!(
+        engine_blocks(&boot, device_id, SPACE, &ids),
+        session_engine,
+        "the engine holds what the session's did"
+    );
+    assert_eq!(
+        projected_rows(&pool).await,
+        session_sql,
+        "SQL must match the session's"
+    );
+    // dynamic-sql: static SQL, test-only read-back.
+    let indexed: Vec<String> =
+        sqlx::query_scalar("SELECT stripped FROM fts_blocks ORDER BY stripped")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        indexed,
+        (0..SAVED + TAIL)
+            .map(|k| format!("findable-{k}"))
+            .collect::<Vec<_>>(),
+        "every op past the cursor gets its index fan-out, applied again or not"
+    );
+    boot.shutdown();
+}
+
+/// #6521 — rows under different stamps, as an older build's pass could leave
+/// them: boot applies what is above the lowest, since the row carrying it
+/// holds nothing later.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boot_applies_the_ops_above_the_lowest_stamp_6521() {
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const LAGGING_SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+    const PAGE_ID: &str = "01HZ00000000000000006521PH";
+    let device_id = "dev-6521-lowest";
+    let child_ids = oracle_child_ids(3);
+    let (pool, _dir) = test_pool().await;
+
+    let session = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
+    for child in &child_ids {
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(child),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: None,
+            index: None,
+            content: child.clone(),
+        });
+        apply_like_a_command(&pool, &session, device_id, create).await;
+    }
+    agaric_engine::loro::snapshot::save_all_engines(&pool, &session.loro_state().registry).await;
+    let empty = agaric_engine::loro::engine::LoroEngine::with_peer_id(device_id)
+        .unwrap()
+        .export_snapshot()
+        .unwrap();
+    // dynamic-sql: static SQL, test-only fixture.
+    sqlx::query(
+        "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+         VALUES (?, ?, 0, 0, 1)",
+    )
+    .bind(LAGGING_SPACE)
+    .bind(empty)
+    .execute(&pool)
+    .await
+    .unwrap();
+    session.flush_background().await.unwrap();
+    session.shutdown();
+    drop(session);
+
+    let boot = Materializer::new(pool.clone());
+    let registry = &boot.loro_state().registry;
+    agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id)
+        .await
+        .expect("rehydrate");
+    super::boot::reset_recovery_guard();
+    let report = recover_at_boot(&pool, device_id, &boot, registry)
+        .await
+        .unwrap();
+    boot.flush_background().await.unwrap();
+
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+    assert_eq!(
+        report.ops_replayed, 2,
+        "ops 2 and 3 are above the lagging row's stamp"
+    );
+    boot.shutdown();
+}
+
 /// #5630 — a crash leaves ops in the replayed tail on a block, and on a page,
 /// that later ops in the same tail delete. SQL already shows them deleted when
 /// those ops replay, so each op must still reach the engine through the space
@@ -4228,12 +4417,19 @@ async fn replay_over_an_engine_ahead_of_the_cursor_keeps_an_outdented_block_thro
         );
     }
     // The exit save of a pre-#5418 build: every engine persisted, the cursor
-    // left before the session.
+    // left before the session, and the row's stamp no higher than that cursor.
+    // Boot applies what is above the stamp (#6521).
     let pass =
         agaric_engine::loro::snapshot::save_all_engines(&pool, &session.loro_state().registry)
             .await;
     assert_eq!(pass.saved, 1, "the exit save persists the one space");
     set_cursor(&pool, seqs[0] - 1).await;
+    // dynamic-sql: static SQL, test-only fixture.
+    sqlx::query("UPDATE loro_doc_state SET applied_through_seq = ?")
+        .bind(seqs[0] - 1)
+        .execute(&pool)
+        .await
+        .unwrap();
     session.shutdown();
     drop(session);
 

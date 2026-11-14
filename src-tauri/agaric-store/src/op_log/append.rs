@@ -327,7 +327,7 @@ async fn append_local_op_in_tx_with_provenance(
         payload: payload_json,
         created_at,
         // Cache the typed payload's block_id sidecar so the
-        // materializer hot path (`dispatch::enqueue_background_tasks`)
+        // materializer hot path (`dispatch::collect_fan_out`)
         // does not re-parse `payload` to recover the same value.
         block_id: block_id.map(str::to_owned),
     })

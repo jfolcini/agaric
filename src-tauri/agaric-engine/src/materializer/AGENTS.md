@@ -2,6 +2,10 @@
 
 What a change to derived state (caches, FTS, link graphs, `page_id` / `space_id`) owes.
 
+## Enqueueing a commit's tasks
+
+A path that commits several ops hands them to one `Materializer::dispatch_commit` (`CommandTx::commit_and_dispatch` does), never one `dispatch_background` per op in a loop: the background channel is bounded and its send does not block, so a per-op loop over a batch sheds every task past the capacity, and a shed task waits in `materializer_retry_queue` for the sweeper while its block is missing from search and the agenda.
+
 ## Narrowing a rebuild
 
 `invalidations_for_op` (`src-tauri/agaric-engine/src/materializer/dispatch.rs`) maps an op to its rebuild tasks; `FULL_CACHE_REBUILD_TASKS` is the correctness-preserving default.

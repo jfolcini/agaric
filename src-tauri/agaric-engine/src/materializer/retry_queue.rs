@@ -782,6 +782,28 @@ pub(crate) async fn fetch_due(pool: &SqlitePool, limit: i64) -> Result<Vec<DueRo
         .collect())
 }
 
+/// Every row persisted by a shed ([`SHED_LAST_ERROR`]), due or not: its task
+/// has never run.
+pub(crate) async fn fetch_shed(pool: &SqlitePool) -> Result<Vec<DueRow>, AppError> {
+    let rows = sqlx::query!(
+        "SELECT block_id, task_kind, attempts, created_at, last_error \
+         FROM materializer_retry_queue WHERE last_error = ?",
+        SHED_LAST_ERROR,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| DueRow {
+            block_id: r.block_id,
+            task_kind: r.task_kind,
+            attempts: r.attempts,
+            created_at: r.created_at,
+            last_error: r.last_error,
+        })
+        .collect())
+}
+
 /// Delete a retry row after a confirmed, durable successful re-run.
 ///
 /// Issue #378: this is the canonical clear site. It is called from the

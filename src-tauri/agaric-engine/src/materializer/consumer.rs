@@ -9,7 +9,7 @@
 //! | Tier | Site | Tasks routed here | Retries | Backoff | On exhaustion |
 //! |------|------|-------------------|---------|---------|---------------|
 //! | Foreground (fg) | [`process_single_foreground_task`] | `ApplyOp`, `BatchApplyOps`, `Barrier` | 1 | constant 100 ms | Bump `fg_errors` (and, for Apply / BatchApplyOps, `fg_apply_dropped` plus a divergence warn carrying op coords). the failure is **persisted** to `materializer_retry_queue` (one `ApplyOp` row per record; batches fan out) and re-enqueued by the sweeper on the minute-to-hour schedule. #621: persisted ApplyOp rows are exempt from the give-up triggers — the cursor's MAX-semantics advance has already leapt past the dropped seq, so this row is the only remaining recovery net; the sweeper instead retires a row only when its op_log row is gone or a later `purge_block` supersedes it (re-applying out of order would resurrect purged data). |
-//! | Background (bg) | [`run_background`] | All cache rebuilds, FTS reindex, attachment cleanup | 2 | exponential 150 ms / 300 ms | Bump `bg_errors` (which, per #3382, subsumes the debug-only panic arm). Idempotent per-block tasks (`UpdateFtsBlock`, `ReindexBlockLinks`, `ReindexBlockTagRefs`) are persisted to `materializer_retry_queue` for re-enqueue on the much-longer minute-to-hour schedule from [`super::retry_queue::backoff_delay_for`]. extends persistence to global cache rebuilds (`RebuildTagsCache`, …, `RebuildBlockTagRefsCache`) under the `'__GLOBAL__'` sentinel so a failure / saturation drop no longer leaves caches stale until the next user mutation. Truly non-retryable tasks (`RebuildFtsIndex`, `FtsOptimize`, `CleanupOrphanedAttachments`, …) are silently counted on `bg_dropped` without persistence. |
+//! | Background (bg) | [`run_background`] | All cache rebuilds, FTS reindex, attachment cleanup | 2 | exponential 150 ms / 300 ms | A schedule that ends on a busy writer (`AppError::is_write_contention`) runs again and is not an exhaustion. Otherwise bump `bg_errors` (which, per #3382, subsumes the debug-only panic arm). Idempotent per-block tasks (`UpdateFtsBlock`, `ReindexBlockLinks`, `ReindexBlockTagRefs`) are persisted to `materializer_retry_queue` for re-enqueue on the much-longer minute-to-hour schedule from [`super::retry_queue::backoff_delay_for`]. extends persistence to global cache rebuilds (`RebuildTagsCache`, …, `RebuildBlockTagRefsCache`) under the `'__GLOBAL__'` sentinel so a failure / saturation drop no longer leaves caches stale until the next user mutation. Truly non-retryable tasks (`RebuildFtsIndex`, `FtsOptimize`, `CleanupOrphanedAttachments`, …) are silently counted on `bg_dropped` without persistence. |
 //!
 //! The in-memory backoffs (this module) handle transient WAL-lock
 //! contention; the persistent retry queue handles harder failures
@@ -167,6 +167,9 @@ where
 pub(super) struct RetryOutcome {
     pub succeeded: bool,
     pub last_error_msg: Option<String>,
+    /// The last attempt failed because another writer held the database
+    /// ([`agaric_core::error::AppError::is_write_contention`]).
+    pub contended: bool,
 }
 
 /// Run an async task, retrying up to `max_retries` times on failure with
@@ -205,6 +208,7 @@ where
     let mut outcome = RetryOutcome {
         succeeded: false,
         last_error_msg: None,
+        contended: false,
     };
 
     let first = run_attempt_cancellable(spawn_attempt()).await;
@@ -215,6 +219,7 @@ where
         }
         Ok(Err(e)) => {
             outcome.last_error_msg = Some(format!("{e:?}"));
+            outcome.contended = e.is_write_contention();
             // Demote first-attempt non-panic failure to `debug` —
             // the loop below already emits a `tracing::warn!("retrying
             // failed materializer task …")` line announcing the retry,
@@ -265,10 +270,12 @@ where
                 );
                 outcome.succeeded = true;
                 outcome.last_error_msg = None;
+                outcome.contended = false;
                 return outcome;
             }
             Ok(Err(e)) => {
                 outcome.last_error_msg = Some(format!("{e:?}"));
+                outcome.contended = e.is_write_contention();
                 // Same rationale as the first-attempt arm — these
                 // intermediate retry failures are about to be retried
                 // again (or escalated below). Demote to `debug`.
@@ -277,25 +284,40 @@ where
             // Unwind-only, exactly as the first-attempt arm above (#3295).
             Err(e) => {
                 outcome.last_error_msg = Some(format!("panic: {e:?}"));
+                outcome.contended = false;
                 log_consumer_result(&retry_label, &retry, tracing::Level::ERROR);
                 return outcome;
             }
         }
     }
 
+    log_exhausted_schedule(label, &outcome);
+    outcome
+}
+
+/// [`retry_with_backoff`]'s closing log line, for a schedule that did not
+/// succeed.
+fn log_exhausted_schedule(label: &str, outcome: &RetryOutcome) {
     // Retries exhausted — surface a single operator-facing `error` line so
     // the demoted-to-debug intermediate failures don't leave the
     // operator-facing logs silent. Panicking attempts never reach here:
     // both `Err(JoinError)` arms `return` after logging at `error`
     // themselves. #3295 dropped this guard's `!outcome.panicked` conjunct
     // for exactly that reason — the early `return` made it unfalsifiable.
-    if !outcome.succeeded
+    //
+    // A schedule that ends on a busy writer is not an error in the task: the
+    // background consumer runs it again, and an `error` line per pass would
+    // fill a bug report with tasks that then succeeded.
+    if outcome.contended {
+        tracing::warn!(
+            label,
+            "writer busy through every attempt of a materializer task"
+        );
+    } else if !outcome.succeeded
         && let Some(msg) = outcome.last_error_msg.as_deref()
     {
         tracing::error!(label, error = msg, "error processing materializer task");
     }
-
-    outcome
 }
 
 // #647: the foreground consumer loop is the async core's hardest path to
@@ -780,6 +802,15 @@ async fn hold_back_for_e2e() {
     }
 }
 
+/// Push `task` onto `batch`, a [`MaterializeTask::CommitFanOut`] as the tasks
+/// it carries.
+fn unpack_into(batch: &mut Vec<MaterializeTask>, task: MaterializeTask) {
+    match task {
+        MaterializeTask::CommitFanOut(tasks) => batch.extend(tasks),
+        task => batch.push(task),
+    }
+}
+
 // #647: background consumer loop (cache fan-out, FTS). Same
 // rationale + `skip_all` privacy guard as `run_foreground`.
 #[instrument(
@@ -801,9 +832,10 @@ pub(super) async fn run_background(
         };
         #[cfg(debug_assertions)]
         hold_back_for_e2e().await;
-        let mut batch = vec![first];
+        let mut batch = Vec::new();
+        unpack_into(&mut batch, first);
         while let Ok(task) = rx.try_recv() {
-            batch.push(task);
+            unpack_into(&mut batch, task);
         }
         let total_before = batch.len();
         let deduped = dedup_tasks(batch);
@@ -908,8 +940,32 @@ async fn process_single_background_task(
 }
 
 /// Runs one background task through the background in-memory retry
-/// schedule (2 retries, exponential 150 ms / 300 ms).
+/// schedule (2 retries, exponential 150 ms / 300 ms), again for as long as
+/// the schedule ends on a busy writer.
+///
+/// A task refused by a busy writer never ran and nothing about it is wrong:
+/// it is a writer queued behind a command, and it waits. Counted as a
+/// failure it goes to `materializer_retry_queue` for a minute or more, and
+/// commands sent back to back (a folder import) hold the writer for longer
+/// than the schedule's busy timeouts.
 async fn run_background_task_with_retry(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    app_data_dir: &Arc<OnceLock<PathBuf>>,
+    task: &MaterializeTask,
+    metrics: &Arc<QueueMetrics>,
+) -> RetryOutcome {
+    loop {
+        let outcome =
+            run_background_retry_schedule(pool, read_pool, app_data_dir, task, metrics).await;
+        if !outcome.contended {
+            return outcome;
+        }
+    }
+}
+
+/// One pass of the background in-memory retry schedule.
+async fn run_background_retry_schedule(
     pool: &SqlitePool,
     read_pool: Option<&SqlitePool>,
     app_data_dir: &Arc<OnceLock<PathBuf>>,

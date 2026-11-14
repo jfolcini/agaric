@@ -10,13 +10,8 @@ use agaric_core::error::AppError;
 use agaric_core::foreground::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-// `AtomicU32` backs only the test-only `BlockCountTestHooks` sidecar
-// (#1059); importing it unconditionally would be an unused-import warning
-// in production builds. (`Notify` is now an unconditional production import
-// for the #2291 inbound-rebuild debounce.)
-#[cfg(test)]
 use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -169,25 +164,20 @@ pub struct Materializer {
     /// #1059: test-only readiness/drain coordination for the
     /// block-count cache refreshes. Production code never observes these
     /// signals, so the whole bundle lives behind `#[cfg(test)]` and is
-    /// absent from the production `Materializer` (which carries only its
-    /// 9 real fields). See [`BlockCountTestHooks`].
+    /// absent from the production `Materializer`. See [`BlockCountTestHooks`].
     #[cfg(test)]
     pub(super) block_count_test_hooks: BlockCountTestHooks,
-    /// #3482: test-only drain coordination for the fire-and-forget
-    /// `record_failure` write spawned by [`Self::try_enqueue_background`]'s
-    /// Full arm. Production treats that persist as pure fire-and-forget;
-    /// tests asserting the shed task reached `materializer_retry_queue`
-    /// need a real completion edge rather than a wall-clock poll — see
-    /// [`Self::wait_for_pending_shed_persists`].
-    #[cfg(test)]
-    pub(super) shed_persist_test_hooks: PendingTaskGate,
+    /// The `record_failure` writes [`Self::try_enqueue_background`]'s Full arm
+    /// has spawned and that have not finished. [`Self::settle_background`]
+    /// waits for them before it reads which tasks were shed.
+    pub(super) shed_persists: PendingTaskGate,
     /// #4208 test-only: force [`Self::try_enqueue_background`] down its Full
     /// arm without a genuinely saturated channel. The established idiom for
     /// saturating it takes the writer hostage, which also blocks the
     /// `lease_entry` a mixed shed/enqueue batch needs to succeed — the two
     /// cannot hold at once, so the sweep case this flag covers is otherwise
     /// unreachable from a test.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-util"))]
     pub(super) force_shed_after: std::sync::Arc<std::sync::atomic::AtomicI64>,
     /// C-3c — OS-correct app data directory used by the
     /// `CleanupOrphanedAttachments` background task to walk the
@@ -320,14 +310,13 @@ impl BlockCountTestHooks {
 /// future panics or is cancelled mid-refresh (e.g. during runtime
 /// shutdown). Missing a decrement would permanently desync the counter
 /// from reality and leave `wait_for_pending_block_count_refreshes` hung.
-#[cfg(test)]
 struct PendingRefreshGuard {
     counter: Arc<AtomicU32>,
     notify: Arc<Notify>,
 }
 
 /// #3482: counter + notify pair that turns a fire-and-forget
-/// `Self::spawn_task` into something a test can await.
+/// `Self::spawn_task` into something a caller can await.
 ///
 /// The pattern is the one already used for the block-count refreshes:
 /// [`Self::enter`] bumps the counter *before* the spawn (so a waiter
@@ -335,14 +324,12 @@ struct PendingRefreshGuard {
 /// spawned future started") and hands back a [`PendingRefreshGuard`] that
 /// moves into the future and decrements on every exit path — completion,
 /// panic, or runtime-shutdown cancellation.
-#[cfg(test)]
 #[derive(Clone)]
 pub(super) struct PendingTaskGate {
     pending: Arc<AtomicU32>,
     notify: Arc<Notify>,
 }
 
-#[cfg(test)]
 impl PendingTaskGate {
     fn new() -> Self {
         Self {
@@ -359,6 +346,11 @@ impl PendingTaskGate {
             counter: self.pending.clone(),
             notify: self.notify.clone(),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn in_flight(&self) -> u32 {
+        self.pending.load(Ordering::Acquire)
     }
 
     /// Await the counter reaching zero. Double-checked against the
@@ -379,7 +371,6 @@ impl PendingTaskGate {
     }
 }
 
-#[cfg(test)]
 impl Drop for PendingRefreshGuard {
     fn drop(&mut self) {
         // AcqRel matches the increment at spawn time; the post-decrement
@@ -564,9 +555,8 @@ impl Materializer {
             write_pool,
             #[cfg(test)]
             block_count_test_hooks: BlockCountTestHooks::new(),
-            #[cfg(test)]
-            shed_persist_test_hooks: PendingTaskGate::new(),
-            #[cfg(test)]
+            shed_persists: PendingTaskGate::new(),
+            #[cfg(any(test, feature = "test-util"))]
             force_shed_after: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(-1)),
             app_data_dir: Arc::new(OnceLock::new()),
             local_commit_hook: Arc::new(OnceLock::new()),
@@ -987,16 +977,14 @@ impl Materializer {
     /// is committed and a single un-retried `SELECT` is authoritative.
     ///
     /// Returns immediately when nothing is in flight (one `Acquire` load).
-    /// Test-only: the backing gate is `#[cfg(test)]`, so production still
-    /// carries no coordination for this path.
     #[cfg(test)]
     pub async fn wait_for_pending_shed_persists(&self) {
-        self.shed_persist_test_hooks.wait_for_drain().await;
+        self.shed_persists.wait_for_drain().await;
     }
 
     /// #4208 test-only: let the next `n` background enqueues through, then
     /// shed every one after that. `-1` restores normal behaviour.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-util"))]
     pub fn force_shed_after(&self, n: i64) {
         self.force_shed_after
             .store(n, std::sync::atomic::Ordering::Release);
@@ -1099,7 +1087,7 @@ impl Materializer {
     }
 
     /// [`Self::try_enqueue_background`]'s `Full` arm.
-    fn shed_background_task(&self, task: &MaterializeTask) -> BackgroundEnqueueOutcome {
+    fn shed_background_task(&self, task: MaterializeTask) -> BackgroundEnqueueOutcome {
         // When the bounded background channel is full,
         // we shed the task and warn — but every dropped fan-out
         // (RebuildTagsCache, RebuildAgendaCache, …) must also be
@@ -1126,27 +1114,47 @@ impl Materializer {
         // per-block reindex backlog. The persist is fire-and-forget
         // via a spawned write (errors warned) because `try_enqueue_*`
         // is sync and on the hot path.
-        self.metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
-        if let Some((kind, _)) = super::retry_queue::RetryKind::from_task(task) {
-            if kind.is_global() {
-                self.metrics
-                    .bg_dropped_global
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+        //
+        // A shed commit sheds each task it carries. They are deduped first, as
+        // the consumer would have: a repeat would only escalate its own row's
+        // backoff. One spawned future writes the rows in turn, because a
+        // future per row holds the two-connection write pool against the
+        // commands waiting on it.
+        let tasks = match task {
+            MaterializeTask::CommitFanOut(tasks) => super::dedup::dedup_tasks(tasks),
+            task => vec![task],
+        };
+        self.metrics
+            .bg_dropped
+            .fetch_add(tasks.len() as u64, Ordering::Relaxed);
+        let retryable: Vec<MaterializeTask> = tasks
+            .into_iter()
+            .filter(
+                |task| match super::retry_queue::RetryKind::from_task(task) {
+                    Some((kind, _)) => {
+                        if kind.is_global() {
+                            self.metrics
+                                .bg_dropped_global
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                        true
+                    }
+                    None => false,
+                },
+            )
+            .collect();
+        if !retryable.is_empty() {
             let pool = self.write_pool.clone();
-            let task_for_spawn = task.clone();
             let metrics_for_spawn = self.metrics.clone();
-            // #3482: register the persist with the test-only drain
-            // gate BEFORE spawning, so a test that shed a task can
-            // await the write instead of polling the DB on a
-            // wall-clock deadline. Production is unchanged: the gate
-            // and its guard are `#[cfg(test)]`.
-            #[cfg(test)]
-            let shed_guard = self.shed_persist_test_hooks.enter();
+            // #3482: register the persist with the drain gate BEFORE
+            // spawning, so a waiter cannot slip between the decision to
+            // spawn and the spawned future starting.
+            let shed_guard = self.shed_persists.enter();
             Self::spawn_task(&self.tasks, &self.runtime, async move {
-                #[cfg(test)]
                 let _shed_guard = shed_guard;
-                Self::persist_shed_task(&pool, &task_for_spawn, &metrics_for_spawn).await;
+                for task in &retryable {
+                    Self::persist_shed_task(&pool, task, &metrics_for_spawn).await;
+                }
             });
         }
         tracing::warn!("background queue full, dropping task");
@@ -1170,7 +1178,7 @@ impl Materializer {
         // Occupancy BEFORE the send — a post-send `capacity()` read races the
         // consumer draining our task (see `enqueue_background`).
         let occupancy_before = BACKGROUND_CAPACITY - tx.capacity();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-util"))]
         let sent = {
             use std::sync::atomic::Ordering as O;
             // One atomic step: two enqueuers that both read `1` must not both
@@ -1185,7 +1193,7 @@ impl Materializer {
                 tx.try_send(task)
             }
         };
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-util")))]
         let sent = tx.try_send(task);
         match sent {
             Ok(()) => {
@@ -1196,7 +1204,7 @@ impl Materializer {
                 self.check_queue_pressure();
                 Ok(BackgroundEnqueueOutcome::Enqueued)
             }
-            Err(mpsc::error::TrySendError::Full(task)) => Ok(self.shed_background_task(&task)),
+            Err(mpsc::error::TrySendError::Full(task)) => Ok(self.shed_background_task(task)),
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 Err(AppError::Channel("background queue closed".into()))
             }
@@ -1292,6 +1300,39 @@ impl Materializer {
             .await?;
         notify.notified().await;
         Ok(())
+    }
+
+    /// [`Self::flush_background`], then the tasks a full queue had shed, then
+    /// the flush again.
+    ///
+    /// A shed task has not run: it waits in `materializer_retry_queue` for the
+    /// sweeper, so the flush alone returns with the task's rows still missing.
+    /// The integrity check and the `after_rebuild` event promise a settled
+    /// vault and call this. Quit, boot, the snapshot pass and the end of a pull
+    /// flush too, and must not wait on a backlog, so the flush stays a barrier.
+    ///
+    /// The shed tasks go back as one [`MaterializeTask::CommitFanOut`] on a
+    /// send that waits for its slot: it cannot be shed again, and it cannot
+    /// fill the channel against a concurrent commit. A task's row goes when it
+    /// succeeds (`clear_on_success`). A task with no retry kind left no row
+    /// when it was shed, and is not run here either.
+    pub async fn settle_background(&self) -> Result<(), AppError> {
+        self.flush_background().await?;
+        self.shed_persists.wait_for_drain().await;
+        if !self.metrics.has_pending_retry_rows() {
+            return Ok(());
+        }
+        let shed: Vec<MaterializeTask> = super::retry_queue::fetch_shed(&self.reader_pool)
+            .await?
+            .iter()
+            .filter_map(super::retry_queue::task_from_row)
+            .collect();
+        if shed.is_empty() {
+            return Ok(());
+        }
+        self.enqueue_background(MaterializeTask::CommitFanOut(shed))
+            .await?;
+        self.flush_background().await
     }
 
     pub async fn flush(&self) -> Result<(), AppError> {

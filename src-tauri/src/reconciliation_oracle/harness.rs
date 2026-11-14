@@ -361,7 +361,7 @@ pub async fn settle_page_link_cache_rebuild(pool: &SqlitePool) -> Result<(), App
 /// wired up.
 ///
 /// Likewise, this runs `invalidations_for_op`'s RAW output, whereas production
-/// runs it through `enqueue_background_tasks`, which FILTERS: a local
+/// runs it through `collect_fan_out`, which FILTERS: a local
 /// delete/restore/purge diverts `is_global_lifecycle_rebuild` tasks (including
 /// `RebuildPageLinkCache`) into a trailing debounce. So the harness settles
 /// more EAGERLY than production does. That is the safe direction for an

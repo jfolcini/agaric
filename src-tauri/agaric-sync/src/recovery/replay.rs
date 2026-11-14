@@ -1,8 +1,9 @@
 //! C-2b: boot-time op-log replay for unmaterialized ops.
 //!
-//! On boot, walk `op_log WHERE seq > materialized_through_seq` and
-//! enqueue it in chunks of at most `REPLAY_CHUNK_SIZE` as `ReplayApplyOps`
-//! tasks on the materializer's foreground queue. The materializer applies each
+//! On boot, walk `op_log WHERE seq > materialized_through_seq`, leave out the
+//! ops every saved engine already holds (#6521), and enqueue the rest in
+//! chunks of at most `REPLAY_CHUNK_SIZE` as `ReplayApplyOps` tasks on the
+//! materializer's foreground queue. The materializer applies each
 //! chunk in one transaction, advancing the cursor with it (#5418). If the same
 //! crash recurs mid-replay, the next boot picks up where this one stopped.
 //!
@@ -107,8 +108,8 @@ pub struct ReplayReport {
 /// the op-log head, so any `save_all_engines`
 /// pass firing in that window writes `applied_through_seq = 0` over a
 /// previously-high watermark for every DIRTY space (the `INSERT OR REPLACE`
-/// in that pass is unconditional — unlike `advance_clean_space_watermarks`, which re-asserts
-/// `applied_through_seq <` precisely to avoid walking a watermark back). A
+/// in that pass is unconditional — unlike the stamps of the rows it does not
+/// write, which `snapshot::write_pass` moves only upward). A
 /// later boot whose cursor has advanced again then rewinds to 0 and re-fires
 /// the #619 under-rebuild `error!`.
 ///
@@ -268,7 +269,7 @@ pub(super) async fn compacted_floor_above(
 /// The reset target is the most-stale watermark across all spaces. What
 /// bounds it is `save_all_engines`: since #2201 that pass re-encodes only
 /// DIRTY spaces, but it also advances `applied_through_seq` for every space
-/// it did not re-encode (`snapshot::advance_clean_space_watermarks`), taking
+/// it did not re-encode (`snapshot::write_pass`), taking
 /// a clean engine to reflect the ops below the pass's head without rewriting
 /// the blob. The exceptions are the late engine writes `snapshot::op_log_head`
 /// lists, each of which re-dirties its engine so the next pass persists it.
@@ -378,34 +379,28 @@ async fn plan_cursor_rewind(pool: &SqlitePool) -> Result<Option<RewindPlan>, App
         return Ok(None);
     }
 
-    let snapshot_count: i64 =
-        sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM loro_doc_state"#,)
-            .fetch_one(pool)
-            .await?;
+    let saved = lowest_saved_watermark(pool).await?;
+    let snapshot_count = saved.map_or(0, |(_, count)| count);
 
     // How far back to rewind the cursor so replay catches every behind
     // engine up to the materialised frontier.
-    let reset_to: i64 = if snapshot_count == 0 {
+    let reset_to: i64 = match saved {
         // No persisted snapshot at all — every engine boots empty; rebuild
         // the whole op-log.
-        0
-    } else {
+        None => 0,
         // Snapshots exist. Each reflects ops only up to its
         // `applied_through_seq`; the most-stale one bounds what replay must
         // re-apply. A backfilled/legacy `0` watermark forces a full rebuild
         // for that space, which is correct — and #3309 makes it genuinely
         // one-time: the first `save_all_engines` pass after the rebuild
         // advances that row even if its space is never touched again.
-        let min_watermark: i64 = sqlx::query_scalar!(
-            r#"SELECT MIN(applied_through_seq) as "wm!: i64" FROM loro_doc_state"#,
-        )
-        .fetch_one(pool)
-        .await?;
-        if cursor <= min_watermark {
-            // Every snapshot already covers the cursor — nothing to heal.
-            return Ok(None);
+        Some((min_watermark, _)) => {
+            if cursor <= min_watermark {
+                // Every snapshot already covers the cursor — nothing to heal.
+                return Ok(None);
+            }
+            min_watermark
         }
-        min_watermark
     };
 
     Ok(Some(RewindPlan {
@@ -416,8 +411,27 @@ async fn plan_cursor_rewind(pool: &SqlitePool) -> Result<Option<RewindPlan>, App
     }))
 }
 
-/// Re-enqueue the background fan-out for every op boot replay just applied,
-/// covering `from_seq < seq <= through_seq`. Returns how many ops it dispatched.
+/// The lowest `applied_through_seq` of the saved engines, and how many are
+/// saved. `None` with none.
+async fn lowest_saved_watermark(pool: &SqlitePool) -> Result<Option<(i64, i64)>, AppError> {
+    let snapshot_count: i64 =
+        sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM loro_doc_state"#,)
+            .fetch_one(pool)
+            .await?;
+    if snapshot_count == 0 {
+        return Ok(None);
+    }
+    let min_watermark: i64 = sqlx::query_scalar!(
+        r#"SELECT MIN(applied_through_seq) as "wm!: i64" FROM loro_doc_state"#,
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(Some((min_watermark, snapshot_count)))
+}
+
+/// Re-enqueue the background fan-out for every op past the cursor, applied by
+/// this replay or held by the saved engines, covering
+/// `from_seq < seq <= through_seq`. Returns how many ops it dispatched.
 ///
 /// Applying an op writes `blocks`; it does NOT write `fts_blocks`,
 /// `block_links`, `block_tag_refs` or `blocks.page_id`. Live, those come from
@@ -497,8 +511,8 @@ enum ReplayGranularity {
     PerOp,
 }
 
-/// Walk `op_log WHERE seq > cursor` and enqueue it in chunks as
-/// `ReplayApplyOps` tasks on the materializer's foreground queue.
+/// Walk `op_log WHERE seq > cursor` and enqueue what no saved engine holds, in
+/// chunks, as `ReplayApplyOps` tasks on the materializer's foreground queue.
 ///
 /// Returns a [`ReplayReport`] summarising the pass. The function blocks
 /// until every enqueued op has been processed (via a foreground
@@ -536,6 +550,20 @@ async fn replay_unmaterialized_ops_with(
     let cursor = read_apply_cursor(pool).await?;
     ensure_single_device_op_log(pool).await?;
 
+    // #6521: every saved engine holds this device's ops up to its row's stamp,
+    // and a pass commits all its rows under one stamp or none of them
+    // (`snapshot::write_pass`), so together they hold the ops up to the lowest.
+    // A pass moves the cursor there only once the queue has drained, and a
+    // direct caller of `save_all_engines` saves rows without moving it, so
+    // the cursor can be behind the rows. The ops in
+    // between are not applied again: each would land as a new write, over
+    // whatever a peer wrote to the same block since. They still get their
+    // index fan-out below, which a kill takes with the queue.
+    let held_through = lowest_saved_watermark(pool)
+        .await?
+        .map_or(0, |(seq, _)| seq);
+    let apply_after = cursor.max(held_through);
+
     // Count first so we can log the size before kicking off the walk.
     // The reader pool would be marginally cheaper but the writer pool
     // is the one we own at boot — see fn-level docs.
@@ -553,7 +581,8 @@ async fn replay_unmaterialized_ops_with(
 
     tracing::info!(
         cursor,
-        ops_to_replay = total,
+        apply_after,
+        ops_past_cursor = total,
         "replay: enqueuing unmaterialized ops on foreground queue"
     );
 
@@ -580,9 +609,15 @@ async fn replay_unmaterialized_ops_with(
     // cursor only advances on successful apply).
     let dirty = agaric_engine::apply::kernel::ReplayDirtyParents::new();
 
-    let (last_seen, replay_device_id) =
-        enqueue_ops_for_replay(pool, materializer, cursor, &dirty, granularity, &mut report)
-            .await?;
+    let (last_seen, replay_device_id) = enqueue_ops_for_replay(
+        pool,
+        materializer,
+        apply_after,
+        &dirty,
+        granularity,
+        &mut report,
+    )
+    .await?;
 
     // Drain the foreground queue via a Barrier so the caller observes
     // a fully-applied state on return. Without this, recover_at_boot's
@@ -685,7 +720,7 @@ async fn ensure_single_device_op_log(pool: &SqlitePool) -> Result<(), AppError> 
     Ok(())
 }
 
-/// Enqueue every locally-authored op past `cursor` as `ReplayApplyOps` chunks
+/// Enqueue every locally-authored op past `after` as `ReplayApplyOps` chunks
 /// ([`split_after_cascades`]), carrying `dirty` so each replayed create/move
 /// defers its inline reprojection to the single end-of-replay pass.
 ///
@@ -694,12 +729,12 @@ async fn ensure_single_device_op_log(pool: &SqlitePool) -> Result<(), AppError> 
 async fn enqueue_ops_for_replay(
     pool: &SqlitePool,
     materializer: &Materializer,
-    cursor: i64,
+    after: i64,
     dirty: &agaric_engine::apply::kernel::ReplayDirtyParents,
     granularity: ReplayGranularity,
     report: &mut ReplayReport,
 ) -> Result<(i64, Option<String>), AppError> {
-    let mut last_seen: i64 = cursor;
+    let mut last_seen: i64 = after;
     // #2295 — remember the (single, per the #412 guard above) device id so we
     // can acquire the right per-space engine for the end-of-replay reproject.
     let mut replay_device_id: Option<String> = None;

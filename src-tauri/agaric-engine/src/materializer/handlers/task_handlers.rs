@@ -762,6 +762,8 @@ async fn handle_background_task_inner(
         MaterializeTask::BatchApplyOps(records) | MaterializeTask::ReplayApplyOps(records, _) => {
             reject_batch_apply_ops_in_background_queue(records)
         }
+        // The consumer unpacks it before any task reaches a handler.
+        MaterializeTask::CommitFanOut(_) => misrouted_background_task(task, "commit fan-out"),
         MaterializeTask::Barrier(notify) => {
             notify.notify_one();
             Ok(())

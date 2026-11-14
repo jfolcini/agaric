@@ -1442,7 +1442,7 @@ async fn materializer_processes_background_tasks_after_page_create() {
 
     let bg = mat.metrics().bg_processed.load(Ordering::Relaxed);
     // A `create_block` op with `block_type = "page"` fans out to exactly
-    // 4 background tasks via `dispatch::enqueue_background_tasks`:
+    // 4 background tasks via `dispatch::collect_fan_out`:
     // RebuildPagesCache, UpdateFtsBlock, ReindexBlockLinks, ReindexBlockTagRefs.
     // (#3296: `ReindexBlockLinks` joined the create arm — its handler is the
     // SOLE per-block writer of the `page_link_cache` roll-up, and a page's own

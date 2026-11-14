@@ -44,7 +44,7 @@ pub fn property_changed_events(
 /// has already committed.
 ///
 /// The events go out twice: at once, and again when the background queue has
-/// drained. The agenda's views read `agenda_cache` on this event, and the
+/// settled, the tasks a full queue shed included. The agenda's views read `agenda_cache` on this event, and the
 /// write's rebuild of it runs after the command has answered, so a read that
 /// came before the rebuild is followed by one that comes after (#6567). The
 /// second sending says `after_rebuild`, which the conformance harness reads
@@ -60,8 +60,9 @@ fn emit_property_changed_events<R: tauri::Runtime>(
     let app = app.clone();
     let materializer = materializer.clone();
     tauri::async_runtime::spawn(async move {
-        // Fails only at shutdown, when nothing listens either.
-        if materializer.flush_background().await.is_ok() {
+        // Fails at shutdown, when nothing listens either, or when the retry
+        // queue cannot be read, when no rebuild can be vouched for.
+        if materializer.settle_background().await.is_ok() {
             for event in events {
                 let again = serde_json::json!({
                     "block_id": event.block_id,

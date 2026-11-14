@@ -184,7 +184,9 @@ The primitives wire into the tx lifecycle via a per-tx **revert log** on
   another tx's log). On COMMIT success the detached checkpoints are dropped (the
   ops stay); on an apply error or a failing `commit()` the owner calls
   `DetachedRevert::revert`, which runs `revert_to_frontier` for each recorded
-  space. The `RevertScope`'s `Drop` is a panic-only safety-net for an unwind
+  space and then marks it dirty: a snapshot pass may have exported the engine
+  with the write in it, and the next pass saves it as rewound (#6521). The
+  `RevertScope`'s `Drop` is a panic-only safety-net for an unwind
   between arming and detaching. Together these cover the commit-failure,
   mid-apply-error, and panic paths.
 - **Cursor interaction (design-Q).** Unchanged: an apply advances the cursor

@@ -965,6 +965,55 @@ async fn a_restart_keeps_a_peers_edit_made_after_this_devices_last_op_6521() {
     b.shutdown();
 }
 
+/// #6521 — the same when B's rows were saved and its cursor did not move, as
+/// a direct `save_all_engines` leaves them and as a kill between a pass's rows
+/// and its cursor move does. B's edit of X
+/// is then after the cursor and in the rows, next to A's later edit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restart_with_rows_saved_and_the_cursor_behind_keeps_a_peers_edit_6521() {
+    let (a, mut b, space, _page, x) = paired().await;
+    edit_block_inner(&b.pool, DEV_B, &b.mat, x.clone(), "abcB".into())
+        .await
+        .unwrap();
+    a.pull(&b, &space).await;
+    edit_block_inner(
+        &a.pool,
+        DEV_A,
+        &a.mat,
+        x.clone(),
+        "abcB, and A went on".into(),
+    )
+    .await
+    .unwrap();
+    b.pull(&a, &space).await;
+    agaric_engine::loro::snapshot::save_all_engines(&b.pool, &b.mat.loro_state().registry).await;
+    assert_eq!(
+        b.sql_content(&x).await,
+        "abcB, and A went on",
+        "the fixture"
+    );
+
+    b.kill_and_boot().await;
+
+    assert_eq!(
+        (
+            b.engine_content(&space, &x).as_deref(),
+            b.sql_content(&x).await.as_str()
+        ),
+        (Some("abcB, and A went on"), "abcB, and A went on"),
+        "B still holds A's text after the restart"
+    );
+    a.pull(&b, &space).await;
+    a.mat.flush_background().await.unwrap();
+    assert_eq!(
+        a.sql_content(&x).await,
+        "abcB, and A went on",
+        "and B's restart sent A nothing that undoes it"
+    );
+    a.shutdown();
+    b.shutdown();
+}
+
 /// #6521 — the same for a property, where the replayed write would win as the
 /// newer one: B's last own op sets a value, A changes it afterwards, and B's
 /// session saves that.
