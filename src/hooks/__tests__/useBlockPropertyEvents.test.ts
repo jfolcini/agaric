@@ -205,4 +205,27 @@ describe('useScopedBlockPropertyEvents', () => {
     })
     expect(result.current.invalidationKey).toBe(1)
   })
+
+  // #6567 — the backend repeats the event once the caches are rebuilt. A tree's
+  // batch properties are primary state, which the first sending already read.
+  it('hears the after-rebuild repeat on the global counter only', async () => {
+    const { result } = renderHook(() => ({
+      global: useBlockPropertyEvents(),
+      scoped: useScopedBlockPropertyEvents({ ownsBlock: (blockId) => blockId === 'BLK01' }),
+    }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    act(() => {
+      const handler = eventListeners.get(EVENT_PROPERTY_CHANGED)
+      handler?.({ payload: { block_id: 'BLK01', changed_keys: ['due_date'], after_rebuild: true } })
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150)
+    })
+
+    expect(result.current.global.invalidationKey).toBe(1)
+    expect(result.current.scoped.invalidationKey).toBe(0)
+  })
 })

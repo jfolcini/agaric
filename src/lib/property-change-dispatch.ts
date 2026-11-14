@@ -36,6 +36,8 @@ export { EVENT_PROPERTY_CHANGED }
 export interface PropertyChangedPayload {
   block_id: string
   changed_keys: string[]
+  /** The backend's second sending, once the caches the write staled are rebuilt (#6567). */
+  after_rebuild?: boolean
 }
 
 /**
@@ -45,7 +47,7 @@ export interface PropertyChangedPayload {
  */
 export type PropertyChangeTarget = (payload: PropertyChangedPayload | undefined) => void
 
-const targets = new Set<PropertyChangeTarget>()
+const targets = new Map<PropertyChangeTarget, boolean>()
 let listenerInitialized = false
 
 /**
@@ -53,9 +55,16 @@ let listenerInitialized = false
  * unregister fn. Registration is synchronous and independent of the underlying
  * Tauri `listen()` — call {@link ensurePropertyChangeDispatch} to make sure the
  * one process-lifetime listener is actually wired up.
+ *
+ * Only a target that reads a view the materializer rebuilds in the background
+ * (`agenda_cache`, FTS) passes `readsRebuiltViews`: the `after_rebuild` repeat
+ * tells a reader of primary state nothing its first refetch did not see.
  */
-export function registerPropertyChangeTarget(target: PropertyChangeTarget): () => void {
-  targets.add(target)
+export function registerPropertyChangeTarget(
+  target: PropertyChangeTarget,
+  readsRebuiltViews = false,
+): () => void {
+  targets.set(target, readsRebuiltViews)
   return () => {
     targets.delete(target)
   }
@@ -63,8 +72,8 @@ export function registerPropertyChangeTarget(target: PropertyChangeTarget): () =
 
 /** Fan a payload out to every registered target. */
 function dispatch(payload: PropertyChangedPayload | undefined): void {
-  for (const target of targets) {
-    target(payload)
+  for (const [target, readsRebuiltViews] of targets) {
+    if (payload?.after_rebuild !== true || readsRebuiltViews) target(payload)
   }
 }
 

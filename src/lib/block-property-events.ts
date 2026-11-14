@@ -111,7 +111,7 @@ export function ensureBlockPropertyEventsListener(onError?: (err: unknown) => vo
     targetRegistered = true
     unregisterTarget = registerPropertyChangeTarget(() => {
       recordBlockPropertyChange()
-    })
+    }, true)
   }
   ensurePropertyChangeDispatch(onError)
 }

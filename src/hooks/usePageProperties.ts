@@ -30,7 +30,7 @@ const invalidateChangedPage: PropertyChangeTarget = (payload) => {
   })
 }
 
-// The dispatcher keeps its targets in a Set, so every mount re-adding this one
+// The dispatcher keys its targets by identity, so every mount re-adding this one
 // function is still a single registration; it stays registered for the
 // process, like the dispatcher's own listener.
 function listenForPropertyChanges(): void {
