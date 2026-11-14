@@ -1014,6 +1014,11 @@ export const commands = {
 	 */
 	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppError>(__TAURI_INVOKE("read_logs_for_report", { redact })),
 	/**
+	 *  Tauri command: save `bytes` as `file_name` in the user's Downloads folder.
+	 *  Delegates to [`save_to_downloads_inner`].
+	 */
+	saveToDownloads: (fileName: string, bytes: Base64Bytes) => typedError<null, AppError>(__TAURI_INVOKE("save_to_downloads", { fileName, bytes })),
+	/**
 	 *  Tauri command: let the materializer settle, rebuild every derived artefact
 	 *  from base tables, compare `blocks` with the Loro engine, and report where
 	 *  the live vault disagrees. Reads through the reader pool and engine exports;

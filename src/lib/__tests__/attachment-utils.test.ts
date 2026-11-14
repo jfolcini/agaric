@@ -2,16 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const mockReadAttachmentMeta = vi.hoisted(() => vi.fn())
 const mockReadAttachment = vi.hoisted(() => vi.fn())
+const mockSaveToDownloads = vi.hoisted(() => vi.fn())
 const mockNotifyError = vi.hoisted(() => vi.fn())
 const mockNotifyInfo = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', () => ({
-  commands: { readAttachmentMeta: mockReadAttachmentMeta },
+  commands: { readAttachmentMeta: mockReadAttachmentMeta, saveToDownloads: mockSaveToDownloads },
 }))
 vi.mock('@/lib/ipc-helpers', () => ({ readAttachment: mockReadAttachment }))
 vi.mock('@/lib/notify', () => ({ notify: { error: mockNotifyError, info: mockNotifyInfo } }))
 
-import { formatSize, openAttachmentLink } from '@/lib/attachment-utils'
+import { formatSize, openAttachmentLink, saveBlob } from '@/lib/attachment-utils'
 import { t } from '@/lib/i18n'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
 
@@ -114,6 +115,92 @@ describe('attachment-utils', () => {
       } finally {
         __resetPlatformCacheForTests()
       }
+    })
+  })
+
+  describe('saveBlob', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+      vi.useRealTimers()
+      mockSaveToDownloads.mockReset()
+      __resetPlatformCacheForTests()
+    })
+
+    function onMac(): void {
+      vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel')
+      __resetPlatformCacheForTests()
+    }
+
+    it('clicks a temporary anchor while attached, detaches it, and revokes the URL a tick later', async () => {
+      vi.useFakeTimers()
+      const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:agaric/x')
+      const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+      // The anchor is detached again after the click, so `attached` is read inside it.
+      const clicks: { tag: string; href: string; download: string; attached: boolean }[] = []
+      vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+        this: HTMLAnchorElement,
+      ) {
+        clicks.push({
+          tag: this.tagName,
+          href: this.getAttribute('href') ?? '',
+          download: this.getAttribute('download') ?? '',
+          attached: document.body.contains(this),
+        })
+      })
+      const blob = new Blob(['zip bytes'])
+
+      await saveBlob(blob, 'agaric-export.zip')
+
+      expect(createObjectURL).toHaveBeenCalledWith(blob)
+      expect(clicks).toEqual([
+        { tag: 'A', href: 'blob:agaric/x', download: 'agaric-export.zip', attached: true },
+      ])
+      expect(document.body.querySelector('a')).toBeNull()
+      expect(revokeObjectURL).not.toHaveBeenCalled()
+      vi.runAllTimers()
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:agaric/x')
+      expect(mockSaveToDownloads).not.toHaveBeenCalled()
+    })
+
+    // #6652: WKWebView cancels the anchor's download, so macOS saves through the backend.
+    it('on macOS hands the bytes to the backend and clicks no anchor', async () => {
+      onMac()
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+      mockSaveToDownloads.mockResolvedValue({ status: 'ok', data: null })
+
+      await saveBlob(new Blob(['# Notes\n'], { type: 'text/markdown' }), 'Notes.md')
+
+      expect(mockSaveToDownloads).toHaveBeenCalledWith('Notes.md', btoa('# Notes\n'))
+      expect(click).not.toHaveBeenCalled()
+    })
+
+    it('on macOS rejects when the backend could not save', async () => {
+      onMac()
+      const failure = { kind: 'Io', message: 'disk full' }
+      mockSaveToDownloads.mockResolvedValue({ status: 'error', error: failure })
+
+      await expect(saveBlob(new Blob(['x']), 'x.md')).rejects.toBe(failure)
+    })
+
+    it('on macOS a failed attachment save is toasted', async () => {
+      onMac()
+      mockReadAttachmentMeta.mockResolvedValue({
+        status: 'ok',
+        data: { filename: 'paper.pdf', mime_type: 'application/pdf' },
+      })
+      mockReadAttachment.mockResolvedValue(new Uint8Array([37, 80]))
+      mockSaveToDownloads.mockResolvedValue({
+        status: 'error',
+        error: { kind: 'Io', message: 'disk full' },
+      })
+
+      await openAttachmentLink('01ATT')
+
+      expect(mockSaveToDownloads).toHaveBeenCalledWith('paper.pdf', btoa('%P'))
+      expect(mockNotifyError).toHaveBeenCalledWith(t('attachments.loadFailed'))
+      mockNotifyError.mockReset()
+      mockReadAttachmentMeta.mockReset()
+      mockReadAttachment.mockReset()
     })
   })
 })
