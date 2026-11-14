@@ -1,59 +1,107 @@
-# `packaging/flathub/`: a Flathub submission the maintainer still has to write
+# `packaging/flathub/`: a Flatpak that builds, and a Flathub submission that is still blocked
 
-**Status, checked against Flathub's requirements on 2026-11-13 with release 0.23.0: not submitted, and the files here cannot be submitted as they stand.** Two of [Flathub's requirements](https://docs.flathub.org/docs/for-app-authors/requirements) rule the manifest out:
+**Status, checked against [Flathub's requirements](https://docs.flathub.org/docs/for-app-authors/requirements) on 2026-11-14: not submitted, and not submittable as it stands.** The manifest here now builds Agaric from source in the Flatpak sandbox, and it passes `flatpak-builder-lint`. One requirement still rules it out, and no edit to the file can lift it:
 
-1. **Generative AI policy.** "Flathub manifests must not contain AI-generated or AI-assisted content. Disclosure does not exempt manifests from this restriction." The manifest in this directory was drafted by an AI agent. The same policy forbids an AI tool from opening the submission pull request or writing its commit messages, description, or replies, and it requires the submitter to disclose AI-generated code in the application itself, which reviewers may weigh against the submission.
-2. **Building from source.** "All source available submissions must be built entirely from source code." The manifest here unpacks the release `.deb`.
+> Flathub manifests must not contain AI-generated or AI-assisted content. Disclosure does not exempt manifests from this restriction.
 
-So a submission means the maintainer writes a from-source manifest by hand. What follows is what was measured on 0.23.0 that such a manifest has to account for, then the submission steps. The decision whether to go on is tracked in [#6660](https://github.com/jfolcini/agaric/issues/6660).
+An AI agent wrote [`io.github.jfolcini.Agaric.yml`](io.github.jfolcini.Agaric.yml). Submitting it, or a copy of it, is the maintainer's decision to take against that rule ([#6660](https://github.com/jfolcini/agaric/issues/6660)); the alternative is a manifest the maintainer writes by hand. The same policy has two more duties whichever manifest is used:
+
+- The submitter discloses AI-generated material "in the application or its Flathub packaging", with the affected parts and their extent. That covers the application's code, the MetaInfo file and the desktop file here. Reviewers may reject on it.
+- No AI tool opens the submission pull request or writes its commit messages, description, or replies.
 
 ## What is here
 
 | File | State |
 |------|-------|
-| [`io.github.jfolcini.Agaric.yml`](io.github.jfolcini.Agaric.yml) | The May 2026 draft. Do not submit it (both rules above). It is also stale against 0.23.0: the asset is `Agaric_<version>_amd64.deb`, the desktop file inside it is `Agaric.desktop`, `archive-type: deb` is not a flatpak-builder archive type, and `org.freedesktop.Platform` carries no WebKitGTK. |
-| [`io.github.jfolcini.Agaric.metainfo.xml`](io.github.jfolcini.Agaric.metainfo.xml) | AppStream metadata, valid under `appstreamcli validate`. AI-drafted, so it is either disclosed in the submission or rewritten. Its screenshot is a placeholder (step 5). |
+| [`io.github.jfolcini.Agaric.yml`](io.github.jfolcini.Agaric.yml) | Builds the checkout it sits in, from source and offline, on `org.gnome.Platform` 51 (the latest; it ships the WebKitGTK 4.1 the app links). AI-written: see above. |
+| [`io.github.jfolcini.Agaric.metainfo.xml`](io.github.jfolcini.Agaric.metainfo.xml) | AppStream metadata, valid under `appstreamcli validate`. Its screenshot is a placeholder, which Flathub rejects (step 1). |
+| [`io.github.jfolcini.Agaric.desktop`](io.github.jfolcini.Agaric.desktop) | The desktop file the Flatpak installs. Tauri's own has an empty `Categories=` and `Icon=agaric`. |
+| [`flathub.json`](flathub.json) | Restricts Flathub's build to x86_64, the one Linux architecture a release is built and tested on. |
 
-The app ID is `io.github.jfolcini.Agaric`; the Tauri identifier stays `com.agaric.app`.
+`cargo-sources.json` and `node-sources.json`, which the manifest names, are generated from the two lockfiles and not committed (step 3). The app ID is `io.github.jfolcini.Agaric`; the Tauri identifier stays `com.agaric.app`.
 
-## What a manifest has to account for
+## Permissions, and why each
 
-Measured on the 0.23.0 `.deb` and the source at that tag.
+| `finish-args` | Used for |
+|------|----------|
+| `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc`, `--device=dri` | The window and the webview. |
+| `--socket=pulseaudio` | Playing audio attachments and recording voice notes. |
+| `--share=network` | LAN sync between paired devices (mDNS discovery and QUIC, from the app's own sockets) and link previews. |
+| `--filesystem=xdg-download` | Exports. On Linux a page, attachment or export ZIP is saved by the webview's own download, which writes to the Downloads folder (`saveBlob` in `src/lib/attachment-utils.ts`). |
+| `--talk-name=org.freedesktop.Notifications` | Due-task notifications go to the notification service directly (`notify-rust`), not through the portal. |
+| `--own-name=com.agaric.app.SingleInstance` | The name `tauri-plugin-single-instance` claims. Without it a second launch is not detected and opens a second pool on the same database. |
 
-- **Runtime.** `agaric` links `libwebkit2gtk-4.1` and `libsoup-3.0`, which `org.gnome.Platform` ships and `org.freedesktop.Platform` does not.
-- **Offline build.** Flathub builds have no network: the Cargo workspace under `src-tauri/` and the npm tree need vendored sources (the cargo and node generators in [flatpak-builder-tools](https://github.com/flatpak/flatpak-builder-tools)), and sqlx resolves its compile-time queries from `src-tauri/.sqlx` under `SQLX_OFFLINE=true`.
-- **Two binaries.** `agaric` and the `agaric-mcp` sidecar, installed next to each other.
-- **Architecture.** Releases are built and tested on x86_64 only, so the submission carries a [`flathub.json`](https://docs.flathub.org/docs/for-app-authors/requirements#flathubjson) restricting it, unless aarch64 is built and tested too.
-- **Desktop file and icons.** Tauri's desktop file has an empty `Categories=`, `Icon=agaric` and `MimeType=x-scheme-handler/agaric`; the file and the icons are renamed to the app ID.
-- **Permissions the app uses.** Wayland with X11 fallback, IPC and DRI for the webview; the network, for LAN sync (mDNS and QUIC) and the opt-in Google Calendar push; `--talk-name=org.freedesktop.Notifications`, because Linux notifications go to the notification service directly; `--own-name=com.agaric.app.SingleInstance`, the name `tauri-plugin-single-instance` claims, without which a second launch is not detected and opens a second pool on the same database.
-- **Data directory.** Under Flatpak it is `~/.var/app/io.github.jfolcini.Agaric/data/com.agaric.app/`. Someone coming from the `.deb` or the AppImage moves `~/.local/share/com.agaric.app` there before the first launch; a copy would leave two installs with one sync identity.
-- **Self-update.** Already off under Flatpak (`running_under_flatpak` in `src-tauri/src/lib.rs`), as Flathub requires.
+Nothing else is needed: files are imported and attached through the webview's file chooser, which is the file portal in a sandbox; links and the data folder open through the sandbox's `xdg-open`, which is the OpenURI portal; `agaric://` links arrive through the desktop file's `MimeType`; the database is under `~/.var/app/io.github.jfolcini.Agaric/data/com.agaric.app/`, which every Flatpak owns. There is no keyring and no Google Calendar access to ask for: that integration is gone.
+
+What the sandbox takes away, to check in step 5 and say in the submission if it holds:
+
+- **Launch at login** writes an autostart entry inside the sandbox, where the desktop does not look.
+- **The QR scanner** in pairing needs a camera, which the manifest does not grant.
+- **Self-update** is off under Flatpak (`running_under_flatpak` in `src-tauri/src/lib.rs`), as Flathub requires.
+- **Moving from the `.deb` or the AppImage:** move `~/.local/share/com.agaric.app` to the path above before the first launch. A copy would leave two installs with one sync identity.
 
 ## Submitting
 
-Every step is the maintainer's, by hand.
+Every step is the maintainer's. A release has to contain these files before it can be submitted, so the first submittable release is the one after they merge.
 
-1. Write the manifest and `flathub.json`.
-2. Build and install it, as [Flathub's submission guide](https://docs.flathub.org/docs/for-app-authors/submission) describes:
+1. Before tagging the release: take screenshots of the app's window on Linux, commit them, replace the placeholder in the MetaInfo `<screenshots>` with their URLs pinned to the release's tag (`https://raw.githubusercontent.com/jfolcini/agaric/<version>/…`), and add the `<release>` entry. To try the Flatpak from the checkout first, generate the sources (step 3) and run `flatpak-builder --user --install --force-clean builddir io.github.jfolcini.Agaric.yml`.
 
    ```bash
+   appstreamcli validate packaging/flathub/io.github.jfolcini.Agaric.metainfo.xml
+   desktop-file-validate packaging/flathub/io.github.jfolcini.Agaric.desktop
+   ```
+
+2. After the release: fork `flathub/flathub` with "Copy the master branch only" unchecked, clone it, and branch from `new-pr`. Copy in the manifest and `flathub.json`, and nothing else from here: the MetaInfo and desktop files come from the tag. In the copied manifest the `dir` source, which Flathub's sandboxed build refuses, becomes the release:
+
+   ```yaml
+         - type: git
+           url: https://github.com/jfolcini/agaric.git
+           tag: <version>
+           commit: <output of: git rev-list -n1 <version>>
+   ```
+
+3. Next to that manifest, generate the dependency sources from the tagged lockfiles with the generators in [flatpak-builder-tools](https://github.com/flatpak/flatpak-builder-tools) (the node one needs a checkout with no `node_modules`):
+
+   ```bash
+   python3 <flatpak-builder-tools>/cargo/flatpak-cargo-generator.py <agaric>/src-tauri/Cargo.lock -o cargo-sources.json
+   pipx install "git+https://github.com/flatpak/flatpak-builder-tools.git#subdirectory=node"
+   flatpak-node-generator npm <agaric>/package-lock.json -o node-sources.json
+   ```
+
+4. Build and install, as [Flathub's submission guide](https://docs.flathub.org/docs/for-app-authors/submission) describes:
+
+   ```bash
+   flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
    flatpak install -y flathub org.flatpak.Builder
    flatpak run --command=flathub-build org.flatpak.Builder --install io.github.jfolcini.Agaric.yml
    flatpak run io.github.jfolcini.Agaric
    ```
 
-3. In the running Flatpak, on a Wayland session: write a block and find it after a restart; launch a second time and see the first window focused; pair and sync with another device on the LAN; receive a due-task notification; attach a file and export a page; open an `agaric://` link; run an MCP client through `flatpak run --command=agaric-mcp io.github.jfolcini.Agaric`.
-4. Lint:
+5. In the running Flatpak, on a Wayland session: write a block and find it after a restart; launch a second time and see the first window focused; pair and sync with another device on the LAN; receive a due-task notification; attach a file; export a page and find it in Downloads; play an audio attachment and record a voice note; open an `agaric://` link; run an MCP client through `flatpak run --command=agaric-mcp io.github.jfolcini.Agaric`.
+6. Lint:
 
    ```bash
    flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest io.github.jfolcini.Agaric.yml
    flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo repo
    ```
 
-5. Replace the placeholder in the MetaInfo `<screenshots>` with screenshots of the app's window, committed to this repository and linked by a URL pinned to a tag, and set `<releases>` to the release being submitted.
-6. Fork `flathub/flathub` with "Copy the master branch only" unchecked, branch from `new-pr`, add the manifest and `flathub.json`, and open a pull request against `new-pr` titled "Add io.github.jfolcini.Agaric". Disclose the AI-generated code in the application and any AI-drafted MetaInfo, and explain each permission. Put the pull request's link in #6660.
-7. Once Flathub has created `flathub/io.github.jfolcini.Agaric`, updates go there and never through a new submission ([docs/BUILD.md § After the release is published](../../docs/BUILD.md#after-the-release-is-published)).
+7. Commit the manifest, `flathub.json`, `cargo-sources.json` and `node-sources.json`, push, and open a pull request against `new-pr` titled "Add io.github.jfolcini.Agaric", from the GitHub web interface. Disclose the AI-generated material (top of this file) and explain each permission (the table above). Put the pull request's link in #6660.
 
-## Not validated
+## Every release after acceptance
 
-No Flatpak build has been run, and `flatpak-builder-lint` has not been run on anything here. `appstreamcli validate` passes on the MetaInfo file; `flatpak-builder --show-manifest` parses the draft manifest, which says only that it is well-formed.
+Flathub creates `flathub/io.github.jfolcini.Agaric`; updates go there and never through a new submission. Per release: the `<release>` entry in the MetaInfo file before tagging, then in that repository the manifest's `tag` and `commit`, and both sources files regenerated (step 3). `runtime-version` moves when GNOME retires the runtime, about once a year.
+
+## What was run, and what was not
+
+Run on 2026-11-14 in a container, on the commit that added these files:
+
+- The manifest as it is here, with plain `flatpak-builder`: built from source with no network in the build, against `org.gnome.Platform` 51 with the `rust-stable` and `node24` extensions.
+- The submission form (step 2's `git` source, pinned to that commit) with Flathub's `flathub-build` flags; `flatpak-builder-lint manifest` and `flatpak-builder-lint repo` pass on it. The linter cannot tell that the screenshot is a placeholder; a reviewer can.
+- The installed Flatpak launched under a virtual X display: the window renders, the database is created under `~/.var/app/io.github.jfolcini.Agaric/data/com.agaric.app/`, a second launch exits and leaves one instance, and from inside the sandbox the Downloads folder is writable and Documents is not.
+- `appstreamcli validate` and `desktop-file-validate`.
+
+Not run:
+
+- **Everything else in step 5.** No Wayland session, second device, notification service, sound, or camera: sync, notifications, audio, an export through the webview, `agaric://` links, and the limits listed under the permissions table come from reading the code.
+- **The two generators in step 3.** The session could not run them; the builds used source lists made from the same lockfiles by a stand-in script, with the npm cache filled from plain tarballs.
+- **A build from a release tag.** No release contains these files yet.

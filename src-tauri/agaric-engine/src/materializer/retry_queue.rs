@@ -4151,8 +4151,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Take the writer hostage so every consumer write waits on the 5s
-        // busy_timeout instead of completing.
+        // Take the writer hostage so every consumer write waits for its turn
+        // instead of completing.
         let hostage = agaric_store::db::begin_immediate_logged(&pool, "test_2541_hostage")
             .await
             .unwrap();
@@ -4161,10 +4161,10 @@ mod tests {
         // has drained the (1-element) batch and is stuck inside the handler.
         mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
             .unwrap();
-        // Real-time sleep (not just yields): the consumer's descent into the
-        // blocked SQL write crosses sqlx's worker-thread channel, which
-        // needs wall-clock time, not only scheduler turns. 250ms is far
-        // inside the 5s busy_timeout window the consumer then waits in.
+        // Real-time sleep (not just yields): the consumer reads on sqlx's
+        // worker thread before it asks for the writer, which needs wall-clock
+        // time, not only scheduler turns. It then waits for its turn until
+        // the hostage is dropped.
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
         // Refill the channel to capacity; the consumer is busy, not in

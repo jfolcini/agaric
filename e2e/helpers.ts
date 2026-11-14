@@ -607,10 +607,18 @@ export function activeSuggestionList(page: Page): Locator {
  * retired in favour of the header hamburger, and a closed Sheet mounts
  * nothing — so the hamburger is the mobile equivalent. Accept either, so one
  * helper serves both profiles.
+ *
+ * `includeHidden`: on a first run the welcome dialog opens over the shell and
+ * `aria-hidden`s it, and a role locator then finds no Journal button unless a
+ * poll happened to land before the dialog's lazy chunk did.
  */
 export async function waitForBoot(page: Page) {
   await page.goto('/')
-  const desktopNav = page.getByRole('button', { name: 'Journal', exact: true })
+  const desktopNav = page.getByRole('button', {
+    name: 'Journal',
+    exact: true,
+    includeHidden: true,
+  })
   const mobileTrigger = page.getByTestId('mobile-sidebar-trigger')
   await expect(desktopNav.or(mobileTrigger).first()).toBeVisible()
 }

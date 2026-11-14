@@ -39,7 +39,7 @@
 //! no row holds, until a snapshot pass saves the space. The test oracle for
 //! that is `saved_engine_divergences`, in this module's test builds.
 
-use sqlx::{Sqlite, SqliteConnection, SqlitePool};
+use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::loro::registry::LoroEngineRegistry;
 use crate::loro::revert::{DetachedRevert, RevertLog, RevertScope};
@@ -81,7 +81,7 @@ pub async fn save_deltas(
 /// the save or the commit fails, the transaction rolls back and the engines
 /// are rewound.
 pub async fn commit_with_deltas(
-    tx: sqlx::Transaction<'_, Sqlite>,
+    tx: agaric_store::db::WriteTx,
     registry: &LoroEngineRegistry,
     pending: DetachedRevert,
 ) -> Result<(), AppError> {
@@ -93,7 +93,7 @@ pub async fn commit_with_deltas(
 }
 
 async fn save_and_commit(
-    mut tx: sqlx::Transaction<'_, Sqlite>,
+    mut tx: agaric_store::db::WriteTx,
     registry: &LoroEngineRegistry,
     pending: &DetachedRevert,
 ) -> Result<(), AppError> {
@@ -209,7 +209,7 @@ pub async fn start_replay_boot(pool: &SqlitePool) -> Result<(), AppError> {
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "loro_start_replay_boot").await?;
     clear_marker(&mut tx).await?;
     sqlx::query!("DELETE FROM loro_doc_delta")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     Ok(tx.commit().await?)
 }

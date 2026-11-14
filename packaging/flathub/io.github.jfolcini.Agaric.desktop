@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Agaric
+Comment=Local-first outliner and personal knowledge base
+Exec=agaric %u
+Icon=io.github.jfolcini.Agaric
+Terminal=false
+Categories=Office;
+Keywords=outliner;notes;journal;markdown;
+MimeType=x-scheme-handler/agaric;
+StartupWMClass=agaric

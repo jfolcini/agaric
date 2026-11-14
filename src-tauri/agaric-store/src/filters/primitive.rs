@@ -46,6 +46,9 @@ pub enum FilterPrimitive {
     /// `Tag` is attached-only. This leaf is the one tag: a tag nested under
     /// it does not match.
     TagOrRef { tag: String },
+    /// Block carries `tag`, or a tag nested under it, attached, written inline
+    /// or inherited from an ancestor: the search syntax's `under:`.
+    TagUnder { tag: String },
     /// Shared — block's `parent_id` equals `parent` (its direct children).
     ChildOf { parent: String },
     /// Shared — page name matches the GLOB pattern. `exclude=true`
@@ -585,6 +588,10 @@ pub trait Projection {
         alias: &str,
     ) -> WhereClause;
 
+    fn compile_tag_under(&self, _tag: &str, _alias: &str) -> WhereClause {
+        WhereClause::unsupported()
+    }
+
     // #1280 — shared metadata primitives; default to `unsupported` so a
     // projection only opts in by overriding (currently `BacklinkProjection`).
     fn compile_state(
@@ -686,6 +693,7 @@ pub trait Projection {
         match p {
             FilterPrimitive::Tag { tag } => self.compile_tag(tag, alias),
             FilterPrimitive::TagOrRef { tag } => self.compile_tag_or_ref(tag, alias),
+            FilterPrimitive::TagUnder { tag } => self.compile_tag_under(tag, alias),
             FilterPrimitive::ChildOf { parent } => self.compile_child_of(parent, alias),
             FilterPrimitive::PathGlob { pattern, exclude } => {
                 self.compile_path_glob(pattern, *exclude, alias)
@@ -782,6 +790,8 @@ impl FilterPrimitive {
             // index-backed sub-selects (`block_tags.tag_id` +
             // `idx_block_tag_refs_tag`) — same index-backed tier as `Tag`.
             | FilterPrimitive::TagOrRef { .. }
+            // One more index-backed arm, over `block_tag_inherited`.
+            | FilterPrimitive::TagUnder { .. }
             // `ChildOf` is `b.parent_id = ?`, served by the `parent_id`
             // index — an index-backed equality, same tier as `Tag`.
             | FilterPrimitive::ChildOf { .. }
@@ -839,6 +849,7 @@ impl FilterPrimitive {
             FilterPrimitive::Tag { .. } => "tag",
             // Ref-inclusive tag leaf — shares the `tag` allowed-key with `Tag`.
             FilterPrimitive::TagOrRef { .. } => "tag",
+            FilterPrimitive::TagUnder { .. } => "tag-under",
             // Direct-children structural leaf — advanced-query-only key
             // (see `QUERY_ALLOWED_KEYS`).
             FilterPrimitive::ChildOf { .. } => "child-of",
@@ -1526,6 +1537,18 @@ impl Projection for SearchProjection {
     fn compile_tag(&self, tag: &str, alias: &str) -> WhereClause {
         compile_tag_and_nested(tag, alias)
     }
+    fn compile_tag_under(&self, tag: &str, alias: &str) -> WhereClause {
+        // `under:`: the tag or one nested under it, attached, inline or inherited.
+        WhereClause::new(
+            format!(
+                "{alias}.id IN (SELECT block_id FROM block_tags WHERE tag_id IN ({n}) \
+                 UNION SELECT source_id FROM block_tag_refs WHERE tag_id IN ({n}) \
+                 UNION SELECT block_id FROM block_tag_inherited WHERE tag_id IN ({n}))",
+                n = TAG_AND_NESTED_IDS_SQL
+            ),
+            vec![Bind::Text(tag.to_string()); 3],
+        )
+    }
     fn compile_tag_or_ref(&self, tag: &str, alias: &str) -> WhereClause {
         // Mirrors `compile_tag`'s `b.id` alias (Search's tag leaf, like Pages,
         // keys on `b.id`); ref-inclusive UNION of attached + inline refs.
@@ -1714,6 +1737,7 @@ mod tests {
         let all = [
             FilterPrimitive::Tag { tag: "t".into() },
             FilterPrimitive::TagOrRef { tag: "t".into() },
+            FilterPrimitive::TagUnder { tag: "t".into() },
             FilterPrimitive::ChildOf { parent: "p".into() },
             FilterPrimitive::PathGlob {
                 pattern: "p".into(),
@@ -1794,6 +1818,7 @@ mod tests {
             match prim {
                 FilterPrimitive::Tag { .. }
                 | FilterPrimitive::TagOrRef { .. }
+                | FilterPrimitive::TagUnder { .. }
                 | FilterPrimitive::ChildOf { .. }
                 | FilterPrimitive::PathGlob { .. }
                 | FilterPrimitive::HasProperty { .. }

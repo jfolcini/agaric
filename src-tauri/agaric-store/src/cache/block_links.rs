@@ -425,9 +425,9 @@ pub async fn backfill_block_links(pool: &SqlitePool) -> Result<bool, AppError> {
         scanned,
         now,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
-    crate::derivations::record(&mut *tx, crate::derivations::Derivation::LinkTokens).await?;
+    crate::derivations::record(&mut **tx, crate::derivations::Derivation::LinkTokens).await?;
 
     tx.commit().await?;
 
@@ -447,7 +447,7 @@ pub async fn backfill_block_links(pool: &SqlitePool) -> Result<bool, AppError> {
 pub async fn rederive_block_links(pool: &SqlitePool) -> Result<(), AppError> {
     let mut tx = crate::db::begin_immediate_logged(pool, "block_links_rederive").await?;
     reindex_every_linking_block(&mut tx).await?;
-    crate::derivations::record(&mut *tx, crate::derivations::Derivation::LinkTokens).await?;
+    crate::derivations::record(&mut **tx, crate::derivations::Derivation::LinkTokens).await?;
     tx.commit().await?;
     Ok(())
 }

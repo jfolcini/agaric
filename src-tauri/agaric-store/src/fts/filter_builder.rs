@@ -533,19 +533,14 @@ impl StructuralFilterBuilder {
         let mut leaves = Vec::with_capacity(tags.len());
         let mut binds = Vec::new();
         for tag in tags {
-            if inline_and_inherited {
-                leaves.push(format!(
-                    "b.id IN (SELECT block_id FROM block_tags WHERE tag_id IN ({n}) \
-                     UNION SELECT source_id FROM block_tag_refs WHERE tag_id IN ({n}) \
-                     UNION SELECT block_id FROM block_tag_inherited WHERE tag_id IN ({n}))",
-                    n = crate::filters::primitive::TAG_AND_NESTED_IDS_SQL
-                ));
-                binds.extend(vec![Bind::Text(tag.clone()); 3]);
+            let tag = tag.clone();
+            let wc = SearchProjection.compile(&if inline_and_inherited {
+                FilterPrimitive::TagUnder { tag }
             } else {
-                let wc = SearchProjection.compile(&FilterPrimitive::Tag { tag: tag.clone() });
-                leaves.push(wc.sql);
-                binds.extend(wc.binds);
-            }
+                FilterPrimitive::Tag { tag }
+            });
+            leaves.push(wc.sql);
+            binds.extend(wc.binds);
         }
         let sql = if leaves.is_empty() {
             "0".to_string()

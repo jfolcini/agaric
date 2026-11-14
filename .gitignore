@@ -109,3 +109,7 @@ e2e-tauri/artifacts/
 mutants.out/
 mutants.out.old/
 scan.out/
+
+# Generated from the lockfiles for a Flatpak build (packaging/flathub/README.md)
+packaging/flathub/cargo-sources.json
+packaging/flathub/node-sources.json

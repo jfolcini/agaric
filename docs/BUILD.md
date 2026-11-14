@@ -342,7 +342,7 @@ Useful flags (see `scripts/release.sh --help`):
 ### After the release is published
 
 - **winget:** run `scripts/gen-winget-manifest.sh <version>`, commit `packaging/winget/`, and submit it ([`packaging/winget/README.md`](../packaging/winget/README.md)).
-- **Flathub:** nothing until the app is accepted there ([`packaging/flathub/README.md`](../packaging/flathub/README.md)); from then on, add the `<release>` to the MetaInfo file in the pre-release PR and point the manifest in `flathub/io.github.jfolcini.Agaric` at the new tag.
+- **Flathub:** nothing until the app is accepted there ([`packaging/flathub/README.md`](../packaging/flathub/README.md)); from then on, add the `<release>` to the MetaInfo file in the pre-release PR, and in `flathub/io.github.jfolcini.Agaric` point the manifest at the new tag and commit and regenerate `cargo-sources.json` and `node-sources.json`.
 
 ### What `release.yml` does on tag push
 

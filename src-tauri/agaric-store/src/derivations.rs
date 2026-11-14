@@ -163,7 +163,7 @@ mod tests {
         (Derivation::TagRefTokens, 1, 15_668_115_924_102_391_061),
         (Derivation::Agenda, 1, 12_540_476_427_942_296_593),
         (Derivation::TitleSortKey, 1, 5_063_557_284_513_772_505),
-        (Derivation::PageLink, 1, 7_934_981_724_046_892_647),
+        (Derivation::PageLink, 1, 11_583_657_963_650_717_047),
         (Derivation::TagUsage, 1, 4_696_616_430_259_714_054),
     ];
 

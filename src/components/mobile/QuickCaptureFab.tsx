@@ -20,7 +20,10 @@
  * Behaviour (Material's extended FAB): it hides while an editing toolbar is
  * pinned to the bottom edge (a block, page mode's text or *Edit as Markdown*
  * being edited on touch, `pinned-toolbar.ts`) and while the user scrolls down, and returns on a
- * scroll up, so it never sits on the control under it mid-scroll. That frees it
+ * scroll up, so it never sits on the control under it mid-scroll. It also
+ * hides while the on-screen keyboard is up: the keyboard pans the screen, and
+ * the button lands on whatever follows the focused field, a form's submit
+ * button included. That frees it
  * to sit 1rem from the bottom,
  * stacked on the bottom safe-area inset via `var(--safe-area-bottom)` (see
  * `index.css` — every consumer reads the variable, never `env()` directly).
@@ -81,6 +84,28 @@ function useScrolledUp(enabled: boolean): boolean {
   return up
 }
 
+/** A visual viewport this much shorter than the layout one is a keyboard, not rounding. */
+const KEYBOARD_MIN_PX = 100
+
+/**
+ * Whether the on-screen keyboard is up. Android pans the visual viewport over
+ * a layout viewport that keeps its height, so the bottom-overlap that
+ * `computeKeyboardInset` measures reads 0 here; the height difference does not.
+ * A pinch zoom shortens the visual viewport too, at a scale above 1.
+ */
+function useKeyboardUp(enabled: boolean): boolean {
+  const [up, setUp] = useState(false)
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!enabled || !vv) return
+    const update = () => setUp(vv.scale <= 1 && window.innerHeight - vv.height > KEYBOARD_MIN_PX)
+    update()
+    vv.addEventListener('resize', update)
+    return () => vv.removeEventListener('resize', update)
+  }, [enabled])
+  return up
+}
+
 export function QuickCaptureFab({
   setQuickCaptureOpen,
 }: {
@@ -90,7 +115,8 @@ export function QuickCaptureFab({
   const shouldShowMobileChrome = useShouldShowMobileChrome()
   const toolbarPinned = usePinnedToolbarShown()
   const scrolledUp = useScrolledUp(shouldShowMobileChrome)
-  const shown = scrolledUp && !toolbarPinned
+  const keyboardUp = useKeyboardUp(shouldShowMobileChrome)
+  const shown = scrolledUp && !toolbarPinned && !keyboardUp
 
   // Desktop (or tablet-with-keyboard) sessions use the OS chord — no FAB.
   if (!shouldShowMobileChrome) return null

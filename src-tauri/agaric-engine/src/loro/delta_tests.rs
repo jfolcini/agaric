@@ -184,12 +184,14 @@ async fn a_transaction_whose_delta_cannot_be_saved_rolls_back_and_rewinds_6521()
     create_saved(&pool, &state, SPACE_A, "KEPT").await.unwrap();
     refuse_deltas(&pool).await;
 
-    let mut tx = pool.begin().await.unwrap();
+    let mut tx = agaric_store::db::begin_immediate_logged(&pool, "test_refused_row")
+        .await
+        .unwrap();
     let scope = RevertScope::arm(&state);
     sqlx::query(
         "INSERT INTO app_settings (key, value, updated_at) VALUES ('written_with_the_op', '1', 0)",
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .unwrap();
     state

@@ -113,7 +113,7 @@ Pattern portability between the two surfaces is roughly the intersection of thes
 
 The find-across-pages view supports a small filter vocabulary that mixes freely with free-text and the FTS5 boolean operators. The query string is the canonical model — every chip the UI renders is a projection of the parsed AST, and copy-pasting a query reproduces every filter exactly.
 
-A query block takes the same syntax as its text (`{{query tag:#work state:TODO}}`, [Tags & links](features/tags-and-links.md#inline-query-blocks)), less `under:`, `path:`, `not-path:`, relative dates and free text for now.
+A query block takes the same syntax as its text (`{{query tag:#work state:TODO}}`, [Tags & links](features/tags-and-links.md#inline-query-blocks)) and returns the blocks the search box returns for it; a relative date (`due:this-week`) is read on the day the query runs. The case, whole-word and regex toggles belong to the search box alone.
 
 **Filter-only queries.** A query made up of only filter tokens — no free-text and no regex pattern — still searches: it returns every block matching the filters, most-recent first. For example, `tag:#urgent state:TODO` on its own lists the open `#urgent` blocks. This behaves the same in regex mode: with no pattern there is nothing for the regex to match, so only the filters apply.
 
