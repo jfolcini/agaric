@@ -30,12 +30,13 @@ Stage 1b of #6529, after stage 1a (session 4092) landed `HeadlessApp`. One PR. I
 
 - **`@tauri-apps/api/core` is stubbed suite-wide in vitest.** A test of the seam calls `window.__TAURI_INTERNALS__.invoke`, as the real `invoke` does.
 - **Debug info fills the session's disk.** These builds ran with `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`; the bridge bin is a second feature set of the whole app.
+- **A write emits `block:properties-changed` twice now.** #6724, merged while this was in review prep, follows a date or state write with a second event once the rebuild has run (`after_rebuild`). The bridge's event test counted frames of that event and went red on the merge; it now counts an event only the test emits. A spec on the bridge will see both frames, as the app does.
 - **A page gets a minted id even with a `blockId`.** A tag takes it. Found by probing the bridge, not by reading.
 
 ## Shown red
 
 - The spec on the bridge: `search_blocks` given a fixed nonsense query in its wrapper, the bin rebuilt, `search-nested-result.spec.ts` times out on its result row.
-- `headless_bridge.rs`: a `reset` that does nothing, a `listen` that registers twice, a `reset` that keeps the listening set, and a 320 ms sleep in the swap, each killed by the assertion it was aimed at.
+- `headless_bridge.rs`: a `reset` that does nothing, a `listen` that registers twice, a `reset` that keeps the listening set, and a 320 ms sleep in the swap, each killed by the assertion it was aimed at. The two `listen` mutations were run again after the event test was rewritten.
 - `bridge.test.ts`: plugin commands sent to the bridge, no `listen` request, an error resolved instead of rejected, `emitMockEvent` emitting in the page, no rejection on close, `setupMock` ignoring the URL. Six mutations, six reds.
 
 ## What ran
@@ -43,5 +44,7 @@ Stage 1b of #6529, after stage 1a (session 4092) landed `HeadlessApp`. One PR. I
 `search-nested-result.spec.ts` on the bridge, three times in one worker, on the final code; four spec files on the mock with the variable unset. Both halves of `cargo nextest run --workspace` (4041 and 4034 passed; the `command_integration` binary again after the managed-state change), `SQLX_OFFLINE=true cargo check --workspace --all-targets`, clippy on the workspace and on the bin, `just gen-bindings` and `just gen-sqlx` with no diff, the full vitest suite, `npm run typecheck`, `npm run lint`, `prek run --all-files` and the manual stage.
 
 A reset: 49 ms at the median over 15 runs, 44 to 63 ms, debug build, 4 vCPU. `a_reset_stays_within_its_budget` asserts the median stays at or under 300 ms wherever the Rust tests run.
+
+`main` moved again before the push (six commits). On that merge: `just gen-bindings` with no diff, the offline check, both clippy runs, the `command_integration` binary (357 passed) and the spec on a bridge built from it, three times. The whole suites on that head are CI's.
 
 The whole Playwright lane did not run locally; `e2e/helpers.ts` changed, so CI runs it.

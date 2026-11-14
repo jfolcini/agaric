@@ -93,16 +93,43 @@ fn a_reset_opens_a_fresh_copy_of_the_template() {
     );
 }
 
+/// The payloads of the frames queued for `event`, oldest first. The app emits
+/// on its own schedule too (a write's rebuild follows it with a second
+/// `block:properties-changed`), so a check reads one event's frames, not all.
+fn pushed(events: &mut tokio::sync::broadcast::Receiver<String>, event: &str) -> Vec<Value> {
+    std::iter::from_fn(|| events.try_recv().ok())
+        .map(|frame| serde_json::from_str::<Value>(&frame).expect("a pushed frame is JSON"))
+        .filter(|frame| frame["event"] == event)
+        .map(|frame| frame["payload"].clone())
+        .collect()
+}
+
 #[test]
 fn a_listened_event_is_pushed_once_and_listening_ends_with_the_vault() {
+    // An event no command emits, so every frame for it is this test's own.
+    const PING: &str = "bridge-test:ping";
     let root = tempfile::TempDir::new().unwrap();
     let mut bridge = Bridge::start(root.path()).expect("start the bridge");
     let mut events = bridge.events();
-    let listen = json!({ "op": "listen", "event": "block:properties-changed" });
+    let listen = json!({ "op": "listen", "event": PING });
+    let emit = json!({ "op": "emit", "event": PING, "payload": { "n": 1 } });
 
     // Twice: a page that reloads listens again, and must not hear double.
     call(&mut bridge, listen.clone()).expect("listen");
     call(&mut bridge, listen.clone()).expect("listen again");
+    call(&mut bridge, emit.clone()).expect("emit");
+    assert_eq!(
+        pushed(&mut events, PING),
+        [json!({ "n": 1 })],
+        "an emit request is pushed back, once however often the event was listened to"
+    );
+
+    // What a command's wrapper emits is pushed by the time the command answers.
+    call(
+        &mut bridge,
+        json!({ "op": "listen", "event": "block:properties-changed" }),
+    )
+    .expect("listen");
     let space_id = first_space(&mut bridge);
     let page = create_page(&mut bridge, "a page");
     let block = invoke(
@@ -123,40 +150,25 @@ fn a_listened_event_is_pushed_once_and_listening_ends_with_the_vault() {
         json!({ "blockId": block_id, "state": "TODO" }),
     )
     .expect("set_todo_state");
-    let pushed: Value = serde_json::from_str(&events.try_recv().expect("the command's event"))
-        .expect("a pushed frame is JSON");
     assert_eq!(
-        pushed,
-        json!({
-            "event": "block:properties-changed",
-            "payload": { "block_id": block_id, "changed_keys": ["todo_state"] },
-        }),
-        "the frame carries the event's name and the payload the wrapper emitted"
-    );
-    assert!(events.try_recv().is_err(), "two listens push one frame");
-
-    // An `emit` request reaches the same listeners a backend emit does.
-    let emit = json!({ "op": "emit", "event": "block:properties-changed", "payload": { "n": 1 } });
-    call(&mut bridge, emit.clone()).expect("emit");
-    let pushed: Value =
-        serde_json::from_str(&events.try_recv().expect("the emitted event")).unwrap();
-    assert_eq!(
-        pushed["payload"],
-        json!({ "n": 1 }),
-        "an emit request is pushed back"
+        pushed(&mut events, "block:properties-changed").first(),
+        Some(&json!({ "block_id": block_id, "changed_keys": ["todo_state"] })),
+        "the frame carries the payload the wrapper emitted"
     );
 
     // The next vault's app has no listener until its page asks again.
     call(&mut bridge, json!({ "op": "reset" })).expect("reset");
     call(&mut bridge, emit.clone()).expect("emit after a reset");
-    assert!(
-        events.try_recv().is_err(),
+    assert_eq!(
+        pushed(&mut events, PING),
+        [] as [Value; 0],
         "a reset ends the old vault's listening"
     );
     call(&mut bridge, listen).expect("listen on the new vault");
     call(&mut bridge, emit).expect("emit");
-    assert!(
-        events.try_recv().is_ok(),
+    assert_eq!(
+        pushed(&mut events, PING),
+        [json!({ "n": 1 })],
         "the new vault pushes once it is listened to"
     );
 }
