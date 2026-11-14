@@ -175,7 +175,7 @@ describe('useScrollCaretAboveKeyboard', () => {
     expect(scrollIntoViewSpy).not.toHaveBeenCalled()
   })
 
-  it('adds resize+scroll listeners on focus and removes them on unmount', () => {
+  it('adds a resize listener on focus and removes it on unmount', () => {
     const vv = new FakeVisualViewport(768)
     installVisualViewport(vv)
     const added: string[] = []
@@ -184,9 +184,9 @@ describe('useScrollCaretAboveKeyboard', () => {
     vi.spyOn(vv, 'removeEventListener').mockImplementation((t) => removed.push(t as string))
     const el = elementWithBottom(600)
     const { unmount } = renderHook(() => useScrollCaretAboveKeyboard(refTo(el), true))
-    expect(added.toSorted()).toEqual(['resize', 'scroll'])
+    expect(added).toEqual(['resize'])
     unmount()
-    expect(removed.toSorted()).toEqual(['resize', 'scroll'])
+    expect(removed).toEqual(['resize'])
   })
 
   it('re-applies the scroll when the visualViewport resizes (keyboard opens)', () => {
@@ -200,6 +200,19 @@ describe('useScrollCaretAboveKeyboard', () => {
     vv.height = 468
     vv.dispatchEvent(new Event('resize'))
     expect(scrollBySpy).toHaveBeenCalledWith({ top: 140, left: 0 })
+  })
+
+  it('leaves the page where the reader panned it with the keyboard up (#6790)', () => {
+    const vv = new FakeVisualViewport(468)
+    installVisualViewport(vv)
+    const el = elementWithBottom(600)
+    renderHook(() => useScrollCaretAboveKeyboard(refTo(el), true))
+    scrollIntoViewSpy.mockClear()
+    scrollBySpy.mockClear()
+
+    vv.dispatchEvent(new Event('scroll'))
+    expect(scrollIntoViewSpy).not.toHaveBeenCalled()
+    expect(scrollBySpy).not.toHaveBeenCalled()
   })
 
   it('is inert (does a one-shot nearest scroll, no throw) when visualViewport is absent', async () => {
