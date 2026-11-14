@@ -113,6 +113,12 @@ pub(crate) type SharedEngine = Arc<Mutex<LoroEngine>>;
 pub(crate) struct DirtySpaces {
     stamps: Mutex<HashMap<SpaceId, u64>>,
     mark_seq: AtomicU64,
+    /// Rollback checkpoints recorded and not yet dropped: each is an engine
+    /// that may hold a write whose transaction has neither committed nor been
+    /// rewound. See [`LoroEngineRegistry::no_rewind_since`].
+    open_checkpoints: AtomicUsize,
+    /// Engines rewound so far.
+    rewinds: AtomicU64,
 }
 
 impl DirtySpaces {
@@ -124,7 +130,24 @@ impl DirtySpaces {
             .wrapping_add(1);
         self.stamps.lock().insert(space_id.clone(), stamp);
     }
+
+    pub(crate) fn checkpoint_opened(&self) {
+        self.open_checkpoints.fetch_add(1, Ordering::AcqRel);
+    }
+
+    pub(crate) fn checkpoint_dropped(&self) {
+        self.open_checkpoints.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    pub(crate) fn engine_rewound(&self) {
+        self.rewinds.fetch_add(1, Ordering::AcqRel);
+    }
 }
+
+/// How long [`LoroEngineRegistry::no_rewind_since`] waits for a transaction
+/// that has released the write lock to drop its checkpoints. That takes no
+/// lock and no I/O, so the wait ends in the time the task needs to be polled.
+const CHECKPOINT_SETTLE: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Lazily-instantiated map of `SpaceId -> LoroEngine`.
 ///
@@ -279,6 +302,33 @@ impl LoroEngineRegistry {
     /// [`evict_space`](Self::evict_space) racing its collect→write span.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
+    }
+
+    /// How many engines a rolled-back transaction has rewound. A snapshot pass
+    /// reads it before it collects any engine and hands it back to
+    /// [`Self::no_rewind_since`].
+    pub(crate) fn rewinds(&self) -> u64 {
+        self.dirty.rewinds.load(Ordering::Acquire)
+    }
+
+    /// Whether no engine was rewound since `rewinds` was read, once every
+    /// transaction that wrote an engine has either committed or rewound it
+    /// (#6521). `false` when one has not within [`CHECKPOINT_SETTLE`].
+    ///
+    /// The caller holds the SQL write lock, so no transaction is between its
+    /// first engine write and the end of its commit or rollback. One can still
+    /// be past a commit that failed, or a dropped transaction, and short of
+    /// its rewind: its checkpoints are open until that rewind is done, and
+    /// the rewind is counted before they close.
+    pub(crate) async fn no_rewind_since(&self, rewinds: u64) -> bool {
+        let deadline = tokio::time::Instant::now() + CHECKPOINT_SETTLE;
+        while self.dirty.open_checkpoints.load(Ordering::Acquire) > 0 {
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        self.rewinds() == rewinds
     }
 
     /// #2201 — number of spaces currently dirty (mutated since their last

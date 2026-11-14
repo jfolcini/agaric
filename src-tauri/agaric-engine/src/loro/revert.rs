@@ -83,6 +83,14 @@ struct RevertEntry {
     dirty: Arc<DirtySpaces>,
 }
 
+impl Drop for RevertEntry {
+    /// The transaction has committed, or [`revert_entries`] has rewound the
+    /// engine: either way it no longer holds a write that may yet be undone.
+    fn drop(&mut self) {
+        self.dirty.checkpoint_dropped();
+    }
+}
+
 /// An engine's position before a transaction's first write to it, captured
 /// under the engine lock by
 /// [`for_space_recording`](crate::loro::registry::LoroEngineRegistry::for_space_recording).
@@ -131,6 +139,7 @@ impl RevertLog {
             return; // already captured this space's pre-tx frontier
         }
         let Checkpoint { frontier, since } = checkpoint();
+        dirty.checkpoint_opened();
         entries.push(RevertEntry {
             space_id: space_id.clone(),
             engine: SharedEngine::clone(engine),
@@ -204,9 +213,12 @@ fn revert_entries(entries: Vec<RevertEntry>) {
             }
         }
         // #6521: a snapshot pass may have exported this engine with the
-        // rolled-back writes in it. Marked after the rewind, so whichever
-        // stamp that pass captured is the older one: the space stays dirty and
-        // the next pass saves the engine as it now is.
+        // rolled-back writes in it. Counted before `entry` drops, so a pass
+        // that waited for the checkpoint to close sees the rewind and writes
+        // nothing (`LoroEngineRegistry::no_rewind_since`). Marked after the
+        // rewind, so whichever stamp that pass captured is the older one: the
+        // space stays dirty and the next pass saves the engine as it now is.
+        entry.dirty.engine_rewound();
         entry.dirty.mark(&entry.space_id);
     }
 }

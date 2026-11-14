@@ -306,9 +306,9 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
         };
         // #607 review: capture the clear-generation BEFORE collecting doc
         // handles; `write_pass` checks it before it commits.
-        let generation = registry.generation();
+        let collected = Collected::read(registry);
         let pairs = registry.snapshot_dirty_engines();
-        let written = write_pass(pool, registry, generation, pairs, covered).await?;
+        let written = write_pass(pool, registry, collected, pairs, covered).await?;
         Ok::<_, AppError>((written, applied_through_seq))
     };
     match pass.await {
@@ -343,6 +343,23 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 struct Covered {
     applied_through_seq: i64,
     delta_id: i64,
+}
+
+/// What a pass read of the registry before it collected any engine, checked
+/// again before its rows commit.
+#[derive(Clone, Copy)]
+struct Collected {
+    generation: u64,
+    rewinds: u64,
+}
+
+impl Collected {
+    fn read(registry: &LoroEngineRegistry) -> Self {
+        Self {
+            generation: registry.generation(),
+            rewinds: registry.rewinds(),
+        }
+    }
 }
 
 /// Write one pass's rows and move every other row's stamp up to the pass's,
@@ -386,10 +403,20 @@ struct Covered {
 /// the rows may belong to a wiped or shrunk table: nothing is committed. It is
 /// checked once, last, so that it also covers a pass with no dirty space,
 /// which writes no row and still moves the stamps.
+///
+/// ## The rewind check (#6521)
+///
+/// An export is taken with no lock held, so it can hold the write of a
+/// transaction that is still open. If that transaction rolls back, the row
+/// would hold ops the engine does not, and the next write to commit reuses
+/// their ids: the rewind keeps the peer id. A boot from that row and the
+/// later write's delta would keep the rolled-back write and drop the committed
+/// one. So a pass during which any engine was rewound commits nothing; its
+/// spaces stay dirty, and the next pass exports the engines as rewound.
 async fn write_pass(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
-    generation: u64,
+    collected: Collected,
     pairs: Vec<(SpaceId, u64, Result<Vec<u8>, AppError>)>,
     covered: Covered,
 ) -> Result<Vec<(SpaceId, u64)>, AppError> {
@@ -410,9 +437,14 @@ async fn write_pass(
         .bind(applied_through_seq)
         .execute(&mut *tx)
         .await?;
-    if registry.generation() != generation {
+    if registry.generation() != collected.generation {
         return Err(AppError::Snapshot(
             "the engine registry was cleared or a space evicted mid-pass (#607, #2910)".to_owned(),
+        ));
+    }
+    if !registry.no_rewind_since(collected.rewinds).await {
+        return Err(AppError::Snapshot(
+            "a transaction rolled back an engine write mid-pass (#6521)".to_owned(),
         ));
     }
     tx.commit().await?;
@@ -1015,17 +1047,17 @@ mod tests {
         assert_eq!(registry.dirty_count(), 0, "no dirty space in this pass");
 
         // What `save_all_engines` captures before its collect.
-        let generation = registry.generation();
+        let collected = Collected::read(&registry);
 
         // …and the RESET that lands before the write.
         registry.clear();
         assert_ne!(
             registry.generation(),
-            generation,
+            collected.generation,
             "clear() must bump the generation, or this test proves nothing"
         );
 
-        let pass = write_pass(&pool, &registry, generation, Vec::new(), covering(499)).await;
+        let pass = write_pass(&pool, &registry, collected, Vec::new(), covering(499)).await;
 
         assert!(
             matches!(pass, Err(AppError::Snapshot(_))),
@@ -1145,7 +1177,7 @@ mod tests {
         let pass = write_pass(
             &pool,
             &registry,
-            registry.generation(),
+            Collected::read(&registry),
             pairs,
             covering(500),
         )
@@ -1979,12 +2011,12 @@ mod tests {
     }
 
     /// #6521 — a pass can export an engine while a transaction's write sits in
-    /// it uncommitted. When that transaction rolls back, the engine is
-    /// rewound, and the row the pass wrote holds a block that SQL, the op log
-    /// and the engine do not. The rewind marks the space dirty, so the next
-    /// pass writes the engine as it now is.
+    /// it uncommitted. If that transaction then rolls back, the pass writes
+    /// nothing: its row would hold a block that SQL, the op log and the engine
+    /// do not, under op ids the next committed write reuses. The rewind marks
+    /// the space dirty, so the next pass writes the engine as it now is.
     #[tokio::test]
-    async fn a_pass_that_saved_a_write_which_then_rolled_back_is_saved_over_6521() {
+    async fn a_pass_writes_nothing_when_a_write_it_exported_rolled_back_6521() {
         let (pool, _dir) = fresh_pool().await;
         let space = SpaceId::from_trusted(SPACE_A);
         let state = crate::loro::shared::LoroState::new();
@@ -1997,27 +2029,83 @@ mod tests {
             .engine_mut()
             .apply_create_block("ROLLED_BACK", "content", "never committed", None, 0)
             .expect("create");
-        assert_eq!(
-            save_all_engines(&pool, &state.registry).await.saved,
-            1,
-            "the pass runs while the transaction is open"
-        );
+        // A pass's own steps, with the rollback between its export and its
+        // write: nothing outside a pass can park it there.
+        let collected = Collected::read(&state.registry);
+        let pairs = state.registry.snapshot_dirty_engines();
+        let mut exported = LoroEngine::with_peer_id("device-1").expect("engine");
+        exported
+            .import(pairs[0].2.as_ref().expect("export"))
+            .expect("import");
         assert!(
-            saved_row_holds(&pool, &space, "ROLLED_BACK").await,
+            exported.read_block("ROLLED_BACK").expect("read").is_some(),
             "the fixture: the pass exported the uncommitted write"
         );
         scope.detach().revert();
 
-        save_all_engines(&pool, &state.registry).await;
+        let pass = write_pass(&pool, &state.registry, collected, pairs, covering(0)).await;
 
         assert!(
-            !saved_row_holds(&pool, &space, "ROLLED_BACK").await,
-            "the saved row must not keep a write its transaction rolled back"
+            matches!(pass, Err(AppError::Snapshot(_))),
+            "a pass that exported a rolled-back write must write nothing: {pass:?}"
         );
+        assert!(
+            load_snapshot(&pool, &space).await.expect("load").is_none(),
+            "and no row was committed"
+        );
+
         assert_eq!(
-            state.registry.dirty_count(),
+            save_all_engines(&pool, &state.registry).await.saved,
+            1,
+            "the next pass saves the space the rewind left dirty"
+        );
+        assert!(
+            !saved_row_holds(&pool, &space, "ROLLED_BACK").await,
+            "as the rewound engine holds it"
+        );
+        assert_eq!(state.registry.dirty_count(), 0, "and the space is clean");
+    }
+
+    /// #6521 — a transaction whose commit failed has released the write lock
+    /// and not yet rewound its engine. A pass that takes the lock in that gap
+    /// cannot tell the write from a committed one, so it writes nothing until
+    /// the transaction has settled.
+    #[tokio::test]
+    async fn a_pass_writes_nothing_while_a_write_is_neither_committed_nor_rewound_6521() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let state = crate::loro::shared::LoroState::new();
+
+        let scope = crate::loro::revert::RevertScope::arm(&state);
+        state
+            .registry
+            .for_space_recording(&space, "device-1", &state.revert)
+            .expect("engine")
+            .engine_mut()
+            .apply_create_block("UNSETTLED", "content", "in doubt", None, 0)
+            .expect("create");
+        let pending = scope.detach();
+
+        assert_eq!(
+            save_all_engines(&pool, &state.registry).await.saved,
             0,
-            "and the space is clean once the rewound engine is saved"
+            "a pass must not commit a row while an exported write may still be rewound"
+        );
+        assert!(
+            load_snapshot(&pool, &space).await.expect("load").is_none(),
+            "no row was committed"
+        );
+
+        // The commit path: the checkpoints are dropped, the write stays.
+        drop(pending);
+        assert_eq!(
+            save_all_engines(&pool, &state.registry).await.saved,
+            1,
+            "once the transaction has settled without a rewind, the pass saves the space"
+        );
+        assert!(
+            saved_row_holds(&pool, &space, "UNSETTLED").await,
+            "with the committed write in its row"
         );
     }
 
