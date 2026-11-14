@@ -211,6 +211,10 @@ pub enum SyncEvent {
     /// SQL disagree about a deleted block (#6523). Each report replaces the
     /// last one, so an empty list says every space exports again.
     ExportRefused { space_ids: Vec<String> },
+    /// A purge that arrived by sync would have taken blocks written on this
+    /// device that the purging device had never received (#6561). They are in
+    /// the Trash instead, under one page per title here.
+    LocalTextKept { page_titles: Vec<String> },
 }
 
 /// A [`SyncEvent::Error`] the frontend explains in its own words (#5728).
@@ -260,6 +264,8 @@ pub const EVENT_SYNC_ENDPOINT_BINDING: &str = "sync:endpoint_binding";
 pub const EVENT_SYNC_NETWORK_BLOCKED: &str = "sync:network_blocked";
 /// Payload is [`SyncEvent::ExportRefused`].
 pub const EVENT_SYNC_EXPORT_REFUSED: &str = "sync:export_refused";
+/// Payload is [`SyncEvent::LocalTextKept`]. In `bindings.ts`, like the payload.
+pub const EVENT_SYNC_LOCAL_TEXT_KEPT: &str = "sync:local_text_kept";
 
 // ---------------------------------------------------------------------------
 // mDNS status (#2506) — backfill for the peers/device-management surface
