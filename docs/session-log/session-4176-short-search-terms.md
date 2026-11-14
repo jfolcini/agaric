@@ -42,7 +42,7 @@ The fixture's blocks are about 45 bytes. The scan's cost follows the bytes it re
 
 - The rare-term budget is held at 200 ms, under what the 3x rule gives (500 ms); see the measurement.
 - Replace across pages keeps its three-character floor.
-- The backlink `Contains` filter and the query block's text filter still drop short terms.
+- The backlink `Contains` filter and the query engine's text filter still drop short terms. Since #6779 a query block's free text reaches the latter (`sanitize_fulltext`): a block of only short words is refused, and a short word beside a longer one is dropped.
 - Two non-blocking review notes, left for a follow-up: a non-ASCII short term misses mixed-case content (`яб` does not find `яБ`), since `LIKE` folds ASCII only and the term is tried in four case forms; and `highlight_short_term_rows` computes offsets on raw content, so a longer term split by markup (`foo**bar**`) is left unmarked and the row drops the snippet that marked it.
 
 ## What ran
