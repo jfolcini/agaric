@@ -35,7 +35,7 @@ import {
   readActiveSpaceScope,
   refInclusiveTags,
 } from '@/lib/tauri-mock/handlers/shared'
-import { inheritedTagIds } from '@/lib/tauri-mock/handlers/tags'
+import { inheritedTagIds } from '@/lib/tauri-mock/handlers/shared'
 import { isSavedViewPage } from '@/lib/tauri-mock/page-names'
 import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
 

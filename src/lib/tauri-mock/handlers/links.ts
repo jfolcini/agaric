@@ -38,7 +38,7 @@ import {
   readActiveSpaceScope,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
-import { inheritedTagIds } from '@/lib/tauri-mock/handlers/tags'
+import { inheritedTagIds } from '@/lib/tauri-mock/handlers/shared'
 import { blocks, linkMetadata, pageAliases, properties } from '@/lib/tauri-mock/seed'
 
 /** Does `b` hold `key`: a `block_properties` row, or a set column for a
