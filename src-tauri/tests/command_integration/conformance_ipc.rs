@@ -199,7 +199,7 @@ async fn expand_op_args(
     // Lists of objects that each name blocks: `create_blocks_batch`'s specs,
     // `edit_blocks_batch`'s edits, `link_import_anchors`'s anchors.
     for (list, keys) in [
-        ("specs", &["parentId"][..]),
+        ("specs", &["parentId", "blockId"][..]),
         ("edits", &["blockId"][..]),
         ("anchors", &["page_id", "block_id"][..]),
     ] {

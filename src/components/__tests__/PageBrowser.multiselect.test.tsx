@@ -180,7 +180,12 @@ describe('PageBrowser multi-select', () => {
 
     // #4480 — `delete_blocks_by_ids` replies with a `BatchDeleteResponse`.
     mockPageList({
-      delete_blocks_by_ids: () => ({ deleted_count: 2, affected_page_ids: ['P1', 'P3'] }),
+      delete_blocks_by_ids: () => ({
+        deleted_count: 2,
+        affected_page_ids: ['P1', 'P3'],
+        deleted_at: 1,
+        op_refs: [],
+      }),
     })
     await user.click(screen.getByTestId('page-batch-trash-btn'))
     // #3339 — the batch trash confirms before it cascades.
