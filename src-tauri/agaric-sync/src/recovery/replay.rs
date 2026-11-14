@@ -414,19 +414,13 @@ async fn plan_cursor_rewind(pool: &SqlitePool) -> Result<Option<RewindPlan>, App
 /// The lowest `applied_through_seq` of the saved engines, and how many are
 /// saved. `None` with none.
 async fn lowest_saved_watermark(pool: &SqlitePool) -> Result<Option<(i64, i64)>, AppError> {
-    let snapshot_count: i64 =
-        sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM loro_doc_state"#,)
-            .fetch_one(pool)
-            .await?;
-    if snapshot_count == 0 {
-        return Ok(None);
-    }
-    let min_watermark: i64 = sqlx::query_scalar!(
-        r#"SELECT MIN(applied_through_seq) as "wm!: i64" FROM loro_doc_state"#,
+    let saved = sqlx::query!(
+        r#"SELECT COUNT(*) as "count!: i64", MIN(applied_through_seq) as "lowest: i64"
+           FROM loro_doc_state"#,
     )
     .fetch_one(pool)
     .await?;
-    Ok(Some((min_watermark, snapshot_count)))
+    Ok(saved.lowest.map(|lowest| (lowest, saved.count)))
 }
 
 /// Re-enqueue the background fan-out for every op past the cursor, applied by
