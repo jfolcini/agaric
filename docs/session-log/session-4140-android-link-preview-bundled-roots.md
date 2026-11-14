@@ -44,4 +44,6 @@ Not covered on the host: that `shared_client` applies `with_bundled_roots` under
 
 ## Shipped
 
-One PR for #6763. Ran: the new test and its falsification, the `link_metadata` tests, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny check`, `cargo audit`, and the pre-push verify.
+One PR for #6763, which stays open until the *Pasting a link* line on #6513 has been run on a release APK.
+
+Ran: the new test and its falsification, the `link_metadata` tests, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny check`, `scripts/cargo-audit-guard.sh`, and the pre-push verify through its nextest phase. That phase had one failure in 8130 tests, `agaric-engine import::parse_proptest::normalizing_is_idempotent`: proptest drew an input whose normal form is not a fixed point (a ```` ```math ```` fence, a quoted `$$` and a `~~~math` fence). `import.rs` is untouched here, so the push skipped the verify with that reason and the counterexample went to the orchestrating session.
