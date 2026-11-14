@@ -192,6 +192,40 @@ describe('TagList', () => {
     expect(screen.getByTestId('tag-item-work')).toBeInTheDocument()
   })
 
+  it('nests a tag under the name it shares a prefix with (#6760)', async () => {
+    stubTags([
+      makeTag('T1', 'projects/web/site', 1),
+      makeTag('T2', 'area/home', 2),
+      makeTag('T3', 'projects', 3),
+      makeTag('T4', 'projects/web', 4),
+      makeTag('T5', 'Projects/API', 5),
+    ])
+
+    const { container } = render(<TagList />)
+
+    await screen.findByTestId('tag-item-projects')
+    // `projects` gathers its nested tags where its first one was listed, in
+    // any case, and `area`, a name no tag holds, is a row of its own above
+    // `area/home`.
+    const rows = screen.getAllByRole('listitem')
+    expect(rows.map((row) => `${row.getAttribute('aria-level')} ${row.textContent}`)).toEqual([
+      '1 projects3',
+      '2 web4',
+      '3 site1',
+      '2 API5',
+      '1 area',
+      '2 home2',
+    ])
+    // The full name stays on the tag's button and tooltip; the parent name has no button.
+    expect(screen.getByTestId('tag-item-projects/web/site')).toBeInTheDocument()
+    expect(screen.getByTitle('projects/web/site')).toHaveTextContent('site')
+    expect(within(rows[4] as HTMLElement).queryByRole('button')).not.toBeInTheDocument()
+    expect(
+      within(rows[1] as HTMLElement).getByRole('button', { name: /rename tag/i }),
+    ).toBeVisible()
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
   it('shows empty state when no tags exist', async () => {
     stubTags([])
 

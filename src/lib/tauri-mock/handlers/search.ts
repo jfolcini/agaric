@@ -32,6 +32,7 @@ import {
   ownerSpaceOf,
   readActiveSpaceScope,
   refInclusiveTags,
+  tagAndNestedIds,
 } from '@/lib/tauri-mock/handlers/shared'
 import { inheritedTagIds } from '@/lib/tauri-mock/handlers/tags'
 import { isSavedViewPage } from '@/lib/tauri-mock/page-names'
@@ -1301,6 +1302,7 @@ const SEARCH_STRUCTURAL_FILTER_FIELDS = [
   'propertyFilters',
   'excludedPropertyFilters',
   'lastEdited',
+  'tagAnyOf',
 ] as const
 
 /**
@@ -1615,7 +1617,12 @@ function searchStructuralCandidates(
   const blockTypeFilter = honourBlockType
     ? ((filter['blockTypeFilter'] as string | null | undefined) ?? null)
     : null
-  const tagIds = (filter['tagIds'] as string[] | undefined) ?? []
+  // `tagIds` is ALL-of, each id a group of one; `tagAnyOf` adds its own
+  // groups. A group is the ids that satisfy it: each tag and those nested under it.
+  const tagGroups = [
+    ...((filter['tagIds'] as string[] | undefined) ?? []).map((t) => [t]),
+    ...((filter['tagAnyOf'] as string[][] | undefined) ?? []),
+  ].map((group) => group.flatMap((tag) => [...tagAndNestedIds(tag)]))
   const tagsWiden = filter['tagsMatchInlineAndInherited'] === true
   const includeGlobs = (filter['includePageGlobs'] as string[] | undefined) ?? []
   const excludeGlobs = (filter['excludePageGlobs'] as string[] | undefined) ?? []
@@ -1630,15 +1637,16 @@ function searchStructuralCandidates(
     if (spaceIds !== null && !spaceIds.some((id) => fbqInSpace(b, id))) return false
     if (parentId !== null && ((b['parent_id'] as string | null) ?? null) !== parentId) return false
     if (blockTypeFilter !== null && b['block_type'] !== blockTypeFilter) return false
-    if (tagIds.length > 0) {
-      // ALL semantics over attached tags (`block_tags`), or, with
-      // `tagsMatchInlineAndInherited`, over the tag query's leaf: attached,
-      // inline `#[id]`, or inherited (`add_tags_via_projection`).
+    if (tagGroups.length > 0) {
+      // Every group needs one of its tags, or a tag nested under it, among
+      // the block's attached tags (`block_tags`) or, with
+      // `tagsMatchInlineAndInherited`, its attached, inline `#[id]` and
+      // inherited ones (`add_any_tag_via_projection`).
       const id = b['id'] as string
       const own = tagsWiden
         ? new Set([...refInclusiveTags(id), ...inheritedTagIds(id)])
-        : blockTags.get(id)
-      if (!own || !tagIds.every((t) => own.has(t))) return false
+        : (blockTags.get(id) ?? new Set<string>())
+      if (!tagGroups.every((group) => group.some((t) => own.has(t)))) return false
     }
     if (includeGlobs.length > 0 || excludeGlobs.length > 0) {
       // `b.page_id [NOT ]IN (SELECT page_id FROM pages_cache WHERE LOWER(title)

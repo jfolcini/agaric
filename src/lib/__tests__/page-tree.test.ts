@@ -295,4 +295,23 @@ describe('buildPageTree', () => {
       { name: 'docs', fullPath: 'docs', pageId: 'P4', children: [] },
     ])
   })
+
+  it('merges segments its key calls the same, keeping the first spelling (#6760)', () => {
+    const pages = [
+      { id: 'T1', content: 'projects/web' },
+      { id: 'T2', content: 'Projects/API' },
+    ]
+    expect(buildPageTree(pages, (segment) => segment.toLowerCase())).toEqual([
+      {
+        name: 'projects',
+        fullPath: 'projects',
+        children: [
+          { name: 'web', fullPath: 'projects/web', pageId: 'T1', children: [] },
+          { name: 'API', fullPath: 'Projects/API', pageId: 'T2', children: [] },
+        ],
+      },
+    ])
+    // Pages pass no key: a segment is its exact spelling.
+    expect(buildPageTree(pages).map((node) => node.name)).toEqual(['projects', 'Projects'])
+  })
 })

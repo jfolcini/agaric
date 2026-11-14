@@ -1024,6 +1024,7 @@ const SEARCH_HAS_FILTERS_FIELDS: readonly string[] = [
   'propertyFilters',
   'excludedPropertyFilters',
   'lastEdited',
+  'tagAnyOf',
 ]
 
 function searchFilterOf(args: Record<string, unknown>): Record<string, unknown> {
@@ -3100,6 +3101,7 @@ describe('#3083 conformance-coverage ratchet', () => {
       'excluded_property_filters',
       'property_filters',
       'last_edited',
+      'tag_any_of',
     ])
 
     // The manifest's own field list must be exactly the camelCase of the two

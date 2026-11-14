@@ -1173,6 +1173,7 @@ async fn partitioned_all_filters_populated_executes_cleanly() {
         // partitioned builder alongside every other filter clause.
         last_edited: Some(agaric_store::filters::primitive::LastEditedSpec::Rolling { days: 7 }),
         tags_match_inline_and_inherited: true,
+        tag_any_of: Vec::new(),
     };
 
     // The corpus deliberately does NOT match all of these predicates —

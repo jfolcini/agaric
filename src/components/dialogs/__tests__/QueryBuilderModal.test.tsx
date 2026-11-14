@@ -876,6 +876,18 @@ describe('QueryBuilderModal', () => {
       expect(screen.getByRole('button', { name: /update query/i })).toBeDisabled()
     })
 
+    it('does not open a text query whose tag name stands for its nested tags (#6760)', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_all_tags_in_space') return [{ tag_id: TAG, name: 'work/urgent' }]
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+      render(<QueryBuilderModal {...defaultProps} initialExpression="tag:#work state:TODO" />)
+
+      // Saving the `Or` the name compiles to would freeze it to today's tags.
+      expect(await screen.findByText(/can only be edited as text/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /update query/i })).toBeDisabled()
+    })
+
     it('does not open a text query it cannot hold, and cannot overwrite it', async () => {
       render(<QueryBuilderModal {...defaultProps} initialExpression="state:TODO due:today" />)
 

@@ -121,9 +121,9 @@ A query block takes the same syntax as its text (`{{query tag:#work state:TODO}}
 
 | Token | Meaning | Notes |
 |---|---|---|
-| `tag:#name` | Block carries the tag `name`. | Repeats AND-combine. |
+| `tag:#name` | Block carries the tag `name`, or a tag nested under it (`name/sub`, `name/sub/deeper`), attached. | Repeats AND-combine. `name` need not be a tag itself when tags are nested under it. There is no spelling for the one tag without its nested tags. |
 | `#name` | Bare alias for `tag:#name`. | Equivalent shape. |
-| `under:#name` | Block carries the tag attached, written inline as `#name`, or inherited from its page or a parent block. | What a tag's "Search everything under #tag" link opens (#5679). Repeats AND-combine. Cannot sit beside `tag:#` or a bare `#name`: the whole query's tags widen at once, so those chips turn invalid. |
+| `under:#name` | Block carries the tag, or a tag nested under it, attached, written inline as `#name`, or inherited from its page or a parent block. | What a tag's "Search everything under #tag" link opens (#5679). Repeats AND-combine. Cannot sit beside `tag:#` or a bare `#name`: the whole query's tags widen at once, so those chips turn invalid. |
 | `path:GLOB` | Page-name glob include. | Comma-separated entries OR-combine inside one token. Quote a glob containing spaces: `path:"Meeting Notes/*"` (see *Values with spaces*). |
 | `not-path:GLOB` | Page-name glob exclude. | AND-joined with `path:`. Same quoting rule as `path:`. |
 | `state:VALUE` | Block's `todo_state` is `VALUE`. | Repeats OR-combine (`state IN (…)`). Custom states allowed. `state:none` matches `todo_state IS NULL`. |

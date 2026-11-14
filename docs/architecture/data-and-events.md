@@ -39,9 +39,9 @@ Renames never break references because the link is by ULID, resolved to a curren
 
 ## Tags & inheritance
 
-A tag is a `blocks` row with `block_type = 'tag'`. Hierarchy is naming-convention: `projects/website` creates `projects` as a parent. Queries can include inherited descendants (`include_inherited`).
+A tag is a `blocks` row with `block_type = 'tag'`. Hierarchy is read from the names at query time: a `Tag` filter on `projects` also matches the tags named `projects/…` (`TAG_AND_NESTED_IDS_SQL`), and no row links a tag to its parent. Queries can include inherited descendants (`include_inherited`).
 
-Inheritance is **materialized**, not a recursive CTE — `block_tag_inherited` is maintained incrementally by the materializer. This collapses cross-page tag-query latency from O(depth) to O(1) lookup. Tag-to-tag inheritance (chains across tags) will not ship — it complicates the model without enough payoff.
+Inheritance is **materialized**, not a recursive CTE — `block_tag_inherited` is maintained incrementally by the materializer. This collapses cross-page tag-query latency from O(depth) to O(1) lookup. Tag-to-tag inheritance (chains across tags, written to `block_tag_inherited`) will not ship — it complicates the model without enough payoff.
 
 Inline tag references (`#[ULID]`) are tracked separately in `block_tag_refs`. They contribute to chip counts but do **not** participate in inheritance — the inline ref is a per-block usage, not a category membership.
 

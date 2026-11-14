@@ -422,6 +422,8 @@ export async function searchBlocks(
     tagIds?: string[] | undefined
     /** Match `tagIds` inline and inherited too (`under:#tag`). See `SearchFilter`. */
     tagsMatchInlineAndInherited?: boolean | undefined
+    /** Tag-id groups, one tag of each required. See `SearchFilter`. */
+    tagAnyOf?: string[][] | undefined
     cursor?: string | undefined
     limit?: SafeLimit | undefined
     spaceId: string
@@ -502,6 +504,7 @@ export async function searchBlocks(
         excludedStateFilter: params.excludedStateFilter ?? [],
         excludedPriorityFilter: params.excludedPriorityFilter ?? [],
         tagsMatchInlineAndInherited: params.tagsMatchInlineAndInherited ?? false,
+        ...(params.tagAnyOf ? { tagAnyOf: params.tagAnyOf } : {}),
       }),
       signal,
     ),
