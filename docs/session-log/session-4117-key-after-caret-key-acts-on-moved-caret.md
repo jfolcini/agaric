@@ -1,4 +1,4 @@
-# Session 4115 — a key right after a caret key acts on the moved caret, in blocks and in page mode
+# Session 4117 — a key right after a caret key acts on the moved caret, in blocks and in page mode
 
 The follow-up to #6725 (session 4100). That session's log says the second route to a mid-word split, the one found in Chromium, was "left alone": nobody had reported it and the fix reads a ProseMirror internal. The orchestrating session asked for that claim to be checked and the product fixed if the fix was small and safe. It is, and this is it. #6725 was approved and green when the note arrived, so it merged as it stood and this is its own PR.
 
