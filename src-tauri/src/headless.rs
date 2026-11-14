@@ -8,11 +8,16 @@
 //! `#[tauri::command]` wrapper with the events it emits, and the error's
 //! serialization. Only the transport differs.
 //!
-//! It holds the state [`crate::register_managed_state`] registers and no
-//! more: a command that reads state `setup_app` registers elsewhere (the
-//! mirror, MCP, the mDNS status) is refused by tauri as unmanaged.
+//! [`HeadlessApp::new`] holds the state [`crate::register_managed_state`]
+//! registers and no more; [`HeadlessApp::boot`] adds the recovery status.
+//! Nothing here starts a server, a daemon or a background task, and a command
+//! that reads state [`crate::boot`] registers elsewhere (the mirror, the mDNS
+//! and bind status, MCP) is refused by tauri as unmanaged. Register a state
+//! here when a spec's commands first read it.
 //!
 //! Compiled under `test-util` only, so nothing here ships.
+
+pub mod bridge;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -43,12 +48,78 @@ impl HeadlessApp {
         materializer: crate::materializer::Materializer,
         app_data_dir: &Path,
     ) -> Self {
+        Self::over(
+            pools,
+            device_id,
+            materializer,
+            &agaric_sync::foreground::LifecycleHooks::new(),
+            app_data_dir,
+        )
+    }
+
+    /// The vault in `app_data_dir`, opened as [`crate::boot`] opens one: pools
+    /// and migrations, the device id, the materializer, recovery and the
+    /// space bootstrap. An empty directory becomes a new vault.
+    ///
+    /// Call it from outside an async runtime: the boot phases block on one.
+    ///
+    /// # Errors
+    ///
+    /// Whatever a boot phase returns, as the app's own boot would.
+    pub fn boot(app_data_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        std::fs::create_dir_all(app_data_dir)?;
+        let db_path = app_data_dir.join(crate::db::VAULT_DB_FILE);
+        let (pools, device_id, _endpoint_secret) = crate::init_persistence(&db_path, app_data_dir)?;
+        let (lifecycle, materializer) = crate::build_materializer(&pools, app_data_dir);
+        // Recovery runs once per process, and one process boots many vaults.
+        agaric_sync::recovery::reset_recovery_guard();
+        let report = crate::recover_and_bootstrap(&pools, &device_id, &materializer)?;
+        let headless = Self::over(pools, device_id, materializer, &lifecycle, app_data_dir);
+        // The app asks for it as it boots.
+        crate::surface_recovery_status(&headless.app, &report);
+        Ok(headless)
+    }
+
+    /// Save the engines and close the vault, so its files can be copied or
+    /// removed. Call it from outside an async runtime.
+    pub fn shutdown(self) {
+        let materializer = self
+            .app
+            .state::<crate::materializer::Materializer>()
+            .inner()
+            .clone();
+        let write = self.app.state::<crate::db::WritePool>().0.clone();
+        let read = self.app.state::<crate::db::ReadPool>().0.clone();
+        // The save the app runs when the OS suspends it.
+        tauri::async_runtime::block_on(
+            agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&write, &materializer),
+        );
+        materializer.shutdown();
+        drop(self);
+        tauri::async_runtime::block_on(async {
+            write.close().await;
+            read.close().await;
+        });
+    }
+
+    fn over(
+        pools: crate::db::DbPools,
+        device_id: String,
+        materializer: crate::materializer::Materializer,
+        lifecycle: &agaric_sync::foreground::LifecycleHooks,
+        app_data_dir: &Path,
+    ) -> Self {
         let builder = tauri_specta::Builder::<MockRuntime>::new().commands(agaric_commands!());
         let app = tauri::test::mock_builder()
             .invoke_handler(crate::build_invoke_handler(&builder))
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .expect("build headless app");
         app.manage(HeadlessDataDir(app_data_dir.to_path_buf()));
+        // Before the state: `register_managed_state` hangs the lifecycle
+        // listener on the main window, and warns when there is none.
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+            .build()
+            .expect("build headless webview");
         // Dropped: the flag is the sync daemon's, and no daemon runs here.
         let _sync_cancel_flag = crate::register_managed_state(
             &app,
@@ -56,23 +127,23 @@ impl HeadlessApp {
             device_id,
             materializer,
             Arc::new(agaric_sync::sync_scheduler::SyncScheduler::new()),
-            &agaric_sync::foreground::LifecycleHooks::new(),
+            lifecycle,
         );
-        let webview = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
-            .build()
-            .expect("build headless webview");
         Self { app, webview }
     }
 
-    /// One IPC round trip. `Ok` is the command's JSON response, `Err` the
-    /// serialized error (`{ kind, message, code? }` for an `AppError`).
-    ///
-    /// # Panics
-    ///
-    /// On a response that is not JSON: `read_attachment` answers raw bytes,
-    /// and no caller reads them yet.
-    pub async fn invoke(&self, cmd: &str, args: Value) -> Result<Value, Value> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+    /// Send one IPC request and hand its outcome to `respond`, on whichever
+    /// thread the command finished on. `Ok` is the command's JSON response,
+    /// `Err` the serialized error: `{ kind, message, code? }` for an
+    /// `AppError`, a bare string when the request never reached its command
+    /// or the command answered raw bytes (`read_attachment`), which this
+    /// transport does not carry.
+    pub fn invoke_with(
+        &self,
+        cmd: &str,
+        args: Value,
+        respond: impl FnOnce(Result<Value, Value>) + Send + 'static,
+    ) {
         let request = tauri::webview::InvokeRequest {
             cmd: cmd.to_owned(),
             callback: tauri::ipc::CallbackFn(0),
@@ -85,16 +156,26 @@ impl HeadlessApp {
         let webview: &tauri::Webview<MockRuntime> = self.webview.as_ref();
         webview.clone().on_message(
             request,
-            Box::new(move |_webview, _cmd, response, _callback, _error| {
-                // The receiver is gone only when the caller stopped waiting.
-                let _ = tx.send(response);
+            Box::new(move |_webview, cmd, response, _callback, _error| {
+                respond(match response {
+                    tauri::ipc::InvokeResponse::Ok(body) => {
+                        body.deserialize::<Value>().map_err(|e| {
+                            Value::String(format!("command '{cmd}' answered a non-JSON body: {e}"))
+                        })
+                    }
+                    tauri::ipc::InvokeResponse::Err(e) => Err(e.0),
+                });
             }),
         );
-        match rx.await.expect("the invoke responder ran") {
-            tauri::ipc::InvokeResponse::Ok(body) => Ok(body
-                .deserialize::<Value>()
-                .unwrap_or_else(|e| panic!("command '{cmd}' answered a non-JSON body: {e}"))),
-            tauri::ipc::InvokeResponse::Err(e) => Err(e.0),
-        }
+    }
+
+    /// [`Self::invoke_with`], awaited.
+    pub async fn invoke(&self, cmd: &str, args: Value) -> Result<Value, Value> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.invoke_with(cmd, args, move |outcome| {
+            // The receiver is gone only when the caller stopped waiting.
+            let _ = tx.send(outcome);
+        });
+        rx.await.expect("the invoke responder ran")
     }
 }
