@@ -911,9 +911,10 @@ fn tool_desc_search() -> ToolDescription {
         name: TOOL_SEARCH.to_string(),
         description: "Search one space's blocks by text. `query` is not raw FTS5: every word must \
              appear, as a case-insensitive substring; `\"a phrase\"` matches as written; \
-             `OR` and `NOT` between terms combine them. Words and phrases under 3 characters \
-             are dropped (the index is trigram), so a query of only short words finds \
-             nothing. Hits come best match first. An empty `query` with at least one of \
+             `OR` and `NOT` between terms combine them. A word or phrase under 3 characters \
+             is matched against the raw content instead (the index is trigram), and is left \
+             out beside `OR` or after `NOT`. Hits come best match first; a query of only \
+             short words comes newest first, without snippets. An empty `query` with at least one of \
              `parent_id`, `tag_ids` or `filter` returns the blocks those match, newest \
              first; with none it returns nothing. Rows carry `page_title` (a page's own is its \
              `content`) and a `snippet` with <mark> around the matches; `content` is cut to \

@@ -1042,9 +1042,8 @@ async fn partitioned_over_long_query_is_rejected() {
     // Any tokenise / sanitise work. This supersedes the pre-
     // behaviour where a long sub-trigram-only query was tokenised,
     // sanitised to empty, and short-circuited to an empty response. The
-    // sub-trigram empty-short-circuit itself is still covered by
-    // `partitioned_sub_trigram_only_under_cap_short_circuits` below for
-    // queries that fit under the length cap.
+    // empty short-circuit itself is covered by
+    // `partitioned_query_of_dropped_terms_short_circuits` below.
     let (pool, _dir) = test_pool().await;
     seed_partitioned_fixture(&pool, 3, 3).await;
 
@@ -1070,22 +1069,15 @@ async fn partitioned_over_long_query_is_rejected() {
 }
 
 #[tokio::test]
-async fn partitioned_sub_trigram_only_under_cap_short_circuits() {
-    // A sub-trigram-only query that fits UNDER `MAX_QUERY_LEN`: every
-    // token is a single-character word (sub-trigram length). The
-    // sanitizer drops sub-trigram word tokens (per `sanitize_fts_query`'s
-    // `TRIGRAM_MIN_LEN = 3` filter), leaving the post-sanitised query
-    // empty. The partitioned path then short-circuits to two empty
-    // partitions rather than passing an empty MATCH expression to SQLite.
+async fn partitioned_query_of_dropped_terms_short_circuits() {
+    // Every term here is left out of the query: a short term beside `OR` is
+    // neither in the trigram index nor a required substring (#6752). The
+    // partitioned path then short-circuits to two empty partitions rather
+    // than passing an empty MATCH expression to SQLite.
     let (pool, _dir) = test_pool().await;
     seed_partitioned_fixture(&pool, 3, 3).await;
 
-    // "a a a …" — comfortably under the 4 KiB cap.
-    let short: String = "a ".repeat(100);
-    assert!(
-        short.len() < agaric_store::fts::MAX_QUERY_LEN,
-        "fixture must fit under MAX_QUERY_LEN"
-    );
+    let short = "pa OR bl".to_owned();
 
     let resp = agaric_lib::commands::queries::search_blocks_partitioned_inner(
         &pool,
@@ -1096,15 +1088,15 @@ async fn partitioned_sub_trigram_only_under_cap_short_circuits() {
         None,
     )
     .await
-    .expect("sub-trigram-only query must short-circuit, not error");
+    .expect("a query of dropped terms must short-circuit, not error");
 
     assert!(
         resp.pages.items.is_empty(),
-        "sub-trigram-only query must yield empty pages partition"
+        "a query of dropped terms must yield an empty pages partition"
     );
     assert!(
         resp.blocks.items.is_empty(),
-        "sub-trigram-only query must yield empty blocks partition"
+        "a query of dropped terms must yield an empty blocks partition"
     );
     assert!(!resp.pages.has_more);
     assert!(!resp.blocks.has_more);

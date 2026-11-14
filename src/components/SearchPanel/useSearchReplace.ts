@@ -36,7 +36,7 @@ import { useResolveStore } from '@/stores/resolve'
 
 type ScanQuery = Extract<CompiledQuery, { kind: 'literal' }>
 
-/** The trigram index finds nothing for a shorter text. */
+/** Replace across pages keeps the three-character floor that search dropped (#6752). */
 const MIN_FIND_LENGTH = 3
 
 const CANDIDATE_TOGGLES: SearchToggleState = {

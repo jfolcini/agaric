@@ -15,9 +15,8 @@ use super::tokenizer::{QueryToken, tokenize_query};
 /// ## Rules
 ///
 /// 1. **Quoted phrases** — matched `"..."` in the input are kept as a single
-///    FTS5 phrase token (internal `"` escaped by doubling). Quoted phrases
-///    are *not* subject to the trigram length filter — the user explicitly
-///    asked for them.
+///    FTS5 phrase token (internal `"` escaped by doubling). A phrase under 3
+///    characters emits no trigram, so it follows rule 4.
 /// 2. **`NOT` operator** — preserved as the bare keyword when followed by at
 ///    least one more token. FTS5 `NOT` is a *binary* operator (`A NOT B`):
 ///    a standalone leading `NOT term` (no left operand) is an FTS5 syntax
@@ -26,11 +25,12 @@ use super::tokenizer::{QueryToken, tokenize_query};
 /// 3. **`OR` / `AND` operators** — preserved as bare keywords when they appear
 ///    between two other tokens.
 /// 4. **Trigram length filter (I-Search-2)** — non-operator word tokens
-///    shorter than 3 characters are dropped. The FTS5 table uses the
-///    trigram tokenizer (migration `0006_fts5_trigram.sql`,
+///    shorter than 3 characters are left out of the expression. The FTS5
+///    table uses the trigram tokenizer (migration `0006_fts5_trigram.sql`,
 ///    `tokenize = 'trigram case_sensitive 0'`); tokens with fewer than 3
 ///    characters cannot match anything in the index, so retaining them
-///    would only AND-collapse the whole query to zero hits. The
+///    would only AND-collapse the whole query to zero hits. The search
+///    paths match them by substring instead (`parse_query`). The
 ///    operator-keyword whitelist below is the single exception.
 /// 5. **Everything else** — wrapped in `"..."` with internal `"` escaped.
 ///
@@ -57,9 +57,49 @@ use super::tokenizer::{QueryToken, tokenize_query};
 // (src-tauri/fuzz/fuzz_targets/fts_strip.rs) can reach this via the
 // `agaric_store::fts::sanitize_fts_query` re-export.
 pub fn sanitize_fts_query(query: &str) -> String {
-    /// Trigram tokenizer minimum match length — see migration
-    /// `0006_fts5_trigram.sql` (`tokenize = 'trigram case_sensitive 0'`).
-    const TRIGRAM_MIN_LEN: usize = 3;
+    parse_query(query).match_expr
+}
+
+/// Trigram tokenizer minimum match length — see migration
+/// `0006_fts5_trigram.sql` (`tokenize = 'trigram case_sensitive 0'`).
+const TRIGRAM_MIN_LEN: usize = 3;
+
+/// A search query split by what can answer it.
+pub(in crate::fts) struct ParsedQuery {
+    /// The FTS5 MATCH expression over the terms the trigram index holds;
+    /// empty when the query has none.
+    pub(in crate::fts) match_expr: String,
+    /// The terms under [`TRIGRAM_MIN_LEN`] characters, which the index cannot
+    /// hold: each is a required substring of `blocks.content` (#6752).
+    pub(in crate::fts) short_terms: Vec<String>,
+    /// Every term as typed, for highlighting.
+    pub(in crate::fts) terms: Vec<String>,
+}
+
+/// Whether the short term at `i` is a plain AND-ed operand. Beside an `OR` or
+/// after a `NOT` it is not: a required substring cannot express either, and
+/// requiring the term would invert `cats NOT ab`, so there it is left out.
+fn short_term_stands_alone(tokens: &[QueryToken], i: usize) -> bool {
+    let is_word = |at: Option<usize>, op: &str| {
+        at.and_then(|at| tokens.get(at))
+            .is_some_and(|t| matches!(t, QueryToken::Word(w) if w.eq_ignore_ascii_case(op)))
+    };
+    !is_word(i.checked_sub(1), "OR")
+        && !is_word(Some(i + 1), "OR")
+        && !is_word(i.checked_sub(1), "NOT")
+}
+
+/// Record a short term once: a repeat would only repeat its SQL predicate.
+fn push_short_term(short_terms: &mut Vec<String>, terms: &mut Vec<String>, term: &str) {
+    if !short_terms.iter().any(|seen| seen == term) {
+        short_terms.push(term.to_owned());
+        terms.push(term.to_owned());
+    }
+}
+
+/// Split a raw query into its trigram MATCH expression and its short terms.
+/// [`sanitize_fts_query`] documents the expression's rules.
+pub(in crate::fts) fn parse_query(query: &str) -> ParsedQuery {
     // NFC-normalise the query before tokenisation so an
     // NFC query reaches the NFC-normalised FTS index emitted by
     // `strip_for_fts_with_maps`. Without this, NFD content (macOS
@@ -69,6 +109,8 @@ pub fn sanitize_fts_query(query: &str) -> String {
     let tokens = tokenize_query(&normalised);
     let len = tokens.len();
     let mut output_parts: Vec<String> = Vec::new();
+    let mut short_terms: Vec<String> = Vec::new();
+    let mut terms: Vec<String> = Vec::new();
 
     for (i, token) in tokens.iter().enumerate() {
         match token {
@@ -82,23 +124,17 @@ pub fn sanitize_fts_query(query: &str) -> String {
                 if trimmed.is_empty() {
                     continue;
                 }
-                // #673 — a quoted phrase shorter than a trigram ("ab") emits
-                // ZERO trigram tokens, so its `MATCH` clause returns no rows
-                // and AND-collapses the whole query to nothing — the exact
-                // silent failure the bare-word length filter exists to
-                // prevent. The explicit-quoting "intent" bypass does not
-                // rescue a phrase the index physically cannot represent, so
-                // we drop it (with a warning) rather than letting it zero out
-                // the query. `chars().count()` counts unicode scalars so a
-                // 2-char CJK phrase is measured as 2.
+                // #673 — a phrase under a trigram emits no trigram token, so
+                // its MATCH clause would AND-collapse the query to nothing.
+                // `chars().count()` counts unicode scalars, so a 2-char CJK
+                // phrase is measured as 2.
                 if trimmed.chars().count() < TRIGRAM_MIN_LEN {
-                    tracing::warn!(
-                        phrase = %trimmed,
-                        "fts: dropping sub-trigram quoted phrase (< {TRIGRAM_MIN_LEN} chars); \
-                         the trigram index cannot match it"
-                    );
+                    if short_term_stands_alone(&tokens, i) {
+                        push_short_term(&mut short_terms, &mut terms, trimmed);
+                    }
                     continue;
                 }
+                terms.push(phrase.clone());
                 let escaped = phrase.replace('"', "\"\"");
                 output_parts.push(format!("\"{escaped}\""));
             }
@@ -116,12 +152,17 @@ pub fn sanitize_fts_query(query: &str) -> String {
                     // Whitelisted operator — bypass the trigram length filter.
                     output_parts.push(upper);
                 } else {
-                    // I-Search-2: drop sub-trigram tokens. `word.chars().count()`
-                    // counts unicode scalars (so a 2-character CJK token is
-                    // measured as 2, not by byte length).
+                    // I-Search-2: `chars().count()` counts unicode scalars
+                    // (so a 2-character CJK token is measured as 2, not by
+                    // byte length). A bare `or` outside an operator position
+                    // stays dropped; quote it to search for it.
                     if word.chars().count() < TRIGRAM_MIN_LEN {
+                        if upper != "OR" && short_term_stands_alone(&tokens, i) {
+                            push_short_term(&mut short_terms, &mut terms, word);
+                        }
                         continue;
                     }
+                    terms.push(word.clone());
                     let escaped = word.replace('"', "\"\"");
                     output_parts.push(format!("\"{escaped}\""));
                 }
@@ -180,17 +221,21 @@ pub fn sanitize_fts_query(query: &str) -> String {
         }
     }
 
-    output_parts.join(" ")
+    ParsedQuery {
+        match_expr: output_parts.join(" "),
+        short_terms,
+        terms,
+    }
 }
 
-/// Turn a raw user query into the MATCH expression the FTS entry points run,
-/// or `None` when there is nothing to run — an empty MATCH is an FTS5 syntax
-/// error, so each entry point short-circuits to its own empty result instead.
+/// Parse a raw user query for the FTS entry points, or `None` when it asks
+/// for nothing — an empty MATCH is an FTS5 syntax error, so each entry point
+/// short-circuits to its own empty result instead.
 ///
 /// The length cap runs before the NFC-normalise + tokenise walk, mirroring the
 /// regex path's `MAX_PATTERN_LEN`.
-pub(super) fn prepare_match_expression(query: &str) -> Result<Option<String>, AppError> {
-    // Not redundant with the sanitised-empty check below: it is what keeps a
+pub(super) fn prepare_query(query: &str) -> Result<Option<ParsedQuery>, AppError> {
+    // Not redundant with the parsed-empty check below: it is what keeps a
     // blank query past `MAX_QUERY_LEN` an empty page rather than a validation error.
     if query.trim().is_empty() {
         return Ok(None);
@@ -201,6 +246,6 @@ pub(super) fn prepare_match_expression(query: &str) -> Result<Option<String>, Ap
             query.len()
         )));
     }
-    let sanitized = sanitize_fts_query(query);
-    Ok((!sanitized.is_empty()).then_some(sanitized))
+    let parsed = parse_query(query);
+    Ok((!parsed.match_expr.is_empty() || !parsed.short_terms.is_empty()).then_some(parsed))
 }

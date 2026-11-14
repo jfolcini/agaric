@@ -174,7 +174,7 @@ Agaric's strongest domain. Its index advantage now holds against OG only.
 | Capability | Logseq | Agaric | Status |
 | --- | --- | --- | --- |
 | Full-text search | **OG**: FTS5 with the default `unicode61` tokenizer on desktop, `LIKE` fallback; browser uses Fuse.js. **2.0**: FTS5 with `tokenize="trigram"` in the DB worker since 2024-07-20, `LIKE` for ≤ 2-char queries; 2.0.2 reindex and Unicode fixes (#13475, #13761) | FTS5 trigram, bm25, keyset pagination, same engine on every platform | Better vs OG; tie vs 2.0 |
-| CJK / substring search | **OG: broken**: `unicode61` cannot segment CJK. **2.0: same engine class as Agaric**; CJK behaviour not tested | Substring and CJK via trigram; a word under three characters is dropped from the query (`TRIGRAM_MIN_LEN` in `src-tauri/agaric-store/src/fts/search/sanitizer.rs`), a two-character CJK word included, and the search box says so (#6752) | Better vs OG; tie vs 2.0 (untested) |
+| CJK / substring search | **OG: broken**: `unicode61` cannot segment CJK. **2.0: same engine class as Agaric**; CJK behaviour not tested | Substring and CJK via trigram; a word under three characters (`TRIGRAM_MIN_LEN` in `src-tauri/agaric-store/src/fts/search/sanitizer.rs`), a two-character CJK word included, is found by a scan of block content (#6752) | Better vs OG; tie vs 2.0 (untested) |
 | Semantic search | **2.0**: hybrid vector + keyword (#12710), opt-in, macOS ARM64 only, off by default | **Absent** | Gap |
 | Search filter language | Combine `Ctrl+K` with filters informally | **Inline DSL**: `tag:`, `under:`, `path:`, `not-path:`, `state:`, `not-state:`, `priority:`, `not-priority:`, `due:`, `scheduled:`, `prop:`, `not-prop:` and bare `#tag` (`src/lib/search-query/register.ts`), with validation, chips, autocomplete and a helper popover. Different filter kinds AND; repeated `state:`, `priority:` and `path:` OR; repeated `tag:` and `prop:` AND; `AND` / `OR` / `NOT` act on the free text only (`docs/SEARCH.md`) | Better |
 | Search scope | Pages + blocks, filterable | Space scope, page-name GLOB include/exclude, block-type filter, partitioned palette endpoint: the fields of `SearchFilter` (`src-tauri/agaric-store/src/search_types.rs`); result counts say what they count (#5810) | Better |
@@ -322,7 +322,7 @@ A judgment, not a count: each product is scored 1 to 10 per category on what it 
 | Query system | 9 | 9 | 8 | A board, picked columns, editable table cells, text queries and synced views; no Datalog, AND-only text |
 | Task management | 7 | 8 | 8 | Fixed states, no time tracking |
 | Daily journal | 8 | 7 | 9 | |
-| Search | 5 | 7 | 9 | Terms under three characters are dropped |
+| Search | 5 | 7 | 9 | No semantic search |
 | Templates | 7 | 8 | 8 | `/template` is one transaction and carries properties; not offered in page mode |
 | Spaces | 2 | 3 | 9 | |
 | AI / agent access | 2 | 8 | 9 | |

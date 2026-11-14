@@ -19,6 +19,7 @@ use agaric_core::error::AppError;
 use super::super::metadata_filter::MetadataPredicates;
 use super::constants::{FTS_QUERY_INFO_MS, FTS_QUERY_WARN_MS, SNIPPET_SQL_PROJECTION};
 use super::row::{FtsSearchRow, content_select_expr};
+use super::sanitizer::ParsedQuery;
 
 /// Build the dynamic FTS5 MATCH SQL and execute it, returning the raw
 /// rows in rank order. Reused by both [`search_fts`] (cursor-paginated,
@@ -26,8 +27,8 @@ use super::row::{FtsSearchRow, content_select_expr};
 /// no-cursor, two-partition).
 ///
 /// Callers control:
-/// - `sanitized` — already-[`sanitize_fts_query`]'d MATCH expression.
-///   Caller must short-circuit on empty.
+/// - `query` — the parsed query. Caller must short-circuit when it has
+///   neither a MATCH expression nor a short term.
 /// - `cursor_flag` / `cursor_rank` / `cursor_id` — composite (rank, id)
 ///   cursor. Pass `(None, 0.0, "")` to disable cursor filtering.
 /// - `fetch_limit` — the `LIMIT` value bound at `?5`. Caller is
@@ -52,12 +53,11 @@ use super::row::{FtsSearchRow, content_select_expr};
 ///
 /// [`search_fts`]: super::cursor::search_fts
 /// [`search_fts_partitioned`]: super::partitioned::search_fts_partitioned
-/// [`sanitize_fts_query`]: super::sanitizer::sanitize_fts_query
 /// [`MAX_SEARCH_RESULTS`]: super::constants::MAX_SEARCH_RESULTS
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn fts_fetch_rows(
     pool: &SqlitePool,
-    sanitized: &str,
+    query: &ParsedQuery,
     cursor_flag: Option<i64>,
     cursor_rank: f64,
     cursor_id: &str,
@@ -80,6 +80,7 @@ pub(super) async fn fts_fetch_rows(
     // [`build_fts_fetch`] ONCE and [`execute_fts_fetch`] per window so the SQL
     // assembly + filter compilation are not repeated up to ten times (#2282).
     let prepared = build_fts_fetch(
+        query,
         parent_id,
         tag_ids,
         scope,
@@ -93,7 +94,7 @@ pub(super) async fn fts_fetch_rows(
     execute_fts_fetch(
         pool,
         &prepared,
-        sanitized,
+        &query.match_expr,
         cursor_flag,
         cursor_rank,
         cursor_id,
@@ -118,11 +119,19 @@ pub(super) struct PreparedFtsFetch {
 /// Everything assembled here is INVARIANT across pagination windows: the MATCH
 /// query (`?1`), the `LIMIT` (`?5`), the snippet projection, and every
 /// structural filter (parent / tags / space / globs / block-type / metadata).
+///
+/// A query with no MATCH expression has only short terms (#6752), which the
+/// trigram index cannot answer: it scans `blocks` for them instead, newest
+/// first, and pages on `b.id` alone. It keeps the placeholder layout and the
+/// row shape (a constant rank, no snippet), so every caller pages it as it
+/// pages a MATCH. Beside a MATCH the short terms narrow its rows.
+///
 /// Only the composite cursor (`?2`/`?3`/`?4`), bound later in
 /// [`execute_fts_fetch`], advances between windows — so a paginating caller
 /// builds this once and re-executes per window (#2282).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_fts_fetch(
+    query: &ParsedQuery,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
     scope: &SearchScope,
@@ -187,8 +196,27 @@ pub(super) fn build_fts_fetch(
     // injection-safe and avoids juggling another bound `?N` index through
     // the dynamic filter builder.
     let content_select = content_select_expr(snippet_len);
-    let mut sql = format!(
-        r"SELECT b.id, b.block_type, {content_select}, b.parent_id, b.position,
+    let scans_short_terms = query.match_expr.is_empty();
+    // The scan walks the primary key newest first and stops at the limit, so a
+    // term most blocks hold costs one page and no term costs more than one
+    // pass. Left to itself the planner takes the space index and sorts every
+    // match (`search_blocks (2-char term, …)` in `benches/interactive_slo.rs`).
+    let mut sql = if scans_short_terms {
+        format!(
+            r"SELECT b.id, b.block_type, {content_select}, b.parent_id, b.position,
+                b.deleted_at,
+                b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.page_id,
+                NULL as snippet,
+                0.0 as search_rank
+         FROM blocks b INDEXED BY sqlite_autoindex_blocks_1
+         WHERE b.deleted_at IS NULL
+           AND {NOT_SAVED_VIEW}
+           AND (?2 IS NULL OR b.id < ?4)",
+        )
+    } else {
+        format!(
+            r"SELECT b.id, b.block_type, {content_select}, b.parent_id, b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id,
@@ -202,7 +230,8 @@ pub(super) fn build_fts_fetch(
            AND (?2 IS NULL
                 OR fts.rank > ?3 + (1e-9 * MAX(1.0, ABS(?3)))
                 OR (ABS(fts.rank - ?3) <= (1e-9 * MAX(1.0, ABS(?3))) AND b.id > ?4))",
-    );
+        )
+    };
 
     // M2 (#348) — `StructuralFilterBuilder` owns the dynamic fragment,
     // the running `?N` index, and the ordered bind sequence atomically,
@@ -279,8 +308,14 @@ pub(super) fn build_fts_fetch(
     // spliced (with their ordered binds) into the builder.
     fb.add_metadata(metadata, "b");
 
+    fb.add_content_contains(PREFIX, &query.short_terms);
+
     sql.push_str(fb.sql());
-    sql.push_str("\n         ORDER BY fts.rank, b.id");
+    sql.push_str(if scans_short_terms {
+        "\n         ORDER BY b.id DESC"
+    } else {
+        "\n         ORDER BY fts.rank, b.id"
+    });
     sql.push_str("\n         LIMIT ?5");
 
     PreparedFtsFetch { sql, filter: fb }
@@ -425,6 +460,7 @@ pub(super) async fn execute_fts_fetch(
 #[cfg(test)]
 pub(crate) fn fts_select_prefix_for_test(with_snippet: bool) -> String {
     build_fts_fetch(
+        &super::sanitizer::parse_query("placeholder"),
         None,
         None,
         &SearchScope::AllSpaces,
