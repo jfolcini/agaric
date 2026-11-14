@@ -121,8 +121,8 @@ pub(super) struct PreparedFtsFetch {
 /// structural filter (parent / tags / space / globs / block-type / metadata).
 ///
 /// A query with no MATCH expression has only short terms (#6752), which the
-/// trigram index cannot answer: it scans `blocks` for them instead, newest
-/// first, and pages on `b.id` alone. It keeps the placeholder layout and the
+/// trigram index cannot answer: it walks `blocks` newest first, testing each
+/// block's indexed text for them, and pages on `b.id` alone. It keeps the placeholder layout and the
 /// row shape (a constant rank, no snippet), so every caller pages it as it
 /// pages a MATCH. Beside a MATCH the short terms narrow its rows.
 ///
@@ -300,7 +300,7 @@ pub(super) fn build_fts_fetch(
     // spliced (with their ordered binds) into the builder.
     fb.add_metadata(metadata, "b");
 
-    fb.add_content_contains(PREFIX, &query.short_terms);
+    fb.add_shown_text_contains(PREFIX, &query.short_terms);
 
     sql.push_str(fb.sql());
     sql.push_str(if scans_short_terms {

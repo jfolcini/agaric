@@ -1302,6 +1302,33 @@ async fn short_term_is_a_literal_in_any_letter_case() {
     );
 }
 
+#[tokio::test]
+async fn short_term_matches_the_text_the_editor_shows() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, PAGE_ULID, "page", "Qx hub", None, Some(0)).await;
+    let link = format!("see [[{PAGE_ULID}]]");
+    seed_short_term_blocks(&pool, &[&link, "bold **x**"]).await;
+
+    let ids = |hits: Vec<(String, Vec<(u32, u32)>)>| -> Vec<String> {
+        hits.into_iter().map(|(id, _)| id).collect()
+    };
+    assert_eq!(
+        ids(short_term_hits(&pool, "qx").await),
+        [short_id(0), PAGE_ULID.to_owned()],
+        "a link reads as its page's title"
+    );
+    assert_eq!(
+        ids(short_term_hits(&pool, "PG").await),
+        Vec::<String>::new(),
+        "the inside of a link's id is not text"
+    );
+    assert_eq!(
+        ids(short_term_hits(&pool, "**").await),
+        Vec::<String>::new(),
+        "markup is not text"
+    );
+}
+
 #[test]
 fn a_repeated_short_term_is_scanned_for_once() {
     let parsed = super::search::parse_query("go a go \"a\" going");

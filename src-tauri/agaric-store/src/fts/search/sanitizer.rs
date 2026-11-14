@@ -70,7 +70,7 @@ pub(in crate::fts) struct ParsedQuery {
     /// empty when the query has none.
     pub(in crate::fts) match_expr: String,
     /// The terms under [`TRIGRAM_MIN_LEN`] characters, which the index cannot
-    /// hold: each is a required substring of `blocks.content` (#6752).
+    /// hold: each is a required substring of the block's indexed text (#6752).
     pub(in crate::fts) short_terms: Vec<String>,
     /// Every term as typed, for highlighting.
     pub(in crate::fts) terms: Vec<String>,

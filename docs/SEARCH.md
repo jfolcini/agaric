@@ -333,12 +333,12 @@ A quoted phrase is matched as written, its short words included: `"sprint plan 2
 
 ### Short terms
 
-The full-text index holds three-character runs, so a term of one or two characters (`UI`, `Q3`, `东京`) is not in it. Search finds such a term by scanning block content for it instead (#6752):
+The full-text index holds three-character runs, so a term of one or two characters (`UI`, `Q3`, `东京`) is not in it. Search finds such a term by scanning the same indexed text for it instead (#6752):
 
 - **Alone**, a query of short terms lists the blocks holding all of them, newest first; there is no relevance order.
 - **Beside longer words**, each short term narrows the full-text matches to the blocks that also hold it, in the usual relevance order.
-- Matches are highlighted in the block's whole text, not in a snippet.
-- The scan reads the **raw content**, as the case-sensitive and whole-word toggles do: a two-character run of markup (`**`) or of a link's or tag's underlying reference token can match, and a tag or page name shown in place of a reference cannot.
+- The scan reads the text the editor shows, as full-text search does: a link or tag is its name, and markup and the ids behind references are not text.
+- Matches are highlighted in the block's raw text, so a term found only in a link's or tag's name is found and not highlighted.
 - A short term beside `OR`, or after `NOT`, is left out of the query: only a required term can be scanned for. A bare `or` is read as the operator; quote it (`"or"`) to search for the word.
 - The case-sensitive and whole-word toggles apply to short terms too. Whole word is what makes `ui` find *UI* and not *build*.
 

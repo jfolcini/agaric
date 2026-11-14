@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Real-backend search for a term under three characters (#6752).
 //
-// The trigram index holds no term that short, so the backend scans block
-// content for it. The mock matched a short query by substring before the
+// The trigram index holds no term that short, so the backend scans the
+// indexed text for it. The mock matched a short query by substring before the
 // backend did, so only this lane shows the search returning nothing.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.

@@ -379,8 +379,8 @@ function quotedPhrases(query: string): string[] | null {
 
 /**
  * `parse_query`'s split (`agaric-store/src/fts/search/sanitizer.rs`, #6752):
- * the terms under the trigram floor, each a required substring of the RAW
- * content, and what is left for the index. A query with no short term keeps
+ * the terms under the trigram floor, each a required substring of the indexed
+ * text, and what is left for the index. A query with no short term keeps
  * its one whole-query phrase, so nothing else about the MATCH model moves.
  * Operators are not modelled, here as in {@link matchesFtsIndex}.
  */
@@ -401,9 +401,9 @@ function splitShortTerms(query: string): { phrases: string[]; shortTerms: string
   return { phrases: words.filter((word) => !isShort(word)), shortTerms }
 }
 
-/** `add_content_contains`: the raw content holds every short term, in any case. */
-function holdsShortTerms(content: string | null, shortTerms: string[]): boolean {
-  const folded = foldForFtsIndex(content ?? '')
+/** `add_shown_text_contains`: the indexed text holds every short term, in any case. */
+function holdsShortTerms(stripped: string, shortTerms: string[]): boolean {
+  const folded = foldForFtsIndex(stripped)
   return shortTerms.every((term) => folded.includes(foldForFtsIndex(term)))
 }
 
@@ -2603,8 +2603,8 @@ export const searchHandlers = {
     // #6608 — a query of quoted phrases (`tokenize_query`) matches the blocks
     // holding every phrase, which is what replace across pages sends.
     //
-    // #6752 — a term under the trigram floor is a substring of the raw content
-    // instead, and a query of nothing else pages newest first.
+    // #6752 — a term under the trigram floor is a substring test on the same
+    // indexed text, and a query of nothing else pages newest first.
     const { phrases, shortTerms } = splitShortTerms(query)
     const shortOnly = phrases.length === 0
     const ftsCandidates = candidates
@@ -2612,7 +2612,7 @@ export const searchHandlers = {
       .filter(
         (c) =>
           phrases.every((phrase) => matchesFtsIndex(c.stripped, phrase)) &&
-          holdsShortTerms(c.b['content'] as string | null, shortTerms),
+          holdsShortTerms(c.stripped, shortTerms),
       )
 
     // Arm 4 — every toggle off: the FTS5 candidate set IS the answer,
@@ -2814,7 +2814,7 @@ export const searchHandlers = {
         shortTerms.length === 0
           ? matchesFtsIndex(c.stripped, query)
           : phrases.every((phrase) => matchesFtsIndex(c.stripped, phrase)) &&
-            holdsShortTerms(c.content, shortTerms),
+            holdsShortTerms(c.stripped, shortTerms),
       )
     const pagesAll = matching.filter((c) => isPageTyped(c.b))
     const folded = phrases.length === 0 ? null : foldForFtsIndex(query)

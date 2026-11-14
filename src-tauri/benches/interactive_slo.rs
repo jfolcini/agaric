@@ -4556,8 +4556,8 @@ fn bench_search_blocks_word_query(c: &mut Criterion) {
     assert_under_budget(CMD, &acc, SEARCH_WORD_BUDGET_MS);
 }
 
-/// `search_blocks` on a term under the trigram floor (#6752), which scans block
-/// content newest first: `re` is in the `SEARCH_WORD_BLOCKS` blocks alone, so
+/// `search_blocks` on a term under the trigram floor (#6752), which tests each
+/// block's indexed text newest first: `re` is in the `SEARCH_WORD_BLOCKS` blocks alone, so
 /// the scan reads the whole vault; `ee` is in nearly every block, so it reads
 /// one page; and beside `meeting` the term narrows that word's 10K rows.
 /// Each budget is the smallest 1-2-5 step at least 3x its first `bench-slo` mean.

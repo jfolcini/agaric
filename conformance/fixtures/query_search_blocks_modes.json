@@ -267,8 +267,8 @@
       "cursor": null,
       "error": null,
       "has_more": false,
-      "name": "search_short_term_reads_raw_content",
-      "rows": ["B7"],
+      "name": "search_short_term_skips_markup",
+      "rows": [],
       "total_count": null
     },
     {
@@ -545,7 +545,7 @@
         "query": "no"
       },
       "command": "search_blocks",
-      "comment": "#6752 — a term under the trigram floor has no index entry, so the query scans raw `blocks.content` for it, case-insensitively, `ORDER BY b.id DESC`: `notes` in S6, S3 and S2 and `note` in S4, newest first. A mock that drops the term answers []; one that ranks it as a MATCH returns the rows in `(rank, id)` order.",
+      "comment": "#6752 — a term under the trigram floor has no index entry, so the query scans each block's indexed text for it, case-insensitively, `ORDER BY b.id DESC`: `notes` in S6, S3 and S2 and `note` in S4, newest first. A mock that drops the term answers []; one that ranks it as a MATCH returns the rows in `(rank, id)` order.",
       "name": "search_short_term_alone"
     },
     {
@@ -575,8 +575,9 @@
         "query": "**"
       },
       "command": "search_blocks",
-      "comment": "#6752 — the scan reads RAW content, not the stripped text the index holds: S7's `Sprocket **gad**get inventory` is the one block whose markup carries `**`, which `strip_for_fts` removes. The mirror of `search_fts_stripped_markup`, which finds S7 only in the stripped text.",
-      "name": "search_short_term_reads_raw_content"
+      "comment": "#6752 — the scan reads the text the index holds, not raw content: S7's `Sprocket **gad**get inventory` is the one block carrying `**`, and `strip_for_fts` takes the markup out, so nothing matches. `expect_empty` because the emptiness is the behaviour: a mock that tests raw content answers S7.",
+      "name": "search_short_term_skips_markup",
+      "expect_empty": true
     },
     {
       "args": {

@@ -638,23 +638,33 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// One `AND (b.content LIKE ?N ESCAPE '\' …)` per term: the block's raw
-    /// content holds the term, in any letter case.
-    pub(super) fn add_content_contains(&mut self, prefix: &str, terms: &[String]) {
+    /// `AND EXISTS (…)`: the block's indexed text, the stripped text the
+    /// editor shows, holds every term in any letter case. It reads FTS5's
+    /// content table by `block_id` (`idx_fts_blocks_content_block`), so a walk
+    /// of `blocks` in its own order can test one block at a time; a `LIKE` on
+    /// `fts_blocks` itself would scan the whole index before the first row.
+    pub(super) fn add_shown_text_contains(&mut self, prefix: &str, terms: &[String]) {
+        if terms.is_empty() {
+            return;
+        }
+        let mut holds_term = Vec::new();
         for term in terms {
-            let mut clauses = Vec::new();
+            let mut forms = Vec::new();
             for form in like_case_forms(term) {
                 let escaped = form
                     .replace('\\', "\\\\")
                     .replace('%', "\\%")
                     .replace('_', "\\_");
-                clauses.push(format!("b.content LIKE ?{} ESCAPE '\\'", self.next_param));
+                forms.push(format!("s.c1 LIKE ?{} ESCAPE '\\'", self.next_param));
                 self.next_param += 1;
                 self.binds.push(ScalarBind::Str(format!("%{escaped}%")));
             }
-            self.sql
-                .push_str(&format!("{prefix}({})", clauses.join(" OR ")));
+            holds_term.push(format!("({})", forms.join(" OR ")));
         }
+        self.sql.push_str(&format!(
+            "{prefix}EXISTS (SELECT 1 FROM fts_blocks_content s WHERE s.c0 = b.id AND {})",
+            holds_term.join(" AND ")
+        ));
     }
 
     /// `AND b.id < ?N` keyset cursor predicate when `Some`.
