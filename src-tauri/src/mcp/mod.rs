@@ -368,7 +368,7 @@ pub fn default_mcp_socket_path(
 }
 
 /// The first argument that makes the app's own executable hand over to the
-/// bridge beside it ([`bridge_handover`]). An AppImage's mount path changes
+/// bridge beside it ([`bridge_handover_args`]). An AppImage's mount path changes
 /// every launch, so its agent config runs the AppImage file with this
 /// argument instead of naming the bridge inside the mount.
 pub const BRIDGE_ARG: &str = "agaric-mcp";
