@@ -577,7 +577,7 @@ pub(crate) async fn edit_block_in_tx(
     // entry point. `apply_op_projected` re-derives the `EditBlockPayload` from
     // `op_record.payload` and runs the SAME `apply_edit_block_via_loro`
     // (resolve space → per-space Loro engine apply → IDENTICAL
-    // `UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL`),
+    // `UPDATE blocks SET content = ? WHERE id = ?`, with no `deleted_at` filter, #2909),
     // PLUS the in-tx `reindex_block_links` + `inbound_link_count` recompute the
     // Edit arm of `apply_op_tx` runs (previously deferred to the background
     // `enqueue_edit_background` fan-out on the LOCAL path). We pass

@@ -160,11 +160,11 @@ const CHECKPOINT_SETTLE: std::time::Duration = std::time::Duration::from_millis(
 /// re-encodes ONLY the spaces mutated since their last successful persist,
 /// instead of every registered space.
 ///
-/// Every call to [`for_space`](Self::for_space) marks its space dirty (so
-/// any code path that *might* mutate that engine is counted, including
-/// read-only `for_space` calls — over-marking is harmless because the
-/// extra per-space snapshot is idempotent; the conservative bias is toward
-/// marking, never toward missing a real mutation).
+/// Every [`for_space`](Self::for_space) guard marks its space dirty when it
+/// is dropped, whether or not it wrote: the extra per-space snapshot of a
+/// read is idempotent, and the bias is toward marking, never toward missing
+/// a real mutation. The mark follows the write, so a pass that exported the
+/// engine before the write holds an older stamp and leaves the space dirty.
 /// [`with_engine`](Self::with_engine) marks only when its closure moved the
 /// op log, so the sync paths, which read every space and mostly import
 /// nothing new, leave clean spaces clean (#6525). A space stays dirty
@@ -250,12 +250,13 @@ impl LoroEngineRegistry {
         write: impl FnOnce(&mut LoroEngine) -> T,
     ) -> T {
         let shared = self
-            .shared_for_space(space_id, device_id)
+            .engine_for(space_id, device_id)
             .expect("the fixture's engine");
         let (out, delta) = shared
             .lock()
             .capturing_delta(write)
             .expect("export the fixture's seed");
+        self.mark_dirty(space_id);
         if let Some(delta) = delta {
             self.seeded.lock().push((space_id.clone(), delta));
         }
@@ -355,9 +356,8 @@ impl LoroEngineRegistry {
         self.acquisitions.load(Ordering::Relaxed)
     }
 
-    /// #2201 — mark `space_id` dirty ([`DirtySpaces::mark`]). Called from
-    /// [`for_space`](Self::for_space) and [`with_engine`](Self::with_engine)
-    /// with the map lock already released.
+    /// #2201 — mark `space_id` dirty ([`DirtySpaces::mark`]). Called with no
+    /// map or engine lock held.
     pub(crate) fn mark_dirty(&self, space_id: &SpaceId) {
         self.dirty.mark(space_id);
     }
@@ -408,9 +408,8 @@ impl LoroEngineRegistry {
         // owned guard that keeps the engine alive even if the map entry is
         // concurrently removed (`clear`) or replaced (`install_engine`) —
         // see "Detached engines" in the module docs.
-        Ok(EngineGuard {
-            guard: self.shared_for_space(space_id, device_id)?.lock_arc(),
-        })
+        let guard = self.engine_for(space_id, device_id)?.lock_arc();
+        Ok(self.guarding(space_id, guard))
     }
 
     /// Like [`for_space`](Self::for_space), but ALSO records a rollback
@@ -437,7 +436,7 @@ impl LoroEngineRegistry {
         device_id: &str,
         revert: &crate::loro::revert::RevertLog,
     ) -> Result<EngineGuard, AppError> {
-        let shared = self.shared_for_space(space_id, device_id)?;
+        let shared = self.engine_for(space_id, device_id)?;
         let guard = shared.lock_arc();
         // Only pay the `oplog_frontiers()` capture when a rollback scope is
         // armed AND this is the first time this tx touches this space (a later
@@ -449,29 +448,23 @@ impl LoroEngineRegistry {
                 since: guard.version_vector(),
             }
         });
-        Ok(EngineGuard { guard })
+        Ok(self.guarding(space_id, guard))
     }
 
-    /// [`Self::engine_for`], marking the space dirty. Shared by
-    /// [`for_space`](Self::for_space) and
-    /// [`for_space_recording`](Self::for_space_recording).
-    fn shared_for_space(
+    /// An [`EngineGuard`] over `guard` that marks `space_id` dirty when it is
+    /// dropped.
+    fn guarding(
         &self,
         space_id: &SpaceId,
-        device_id: &str,
-    ) -> Result<SharedEngine, AppError> {
-        let shared = self.engine_for(space_id, device_id)?;
-        // Issue #157 sub-item I / #2201 — `for_space` is the chokepoint
-        // every mutation path for THIS space goes through (cross-space ops
-        // are impossible by construction — see the module docs), so marking
-        // `space_id` dirty here captures exactly the space this call may
-        // mutate. Over-marks (a read-only `for_space` call also marks); the
-        // extra per-space snapshot is idempotent, so the false positive costs
-        // one re-encode — the bias is toward marking, never toward missing a
-        // real mutation. The map guard was dropped in `engine_for`, so this
-        // takes only the short dirty lock (never nested).
-        self.mark_dirty(space_id);
-        Ok(shared)
+        guard: ArcMutexGuard<RawMutex, LoroEngine>,
+    ) -> EngineGuard {
+        EngineGuard {
+            guard,
+            _mark: MarkDirtyOnDrop {
+                dirty: Arc::clone(&self.dirty),
+                space_id: space_id.clone(),
+            },
+        }
     }
 
     /// Run `f` on `space_id`'s engine under its lock, and mark the space dirty
@@ -969,6 +962,22 @@ impl Drop for InboundSync {
 /// critical sections synchronous.
 pub struct EngineGuard {
     guard: ArcMutexGuard<RawMutex, LoroEngine>,
+    /// Declared after `guard`, so it drops once the engine lock is released.
+    _mark: MarkDirtyOnDrop,
+}
+
+/// Marks a space dirty when its [`EngineGuard`] is dropped, after the guard's
+/// write: a snapshot pass that exported the engine before the write captured
+/// an older stamp, so it cannot clear this one (#6521).
+struct MarkDirtyOnDrop {
+    dirty: Arc<DirtySpaces>,
+    space_id: SpaceId,
+}
+
+impl Drop for MarkDirtyOnDrop {
+    fn drop(&mut self) {
+        self.dirty.mark(&self.space_id);
+    }
 }
 
 impl EngineGuard {
@@ -1940,6 +1949,37 @@ mod tests {
         assert_eq!(
             dirty[0].0, a,
             "the single dirty space must be A (the one mutated), never B"
+        );
+    }
+
+    /// #6521 — a snapshot pass that exports an engine while a `for_space`
+    /// caller has not yet written cannot clear that write's dirty flag: the
+    /// guard marks when it is dropped, so the pass holds an older stamp.
+    #[test]
+    fn a_pass_that_collected_before_the_write_leaves_the_space_dirty_6521() {
+        let r = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+        let mut guard = r.for_space(&space, "device-1").expect("for_space");
+        // The pass's atomic cut, taken before the write below.
+        let collected: Vec<(SpaceId, u64)> = r
+            .dirty
+            .stamps
+            .lock()
+            .iter()
+            .map(|(space, stamp)| (space.clone(), *stamp))
+            .collect();
+        guard
+            .engine_mut()
+            .apply_create_block("BLOCK_1", "content", "late", None, 0)
+            .expect("create");
+        drop(guard);
+        for (space, stamp) in collected {
+            r.clear_dirty_if_unchanged(&space, stamp);
+        }
+        assert_eq!(
+            r.dirty_count(),
+            1,
+            "the write came after the pass's collect, so its space stays dirty"
         );
     }
 

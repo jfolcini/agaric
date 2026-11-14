@@ -27,8 +27,8 @@ use agaric_sync::sync_protocol::loro_sync::{
 use super::SpacePlacementSink;
 use crate::commands::{
     BlockEdit, create_block_inner, create_page_in_space_inner, create_space_inner,
-    edit_block_inner, edit_block_inner_with_base, edit_blocks_batch_inner, set_property_inner,
-    set_todo_state_inner,
+    delete_block_inner, edit_block_inner, edit_block_inner_with_base, edit_blocks_batch_inner,
+    restore_block_inner, set_property_inner, set_todo_state_inner,
 };
 use crate::materializer::Materializer;
 use crate::mcp::view_notify::RecordingViewChangeEmitter;
@@ -1204,6 +1204,73 @@ async fn a_restart_keeps_a_peers_property_write_made_after_this_devices_last_op_
     b.shutdown();
 }
 under_both_boots!(a_restart_keeps_a_peers_property_write_made_after_this_devices_last_op_6521);
+
+/// A trashes D, then its parent X, which takes X's other child Y along. A
+/// then restores D: X comes back as D's ancestor and Y stays in the Trash. B,
+/// which imported the deletes before the restore, must leave Y there too. Its
+/// import of X's restore clears X's whole cohort, and Y, whose own delete mark
+/// the restore did not touch, is not among the blocks the import reports: it
+/// came back live on B with no `fts_blocks` or `block_links` row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_imported_restore_leaves_a_sibling_the_restoring_device_kept_in_the_trash() {
+    let (a, b, space, _page, x) = paired(Boot::SavedRows).await;
+    let pull = async || {
+        b.pull(&a, &space).await;
+        b.mat.flush_inbound_rebuilds().await.unwrap();
+    };
+    let child = async |text: &str| {
+        create_block_inner(
+            &a.pool,
+            DEV_A,
+            &a.mat,
+            "content".into(),
+            text.into(),
+            Some(x.clone()),
+            None,
+        )
+        .await
+        .unwrap()
+        .id
+    };
+    let d = child("d").await;
+    let y = child("y").await;
+    let deleted_at = async |device: &Device, id: &BlockId| -> Option<i64> {
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_one(&device.pool)
+            .await
+            .unwrap()
+    };
+
+    delete_block_inner(&a.pool, DEV_A, &a.mat, d.clone())
+        .await
+        .unwrap();
+    let d_deleted_at = deleted_at(&a, &d).await.unwrap();
+    // X's cohort must carry another timestamp than D's.
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    delete_block_inner(&a.pool, DEV_A, &a.mat, x.clone())
+        .await
+        .unwrap();
+    pull().await;
+    restore_block_inner(&a.pool, DEV_A, &a.mat, d.clone(), d_deleted_at)
+        .await
+        .unwrap();
+    pull().await;
+
+    let y_on_a = deleted_at(&a, &y).await;
+    assert!(y_on_a.is_some(), "seed: Y stays in A's Trash");
+    assert_eq!(
+        [
+            deleted_at(&b, &x).await,
+            deleted_at(&b, &d).await,
+            deleted_at(&b, &y).await
+        ],
+        [None, None, y_on_a],
+        "X and D are back on B, and Y is in its Trash as on A"
+    );
+    a.shutdown();
+    b.shutdown();
+}
 
 // ---------------------------------------------------------------------------
 // #6521 — the boot from saved rows against the boot it replaced

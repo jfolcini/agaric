@@ -3195,6 +3195,54 @@ async fn replay_re_derives_per_block_indexes_3298() {
     mat.shutdown();
 }
 
+/// Boot replay hands each chunk's fan-out to the background queue as one
+/// task. Dispatched per op, a replay of a few hundred ops offers the queue
+/// more tasks than it holds before its consumer runs, and the surplus is shed
+/// to the retry queue.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_of_several_hundred_ops_sheds_no_background_task() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    const N: i64 = 450;
+    for i in 1..=N {
+        append_local_op(
+            &pool,
+            "dev-replay-fanout",
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(&format!("SHED_BLK_{i:04}")),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(i),
+                index: None,
+                content: format!("replayed-{i}"),
+            }),
+        )
+        .await
+        .unwrap();
+    }
+
+    let report = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+    assert_eq!(report.ops_replayed, N as u64, "every op replays");
+    mat.flush_background().await.unwrap();
+
+    // dynamic-sql: static SQL, test-only read-back (see above).
+    let indexed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            mat.metrics()
+                .bg_dropped
+                .load(std::sync::atomic::Ordering::Relaxed),
+            indexed,
+        ),
+        (0, N),
+        "the replay shed nothing, and every replayed block is searchable"
+    );
+    mat.shutdown();
+}
+
 /// #2237 — the chunked cursor walk (`REPLAY_CHUNK_SIZE = 200`) was never
 /// exercised beyond a single chunk, so multi-chunk pagination and the
 /// classic chunk-boundary off-by-ones (an op at `seq == last_seen` skipped

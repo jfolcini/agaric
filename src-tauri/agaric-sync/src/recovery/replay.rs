@@ -30,7 +30,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use agaric_core::error::AppError;
-use agaric_engine::materializer::{MaterializeTask, Materializer};
+use agaric_engine::materializer::{CommitOp, MaterializeTask, Materializer};
 use agaric_store::op_log::OpRecord;
 
 /// Chunk size for the op_log read pass. Bounded so a multi-thousand-op
@@ -419,19 +419,13 @@ async fn plan_cursor_rewind(pool: &SqlitePool) -> Result<Option<RewindPlan>, App
 /// The lowest `applied_through_seq` of the saved engines, and how many are
 /// saved. `None` with none.
 async fn lowest_saved_watermark(pool: &SqlitePool) -> Result<Option<(i64, i64)>, AppError> {
-    let snapshot_count: i64 =
-        sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM loro_doc_state"#,)
-            .fetch_one(pool)
-            .await?;
-    if snapshot_count == 0 {
-        return Ok(None);
-    }
-    let min_watermark: i64 = sqlx::query_scalar!(
-        r#"SELECT MIN(applied_through_seq) as "wm!: i64" FROM loro_doc_state"#,
+    let saved = sqlx::query!(
+        r#"SELECT COUNT(*) as "count!: i64", MIN(applied_through_seq) as "lowest: i64"
+           FROM loro_doc_state"#,
     )
     .fetch_one(pool)
     .await?;
-    Ok(Some((min_watermark, snapshot_count)))
+    Ok(saved.lowest.map(|lowest| (lowest, saved.count)))
 }
 
 /// Re-enqueue the background fan-out for every op past the cursor, applied by
@@ -453,9 +447,10 @@ async fn lowest_saved_watermark(pool: &SqlitePool) -> Result<Option<(i64, i64)>,
 /// fan-out for an op that never applied finds no `blocks` row and no-ops — so
 /// no test asserts on them.
 ///
-/// `dispatch_background_or_warn` because the ops are already durably applied:
-/// a saturated queue must not fail the boot, and a shed task persists itself to
-/// `materializer_retry_queue` (#423). NOT `enqueue_full_cache_rebuild`: replay
+/// One `dispatch_commit` per chunk: enqueued per op, a few hundred ops offer
+/// the background queue more tasks than it holds and the surplus is shed. It
+/// logs a failure instead of returning it because the ops are already durably
+/// applied. NOT `enqueue_full_cache_rebuild`: replay
 /// has ops after every kill, a phone's usual exit, and that one-liner would
 /// run nine O(vault) rebuilds for them.
 ///
@@ -494,11 +489,17 @@ async fn fan_out_replayed_ops(
             break;
         }
 
-        for record in &rows {
-            next = next.max(record.seq);
-            materializer.dispatch_background_or_warn(record);
-            dispatched += 1;
-        }
+        let ops: Vec<CommitOp<'_>> = rows
+            .iter()
+            .map(|record| CommitOp {
+                record,
+                block_type: None,
+                move_same_page: None,
+            })
+            .collect();
+        materializer.dispatch_commit(&ops);
+        next = rows.iter().map(|r| r.seq).fold(next, i64::max);
+        dispatched += rows.len();
     }
     Ok(dispatched)
 }
