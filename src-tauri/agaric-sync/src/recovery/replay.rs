@@ -3,7 +3,7 @@
 //! Runs on a boot that built its engines from the snapshots alone: the first
 //! after an update from a build that saved no engine rows, and any that cannot
 //! use the rows it has (#6521). A boot from saved rows applies no op and calls
-//! only [`fan_out_ops_past_the_cursor`].
+//! only `fan_out_ops_past_the_cursor`.
 //!
 //! Walk `op_log WHERE seq > materialized_through_seq`, leave out the
 //! ops every saved snapshot already holds (#6521), and enqueue the rest in
