@@ -168,7 +168,7 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // cohort the cascade reached, not the ids the caller listed.
   delete_blocks_by_ids: {
     idKey: HEADED_ID_KEY,
-    attrs: ['deleted_count'],
+    attrs: ['deleted_at', 'deleted_count'],
     lists: ['affected_page_ids'],
   },
   restore_blocks_by_ids: { idKey: HEADED_ID_KEY, attrs: ['affected_count'], lists: [] },

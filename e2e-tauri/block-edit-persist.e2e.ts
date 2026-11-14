@@ -20,6 +20,7 @@ import {
   NAV_TIMEOUT,
   addBlockWithMarker,
   blockStaticByMarker,
+  caretToEnd,
   navigateTo,
   runScopedMarker,
   waitForAppReady,
@@ -47,7 +48,7 @@ describe('Agaric real-backend edit persistence (#3085) @editor', () => {
     const editor = $('[data-testid="block-editor"] [contenteditable="true"]')
     await editor.waitForDisplayed({ timeout: ACTION_TIMEOUT })
     await editor.click()
-    await browser.keys(['End'])
+    await caretToEnd()
     await browser.keys(SUFFIX.split(''))
     // Commit the edit (Enter flushes editBlock + moves the roving editor on),
     // then Escape out of the fresh sibling editor.

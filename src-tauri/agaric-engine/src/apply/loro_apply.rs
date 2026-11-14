@@ -923,7 +923,8 @@ pub(crate) enum SeedRank<'a> {
     /// By their legacy `position` stamps, as a create op does: the seed at
     /// space assignment. Not by SQL there: a page's seed renumbers its group
     /// without the nested pages it stops at (#5239), so a nested page seeded
-    /// later would tie the sibling renumbered into its rank.
+    /// later would tie the sibling renumbered into its rank. A top-level
+    /// block is not ranked at all: it goes after the last root.
     Stamp,
     /// By their SQL `position` (#5670): a repair seeds among siblings whose
     /// stamps a later move left stale. It seeds the blocks in `only`, and
@@ -933,11 +934,24 @@ pub(crate) enum SeedRank<'a> {
     },
 }
 
+/// A parent group [`seed_nodes_into_engine`] seeded into.
+struct SeededGroup {
+    parent: Option<String>,
+    /// The group's order after the seed, from index `offset` on.
+    order: Vec<String>,
+    offset: usize,
+    /// The index, in the whole group, of the first block seeded into it.
+    first_seeded: usize,
+}
+
 /// [`hydrate_page_subtree_into_engine`]'s synchronous engine seed, ranking
-/// siblings by `sql_ranks` (keyed by id) when given, else by their stamps.
+/// siblings by `sql_ranks` (keyed by id) when given, else by their stamps,
+/// and a top-level block after every root (`LoroEngine::apply_append_root_block`).
 /// With `only`, see [`SeedRank::Sql`].
-/// Returns the post-seed sibling order of every parent group actually touched,
-/// each with the index of the first block this call seeded into it.
+/// Returns the post-seed sibling order of every parent group actually touched.
+/// The root group's starts at the block before the first one seeded, the one
+/// `reproject_dense_tail` checks: a space's root holds every page and tag it
+/// has, and a seed there changes no rank before its own.
 fn seed_nodes_into_engine(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
@@ -945,15 +959,16 @@ fn seed_nodes_into_engine(
     nodes: &[SeedNode],
     sql_ranks: Option<&std::collections::HashMap<String, i64>>,
     only: Option<&std::collections::HashSet<String>>,
-) -> Result<Vec<(Vec<String>, usize)>, AppError> {
+) -> Result<Vec<SeededGroup>, AppError> {
     let mut guard = state
         .registry
         .for_space_recording(space_id, device_id, &state.revert)?;
     let engine = guard.engine_mut();
     let mut touched_parents: Vec<Option<String>> = Vec::new();
     let mut seeded: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut roots_before = None;
     for n in nodes {
-        if engine.read_block(&n.id)?.is_some() {
+        if engine.contains_block(&n.id) {
             continue;
         }
         let parent_id = n.parent_id.as_deref();
@@ -962,8 +977,8 @@ fn seed_nodes_into_engine(
         }) {
             continue;
         }
-        match sql_ranks {
-            Some(ranks) => engine.apply_seed_block(
+        match (sql_ranks, parent_id) {
+            (Some(ranks), _) => engine.apply_seed_block(
                 &n.id,
                 &n.block_type,
                 &n.content,
@@ -971,7 +986,11 @@ fn seed_nodes_into_engine(
                 n.position,
                 ranks,
             )?,
-            None => engine.apply_create_block(
+            (None, None) => {
+                roots_before.get_or_insert_with(|| engine.root_count());
+                engine.apply_append_root_block(&n.id, &n.block_type, &n.content, n.position)?;
+            }
+            (None, Some(_)) => engine.apply_create_block(
                 &n.id,
                 &n.block_type,
                 &n.content,
@@ -997,17 +1016,63 @@ fn seed_nodes_into_engine(
             touched_parents.push(n.parent_id.clone());
         }
     }
-    let mut orders = Vec::with_capacity(touched_parents.len());
-    for parent in &touched_parents {
+    let groups = seeded_groups(engine, touched_parents, &seeded, roots_before)?;
+    drop(guard);
+    Ok(groups)
+}
+
+/// The post-seed order of each of `parents`' groups. `roots_before` is how
+/// many roots the engine held before the seed appended to them.
+fn seeded_groups(
+    engine: &crate::loro::engine::LoroEngine,
+    parents: Vec<Option<String>>,
+    seeded: &std::collections::HashSet<&str>,
+    roots_before: Option<usize>,
+) -> Result<Vec<SeededGroup>, AppError> {
+    let mut groups = Vec::with_capacity(parents.len());
+    for parent in parents {
+        if let (None, Some(first_seeded)) = (&parent, roots_before) {
+            let offset = first_seeded.saturating_sub(1);
+            groups.push(SeededGroup {
+                order: engine.children_ordered_block_ids_from(None, offset)?,
+                parent,
+                offset,
+                first_seeded,
+            });
+            continue;
+        }
         let order = engine.children_ordered_block_ids(parent.as_deref())?;
         let first_seeded = order
             .iter()
             .position(|id| seeded.contains(id.as_str()))
             .unwrap_or(0);
-        orders.push((order, first_seeded));
+        groups.push(SeededGroup {
+            parent,
+            order,
+            offset: 0,
+            first_seeded,
+        });
     }
-    drop(guard);
-    Ok(orders)
+    Ok(groups)
+}
+
+/// The whole sibling order of `group`, read again from the engine when the
+/// seed kept only its tail.
+fn whole_group_order<'a>(
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    space_id: &agaric_store::space::SpaceId,
+    group: &'a SeededGroup,
+) -> Result<std::borrow::Cow<'a, [String]>, AppError> {
+    if group.offset == 0 {
+        return Ok(std::borrow::Cow::Borrowed(&group.order));
+    }
+    let mut guard = state.registry.for_space(space_id, device_id)?;
+    Ok(std::borrow::Cow::Owned(
+        guard
+            .engine_mut()
+            .children_ordered_block_ids(group.parent.as_deref())?,
+    ))
 }
 
 /// Seed `n`'s attachment rows into its block's map (#5608). A map the block
@@ -1157,7 +1222,7 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
     //    guard is `!Send`, so NO `.await` may run while it is alive. Skip nodes
     //    already present (idempotent), and record the post-seed sibling order of
     //    every parent group we actually touched for the dense reprojection.
-    let touched_orders =
+    let touched =
         seed_nodes_into_engine(state, device_id, space_id, &nodes, sql_ranks.as_ref(), only)?;
 
     // 4. Reproject each touched parent group so the engine's sibling order and
@@ -1167,12 +1232,30 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
     //    replayed one finds SQL ahead of the engine, and a repair seeds among
     //    siblings SQL may rank apart from the engine, so both write the group.
     let seeded_in_step = matches!(rank, SeedRank::Stamp) && admit_deleted_since.is_none();
-    for (order, first_seeded) in &touched_orders {
-        if seeded_in_step {
-            projection::reproject_dense_positions_from(conn, order, *first_seeded).await?;
-        } else {
-            projection::reproject_dense_positions(conn, order).await?;
+    for group in &touched {
+        if seeded_in_step
+            && projection::reproject_dense_tail(
+                conn,
+                &group.order,
+                group.offset,
+                group.first_seeded,
+            )
+            .await?
+        {
+            // The whole-group write the tail replaces, as its oracle. Debug
+            // builds only, so a bench (built with `test-util`, without debug
+            // assertions) times the tail alone.
+            #[cfg(any(test, feature = "test-util"))]
+            if cfg!(debug_assertions) {
+                let order = crate::loro::engine::sibling_read_spy::uncounted(|| {
+                    whole_group_order(state, device_id, space_id, group)
+                })?;
+                projection::assert_dense_positions(conn, &order).await?;
+            }
+            continue;
         }
+        let order = whole_group_order(state, device_id, space_id, group)?;
+        projection::reproject_dense_positions(conn, &order).await?;
     }
     Ok(())
 }

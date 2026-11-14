@@ -329,4 +329,44 @@ test.describe('HasTagFilterForm tag picker (#1171 surface 5) @pages @search @jou
     await page.keyboard.press('Escape')
     await expect(activePopover(page)).toHaveCount(0)
   })
+
+  // #6729: the Select returns focus to its trigger one timer after its list
+  // unmounts. The timer is held here until the picker is open, the order a
+  // stalled main thread produces by chance.
+  test('the tag picker stays open when the category Select refocuses late', async ({ page }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+
+    const refs = page.getByTestId('linked-references')
+    await refs.getByRole('button', { name: 'Add filter', exact: true }).click()
+    await refs.getByRole('combobox', { name: 'Filter category' }).click()
+
+    await page.evaluate(() => {
+      const w = window as unknown as { __held: Array<() => void>; setTimeout: unknown }
+      const realSetTimeout = window.setTimeout.bind(window)
+      w.__held = []
+      w.setTimeout = (fn: () => void, ms?: number, ...rest: unknown[]) => {
+        if (ms) return realSetTimeout(fn, ms, ...rest)
+        w.__held.push(fn)
+        return 0
+      }
+    })
+    await page.getByRole('option', { name: 'Has Tag' }).click()
+
+    await page.getByTestId('tag-search-popover').click()
+    const popover = activePopover(page)
+    await expect(popover.getByPlaceholder('Search tags...')).toBeFocused()
+
+    const released = await page.evaluate(() => {
+      const w = window as unknown as { __held: Array<() => void> }
+      const held = w.__held.splice(0)
+      for (const fn of held) fn()
+      return held.length
+    })
+    expect(released).toBeGreaterThan(0)
+
+    await expect(popover.getByPlaceholder('Search tags...')).toBeFocused()
+    await popover.getByRole('option', { name: 'work' }).click()
+    await expect(page.getByTestId('tag-search-popover')).toHaveText('work')
+  })
 })

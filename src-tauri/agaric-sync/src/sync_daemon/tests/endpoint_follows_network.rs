@@ -92,6 +92,25 @@ async fn start_daemon(
     lifecycle: &LifecycleHooks,
     bind_policy: Arc<dyn BindPolicy>,
 ) -> SyncDaemon {
+    start_daemon_reporting_to(
+        device,
+        secret,
+        scheduler,
+        lifecycle,
+        bind_policy,
+        Arc::new(RecordingEventSink::new()),
+    )
+    .await
+}
+
+async fn start_daemon_reporting_to(
+    device: &Device2141,
+    secret: &SecretKey,
+    scheduler: &Arc<SyncScheduler>,
+    lifecycle: &LifecycleHooks,
+    bind_policy: Arc<dyn BindPolicy>,
+    event_sink: Arc<RecordingEventSink>,
+) -> SyncDaemon {
     SyncDaemon::start_with_bind_policy(
         SyncDaemonContext {
             pool: device.pool.clone(),
@@ -99,7 +118,7 @@ async fn start_daemon(
             materializer: Arc::new(device.mat.clone()),
             scheduler: Arc::clone(scheduler),
             endpoint_secret: secret.clone(),
-            event_sink: Arc::new(RecordingEventSink::new()),
+            event_sink,
             cancel: Arc::new(AtomicBool::new(false)),
             lifecycle: lifecycle.clone(),
             internet_relay: false,
@@ -312,6 +331,55 @@ async fn the_endpoint_follows_the_bind_decision_and_then_syncs_6526() {
     stop(&[&daemon_a, &daemon_b]).await;
     a.flush_and_shutdown().await;
     b.flush_and_shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn each_bind_first_retracts_what_the_last_endpoint_reported_6526() {
+    let (device, _, scheduler, lifecycle) = lone_device().await;
+    let bind = MovableBind::at(BindDecision {
+        internet_facing: true,
+        ..bind_on(OLD_NETWORK)
+    });
+    let events = Arc::new(RecordingEventSink::new());
+    let daemon = start_daemon_reporting_to(
+        &device,
+        &SecretKey::generate(),
+        &scheduler,
+        &lifecycle,
+        bind.clone(),
+        Arc::clone(&events),
+    )
+    .await;
+    scheduler
+        .await_local_endpoint(BRANCH_DISPATCH_DEADLINE)
+        .await
+        .expect("the daemon binds on the old network");
+
+    bind.move_to(bind_on(NEW_NETWORK));
+    tick_until(
+        &lifecycle,
+        async || bind.endpoints().len() == 2,
+        "the daemon binds on the new network",
+    )
+    .await;
+    stop(&[&daemon]).await;
+
+    let endpoint_events: Vec<&str> = events
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            SyncEvent::EndpointBinding => Some("binding"),
+            SyncEvent::InternetFacingBind { .. } => Some("internet_facing"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        endpoint_events,
+        ["binding", "internet_facing", "binding"],
+        "each bring-up retracts the last endpoint's reports before making its own"
+    );
+
+    device.flush_and_shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

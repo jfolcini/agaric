@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -38,6 +39,10 @@ export function useBatchCounts(entries: DayEntry[]) {
   // A `[[link]]` typed, pasted or synced changes the badge counts without any
   // property event; the graph-structure counter is what notices it.
   const { structureKey } = useGraphStructureEvents()
+  // A date write staled `agenda_cache`; the backend sends the property event
+  // again once the cache is rebuilt, which the read after the write may have
+  // preceded (#6567).
+  const { invalidationKey } = useBlockPropertyEvents()
 
   useEffect(() => {
     // #5415 — no active space: nothing to count, never dispatch.
@@ -73,7 +78,7 @@ export function useBatchCounts(entries: DayEntry[]) {
       cancelled = true
     }
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- `dates`/`pageIds` arrive as their serialized keys, so a new `entries` array with the same dates does not re-run the effect (#1632)
-  }, [datesKey, pageIdsKey, t, currentSpaceId, structureKey])
+  }, [datesKey, pageIdsKey, t, currentSpaceId, structureKey, invalidationKey])
 
   return { agendaCounts, agendaCountsBySource, backlinkCounts }
 }

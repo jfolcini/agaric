@@ -260,6 +260,10 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   mcp_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_disconnect_all: 'no persistent domain state — MCP transport reset',
 
+  save_to_downloads:
+    'no persistent state — writes a file into the OS Downloads folder (#6652); ' +
+    '`commands::downloads` tests pin the backend',
+
   // ── Markdown mirror (#5363) ──
   pick_mirror_folder: 'no persistent state — an OS folder dialog; it stores nothing',
   set_mirror_folder:
@@ -543,6 +547,8 @@ const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
   'mcp_disconnect_all',
   // An OS folder dialog (#5363).
   'pick_mirror_folder',
+  // A file in the OS Downloads folder (#6652).
+  'save_to_downloads',
   // The OS file manager (#6554).
   'open_data_folder',
 ])

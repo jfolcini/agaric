@@ -9,7 +9,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SYNC_MDNS_DISABLED_EVENT, useMdnsStatus } from '@/hooks/useMdnsStatus'
+import {
+  SYNC_ENDPOINT_BINDING_EVENT,
+  SYNC_MDNS_DISABLED_EVENT,
+  useMdnsStatus,
+} from '@/hooks/useMdnsStatus'
 import type { MdnsStatus } from '@/lib/bindings'
 
 // -- Hoisted mocks ------------------------------------------------------------
@@ -128,6 +132,31 @@ describe('useMdnsStatus — mount backfill', () => {
     mockGetMdnsStatus.mockRejectedValue(new Error('ipc down'))
     const { result } = renderHook(() => useMdnsStatus())
     await waitFor(() => expect(mockGetMdnsStatus).toHaveBeenCalledTimes(1))
+    expect(result.current).toEqual({ disabled: false, reason: null })
+  })
+})
+
+describe('useMdnsStatus — endpoint rebind', () => {
+  it('clears a live-event failure when the daemon binds a new endpoint', () => {
+    const { result } = renderHook(() => useMdnsStatus())
+    act(() => {
+      getListenerCallback(SYNC_MDNS_DISABLED_EVENT)({ payload: { reason: 'no Wi-Fi yet' } })
+    })
+    act(() => {
+      getListenerCallback(SYNC_ENDPOINT_BINDING_EVENT)({ payload: { type: 'endpoint_binding' } })
+    })
+    expect(result.current).toEqual({ disabled: false, reason: null })
+  })
+
+  it('clears a backfilled failure when the daemon binds a new endpoint', async () => {
+    mockGetMdnsStatus.mockResolvedValue(ok(DISABLED))
+    const { result } = renderHook(() => useMdnsStatus())
+    await waitFor(() =>
+      expect(result.current).toEqual({ disabled: true, reason: 'multicast lock missing' }),
+    )
+    act(() => {
+      getListenerCallback(SYNC_ENDPOINT_BINDING_EVENT)({ payload: { type: 'endpoint_binding' } })
+    })
     expect(result.current).toEqual({ disabled: false, reason: null })
   })
 })

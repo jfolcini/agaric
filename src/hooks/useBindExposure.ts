@@ -23,6 +23,7 @@
 
 import { useEffect, useState } from 'react'
 
+import { SYNC_ENDPOINT_BINDING_EVENT } from '@/hooks/useMdnsStatus'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { unwrap } from '@/lib/app-error'
 import type { InternetFacingBind } from '@/lib/bindings'
@@ -73,6 +74,18 @@ export function useBindExposure(): InternetFacingBind | null {
       },
     },
   )
+
+  useTauriEventListener<unknown>(SYNC_ENDPOINT_BINDING_EVENT, () => setBind(null), {
+    enabled,
+    onError: (err) => {
+      logger.warn(
+        'DeviceManagement',
+        `Failed to listen to ${SYNC_ENDPOINT_BINDING_EVENT}`,
+        undefined,
+        err,
+      )
+    },
+  })
 
   // Backfill — see the header: this is the primary path, not the fallback.
   // A live event arriving afterwards still wins (last write), which is

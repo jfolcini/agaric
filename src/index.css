@@ -2967,8 +2967,8 @@
  * The page alone: no sidebar, header, page toolbar, gutter controls or
  * scrollbars, and the shell's fixed-height scroll boxes let the page run
  * onto as many sheets as it needs. `useTheme` swaps to the light palette on
- * `beforeprint`. Block mode renders rows off screen as empty placeholders
- * (`useViewportObserver`), so only page mode prints a long page whole.
+ * `beforeprint`, and `useViewportObserver` fills in the rows block mode keeps
+ * as placeholders off screen.
  */
 @media print {
   /* The palette swap lands at once, not mid-fade. */
@@ -3002,5 +3002,24 @@
     height: auto !important;
     min-height: 0 !important;
     overflow: visible !important;
+  }
+  /* No heading is the last line of a sheet, and nothing atomic is cut in two. */
+  :is(h1, h2, h3, h4, h5, h6) {
+    break-after: avoid;
+  }
+  :is(h1, h2, h3, h4, h5, h6, pre, img, svg, tr, blockquote) {
+    break-inside: avoid;
+  }
+  /* Paper cannot follow a link: its address prints after it. */
+  .external-link[href]::after {
+    content: ' (' attr(href) ')';
+    overflow-wrap: anywhere;
+  }
+  .external-link[data-href]::after {
+    content: ' (' attr(data-href) ')';
+    overflow-wrap: anywhere;
+  }
+  .external-link > svg {
+    display: none;
   }
 }

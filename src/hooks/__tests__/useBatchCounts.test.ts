@@ -18,6 +18,7 @@ vi.mock('@/lib/bindings', () => ({
 import { toast } from 'sonner'
 
 import { useBatchCounts } from '@/hooks/useBatchCounts'
+import { recordBlockPropertyChange } from '@/lib/block-property-events'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
@@ -154,6 +155,26 @@ describe('useBatchCounts', () => {
       expect(result.current.backlinkCounts).toEqual({ 'page-1': 2 })
     })
     expect(mockedCountBacklinksBatch).toHaveBeenCalledTimes(2)
+  })
+
+  // The backend sends `block:properties-changed` again once the agenda cache a
+  // date write staled is rebuilt (#6567); only this counter hears it.
+  it('refetches the counts when a property event fires', async () => {
+    const entries: DayEntry[] = [{ dateStr: '2025-01-06', pageId: null } as DayEntry]
+    mockedCountAgendaBatchBySource.mockResolvedValue(ok({ '2025-01-06': {} }))
+    const { result } = renderHook(() => useBatchCounts(entries))
+    await waitFor(() => {
+      expect(mockedCountAgendaBatchBySource).toHaveBeenCalledTimes(1)
+    })
+
+    mockedCountAgendaBatchBySource.mockResolvedValue(ok({ '2025-01-06': { 'column:due_date': 1 } }))
+    act(() => {
+      recordBlockPropertyChange()
+    })
+    await waitFor(() => {
+      expect(result.current.agendaCounts).toEqual({ '2025-01-06': 1 })
+    })
+    expect(mockedCountAgendaBatchBySource).toHaveBeenCalledTimes(2)
   })
 
   it('handles empty entries array', async () => {
