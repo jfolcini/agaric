@@ -73,7 +73,7 @@ use agaric_store::op::{DeleteBlockPayload, MoveBlockPayload, OpPayload};
 use agaric_store::op_log::{self, OpRecord};
 use agaric_store::task_locals::{Actor, ActorContext};
 
-use crate::apply::kernel::{ApplyEffects, apply_op_projected};
+use crate::apply::kernel::apply_op_projected;
 use crate::block_ops::{create_block_in_tx, live_child_count, set_property_in_tx};
 use crate::loro::shared::LoroState;
 use crate::spaces::SPACE_PERSONAL_ULID;
@@ -107,11 +107,9 @@ pub enum RepairOp {
     Move(OpRecord),
     /// A `DeleteBlock` (an emptied duplicate journal page): the lifecycle
     /// dispatch keyed by `block_type`, as `delete_block_inner` runs it.
-    /// `effects` names the cohort the delete took.
     Delete {
         record: OpRecord,
         block_type: String,
-        effects: Box<ApplyEffects>,
     },
 }
 
@@ -297,11 +295,10 @@ async fn soft_delete(
         block_id: BlockId::from_trusted(block_id),
     });
     let record = op_log::append_local_op_in_tx(tx, device_id, payload, next_delete_ms()).await?;
-    let effects = apply_op_projected(tx, &record, state, false).await?;
+    apply_op_projected(tx, &record, state, false).await?;
     Ok(RepairOp::Delete {
         record,
         block_type: "page".to_owned(),
-        effects: Box::new(effects),
     })
 }
 

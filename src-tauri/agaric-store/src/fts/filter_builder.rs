@@ -71,6 +71,27 @@ pub(crate) fn normalize_tag_ids(tag_ids: Option<&[String]>) -> Vec<String> {
     }
 }
 
+/// The spellings of `term` to hand `LIKE`, which folds ASCII case only while
+/// the trigram index folds every script: a term with a non-ASCII letter is
+/// also tried lowercased, uppercased and capitalised.
+fn like_case_forms(term: &str) -> Vec<String> {
+    let mut forms = vec![term.to_owned()];
+    if !term.is_ascii() {
+        let lower = term.to_lowercase();
+        let mut rest = lower.chars();
+        let capitalised: String = rest
+            .next()
+            .map(|first| first.to_uppercase().chain(rest).collect())
+            .unwrap_or_default();
+        for form in [lower, term.to_uppercase(), capitalised] {
+            if !forms.contains(&form) {
+                forms.push(form);
+            }
+        }
+    }
+    forms
+}
+
 /// #1280 B2 — bridge the search-side resolved [`MetaDatePredicate`]
 /// (`IsNull` / `Range` / `Op{DateOp}`) onto the cross-surface
 /// [`DatePredicate`] the projection compiles. The resolver oracle treats the
@@ -610,6 +631,35 @@ impl StructuralFilterBuilder {
             }
             self.sql.push(')');
         }
+    }
+
+    /// `AND EXISTS (…)`: the block's indexed text, the stripped text the
+    /// editor shows, holds every term in any letter case. It reads FTS5's
+    /// content table by `block_id` (`idx_fts_blocks_content_block`), so a walk
+    /// of `blocks` in its own order can test one block at a time; a `LIKE` on
+    /// `fts_blocks` itself would scan the whole index before the first row.
+    pub(super) fn add_shown_text_contains(&mut self, prefix: &str, terms: &[String]) {
+        if terms.is_empty() {
+            return;
+        }
+        let mut holds_term = Vec::new();
+        for term in terms {
+            let mut forms = Vec::new();
+            for form in like_case_forms(term) {
+                let escaped = form
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_");
+                forms.push(format!("s.c1 LIKE ?{} ESCAPE '\\'", self.next_param));
+                self.next_param += 1;
+                self.binds.push(ScalarBind::Str(format!("%{escaped}%")));
+            }
+            holds_term.push(format!("({})", forms.join(" OR ")));
+        }
+        self.sql.push_str(&format!(
+            "{prefix}EXISTS (SELECT 1 FROM fts_blocks_content s WHERE s.c0 = b.id AND {})",
+            holds_term.join(" AND ")
+        ));
     }
 
     /// `AND b.id < ?N` keyset cursor predicate when `Some`.

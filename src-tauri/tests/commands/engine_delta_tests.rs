@@ -458,3 +458,90 @@ async fn a_move_applied_alone_whose_cascade_cannot_be_saved_moves_nothing_6521()
 async fn a_move_applied_in_a_batch_whose_cascade_cannot_be_saved_moves_nothing_6521() {
     an_applied_move_whose_cascade_cannot_be_saved_moves_nothing(Applied::InABatch).await;
 }
+
+/// `space`'s rows in `table`, which keys them by `space_id`.
+async fn space_rows(pool: &SqlitePool, table: &str, space: &str) -> i64 {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM {table} WHERE space_id = ?"
+    )))
+    .bind(space)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// #6521 — a space purged through `command` drops its engine and its saved
+/// rows, as an applied purge does: left behind, the rows rebuild the dead
+/// space's engine at every boot.
+async fn a_purged_space_leaves_no_engine_and_no_rows(command: &str) {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let space = create_space_inner(&pool, DEV, &mat, "Doomed".into(), None)
+        .await
+        .unwrap();
+    let page = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "page".into(),
+        space.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    agaric_engine::loro::snapshot::save_all_engines(&pool, &mat.loro_state().registry).await;
+    // A write after the snapshot, so the space has a delta row as well.
+    append_child(&pool, &mat, &page, "child").await;
+    let space_id = SpaceId::from_trusted(space.as_str());
+    let saved = (
+        space_rows(&pool, "loro_doc_state", space.as_str()).await,
+        space_rows(&pool, "loro_doc_delta", space.as_str()).await,
+    );
+    assert_eq!(saved, (1, 1), "the space has a snapshot and a delta");
+    assert!(mat.loro_state().registry.space_ids().contains(&space_id));
+
+    delete_block_inner(&pool, DEV, &mat, page).await.unwrap();
+    delete_block_inner(&pool, DEV, &mat, space.clone())
+        .await
+        .unwrap();
+    match command {
+        "purge_block" => purge_block_inner(&pool, DEV, &mat, space.clone())
+            .await
+            .map(drop),
+        "purge_blocks_by_ids" => purge_blocks_by_ids_inner(&pool, DEV, &mat, vec![space.clone()])
+            .await
+            .map(drop),
+        _ => purge_all_deleted_inner(&pool, DEV, &mat).await.map(drop),
+    }
+    .unwrap();
+
+    assert_eq!(
+        (
+            space_rows(&pool, "loro_doc_state", space.as_str()).await,
+            space_rows(&pool, "loro_doc_delta", space.as_str()).await,
+        ),
+        (0, 0),
+        "{command} deletes the space's snapshot and deltas"
+    );
+    assert!(
+        !mat.loro_state().registry.space_ids().contains(&space_id),
+        "{command} evicts the space's engine"
+    );
+    settle(&mat).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_block_on_a_space_leaves_no_engine_and_no_rows_6521() {
+    a_purged_space_leaves_no_engine_and_no_rows("purge_block").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_blocks_by_ids_on_a_space_leaves_no_engine_and_no_rows_6521() {
+    a_purged_space_leaves_no_engine_and_no_rows("purge_blocks_by_ids").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_all_deleted_on_a_space_leaves_no_engine_and_no_rows_6521() {
+    a_purged_space_leaves_no_engine_and_no_rows("purge_all_deleted").await;
+}

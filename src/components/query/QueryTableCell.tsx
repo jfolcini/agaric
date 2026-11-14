@@ -28,9 +28,6 @@ export interface QueryTableCellProps {
   display: string
 }
 
-/** The row is read again by the refetch a write starts, not from the save's reply. */
-function ignoreProperties(): void {}
-
 function CellEditor({
   block,
   label,
@@ -47,7 +44,7 @@ function CellEditor({
   const current = readCurrentValue(prop)
   const { handleSave, handleDelete } = usePropertySave({
     blockId: block.id,
-    setProperties: ignoreProperties,
+    // No `setProperties`: the row is read again by the refetch a write starts.
     logTag: 'QueryTableCell',
     onWritten: (refs) => recordBlockWrite(block, refs, done),
   })

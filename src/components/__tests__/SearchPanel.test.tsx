@@ -10,7 +10,6 @@
  *  - Debounced search on input change
  *  - Pagination (Load more)
  *  - Clearing results when input cleared
- *  - CJK notice shown/hidden
  *  - Search button disabled when empty
  *  - a11y compliance
  */
@@ -540,28 +539,6 @@ describe('SearchPanel', () => {
       expect(screen.queryByText(textContent('test content'))).not.toBeInTheDocument()
       expect(container.querySelector('[data-testid="search-input-clear"]')).toBeNull()
     })
-  })
-
-  it('shows CJK notice for CJK input', () => {
-    render(<SearchPanel />)
-
-    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
-    fireEvent.change(input, { target: { value: '你好' } })
-
-    expect(screen.getByText(t('search.cjkLimitationNote'))).toBeInTheDocument()
-    // Notice surfaces the 3-character minimum workaround so CJK
-    // users know how to widen matches.
-    const notice = screen.getByTestId('cjk-notice')
-    expect(notice.textContent).toMatch(/3/)
-  })
-
-  it('does not show CJK notice for Latin input', () => {
-    render(<SearchPanel />)
-
-    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
-    fireEvent.change(input, { target: { value: 'hello' } })
-
-    expect(screen.queryByText(t('search.cjkLimitationNote'))).not.toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
@@ -1331,13 +1308,6 @@ describe('SearchPanel', () => {
     render(<SearchPanel />)
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     expect(input).toHaveFocus()
-  })
-
-  it('shows minimum character hint for short queries', () => {
-    render(<SearchPanel />)
-    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
-    fireEvent.change(input, { target: { value: 'ab' } })
-    expect(screen.getByText(t('search.minCharsHint'))).toBeInTheDocument()
   })
 
   it('results container has role=listbox', async () => {
@@ -2224,23 +2194,6 @@ describe('SearchPanel', () => {
       expect(fetching).toBeInTheDocument()
       expect(fetching).toHaveTextContent(t('search.searching'))
       expect(screen.queryByTestId('search-typing-indicator')).not.toBeInTheDocument()
-    })
-
-    // Sub-fix 4: CJK notice sits directly below the search input (above
-    // the filter chip bar) so CJK users see it before scanning results.
-    it('places the CJK notice directly below the input, above the filter chip bar', () => {
-      render(<SearchPanel />)
-      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
-      fireEvent.change(input, { target: { value: '你好' } })
-
-      const cjk = screen.getByTestId('cjk-notice')
-      const chipBar = screen.getByTestId('filter-chip-bar')
-      expect(cjk).toBeInTheDocument()
-
-      // DOM order: cjk-notice precedes filter-chip-bar.
-      const position = cjk.compareDocumentPosition(chipBar)
-      // DOCUMENT_POSITION_FOLLOWING (4) means chipBar follows cjk.
-      expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
     // Sub-fix 5: Alias-match overlay is rendered inside the ResultCard

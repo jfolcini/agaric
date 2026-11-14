@@ -12,7 +12,7 @@ use super::super::metadata_filter::MetadataPredicates;
 use super::constants::MAX_SEARCH_RESULTS;
 use super::fetch::fts_fetch_rows;
 use super::row::{FtsSearchRow, fts_row_to_block_row};
-use super::sanitizer::prepare_match_expression;
+use super::sanitizer::prepare_query;
 
 /// Outcome of [`search_fts_partitioned`] — two pre-partitioned candidate
 /// sets (page-only + unrestricted), each with its own `has_more` flag
@@ -123,7 +123,7 @@ pub(crate) async fn search_fts_partitioned(
     snippet_len: Option<usize>,
     cancel: Option<CancellationToken>,
 ) -> Result<FtsPartitionedScan, AppError> {
-    let Some(sanitized) = prepare_match_expression(query)? else {
+    let Some(parsed) = prepare_query(query)? else {
         return Ok(FtsPartitionedScan {
             pages: Vec::new(),
             blocks: Vec::new(),
@@ -142,7 +142,7 @@ pub(crate) async fn search_fts_partitioned(
     // error — no partial response.
     let pages_future = fts_fetch_rows(
         pool,
-        &sanitized,
+        &parsed,
         None, // no cursor — palette doesn't paginate
         0.0,
         "",
@@ -168,7 +168,7 @@ pub(crate) async fn search_fts_partitioned(
     );
     let blocks_future = fts_fetch_rows(
         pool,
-        &sanitized,
+        &parsed,
         None,
         0.0,
         "",

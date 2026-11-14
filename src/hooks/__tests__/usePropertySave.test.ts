@@ -159,6 +159,23 @@ describe('usePropertySave handleSave', () => {
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to save property')
   })
 
+  it('reads nothing back, and reports no failure, when it has no list to refresh', async () => {
+    const onWritten = vi.fn()
+    stubInvoke({
+      set_property: () => setPropertyResult,
+      get_properties: () => Promise.reject(new Error('read failed')),
+    })
+
+    const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', onWritten }))
+
+    await act(async () => {
+      await result.current.handleSave('status', 'val', 'text')
+    })
+
+    expect(onWritten).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
   it('announces on save when announceOnSave is set', async () => {
     const { announce } = await import('@/lib/announcer')
     const updatedProps = [makeProp('status', { value_text: 'done' })]

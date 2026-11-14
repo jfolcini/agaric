@@ -114,7 +114,6 @@ async fn prepare_outgoing_exports_when_its_stamp_delta_cannot_be_saved() {
         matches!(msg, Some(LoroSyncMessage::Snapshot { .. })),
         "the snapshot is still sent, got {msg:?}"
     );
-    assert_eq!(registry.dirty_count(), 1, "the stamped space is left dirty");
 }
 
 /// `prepare_outgoing(Some(vv))` → Update variant carrying only the

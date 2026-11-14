@@ -13,8 +13,11 @@
  * This hook mirrors the established `visualViewport` tracking used by
  * `Sheet` (#760), `InPageFind`, and `JournalCalendarDropdown`:
  *
- *  - On focus AND on every visualViewport `resize` / `scroll`, it computes
- *    the keyboard inset = `innerHeight - (vv.height + vv.offsetTop)`.
+ *  - On focus AND on every visualViewport `resize` (the keyboard opening or
+ *    closing), it computes the keyboard inset =
+ *    `innerHeight - (vv.height + vv.offsetTop)`. Not on its `scroll`: that is
+ *    the reader panning the screen, and scrolling the block back each time
+ *    kept the top of a long page out of reach with the keyboard up (#6790).
  *  - When the inset is 0 (no keyboard — desktop, jsdom, older WebViews, or
  *    a pinch-zoomed viewport) it falls back to the plain
  *    `scrollIntoView({ block: 'nearest' })` so desktop behavior is
@@ -127,13 +130,11 @@ export function useScrollCaretAboveKeyboard(
     }
 
     vv.addEventListener('resize', apply)
-    vv.addEventListener('scroll', apply)
     return () => {
       if (raf !== null && typeof cancelAnimationFrame !== 'undefined') {
         cancelAnimationFrame(raf)
       }
       vv.removeEventListener('resize', apply)
-      vv.removeEventListener('scroll', apply)
     }
   }, [ref, enabled])
 }

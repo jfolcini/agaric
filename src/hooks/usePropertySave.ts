@@ -24,8 +24,8 @@ import { invalidRepeatRuleMessage } from '@/lib/repeat-utils'
 export interface UsePropertySaveOptions {
   /** Block or page ID to operate on. When null, save/delete are no-ops. */
   blockId: string | null
-  /** React state setter for the property list. */
-  setProperties: Dispatch<SetStateAction<PropertyRow[]>>
+  /** React state setter for the property list. Without one, a save reads nothing back. */
+  setProperties?: Dispatch<SetStateAction<PropertyRow[]>>
   /** Override default i18n keys for toast messages. */
   toasts?: {
     invalidNumber?: string
@@ -62,14 +62,7 @@ export function usePropertySave({
     async (key: string, value: string, type: string) => {
       if (!blockId) return
       try {
-        const ok = await handleSaveProperty(
-          blockId,
-          key,
-          value,
-          type,
-          (props) => setProperties(props),
-          onWritten,
-        )
+        const ok = await handleSaveProperty(blockId, key, value, type, setProperties, onWritten)
         if (!ok) {
           notify.error(t(toasts?.invalidNumber ?? 'property.invalidNumber'))
           return
@@ -120,7 +113,7 @@ export function usePropertySave({
           key,
           () => {
             // Removing the rule removes its bounds with it (`delete_property`).
-            setProperties((prev) =>
+            setProperties?.((prev) =>
               prev.filter(
                 (p) => p.key !== key && !(key === 'repeat' && REPEAT_RULE_BOUNDS.has(p.key)),
               ),

@@ -141,7 +141,10 @@ jobs:
     # and unmeasured,
     # so give Linux 50% headroom (60 -> 90) until a cold tag run can replace
     # this estimate with observed whole-job timing.
-    timeout-minutes: ${{ matrix.platform == 'ubuntu-24.04' && 90 || matrix.platform == 'windows-2025-vs2026' && 75 || 60 }}
+    # macOS's 60 had no headroom: on the 0.24.0 tag (run 43591828865) the
+    # aarch64 job was cancelled at 60 minutes in its last upload step and the
+    # x86_64 one took 51, so macOS gets Linux's 90.
+    timeout-minutes: ${{ matrix.platform == 'windows-2025-vs2026' && 75 || 90 }}
     # Reads TAURI_SIGNING_PRIVATE_KEY(_PASSWORD), stored as environment secrets:
     # the job waits for the maintainer to approve the `release` environment.
     environment: release
