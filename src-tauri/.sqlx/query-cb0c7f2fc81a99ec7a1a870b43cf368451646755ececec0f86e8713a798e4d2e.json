@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT space_id, bytes FROM loro_doc_delta ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "space_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "loro_doc_delta",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "bytes",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "loro_doc_delta",
+            "name": "bytes"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "cb0c7f2fc81a99ec7a1a870b43cf368451646755ececec0f86e8713a798e4d2e"
+}

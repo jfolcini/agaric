@@ -359,7 +359,11 @@ async fn edit_transaction(pool: &sqlx::SqlitePool, snapshot: &[u8], target: &str
         with.push(start.elapsed());
     }
     let (rows, bytes) = saved_deltas(pool).await;
-    assert_eq!(rows, SAMPLES as i64, "each edit with a delta saved one row");
+    assert_eq!(
+        usize::try_from(rows).ok(),
+        Some(SAMPLES),
+        "each edit with a delta saved one row"
+    );
     without.sort();
     with.sort();
     Timings(without).report("edit transaction, no delta", scale, "");

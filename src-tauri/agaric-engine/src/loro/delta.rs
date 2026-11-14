@@ -164,36 +164,7 @@ pub async fn saved_engine_divergences(
 ) -> Result<Vec<String>, AppError> {
     use std::collections::BTreeMap;
 
-    let mut saved: BTreeMap<String, Vec<Vec<u8>>> = BTreeMap::new();
-    for row in sqlx::query!(r#"SELECT space_id AS "space_id!", snapshot FROM loro_doc_state"#)
-        .fetch_all(pool)
-        .await?
-    {
-        saved.entry(row.space_id).or_default().push(row.snapshot);
-    }
-    for row in sqlx::query!("SELECT space_id, bytes FROM loro_doc_delta ORDER BY id")
-        .fetch_all(pool)
-        .await?
-    {
-        saved.entry(row.space_id).or_default().push(row.bytes);
-    }
-    for row in sqlx::query!(
-        "SELECT space_id, bytes FROM loro_sync_inbox \
-         UNION ALL SELECT space_id, bytes FROM loro_sync_quarantine"
-    )
-    .fetch_all(pool)
-    .await?
-    {
-        saved.entry(row.space_id).or_default().push(row.bytes);
-    }
-
-    for (space_id, bytes) in registry.seeded() {
-        saved
-            .entry(space_id.as_str().to_owned())
-            .or_default()
-            .push(bytes);
-    }
-
+    let saved = saved_rows(pool, registry).await?;
     let live: BTreeMap<String, loro::LoroDoc> = registry
         .doc_handles()
         .into_iter()
@@ -239,6 +210,47 @@ pub async fn saved_engine_divergences(
         }
     }
     Ok(divergences)
+}
+
+/// Everything saved for each space, in the order a rebuild imports it: the
+/// snapshot, the deltas by `id`, the inbound blobs, then what fixtures seeded.
+#[cfg(any(test, feature = "test-util"))]
+async fn saved_rows(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+) -> Result<std::collections::BTreeMap<String, Vec<Vec<u8>>>, AppError> {
+    use std::collections::BTreeMap;
+
+    let mut saved: BTreeMap<String, Vec<Vec<u8>>> = BTreeMap::new();
+    for row in sqlx::query!(r#"SELECT space_id AS "space_id!", snapshot FROM loro_doc_state"#)
+        .fetch_all(pool)
+        .await?
+    {
+        saved.entry(row.space_id).or_default().push(row.snapshot);
+    }
+    for row in sqlx::query!("SELECT space_id, bytes FROM loro_doc_delta ORDER BY id")
+        .fetch_all(pool)
+        .await?
+    {
+        saved.entry(row.space_id).or_default().push(row.bytes);
+    }
+    for row in sqlx::query!(
+        "SELECT space_id, bytes FROM loro_sync_inbox \
+         UNION ALL SELECT space_id, bytes FROM loro_sync_quarantine"
+    )
+    .fetch_all(pool)
+    .await?
+    {
+        saved.entry(row.space_id).or_default().push(row.bytes);
+    }
+
+    for (space_id, bytes) in registry.seeded() {
+        saved
+            .entry(space_id.as_str().to_owned())
+            .or_default()
+            .push(bytes);
+    }
+    Ok(saved)
 }
 
 /// `doc`'s state by root container, without the empty ones: a root a reader

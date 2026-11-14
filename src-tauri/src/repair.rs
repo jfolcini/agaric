@@ -248,7 +248,19 @@ async fn run(
         }
     }
     tx.commit_and_dispatch(materializer).await?;
-    for (record, effects) in &deletes {
+    fan_out_deletes(pool, state, &deletes).await;
+
+    tracing::info!(repair = repair.label(), %summary, "content repair complete");
+    Ok(())
+}
+
+/// The engine fan-out of each committed delete: its cohort's tombstones.
+pub(crate) async fn fan_out_deletes(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+    deletes: &[(Arc<OpRecord>, ApplyEffects)],
+) {
+    for (record, effects) in deletes {
         crate::materializer::dispatch_delete_descendants(
             pool,
             record,
@@ -258,9 +270,6 @@ async fn run(
         )
         .await;
     }
-
-    tracing::info!(repair = repair.label(), %summary, "content repair complete");
-    Ok(())
 }
 
 /// A backfill's ops and the summary its log line carries.

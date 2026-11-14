@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM loro_doc_delta WHERE space_id = ? AND id <= ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "86de80d192ef8b4ddae47ebbc071151721a1463fed155ed1224a119d69c8c737"
+}

@@ -595,39 +595,8 @@ async fn fan_out_restore(
         }
     };
 
-    // Resolve the space once via the root's block_id (every id shares the seed's
-    // per-space tree and is alive again post-commit, so `resolve_block_space`
-    // succeeds). Keeps fanout O(N) on the engine call, not on SQL queries.
-    let root_block = BlockId::from_trusted(root_payload.block_id.as_str());
-    let resolved = match space_id {
-        Some(space_id) => Ok(Some(space_id.clone())),
-        None => agaric_store::space::resolve_block_space(pool, &root_block).await,
-    };
-    let space_id = match resolved {
-        Ok(Some(s)) => s,
-        Ok(None) => {
-            // #2031: SQL restore committed but the root block has no resolvable
-            // space, so the engine cohort cannot be mirrored and stays divergent.
-            // Meter the skip.
-            super::descendant_fanout_dropped::record();
-            tracing::trace!(
-                block_id = root_payload.block_id.as_str(),
-                "{}: no space for root block; skipping",
-                kind.log_prefix(),
-            );
-            return;
-        }
-        Err(e) => {
-            // #2031: resolve_block_space failed post-commit; the engine cohort
-            // is left divergent. Meter the skip.
-            super::descendant_fanout_dropped::record();
-            tracing::warn!(
-                error = %e,
-                "{}: resolve_block_space failed; skipping",
-                kind.log_prefix(),
-            );
-            return;
-        }
+    let Some(space_id) = restore_fan_out_space(pool, &root_payload, space_id, kind).await else {
+        return;
     };
 
     saving_fan_out(pool, root_record, state, |log| {
@@ -660,6 +629,50 @@ async fn fan_out_restore(
         }
     })
     .await;
+}
+
+/// The space a restore fan-out writes: `space_id` when the caller pinned one,
+/// else the root's, resolved once (every id shares the seed's per-space tree
+/// and is alive again post-commit, so `resolve_block_space` succeeds), which
+/// keeps the fan-out O(N) on the engine call and not on SQL queries. `None`
+/// when there is none to write; the skip is metered (#2031).
+async fn restore_fan_out_space(
+    pool: &SqlitePool,
+    root_payload: &agaric_store::op::RestoreBlockPayload,
+    space_id: Option<&agaric_store::space::SpaceId>,
+    kind: FanoutKind,
+) -> Option<agaric_store::space::SpaceId> {
+    let root_block = agaric_core::ulid::BlockId::from_trusted(root_payload.block_id.as_str());
+    let resolved = match space_id {
+        Some(space_id) => Ok(Some(space_id.clone())),
+        None => agaric_store::space::resolve_block_space(pool, &root_block).await,
+    };
+    match resolved {
+        Ok(Some(s)) => Some(s),
+        Ok(None) => {
+            // #2031: SQL restore committed but the root block has no resolvable
+            // space, so the engine cohort cannot be mirrored and stays divergent.
+            // Meter the skip.
+            super::descendant_fanout_dropped::record();
+            tracing::trace!(
+                block_id = root_payload.block_id.as_str(),
+                "{}: no space for root block; skipping",
+                kind.log_prefix(),
+            );
+            None
+        }
+        Err(e) => {
+            // #2031: resolve_block_space failed post-commit; the engine cohort
+            // is left divergent. Meter the skip.
+            super::descendant_fanout_dropped::record();
+            tracing::warn!(
+                error = %e,
+                "{}: resolve_block_space failed; skipping",
+                kind.log_prefix(),
+            );
+            None
+        }
+    }
 }
 
 /// Run `fan_out`, the engine writes that follow an op's commit, under the write

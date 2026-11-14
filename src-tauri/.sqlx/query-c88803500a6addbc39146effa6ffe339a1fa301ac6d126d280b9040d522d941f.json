@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT space_id, bytes FROM loro_sync_inbox UNION ALL SELECT space_id, bytes FROM loro_sync_quarantine",
+  "describe": {
+    "columns": [
+      {
+        "name": "space_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_inbox",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "bytes",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_inbox",
+            "name": "bytes"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "c88803500a6addbc39146effa6ffe339a1fa301ac6d126d280b9040d522d941f"
+}

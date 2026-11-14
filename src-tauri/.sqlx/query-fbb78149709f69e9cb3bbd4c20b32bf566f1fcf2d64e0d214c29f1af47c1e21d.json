@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(MAX(id), 0) AS \"head!: i64\" FROM loro_doc_delta",
+  "describe": {
+    "columns": [
+      {
+        "name": "head!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "fbb78149709f69e9cb3bbd4c20b32bf566f1fcf2d64e0d214c29f1af47c1e21d"
+}

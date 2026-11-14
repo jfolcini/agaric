@@ -1521,10 +1521,18 @@ fn project_space_block_first(
 /// frontier the op-log never reached keeps its row (its content is in neither
 /// the op-log nor this projection), which is the same #535 rule the tx
 /// coupling enforces for everything else.
+///
+/// #6521: what the import added to the engine is saved here, with its
+/// projection.
 async fn clear_inbox_slots(
     tx: &mut sqlx::SqliteConnection,
     clearable_ids: &[i64],
+    space_id: &SpaceId,
+    engine_delta: Option<&[u8]>,
 ) -> Result<(), AppError> {
+    if let Some(delta) = engine_delta {
+        agaric_engine::loro::delta::insert_delta(&mut *tx, space_id, delta).await?;
+    }
     for id in clearable_ids {
         sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", id)
             .execute(&mut *tx)
@@ -2197,6 +2205,13 @@ fn clearable_slot_ids(
     Ok(clearable_ids)
 }
 
+/// What an import resolved, or why it failed, and the Loro update it added to
+/// the engine's op log either way.
+type ImportedWithDelta = (
+    Result<agaric_engine::loro::engine::ImportDelta, AppError>,
+    Option<Vec<u8>>,
+);
+
 /// #2188: the CRDT import (decode + diff resolution) is CPU-bound and runs while
 /// holding this space's engine mutex (#2205 — per-space). `cpu_block_in_place`
 /// lets the multi-thread reactor drive other tasks for the duration without
@@ -2218,13 +2233,7 @@ fn import_payload_into_engine(
     device_id: &str,
     space_id: &SpaceId,
     payload: agaric_engine::loro::engine::ImportPayload<'_>,
-) -> Result<
-    (
-        Result<agaric_engine::loro::engine::ImportDelta, AppError>,
-        Option<Vec<u8>>,
-    ),
-    AppError,
-> {
+) -> Result<ImportedWithDelta, AppError> {
     cpu_block_in_place(|| {
         registry.with_engine(space_id, device_id, |engine| {
             engine.capturing_delta(|engine| match payload {
@@ -2430,6 +2439,38 @@ pub(crate) async fn import_and_project(
     projected
 }
 
+/// The trusted no-op fast path of [`import_and_project`]: clear the slots with
+/// no projection.
+///
+/// #6521: an import that changed nothing projected can still have added ops,
+/// and they are saved before their slot goes.
+///
+/// #3213: `clearable_ids`, not `inbox_ids`. Since the live path also supplies
+/// a delete condition this is no longer trivially the same set: the #2264
+/// trust rule proves only that the ENGINE already held everything in `bytes`,
+/// which is exactly what an unmet declared frontier contradicts. When the two
+/// disagree, the frontier wins — "the op-log never reached this content"
+/// outranks "the diff was empty", and the slot stays (#535). A no-op import
+/// whose op-log DOES cover the frontier (the ordinary echo) is unaffected.
+async fn clear_trusted_noop_slots(
+    pool: &SqlitePool,
+    space_id: &SpaceId,
+    unsaved_delta: &mut Option<Vec<u8>>,
+    clearable_ids: &[i64],
+) -> Result<(), AppError> {
+    if let Some(delta) = unsaved_delta.as_deref() {
+        let mut conn = pool.acquire().await?;
+        agaric_engine::loro::delta::insert_delta(&mut conn, space_id, delta).await?;
+    }
+    *unsaved_delta = None;
+    for id in clearable_ids {
+        sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 /// [`import_and_project`]'s body. `unsaved_delta` holds what the import added
 /// to the engine from the import until a transaction has saved it.
 #[allow(clippy::too_many_arguments)]
@@ -2533,26 +2574,7 @@ async fn import_and_project_saving(
     let (mut changed_blocks, rank_only_blocks, tag_scope, def_keys) = if noop_diff {
         let trusted = noop_import_is_trusted(pool, space_id, inbox_ids, delivery).await?;
         if trusted {
-            // #6521: an import that changed nothing projected can still have
-            // added ops, and they are saved before their slot goes.
-            if let Some(delta) = unsaved_delta.as_deref() {
-                let mut conn = pool.acquire().await?;
-                agaric_engine::loro::delta::insert_delta(&mut conn, space_id, delta).await?;
-            }
-            *unsaved_delta = None;
-            // #3213: `clearable_ids`, not `inbox_ids`. Since the live path also
-            // supplies a delete condition this is no longer trivially the same
-            // set: the #2264 trust rule proves only that the ENGINE already held
-            // everything in `bytes`, which is exactly what an unmet declared
-            // frontier contradicts. When the two disagree, the frontier wins —
-            // "the op-log never reached this content" outranks "the diff was
-            // empty", and the slot stays (#535). A no-op import whose op-log DOES
-            // cover the frontier (the ordinary echo) is unaffected.
-            for id in &clearable_ids {
-                sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", id)
-                    .execute(pool)
-                    .await?;
-            }
+            clear_trusted_noop_slots(pool, space_id, unsaved_delta, &clearable_ids).await?;
             return Ok(changed_blocks);
         }
         healing_fallback_delta(registry, device_id, space_id)?
@@ -2614,12 +2636,7 @@ async fn import_and_project_saving(
 
     let (healed, tagged) = project_pass_dropped(&mut tx, registry, new_rows).await?;
 
-    // #6521: what the import added to the engine is saved with its projection.
-    if let Some(delta) = unsaved_delta.as_deref() {
-        agaric_engine::loro::delta::insert_delta(&mut tx, space_id, delta).await?;
-    }
-
-    clear_inbox_slots(&mut tx, &clearable_ids).await?;
+    clear_inbox_slots(&mut tx, &clearable_ids, space_id, unsaved_delta.as_deref()).await?;
 
     commit_projection(tx, pool, space_id, &block_states).await?;
     *unsaved_delta = None;
