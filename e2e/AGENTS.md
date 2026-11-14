@@ -42,12 +42,12 @@ AGARIC_E2E_BRIDGE=$PWD/src-tauri/target/debug/bridge PW_PORT=<port> npx playwrig
 
 What a spec can rely on there differs from the mock:
 
-- **The vault is a first boot's**: the Personal and Work spaces and nothing else. `SEED_IDS` name nothing, so a spec that reads seed content fails. A spec that makes its own pages runs.
+- **The vault holds the mock's seed**, written into its Personal space through the real commands once per worker (`seedCommands`, `src/lib/tauri-mock/seed-commands.ts`). `SEED_IDS` name the seeded rows; the seed's backdated op-log rows and its opt-in `localStorage` fixtures are not reproduced. A spec that makes its own pages runs.
 - **The mock's hooks are absent**: `__injectMockError`, `__setMockLatency` and the `__addMock*` seeds do not exist, and `page.clock` moves the browser's clock only. `emitMockEvent` works: the backend emits the event.
 - **`plugin:*` commands stay in the browser**, on the mock's handlers.
 - **Not carried**: a `Channel` argument's messages (an import's progress) and `read_attachment`'s raw bytes.
 
-No CI lane runs specs this way yet. Show a spec red there by breaking the Rust command it reads, rebuilding the binary and running it.
+The nightly `full-suite` lane of `scheduled-deep-checks.yml` runs specs this way: the `real-backend` project, the specs `REAL_BACKEND_SPECS` lists in `playwright.config.ts`, minus tests tagged `@mock-only`. Show a spec red there by breaking the Rust command it reads, rebuilding the binary and running it.
 
 ## The mock is a contract, not a convenience
 
