@@ -5,20 +5,18 @@ import {
   activePopover,
   activeSheet,
   expect,
-  ipc,
+  navigateToView,
   openPage,
+  openSettingsTab,
   reopenPage,
   test,
   waitForBoot,
 } from './helpers'
 
 /**
- * #6741, mock lane: a property whose definition holds several values is edited
- * in the block drawer as its items, one chip each, and the items it holds are
- * the ones read back after leaving the page and coming back.
- *
- * The definition is created through the mock: Settings' "Holds several values"
- * checkbox is another lane's of the same change.
+ * #6741, mock lane: a select defined in Settings › Properties to hold several
+ * values is edited in the block drawer as its items, one chip each, and the
+ * items it holds are the ones read back after leaving the page and coming back.
  */
 
 const GS_1 = '0000000000000000000B10CK01'
@@ -52,13 +50,18 @@ test.describe('A property that holds several values @editor', () => {
   test('two items added in the drawer are both there after reopening the page', async ({
     page,
   }) => {
-    await ipc(page, 'create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
-      key: 'stages',
-      valueType: 'select',
-      options: JSON.stringify(['draft', 'review', 'final']),
-      multiple: true,
-    })
+    await navigateToView(page, 'Settings')
+    await openSettingsTab(page, 'Properties')
+    const panel = page.locator('[data-testid="settings-panel-properties"]')
+    await panel.getByRole('textbox', { name: 'Property key', exact: true }).fill('stages')
+    await panel.getByRole('combobox', { name: 'Type', exact: true }).click()
+    await page.getByRole('option', { name: 'select', exact: true }).click()
+    await panel
+      .getByRole('textbox', { name: 'Options, comma-separated', exact: true })
+      .fill('draft, review, final')
+    await panel.getByRole('checkbox', { name: 'Holds several values', exact: true }).check()
+    await panel.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(panel.locator('ul > li', { hasText: 'Stages' })).toContainText('several values')
 
     await openPage(page, 'Getting Started')
     let sheet = await openBlockDrawer(page, GS_1)
