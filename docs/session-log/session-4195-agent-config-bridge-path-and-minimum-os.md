@@ -1,4 +1,4 @@
-# Session 4193 — the copied agent config names the bridge by its path; minimum macOS and Windows declared (#6736, #6737)
+# Session 4195 — the copied agent config names the bridge by its path; minimum macOS and Windows declared (#6736, #6737)
 
 Two packaging issues found while checking the README against the 0.23.0 artifacts, in one PR.
 
