@@ -4,25 +4,26 @@ Set out to build #6752 by its plan: measure option 1 (a bounded substring scan f
 
 ## The measurement
 
-`bench-slo` on the branch, run 43586310226, warm, the `FIXTURE_SIZE` vault. Each line is the accumulated mean, with Criterion's interval for the same samples:
+`bench-slo` on the branch, warm, the `FIXTURE_SIZE` vault. Each line is the accumulated mean, with Criterion's interval for the same samples. The first run (43586310226) timed the raw-content scan; the second (43597361575) the shipped one, which tests the stripped text:
 
-| Probe | Mean | Criterion interval |
-| --- | --- | --- |
-| 2-char term in 20 of 100K blocks (one full pass) | 35.77 ms | 35.06 to 36.80 ms |
-| 2-char term in nearly every block (one page) | 0.38 ms | 0.378 to 0.382 ms |
-| word + 2-char term, 10K trigram candidates | 24.17 ms | 24.10 to 24.60 ms |
-| existing 3-char query, 10K matches, same run | 24.18 ms | 24.05 to 24.89 ms |
+| Probe | Raw content | Stripped text | Budget |
+| --- | --- | --- | --- |
+| 2-char term in 20 of 100K blocks (one full pass) | 35.77 ms (35.06 to 36.80) | 79.52 ms (79.34 to 79.71) | 200 ms |
+| 2-char term in nearly every block (one page) | 0.38 ms (0.378 to 0.382) | 0.44 ms (0.41 to 0.46) | 2 ms |
+| word + 2-char term, 10K trigram candidates | 24.17 ms (24.10 to 24.60) | 24.52 ms (24.40 to 24.90) | 100 ms |
+| existing 3-char query, 10K matches, same run | 24.18 ms (24.05 to 24.89) | 16.60 ms (16.14 to 17.49) | 30 ms |
 
-The worst case is the rare term: the scan reads every block once. It is 1.5x the existing 3-char probe and under a fifth of the 200 ms product ceiling. Beside a longer word the short term costs nothing that shows: the two 10K-candidate probes sit inside each other's interval. That was read as inside the search budget, so option 1 shipped and no second index was built.
+The second run's runner was faster (the 3-char probe fell by a third), so against its sibling the stripped scan costs about 3x the raw one in the rare case: each block it walks is one more index lookup into FTS5's content table. Beside a word the short term now shows (1.5x the 3-char probe, where raw content sat inside its interval). Both are under their budgets.
 
-One run, not several: the issue asks for budgets from the first run, where `src-tauri/benches/AGENTS.md` prefers recent runs. The budgets are the smallest 1-2-5 step at least 3x each mean (200, 2 and 100 ms), so one run's noise does not decide them.
+The rare term's mean moved a 1-2-5 step: 3x is 239 ms, so the rule would give 500 ms. The budget stays at 200 ms, the product target for an interactive command (`docs/architecture/operations.md` § Product SLO); a gate above the product target would let the probe miss it unflagged.
 
 The fixture's blocks are about 45 bytes. The scan's cost follows the bytes it reads, so a vault of long blocks pays more for the rare-term case than this number says.
 
 ## What shipped (PR #6781)
 
 - `parse_query` (`fts/search/sanitizer.rs`) returns the terms under `TRIGRAM_MIN_LEN` beside the MATCH expression. `sanitize_fts_query` returns the same expression as before, so the backlink filters and the query engine's text filter still ignore a short term.
-- `build_fts_fetch` answers short terms with `b.content LIKE ? ESCAPE '\'`: one more predicate beside a MATCH, and alone a scan of `blocks` with the MATCH query's placeholder layout and row shape (constant rank, no snippet, `b.id` keyset, newest first). Keeping that shape is what let the cursor path, the toggle post-filter and the palette's partitioned scan take short terms with no code of their own.
+- `build_fts_fetch` answers short terms with `add_shown_text_contains` (`fts/filter_builder.rs`): `EXISTS (SELECT 1 FROM fts_blocks_content s WHERE s.c0 = b.id AND s.c1 LIKE ? ESCAPE '\')`, the block's stripped text read by `block_id` through `idx_fts_blocks_content_block`. Beside a MATCH it is one more predicate; alone it filters a scan of `blocks` with the MATCH query's placeholder layout and row shape (constant rank, no snippet, `b.id` keyset, newest first). Keeping that shape is what let the cursor path, the toggle post-filter and the palette's partitioned scan take short terms with no code of their own.
+- A first version tested raw `blocks.content`; the maintainer chose the stripped text, so a short term never matches markup or the inside of a reference id. A `LIKE` on `fts_blocks` itself was rejected: it scans the whole index and sorts before the first row (a common term measured near 200 ms locally).
 - The scan is `INDEXED BY sqlite_autoindex_blocks_1`. Left to the planner it took `idx_blocks_space_type` and sorted every match: a local timing of the common-term case went from about 120 ms to under 1 ms with the hint. The common-term probe exists to keep that.
 - `highlight_short_term_rows` gives rows of a query with a short term `match_offsets` for all its terms.
 - The two notes under the search box and their i18n keys are gone. The MCP `search` description and the docs restate the floor.
@@ -39,9 +40,10 @@ The fixture's blocks are about 45 bytes. The scan's cost follows the bytes it re
 
 ## Left for the maintainer
 
-- The scan reads raw content, as the issue says. A two-character run inside a `[[ULID]]` token can match (`Q3`; not `UI`, `AI` or `go`, whose letters Crockford base32 lacks). Scanning `fts_blocks.stripped` would avoid that and lose the early stop.
+- The rare-term budget is held at 200 ms, under what the 3x rule gives (500 ms); see the measurement.
 - Replace across pages keeps its three-character floor.
 - The backlink `Contains` filter and the query block's text filter still drop short terms.
+- Two non-blocking review notes, left for a follow-up: a non-ASCII short term misses mixed-case content (`яб` does not find `яБ`), since `LIKE` folds ASCII only and the term is tried in four case forms; and `highlight_short_term_rows` computes offsets on raw content, so a longer term split by markup (`foo**bar**`) is left unmarked and the row drops the snippet that marked it.
 
 ## What ran
 
