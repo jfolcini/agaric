@@ -5,7 +5,7 @@
  */
 
 import type { Editor } from '@tiptap/core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   blockId,
@@ -52,6 +52,18 @@ function paste(ed: Editor, text: string): void {
   const event = new Event('paste', { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'clipboardData', {
     value: { getData: (type: string) => (type === 'text/plain' ? text : ''), files: [] },
+  })
+  ed.view.dom.dispatchEvent(event)
+}
+
+/** Paste as Ctrl+V does with `html` beside its `text` on the clipboard. */
+function pasteHtml(ed: Editor, html: string, text: string): void {
+  const event = new Event('paste', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'clipboardData', {
+    value: {
+      getData: (type: string) => (type === 'text/html' ? html : type === 'text/plain' ? text : ''),
+      files: [],
+    },
   })
   ed.view.dom.dispatchEvent(event)
 }
@@ -329,5 +341,59 @@ describe('pasting Markdown text in page mode', () => {
     paste(ed, '- a\n- b')
 
     expect(rowsOf(ed.state.doc)).toHaveLength(1)
+  })
+})
+
+describe('pasting a list as HTML in page mode (#6727)', () => {
+  it('makes each item a block with its style, a nested item one deeper', async () => {
+    const { editor: ed, lists } = openWithLists([
+      [A, 0, ''],
+      [B, 0, 'after'],
+    ])
+    caret(ed, 0, 0)
+
+    pasteHtml(ed, '<ul><li>a<ol><li>b</li></ol></li><li>c <b>bold</b></li></ul>', 'a\nb\nc bold')
+
+    await vi.waitFor(() =>
+      expect(rowsOf(ed.state.doc)).toEqual([
+        [A, 0, 'a'],
+        [N1, 1, 'b'],
+        [N2, 0, 'c **bold**'],
+        [B, 0, 'after'],
+      ]),
+    )
+    expect([A, N1, N2, B].map((id) => lists.styleOf(id))).toEqual([
+      'bullet',
+      'ordered',
+      'bullet',
+      'none',
+    ])
+  })
+
+  it('leaves one item pasted after text to ProseMirror', async () => {
+    const ed = open([[A, 0, 'ab']])
+    caret(ed, 0, 1)
+
+    pasteHtml(ed, '<ul><li>x</li></ul>', 'x')
+
+    await vi.waitFor(() => expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'axb']]))
+  })
+
+  it('leaves a copy from an editor of ours to ProseMirror', () => {
+    const ed = open([[A, 0, '']])
+    caret(ed, 0, 0)
+
+    pasteHtml(ed, '<ul data-pm-slice="0 0 []"><li><p>a</p></li><li><p>b</p></li></ul>', 'a\nb')
+
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, '- a\n- b']])
+  })
+
+  it('leaves a list pasted into code as its text', () => {
+    const ed = open([[A, 0, '```\ncode\n```']])
+    caret(ed, 0, 0)
+
+    pasteHtml(ed, '<ul><li>a</li><li>b</li></ul>', 'a\nb')
+
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, '```\na\nbcode\n```']])
   })
 })

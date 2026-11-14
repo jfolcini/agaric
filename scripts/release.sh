@@ -13,16 +13,23 @@
 #      a full `cargo tauri build` + bundle-path probes for THIS OS, so
 #      release-only failures surface locally before a CI run is spent.
 #      Skip with --skip-verify-build.
-#   3. Bump every version manifest in lockstep (bump-version.sh's own
+#   3. The release's vault (scripts/gen-release-vault.sh, a multi-minute
+#      build): a small vault written by the code about to be tagged, which
+#      replaces the previous release's under
+#      src-tauri/tests/fixtures/release-vault/ and is committed with the bump,
+#      so the upgrade test on main opens what this release writes (#6567).
+#      The upgrade test then runs over it. A failure of either stops here,
+#      with nothing bumped, tagged or pushed.
+#   4. Bump every version manifest in lockstep (bump-version.sh's own
 #      `Files updated:` header is the list), commit (GPG-signed), tag
 #      (GPG-signed), and push main + the tag (scripts/bump-version.sh).
 #      bump-version.sh refuses to commit under an identity that cannot
 #      verify, and asks GitHub to confirm the pushed commit's signature
 #      BEFORE it pushes the tag (#3745, #4082).
-#   4. The pushed tag triggers .github/workflows/release.yml, which builds
+#   5. The pushed tag triggers .github/workflows/release.yml, which builds
 #      every platform, drafts the GitHub Release, and then PUBLISHES it.
 #
-# THE TAG PUSH IN STEP 3 STARTS THE RELEASE. The jobs that read the signing
+# THE TAG PUSH IN STEP 4 STARTS THE RELEASE. The jobs that read the signing
 # secrets (`build-and-release`, `android-build-and-release`) run in the
 # `release` GitHub environment, so each waits for you to approve it: open the
 # run page and use "Review deployments", or
@@ -109,7 +116,7 @@ if [ -z "$REPO_ROOT" ]; then
 fi
 cd "$REPO_ROOT"
 
-for cmd in git gh jq cargo node; do
+for cmd in git gh jq cargo cargo-nextest node; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "ERROR: required command '$cmd' not found in PATH." >&2
     exit 1
@@ -210,6 +217,30 @@ else
   echo "→ verifying release build locally (scripts/verify-release-build.sh)"
   scripts/verify-release-build.sh
 fi
+
+# ── The release's vault ─────────────────────────────────────────────────────
+#
+# Written by HEAD, which is the code the tag will hold: the bump commit changes
+# version manifests only. Staged here and committed by the bump, which accepts
+# a staged vault and nothing else.
+
+VAULTS=src-tauri/tests/fixtures/release-vault
+echo "→ writing the release vault (scripts/gen-release-vault.sh, a multi-minute build)"
+if ! scripts/gen-release-vault.sh "$NEW_VERSION" HEAD; then
+  echo "ERROR: could not write the release vault for $NEW_VERSION." >&2
+  echo "       Nothing was bumped, tagged or pushed. Fix the build above and re-run." >&2
+  exit 1
+fi
+echo "→ running the upgrade test over it"
+if ! (cd src-tauri && SQLX_OFFLINE=true cargo nextest run -p agaric --lib --no-tests=fail \
+  -E 'test(head_boots_the_vault_the_last_release_wrote_6567)'); then
+  echo "ERROR: the upgrade test fails on the vault $NEW_VERSION wrote." >&2
+  echo "       Nothing was bumped, tagged or pushed. The vault is in $VAULTS;" >&2
+  echo "       fix the test or $VAULTS/generator.rs in an ordinary PR, discard it" >&2
+  echo "       (git checkout -- $VAULTS && git clean -fdq -- $VAULTS), then re-run." >&2
+  exit 1
+fi
+git add -A -- "$VAULTS"
 
 # ── Bump + commit + tag (+ push) ────────────────────────────────────────────
 

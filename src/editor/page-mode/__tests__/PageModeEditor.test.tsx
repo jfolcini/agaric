@@ -494,6 +494,110 @@ describe('PageModeEditor', () => {
     })
   })
 
+  it('saves the blocks a paste makes in one batch, and a cut of several in one, under their own ids (#6559)', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 5))
+      editor.view.pasteText(' one\ntwo\nthree')
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    const pasted = [1, 2].map((i) => blockIdOf(editor.state.doc.child(i)) as string)
+
+    expect([callsTo('create_blocks_batch'), callsTo('create_block')]).toEqual([1, 0])
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'first one'],
+      [pasted[0], 'two'],
+      [pasted[1], 'three'],
+      [ids[1], 'second'],
+    ])
+
+    act(() => {
+      editor.view.dispatch(
+        editor.state.tr.delete(at(editor, 1, 0) - 2, editor.state.doc.content.size),
+      )
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect([callsTo('delete_blocks_by_ids'), callsTo('delete_block')]).toEqual([1, 0])
+    expect(backendPage(pageId)).toEqual([[ids[0], 'first one']])
+  })
+
+  it('sends a refused batch a write at a time, and every block still lands or goes (#6559)', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const warn = vi.spyOn(logger, 'warn')
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'create_blocks_batch' || cmd === 'delete_blocks_by_ids') {
+        throw new Error('database locked')
+      }
+      return dispatch(cmd, args)
+    })
+
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 5))
+      editor.view.pasteText(' one\ntwo\nthree')
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    const pasted = [1, 2].map((i) => blockIdOf(editor.state.doc.child(i)) as string)
+
+    expect(callsTo('create_block')).toBe(2)
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'first one'],
+      [pasted[0], 'two'],
+      [pasted[1], 'three'],
+      [ids[1], 'second'],
+    ])
+
+    act(() => {
+      editor.view.dispatch(
+        editor.state.tr.delete(at(editor, 1, 0) - 2, editor.state.doc.content.size),
+      )
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect(callsTo('delete_block')).toBe(3)
+    expect(backendPage(pageId)).toEqual([[ids[0], 'first one']])
+    expect(warn).toHaveBeenCalledWith(
+      'savePage',
+      'A batch write was refused; sending it a write at a time',
+      { count: 3 },
+      expect.any(Error),
+    )
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
+  it('sends a batch delete that found none of its blocks live a write at a time, each refused (#6559)', async () => {
+    const { pageId, ids } = seedPage(['first', 'second', 'third'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    // Deleted elsewhere, before page mode heard of it.
+    for (const id of ids.slice(1)) dispatch('delete_block', { blockId: id })
+
+    act(() => {
+      editor.view.dispatch(
+        editor.state.tr.delete(at(editor, 1, 0) - 2, editor.state.doc.content.size),
+      )
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect([callsTo('delete_blocks_by_ids'), callsTo('delete_block')]).toEqual([1, 2])
+    expect(backendPage(pageId)).toEqual([[ids[0], 'first']])
+  })
+
   it('a refused write whose reread fails still says the save failed, and what landed is undoable', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     const { container, handle } = renderPageMode(pageId)

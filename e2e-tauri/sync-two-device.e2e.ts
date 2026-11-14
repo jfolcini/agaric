@@ -29,6 +29,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  caretToEnd,
   enterBlankSibling,
   expectAbsent,
   expectImageRendered,
@@ -525,7 +526,7 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
       // still in the editor when the pull lands is the next test's.
       await reopenSharedPage()
       await editBlock(peerBlockId)
-      await browser.keys(['Control', 'End'])
+      await caretToEnd()
       // One key per call: WebKit coalesces identical adjacent keys sent together.
       for (const ch of ` ${APP_TAIL}`) {
         await browser.keys([ch])
@@ -571,7 +572,7 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
       await reopenSharedPage()
       await waitForStaticText(peerBlockId, before, 'the block is not as the last test left it')
       await editBlock(peerBlockId)
-      await browser.keys(['Control', 'End'])
+      await caretToEnd()
       await peer.editBlock(peerBlockId, peerText)
       if ((await stored()) !== before) {
         throw new Error("the app pulled the peer's edit before a key was typed")

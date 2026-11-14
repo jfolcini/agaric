@@ -296,6 +296,23 @@ function commandsApi(read: () => Promise<TreeRow[]>): PageSaveApi {
           }),
         )
       ).op_refs,
+    createBatch: async (creates) =>
+      (
+        await retryOnPoolBusy(() =>
+          commands
+            .createBlocksBatch(
+              creates.map(({ id, parentId, index, markdown }) => ({
+                blockType: 'content',
+                content: markdown,
+                parentId,
+                blockId: id,
+                // The batch's sibling position counts from 1.
+                position: index + 1,
+              })),
+            )
+            .then(unwrap),
+        )
+      ).op_refs,
     restore: async (id, deletedAt) =>
       (await retryOnPoolBusy(() => commands.restoreBlock(id, deletedAt).then(unwrap))).op_refs,
     move: async (id, parentId, index) =>
@@ -305,6 +322,12 @@ function commandsApi(read: () => Promise<TreeRow[]>): PageSaveApi {
         .op_refs,
     remove: async (id) => {
       const deleted = await retryOnPoolBusy(() => commands.deleteBlock(id).then(unwrap))
+      return { deletedAt: deleted.deleted_at, refs: deleted.op_refs }
+    },
+    removeBatch: async (ids) => {
+      const deleted = await retryOnPoolBusy(() => commands.deleteBlocksByIds([...ids]).then(unwrap))
+      // None was live: one at a time, each delete says why.
+      if (deleted.deleted_at === null) throw new Error('none of the blocks was there to delete')
       return { deletedAt: deleted.deleted_at, refs: deleted.op_refs }
     },
     tree: read,

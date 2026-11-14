@@ -562,7 +562,7 @@ function AttachmentFileChip({
           // and trigger a browser download.
           try {
             const bytes = await readAttachment(att.id)
-            triggerDownload(bytes, att.mime_type, att.filename)
+            await triggerDownload(bytes, att.mime_type, att.filename)
           } catch (err) {
             logger.warn('AttachmentRenderer', 'download attachment failed', { id: att.id }, err)
             notify.error(t('attachments.loadFailed'))
@@ -640,7 +640,7 @@ function MarkdownAttachment({
       e.stopPropagation()
       try {
         const bytes = await readAttachment(att.id)
-        triggerDownload(bytes, att.mime_type || 'text/markdown', att.filename)
+        await triggerDownload(bytes, att.mime_type || 'text/markdown', att.filename)
       } catch (err) {
         logger.warn('AttachmentRenderer', 'download markdown failed', { id: att.id }, err)
         notify.error(t('attachments.loadFailed'))

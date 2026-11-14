@@ -94,7 +94,7 @@ pub async fn project_create_block_to_sql(
 }
 
 /// #2200 test-only counters for [`reproject_dense_positions`] and
-/// [`reproject_dense_positions_from`]: how many times a reprojection ran, and
+/// [`reproject_dense_tail`]: how many times a reprojection ran, and
 /// how many sibling ids it sent. Lets the import-scaling tests assert the
 /// deferred flush reprojects each touched parent ONCE per chunk instead of
 /// once per imported block, and the #6527 tests that an append sends one id.
@@ -176,77 +176,81 @@ pub async fn reproject_dense_positions(
 /// [`reproject_dense_positions`] for a group whose only change is blocks
 /// inserted at index `first_new` or later (#6527): the siblings before it keep
 /// their ranks, so only the tail is sent. A page appended to a space sends one
-/// pair where every page and tag of the space went before.
+/// pair where every page and tag of the space went before. `window` is the
+/// group's order from index `offset` on, starting no later than the sibling
+/// before `first_new`.
 ///
-/// The tail is written alone only when the sibling right before it already
-/// sits at its rank. A purge reprojects nothing and leaves a gap, which lifts
-/// every later sibling above its rank; the whole group is then written, as
-/// before. The check reads one row, so it does not prove the siblings ahead
+/// Returns `false`, having written nothing, when the sibling right before the
+/// tail is off its rank: the caller then writes the whole group. A purge
+/// reprojects nothing and leaves a gap, which lifts every later sibling above
+/// its rank. The check reads one row, so it does not prove the siblings ahead
 /// are dense: a trashed block left on a stale rank by an undone move
 /// (`history::reproject_live_sibling_group` ranks live siblings only) can
 /// cancel a gap. The tail then leaves those ranks as it found them, where the
 /// whole-group write would have reset them; every rank it does write is the
 /// engine's.
-pub async fn reproject_dense_positions_from(
+pub async fn reproject_dense_tail(
+    conn: &mut SqliteConnection,
+    window: &[String],
+    offset: usize,
+    first_new: usize,
+) -> Result<bool, AppError> {
+    let Some(tail_at) = first_new.checked_sub(offset) else {
+        return Ok(false);
+    };
+    if let Some(before) = tail_at.checked_sub(1).and_then(|i| window.get(i)) {
+        let position = sqlx::query_scalar!("SELECT position FROM blocks WHERE id = ?", before)
+            .fetch_optional(&mut *conn)
+            .await?
+            .flatten();
+        if position != i64::try_from(first_new).ok() {
+            return Ok(false);
+        }
+    } else if first_new > 0 {
+        return Ok(false);
+    }
+    let Some(tail) = window.get(tail_at..).filter(|tail| !tail.is_empty()) else {
+        return Ok(true);
+    };
+    #[cfg(any(test, feature = "test-util"))]
+    reproject_call_spy::bump(tail.len());
+    write_dense_ranks(conn, tail, first_new).await?;
+    Ok(true)
+}
+
+/// The oracle for [`reproject_dense_tail`]: the whole-group write it replaces
+/// must find every rank already in place.
+#[cfg(any(test, feature = "test-util"))]
+pub(crate) async fn assert_dense_positions(
     conn: &mut SqliteConnection,
     ordered_block_ids: &[String],
-    first_new: usize,
 ) -> Result<(), AppError> {
-    let start = match first_new
-        .checked_sub(1)
-        .and_then(|i| ordered_block_ids.get(i))
-    {
-        Some(before) => {
-            let position = sqlx::query_scalar!("SELECT position FROM blocks WHERE id = ?", before)
-                .fetch_optional(&mut *conn)
-                .await?
-                .flatten();
-            if position == i64::try_from(first_new).ok() {
-                first_new
-            } else {
-                0
-            }
-        }
-        None => 0,
-    };
-    if start >= ordered_block_ids.len() {
-        return Ok(());
-    }
-    #[cfg(any(test, feature = "test-util"))]
-    reproject_call_spy::bump(ordered_block_ids.len() - start);
-    write_dense_ranks(conn, ordered_block_ids, start).await?;
-    // The whole-group write this replaces, kept as the oracle: after the tail
-    // it must find every rank already in place, so a test that builds the
-    // drift above fails here. Debug builds only, so a bench (built with
-    // `test-util`, without debug assertions) times the tail alone.
-    #[cfg(any(test, feature = "test-util"))]
-    if cfg!(debug_assertions) && start > 0 {
-        let rewritten = write_dense_ranks(conn, ordered_block_ids, 0).await?;
-        assert_eq!(
-            rewritten, 0,
-            "reprojecting the tail from index {start} left {rewritten} sibling(s) off the \
-             rank the whole-group reprojection gives"
-        );
-    }
+    let rewritten = write_dense_ranks(conn, ordered_block_ids, 0).await?;
+    assert_eq!(
+        rewritten, 0,
+        "reprojecting the tail left {rewritten} sibling(s) off the rank the whole-group \
+         reprojection gives"
+    );
     Ok(())
 }
 
-/// Write rank `i + 1` to `ordered_block_ids[i]` for every `i >= start`, in one
-/// statement. Returns how many rows' `position` changed.
+/// Write rank `first_index + i + 1` to `block_ids[i]`, in one statement.
+/// Returns how many rows' `position` changed.
 async fn write_dense_ranks(
     conn: &mut SqliteConnection,
-    ordered_block_ids: &[String],
-    start: usize,
+    block_ids: &[String],
+    first_index: usize,
 ) -> Result<u64, AppError> {
     // Build the `[{"id","rank"}, …]` value list once. rank is 1-based,
     // matching the pre-#400 convention; `saturating_add` mirrors the old
     // per-row overflow guard.
-    let pairs: Vec<serde_json::Value> = ordered_block_ids
+    let pairs: Vec<serde_json::Value> = block_ids
         .iter()
         .enumerate()
-        .skip(start)
-        .map(|(idx, block_id)| {
-            let rank = i64::try_from(idx).unwrap_or(i64::MAX).saturating_add(1);
+        .map(|(i, block_id)| {
+            let rank = i64::try_from(first_index.saturating_add(i))
+                .unwrap_or(i64::MAX)
+                .saturating_add(1);
             serde_json::json!({ "id": block_id, "rank": rank })
         })
         .collect();
@@ -5593,6 +5597,81 @@ mod tests {
         assert_eq!(pos(&pool, DEAD).await, Some(2));
         assert_eq!(pos(&pool, C1).await, Some(3));
         assert_eq!(pos(&pool, C3).await, Some(4));
+    }
+
+    /// Five children of one page at ranks 1..=5, in id order.
+    async fn five_ranked_children(conn: &mut SqliteConnection) -> Vec<String> {
+        const PARENT: &str = "01HZ00000000000000000000P1";
+        project_create_block_to_sql(conn, &snapshot(PARENT, "page", "P", None, 1))
+            .await
+            .expect("parent");
+        let mut ids = Vec::new();
+        for rank in 1..=5 {
+            let id = format!("01HZ00000000000000000000D{rank}");
+            project_create_block_to_sql(conn, &snapshot(&id, "content", "c", Some(PARENT), rank))
+                .await
+                .expect("child");
+            ids.push(id);
+        }
+        ids
+    }
+
+    async fn ranks(conn: &mut SqliteConnection, ids: &[String]) -> Vec<Option<i64>> {
+        let mut out = Vec::new();
+        for id in ids {
+            out.push(
+                sqlx::query_scalar::<_, Option<i64>>("SELECT position FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .expect("position"),
+            );
+        }
+        out
+    }
+
+    /// The group reordered so its last child sits at index 2: the window
+    /// starts at the sibling before it, and only the ranks from index 2 on
+    /// are sent.
+    #[tokio::test]
+    async fn reproject_dense_tail_renumbers_from_a_mid_list_insert_6527() {
+        let (pool, _dir) = fresh_pool().await;
+        let mut conn = pool.acquire().await.expect("acquire");
+        let ids = five_ranked_children(&mut conn).await;
+        let order = [&ids[0], &ids[1], &ids[4], &ids[2], &ids[3]].map(String::clone);
+
+        reproject_call_spy::reset();
+        let written = reproject_dense_tail(&mut conn, &order[1..], 1, 2)
+            .await
+            .expect("tail");
+
+        assert!(written, "the sibling before the tail is at its rank");
+        assert_eq!(reproject_call_spy::ids(), 3);
+        assert_eq!(
+            ranks(&mut conn, &order).await,
+            [Some(1), Some(2), Some(3), Some(4), Some(5)]
+        );
+    }
+
+    #[tokio::test]
+    async fn reproject_dense_tail_writes_nothing_when_the_sibling_before_is_off_its_rank_6527() {
+        let (pool, _dir) = fresh_pool().await;
+        let mut conn = pool.acquire().await.expect("acquire");
+        let ids = five_ranked_children(&mut conn).await;
+        // A purge of the first child: the engine ranks the rest 1..=4, SQL still 2..=5.
+        let order = ids[1..].to_vec();
+
+        reproject_call_spy::reset();
+        let written = reproject_dense_tail(&mut conn, &order[2..], 2, 3)
+            .await
+            .expect("tail");
+
+        assert!(!written, "the caller writes the whole group");
+        assert_eq!(reproject_call_spy::ids(), 0);
+        assert_eq!(
+            ranks(&mut conn, &order).await,
+            [Some(2), Some(3), Some(4), Some(5)]
+        );
     }
 
     /// #4083 — under the inbound tx's `defer_foreign_keys = ON`, a block may be

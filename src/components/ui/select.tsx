@@ -95,6 +95,7 @@ const SelectContent = ({
   className,
   children,
   position = 'popper',
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) => (
   <SelectPrimitive.Portal>
@@ -108,6 +109,14 @@ const SelectContent = ({
         className,
       )}
       position={position}
+      // Radix refocuses the trigger one timer after the list unmounts. A click
+      // that lands first has moved focus on, and taking it back closes the
+      // popover that click opened (#6729).
+      onCloseAutoFocus={(event) => {
+        onCloseAutoFocus?.(event)
+        const focused = document.activeElement
+        if (focused != null && focused !== document.body) event.preventDefault()
+      }}
       {...props}
     >
       <SelectScrollUpButton />

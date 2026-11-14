@@ -1,0 +1,3 @@
+blocks 15
+ops 5
+compacted_through 57
