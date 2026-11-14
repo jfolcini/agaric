@@ -6696,6 +6696,63 @@ async fn a_draft_is_written_back_with_the_marker_cleared_6521() {
     assert_eq!(in_engine.as_deref(), Some("typed and not saved"));
     second.shutdown();
 }
+/// #6521 — a draft that fails before its op commits leaves no op behind, so
+/// it does not keep the vault on the replay boot: an over-long draft fails
+/// that way at every boot, for as long as its row stays. One whose op
+/// committed and whose engine apply could not be enqueued does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn only_a_draft_whose_op_committed_unapplied_keeps_boot_on_the_replay_6521() {
+    let device_id = "dev-6521-draft-errors";
+    let block = BlockId::test_id("DRAFTERR6521");
+    let (pool, _dir) = test_pool().await;
+    let (first, _) = boot_6521(&pool, device_id).await;
+    first.shutdown();
+    drop(first);
+    insert_test_block(&pool, block.as_str(), "old content").await;
+    let too_long = "x".repeat(agaric_engine::block_ops::MAX_CONTENT_LENGTH + 1);
+    save_draft(&pool, device_id, block.as_str(), &too_long)
+        .await
+        .unwrap();
+
+    let (second, report) = boot_6521(&pool, device_id).await;
+    second.shutdown();
+    drop(second);
+
+    assert_eq!(
+        report.draft_errors.len(),
+        1,
+        "the fixture: the draft failed"
+    );
+    assert!(
+        boots_from_saved_rows(&pool).await,
+        "no op was committed, so the saved rows still hold every op"
+    );
+
+    save_draft(&pool, device_id, block.as_str(), "typed and not saved")
+        .await
+        .unwrap();
+    let killed_queue = Materializer::new(pool.clone());
+    let registry = &killed_queue.loro_state().registry;
+    agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id)
+        .await
+        .expect("rehydrate");
+    killed_queue.shutdown();
+    super::boot::reset_recovery_guard();
+    let report = recover_at_boot(&pool, device_id, &killed_queue, registry)
+        .await
+        .expect("recover");
+
+    assert_eq!(
+        report.draft_errors.len(),
+        1,
+        "the fixture: the apply was not enqueued"
+    );
+    assert!(
+        !boots_from_saved_rows(&pool).await,
+        "the draft's op is in the log and in no engine"
+    );
+}
+
 /// #6521 — what boot costs over one database each way: from the saved rows,
 /// and replaying the op log. The vault is one space of `blocks` blocks whose
 /// engine a pass saved, then `tail` edits a session committed with their

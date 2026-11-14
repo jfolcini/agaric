@@ -153,7 +153,7 @@ pub async fn recover_at_boot(
         saved_rows_hold_every_op = false;
     }
     let drafts = recover_drafts(pool, device_id, materializer).await?;
-    every_op_applied &= drafts.errors.is_empty() && drafts.applied;
+    every_op_applied &= drafts.applied;
 
     // -----------------------------------------------------------------
     // Step 3: #1453 Phase 1 — backfill blake3 content_hash for attachment
@@ -363,6 +363,7 @@ async fn recover_drafts(
     let mut drafts_recovered: Vec<String> = Vec::new();
     let mut drafts_already_flushed: u64 = 0;
     let mut draft_errors: Vec<String> = Vec::new();
+    let mut applied = true;
 
     let existing_block_ids = live_draft_block_ids(pool, &drafts).await?;
 
@@ -380,6 +381,9 @@ async fn recover_drafts(
                     true
                 }
                 Err(e) => {
+                    // The one failure that comes after the draft's op has
+                    // committed: its engine apply could not be enqueued.
+                    applied &= !matches!(e, AppError::Channel(_));
                     log_draft_error(&mut draft_errors, draft.block_id.as_str(), &e, "recovering");
                     false
                 }
@@ -424,7 +428,6 @@ async fn recover_drafts(
     // caller proceeds — `refresh_caches_for_recovered_drafts` and the first
     // user ops must observe a settled state. Non-fatal, same "log +
     // continue" philosophy as the replay step.
-    let mut applied = true;
     if !drafts_recovered.is_empty()
         && let Err(e) = materializer.flush_foreground().await
     {
@@ -448,8 +451,8 @@ struct DraftRecoveryOutcome {
     recovered: Vec<String>,
     already_flushed: u64,
     errors: Vec<String>,
-    /// The foreground queue drained, so each written-back draft's op has had
-    /// its engine apply.
+    /// Every draft's op that committed has had its engine apply: each was
+    /// enqueued, and the foreground queue drained.
     applied: bool,
 }
 
