@@ -1,0 +1,81 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT key, value_type, options, created_at, 0 AS \"builtin!: bool\",\n                multiple AS \"multiple: bool\"\n         FROM property_definitions\n         WHERE space_id = ?1 AND (?2 IS NULL OR key > ?3)\n         ORDER BY key ASC\n         LIMIT ?4",
+  "describe": {
+    "columns": [
+      {
+        "name": "key",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "value_type",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "value_type"
+          }
+        }
+      },
+      {
+        "name": "options",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "options"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "builtin!: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "multiple: bool",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "multiple"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5953111f388cb925372b767711e80d2cb694ef520505d156528bba103e2bb616"
+}

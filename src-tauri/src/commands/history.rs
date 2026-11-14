@@ -864,7 +864,7 @@ async fn with_recorded_prior_in_tx(
 /// back in the slot of its own kind, a string as text, as the projection keeps
 /// it (#6206). A value whose slot the type takes is left alone: a ref under a
 /// text key, and a select value outside the options, which an options edit
-/// leaves shown.
+/// leaves shown. A list is left alone too: no type converts one (`coerce`).
 async fn fit_reverse_to_declared_type(
     conn: &mut sqlx::SqliteConnection,
     p: &mut agaric_store::op::SetPropertyPayload,

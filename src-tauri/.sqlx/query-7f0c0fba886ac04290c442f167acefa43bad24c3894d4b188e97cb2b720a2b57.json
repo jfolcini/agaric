@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE block_properties SET value_list = (SELECT json_group_array( CASE WHEN je.value = ?3 THEN ?4 ELSE je.value END ORDER BY je.key) FROM json_each(block_properties.value_list) je) WHERE key = ?2 AND EXISTS (SELECT 1 FROM json_each(block_properties.value_list) je WHERE je.value = ?3) AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = block_properties.block_id AND (b.space_id = ?1 OR b.id = ?1))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "7f0c0fba886ac04290c442f167acefa43bad24c3894d4b188e97cb2b720a2b57"
+}

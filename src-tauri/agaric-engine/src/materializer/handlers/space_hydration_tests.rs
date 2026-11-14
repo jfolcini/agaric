@@ -118,6 +118,7 @@ fn set_space_op(block_id: &str, space: Option<&str>) -> OpPayload {
         value_ref: space.map(BlockId::from_trusted),
         value_bool: None,
         prior: None,
+        value_list: None,
     })
 }
 
@@ -365,6 +366,7 @@ async fn engine_matches_sql_for_subtree() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
     )
     .await;
@@ -543,6 +545,7 @@ async fn clearing_space_skips_hydration() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         },
     )
     .await;

@@ -302,6 +302,10 @@ pub struct RemovePageAliasPayload {
 pub struct PropertyDefState {
     pub value_type: String,
     pub options: Option<String>,
+    /// The key holds a list of `value_type` items (#6741). Omitted when
+    /// `false`, so ops written before it keep their hash.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub multiple: bool,
 }
 
 /// Payload for the `set_property_def` op — creates, edits or deletes
@@ -406,6 +410,10 @@ pub struct SetPropertyPayload {
     pub value_ref: Option<BlockId>,
     #[serde(default)]
     pub value_bool: Option<bool>,
+    /// A list value (#6741). Omitted when `None`, so ops written before it
+    /// keep their hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_list: Option<PropertyList>,
     /// The value the set overwrote, which its undo restores; every slot `None`
     /// when the block held none. The op log cannot always supply it: a value
     /// set on a peer arrives through the engine with no local op behind it,
@@ -426,6 +434,7 @@ impl SetPropertyPayload {
             value_date,
             value_ref,
             value_bool,
+            value_list,
         } = value;
         Self {
             block_id,
@@ -435,6 +444,7 @@ impl SetPropertyPayload {
             value_date,
             value_ref,
             value_bool,
+            value_list,
             prior: None,
         }
     }
@@ -447,11 +457,70 @@ impl SetPropertyPayload {
             value_date: self.value_date.clone(),
             value_ref: self.value_ref.clone(),
             value_bool: self.value_bool,
+            value_list: self.value_list.clone(),
         }
     }
 }
 
-/// A property's typed value, in the five slots [`SetPropertyPayload`] carries.
+/// One item of a list value (#6741): a string for a text, url, select, date
+/// or ref item, a number for a number item.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(untagged)]
+pub enum PropertyListItem {
+    Text(String),
+    Num(f64),
+}
+
+/// A list value (#6741), in the order it was written. `block_properties`
+/// stores it as the JSON array text of `value_list`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(transparent)]
+pub struct PropertyList(pub Vec<PropertyListItem>);
+
+impl PropertyList {
+    /// The text `block_properties.value_list` stores.
+    pub fn to_json(&self) -> String {
+        serde_json::Value::from(
+            self.0
+                .iter()
+                .map(|item| match item {
+                    PropertyListItem::Text(s) => serde_json::Value::from(s.as_str()),
+                    PropertyListItem::Num(n) => serde_json::Value::from(*n),
+                })
+                .collect::<Vec<_>>(),
+        )
+        .to_string()
+    }
+
+    /// The string items, which under a `ref` definition are the targets.
+    pub fn texts(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().filter_map(|item| match item {
+            PropertyListItem::Text(s) => Some(s.as_str()),
+            PropertyListItem::Num(_) => None,
+        })
+    }
+}
+
+impl sqlx::Type<sqlx::Sqlite> for PropertyList {
+    fn type_info() -> <sqlx::Sqlite as sqlx::Database>::TypeInfo {
+        <&str as sqlx::Type<sqlx::Sqlite>>::type_info()
+    }
+
+    fn compatible(ty: &<sqlx::Sqlite as sqlx::Database>::TypeInfo) -> bool {
+        <&str as sqlx::Type<sqlx::Sqlite>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for PropertyList {
+    fn decode(
+        value: <sqlx::Sqlite as sqlx::Database>::ValueRef<'r>,
+    ) -> Result<Self, sqlx::error::BoxDynError> {
+        let text = <&str as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
+        Ok(serde_json::from_str(text)?)
+    }
+}
+
+/// A property's typed value, in the six slots [`SetPropertyPayload`] carries.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PropertyValueFields {
     pub value_text: Option<String>,
@@ -459,6 +528,9 @@ pub struct PropertyValueFields {
     pub value_date: Option<String>,
     pub value_ref: Option<BlockId>,
     pub value_bool: Option<bool>,
+    /// Omitted when `None`, so a `prior` written before #6741 keeps its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_list: Option<PropertyList>,
 }
 
 impl PropertyValueFields {
@@ -919,12 +991,16 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), agaric_core::
         p.value_date.is_some(),
         p.value_ref.is_some(),
         p.value_bool.is_some(),
+        p.value_list.is_some(),
     ]
     .iter()
     .filter(|&&b| b)
     .count();
 
     if count == 1 {
+        if let Some(list) = &p.value_list {
+            validate_list_items(list)?;
+        }
         // Reject empty / whitespace-only string fields. The frontend
         // already enforces non-empty values, but op-log entries can also
         // originate from MCP tools and import paths, so backend-side
@@ -958,6 +1034,33 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), agaric_core::
             "SetProperty must have exactly 1 non-null value field, found {count}"
         )))
     }
+}
+
+/// A list value's shape (#6741): at least one item (clearing the last removes
+/// the property, as clearing a scalar does), each a non-blank string or a
+/// finite number.
+fn validate_list_items(list: &PropertyList) -> Result<(), agaric_core::error::AppError> {
+    if list.0.is_empty() {
+        return Err(agaric_core::error::AppError::validation(
+            "set_property.value_list.empty".into(),
+        ));
+    }
+    for item in &list.0 {
+        match item {
+            PropertyListItem::Text(s) if s.trim().is_empty() => {
+                return Err(agaric_core::error::AppError::validation(
+                    "set_property.value_list.item_empty".into(),
+                ));
+            }
+            PropertyListItem::Num(n) if !n.is_finite() => {
+                return Err(agaric_core::error::AppError::validation(format!(
+                    "value_list items must be finite, got {n}"
+                )));
+            }
+            PropertyListItem::Text(_) | PropertyListItem::Num(_) => {}
+        }
+    }
+    Ok(())
 }
 
 // ===========================================================================
@@ -1060,6 +1163,7 @@ mod tests {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             OpPayload::DeleteProperty(DeletePropertyPayload {
                 block_id: BlockId::from_string(TEST_BID).unwrap(),
@@ -1099,10 +1203,12 @@ mod tests {
                 def: Some(PropertyDefState {
                     value_type: "select".into(),
                     options: Some(r#"["draft","done"]"#.into()),
+                    multiple: false,
                 }),
                 prior: Some(PropertyDefState {
                     value_type: "select".into(),
                     options: Some(r#"["draft"]"#.into()),
+                    multiple: false,
                 }),
             }),
             OpPayload::RenamePropertyKey(RenamePropertyKeyPayload {
@@ -1120,6 +1226,7 @@ mod tests {
                         prior: Some(PropertyDefState {
                             value_type: "select".into(),
                             options: Some(r#"["a"]"#.into()),
+                            multiple: false,
                         }),
                     },
                     PropertyDefWrite {
@@ -1127,10 +1234,12 @@ mod tests {
                         def: Some(PropertyDefState {
                             value_type: "select".into(),
                             options: Some(r#"["b","a"]"#.into()),
+                            multiple: false,
                         }),
                         prior: Some(PropertyDefState {
                             value_type: "select".into(),
                             options: Some(r#"["b"]"#.into()),
+                            multiple: false,
                         }),
                     },
                 ],
@@ -1404,6 +1513,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: Some(PropertyValueFields::default()),
+            value_list: None,
         };
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(
@@ -1586,6 +1696,7 @@ mod tests {
         let def = |value_type: &str| PropertyDefState {
             value_type: value_type.into(),
             options: None,
+            multiple: false,
         };
         let payload = OpPayload::RewriteProperties(RewritePropertiesPayload {
             space_id: BlockId::from_string(TEST_BID).unwrap(),
@@ -2003,6 +2114,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("\"value_text\":null"));
@@ -2029,6 +2141,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         });
         let json = serde_json::to_string(&payload).unwrap();
         let deser: OpPayload = serde_json::from_str(&json).unwrap();
@@ -2167,6 +2280,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         assert!(
             validate_set_property(&p).is_ok(),
@@ -2185,6 +2299,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -2205,6 +2320,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -2212,6 +2328,45 @@ mod tests {
             "expected Validation error, got: {err:?}"
         );
         assert!(err.to_string().contains("found 2"));
+    }
+
+    /// #6741: a list is one value. It is accepted alone, and refused beside
+    /// another slot, when empty, and when an item is blank or not finite.
+    #[test]
+    fn validate_set_property_holds_a_list_to_its_shape_6741() {
+        use PropertyListItem::{Num, Text};
+        let with = |value_text: Option<&str>, items: Vec<PropertyListItem>| SetPropertyPayload {
+            block_id: BlockId::test_id("B1"),
+            key: "authors".into(),
+            value_text: value_text.map(str::to_owned),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+            value_list: Some(PropertyList(items)),
+            prior: None,
+        };
+        let message = |p: &SetPropertyPayload| validate_set_property(p).unwrap_err().to_string();
+
+        validate_set_property(&with(None, vec![Text("Ann".into()), Num(2.0)]))
+            .expect("a list of strings and numbers is one value");
+        assert!(
+            message(&with(Some("v"), vec![Text("Ann".into())])).contains("found 2"),
+            "a list beside a text is two values"
+        );
+        assert!(
+            message(&with(None, vec![])).contains("set_property.value_list.empty"),
+            "an empty list is refused: clearing the last item deletes the property"
+        );
+        assert!(
+            message(&with(None, vec![Text("Ann".into()), Text("  ".into())]))
+                .contains("set_property.value_list.item_empty"),
+            "a blank item is refused"
+        );
+        assert!(
+            message(&with(None, vec![Num(f64::NAN)])).contains("must be finite"),
+            "a NaN item is refused"
+        );
     }
 
     /// Validation accepts a payload whose only set value is
@@ -2228,6 +2383,7 @@ mod tests {
                 value_ref: None,
                 value_bool: Some(b),
                 prior: None,
+                value_list: None,
             };
             assert!(
                 validate_set_property(&p).is_ok(),
@@ -2249,6 +2405,7 @@ mod tests {
             value_ref: None,
             value_bool: Some(true),
             prior: None,
+            value_list: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -2272,6 +2429,7 @@ mod tests {
             value_ref: None,
             value_bool: Some(true),
             prior: None,
+            value_list: None,
         };
         let json: serde_json::Value = serde_json::to_value(&payload).unwrap();
         insta::assert_yaml_snapshot!("set_property_payload_value_bool_true", json);
@@ -2301,6 +2459,7 @@ mod tests {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             };
             assert!(
                 validate_set_property(&p).is_ok(),
@@ -2320,6 +2479,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -2340,6 +2500,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -2361,6 +2522,7 @@ mod tests {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
@@ -2424,6 +2586,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -2447,6 +2610,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -2468,6 +2632,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let err_neg = validate_set_property(&p_neg).unwrap_err();
         assert!(
@@ -2487,6 +2652,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         assert!(
             validate_set_property(&p).is_ok(),
@@ -2510,6 +2676,7 @@ mod tests {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
@@ -2535,6 +2702,7 @@ mod tests {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
@@ -2560,6 +2728,7 @@ mod tests {
                 value_ref: Some(empty.into()),
                 value_bool: None,
                 prior: None,
+                value_list: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
@@ -2593,6 +2762,7 @@ mod tests {
             value_ref: Some(BlockId::from(lower)),
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         assert_eq!(
             p.value_ref.as_ref().map(agaric_core::ulid::BlockId::as_str),

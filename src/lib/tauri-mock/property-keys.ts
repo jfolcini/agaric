@@ -32,6 +32,8 @@ type ValueFields = Row
 export interface DefState {
   value_type: string
   options: string | null
+  /** Set only on a definition that holds a list (#6741). */
+  multiple?: true
 }
 
 export interface DefWrite {
@@ -160,7 +162,7 @@ const VALUE_SLOTS = ['value_text', 'value_num', 'value_date', 'value_ref', 'valu
 
 /** A row with no value: the mock's engine Null, a clear SQL holds no row for. */
 function isNullRow(row: Row): boolean {
-  return VALUE_SLOTS.every((slot) => row[slot] == null)
+  return VALUE_SLOTS.every((slot) => row[slot] == null) && row['value_list'] == null
 }
 
 /** The block holds a value under `key`; an engine Null counts as none. */
@@ -205,7 +207,11 @@ export function userDef(spaceId: string, key: string): Row {
 }
 
 export function defState(row: Row): DefState {
-  return { value_type: row['value_type'] as string, options: (row['options'] as string) ?? null }
+  return {
+    value_type: row['value_type'] as string,
+    options: (row['options'] as string) ?? null,
+    ...(row['multiple'] === true ? { multiple: true as const } : {}),
+  }
 }
 
 /** A `block_properties` row's value as `PropertyValueFields`: a bool slot is a bool there. */
@@ -217,7 +223,13 @@ function fieldsOf(row: Row): ValueFields {
     value_date: row['value_date'] ?? null,
     value_ref: row['value_ref'] ?? null,
     value_bool: bool == null ? null : Boolean(bool),
+    ...listField(row),
   }
+}
+
+/** `value_list` as a row, an op and the wire carry it: left out when the value is no list (#6741). */
+export function listField(row: Row): { value_list?: unknown } {
+  return row['value_list'] == null ? {} : { value_list: row['value_list'] }
 }
 
 /** A `block_properties` row of `fields`: a bool slot is 1 or 0 there. */

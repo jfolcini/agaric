@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key AS \"key!\", value_type, options\n               FROM property_definitions\n               WHERE space_id = ?2 AND key IN (SELECT value FROM json_each(?1))",
+  "query": "SELECT key AS \"key!\", value_type, options, multiple AS \"multiple: bool\"\n               FROM property_definitions\n               WHERE space_id = ?2 AND key IN (SELECT value FROM json_each(?1))",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,17 @@
             "name": "options"
           }
         }
+      },
+      {
+        "name": "multiple: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "multiple"
+          }
+        }
       }
     ],
     "parameters": {
@@ -43,8 +54,9 @@
     "nullable": [
       false,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "86254d612e52aa22c3721aaad8d22674b77f400ebfd80fcbecaa95f4ca3f88c6"
+  "hash": "31b226241a69d8bf4dfc51ab04312df2c7a84d68600ffe7a8d75d0b9e68cf6c2"
 }

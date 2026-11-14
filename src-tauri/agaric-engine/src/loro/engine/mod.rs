@@ -69,6 +69,7 @@ use loro::{
 };
 
 use agaric_core::error::AppError;
+use agaric_store::op::{PropertyList, PropertyListItem};
 
 /// Map an external `device_id` string (production uses a canonical
 /// UUID-v4 — see `src/device.rs:83-99`) into a `loro::PeerID` (`u64`).
@@ -289,7 +290,9 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// Phase 3); `3` = adds the `page_aliases` root (#5387); `4` = adds the
 /// `block_attachments` root (#5608); `5` = the doc is unchanged, but its sync
 /// bytes travel raw after a header frame instead of inside the JSON (#5761);
-/// `6` = adds the per-space `property_definitions` root (#5841).
+/// `6` = adds the per-space `property_definitions` root (#5841); `7` = a
+/// property slot may hold a list value and a definition may be `multiple`
+/// (#6741).
 /// Each bump makes the sync handshake turn away a peer that would carry state
 /// it cannot project, or bytes it cannot read. The v1→v2
 /// forward-migration was retired in #332 once every persisted snapshot had
@@ -309,7 +312,7 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// #6525 skips a snapshot it cannot read and its next save overwrites it, so the
 /// migration makes such a build refuse the vault at the migration check instead
 /// of opening it.
-pub const ENGINE_FORMAT_VERSION: u32 = 6;
+pub const ENGINE_FORMAT_VERSION: u32 = 7;
 /// Key under [`ENGINE_META_ROOT`] recording the engine format version a doc was
 /// written under (#1584). Stored as a Loro `I64`. Absent ⇒ a pre-#1584 export
 /// (legacy-unstamped); such docs are *accepted* — see
@@ -340,12 +343,15 @@ pub struct BlockSnapshot {
 /// `LoroValue::String` in Loro — disambiguated at the SQL projection by
 /// `property_definitions.value_type`; this is the encoding chosen for the
 /// Open kept reversible and migration-free). `Null` is an
-/// explicit clear, distinct from a key being absent.
+/// explicit clear, distinct from a key being absent. `List` is one plain
+/// `LoroValue::List` in the slot, never a container, so two devices that write
+/// one list concurrently keep the later write whole (#6741).
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropertyValue {
     Str(String),
     Num(f64),
     Bool(bool),
+    List(PropertyList),
     Null,
 }
 
@@ -366,7 +372,7 @@ impl From<&agaric_store::op::SetPropertyPayload> for PropertyValue {
 
 impl From<&agaric_store::op::PropertyValueFields> for PropertyValue {
     /// Coerce typed value fields into the engine's native [`PropertyValue`] by
-    /// precedence (text→num→date→ref→bool); no field set ⇒ an explicit
+    /// precedence (text→num→date→ref→bool→list); no field set ⇒ an explicit
     /// [`PropertyValue::Null`] clear. text/date/ref all map to
     /// [`PropertyValue::Str`] (disambiguated at the SQL projection by
     /// `property_definitions.value_type`).
@@ -381,6 +387,8 @@ impl From<&agaric_store::op::PropertyValueFields> for PropertyValue {
             PropertyValue::Str(r.as_str().to_owned())
         } else if let Some(b) = v.value_bool {
             PropertyValue::Bool(b)
+        } else if let Some(list) = &v.value_list {
+            PropertyValue::List(list.clone())
         } else {
             PropertyValue::Null
         }
@@ -394,11 +402,21 @@ impl PropertyValue {
             PropertyValue::Str(s) => LoroValue::from(s.as_str()),
             PropertyValue::Num(n) => LoroValue::Double(*n),
             PropertyValue::Bool(b) => LoroValue::Bool(*b),
+            PropertyValue::List(list) => LoroValue::from(
+                list.0
+                    .iter()
+                    .map(|item| match item {
+                        PropertyListItem::Text(s) => LoroValue::from(s.as_str()),
+                        PropertyListItem::Num(n) => LoroValue::Double(*n),
+                    })
+                    .collect::<Vec<_>>(),
+            ),
             PropertyValue::Null => LoroValue::Null,
         }
     }
 
-    /// Recover a `PropertyValue` from a stored `LoroValue`. Accepts every
+    /// Recover a `PropertyValue` from a stored `LoroValue`. Accepts a list of
+    /// strings and numbers, and every
     /// scalar the engine may hold — including legacy `String`-encoded
     /// numbers/bools written before §2.1 (they stay `Str` and are recovered
     /// by `value_type` at projection, so this is fully back-compatible and
@@ -433,8 +451,20 @@ impl PropertyValue {
                 Ok(PropertyValue::Num(i as f64))
             }
             LoroValue::Bool(b) => Ok(PropertyValue::Bool(b)),
+            LoroValue::List(items) => items
+                .iter()
+                .map(|item| match item {
+                    LoroValue::String(s) => Ok(PropertyListItem::Text((**s).clone())),
+                    LoroValue::Double(n) => Ok(PropertyListItem::Num(*n)),
+                    LoroValue::I64(i) => Ok(PropertyListItem::Num(*i as f64)),
+                    other => Err(AppError::validation(format!(
+                        "loro: list item expected a string or a number, got {other:?}"
+                    ))),
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(|items| PropertyValue::List(PropertyList(items))),
             other => Err(AppError::validation(format!(
-                "loro: property value expected scalar, got {other:?}"
+                "loro: property value expected a scalar or a list, got {other:?}"
             ))),
         }
     }
@@ -446,6 +476,7 @@ impl PropertyValue {
             PropertyValue::Str(s) => Some(s.clone()),
             PropertyValue::Num(n) => Some(n.to_string()),
             PropertyValue::Bool(b) => Some(b.to_string()),
+            PropertyValue::List(list) => Some(list.to_json()),
             PropertyValue::Null => None,
         }
     }

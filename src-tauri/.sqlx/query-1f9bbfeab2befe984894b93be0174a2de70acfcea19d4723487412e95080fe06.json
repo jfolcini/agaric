@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref, value_bool, value_list) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE ? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 10
+    },
+    "nullable": []
+  },
+  "hash": "1f9bbfeab2befe984894b93be0174a2de70acfcea19d4723487412e95080fe06"
+}

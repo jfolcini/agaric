@@ -668,6 +668,7 @@ describe('PagePropertyTable add property flow', () => {
         key: 'newfield',
         valueType: 'text',
         options: null,
+        multiple: null,
       })
     })
 
@@ -718,6 +719,7 @@ describe('PagePropertyTable add property flow', () => {
         key: 'homepage',
         valueType: 'url',
         options: null,
+        multiple: null,
       })
     })
     await waitFor(() => {
@@ -1813,6 +1815,7 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
         key: 'newfield',
         valueType: 'text',
         options: null,
+        multiple: null,
       })
     })
     expect(spacePropertyDefs('SPACE_PERSONAL').get('newfield')).toBeTruthy()

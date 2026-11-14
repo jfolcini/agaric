@@ -38,8 +38,8 @@ async fn select_unbackfilled(
     device_id: &str,
 ) -> Result<Vec<SetPropertyDefPayload>, AppError> {
     let rows = sqlx::query!(
-        "SELECT space_id, key, value_type, options FROM property_definitions \
-         ORDER BY space_id, key"
+        r#"SELECT space_id, key, value_type, options, multiple AS "multiple: bool"
+           FROM property_definitions ORDER BY space_id, key"#
     )
     .fetch_all(&mut **tx)
     .await?;
@@ -71,6 +71,7 @@ async fn select_unbackfilled(
             def: Some(PropertyDefState {
                 value_type: row.value_type,
                 options: row.options,
+                multiple: row.multiple,
             }),
             prior: None,
         });

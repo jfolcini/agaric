@@ -114,6 +114,8 @@ async fn purge_tag_property_and_link_rows(
     )
     .await?;
 
+    purge_refs_from_lists(conn, cte_prefix, member_subquery, bind).await?;
+
     // block_links: either end may be in the subtree.
     exec(
         conn,
@@ -208,7 +210,50 @@ async fn purge_cache_and_lookup_rows(
     Ok(())
 }
 
-/// Execute one dynamic `DELETE`, optionally binding a single placeholder.
+/// Take the member set out of every list of refs holding one of its blocks
+/// (#6741): the `value_ref` delete of a list, which no foreign key reaches
+/// inside. A list under a key its block's space declares `ref` loses the
+/// members, and its row when no item is left. `cte_prefix`, `member_subquery`
+/// and `bind` are [`purge_block_satellite_caches`]'s.
+pub async fn purge_refs_from_lists(
+    conn: &mut SqliteConnection,
+    cte_prefix: &str,
+    member_subquery: &str,
+    bind: Option<&str>,
+) -> Result<(), AppError> {
+    const REF_LIST: &str = "value_list IS NOT NULL AND EXISTS ( \
+        SELECT 1 FROM blocks b JOIN property_definitions d \
+          ON d.space_id = b.space_id AND d.key = block_properties.key \
+        WHERE b.id = block_properties.block_id AND d.value_type = 'ref')";
+    exec(
+        conn,
+        bind,
+        &format!(
+            "{cte_prefix}DELETE FROM block_properties \
+             WHERE {REF_LIST} \
+               AND NOT EXISTS (SELECT 1 FROM json_each(block_properties.value_list) je \
+                               WHERE je.value NOT IN ({member_subquery}))"
+        ),
+    )
+    .await?;
+    exec(
+        conn,
+        bind,
+        &format!(
+            "{cte_prefix}UPDATE block_properties \
+             SET value_list = (SELECT json_group_array(je.value ORDER BY je.key) \
+                               FROM json_each(block_properties.value_list) je \
+                               WHERE je.value NOT IN ({member_subquery})) \
+             WHERE {REF_LIST} \
+               AND EXISTS (SELECT 1 FROM json_each(block_properties.value_list) je \
+                           WHERE je.value IN ({member_subquery}))"
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Execute one dynamic statement, optionally binding a single placeholder.
 async fn exec(conn: &mut SqliteConnection, bind: Option<&str>, sql: &str) -> Result<u64, AppError> {
     // dynamic-sql: #664/#2895 — one purge chain emitted against three runtime
     // membership shapes (single-root CTE / json_each CTE / flat deleted-set);
@@ -278,6 +323,72 @@ mod tests {
             .await
             .expect("count blocks");
         assert_eq!(block_count, 2, "purge fn must not delete blocks rows");
+    }
+
+    /// #6741: a purged block leaves the lists of refs holding it, as its
+    /// `value_ref` rows go. A list it was the only item of loses its row; a
+    /// list under a key that is no `ref` keeps a string that reads as its id.
+    #[tokio::test]
+    async fn purge_takes_the_member_out_of_a_list_of_refs_6741() {
+        let (pool, _tmp) = test_pool().await;
+        let mut conn = pool.acquire().await.expect("acquire");
+        for sql in [
+            "INSERT INTO blocks (id, block_type, content) VALUES ('space', 'page', 'S')",
+            "INSERT INTO spaces (id) VALUES ('space')",
+            "INSERT INTO property_definitions (space_id, key, value_type, created_at, multiple) \
+             VALUES ('space', 'related', 'ref', '2026-01-01T00:00:00.000Z', 1), \
+                    ('space', 'names', 'text', '2026-01-01T00:00:00.000Z', 1)",
+        ] {
+            sqlx::query(sql).execute(&mut *conn).await.expect("seed");
+        }
+        for id in ["victim", "kept", "both", "only", "named"] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, space_id) \
+                 VALUES (?, 'content', '', 'space')",
+            )
+            .bind(id)
+            .execute(&mut *conn)
+            .await
+            .expect("seed block");
+        }
+        for (holder, key, list) in [
+            ("both", "related", r#"["victim","kept"]"#),
+            ("only", "related", r#"["victim"]"#),
+            ("named", "names", r#"["victim"]"#),
+        ] {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_list) VALUES (?, ?, ?)",
+            )
+            .bind(holder)
+            .bind(key)
+            .bind(list)
+            .execute(&mut *conn)
+            .await
+            .expect("seed list");
+        }
+
+        purge_block_satellite_caches(
+            &mut conn,
+            "",
+            "SELECT id FROM blocks WHERE id = 'victim'",
+            None,
+        )
+        .await
+        .expect("purge");
+
+        let lists: Vec<(String, String)> =
+            sqlx::query_as("SELECT block_id, value_list FROM block_properties ORDER BY block_id")
+                .fetch_all(&mut *conn)
+                .await
+                .expect("read back");
+        assert_eq!(
+            lists,
+            [
+                ("both".to_owned(), r#"["kept"]"#.to_owned()),
+                ("named".to_owned(), r#"["victim"]"#.to_owned()),
+            ],
+            "the ref list lost the member, the emptied one its row, the text list nothing"
+        );
     }
 
     /// The FIRST half of the chain, in isolation: `block_tags`,

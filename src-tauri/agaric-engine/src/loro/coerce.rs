@@ -8,7 +8,8 @@
 //! | `Num(n)` | its text | itself, if finite | none | none | none |
 //! | `Bool(b)` | `"true"` / `"false"` | none | none | itself | none |
 //!
-//! `Null` is no value, so nothing converts it.
+//! `Null` is no value, so nothing converts it, and a `List` is no scalar, so it
+//! converts to nothing either: it lands in `value_list` under any type.
 
 use agaric_core::date_validation::is_valid_iso_date;
 use agaric_core::ulid::{BlockId, canonical_ulid};
@@ -19,9 +20,9 @@ use super::engine::PropertyValue;
 /// The value `value` becomes under a definition of `to`, or `None` when it
 /// does not fit. Pure; a select's option membership is the caller's.
 pub fn coerce(value: &PropertyValue, to: &str) -> Option<PropertyValue> {
-    use PropertyValue::{Bool, Null, Num, Str};
+    use PropertyValue::{Bool, List, Null, Num, Str};
     match (value, to) {
-        (Null, _) => None,
+        (Null | List(_), _) => None,
         (Str(s), "number") => s
             .trim()
             .parse::<f64>()
@@ -45,7 +46,7 @@ pub fn coerce(value: &PropertyValue, to: &str) -> Option<PropertyValue> {
 
 /// `value` in the slot a local write under `value_type` puts it in: a string
 /// in `value_date` under a date, in `value_ref` under a ref and in
-/// `value_text` otherwise; a number or a boolean in its own.
+/// `value_text` otherwise; a number, a boolean or a list in its own.
 pub fn value_fields_under(value: &PropertyValue, value_type: &str) -> PropertyValueFields {
     let mut fields = PropertyValueFields::default();
     match value {
@@ -56,6 +57,7 @@ pub fn value_fields_under(value: &PropertyValue, value_type: &str) -> PropertyVa
         },
         PropertyValue::Num(n) => fields.value_num = Some(*n),
         PropertyValue::Bool(b) => fields.value_bool = Some(*b),
+        PropertyValue::List(list) => fields.value_list = Some(list.clone()),
         PropertyValue::Null => {}
     }
     fields
@@ -226,6 +228,7 @@ mod tests {
             let kind = coerce(&value, to).map(|fit| match fit {
                 Num(_) => "number",
                 Bool(_) => "boolean",
+                PropertyValue::List(_) => "list",
                 Str(_) | Null => "string",
             });
             let expected = match to {
@@ -249,7 +252,7 @@ mod tests {
                     f.value_ref.map(BlockId::into_string),
                     f.value_bool,
                 );
-                let decl = PropertyDeclaration { value_type: to.to_owned(), options: None };
+                let decl = PropertyDeclaration { value_type: to.to_owned(), options: None, multiple: false };
                 prop_assert!(
                     check_property_value("k", &args, Some(&decl)).is_ok(),
                     "{:?} under {}", fit, to
@@ -269,9 +272,10 @@ mod tests {
                 value_date,
                 value_ref: value_ref.map(BlockId::from),
                 value_bool,
+                value_list: None,
             });
             for to in TYPES {
-                let decl = PropertyDeclaration { value_type: to.to_owned(), options: None };
+                let decl = PropertyDeclaration { value_type: to.to_owned(), options: None, multiple: false };
                 if check_property_value("k", &args, Some(&decl)).is_ok() {
                     prop_assert_eq!(coerce(&value, to), Some(value.clone()), "under {}", to);
                 }

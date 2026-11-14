@@ -46,7 +46,13 @@ export function CopyDefinitionToSpace({
     setOpen(false)
     try {
       const held = unwrap(
-        await commands.createPropertyDef(space.id, key, definition.value_type, definition.options),
+        await commands.createPropertyDef(
+          space.id,
+          key,
+          definition.value_type,
+          definition.options,
+          definition.multiple ?? null,
+        ),
       )
       if (held.value_type === definition.value_type && held.options === definition.options) {
         notifyDefinitionWrite(

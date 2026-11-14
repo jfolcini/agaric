@@ -292,6 +292,7 @@ async fn apply_tag_to_block_resolved(
                     value_date: None,
                     value_ref: Some(BlockId::from(space_ref)),
                     value_bool: None,
+                    value_list: None,
                     // An orphan holds no space, so the set overwrites nothing.
                     prior: None,
                 });

@@ -31,10 +31,15 @@ import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
+import { RUST_TRIM, coerce } from '@/lib/tauri-mock/coerce'
 import { definitionSpaceOf, linksTo, ownerSpaceOf } from '@/lib/tauri-mock/link-index'
 import { type MockLinkEdge, linkTokenRe, scanLinkTargets } from '@/lib/tauri-mock/link-scan'
 import { pageNameHolder, pageNameRefusal } from '@/lib/tauri-mock/page-names'
-import { forwardPropertyKey, propertyKeyReversePayload } from '@/lib/tauri-mock/property-keys'
+import {
+  forwardPropertyKey,
+  listField,
+  propertyKeyReversePayload,
+} from '@/lib/tauri-mock/property-keys'
 import { isValidRepeatRuleMock } from '@/lib/tauri-mock/recurrence'
 import {
   applyRevertForOp,
@@ -544,6 +549,48 @@ export function assertValidSetPropertyValue(
     throw validationRejection(
       `set_property.value_text.invalid_option: '${valueText}' not in [${options.join(', ')}]`,
     )
+  }
+}
+
+/**
+ * #6741 — `validate_list_items` (`op.rs`), then `validate_list_value`
+ * (`block_ops.rs`): a list has an item, none of them blank; only a definition
+ * that holds a list takes one; and each item is held to the definition's type
+ * as a single value is.
+ */
+export function assertValidListValue(
+  key: string,
+  list: readonly unknown[],
+  def: Record<string, unknown> | undefined,
+): void {
+  if (list.length === 0) throw validationRejection('set_property.value_list.empty')
+  if (list.some((item) => typeof item === 'string' && item.replace(RUST_TRIM, '') === '')) {
+    throw validationRejection('set_property.value_list.item_empty')
+  }
+  if (def?.['multiple'] !== true) {
+    throw validationRejection(`Property '${key}' holds one value, not a list.`)
+  }
+  const valueType = def['value_type'] as string
+  const rawOptions = valueType === 'select' ? (def['options'] as string | null) : null
+  const options = rawOptions === null ? null : (JSON.parse(rawOptions) as string[])
+  for (const item of list) {
+    const fits =
+      typeof item === 'number'
+        ? valueType === 'number'
+        : typeof item === 'string' &&
+          valueType !== 'number' &&
+          valueType !== 'boolean' &&
+          ((valueType !== 'date' && valueType !== 'ref') || coerce(item, valueType) === item)
+    if (!fits) {
+      throw validationRejection(
+        `Property '${key}' expects a list of '${valueType}', got the item ${JSON.stringify(item)}.`,
+      )
+    }
+    if (options !== null && typeof item === 'string' && !options.includes(item)) {
+      throw validationRejection(
+        `Property '${key}' value '${item}' is not in allowed options: ${options.join(', ')}`,
+      )
+    }
   }
 }
 
@@ -2400,6 +2447,7 @@ function currentPropertyValue(blockId: string, key: string): Record<string, unkn
     value_date: (row['value_date'] as string | null) ?? null,
     value_ref: (row['value_ref'] as string | null) ?? null,
     value_bool: (row['value_bool'] as number | null) ?? null,
+    ...listField(row),
   }
 }
 

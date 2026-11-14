@@ -198,6 +198,7 @@ async fn append_rejects_set_property_with_zero_values() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         FIXED_TS,
     )
@@ -229,6 +230,7 @@ async fn append_rejects_set_property_with_multiple_values() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         FIXED_TS,
     )
@@ -254,6 +256,7 @@ async fn append_accepts_valid_set_property() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         FIXED_TS,
     )

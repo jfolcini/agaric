@@ -7957,3 +7957,225 @@ async fn loro_doc_delta_0132_keeps_save_order_and_never_reuses_an_id_6521() {
         "a row saved after every earlier one was deleted takes the next id"
     );
 }
+
+/// The `block_properties` rows as `(block_id, key, text, num, date, ref,
+/// bool)`, in primary-key order.
+type PropertyRows = Vec<(
+    String,
+    String,
+    Option<String>,
+    Option<f64>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+)>;
+
+async fn property_rows_6741(pool: &SqlitePool) -> PropertyRows {
+    sqlx::query_as(
+        "SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool \
+         FROM block_properties ORDER BY block_id, key",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("read block_properties")
+}
+
+/// `block_properties`' indexes as `(name, sql)` and its foreign keys as
+/// `(from, table, to, on_delete)`.
+async fn property_table_shape_6741(
+    pool: &SqlitePool,
+) -> (Vec<(String, String)>, Vec<(String, String, String, String)>) {
+    let indexes = sqlx::query_as(
+        "SELECT name, sql FROM sqlite_master \
+         WHERE type = 'index' AND tbl_name = 'block_properties' AND sql IS NOT NULL \
+         ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("read the indexes");
+    let foreign_keys = sqlx::query_as(
+        "SELECT \"from\", \"table\", \"to\", on_delete \
+         FROM pragma_foreign_key_list('block_properties') ORDER BY \"from\"",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("read the foreign keys");
+    (indexes, foreign_keys)
+}
+
+/// #6741 — 0133 rebuilds `block_properties` to add `value_list`. Over a
+/// populated vault every row, index and foreign key survives, 0089's
+/// `spaces_register_is_space` trigger (which the DROP removes) registers a
+/// new space again, and the new column holds only a non-empty JSON array that
+/// counts as the row's one value. Existing definitions read `multiple = 0`.
+#[tokio::test]
+async fn block_properties_0133_value_list_preserves_rows_and_is_space_trigger_6741() {
+    const SPACE: &str = "01J0000000000000000SPC6741";
+    const HOLDER: &str = "01J0000000000000000HLD6741";
+    const TARGET: &str = "01J0000000000000000TGT6741";
+    const LATER: &str = "01J0000000000000000NEW6741";
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 132).await;
+
+    for (id, block_type) in [(SPACE, "page"), (HOLDER, "content"), (TARGET, "page")] {
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, ?, 'seed')")
+            .bind(id)
+            .bind(block_type)
+            .execute(&pool)
+            .await
+            .expect("seed a block");
+    }
+    for sql in [
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?1, 'is_space', 'true')",
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?2, 'author', 'Le Guin')",
+        "INSERT INTO block_properties (block_id, key, value_num) VALUES (?2, 'pages', 387.5)",
+        "INSERT INTO block_properties (block_id, key, value_date) VALUES (?2, 'read', '2026-10-31')",
+        "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?2, 'related', ?3)",
+        "INSERT INTO block_properties (block_id, key, value_bool) VALUES (?2, 'owned', 0)",
+        "INSERT INTO property_definitions (space_id, key, value_type, options, created_at) \
+         VALUES (?1, 'stage', 'select', '[\"draft\"]', '2026-01-01T00:00:00.000Z')",
+    ] {
+        sqlx::query(sql)
+            .bind(SPACE)
+            .bind(HOLDER)
+            .bind(TARGET)
+            .execute(&pool)
+            .await
+            .expect("seed a pre-0133 row");
+    }
+    let rows_before = property_rows_6741(&pool).await;
+    assert_eq!(
+        rows_before.len(),
+        6,
+        "one row per value column, and is_space"
+    );
+    let shape_before = property_table_shape_6741(&pool).await;
+    assert_eq!(shape_before.0.len(), 6, "the six indexes 0088 left");
+
+    apply_migrations_through(&pool, 132, 133).await;
+
+    assert_eq!(
+        property_rows_6741(&pool).await,
+        rows_before,
+        "every row survives the rebuild, value for value"
+    );
+    assert_eq!(
+        property_table_shape_6741(&pool).await,
+        shape_before,
+        "the indexes and foreign keys are the ones the table had"
+    );
+    let lists: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE value_list IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(lists, 0, "no copied row holds a list");
+    let violations: Vec<(String,)> =
+        sqlx::query_as("SELECT \"table\" FROM pragma_foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        violations.is_empty(),
+        "no dangling reference: {violations:?}"
+    );
+    let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(integrity, "ok");
+    let (strict, multiple): (i64, i64) = (
+        sqlx::query_scalar("SELECT strict FROM pragma_table_list WHERE name = 'block_properties'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT multiple FROM property_definitions WHERE key = 'stage'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        (strict, multiple),
+        (1, 0),
+        "still STRICT; a definition holds one value"
+    );
+
+    // The trigger the DROP removed: a new `is_space` row registers its block.
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'Later')")
+        .bind(LATER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'is_space', 'true')",
+    )
+    .bind(LATER)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let spaces: Vec<String> = sqlx::query_scalar("SELECT id FROM spaces ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(spaces, [LATER, SPACE], "the old space and the new one");
+
+    // `value_list` takes a non-empty JSON array, alone in its row.
+    let insert = "INSERT INTO block_properties (block_id, key, value_text, value_list) \
+                  VALUES (?, ?, ?, ?)";
+    sqlx::query(insert)
+        .bind(HOLDER)
+        .bind("authors")
+        .bind(None::<&str>)
+        .bind(r#"["Smith, John",2]"#)
+        .execute(&pool)
+        .await
+        .expect("a list of strings and numbers is stored");
+    for (key, text, list) in [
+        ("l1", None, "not json"),
+        ("l2", None, r#"{"a":1}"#),
+        ("l3", None, "[]"),
+        ("l4", None, "3"),
+        ("l5", Some("text"), r#"["a"]"#),
+    ] {
+        let refused = sqlx::query(insert)
+            .bind(HOLDER)
+            .bind(key)
+            .bind(text)
+            .bind(list)
+            .execute(&pool)
+            .await;
+        assert!(
+            refused.is_err_and(|e| e.to_string().contains("CHECK constraint failed")),
+            "{list:?} beside {text:?} is refused by a CHECK"
+        );
+    }
+    let bad_flag = sqlx::query("UPDATE property_definitions SET multiple = 2 WHERE key = 'stage'")
+        .execute(&pool)
+        .await;
+    assert!(bad_flag.is_err(), "multiple is 0 or 1");
+
+    // The foreign keys still cascade: a purged target takes its `value_ref`
+    // row, a purged holder every row it owns.
+    sqlx::query("DELETE FROM blocks WHERE id = ?")
+        .bind(TARGET)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let related: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE key = 'related'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(related, 0, "value_ref cascades");
+    sqlx::query("DELETE FROM blocks WHERE id = ?")
+        .bind(HOLDER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
+        .bind(HOLDER)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(held, 0, "block_id cascades");
+}

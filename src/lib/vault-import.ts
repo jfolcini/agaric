@@ -173,7 +173,9 @@ export async function restoreSpaceFile(
     const existing = new Set((await listAllPropertyDefs(spaceId)).map((def) => def.key))
     for (const def of space.propertyDefinitions.filter(({ key }) => !existing.has(key))) {
       try {
-        unwrap(await commands.createPropertyDef(spaceId, def.key, def.value_type, def.options))
+        unwrap(
+          await commands.createPropertyDef(spaceId, def.key, def.value_type, def.options, null),
+        )
       } catch (err) {
         logger.warn('vault-import', 'property definition restore failed', { key: def.key }, err)
         warnings.push(

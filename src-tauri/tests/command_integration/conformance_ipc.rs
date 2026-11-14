@@ -192,7 +192,8 @@ async fn expand_op_args(
             }
         }
     }
-    // `set_property`'s value bundle: only a `value_ref` names a block.
+    // `set_property`'s value bundle: only a `value_ref` names a block. A
+    // `value_list` item is sent as written, so a list of refs spells its ids.
     if let Some(Value::Object(value)) = out.get_mut("value") {
         resolve_key(value, "value_ref", created_ids);
     }

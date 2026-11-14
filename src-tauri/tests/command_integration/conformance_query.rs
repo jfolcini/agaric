@@ -234,9 +234,11 @@ const TAG_ATTRS: &[&str] = &["name", "usage_count"];
 
 /// A `PropertyDefinition` (#3830), whose token head is the registry `key`.
 /// `created_at` is a wall clock and stays off the token; `value_type`,
-/// `options` and `builtin` (#5841) are the whole of what the declaration
-/// says. MUST match `PROPERTY_DEF_TOKEN` in the TS twin.
-pub(super) const PROPERTY_DEF_ATTRS: &[&str] = &["value_type", "options", "builtin"];
+/// `options`, `builtin` (#5841) and `multiple` (#6741) are the whole of what
+/// the declaration says. `multiple?` is on the token only when the row carries
+/// it, as the wire leaves it out of a definition that holds one value. MUST
+/// match `PROPERTY_DEF_TOKEN` in the TS twin.
+pub(super) const PROPERTY_DEF_ATTRS: &[&str] = &["value_type", "options", "builtin", "multiple?"];
 
 /// An `AttachmentRow` (#3830), whose token head is the attachment id and whose
 /// attributes are every other column. `created_at` rides along VERBATIM,
@@ -467,7 +469,8 @@ fn token_head(what: &str, head: &str) -> String {
     head.to_owned()
 }
 
-/// Build `<row[id_key]>#<attr>=<value>…` for one serialized row.
+/// Build `<row[id_key]>#<attr>=<value>…` for one serialized row. An attribute
+/// named with a trailing `?` is left off the token when the row lacks it.
 pub(super) fn row_token(row: &Value, id_key: &str, attrs: &[&str]) -> String {
     let mut token = token_head(
         "row id",
@@ -476,10 +479,15 @@ pub(super) fn row_token(row: &Value, id_key: &str, attrs: &[&str]) -> String {
             .unwrap_or("<missing-id>"),
     );
     for attr in attrs {
+        let attr = match attr.strip_suffix('?') {
+            Some(optional) if row.get(optional).is_none_or(Value::is_null) => continue,
+            Some(optional) => optional,
+            None => *attr,
+        };
         token.push('#');
         token.push_str(attr);
         token.push('=');
-        token.push_str(&attr_value(attr, row.get(*attr)));
+        token.push_str(&attr_value(attr, row.get(attr)));
     }
     token
 }
@@ -511,7 +519,8 @@ fn tuple_token(row: &Value, names: &[&str]) -> String {
 /// precedence the #763 snapshot uses (`property_typed_value` in
 /// `conformance_snapshot.rs`), so a property read and the snapshot row it comes
 /// from disagree only when the command's own projection is wrong. `Bool` keeps
-/// SQLite's raw `0` / `1` INTEGER — both stacks store the integer.
+/// SQLite's raw `0` / `1` INTEGER — both stacks store the integer. A list is
+/// `List=[item,item]`, each item rendered as a single value is.
 fn property_token(row: &Value) -> String {
     let key = token_head(
         "property key",
@@ -529,6 +538,13 @@ fn property_token(row: &Value) -> String {
         if row.get(column).is_some_and(|v| !v.is_null()) {
             return format!("{key}#{tag}={}", attr_value(column, row.get(column)));
         }
+    }
+    if let Some(items) = row.get("value_list").and_then(Value::as_array) {
+        let items: Vec<String> = items
+            .iter()
+            .map(|item| attr_value("value_list", Some(item)))
+            .collect();
+        return format!("{key}#List=[{}]", items.join(","));
     }
     format!("{key}#null=null")
 }

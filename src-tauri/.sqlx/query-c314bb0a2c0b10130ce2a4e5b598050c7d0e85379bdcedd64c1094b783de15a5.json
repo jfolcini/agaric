@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS(\n                       SELECT 1 FROM blocks b JOIN property_definitions d\n                         ON d.space_id = b.space_id AND d.key = ?2\n                       WHERE b.id = ?1 AND d.value_type = 'ref') AS \"e!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "e!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c314bb0a2c0b10130ce2a4e5b598050c7d0e85379bdcedd64c1094b783de15a5"
+}

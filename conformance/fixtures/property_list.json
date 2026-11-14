@@ -1,0 +1,723 @@
+{
+  "description": "#6741 — a property that holds a list. A definition declared `multiple` takes a `value_list`, a JSON array of strings or numbers held to the definition's type item by item, and takes nothing else; no other key takes a list. The list is one value: a set replaces it whole, its undo restores the list it replaced, and a delete's undo restores the one it removed. Driven through the commands themselves (`via: \"command\"`).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Book",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "other card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 13,
+      "ops": [
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "key": "scores",
+          "op_type": "set_property"
+        },
+        {
+          "key": "related",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stages",
+          "op_type": "set_property"
+        },
+        {
+          "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "key": "scores",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "authors",
+        "value": ["Smith, John", "Doe"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B2",
+        "key": "related",
+        "value": ["B1", "B3"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B2",
+        "key": "scores",
+        "value": [2.5, 4.0],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B2",
+        "key": "stages",
+        "value": ["review", "draft"],
+        "value_type": "List"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_text_list",
+      "returns": ["authors#value_type=text#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_number_list",
+      "returns": ["scores#value_type=number#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_ref_list",
+      "returns": ["related#value_type=ref#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_select_list",
+      "returns": [
+        "stages#value_type=select#options=[\"draft\",\"review\"]#builtin=false#multiple=true"
+      ]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_list_of_booleans_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_a_single_text_key",
+      "returns": ["title2#value_type=text#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"authors\"]"],
+      "name": "set_a_text_list",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"scores\"]"],
+      "name": "set_a_number_list",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"related\"]"],
+      "name": "set_a_ref_list",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"stages\"]"],
+      "name": "set_a_select_list",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"authors\"]"],
+      "name": "replace_the_text_list",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_single_value_under_a_list_key_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_list_under_an_undeclared_key_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_list_under_a_single_key_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_list_beside_a_value_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "an_empty_list_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_blank_item_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_text_item_under_a_number_list_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_number_item_under_a_text_list_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "an_item_outside_the_options_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "an_item_that_is_no_block_id_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_restores_the_list_a_set_replaced",
+      "returns": ["undo_op#reversed_op_type=set_property#new_op_type=set_property#is_redo=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"scores\"]"],
+      "name": "delete_a_list",
+      "returns": ["delete_property"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_restores_a_deleted_list",
+      "returns": ["undo_op#reversed_op_type=delete_property#new_op_type=set_property#is_redo=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "lists_read_back_item_for_item",
+      "rows": [
+        "authors#List=[Smith, John,Doe]",
+        "related#List=[000000000000000000000000S1,000000000000000000000000S3]",
+        "scores#List=[2.5,4]",
+        "stages#List=[review,draft]"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "the_point_read_carries_the_list",
+      "rows": ["authors#List=[Smith, John,Doe]"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "the_batch_read_carries_the_lists",
+      "rows": [
+        "B2->authors#List=[Smith, John,Doe]",
+        "B2->related#List=[000000000000000000000000S1,000000000000000000000000S3]",
+        "B2->scores#List=[2.5,4]",
+        "B2->stages#List=[review,draft]"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "a_list_definition_reads_back_multiple",
+      "rows": [
+        "stages#value_type=select#options=[\"draft\",\"review\"]#builtin=false#multiple=true"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "a_single_definition_carries_no_flag",
+      "rows": ["title2#value_type=text#options=null#builtin=false"],
+      "total_count": null
+    }
+  ],
+  "name": "property_list",
+  "ops": [
+    {
+      "args": {
+        "key": "authors",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "create_property_def",
+      "comment": "O1. A definition that holds a list: its type names the type of each item.",
+      "name": "declare_text_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "scores",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "create_property_def",
+      "comment": "O2.",
+      "name": "declare_number_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "related",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "ref"
+      },
+      "command": "create_property_def",
+      "comment": "O3.",
+      "name": "declare_ref_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stages",
+        "multiple": true,
+        "options": "[\"draft\",\"review\"]",
+        "spaceId": "$SPACE",
+        "valueType": "select"
+      },
+      "command": "create_property_def",
+      "comment": "O4. A multi-select.",
+      "name": "declare_select_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "flags",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "boolean"
+      },
+      "command": "create_property_def",
+      "comment": "validate_property_def_state: a boolean is never a list.",
+      "expect_error": "validation",
+      "name": "a_list_of_booleans_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "title2",
+        "multiple": null,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "create_property_def",
+      "comment": "O5. `multiple` left out: the key holds one value.",
+      "name": "declare_a_single_text_key",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "authors",
+        "value": {
+          "value_list": ["Smith, John", "Doe"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O6. An item may hold a comma: the list is one value, not text to split.",
+      "name": "set_a_text_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "scores",
+        "value": {
+          "value_list": [2.5, 4]
+        }
+      },
+      "command": "set_property",
+      "comment": "O7.",
+      "name": "set_a_number_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "related",
+        "value": {
+          "value_list": ["000000000000000000000000S1", "000000000000000000000000S3"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O8. The items are block ids, spelt whole: a list item is sent as written.",
+      "name": "set_a_ref_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "stages",
+        "value": {
+          "value_list": ["review", "draft"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O9. The order written is the order kept.",
+      "name": "set_a_select_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "authors",
+        "value": {
+          "value_list": ["Doe"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O10. A set replaces the list whole, and records the one it replaced.",
+      "name": "replace_the_text_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "authors",
+        "value": {
+          "value_text": "Ann"
+        }
+      },
+      "command": "set_property",
+      "comment": "A definition that holds a list takes nothing else.",
+      "expect_error": "validation",
+      "name": "a_single_value_under_a_list_key_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "note",
+        "value": {
+          "value_list": ["a"]
+        }
+      },
+      "command": "set_property",
+      "comment": "Only a definition that holds a list takes one.",
+      "expect_error": "validation",
+      "name": "a_list_under_an_undeclared_key_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "title2",
+        "value": {
+          "value_list": ["a"]
+        }
+      },
+      "command": "set_property",
+      "comment": "And a definition that holds one value does not.",
+      "expect_error": "validation",
+      "name": "a_list_under_a_single_key_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "authors",
+        "value": {
+          "value_list": ["a"],
+          "value_text": "b"
+        }
+      },
+      "command": "set_property",
+      "comment": "A list is one value: beside another it is two.",
+      "expect_error": "validation",
+      "name": "a_list_beside_a_value_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "authors",
+        "value": {
+          "value_list": []
+        }
+      },
+      "command": "set_property",
+      "comment": "Clearing the last item deletes the property; an empty list is not stored.",
+      "expect_error": "validation",
+      "name": "an_empty_list_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "authors",
+        "value": {
+          "value_list": ["Ann", "  "]
+        }
+      },
+      "command": "set_property",
+      "comment": "As a blank text value is.",
+      "expect_error": "validation",
+      "name": "a_blank_item_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "scores",
+        "value": {
+          "value_list": ["3"]
+        }
+      },
+      "command": "set_property",
+      "comment": "Each item is held to the definition's type.",
+      "expect_error": "validation",
+      "name": "a_text_item_under_a_number_list_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "authors",
+        "value": {
+          "value_list": [3]
+        }
+      },
+      "command": "set_property",
+      "comment": "In both directions.",
+      "expect_error": "validation",
+      "name": "a_number_item_under_a_text_list_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "stages",
+        "value": {
+          "value_list": ["draft", "published"]
+        }
+      },
+      "command": "set_property",
+      "comment": "A multi-select item is one of the options.",
+      "expect_error": "validation",
+      "name": "an_item_outside_the_options_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "related",
+        "value": {
+          "value_list": ["not a block id"]
+        }
+      },
+      "command": "set_property",
+      "comment": "A ref item is a block id.",
+      "expect_error": "validation",
+      "name": "an_item_that_is_no_block_id_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "opRef": "O10"
+      },
+      "command": "undo_op",
+      "comment": "O11. The reverse of O10 sets the two-author list back.",
+      "name": "undo_restores_the_list_a_set_replaced",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "scores"
+      },
+      "command": "delete_property",
+      "comment": "O12. A delete records the list it removed.",
+      "name": "delete_a_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "opRef": "O12"
+      },
+      "command": "undo_op",
+      "comment": "O13. So its undo sets it again.",
+      "name": "undo_restores_a_deleted_list",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "get_properties",
+      "comment": "Each list as written, numbers as numbers, after both undos.",
+      "name": "lists_read_back_item_for_item",
+      "unordered": "`get_properties_inner` has no ORDER BY: the backend answers in primary-key order, the mock in insertion order."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "authors"
+      },
+      "command": "get_property",
+      "comment": "The single-key read shows the list the undo restored.",
+      "name": "the_point_read_carries_the_list"
+    },
+    {
+      "args": {
+        "blockIds": ["S2", "S3"]
+      },
+      "command": "get_batch_properties",
+      "comment": "S3 holds nothing: every write to it was refused.",
+      "name": "the_batch_read_carries_the_lists",
+      "unordered": "As `get_properties`: no ORDER BY within a block."
+    },
+    {
+      "args": {
+        "key": "stages",
+        "spaceId": "$SPACE"
+      },
+      "command": "get_property_def",
+      "comment": "The definition says it holds a list.",
+      "name": "a_list_definition_reads_back_multiple"
+    },
+    {
+      "args": {
+        "key": "title2",
+        "spaceId": "$SPACE"
+      },
+      "command": "get_property_def",
+      "comment": "`multiple` is left off a definition that holds one value.",
+      "name": "a_single_definition_carries_no_flag"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Book",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "other card",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

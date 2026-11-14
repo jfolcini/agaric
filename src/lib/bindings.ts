@@ -91,7 +91,7 @@ export const commands = {
 	 *  Tauri command: one page of the values a cross-space move would drop under
 	 *  `key`. Delegates to [`list_property_loss_values_inner`].
 	 */
-	listPropertyLossValues: (blockIds: BlockId[], targetSpaceId: SpaceId, key: string, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyLossValue>, AppError>(__TAURI_INVOKE("list_property_loss_values", { blockIds, targetSpaceId, key, cursor, limit })),
+	listPropertyLossValues: (blockIds: BlockId[], targetSpaceId: SpaceId, key: string, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyLossValue_Serialize>, AppError>(__TAURI_INVOKE("list_property_loss_values", { blockIds, targetSpaceId, key, cursor, limit })),
 	/**
 	 *  Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`].
 	 *  The response carries the produced op ref, so the restore is an undo step of
@@ -388,7 +388,7 @@ export const commands = {
 	 */
 	deleteProperty: (blockId: BlockId, key: string) => typedError<WithOps<DeletePropertyResponse>, AppError>(__TAURI_INVOKE("delete_property", { blockId, key })),
 	/**  Tauri command: get all properties for a block. Delegates to [`get_properties_inner`]. */
-	getProperties: (blockId: BlockId) => typedError<PropertyRow[], AppError>(__TAURI_INVOKE("get_properties", { blockId })),
+	getProperties: (blockId: BlockId) => typedError<PropertyRow_Serialize[], AppError>(__TAURI_INVOKE("get_properties", { blockId })),
 	/**
 	 *  Tauri command: fetch a single property row by `(block_id, key)`
 	 *  Primary key. Delegates to [`get_property_inner`].
@@ -404,9 +404,14 @@ export const commands = {
 	 *  as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
 	 */
 	value_bool: number | null,
+	/**
+	 *  A list value (#6741), its items in the order written. Left out when
+	 *  the row holds none.
+	 */
+	value_list?: PropertyList | null,
 } | null, AppError>(__TAURI_INVOKE("get_property", { blockId, key })),
 	/**  Tauri command: batch-fetch properties. Delegates to [`get_batch_properties_inner`]. */
-	getBatchProperties: (blockIds: BlockId[]) => typedError<{ [key in string]: PropertyRow[] }, AppError>(__TAURI_INVOKE("get_batch_properties", { blockIds })),
+	getBatchProperties: (blockIds: BlockId[]) => typedError<{ [key in string]: PropertyRow_Serialize[] }, AppError>(__TAURI_INVOKE("get_batch_properties", { blockIds })),
 	/**  Tauri command: list page history. Delegates to [`list_page_history_inner`]. */
 	listPageHistory: (pageId: string, opTypeFilter: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppError>(__TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, scope, cursor, limit })),
 	/**  Tauri command: batch revert ops. Delegates to [`revert_ops_inner`]. */
@@ -471,7 +476,7 @@ export const commands = {
 	 *  [`create_property_def_inner`]; the response carries the op refs it
 	 *  appended, none when the space already declared the key.
 	 */
-	createPropertyDef: (spaceId: SpaceId, key: string, valueType: string, options: string | null) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("create_property_def", { spaceId, key, valueType, options })),
+	createPropertyDef: (spaceId: SpaceId, key: string, valueType: string, options: string | null, multiple: boolean | null) => typedError<WithOps<PropertyDefinition_Serialize>, AppError>(__TAURI_INVOKE("create_property_def", { spaceId, key, valueType, options, multiple })),
 	/**
 	 *  Tauri command: fetch a single property definition of a space by key.
 	 *  Delegates to [`get_property_def_inner`].
@@ -486,24 +491,29 @@ export const commands = {
 	 *  by every definition write.
 	 */
 	builtin: boolean,
+	/**
+	 *  The key holds a list of `value_type` items (#6741); never a built-in.
+	 *  Left out when `false`.
+	 */
+	multiple?: boolean,
 } | null, AppError>(__TAURI_INVOKE("get_property_def", { spaceId, key })),
 	/**
 	 *  Tauri command: list a space's property definitions, paginated.
 	 *  Delegates to [`list_property_defs_inner`].
 	 */
-	listPropertyDefs: (spaceId: SpaceId, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyDefinition>, AppError>(__TAURI_INVOKE("list_property_defs", { spaceId, cursor, limit })),
+	listPropertyDefs: (spaceId: SpaceId, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyDefinition_Serialize>, AppError>(__TAURI_INVOKE("list_property_defs", { spaceId, cursor, limit })),
 	/**
 	 *  Tauri command: update options for a space's select-type definition.
 	 *  Delegates to [`update_property_def_options_inner`]; the response carries
 	 *  the op refs it appended, none when the options are unchanged.
 	 */
-	updatePropertyDefOptions: (spaceId: SpaceId, key: string, options: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("update_property_def_options", { spaceId, key, options })),
+	updatePropertyDefOptions: (spaceId: SpaceId, key: string, options: string) => typedError<WithOps<PropertyDefinition_Serialize>, AppError>(__TAURI_INVOKE("update_property_def_options", { spaceId, key, options })),
 	/**
 	 *  Tauri command: delete a space's property definition. Delegates to
 	 *  [`delete_property_def_inner`]; the response is the deleted definition and
 	 *  the op ref of its delete.
 	 */
-	deletePropertyDef: (spaceId: SpaceId, key: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("delete_property_def", { spaceId, key })),
+	deletePropertyDef: (spaceId: SpaceId, key: string) => typedError<WithOps<PropertyDefinition_Serialize>, AppError>(__TAURI_INVOKE("delete_property_def", { spaceId, key })),
 	/**
 	 *  Tauri command: how many live blocks of a space use each key of its
 	 *  vocabulary, and how many of its values don't fit it (#6206). Delegates to
@@ -514,7 +524,7 @@ export const commands = {
 	 *  Tauri command: rename a space's property key. Delegates to
 	 *  [`rename_property_key_inner`]; the response carries the op ref.
 	 */
-	renamePropertyKey: (spaceId: SpaceId, oldKey: string, newKey: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("rename_property_key", { spaceId, oldKey, newKey })),
+	renamePropertyKey: (spaceId: SpaceId, oldKey: string, newKey: string) => typedError<WithOps<PropertyDefinition_Serialize>, AppError>(__TAURI_INVOKE("rename_property_key", { spaceId, oldKey, newKey })),
 	/**
 	 *  Tauri command: what merging one of a space's property keys into another
 	 *  would move and drop. Delegates to [`preview_property_merge_inner`].
@@ -524,12 +534,12 @@ export const commands = {
 	 *  Tauri command: merge one of a space's property keys into another.
 	 *  Delegates to [`merge_property_key_inner`]; the response carries the op ref.
 	 */
-	mergePropertyKey: (spaceId: SpaceId, fromKey: string, intoKey: string, acknowledged: PropertyMergeCounts) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("merge_property_key", { spaceId, fromKey, intoKey, acknowledged })),
+	mergePropertyKey: (spaceId: SpaceId, fromKey: string, intoKey: string, acknowledged: PropertyMergeCounts) => typedError<WithOps<PropertyDefinition_Serialize>, AppError>(__TAURI_INVOKE("merge_property_key", { spaceId, fromKey, intoKey, acknowledged })),
 	/**
 	 *  Tauri command: rename an option of a space's select property. Delegates to
 	 *  [`rename_property_option_inner`]; the response carries the op ref.
 	 */
-	renamePropertyOption: (spaceId: SpaceId, key: string, oldOption: string, newOption: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("rename_property_option", { spaceId, key, oldOption, newOption })),
+	renamePropertyOption: (spaceId: SpaceId, key: string, oldOption: string, newOption: string) => typedError<WithOps<PropertyDefinition_Serialize>, AppError>(__TAURI_INVOKE("rename_property_option", { spaceId, key, oldOption, newOption })),
 	/**
 	 *  Tauri command: what changing a space's property to another type would
 	 *  convert and leave unfit. Delegates to [`preview_property_type_change_inner`].
@@ -544,7 +554,7 @@ export const commands = {
 	 *  Tauri command: change a space's property to another type. Delegates to
 	 *  [`change_property_type_inner`]; the response carries the op ref.
 	 */
-	changePropertyType: (spaceId: SpaceId, key: string, valueType: string, options: string | null, acknowledged: PropertyTypeChangeCounts) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("change_property_type", { spaceId, key, valueType, options, acknowledged })),
+	changePropertyType: (spaceId: SpaceId, key: string, valueType: string, options: string | null, acknowledged: PropertyTypeChangeCounts) => typedError<WithOps<PropertyDefinition_Serialize>, AppError>(__TAURI_INVOKE("change_property_type", { spaceId, key, valueType, options, acknowledged })),
 	/**
 	 *  Tauri command: one page of a key's values that don't fit it. Delegates to
 	 *  [`list_unfit_property_values_inner`].
@@ -560,7 +570,7 @@ export const commands = {
 	 *  Delegates to [`add_unfit_values_to_options_inner`]; the response carries
 	 *  the op ref.
 	 */
-	addUnfitValuesToOptions: (spaceId: SpaceId, key: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("add_unfit_values_to_options", { spaceId, key })),
+	addUnfitValuesToOptions: (spaceId: SpaceId, key: string) => typedError<WithOps<PropertyDefinition_Serialize>, AppError>(__TAURI_INVOKE("add_unfit_values_to_options", { spaceId, key })),
 	/**
 	 *  Tauri command: one page of a key's distinct values that don't fit it.
 	 *  Delegates to [`list_distinct_unfit_property_values_inner`].
@@ -3786,7 +3796,10 @@ export type PeerRef = {
 };
 
 /**  A property definition from the schema registry. */
-export type PropertyDefinition = {
+export type PropertyDefinition = PropertyDefinition_Serialize | PropertyDefinition_Deserialize;
+
+/**  A property definition from the schema registry. */
+export type PropertyDefinition_Deserialize = {
 	key: string,
 	value_type: string,
 	options: string | null,
@@ -3796,6 +3809,29 @@ export type PropertyDefinition = {
 	 *  by every definition write.
 	 */
 	builtin: boolean,
+	/**
+	 *  The key holds a list of `value_type` items (#6741); never a built-in.
+	 *  Left out when `false`.
+	 */
+	multiple?: boolean,
+};
+
+/**  A property definition from the schema registry. */
+export type PropertyDefinition_Serialize = {
+	key: string,
+	value_type: string,
+	options: string | null,
+	created_at: string,
+	/**
+	 *  A built-in definition (#5841): fixed in code, never stored, and refused
+	 *  by every definition write.
+	 */
+	builtin: boolean,
+	/**
+	 *  The key holds a list of `value_type` items (#6741); never a built-in.
+	 *  Left out when `false`.
+	 */
+	multiple?: boolean,
 };
 
 /**
@@ -3842,6 +3878,18 @@ export type PropertyFilter = {
 };
 
 /**
+ *  A list value (#6741), in the order it was written. `block_properties`
+ *  stores it as the JSON array text of `value_list`.
+ */
+export type PropertyList = PropertyListItem[];
+
+/**
+ *  One item of a list value (#6741): a string for a text, url, select, date
+ *  or ref item, a number for a number item.
+ */
+export type PropertyListItem = string | number | null;
+
+/**
  *  One key a cross-space move would drop, and how many values it holds.
  *  `move_blocks_to_space` takes the list back as its acknowledgement.
  */
@@ -3854,7 +3902,13 @@ export type PropertyLoss = {
  *  One value a cross-space move would drop: the block holding it, its page,
  *  and the typed value (`PropertyRow`'s slots).
  */
-export type PropertyLossValue = {
+export type PropertyLossValue = PropertyLossValue_Serialize | PropertyLossValue_Deserialize;
+
+/**
+ *  One value a cross-space move would drop: the block holding it, its page,
+ *  and the typed value (`PropertyRow`'s slots).
+ */
+export type PropertyLossValue_Deserialize = {
 	block_id: string,
 	page_id: string | null,
 	page_title: string | null,
@@ -3867,6 +3921,27 @@ export type PropertyLossValue = {
 	value_date: string | null,
 	value_ref: string | null,
 	value_bool: number | null,
+	value_list?: PropertyList | null,
+};
+
+/**
+ *  One value a cross-space move would drop: the block holding it, its page,
+ *  and the typed value (`PropertyRow`'s slots).
+ */
+export type PropertyLossValue_Serialize = {
+	block_id: string,
+	page_id: string | null,
+	page_title: string | null,
+	content: string | null,
+	/**  The block is in the Trash; it moves with its page all the same. */
+	deleted: boolean,
+	key: string,
+	value_text: string | null,
+	value_num: number | null,
+	value_date: string | null,
+	value_ref: string | null,
+	value_bool: number | null,
+	value_list?: PropertyList | null,
 };
 
 /**
@@ -3935,7 +4010,9 @@ export type PropertyPredicate =
  */
 { type: "StartsWith"; value: PropertyValue };
 
-export type PropertyRow = {
+export type PropertyRow = PropertyRow_Serialize | PropertyRow_Deserialize;
+
+export type PropertyRow_Deserialize = {
 	key: string,
 	value_text: string | null,
 	value_num: number | null,
@@ -3946,6 +4023,29 @@ export type PropertyRow = {
 	 *  as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
 	 */
 	value_bool: number | null,
+	/**
+	 *  A list value (#6741), its items in the order written. Left out when
+	 *  the row holds none.
+	 */
+	value_list?: PropertyList | null,
+};
+
+export type PropertyRow_Serialize = {
+	key: string,
+	value_text: string | null,
+	value_num: number | null,
+	value_date: string | null,
+	value_ref: string | null,
+	/**
+	 *  Native boolean property storage. SQLite represents booleans
+	 *  as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
+	 */
+	value_bool: number | null,
+	/**
+	 *  A list value (#6741), its items in the order written. Left out when
+	 *  the row holds none.
+	 */
+	value_list?: PropertyList | null,
 };
 
 /**
@@ -4686,6 +4786,8 @@ export type SetPropertyArgs = {
 	value_ref?: string | null,
 	/**  Native boolean property value (`true` / `false`). */
 	value_bool?: boolean | null,
+	/**  A list value (#6741), taken by a key its space declares `multiple`. */
+	value_list?: PropertyList | null,
 };
 
 /**

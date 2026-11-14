@@ -428,6 +428,7 @@ mod tests {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             "the reverse sets the stamp back"
         );

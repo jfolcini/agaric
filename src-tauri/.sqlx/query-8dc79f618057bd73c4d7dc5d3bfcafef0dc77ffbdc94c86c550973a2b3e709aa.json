@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "WITH roots AS (\n               SELECT id FROM blocks\n               WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NULL\n           ),\n           moved AS (\n               SELECT id FROM roots\n               UNION\n               SELECT b.id FROM blocks b JOIN roots r ON b.page_id = r.id\n           )\n           SELECT b.id AS \"block_id!: String\", b.page_id, pg.content AS page_title,\n                  b.content, b.deleted_at IS NOT NULL AS \"deleted!: bool\",\n                  bp.key AS \"key!: String\", bp.value_text, bp.value_num, bp.value_date,\n                  bp.value_ref, bp.value_bool\n           FROM moved m\n           JOIN blocks b ON b.id = m.id\n           JOIN block_properties bp ON bp.block_id = b.id\n           LEFT JOIN blocks pg ON pg.id = b.page_id\n           LEFT JOIN property_definitions src ON src.space_id = b.space_id AND src.key = bp.key\n           LEFT JOIN property_definitions dst ON dst.space_id = ?2 AND dst.key = bp.key\n           WHERE b.space_id IS NOT ?2\n             AND NOT (src.value_type IS dst.value_type AND src.options IS dst.options)\n             AND (?3 IS NULL OR bp.key = ?3)\n             AND (?4 IS NULL OR b.id > ?4)\n           ORDER BY b.id, bp.key\n           LIMIT ?5",
+  "query": "WITH roots AS (\n               SELECT id FROM blocks\n               WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NULL\n           ),\n           moved AS (\n               SELECT id FROM roots\n               UNION\n               SELECT b.id FROM blocks b JOIN roots r ON b.page_id = r.id\n           )\n           SELECT b.id AS \"block_id!: String\", b.page_id, pg.content AS page_title,\n                  b.content, b.deleted_at IS NOT NULL AS \"deleted!: bool\",\n                  bp.key AS \"key!: String\", bp.value_text, bp.value_num, bp.value_date,\n                  bp.value_ref, bp.value_bool,\n                  bp.value_list AS \"value_list: agaric_store::op::PropertyList\"\n           FROM moved m\n           JOIN blocks b ON b.id = m.id\n           JOIN block_properties bp ON bp.block_id = b.id\n           LEFT JOIN blocks pg ON pg.id = b.page_id\n           LEFT JOIN property_definitions src ON src.space_id = b.space_id AND src.key = bp.key\n           LEFT JOIN property_definitions dst ON dst.space_id = ?2 AND dst.key = bp.key\n           WHERE b.space_id IS NOT ?2\n             AND NOT (src.value_type IS dst.value_type AND src.options IS dst.options\n                      AND src.multiple IS dst.multiple)\n             AND (?3 IS NULL OR bp.key = ?3)\n             AND (?4 IS NULL OR b.id > ?4)\n           ORDER BY b.id, bp.key\n           LIMIT ?5",
   "describe": {
     "columns": [
       {
@@ -118,6 +118,17 @@
             "name": "value_bool"
           }
         }
+      },
+      {
+        "name": "value_list: agaric_store::op::PropertyList",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_list"
+          }
+        }
       }
     ],
     "parameters": {
@@ -134,8 +145,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "a0afecb61ffac8594d0148e7a704e4caca7afc915cbaff4742e7a83d796586c4"
+  "hash": "8dc79f618057bd73c4d7dc5d3bfcafef0dc77ffbdc94c86c550973a2b3e709aa"
 }

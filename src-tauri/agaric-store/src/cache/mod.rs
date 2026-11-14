@@ -200,7 +200,7 @@ pub use projected_agenda::{
 };
 // #2895 slice 1: physical subtree purge of the store-owned satellite /
 // derived-cache tables, extracted from the app's `block_cleanup` orchestrator.
-pub use purge::purge_block_satellite_caches;
+pub use purge::{purge_block_satellite_caches, purge_refs_from_lists};
 // Pinned-today variant for the on-the-fly / cached parity test. Now `pub`
 // (not `#[cfg(test)]`) because the app-layer agenda command tests
 // (`src-tauri/tests/commands/agenda_cmd_tests.rs`, which stay in the app crate)
