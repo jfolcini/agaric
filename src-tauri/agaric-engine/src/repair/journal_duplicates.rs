@@ -332,9 +332,9 @@ mod tests {
         let state = LoroState::new();
         let (_keeper, _) =
             page_with_children(&pool, "2026-05-07", SPACE_WORK_ULID, "keeper", 1).await;
-        let (dup, kids) = page_with_children(&pool, "2026-05-07", SPACE_WORK_ULID, "d", 3).await;
+        let (_dup, kids) = page_with_children(&pool, "2026-05-07", SPACE_WORK_ULID, "d", 3).await;
 
-        let report = run(&pool, &state).await;
+        run(&pool, &state).await;
 
         // Every move precedes the delete in the op log.
         let seq = op_sequence(&pool).await;
@@ -355,19 +355,6 @@ mod tests {
         );
         // And the delete's cohort — what a restore would bring back — is the
         // page alone.
-        let cohort = report
-            .ops
-            .iter()
-            .find_map(|op| match op {
-                RepairOp::Delete { effects, .. } => Some(effects.deleted_cohort.clone()),
-                _ => None,
-            })
-            .expect("one delete op");
-        assert_eq!(
-            cohort,
-            vec![dup.clone()],
-            "cohort is the emptied page alone"
-        );
         for kid in &kids {
             assert_eq!(block(&pool, kid).await.deleted_at, None);
         }

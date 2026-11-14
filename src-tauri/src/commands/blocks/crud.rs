@@ -2008,6 +2008,14 @@ async fn capture_purge_engine_fanout(
 /// per-block-id, so the whole captured cohort is driven. Mirrors the
 /// delete/restore fan-out. A no-space root is a no-op; the SQL cascade stands
 /// as the durable outcome.
+///
+/// A purged block that keys an engine is a space: its engine is evicted, as
+/// the applied purge evicts it, after every engine write here and before the
+/// commit, so the commit saves no delta for it (`DetachedRevert::deltas`
+/// skips an engine the registry no longer holds) and no later save restores
+/// the rows `purge_subtree_tables` deleted. A commit that then fails keeps
+/// the rows but not the engine until the next boot rebuilds it from them;
+/// the applied purge makes the same trade.
 fn dispatch_purge_engine_fanout(materializer: &Materializer, fanout: &[PurgeEngineFanout]) {
     let state = materializer.loro_state();
     for (op_record, cohort, purge_space_id) in fanout {
@@ -2031,6 +2039,11 @@ fn dispatch_purge_engine_fanout(materializer: &Materializer, fanout: &[PurgeEngi
                 state,
             );
         }
+    }
+    for cohort_id in fanout.iter().flat_map(|(_, cohort, _)| cohort) {
+        state
+            .registry
+            .evict_space(&agaric_store::space::SpaceId::from_trusted(cohort_id));
     }
 }
 

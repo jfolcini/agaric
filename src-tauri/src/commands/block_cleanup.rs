@@ -42,11 +42,11 @@ use agaric_core::error::AppError;
 /// or the JSON id array for the multi-root variant); pass `None` for the
 /// "all soft-deleted" variant, whose member set carries no placeholder.
 ///
-/// The table list, order, and per-table column predicates are byte-for-byte
-/// the chains they replace (block_tags → block_tag_inherited → two
-/// block_properties sweeps → block_links → agenda_cache → tags_cache →
-/// pages_cache → attachments → block_drafts → fts_blocks → page_aliases →
-/// projected_agenda_cache → blocks). FK checks must already be deferred by
+/// The tables: block_tags → block_tag_inherited → two block_properties
+/// sweeps → block_links → agenda_cache → tags_cache → pages_cache →
+/// attachments → block_drafts → fts_blocks → page_aliases →
+/// projected_agenda_cache → a purged space's loro_doc_state and
+/// loro_doc_delta → blocks. FK checks must already be deferred by
 /// the caller (`PRAGMA defer_foreign_keys = ON`) — the chain assumes it.
 ///
 /// Returns a [`PurgeSubtreeCounts`]: how many `attachments` rows the chain
@@ -125,6 +125,20 @@ pub async fn purge_subtree_tables(
         ),
     )
     .await?;
+
+    // #6521: a purged space's saved engine, its snapshot and deltas, keyed by
+    // the space block's id with no FK, as the applied purge drops them.
+    for table in ["loro_doc_state", "loro_doc_delta"] {
+        exec(
+            conn,
+            bind,
+            &format!(
+                "{cte_prefix}DELETE FROM {table} \
+                 WHERE space_id IN ({member_subquery})"
+            ),
+        )
+        .await?;
+    }
 
     // blocks themselves (keyed on id; deferred FK lets the single DELETE sweep
     // the whole subtree). #2895 slice 1: the engine owns the `blocks`
