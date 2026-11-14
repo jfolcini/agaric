@@ -254,7 +254,7 @@ pub struct SavePass {
 }
 
 /// Walk the registry and persist every dirty engine's current snapshot, all
-/// of them or none ([`write_pass`]). A pass that fails is logged and leaves
+/// of them or none (`write_pass`). A pass that fails is logged and leaves
 /// its spaces dirty for the next one. Passes run one at a time, whoever starts
 /// them (#6521).
 pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) -> SavePass {

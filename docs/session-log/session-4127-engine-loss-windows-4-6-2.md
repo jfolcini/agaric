@@ -50,6 +50,6 @@ All four are in a comment on #6521 with options.
 
 ## Ran
 
-On the branch merged with `origin/main` at `875512b2`: `cargo nextest run --workspace` in two halves, `cargo test --doc --workspace`, `just gen-sqlx` (no diff), `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `just gen-bindings` (no diff), `prek run --hook-stage manual --all-files`. Counts are in the PR body.
+On the branch merged with `origin/main` at `875512b2`: `cargo nextest run --workspace` in two halves, `cargo test --doc --workspace`, `just gen-sqlx` (no diff), `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `just gen-bindings` (no diff), `prek run --hook-stage manual --all-files`. The pre-push `cargo doc` hook then refused a public doc that linked the private `write_pass`; fixed, and the hook's command passes. Counts are in the PR body.
 
 Each new test was red before its fix on the assertion named in the PR body. Five more behaviours were shown red by one guarded mutation each: the fan-out range, the generation check, the clean rows' stamp move, a failed export skipped, and `MAX` for `MIN` in the lowest-stamp read. Not run: vitest, Playwright, WebdriverIO; no frontend file changed. No bench lane was dispatched: no bench or timed SQL changed.
