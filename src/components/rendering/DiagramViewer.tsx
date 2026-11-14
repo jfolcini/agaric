@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { useZoomPan } from '@/hooks/useZoomPan'
+import { saveBlob } from '@/lib/attachment-utils'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -117,15 +118,10 @@ export function DiagramViewer({
 
   const download = () => {
     if (!svg) return
-    // Loaded on demand: the export module is heavy and only this button needs it.
-    import('@/lib/export-graph')
-      .then(({ downloadBlob }) =>
-        downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), 'diagram.svg'),
-      )
-      .catch((err: unknown) => {
-        logger.warn('DiagramViewer', 'download SVG failed', undefined, err)
-        notify.error(t('diagramViewer.downloadFailed'))
-      })
+    saveBlob(new Blob([svg], { type: 'image/svg+xml' }), 'diagram.svg').catch((err: unknown) => {
+      logger.warn('DiagramViewer', 'download SVG failed', undefined, err)
+      notify.error(t('diagramViewer.downloadFailed'))
+    })
   }
 
   return (

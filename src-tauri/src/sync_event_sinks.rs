@@ -8,10 +8,10 @@
 //! leaves that module free of any Tauri dependency.
 
 use agaric_sync::sync_events::{
-    BindExposureStatus, BindExposureStatusState, EVENT_SYNC_COMPLETE, EVENT_SYNC_ERROR,
-    EVENT_SYNC_EXPORT_REFUSED, EVENT_SYNC_INTERNET_FACING_BIND, EVENT_SYNC_MDNS_DISABLED,
-    EVENT_SYNC_NETWORK_BLOCKED, EVENT_SYNC_PROGRESS, InternetFacingBind, MdnsStatus,
-    MdnsStatusState, SyncEvent, SyncEventSink, SyncProgressUpdate,
+    BindExposureStatus, BindExposureStatusState, EVENT_SYNC_COMPLETE, EVENT_SYNC_ENDPOINT_BINDING,
+    EVENT_SYNC_ERROR, EVENT_SYNC_EXPORT_REFUSED, EVENT_SYNC_INTERNET_FACING_BIND,
+    EVENT_SYNC_MDNS_DISABLED, EVENT_SYNC_NETWORK_BLOCKED, EVENT_SYNC_PROGRESS, InternetFacingBind,
+    MdnsStatus, MdnsStatusState, SyncEvent, SyncEventSink, SyncProgressUpdate,
 };
 
 // ---------------------------------------------------------------------------
@@ -30,6 +30,7 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             SyncEvent::Error { .. } => EVENT_SYNC_ERROR,
             SyncEvent::MdnsDisabled { .. } => EVENT_SYNC_MDNS_DISABLED,
             SyncEvent::InternetFacingBind { .. } => EVENT_SYNC_INTERNET_FACING_BIND,
+            SyncEvent::EndpointBinding => EVENT_SYNC_ENDPOINT_BINDING,
             // #3852 — the OS says it is dropping this app's packets. Goes on
             // the legacy `app.emit` bus, like the other two "why is discovery
             // not working" events: its audience is the pairing dialog and the
@@ -79,6 +80,21 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
                     port: *port,
                 }),
             };
+        }
+
+        // A new endpoint: the statuses above described the old one. Those that still
+        // hold are written again by the events the same bring-up emits next.
+        if matches!(event, SyncEvent::EndpointBinding) {
+            if let Some(status) = self.0.try_state::<MdnsStatusState>()
+                && let Ok(mut guard) = status.0.lock()
+            {
+                *guard = MdnsStatus::default();
+            }
+            if let Some(status) = self.0.try_state::<BindExposureStatusState>()
+                && let Ok(mut guard) = status.0.lock()
+            {
+                *guard = BindExposureStatus::default();
+            }
         }
 
         crate::mirror::on_sync_event(&self.0, &event);
@@ -226,9 +242,9 @@ mod tests {
     use super::{ChannelEventSink, TauriEventSink};
     use crate::main_thread::UiChannel;
     use agaric_sync::sync_events::{
-        BindExposureStatus, BindExposureStatusState, EVENT_SYNC_INTERNET_FACING_BIND,
-        EVENT_SYNC_MDNS_DISABLED, InternetFacingBind, MdnsStatus, MdnsStatusState,
-        RecordingEventSink, SyncEvent, SyncEventSink, SyncProgressUpdate,
+        BindExposureStatus, BindExposureStatusState, EVENT_SYNC_ENDPOINT_BINDING,
+        EVENT_SYNC_INTERNET_FACING_BIND, EVENT_SYNC_MDNS_DISABLED, InternetFacingBind, MdnsStatus,
+        MdnsStatusState, RecordingEventSink, SyncEvent, SyncEventSink, SyncProgressUpdate,
     };
     use std::sync::Arc;
     use tauri::{Listener, Manager};
@@ -414,6 +430,50 @@ mod tests {
             payloads[0].contains("203.0.113.9") && payloads[0].contains("41234"),
             "the emitted payload must carry the bound address and port, got {}",
             payloads[0]
+        );
+    }
+
+    /// A laptop that leaves a publicly numbered LAN, or a launch before Wi-Fi, binds
+    /// again: what the last endpoint reported must not outlive it.
+    #[test]
+    fn endpoint_binding_resets_both_statuses_and_is_emitted_once() {
+        let app = tauri::test::mock_app();
+        app.manage(MdnsStatusState(
+            std::sync::Mutex::new(MdnsStatus::default()),
+        ));
+        app.manage(BindExposureStatusState(std::sync::Mutex::new(
+            BindExposureStatus::default(),
+        )));
+        let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen_clone = Arc::clone(&seen);
+        app.listen(EVENT_SYNC_ENDPOINT_BINDING, move |_| {
+            seen_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        let sink = TauriEventSink(app.handle().clone());
+        sink.on_sync_event(SyncEvent::MdnsDisabled {
+            reason: "multicast unavailable".into(),
+        });
+        sink.on_sync_event(SyncEvent::InternetFacingBind {
+            address: "192.160.160.80".into(),
+            port: 54321,
+        });
+
+        sink.on_sync_event(SyncEvent::EndpointBinding);
+
+        assert_eq!(
+            *app.state::<MdnsStatusState>().0.lock().unwrap(),
+            MdnsStatus::default(),
+            "a new bind must clear the last endpoint's mDNS failure"
+        );
+        assert_eq!(
+            *app.state::<BindExposureStatusState>().0.lock().unwrap(),
+            BindExposureStatus::default(),
+            "a new bind must clear the last endpoint's internet-facing bind"
+        );
+        assert_eq!(
+            seen.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "`{EVENT_SYNC_ENDPOINT_BINDING}` must reach the bus exactly once"
         );
     }
 

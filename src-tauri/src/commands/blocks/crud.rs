@@ -1146,10 +1146,12 @@ pub(crate) async fn dispatch_deletes(
 /// [`delete_blocks_by_ids_inner`]'s validation phase, inside its IMMEDIATE
 /// tx: resolve the live root set and refuse the batch if any root is a
 /// non-empty space. Returns `(id, block_type)` per live root, the saved views
-/// of any space among them first.
+/// of any space among them first, then the roots in the order `block_ids`
+/// gives them, so the op refs line up with the caller's ids.
 async fn load_deletable_roots_in_tx(
     tx: &mut CommandTx,
     ids_json: &str,
+    block_ids: &[String],
 ) -> Result<Vec<(String, String)>, AppError> {
     // Resolve the live root set INSIDE the tx so a row that was
     // soft-deleted between FE selection and this call drops out
@@ -1159,7 +1161,7 @@ async fn load_deletable_roots_in_tx(
     // longer needs a separate `SELECT block_type` per root (N+1).
     // `block_type` is `TEXT NOT NULL` (0001_initial + 0005 CHECK trigger),
     // hence the `block_type!` annotation.
-    let live_roots: Vec<(String, String)> = sqlx::query!(
+    let mut live_roots: Vec<(String, String)> = sqlx::query!(
         r#"SELECT id AS "id!: String", block_type AS "block_type!: String" FROM blocks
            WHERE id IN (SELECT value FROM json_each(?1))
              AND deleted_at IS NULL
@@ -1171,6 +1173,12 @@ async fn load_deletable_roots_in_tx(
     .into_iter()
     .map(|row| (row.id, row.block_type))
     .collect();
+    let given: std::collections::HashMap<&str, usize> = block_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
+    live_roots.sort_by_key(|(id, _)| given.get(id.as_str()).copied());
 
     // Mirror — refuse the batch if any root is a non-empty
     // space. Same reasoning as `delete_block_inner`: a partial delete
@@ -1350,7 +1358,7 @@ pub async fn delete_blocks_by_ids_inner(
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
-    let live_roots = load_deletable_roots_in_tx(&mut tx, &ids_json).await?;
+    let live_roots = load_deletable_roots_in_tx(&mut tx, &ids_json, &block_ids).await?;
 
     if live_roots.is_empty() {
         // Every requested id is missing or already deleted. Commit the
@@ -1359,6 +1367,7 @@ pub async fn delete_blocks_by_ids_inner(
         return Ok(BatchDeleteResponse {
             deleted_count: 0,
             affected_page_ids: Vec::new(),
+            deleted_at: None,
         });
     }
 
@@ -1477,6 +1486,7 @@ pub async fn delete_blocks_by_ids_inner(
     Ok(BatchDeleteResponse {
         deleted_count: deleted_rows.cast_signed(),
         affected_page_ids,
+        deleted_at: Some(now),
     })
 }
 
@@ -1488,16 +1498,22 @@ pub async fn delete_blocks_by_ids_inner(
 /// one writer-lock window. Returns a [`BatchDeleteResponse`]: the number of
 /// blocks soft-deleted (roots + descendants combined) plus the page ids inside
 /// that cascade (#4480 — the frontend cannot see the cascade, so it cannot
-/// evict the nested pages the cascade swept out of the `[[` picker's cache).
+/// evict the nested pages the cascade swept out of the `[[` picker's cache),
+/// and the op refs, one per root in the order given, for the undo stack.
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_blocks_by_ids(
     ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
-) -> Result<BatchDeleteResponse, AppError> {
-    delete_blocks_by_ids_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_ids)
-        .await
-        .map_err(sanitize_internal_error)
+) -> Result<WithOps<BatchDeleteResponse>, AppError> {
+    capture_op_refs(delete_blocks_by_ids_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        block_ids,
+    ))
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// #81 / bulk move N blocks to a target space (the Pages
@@ -3498,6 +3514,11 @@ pub struct CreateBlockSpec {
     /// batch runs. Exclusive with `parent_id`.
     #[serde(default)]
     pub parent_index: Option<u32>,
+    /// A client-generated id for the block, refused as [`create_block`]'s is
+    /// when malformed or already held: page mode creates blocks under the ids
+    /// its document gave them. `None` mints a server id.
+    #[serde(default)]
+    pub block_id: Option<BlockId>,
     /// Optional 1-based sibling position (stable wire field). `None` appends
     /// after the last sibling. #400: converted to the engine's 0-based sibling
     /// `index` at the call site (position 1 → index 0).
@@ -3639,8 +3660,7 @@ async fn create_spec_in_tx(
         spec.content,
         parent_id,
         index,
-        // #2849 PR2: batch creates always mint server ids.
-        None,
+        spec.block_id,
     )
     .await?;
     tx.enqueue_background(block_op);

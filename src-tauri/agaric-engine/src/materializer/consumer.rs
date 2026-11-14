@@ -749,6 +749,24 @@ async fn record_foreground_failure(
     }
 }
 
+/// The real-backend lane's seam (#6567): with `AGARIC_E2E_BACKGROUND_DELAY_MS`
+/// set, every background batch starts that much later, which stands in for a
+/// vault whose cache rebuilds outlast a view's re-read. Seeding such a vault
+/// through commands takes a spec minutes. Debug builds only.
+#[cfg(debug_assertions)]
+async fn hold_back_for_e2e() {
+    static DELAY_MS: OnceLock<u64> = OnceLock::new();
+    let delay = *DELAY_MS.get_or_init(|| {
+        std::env::var("AGARIC_E2E_BACKGROUND_DELAY_MS")
+            .ok()
+            .and_then(|ms| ms.parse().ok())
+            .unwrap_or(0)
+    });
+    if delay > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+    }
+}
+
 // #647: background consumer loop (cache fan-out, FTS). Same
 // rationale + `skip_all` privacy guard as `run_foreground`.
 #[instrument(
@@ -768,6 +786,8 @@ pub(super) async fn run_background(
         let Some(first) = rx.recv().await else {
             break;
         };
+        #[cfg(debug_assertions)]
+        hold_back_for_e2e().await;
         let mut batch = vec![first];
         while let Ok(task) = rx.try_recv() {
             batch.push(task);

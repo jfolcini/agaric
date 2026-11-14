@@ -162,6 +162,9 @@ export const systemHandlers = {
   // nothing to rewrite and leaves the same clean report.
   rebuild_derived_state: cleanReport,
 
+  // #6652 — the macOS file save. The mock has no disk, so nothing is written.
+  save_to_downloads: () => null,
+
   // #5363 — the Markdown mirror. The mock has no disk: the folder is only the
   // `app_settings` rows, so nothing is validated, written, ever diverges or
   // is pending.
@@ -218,6 +221,7 @@ export const systemHandlers = {
   | 'read_logs_for_report'
   | 'compute_reconciliation_report'
   | 'rebuild_derived_state'
+  | 'save_to_downloads'
   | 'pick_mirror_folder'
   | 'set_mirror_folder'
   | 'set_mirror_read_back'

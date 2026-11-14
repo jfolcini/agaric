@@ -14,7 +14,8 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { SettingRow } from '@/components/ui/setting-row'
-import { downloadBlob, exportAllSpacesAsZip, exportGraphAsZip } from '@/lib/export-graph'
+import { saveBlob } from '@/lib/attachment-utils'
+import { exportAllSpacesAsZip, exportGraphAsZip } from '@/lib/export-graph'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { isAndroid } from '@/lib/platform'
@@ -49,7 +50,7 @@ export function ExportSection(): React.ReactElement {
       const activeSpace = availableSpaces.find((s) => s.id === currentSpaceId)
       const sanitizedSpaceName = sanitizeSpaceNameForFilename(activeSpace?.name ?? '')
       const spacePart = sanitizedSpaceName.length > 0 ? `${sanitizedSpaceName}-` : ''
-      downloadBlob(blob, `agaric-export-${spacePart}${date}.zip`)
+      await saveBlob(blob, `agaric-export-${spacePart}${date}.zip`)
       // #2965 — `exportGraphAsZip` no longer silently swallows per-page /
       // per-attachment failures behind an unconditional success: surface a
       // warning (with a details ledger already written into the ZIP as
@@ -93,7 +94,7 @@ export function ExportSection(): React.ReactElement {
         notify.warning(t('data.exportAllSpacesNoSpaces'))
       } else {
         const date = new Date().toISOString().slice(0, 10)
-        downloadBlob(blob, `agaric-export-all-spaces-${date}.zip`)
+        await saveBlob(blob, `agaric-export-all-spaces-${date}.zip`)
         if (skippedPages > 0 || skippedAttachments > 0) {
           const details = [
             skippedPages > 0 ? t('data.exportSkippedPages', { count: skippedPages }) : null,

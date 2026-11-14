@@ -858,6 +858,9 @@ test.describe('Edit as Markdown on a 390 px phone @editor @pages @markdown @mobi
     await activeSheet(page).evaluate((sheet) =>
       Promise.all(sheet.getAnimations().map((slide) => slide.finished)),
     )
+    // The row may sit below the fold of the sheet, and the click's own scroll
+    // to it is not the movement under test.
+    await editSource.scrollIntoViewIfNeeded()
     // Every frame from the click until the sheet has left: its rows, each with
     // its offset from the sheet's top, so the slide itself does not count.
     await page.evaluate(() => {
@@ -909,15 +912,13 @@ test.describe('Edit as Markdown on a 390 px phone @editor @pages @markdown @mobi
     await expect(editor).toContainText(WELCOME)
     await expect(editor).toBeFocused()
 
-    // The closed menu's Insert emoji row lies over the middle of the line.
+    // The closed menu's sheet lies over the middle of the line.
     const line = await sourceLine(editor, WELCOME).boundingBox()
-    const row = await activeSheet(page)
-      .getByRole('menuitem', { name: 'Insert emoji', exact: true })
-      .boundingBox()
-    if (line === null || row === null) throw new Error('the line or the closed row has no box')
+    const sheet = await activeSheet(page).boundingBox()
+    if (line === null || sheet === null) throw new Error('the line or the closed sheet has no box')
     const x = line.x + line.width / 2
     const y = line.y + line.height / 2
-    expect(y > row.y && y < row.y + row.height).toBe(true)
+    expect(y > sheet.y && y < sheet.y + sheet.height).toBe(true)
 
     // A finger's tap there, with none of Playwright's waits for the point to clear.
     await page.mouse.click(x, y)
