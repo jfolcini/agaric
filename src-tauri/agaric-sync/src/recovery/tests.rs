@@ -6696,3 +6696,128 @@ async fn a_draft_is_written_back_with_the_marker_cleared_6521() {
     assert_eq!(in_engine.as_deref(), Some("typed and not saved"));
     second.shutdown();
 }
+/// #6521 — what boot costs over one database each way: from the saved rows,
+/// and replaying the op log. The vault is one space of `blocks` blocks whose
+/// engine a pass saved, then `tail` edits a session committed with their
+/// deltas and was killed before the next pass. Each sample boots a fresh copy
+/// (`rehydrate_registry`, then `recover_at_boot`), the two boots interleaved.
+/// Prints `boot_cost: <boot> @ <blocks>+<tail> = median [min–max]` in ms;
+/// nothing is budgeted.
+///
+/// ```sh
+/// BOOT_COST_FULL=1 CARGO_PROFILE_RELEASE_LTO=off \
+///   CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 cargo test --release \
+///   -p agaric-sync --lib boot_cost -- --ignored --nocapture
+/// ```
+///
+/// Without `BOOT_COST_FULL` it runs at 500 blocks, which is what the weekly
+/// `--run-ignored=only` sweep can afford in a debug build.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "measurement harness (#6521); see the doc comment for the command"]
+async fn boot_cost_6521() {
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ0000000000000006521PG4";
+    const SAMPLES: usize = 5;
+    let device_id = "dev-6521-boot-cost";
+    let full = std::env::var_os("BOOT_COST_FULL").is_some();
+    let scales: &[(usize, usize)] = if full {
+        &[(10_000, 1_000), (100_000, 1_000)]
+    } else {
+        &[(500, 50)]
+    };
+
+    for &(blocks, tail) in scales {
+        let (pool, dir) = test_pool().await;
+        let session = Materializer::new(pool.clone());
+        seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
+        // A hundred blocks to a parent, so no sibling group grows with the vault.
+        let ids = oracle_child_ids(blocks);
+        for (i, id) in ids.iter().enumerate() {
+            let parent = match i % 100 {
+                0 => PAGE_ID,
+                slot => ids[i - slot].as_str(),
+            };
+            let child = (id.as_str(), parent, "a block of the vault");
+            create_child_6521(&pool, &session, device_id, child, false).await;
+        }
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+        for k in 0..tail {
+            let payload = OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::from_trusted(&ids[(k * 7 + 1) % ids.len()]),
+                to_text: format!("edited {k} times after the pass"),
+                prev_edit: None,
+                prior_text: None,
+            });
+            let state = session.loro_state();
+            let mut tx = agaric_store::db::begin_immediate_logged(&pool, "test_edit_6521")
+                .await
+                .unwrap();
+            let scope = agaric_engine::loro::revert::RevertScope::arm(state);
+            let record = agaric_store::op_log::append_local_op_in_tx(
+                &mut tx,
+                device_id,
+                payload,
+                agaric_store::db::now_ms(),
+            )
+            .await
+            .unwrap();
+            agaric_engine::apply::kernel::apply_op_projected(&mut tx, &record, state, false)
+                .await
+                .unwrap();
+            agaric_engine::loro::delta::commit_with_deltas(tx, &state.registry, scope.detach())
+                .await
+                .unwrap();
+        }
+        let space = agaric_store::space::SpaceId::from_trusted(SPACE);
+        let held = session.loro_state().registry.loro_vv(&space);
+        session.shutdown();
+        drop(session);
+
+        let mut timings: [Vec<std::time::Duration>; 2] = [Vec::new(), Vec::new()];
+        for sample in 0..SAMPLES * 2 {
+            let from_saved_rows = sample % 2 == 0;
+            let copy = dir.path().join(format!("copy-{sample}.db"));
+            // dynamic-sql: static SQL, test-only copy of the vault.
+            sqlx::query("VACUUM INTO ?")
+                .bind(copy.to_str().unwrap())
+                .execute(&pool)
+                .await
+                .unwrap();
+            let copied = init_pool(&copy).await.unwrap();
+            agaric_engine::loro::delta::set_boots_from_saved_rows(&copied, from_saved_rows)
+                .await
+                .unwrap();
+            let started = std::time::Instant::now();
+            let (mat, report) = boot_6521(&copied, device_id).await;
+            timings[usize::from(!from_saved_rows)].push(started.elapsed());
+            assert_eq!(
+                report.ops_replayed,
+                if from_saved_rows { 0 } else { tail as u64 },
+                "the boot under test ran"
+            );
+            if from_saved_rows {
+                assert_eq!(
+                    mat.loro_state().registry.loro_vv(&space),
+                    held,
+                    "the saved rows rebuild the engine's whole history"
+                );
+            }
+            mat.shutdown();
+            copied.close().await;
+            std::fs::remove_file(&copy).unwrap();
+        }
+        for (boot, mut samples) in ["from saved rows", "replaying the op log"]
+            .into_iter()
+            .zip(timings)
+        {
+            samples.sort();
+            let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+            println!(
+                "boot_cost: {boot} @ {blocks}+{tail} = {:.1} ms [{:.1}–{:.1}]",
+                ms(samples[samples.len() / 2]),
+                ms(samples[0]),
+                ms(samples[samples.len() - 1]),
+            );
+        }
+    }
+}
