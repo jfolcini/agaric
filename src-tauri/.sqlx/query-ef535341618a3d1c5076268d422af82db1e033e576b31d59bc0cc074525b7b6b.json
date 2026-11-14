@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS(SELECT 1 FROM app_settings WHERE key = ?) AS \"set!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "set!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ef535341618a3d1c5076268d422af82db1e033e576b31d59bc0cc074525b7b6b"
+}

@@ -362,3 +362,66 @@ fn head_boots_the_vault_the_last_release_wrote_6567() {
         assert_no_divergences(&vault, "after a write").await;
     });
 }
+
+/// #6521 — the released vault was written by a build that saved no engine
+/// rows, so its first boot under head replays the op log and then marks the
+/// saved rows as holding every engine write. An edit after that is in a
+/// `loro_doc_delta` row, and the next boot builds the engine with it from the
+/// rows and applies no op.
+///
+/// Needs a process of its own (nextest): it runs boot recovery.
+#[test]
+fn the_released_vault_replays_on_its_first_boot_and_not_on_its_second_6521() {
+    let vault = boot_released_vault();
+    let registry_versions = |materializer: &crate::materializer::Materializer| {
+        let registry = &materializer.loro_state().registry;
+        let mut versions: Vec<_> = registry
+            .space_ids()
+            .into_iter()
+            .map(|space| (space.as_str().to_owned(), registry.loro_vv(&space)))
+            .collect();
+        versions.sort();
+        versions
+    };
+    let held = tauri::async_runtime::block_on(async {
+        assert!(
+            agaric_engine::loro::delta::boots_from_saved_rows(&vault.pools.write)
+                .await
+                .unwrap(),
+            "the first boot ends with the saved rows holding every engine write"
+        );
+        let reading = block_id(&vault.pools.read, "Reading").await;
+        edit_block_inner(
+            &vault.pools.write,
+            &vault.device_id,
+            &vault.materializer,
+            block_id(
+                &vault.pools.read,
+                &format!("Notes live in [[{reading}]] zebrafish"),
+            )
+            .await,
+            "axolotl".into(),
+        )
+        .await
+        .unwrap();
+        vault.materializer.flush().await.unwrap();
+        registry_versions(&vault.materializer)
+    });
+    vault.materializer.shutdown();
+
+    let (_lifecycle, second) = super::build_materializer(&vault.pools, vault.dir.path());
+    agaric_sync::recovery::reset_recovery_guard();
+    let report = super::recover_and_bootstrap(&vault.pools, &vault.device_id, &second)
+        .expect("head boots the vault a second time");
+
+    assert_eq!(
+        report.ops_replayed, 0,
+        "the edit is in a saved row, so the second boot applies no op"
+    );
+    assert_eq!(
+        registry_versions(&second),
+        held,
+        "every engine is at the version the first process left it at"
+    );
+    second.shutdown();
+}
