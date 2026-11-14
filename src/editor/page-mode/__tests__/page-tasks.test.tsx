@@ -353,6 +353,40 @@ describe('the metadata row', () => {
     expect(tasks.navigate).toHaveBeenCalledWith(B)
   })
 
+  // #6746 — the reference count, as block mode draws it, opening the block's references.
+  it('draws a referenced block’s count, none on another, and opens its references', async () => {
+    const tasks = new FakeTasks()
+    tasks.refCounts.set(A, 2)
+    const { container } = mount(
+      [
+        [A, 0, 'quoted'],
+        [B, 0, 'plain'],
+      ],
+      tasks,
+    )
+
+    const chip = await findIn(blockEl(container, A), '[data-testid="ref-count-chip"]')
+    expect(chip).toHaveTextContent('2')
+    expect(blockEl(container, B).querySelector(ROW)).toBeNull()
+    fireEvent.click(chip)
+    expect(tasks.openReferences).toHaveBeenCalledExactlyOnceWith(A)
+  })
+
+  it('a new count read redraws the row', async () => {
+    const tasks = new FakeTasks()
+    const { container } = mount([[A, 0, 'quoted']], tasks)
+    expect(blockEl(container, A).querySelector(ROW)).toBeNull()
+
+    act(() => {
+      tasks.refCounts.set(A, 1)
+      tasks.changed()
+    })
+
+    expect(await findIn(blockEl(container, A), '[data-testid="ref-count-chip"]')).toHaveTextContent(
+      '1',
+    )
+  })
+
   it('a store that clears everything takes the row off', async () => {
     const tasks = metadataTasks()
     const { container } = mount([[A, 0, 'pay rent']], tasks)

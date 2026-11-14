@@ -10,7 +10,7 @@
 
 import { MoreVertical } from 'lucide-react'
 import type React from 'react'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
@@ -52,6 +52,9 @@ export function DayPageEditor({
   const [menuOpen, setMenuOpen] = useState(false)
   const pageMode = usePageMode(pageId)
   useEditModeShortcut(pageMode.mode, pageMode.changeMode)
+  // #6746 — page mode's reference count opens block mode zoomed on its block.
+  const [zoomOnMount, setZoomOnMount] = useState<string | null>(null)
+  const clearZoomOnMount = useCallback(() => setZoomOnMount(null), [])
 
   // A link into the day (search, a backlink, a breadcrumb): block mode focuses
   // its block once it has scrolled to it; page mode puts its cursor there itself.
@@ -117,11 +120,21 @@ export function DayPageEditor({
             editorRef={pageMode.editorRef}
             opening={pageMode.opening}
             onNavigateToPage={onNavigateToPage}
+            onOpenReferences={(blockId) => {
+              setZoomOnMount(blockId)
+              pageMode.changeMode('blocks')
+            }}
           />
         }
         blocks={
           <>
-            <BlockTree parentId={pageId} onNavigateToPage={onNavigateToPage} autoCreateFirstBlock />
+            <BlockTree
+              parentId={pageId}
+              onNavigateToPage={onNavigateToPage}
+              autoCreateFirstBlock
+              zoomOnMount={zoomOnMount}
+              onZoomChange={clearZoomOnMount}
+            />
             <div className="mt-1">
               <AddBlockButton onClick={onAddBlock} />
             </div>

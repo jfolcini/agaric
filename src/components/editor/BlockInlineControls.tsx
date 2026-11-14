@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Calendar, CalendarDays, ChevronRight, Paperclip, Repeat } from 'lucide-react'
+import { Calendar, CalendarDays, ChevronRight, Link2, Paperclip, Repeat } from 'lucide-react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -134,6 +134,10 @@ export interface BlockMetadataRowProps {
   onShowProperties?: ((blockId: string) => void) | undefined
   /** Follows a ref property's chip to its target. */
   onNavigate?: ((id: string) => void) | undefined
+  /** How many blocks reference this one (#6746); none shows no chip. */
+  refCount?: number | undefined
+  /** Opens this block's references: block mode zooms it. Takes the row's own id. */
+  onOpenReferences?: ((blockId: string) => void) | undefined
 }
 
 /** The collapse chevron's classes, page mode's chevron's too. */
@@ -367,6 +371,41 @@ function InlineProperties({
   )
 }
 
+/** How many blocks reference this one (rendered only when some do), opening its references. */
+function ReferenceCountChip({
+  blockId,
+  count,
+  onOpenReferences,
+}: {
+  blockId: string
+  count: number
+  onOpenReferences?: ((blockId: string) => void) | undefined
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const label = t('refCount.label', { count })
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="ref-count-chip flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent focus-ring-visible max-sm:px-2.5 touch-hit-area"
+          data-testid="ref-count-chip"
+          aria-label={label}
+          // #1498: keep editor focus on click (see collapse-toggle note).
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => onOpenReferences?.(blockId)}
+        >
+          <Link2 className="size-[calc(var(--agaric-font-size,1rem)*0.75)] flex-shrink-0" />
+          {count}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={4}>
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 /** The collapsible-attachments badge (rendered only when the block has attachments). */
 function AttachmentBadge({
   attachmentCount,
@@ -450,7 +489,7 @@ BlockInlineControls.displayName = 'BlockInlineControls'
  * Below-block metadata row (user feedback 2026-06-20): the interactive chips
  * that used to crowd the inline-control cluster — priority badge, due /
  * scheduled date chips, repeat indicator, a PDF highlight's or comment's source chip,
- * property chips (+ overflow) and the attachment badge — now render on their
+ * property chips (+ overflow), the attachment badge and the reference count — now render on their
  * own row under the block text, left-aligned with it. They stay fully
  * interactive (priority cycles, dates open pickers, chips edit, the source chip
  * opens the reader, attachments toggle) and ALWAYS visible at rest, since
@@ -476,6 +515,8 @@ export const BlockMetadataRow = React.memo(
     onEditKey,
     onShowProperties,
     onNavigate,
+    refCount = 0,
+    onOpenReferences,
   }: BlockMetadataRowProps): React.ReactElement | null => {
     // #217 C2 / A3 (#1021): cap how many property chips render inline before the
     // `+N` overflow pill, relieving chip density on narrow viewports. The parent
@@ -512,7 +553,8 @@ export const BlockMetadataRow = React.memo(
       repeatValue !== undefined ||
       pdfSource !== null ||
       filteredProperties.length > 0 ||
-      attachmentCount > 0
+      attachmentCount > 0 ||
+      refCount > 0
 
     // No metadata → no row (leaves don't add an empty gap below the text).
     if (!hasContent) return null
@@ -601,6 +643,14 @@ export const BlockMetadataRow = React.memo(
             showAttachments={showAttachments}
             animKey={animKey}
             onToggleAttachments={onToggleAttachments}
+          />
+        )}
+
+        {refCount > 0 && (
+          <ReferenceCountChip
+            blockId={blockId}
+            count={refCount}
+            onOpenReferences={onOpenReferences}
           />
         )}
       </div>

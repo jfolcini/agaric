@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { DonePanel } from '@/components/agenda/DonePanel'
 import { DuePanel } from '@/components/agenda/DuePanel'
 import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
+import { OutgoingLinks } from '@/components/backlinks/OutgoingLinks'
 import { UnlinkedReferences } from '@/components/backlinks/UnlinkedReferences'
 import { BlockRefPeek } from '@/components/BlockRefPeek'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
@@ -108,8 +109,14 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
   // in-page-find container registration and leaves it null.)
   const [zoom, setZoom] = useState<{ pageId: string; blockId: string | null } | null>(null)
   const zoomedBlockId = zoom?.pageId === pageId ? zoom.blockId : null
+  // #6746 — page mode's reference count opens block mode zoomed on its block;
+  // the tree reads this as it mounts and reports the zoom back.
+  const [zoomOnMount, setZoomOnMount] = useState<string | null>(null)
   const handleZoomChange = useCallback(
-    (blockId: string | null) => setZoom({ pageId, blockId }),
+    (blockId: string | null) => {
+      setZoom({ pageId, blockId })
+      setZoomOnMount(null)
+    },
     [pageId],
   )
 
@@ -426,6 +433,10 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
                 opening={pageMode.opening}
                 onNavigateToPage={onNavigateToPage}
                 onEditSource={handleEditSource}
+                onOpenReferences={(blockId) => {
+                  setZoomOnMount(blockId)
+                  pageMode.changeMode('blocks')
+                }}
               />
             }
             blocks={
@@ -439,6 +450,7 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
                   onRevealSettled={handleRevealSettled}
                   revealNonce={revealNonce}
                   onZoomChange={handleZoomChange}
+                  zoomOnMount={zoomOnMount}
                 />
 
                 {/* Add block button — directly beneath the last block */}
@@ -489,6 +501,11 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
           the other. */}
       <FeatureErrorBoundary name="UnlinkedReferences">
         <UnlinkedReferences pageId={pageId} pageTitle={title} onNavigateToPage={onNavigateToPage} />
+      </FeatureErrorBoundary>
+
+      {/* Outgoing links (#6749) — collapsed by default, read once opened. */}
+      <FeatureErrorBoundary name="OutgoingLinks">
+        <OutgoingLinks pageId={pageId} pageTitle={title} onNavigateToPage={onNavigateToPage} />
       </FeatureErrorBoundary>
 
       {/* Page metadata bar — word count, block count, created date */}

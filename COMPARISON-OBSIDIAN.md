@@ -34,7 +34,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | Tables, math, diagrams, callouts, footnotes | All built in | All built in; callouts show in a fixed set of styles |
 | Links | `[[Note]]`, `[[Note#Heading]]`, `[[Note#^id]]`; names in the file | The same forms can be typed; stored as ids and shown as chips. A rename changes no other block |
 | Embeds | `![[Note]]`, headings, blocks, images, audio, video, PDF | Pages, headings and blocks, live, text only: an embedded row shows no checkbox, properties or attachments |
-| Backlinks | Linked and unlinked mentions, and an outgoing links pane | Linked and unlinked references with filters. No outgoing links pane |
+| Backlinks | Linked and unlinked mentions, and an outgoing links pane | Linked and unlinked references with filters |
 | Properties | In a note's YAML front matter, so per file: text, list, number, checkbox, date, date and time | On any block or page: text, number, date, select, reference, boolean, URL. One value per property: no list type and no date-time |
 | Tables of notes | Bases: table, list, cards and kanban layouts over files, with computed columns ("formulas"), summaries and grouping; dragging a kanban card changes its property | Query blocks as a list or a table whose cells edit their block's properties and task state; Advanced Query with grouping, summaries and a board whose cards move from a menu, not by dragging. Rows are blocks. No computed columns (Bases calls them formulas), no cards layout |
 | Tags | `#tag` and nested `#a/b` | `#tag` and nested `#a/b`, renamed everywhere from one place; boolean tag queries |
