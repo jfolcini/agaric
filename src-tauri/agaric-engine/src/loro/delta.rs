@@ -28,8 +28,8 @@
 //!   saves it in the projection transaction that clears its inbox slot.
 //!
 //! An engine write that saves no row leaves a gap: the next row depends on ops
-//! no row holds, until a snapshot pass saves the space. [`saved_engine_divergences`]
-//! is the test oracle for that.
+//! no row holds, until a snapshot pass saves the space. The test oracle for
+//! that is `saved_engine_divergences`, in this module's test builds.
 
 use sqlx::{Sqlite, SqliteConnection, SqlitePool};
 
