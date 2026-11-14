@@ -11,14 +11,14 @@
 > Agaric code behind every **Better**; what it changed is in the
 > [Appendix](#appendix-method-and-sources).
 >
-> **Deliberately unflattering to both sides.** The sibling document, [Agaric vs Logseq](COMPARISON.md),
+> **Deliberately unflattering to both sides.** The sibling document, [Agaric vs Logseq](COMPARISON-LOGSEQ.md),
 > had to be corrected twice for overclaiming on Agaric's behalf. This one starts from the opposite
 > prior: Obsidian is the incumbent with stores, a plugin ecosystem and a paid sync that works anywhere,
 > and Agaric has to earn each "Better".
 >
 > Goal: say plainly what an Obsidian user gains and loses by moving to Agaric, and what Agaric would
 > have to build to be a credible alternative. The short migration table lives in
-> [COMPARISON.md Part 11](COMPARISON.md#part-11-coming-from-logseq-or-obsidian) and is not repeated
+> [COMPARISON-LOGSEQ.md Part 11](COMPARISON-LOGSEQ.md#part-11-coming-from-logseq-or-obsidian) and is not repeated
 > here.
 
 **Status key** (the status describes Agaric against the Obsidian capability in the same row):

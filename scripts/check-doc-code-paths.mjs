@@ -409,7 +409,7 @@ const DOC_ROOTS = [
   'SECURITY.md',
   'README.md',
   'CODE_OF_CONDUCT.md',
-  'COMPARISON.md',
+  'COMPARISON-LOGSEQ.md',
   'COMPARISON-OBSIDIAN.md',
   'docs',
 ]
