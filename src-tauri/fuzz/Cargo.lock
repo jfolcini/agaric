@@ -213,6 +213,7 @@ dependencies = [
  "tracing",
  "ulid",
  "url",
+ "webpki-root-certs",
 ]
 
 [[package]]

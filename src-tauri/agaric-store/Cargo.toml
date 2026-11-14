@@ -40,7 +40,8 @@ tokio = { version = "1", features = ["sync", "net"] }
 # posture (same TLS stack as `tokio-tungstenite` / `tokio-rustls` / sqlx on
 # rustls).  `rustls` in reqwest 0.13 pulls `rustls-platform-verifier` which
 # uses the OS's native trust roots (matches the `rustls-tls-native-roots`
-# feature in `tokio-tungstenite`).
+# feature in `tokio-tungstenite`), except on Android: see `webpki-root-certs`
+# below.
 # `http2` keeps parity with reqwest's default bundle minus native-tls.
 # `default-features = false` prevents the `native-tls` transitive crate
 # from being pulled via `system-proxy` / `charset` at link time.
@@ -98,7 +99,18 @@ iroh-base = { version = "=1.4.1", default-features = false, features = ["key"] }
 # module via the `[dev-dependencies]` `tempfile` below (#2621, wave E1).
 tempfile = { version = "3.27.0", optional = true }
 
+# Android only: the roots `link_metadata`'s client trusts instead of the
+# platform verifier, which panics without a JVM handle this app never gives it
+# (#6763). reqwest 0.13 has no feature that selects bundled roots.
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-root-certs = "1"
+
 [dev-dependencies]
+# The host test of the Android root set (`link_metadata::with_bundled_roots`):
+# a throwaway certificate and the TLS stub that serves it.
+webpki-root-certs = "1"
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs"] }
 # The moved `cancellation` unit tests use `#[tokio::test]`, `tokio::spawn`,
 # the multi-thread flavor, and `tokio::time::timeout`.
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
