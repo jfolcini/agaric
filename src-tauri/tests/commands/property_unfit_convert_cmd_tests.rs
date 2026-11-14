@@ -28,7 +28,9 @@ pub(super) async fn peer_set(
         .await
         .unwrap();
     let state = mat.loro_state();
-    let mut tx = pool.begin().await.unwrap();
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "peer_set")
+        .await
+        .unwrap();
     let scope = agaric_engine::loro::revert::RevertScope::arm(state);
     agaric_engine::apply::kernel::apply_op_projected(&mut tx, &record, state, false)
         .await
