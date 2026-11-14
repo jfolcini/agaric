@@ -25,7 +25,7 @@ members = [".", "agaric-core", "agaric-store", "agaric-engine", "agaric-sync", "
 
 [package]
 name = "agaric"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2024"
 # #640: MSRV documentation — keep in lockstep with rust-toolchain.toml and
 # the `toolchain:` inputs in .github/workflows/{ci,release,_validate}.yml.
@@ -132,9 +132,13 @@ ci-smoke = []
 # `tauri/test` is for `headless`, the app on `tauri::test::MockRuntime` (#6529);
 # `agaric-sync/test-util` for the recovery guard a second boot in one process
 # resets, and `tokio-tungstenite` for `headless::bridge`'s WebSocket.
+# `agaric-engine/test-util` is for the saved-engine oracle
+# `commands::tests::common::settle` calls: without it the `bridge` bin, the one
+# build of this feature outside a test profile, does not compile.
 test-util = [
     "dep:tempfile",
     "dep:tokio-tungstenite",
+    "agaric-engine/test-util",
     "agaric-store/test-util",
     "agaric-sync/test-util",
     "tauri/test",

@@ -32,7 +32,7 @@ import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 
 // Seed id from src/lib/tauri-mock/seed.ts (BLOCK_GS_1, first content block of
 // the "Getting Started" page).
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
 

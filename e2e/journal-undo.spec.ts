@@ -23,7 +23,7 @@ import {
  */
 
 const TODAY_PAGE = '00000000000000000000PAGE03'
-const TODAY_BLOCK = '0000000000000000000BLOCK06'
+const TODAY_BLOCK = '0000000000000000000B10CK06'
 const TODAY_TEXT = 'Morning standup notes go here'
 const EDITED = 'Edited in the journal'
 const OTHER_TEXT = 'Another day’s note'

@@ -179,9 +179,7 @@ pub async fn create_block_inner_with_space(
     parent_id: Option<BlockId>,
     index: Option<i64>,
     scope: &SpaceScope,
-    // #2849 PR2: optional client-generated block id. Only threaded on the
-    // non-page path (optimistic create is a `content`-block feature); the page
-    // path routes through `create_page_in_space_inner`, which mints its own id.
+    // #2849 PR2: optional client-generated block id.
     client_id: Option<BlockId>,
 ) -> Result<BlockRow, AppError> {
     let sid = scope.space_id();
@@ -204,13 +202,14 @@ pub async fn create_block_inner_with_space(
         // Boxed: inline, the page's future (its journal template included,
         // #5395) makes `create_block`'s too large for the stack
         // (`clippy::large_futures`).
-        let new_page_id = Box::pin(crate::commands::create_page_in_space_inner(
+        let new_page_id = Box::pin(crate::commands::spaces::create_page_in_space_inner_with_id(
             pool,
             device_id,
             materializer,
             parent_id.map(BlockId::into_string),
             content,
             sid.as_str().to_owned(),
+            client_id,
         ))
         .await?;
 

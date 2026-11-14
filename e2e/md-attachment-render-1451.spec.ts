@@ -11,7 +11,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  * Seed block: BLOCK_GS_1 — first child of "Getting Started".
  */
 
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 interface MockAttachmentWindow extends Window {
   __addMockAttachment?: (

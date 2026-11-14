@@ -28,13 +28,13 @@ import {
  *      disallowed type or an oversized file is refused with a toast and no row
  *
  * Seed data (`src/lib/tauri-mock/seed.ts`):
- *   BLOCK_GS_1 ('0000000000000000000BLOCK01') — first child of "Getting Started"
+ *   BLOCK_GS_1 ('0000000000000000000B10CK01') — first child of "Getting Started"
  *
  * The mock's attachment store (Map) persists state across IPC calls within a
  * single page session, so we can add attachments via invoke before navigating.
  */
 
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 interface MockAttachmentWindow extends Window {
   __addMockAttachment?: (

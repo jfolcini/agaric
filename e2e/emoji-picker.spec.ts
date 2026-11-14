@@ -33,7 +33,7 @@ import {
 const JOY = '\u{1F602}'
 const ROCKET = '\u{1F680}'
 // SEED_IDS.BLOCK_GS_1 (src/lib/tauri-mock/seed.ts).
-const GS_1 = '0000000000000000000BLOCK01'
+const GS_1 = '0000000000000000000B10CK01'
 
 /** Focus GS_1, make it read `Alpha Omega`, and park the caret after `Alpha `. */
 async function caretBetweenWords(page: Page): Promise<Locator> {

@@ -11,7 +11,7 @@ import { expect, saveBlock, test, waitForBoot } from './helpers'
 
 const PAGE = 'Getting Started'
 // SEED_IDS.BLOCK_GS_1 in src/lib/tauri-mock/seed.ts: a plain "Getting Started" block.
-const GS1 = '0000000000000000000BLOCK01'
+const GS1 = '0000000000000000000B10CK01'
 
 test.beforeEach(async ({ page }) => {
   await waitForBoot(page)

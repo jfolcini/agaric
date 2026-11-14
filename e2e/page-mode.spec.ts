@@ -41,7 +41,7 @@ const PNG_1X1 =
 /** The mock's seeded `work` tag (`src/lib/tauri-mock/seed.ts`). */
 const SEED_TAG_WORK = '000000000000000000000TAG01'
 /** The mock's seeded first block of Getting Started. */
-const SEED_BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const SEED_BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 interface MockWindow {
   __TAURI_INTERNALS__: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }

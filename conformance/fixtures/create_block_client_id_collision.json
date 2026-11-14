@@ -1,5 +1,5 @@
 {
-  "description": "#6054 — `create_block` refuses a client-supplied id that a block already holds, live or trashed (`resolve_block_id_in_tx`, #2849), with `conflict`, and leaves that block as it was. The mock used to overwrite the row. S2 is live and S3 is trashed by the first op; both creates name them and both are refused, so S2 keeps `original` and S3 stays in the trash. S4 is purged, so no row holds its id: a create naming it takes it verbatim, which the edit by that id shows (#5691). A page ignores the client id, so the same id creates one.",
+  "description": "#6054 — `create_block` refuses a client-supplied id that a block already holds, live or trashed (`resolve_block_id_in_tx`, #2849), with `conflict`, and leaves that block as it was. The mock used to overwrite the row. S2 is live and S3 is trashed by the first op; both creates name them and both are refused, so S2 keeps `original` and S3 stays in the trash. S4 is purged, so no row holds its id: a create naming it takes it verbatim, which the edit by that id shows (#5691). A page takes a client id as any block does (#6529): a held id is refused, and S5, purged like S4, becomes the page's id.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -57,36 +57,42 @@
       },
       {
         "block_type": "page",
-        "content": "Work",
+        "content": "Fresh page, renamed",
         "deleted_at": null,
         "due_date": null,
         "id": "B5",
         "page_id": "B5",
         "parent_id": null,
-        "position": 1,
+        "position": 2,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       },
       {
         "block_type": "page",
-        "content": "Fresh page",
+        "content": "Work",
         "deleted_at": null,
         "due_date": null,
         "id": "B6",
         "page_id": "B6",
         "parent_id": null,
-        "position": 2,
+        "position": 1,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 14,
+      "count": 17,
       "ops": [
         {
           "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
         },
         {
           "op_type": "delete_block"
@@ -128,13 +134,16 @@
         {
           "key": "space",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
         }
       ]
     },
     "page_links": [],
     "properties": [
       {
-        "block_id": "B5",
+        "block_id": "B6",
         "key": "is_space",
         "value": "true",
         "value_type": "Text"
@@ -170,13 +179,25 @@
       "code": null,
       "error": null,
       "name": "a_space_for_the_page",
-      "returns": ["create_space#space_id=B5"]
+      "returns": ["create_space#space_id=B6"]
+    },
+    {
+      "code": null,
+      "error": "conflict",
+      "name": "a_page_refuses_a_held_id",
+      "returns": []
     },
     {
       "code": null,
       "error": null,
-      "name": "a_page_ignores_the_client_id",
-      "returns": ["B6#block_type=page#content=Fresh page#parent_id=null#position=2"]
+      "name": "a_fresh_client_id_is_the_page_id",
+      "returns": ["B5#block_type=page#content=Fresh page#parent_id=null#position=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_page_answers_to_its_client_id",
+      "returns": ["B5#content=Fresh page, renamed"]
     }
   ],
   "name": "create_block_client_id_collision",
@@ -196,6 +217,18 @@
     {
       "args": {
         "blockId": "S4"
+      },
+      "command": "purge_block"
+    },
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S5"
       },
       "command": "purge_block"
     },
@@ -283,8 +316,32 @@
         }
       },
       "command": "create_block",
-      "comment": "A page takes the page path, which mints its own id, so the same client id creates a new page.",
-      "name": "a_page_ignores_the_client_id",
+      "expect_error": "conflict",
+      "name": "a_page_refuses_a_held_id",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "blockType": "page",
+        "content": "Fresh page",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C2"
+        }
+      },
+      "command": "create_block",
+      "name": "a_fresh_client_id_is_the_page_id",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "Fresh page, renamed"
+      },
+      "command": "edit_block",
+      "name": "the_page_answers_to_its_client_id",
       "via": "command"
     }
   ],
@@ -317,6 +374,13 @@
         "id": "S4",
         "parent_id": "S1",
         "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "purged too",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
       }
     ],
     "properties": [],
