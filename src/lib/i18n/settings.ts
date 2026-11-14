@@ -191,7 +191,7 @@ export const settings: Record<string, string> = {
   'bugReport.loadMetadataFailed': 'Failed to collect bug-report metadata',
   'bugReport.readLogsFailed': 'Failed to read logs',
   'bugReport.buildZipFailed': 'Failed to build ZIP',
-  // Surfaced when openUrl resolves false (Tauri shell errored AND
+  // Surfaced when openUrl resolves false (the Tauri opener errored AND
   // window.open was popup-blocked / returned null). The dialog stays open so
   // the user can retry or copy the issue URL from the clipboard fallback.
   'bugReport.browserOpenFailed':

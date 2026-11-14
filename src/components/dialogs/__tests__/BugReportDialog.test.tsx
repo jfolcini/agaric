@@ -39,7 +39,7 @@ const mockedToastError = vi.mocked(toast.error)
 const mockedToastSuccess = vi.mocked(toast.success)
 
 // Mock open-url + download so the primary button path runs without touching
-// `@tauri-apps/plugin-shell` or the DOM download machinery.
+// `@tauri-apps/plugin-opener` or the DOM download machinery.
 // OpenUrl now returns Promise<boolean> reflecting whether the
 // browser actually opened — the mock signature follows.
 const openUrlMock = vi.fn<(url: string) => Promise<boolean>>()
@@ -308,7 +308,7 @@ describe('BugReportDialog', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  // When openUrl resolves false (Tauri shell errored AND
+  // When openUrl resolves false (the Tauri opener errored AND
   // window.open was popup-blocked), the dialog must surface an error,
   // copy the issue URL to the clipboard as a manual escape hatch, and
   // stay open instead of claiming success.

@@ -9,8 +9,7 @@ body:
         Before filing, please skim:
 
         - [`AGENTS.md` § Architectural Stability](https://github.com/jfolcini/agaric/blob/main/AGENTS.md#architectural-stability) — the project deliberately avoids new schema, op types, stores, materializer queues, or sync message types. Most features should be expressible within existing abstractions (the properties system is the primary extension point).
-        - [`REVIEW-LATER.md`](https://github.com/jfolcini/agaric/blob/main/REVIEW-LATER.md) — your idea may already be in the backlog.
-        - [`FEATURE-MAP.md`](https://github.com/jfolcini/agaric/blob/main/FEATURE-MAP.md) — current capability inventory.
+        - [`FEATURE-MAP.md`](https://github.com/jfolcini/agaric/blob/main/docs/FEATURE-MAP.md) — current capability inventory.
 
   - type: checkboxes
     id: prereqs
@@ -19,7 +18,7 @@ body:
       options:
         - label: I searched [open and closed issues](https://github.com/jfolcini/agaric/issues?q=is%3Aissue) and could not find a duplicate.
           required: true
-        - label: I checked `REVIEW-LATER.md` and `FEATURE-MAP.md` for an existing entry.
+        - label: I checked `FEATURE-MAP.md` for an existing entry.
           required: true
         - label: This proposal does **not** require introducing a new schema migration, op type, Zustand store, materializer queue, or sync message type — or, if it does, I am opening this issue specifically to discuss whether such a change is justified.
           required: true
@@ -57,7 +56,6 @@ body:
     id: scope
     attributes:
       label: Rough scope
-      description: Cost key matches `REVIEW-LATER.md` — S = <2 h, M = 2–8 h, L = 8 h+.
       options:
         - 'S — under 2 hours'
         - 'M — 2 to 8 hours'

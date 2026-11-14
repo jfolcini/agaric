@@ -178,8 +178,8 @@ test.describe('URL-looking property value @editor', () => {
     await installIpcRecorder(page)
     await openLink.click()
     await expect
-      .poll(() => getInvokeCalls(page, 'plugin:shell|open'))
-      .toEqual([{ path: 'https://example.com' }])
+      .poll(() => getInvokeCalls(page, 'plugin:opener|open_url'))
+      .toEqual([{ url: 'https://example.com' }])
   })
 })
 
