@@ -124,16 +124,26 @@ export function PropertyRowEditor({
   )
 }
 
-interface EditorSlotProps {
+export interface EditorSlotProps {
   bag: UsePropertyRowEditorReturn
   prop: PropertyRow
   onSave: (rawValue: string) => void
   valueLabel: string
   hasCreateNewPage: boolean
   unfit: boolean
+  /** See `SelectEditorProps.onClose`. */
+  onSelectClose?: (() => void) | undefined
 }
 
-function EditorSlot({ bag, prop, onSave, valueLabel, hasCreateNewPage, unfit }: EditorSlotProps) {
+export function EditorSlot({
+  bag,
+  prop,
+  onSave,
+  valueLabel,
+  hasCreateNewPage,
+  unfit,
+  onSelectClose,
+}: EditorSlotProps) {
   switch (bag.valueType) {
     case 'ref': {
       return (
@@ -154,6 +164,7 @@ function EditorSlot({ bag, prop, onSave, valueLabel, hasCreateNewPage, unfit }: 
           state={bag.select}
           ariaLabel={valueLabel}
           unfitValue={unfit ? bag.currentValue : null}
+          onClose={onSelectClose}
         />
       )
     }

@@ -122,6 +122,8 @@ The builder's *Advanced* tab writes the search syntax whenever the filter is a p
 
 A query shown as a table derives its columns from the properties the loaded rows carry, until you pick them: the columns button beside the edit button shows, hides and orders them, and the choice is written into the query block, so it syncs with it and the table keeps its shape as rows change. *Columns from the results* goes back to deriving them. Content comes first and the page last either way. Markdown export keeps the choice for a text query (`columns:a,b`) and for a structured (`v2:`) one. A task's state shows in a list row as the block's checkbox, drawn but not clickable.
 
+A table's cells edit their block. A click on a property cell or the task-state cell, or `Enter` with the cell focused, opens the control the page's Properties table uses for the key's type: a select's options (a task's states), a date field that reads "next friday", a checkbox, a text or number field, a page picker for a ref. Picking, or `Enter` in a field, writes that one value, and an emptied one removes the property; `Escape` closes the cell with nothing written. A toast offers Undo, and the block's own page can undo the change too. The content and page cells stay links, and a key the app keeps itself (`created_at`, a repeat's bookkeeping) is shown, not edited.
+
 ## Tag references in property values
 
 A property of type *ref* can point at a tag as well as a page (e.g. a custom `area` key holding `@ops`). Tag references resolve like page links: rename-safe, click-to-navigate. Note the built-in `assignee` and `location` keys are plain text, not refs.

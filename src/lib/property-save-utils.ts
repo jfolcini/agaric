@@ -6,7 +6,7 @@
  */
 
 import { unwrap } from '@/lib/app-error'
-import type { PageResponse, PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import type { OpRef, PageResponse, PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
 import { PRIORITY_LEVELS } from '@/lib/priority-levels'
@@ -379,7 +379,8 @@ export function buildPropertyParams(
  * refreshes the property list via `onRefresh`.
  *
  * Returns `false` when validation fails (e.g. invalid number) so the
- * caller can show an appropriate error toast.
+ * caller can show an appropriate error toast. `onWritten` hears the ops the
+ * write appended, for a caller that offers to undo it.
  */
 export async function handleSaveProperty(
   blockId: string,
@@ -387,10 +388,11 @@ export async function handleSaveProperty(
   value: string,
   valueType: string,
   onRefresh: (props: PropertyRow[]) => void,
+  onWritten?: (refs: OpRef[]) => void,
 ): Promise<boolean> {
   const result = buildPropertyParams(blockId, key, value, valueType)
   if (!result.ok) return false
-  unwrap(
+  const written = unwrap(
     await commands.setProperty(result.params.blockId, result.params.key, {
       value_text: result.params.valueText ?? null,
       value_num: result.params.valueNum ?? null,
@@ -399,6 +401,7 @@ export async function handleSaveProperty(
       value_bool: result.params.valueBool ?? null,
     }),
   )
+  onWritten?.(written.op_refs)
   const updated = unwrap(await commands.getProperties(blockId))
   onRefresh(updated)
   return true
@@ -411,8 +414,10 @@ export async function handleDeleteProperty(
   blockId: string,
   key: string,
   onRefresh: () => void,
+  onWritten?: (refs: OpRef[]) => void,
 ): Promise<void> {
-  unwrap(await commands.deleteProperty(blockId, key))
+  const written = unwrap(await commands.deleteProperty(blockId, key))
+  onWritten?.(written.op_refs)
   onRefresh()
 }
 

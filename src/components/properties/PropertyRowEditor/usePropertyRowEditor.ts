@@ -23,7 +23,7 @@ import { useDateInput } from '@/hooks/useDateInput'
 import { type SelectOptionsEditorState, useSelectOptionsDraft } from '@/hooks/useSelectOptionsDraft'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { unwrap } from '@/lib/app-error'
-import type { PageHeading, PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import type { OpRef, PageHeading, PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
@@ -39,7 +39,8 @@ export interface UsePropertyRowEditorArgs {
   def: PropertyDefinition | undefined
   onSave: (rawValue: string) => void
   onDefUpdated?: ((updatedDef: PropertyDefinition) => void) | undefined
-  onRefSaved?: (() => void) | undefined
+  /** Called once the ref picker has written its page, with the ops that appended. */
+  onRefSaved?: ((refs: OpRef[]) => void) | undefined
   onCreateNewPage?: ((title: string) => void | Promise<void>) | undefined
   /**
    * #2792 — when true, `textLike.handleBlur` always calls `onSave` on blur,
@@ -285,7 +286,7 @@ export function usePropertyRowEditor({
       // save so it never sticks if the IPC call rejects.
       setSavingRefPageId(page.id)
       try {
-        unwrap(
+        const written = unwrap(
           await commands.setProperty(blockId, prop.key, {
             value_text: null,
             value_num: null,
@@ -294,7 +295,7 @@ export function usePropertyRowEditor({
             value_bool: null,
           }),
         )
-        onRefSaved?.()
+        onRefSaved?.(written.op_refs)
         setRefPickerOpen(false)
       } catch (err) {
         logger.error(
