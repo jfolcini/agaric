@@ -109,6 +109,22 @@ describe('openUrl', () => {
     expect(result).toBe(true)
   })
 
+  it('in the Android app, a refused link resolves false and is not loaded over the app', async () => {
+    mockOpen.mockRejectedValueOnce(new Error('url not allowed on the configured scope'))
+    vi.doMock('@tauri-apps/plugin-opener', () => ({ openUrl: mockOpen }))
+    vi.doMock('@/lib/platform', () => ({ isAndroid: () => true }))
+    vi.stubGlobal('__TAURI_INTERNALS__', {})
+    const windowOpenSpy = vi.spyOn(window, 'open')
+    const { openUrl } = await import('@/lib/open-url')
+
+    const result = await openUrl('https://example.com')
+
+    expect(result).toBe(false)
+    expect(windowOpenSpy).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+    vi.doUnmock('@/lib/platform')
+  })
+
   it('never rejects across all three branches', async () => {
     // (1) happy path
     mockOpen.mockResolvedValueOnce(undefined)

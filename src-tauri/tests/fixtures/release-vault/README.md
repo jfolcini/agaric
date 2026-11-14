@@ -11,7 +11,7 @@ newest release's.
 | `<version>/attachments/` | The attachment's bytes, where the release stored them. |
 | `<version>/device-id` | The device the vault's ops belong to. |
 | `<version>/export-projects.txt` | The release's own Markdown export of the "Projects" page. |
-| `<version>/counts.txt` | The release's own counts at exit: blocks, ops left in the log, the seq its compaction purged through. |
+| `<version>/counts.txt` | The release's own counts at exit: blocks, ops left in the log. |
 
 ## How a vault is produced
 
