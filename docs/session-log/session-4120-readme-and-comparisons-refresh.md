@@ -17,7 +17,7 @@ The maintainer asked whether the README still reflects the app, and for it and t
 
 ## Shipped
 
-`README.md`, `COMPARISON-LOGSEQ.md` (renamed), `COMPARISON-OBSIDIAN.md`, the two references to the old name (`scripts/check-doc-code-paths.mjs`, `_typos.toml`), and one sentence of `docs/ARCHITECTURE.md`.
+`README.md`, `COMPARISON-LOGSEQ.md` (renamed), `COMPARISON-OBSIDIAN.md`, the two references to the old name (`scripts/check-doc-code-paths.mjs`, `_typos.toml`), and one sentence each of `docs/ARCHITECTURE.md` and `docs/features/views.md`.
 
 ## What ran
 
