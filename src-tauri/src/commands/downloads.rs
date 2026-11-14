@@ -88,7 +88,7 @@ pub(crate) fn require_bare_file_name(file_name: &str) -> Result<(), AppError> {
 /// and return the name the file has there, which differs when `file_name` was
 /// taken. Delegates to [`save_to_downloads_inner`], or on Android, where the
 /// folder is reached only through `MediaStore`, to
-/// [`save_through`](super::file_save::save_through) (#6546).
+/// [`save_through`] (#6546).
 #[tauri::command]
 #[specta::specta]
 #[tracing::instrument(skip_all, err)]
