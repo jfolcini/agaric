@@ -221,8 +221,8 @@ test.describe('tag chips on the rows of a 360 px touch phone @mobile @journal @p
     userAgent: iPhone13.userAgent,
   })
 
-  const BUY_GROCERIES = '0000000000000000000BLOCK10'
-  const TRY_TAGGING = '0000000000000000000BLOCK04'
+  const BUY_GROCERIES = '0000000000000000000B10CK10'
+  const TRY_TAGGING = '0000000000000000000B10CK04'
 
   /** Whether a tap 21 px above and below the centre of `el` reaches it. */
   async function hitsAboveBelow(el: Locator): Promise<boolean[]> {

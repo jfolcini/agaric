@@ -47,7 +47,7 @@ function localDateStr(d: Date): string {
 // due_date = today). Today's daily page is the one weekly-view day whose
 // BlockTree is guaranteed to have a task row to drag, since the seed only
 // gives today's page task blocks with `due_date`.
-const BLOCK_DAILY_3 = '0000000000000000000BLOCK10'
+const BLOCK_DAILY_3 = '0000000000000000000B10CK10'
 
 test.describe('WeeklyView — reschedule by drag (real gesture) @journal', () => {
   test.beforeEach(async ({ page }) => {

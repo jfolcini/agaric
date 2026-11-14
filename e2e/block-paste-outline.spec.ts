@@ -56,9 +56,9 @@ function rowsWithText(page: import('@playwright/test').Page, token: string) {
 }
 
 const PAGE_ID = '00000000000000000000PAGE01'
-const GS1 = '0000000000000000000BLOCK01'
-const GS3 = '0000000000000000000BLOCK03'
-const GS5 = '0000000000000000000BLOCK05'
+const GS1 = '0000000000000000000B10CK01'
+const GS3 = '0000000000000000000B10CK03'
+const GS5 = '0000000000000000000B10CK05'
 const FENCED = '```\nfirst line\nsecond line\n```'
 const CHILD_TEXT = 'a child that travels with its parent'
 
@@ -421,7 +421,7 @@ test.describe('Copy/paste through the Markdown grammar (#5140 Phase 3b) @editor'
     page,
   }) => {
     const QUICK_NOTES = '00000000000000000000PAGE02'
-    const QN1 = '0000000000000000000BLOCK08'
+    const QN1 = '0000000000000000000B10CK08'
     await ipc(page, 'set_page_aliases', { pageId: PAGE_ID, aliases: ['GS alias'] })
     await openPage(page, PAGE)
     await page.getByRole('button', { name: 'Page actions' }).click()

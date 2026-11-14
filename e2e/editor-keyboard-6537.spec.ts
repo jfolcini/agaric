@@ -22,10 +22,10 @@ import {
 
 const PAGE = 'Getting Started'
 // SEED_IDS.BLOCK_GS_1..4 in src/lib/tauri-mock/seed.ts
-const GS1 = '0000000000000000000BLOCK01'
-const GS2 = '0000000000000000000BLOCK02'
-const GS3 = '0000000000000000000BLOCK03'
-const GS4 = '0000000000000000000BLOCK04'
+const GS1 = '0000000000000000000B10CK01'
+const GS2 = '0000000000000000000B10CK02'
+const GS3 = '0000000000000000000B10CK03'
+const GS4 = '0000000000000000000B10CK04'
 
 const liveEditor = (page: Page) =>
   page.locator('[data-testid="block-editor"] [contenteditable="true"]')

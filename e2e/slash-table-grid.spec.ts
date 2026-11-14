@@ -20,7 +20,7 @@ import {
  */
 
 // `SEED_IDS.BLOCK_GS_1` in src/lib/tauri-mock/seed.ts, the first block of "Getting Started".
-const GS_1 = '0000000000000000000BLOCK01'
+const GS_1 = '0000000000000000000B10CK01'
 const GS_1_TEXT = 'Welcome to Agaric! This is your personal knowledge base.'
 
 async function openTableGrid(page: Page) {

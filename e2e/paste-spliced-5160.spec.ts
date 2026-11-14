@@ -20,7 +20,7 @@ import {
 
 const PAGE = 'Getting Started'
 const PAGE_ID = '00000000000000000000PAGE01'
-const GS1 = '0000000000000000000BLOCK01'
+const GS1 = '0000000000000000000B10CK01'
 
 /** The shape of a chat answer: a lead-in, a heading, a numbered list, a sign-off. */
 const LLM_ANSWER =

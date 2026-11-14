@@ -22,7 +22,7 @@ import {
 
 const PAGE = 'Getting Started'
 const PAGE_ID = '00000000000000000000PAGE01'
-const GS1 = '0000000000000000000BLOCK01'
+const GS1 = '0000000000000000000B10CK01'
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 
 interface Row {
