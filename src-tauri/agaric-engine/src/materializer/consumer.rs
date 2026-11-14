@@ -291,6 +291,13 @@ where
         }
     }
 
+    log_exhausted_schedule(label, &outcome);
+    outcome
+}
+
+/// [`retry_with_backoff`]'s closing log line, for a schedule that did not
+/// succeed.
+fn log_exhausted_schedule(label: &str, outcome: &RetryOutcome) {
     // Retries exhausted — surface a single operator-facing `error` line so
     // the demoted-to-debug intermediate failures don't leave the
     // operator-facing logs silent. Panicking attempts never reach here:
@@ -311,8 +318,6 @@ where
     {
         tracing::error!(label, error = msg, "error processing materializer task");
     }
-
-    outcome
 }
 
 // #647: the foreground consumer loop is the async core's hardest path to
