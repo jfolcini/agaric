@@ -246,6 +246,54 @@
       "name": "search_limit_zero_refused",
       "rows": [],
       "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_short_term_alone",
+      "rows": ["B6", "B4", "B3", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_short_term_beside_word",
+      "rows": ["B4"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_short_term_reads_raw_content",
+      "rows": ["B7"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_short_term_case_sensitive",
+      "rows": ["B6", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{id,rank}",
+      "error": null,
+      "has_more": true,
+      "name": "search_short_term_paged_page1",
+      "rows": ["B6", "B4", "B3"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_short_term_paged_page2",
+      "rows": ["B2"],
+      "total_count": null
     }
   ],
   "name": "query_search_blocks_modes",
@@ -484,6 +532,98 @@
       "comment": "#4030 — `limit: 0` is a REFUSAL, not an empty page. `PageRequest::new` accepts `1..=MAX_PAGE_SIZE` and returns `AppError::Validation` for everything else (`agaric-store/src/pagination/mod.rs:856-865`), so the request never reaches an arm — `search_fts` could not serve it if it did, since `rows[limit_usize - 1]` would underflow. The mock clamped only the UPPER bound, so it answered `items: []` with `has_more: false`: 'no more results' for a request the backend refuses, and the one input on which an empty page and a refusal are distinguishable at all. `expect_error` rather than `expect_empty` for exactly that reason. Paired with `search_fts_widget` at the top of this file, which is the SAME query at an in-range limit and returns four rows — so an implementation that refused (or emptied) every search fails that step instead of this one.",
       "expect_error": "validation",
       "name": "search_limit_zero_refused"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "no"
+      },
+      "command": "search_blocks",
+      "comment": "#6752 — a term under the trigram floor has no index entry, so the query scans raw `blocks.content` for it, case-insensitively, `ORDER BY b.id DESC`: `notes` in S6, S3 and S2 and `note` in S4, newest first. A mock that drops the term answers []; one that ranks it as a MATCH returns the rows in `(rank, id)` order.",
+      "name": "search_short_term_alone"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "widget ca"
+      },
+      "command": "search_blocks",
+      "comment": "#6752 — beside a word the index holds, the short term narrows that word's rows: all four widget blocks MATCH, and only S4 (`calibration note about widget pending`) also holds `ca`, ahead of the word and apart from it. A mock that drops the term returns all four; a whole-query substring test returns none.",
+      "name": "search_short_term_beside_word"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "**"
+      },
+      "command": "search_blocks",
+      "comment": "#6752 — the scan reads RAW content, not the stripped text the index holds: S7's `Sprocket **gad**get inventory` is the one block whose markup carries `**`, which `strip_for_fts` removes. The mirror of `search_fts_stripped_markup`, which finds S7 only in the stripped text.",
+      "name": "search_short_term_reads_raw_content"
+    },
+    {
+      "args": {
+        "filter": {
+          "caseSensitive": true,
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "Wi"
+      },
+      "command": "search_blocks",
+      "comment": "#6752 — the case-sensitive toggle post-filters the short-term scan as it does a MATCH: `Wi` is in S6 and S2 (`Widget …`), not in S3 or S4 (`widget …`), newest first.",
+      "name": "search_short_term_case_sensitive"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 3,
+        "query": "no"
+      },
+      "command": "search_blocks",
+      "comment": "#6752 — page 1 of the short-term scan. Its cursor is the `(rank, id)` shape every search cursor has, the rank a constant, and the keyset is `b.id` alone, descending.",
+      "name": "search_short_term_paged_page1"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 3,
+        "query": "no"
+      },
+      "command": "search_blocks",
+      "comment": "#6752 — page 2, resumed from page 1's cursor: the one remaining row, S2. A mock that pages this arm on the ranked keyset (`id >` after the cursor) re-delivers S6 and S4.",
+      "cursor_from": "search_short_term_paged_page1",
+      "name": "search_short_term_paged_page2"
     }
   ],
   "seed": {

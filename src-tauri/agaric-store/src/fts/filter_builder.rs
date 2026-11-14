@@ -71,6 +71,27 @@ pub(crate) fn normalize_tag_ids(tag_ids: Option<&[String]>) -> Vec<String> {
     }
 }
 
+/// The spellings of `term` to hand `LIKE`, which folds ASCII case only while
+/// the trigram index folds every script: a term with a non-ASCII letter is
+/// also tried lowercased, uppercased and capitalised.
+fn like_case_forms(term: &str) -> Vec<String> {
+    let mut forms = vec![term.to_owned()];
+    if !term.is_ascii() {
+        let lower = term.to_lowercase();
+        let mut rest = lower.chars();
+        let capitalised: String = rest
+            .next()
+            .map(|first| first.to_uppercase().chain(rest).collect())
+            .unwrap_or_default();
+        for form in [lower, term.to_uppercase(), capitalised] {
+            if !forms.contains(&form) {
+                forms.push(form);
+            }
+        }
+    }
+    forms
+}
+
 /// #1280 B2 — bridge the search-side resolved [`MetaDatePredicate`]
 /// (`IsNull` / `Range` / `Op{DateOp}`) onto the cross-surface
 /// [`DatePredicate`] the projection compiles. The resolver oracle treats the
@@ -609,6 +630,25 @@ impl StructuralFilterBuilder {
                 self.add_projection_clause("", &wc.sql, &wc.binds);
             }
             self.sql.push(')');
+        }
+    }
+
+    /// One `AND (b.content LIKE ?N ESCAPE '\' …)` per term: the block's raw
+    /// content holds the term, in any letter case.
+    pub(super) fn add_content_contains(&mut self, prefix: &str, terms: &[String]) {
+        for term in terms {
+            let mut clauses = Vec::new();
+            for form in like_case_forms(term) {
+                let escaped = form
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_");
+                clauses.push(format!("b.content LIKE ?{} ESCAPE '\\'", self.next_param));
+                self.next_param += 1;
+                self.binds.push(ScalarBind::Str(format!("%{escaped}%")));
+            }
+            self.sql
+                .push_str(&format!("{prefix}({})", clauses.join(" OR ")));
         }
     }
 

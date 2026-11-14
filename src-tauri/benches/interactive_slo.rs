@@ -4555,6 +4555,82 @@ fn bench_search_blocks_word_query(c: &mut Criterion) {
     assert_under_budget(CMD, &acc, SEARCH_WORD_BUDGET_MS);
 }
 
+/// `search_blocks` on a term under the trigram floor (#6752), which scans block
+/// content newest first: `re` is in the `SEARCH_WORD_BLOCKS` blocks alone, so
+/// the scan reads the whole vault; `ee` is in nearly every block, so it reads
+/// one page; and beside `meeting` the term narrows that word's 10K rows.
+/// Measurement only: no budget until `bench-slo` has measured them.
+fn bench_search_blocks_short_terms(c: &mut Criterion) {
+    const RARE: &str = "search_blocks (2-char term, 20 matches) @ 100K";
+    const COMMON: &str = "search_blocks (2-char term, 100K matches) @ 100K";
+    const BESIDE_WORD: &str = "search_blocks (word + 2-char term, 10K candidates) @ 100K";
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_search_short_terms"));
+    let (short_ids, word_ids) = rt.block_on(seed_search_fixture(&pool));
+    let page_of = |query| rt.block_on(search_first_page(&pool, query, slo_search_filter()));
+    let ids_of = |page: &PageResponse<SearchBlockRow>| -> Vec<String> {
+        page.items
+            .iter()
+            .map(|row| row.id.as_str().to_owned())
+            .collect()
+    };
+
+    let rare = page_of("re");
+    let mut rare_ids = ids_of(&rare);
+    rare_ids.sort_unstable();
+    assert_eq!(
+        rare_ids, word_ids,
+        "{RARE}: untimed probe must return exactly the 20 blocks holding the term"
+    );
+    assert!(!rare.has_more, "{RARE}: 20 matches fit one page of 50");
+
+    let common = page_of("ee");
+    let newest: Vec<String> = (FIXTURE_SIZE - SEARCH_PAGE_SIZE..FIXTURE_SIZE)
+        .rev()
+        .map(|i| format!("SEED{i:020}"))
+        .collect();
+    assert_eq!(
+        ids_of(&common),
+        newest,
+        "{COMMON}: untimed probe must return the newest 50 blocks"
+    );
+    assert!(
+        common.has_more,
+        "{COMMON}: the matches overflow one page of 50"
+    );
+
+    let beside_word = page_of("meeting 99");
+    let with_99: Vec<&String> = short_ids
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| format!("{:06}", k * SEARCH_SHORT_STRIDE).contains("99"))
+        .map(|(_, id)| id)
+        .collect();
+    assert_eq!(
+        ids_of(&beside_word).iter().collect::<Vec<_>>(),
+        &with_99[..SEARCH_PAGE_SIZE],
+        "{BESIDE_WORD}: untimed probe must return the first 50 meeting blocks holding `99`, in id order"
+    );
+    assert!(
+        beside_word.has_more,
+        "{BESIDE_WORD}: the matches overflow one page of 50"
+    );
+
+    for (cmd, bench_name, query) in [
+        (RARE, "search_blocks_short_term_rare_100k", "re"),
+        (COMMON, "search_blocks_short_term_common_100k", "ee"),
+        (
+            BESIDE_WORD,
+            "search_blocks_short_term_beside_word_100k",
+            "meeting 99",
+        ),
+    ] {
+        let acc = time_search_blocks(c, &rt, pool.clone(), bench_name, query, slo_search_filter());
+        report_measurement_only(cmd, &acc);
+    }
+}
+
 /// The Tags view's "Search everything under #tag" (#5679): the tag attached
 /// to `UNDER_ATTACHED` blocks, inherited by `UNDER_CHILDREN` children of each,
 /// and written inline in `UNDER_ATTACHED` more.
@@ -6552,6 +6628,7 @@ criterion_group!(
     bench_list_all_tags_in_space_10k,
     bench_search_blocks_short_query,
     bench_search_blocks_word_query,
+    bench_search_blocks_short_terms,
     // #5679 — "Search everything under #tag"; no budget yet.
     bench_search_blocks_under_tag,
     // #5712 — what a completed pull's session-end sweep costs; no budget yet.

@@ -5,7 +5,7 @@ How Agaric finds blocks by content, by tag, by property, and by reference.
 
 ## Full-text search (FTS5)
 
-Backed by SQLite's FTS5 virtual table (`fts_blocks`) with a **trigram tokenizer** (`tokenize = 'trigram case_sensitive 0'`). The trigram choice is load-bearing: SQLite's default tokenizer doesn't handle CJK languages; trigrams index any 3-character sliding window regardless of language. Minimum query length is 3 characters.
+Backed by SQLite's FTS5 virtual table (`fts_blocks`) with a **trigram tokenizer** (`tokenize = 'trigram case_sensitive 0'`). The trigram choice is load-bearing: SQLite's default tokenizer doesn't handle CJK languages; trigrams index any 3-character sliding window regardless of language. A term under 3 characters is not in the index; search scans block content for it instead (see [search.md](search.md) § Terms under the trigram floor).
 
 The materializer maintains the FTS index incrementally on every `edit_block` / `create_block`. A full rebuild path exists for migration recovery. The optimize threshold is adaptive — runs after `max(500, block_count / 10_000)` writes, with a 60-minute ceiling so an idle-but-recently-edited vault still gets a maintenance pass.
 

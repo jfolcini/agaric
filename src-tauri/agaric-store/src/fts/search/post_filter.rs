@@ -13,7 +13,7 @@ use super::super::metadata_filter::MetadataPredicates;
 use super::constants::MAX_SEARCH_RESULTS;
 use super::fetch::{PreparedFtsFetch, build_fts_fetch, execute_fts_fetch};
 use super::row::fts_row_to_block_row;
-use super::sanitizer::prepare_match_expression;
+use super::sanitizer::prepare_query;
 
 /// Window size (candidate FTS rows fetched per loop iteration) for the
 /// post-filter cursor pagination in [`fts_fetch_post_filtered_page`].
@@ -101,7 +101,7 @@ pub(in crate::fts) async fn fts_fetch_post_filtered_page<F>(
 where
     F: FnMut(&mut SearchBlockRow) -> bool,
 {
-    let Some(sanitized) = prepare_match_expression(query)? else {
+    let Some(parsed) = prepare_query(query)? else {
         return Ok(PageResponse {
             items: vec![],
             next_cursor: None,
@@ -139,6 +139,7 @@ where
     // and prefers offsets) and `snippet_len = None` (the `keep` predicate runs
     // the toggle regex against full `content`, so no DB-side truncation).
     let prepared = build_fts_fetch(
+        &parsed,
         parent_id,
         tag_ids,
         scope,
@@ -150,7 +151,15 @@ where
         None,
     );
 
-    scan_post_filtered_windows(pool, &prepared, &sanitized, target, &mut scan, &mut keep).await?;
+    scan_post_filtered_windows(
+        pool,
+        &prepared,
+        &parsed.match_expr,
+        target,
+        &mut scan,
+        &mut keep,
+    )
+    .await?;
 
     post_filtered_page_from_scan(scan, limit_usize)
 }

@@ -352,7 +352,8 @@ export function foldForFtsIndex(s: string): string {
  * divergences are unchanged by #3938 and still apply: the backend AND-joins
  * whitespace-separated tokens (this requires them adjacent and in order), and
  * it drops sub-trigram tokens, rejecting a query that is exclusively them
- * where this happily matches. What #3938 changed is the HAYSTACK and the FOLD
+ * where this happily matches (the two search commands take them out first,
+ * {@link splitShortTerms}; the other callers do not). What #3938 changed is the HAYSTACK and the FOLD
  * — see {@link stripForFts} and {@link foldForFtsIndex}.
  *
  * An empty needle admits every row. The `search_blocks` arms all test
@@ -373,6 +374,35 @@ export function matchesFtsIndex(stripped: string, query: string): boolean {
 function quotedPhrases(query: string): string[] | null {
   if (!/^\s*(?:"[^"]*"\s*)+$/.test(query)) return null
   return Array.from(query.matchAll(/"([^"]*)"/g), (m) => m[1] ?? '')
+}
+
+/**
+ * `parse_query`'s split (`agaric-store/src/fts/search/sanitizer.rs`, #6752):
+ * the terms under the trigram floor, each a required substring of the RAW
+ * content, and what is left for the index. A query with no short term keeps
+ * its one whole-query phrase, so nothing else about the MATCH model moves.
+ * Operators are not modelled, here as in {@link matchesFtsIndex}.
+ */
+function splitShortTerms(query: string): { phrases: string[]; shortTerms: string[] } {
+  const isShort = (term: string) => term !== '' && Array.from(term).length < 3
+  const quoted = quotedPhrases(query)
+  if (quoted) {
+    return {
+      phrases: quoted.filter((phrase) => !isShort(phrase.trim())),
+      shortTerms: quoted.map((phrase) => phrase.trim()).filter(isShort),
+    }
+  }
+  const words = query.trim().split(/\s+/)
+  const shortTerms = words.filter(isShort)
+  if (shortTerms.length === 0) return { phrases: [query], shortTerms }
+  const indexed = words.filter((word) => !isShort(word)).join(' ')
+  return { phrases: indexed === '' ? [] : [indexed], shortTerms }
+}
+
+/** `add_content_contains`: the raw content holds every short term, in any case. */
+function holdsShortTerms(content: string | null, shortTerms: string[]): boolean {
+  const folded = foldForFtsIndex(content ?? '')
+  return shortTerms.every((term) => folded.includes(foldForFtsIndex(term)))
 }
 
 // ---------------------------------------------------------------------------
@@ -1981,6 +2011,8 @@ function searchIdDescPage(
   candidates: Record<string, unknown>[],
   cursor: SearchCursor | null,
   limit: number,
+  // The short-term scan's constant `search_rank`, which its cursor carries.
+  rank: number | null = null,
 ): SearchPageResponse {
   let rows = candidates.toSorted(byIdDesc)
   if (cursor != null) {
@@ -1991,7 +2023,7 @@ function searchIdDescPage(
   const window = rows.slice(0, limit + 1)
   const items = window.slice(0, limit)
   const boundary = window.length > limit ? items.at(-1) : undefined
-  const nextCursor = boundary ? encodeSearchCursor(boundary['id'] as string, null) : null
+  const nextCursor = boundary ? encodeSearchCursor(boundary['id'] as string, rank) : null
   return {
     items,
     next_cursor: nextCursor,
@@ -2076,6 +2108,26 @@ function searchFtsRankedPage(
     has_more: nextCursor !== null,
     total_count: null,
   }
+}
+
+/**
+ * `build_fts_fetch`'s two orders (#6752): a query the index answers pages on
+ * `(rank, id)`; one of short terms alone (`indexedFold === null`) has no rank
+ * and pages newest first.
+ */
+function searchMatchedPage(
+  candidates: Array<{ b: Record<string, unknown>; stripped: string }>,
+  indexedFold: string | null,
+  cursor: SearchCursor | null,
+  limit: number,
+): SearchPageResponse {
+  if (indexedFold !== null) return searchFtsRankedPage(candidates, indexedFold, cursor, limit)
+  return searchIdDescPage(
+    candidates.map((c) => c.b),
+    cursor,
+    limit,
+    0,
+  )
 }
 
 /**
@@ -2541,15 +2593,28 @@ export const searchHandlers = {
     //
     // #6608 — a query of quoted phrases (`tokenize_query`) matches the blocks
     // holding every phrase, which is what replace across pages sends.
-    const phrases = quotedPhrases(query) ?? [query]
+    //
+    // #6752 — a term under the trigram floor is a substring of the raw content
+    // instead, and a query of nothing else pages newest first.
+    const { phrases, shortTerms } = splitShortTerms(query)
+    const shortOnly = phrases.length === 0
     const ftsCandidates = candidates
       .map((b) => ({ b, stripped: stripForFts(b['content'] as string | null) }))
-      .filter((c) => phrases.every((phrase) => matchesFtsIndex(c.stripped, phrase)))
+      .filter(
+        (c) =>
+          phrases.every((phrase) => matchesFtsIndex(c.stripped, phrase)) &&
+          holdsShortTerms(c.b['content'] as string | null, shortTerms),
+      )
 
     // Arm 4 — every toggle off: the FTS5 candidate set IS the answer,
     // rank-ordered and `(rank, id)`-keyset paginated (`search_fts`).
     if (filter['caseSensitive'] !== true && filter['wholeWord'] !== true) {
-      return searchFtsRankedPage(ftsCandidates, foldForFtsIndex(phrases[0] ?? query), cursor, limit)
+      return searchMatchedPage(
+        ftsCandidates,
+        shortOnly ? null : foldForFtsIndex(phrases[0] ?? query),
+        cursor,
+        limit,
+      )
     }
 
     // Arm 5 — `caseSensitive` and/or `wholeWord` (and NOT `isRegex`): narrow
@@ -2577,7 +2642,7 @@ export const searchHandlers = {
     // in one pass, so `fts_exhausted` always holds when the page is short and
     // the branch's condition `!page_full && !fts_exhausted` is unsatisfiable.
     // Modelling it would need a window ceiling the mock does not have.
-    return searchFtsRankedPage(survivors, foldForFtsIndex(query), cursor, limit)
+    return searchMatchedPage(survivors, shortOnly ? null : foldForFtsIndex(query), cursor, limit)
   },
 
   search_blocks_partitioned: (args) => {
@@ -2728,14 +2793,22 @@ export const searchHandlers = {
     // match (once here, once for `blocks`, once for `pages`). The raw value
     // rides along because arm 4's {@link capPaletteContent} needs it too, and
     // re-reading the property there would be a second read of the same column.
+    const { phrases, shortTerms } = splitShortTerms(query)
     const matching = structural
       .map((b) => {
         const content = (b['content'] as string | null) ?? null
         return { b, content, stripped: stripForFts(content) }
       })
-      .filter((c) => matchesFtsIndex(c.stripped, query))
+      // #6752 — a query with a short term splits as `search_blocks`'s does;
+      // any other stays this arm's whole-query substring.
+      .filter((c) =>
+        shortTerms.length === 0
+          ? matchesFtsIndex(c.stripped, query)
+          : phrases.every((phrase) => matchesFtsIndex(c.stripped, phrase)) &&
+            holdsShortTerms(c.content, shortTerms),
+      )
     const pagesAll = matching.filter((c) => isPageTyped(c.b))
-    const folded = foldForFtsIndex(query)
+    const folded = phrases.length === 0 ? null : foldForFtsIndex(query)
     const contentOf = new Map(matching.map((c) => [c.b, c.content]))
 
     // Arm 4 — every toggle off: the straight partitioned FTS scan
@@ -2758,8 +2831,8 @@ export const searchHandlers = {
     // {@link capPaletteContent} for why the cut is per-arm rather than global,
     // and arm 5 below for the arm that must NOT carry it.
     if (filter['caseSensitive'] !== true && filter['wholeWord'] !== true) {
-      const pages = searchFtsRankedPage(pagesAll, folded, null, pageLimit)
-      const blocksPartition = searchFtsRankedPage(matching, folded, null, blockLimit)
+      const pages = searchMatchedPage(pagesAll, folded, null, pageLimit)
+      const blocksPartition = searchMatchedPage(matching, folded, null, blockLimit)
       const capped = (r: unknown): Record<string, unknown> => {
         const row = r as Record<string, unknown>
         return capPaletteContent(row, contentOf.get(row) ?? null)
@@ -2800,7 +2873,7 @@ export const searchHandlers = {
     // as wrong as a cap applied to neither.
     const re = buildSearchRegex(query, filter, true)
     const survivors = (candidates: Array<{ b: Record<string, unknown>; stripped: string }>) =>
-      searchFtsRankedPage(candidates, folded, null, SEARCH_MAX_RESULTS).items.filter((b) =>
+      searchMatchedPage(candidates, folded, null, SEARCH_MAX_RESULTS).items.filter((b) =>
         searchRegexMatches(re, b as Record<string, unknown>),
       ) as Record<string, unknown>[]
     return {

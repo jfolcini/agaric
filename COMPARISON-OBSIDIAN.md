@@ -40,7 +40,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | Tags | `#tag` and nested `#a/b` | `#tag`, renamed everywhere from one place; `/` in a name is a naming convention with prefix search; boolean tag queries |
 | Tasks | Checkboxes and `task:` search in core. The help documents no due dates, priorities or recurrence for tasks; community plugins such as Tasks add them | States, priorities, due and scheduled dates and repeat rules on any block; an Agenda; due-date notifications on desktop. Reads and writes the Tasks plugin's emoji fields on import and export |
 | Daily notes | A core plugin: one note per day from a template | A journal with day, week, month, stream and agenda views |
-| Search | Operators (`file:`, `path:`, `tag:`, `task:`, `[property:value]`), regex, `OR`, negation, embedded queries | Full-text search with typed filters (`tag:`, `state:`, `due:`, `prop:`), regex, find and replace in a page and across pages, query blocks. A term under three characters is not searched |
+| Search | Operators (`file:`, `path:`, `tag:`, `task:`, `[property:value]`), regex, `OR`, negation, embedded queries | Full-text search with typed filters (`tag:`, `state:`, `due:`, `prop:`), regex, find and replace in a page and across pages, query blocks |
 | Canvas | Core, saved as JSON Canvas | None |
 | Graph | Global and local, with colour groups | Global and local |
 | Windows | Tabs, stacked tabs, pop-out windows, saved workspaces | Tabs, back and forward. One page on screen at a time |

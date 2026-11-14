@@ -134,7 +134,7 @@ A query block takes the same syntax as its text (`{{query tag:#work state:TODO}}
 | `scheduled:RANGE` | Block's `scheduled_date` matches `RANGE`. | Same shape as `due:`. |
 | `prop:KEY=VALUE` | Block has property `KEY` with the given value (matches across `value_text` / `value_num` / `value_date` / `value_ref`). | Multiple `prop:` tokens AND-combine. `prop:KEY=` (empty value) matches "block has the key at all". |
 | `not-prop:KEY=VALUE` | Block does NOT have that property/value. | AND-joined exclusion. |
-| `"phrase"` | Quoted phrase passed verbatim to FTS5. | Bypasses the trigram length filter. |
+| `"phrase"` | Quoted phrase passed verbatim to FTS5. | A phrase under three characters is matched as a short term (see *Short terms*). |
 | `AND` / `OR` / `NOT` | Boolean operators (uppercase, FTS5 syntax). | Outside filter tokens. |
 
 ### Values with spaces
@@ -272,7 +272,7 @@ Toggle state persists in `localStorage` (`agaric:searchToggles:v1`) so opening a
 
 ## Replace across pages
 
-The replace toggle beside the search modes, or `Ctrl+H` with the focus in the Search view, opens a replace row under the search box. While it is open, the text in the search box is the literal text to find, with the case and whole-word toggles: search operators and quotes in it are plain characters, except that one quoted phrase is found without its quotes. Filter chips still narrow where to look, and the search stays in the active space. Regex mode is not replaced in, and neither is a text under three characters, which the index cannot find.
+The replace toggle beside the search modes, or `Ctrl+H` with the focus in the Search view, opens a replace row under the search box. While it is open, the text in the search box is the literal text to find, with the case and whole-word toggles: search operators and quotes in it are plain characters, except that one quoted phrase is found without its quotes. Filter chips still narrow where to look, and the search stays in the active space. Regex mode is not replaced in, and neither is a text under three characters.
 
 The result list becomes the preview: only the blocks a replace would change, each showing its change and ticked. A click, `Space` or `Enter` on a row unticks or ticks it, and the checkbox in a page's header does so for every row of that page. The button reads **Replace in N blocks across M pages** and asks before it writes. Every match is loaded first, and a search with more matching blocks than one run writes (`MAX_BATCH_BLOCK_IDS`) is refused with a note to narrow it: a run never does part of the matches.
 
@@ -311,7 +311,7 @@ Regex compile errors surface inline next to the input with a red border; the fro
 
 In regex mode, structural filters **still apply**. Every filter token in the vocabulary above is parsed out of the query and applied as a structural SQL filter on the pre-filter scan; only the remaining free text is treated as the regex pattern, matched against block content. So `tag:#urgent ^TODO` with the `.*` toggle on runs the regex `^TODO` only over blocks tagged `#urgent` — the filter is not part of the pattern, and you can type it anywhere in the query.
 
-What regex mode gives up is the *full-text* path: the FTS5 candidate set is unused, so the scan returns the most-recent blocks within those structural filters (up to a fixed candidate cap) and applies the regex to each. FTS5 boolean operators (`AND` / `OR` / `NOT`) become literal text there, and the trigram length floor no longer applies. Structural filters are therefore the most effective way to keep a regex query fast.
+What regex mode gives up is the *full-text* path: the FTS5 candidate set is unused, so the scan returns the most-recent blocks within those structural filters (up to a fixed candidate cap) and applies the regex to each. FTS5 boolean operators (`AND` / `OR` / `NOT`) become literal text there. Structural filters are therefore the most effective way to keep a regex query fast.
 
 ### Regex matches raw content, not the stripped FTS text
 
@@ -329,7 +329,18 @@ Non-regex queries pass through the FTS5 sanitiser, which preserves three operato
 - `OR` — union, e.g. `cats OR dogs`.
 - `NOT` — negation, requires a following token: `meeting NOT cancelled`.
 
-Quoted phrases bypass the trigram length filter: `"sprint plan"` matches the exact phrase, including 2-char tokens (`OR`, `2x`) that would otherwise be dropped.
+A quoted phrase is matched as written, its short words included: `"sprint plan 2x"` matches that exact phrase.
+
+### Short terms
+
+The full-text index holds three-character runs, so a term of one or two characters (`UI`, `Q3`, `东京`) is not in it. Search finds such a term by scanning block content for it instead (#6752):
+
+- **Alone**, a query of short terms lists the blocks holding all of them, newest first; there is no relevance order.
+- **Beside longer words**, each short term narrows the full-text matches to the blocks that also hold it, in the usual relevance order.
+- Matches are highlighted in the block's whole text, not in a snippet.
+- The scan reads the **raw content**, as the case-sensitive and whole-word toggles do: a two-character run of markup (`**`) or of a link's or tag's underlying reference token can match, and a tag or page name shown in place of a reference cannot.
+- A short term beside `OR`, or after `NOT`, is left out of the query: only a required term can be scanned for. A bare `or` is read as the operator; quote it (`"or"`) to search for the word.
+- The case-sensitive and whole-word toggles apply to short terms too. Whole word is what makes `ui` find *UI* and not *build*.
 
 Boolean operators **don't work inside regex mode** — there the free-text remainder is the regex pattern; `AND` / `OR` in it are matched as literal text. (Structural filters like `tag:` / `path:` still apply — see [Regex mode and structural filters](#regex-mode-and-structural-filters).)
 

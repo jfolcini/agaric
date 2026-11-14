@@ -228,6 +228,20 @@
         "blocks#has_more=false"
       ],
       "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "partitioned_short_term",
+      "rows": [
+        "B8#partition=pages",
+        "pages#has_more=false",
+        "B8#partition=blocks",
+        "B7#partition=blocks",
+        "blocks#has_more=false"
+      ],
+      "total_count": null
     }
   ],
   "name": "query_search_blocks_partitioned",
@@ -403,6 +417,22 @@
       "command": "search_blocks_partitioned",
       "comment": "A blank query WITH a structural filter lists the filtered partitions recency-ordered: no page is a child of S1, and the blocks partition is S1's three children newest first.",
       "name": "partitioned_blank_query_parent_filter"
+    },
+    {
+      "args": {
+        "blockLimit": 10,
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "pageLimit": 10,
+        "query": "ga"
+      },
+      "command": "search_blocks_partitioned",
+      "comment": "#6752 — a term under the trigram floor: both partitions scan raw content for it, newest first. `ga` is in `Gamma index` and `gadget`; a mock that drops the term answers two empty partitions.",
+      "name": "partitioned_short_term"
     }
   ],
   "seed": {

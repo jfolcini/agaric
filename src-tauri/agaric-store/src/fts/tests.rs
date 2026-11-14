@@ -1045,76 +1045,291 @@ async fn search_whitespace_query_returns_empty() {
     );
 }
 
+// ── #6752: terms under the trigram floor ─────────────────────────────
+
+fn short_id(i: usize) -> String {
+    format!("01HQSHRT0000000000000000{i:02}")
+}
+
+/// Seed `contents` as blocks `short_id(0)..`, oldest first, and index them.
+async fn seed_short_term_blocks(pool: &SqlitePool, contents: &[&str]) {
+    for (i, content) in contents.iter().enumerate() {
+        insert_block(pool, &short_id(i), "content", content, None, Some(0)).await;
+    }
+    rebuild_fts_index(pool).await.unwrap();
+}
+
+async fn search_page(
+    pool: &SqlitePool,
+    query: &str,
+    toggles: SearchToggles,
+    page: &PageRequest,
+) -> crate::pagination::PageResponse<crate::search_types::SearchBlockRow> {
+    search_with_toggles(
+        pool,
+        query,
+        page,
+        None,
+        None,
+        &SearchScope::AllSpaces,
+        &[],
+        &[],
+        toggles,
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap()
+}
+
+/// The ids and UTF-16 match offsets `query` returns with every toggle off.
+async fn short_term_hits(pool: &SqlitePool, query: &str) -> Vec<(String, Vec<(u32, u32)>)> {
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    search_page(pool, query, SearchToggles::default(), &page)
+        .await
+        .items
+        .into_iter()
+        .map(|row| {
+            let offsets = row.match_offsets.iter().map(|m| (m.start, m.end)).collect();
+            (row.id.as_str().to_owned(), offsets)
+        })
+        .collect()
+}
+
 #[tokio::test]
-async fn search_sub_trigram_query_returns_empty() {
-    // Pin behaviour for queries shorter than the trigram
-    // tokenizer's 3-char minimum.  `sanitize_fts_query` drops 1- and
-    // 2-char non-operator tokens (I-Search-2), so the sanitised query is
-    // empty and `search_fts` short-circuits to an empty page — no panic,
-    // no FTS5 syntax error, no results.
+async fn short_term_alone_returns_its_blocks_newest_first_with_offsets() {
     let (pool, _dir) = test_pool().await;
-    insert_block(&pool, BLOCK_A, "content", "hello world", None, Some(0)).await;
+    seed_short_term_blocks(
+        &pool,
+        &[
+            "New UI for the build",
+            "明日は東京へ行く",
+            "nothing here",
+            "ui polish",
+            "Q3 plan",
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        short_term_hits(&pool, "ui").await,
+        vec![
+            (short_id(3), vec![(0, 2)]),
+            (short_id(0), vec![(4, 6), (16, 18)]),
+        ],
+        "a two-letter Latin term matches in any case, newest block first"
+    );
+    assert_eq!(
+        short_term_hits(&pool, "東京").await,
+        vec![(short_id(1), vec![(3, 5)])],
+        "a two-character CJK term"
+    );
+    assert_eq!(
+        short_term_hits(&pool, "Q").await,
+        vec![(short_id(4), vec![(0, 1)])],
+        "a one-character term"
+    );
+    assert_eq!(
+        short_term_hits(&pool, "\"q3\"").await,
+        vec![(short_id(4), vec![(0, 2)])],
+        "a quoted short phrase"
+    );
+    assert_eq!(short_term_hits(&pool, "zz").await, vec![]);
+}
+
+#[tokio::test]
+async fn short_term_beside_a_longer_word_narrows_the_trigram_match() {
+    let (pool, _dir) = test_pool().await;
+    seed_short_term_blocks(
+        &pool,
+        &[
+            "design review",
+            "UI design notes",
+            "ui polish",
+            "東京 design trip",
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        short_term_hits(&pool, "design ui").await,
+        vec![(short_id(1), vec![(0, 2), (3, 9)])],
+        "only the block holding both, with both terms marked"
+    );
+    assert_eq!(
+        short_term_hits(&pool, "東京 design").await,
+        vec![(short_id(3), vec![(0, 2), (3, 9)])],
+    );
+    // A query without a short term keeps the FTS5 snippet and no offsets.
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let plain = search_page(&pool, "polish", SearchToggles::default(), &page).await;
+    assert_eq!(plain.items.len(), 1);
+    assert!(plain.items[0].snippet.is_some());
+    assert_eq!(plain.items[0].match_offsets, vec![]);
+}
+
+#[tokio::test]
+async fn short_term_scan_pages_without_skipping_or_repeating() {
+    let (pool, _dir) = test_pool().await;
+    seed_short_term_blocks(&pool, &["go 0", "go 1", "stay", "go 3", "go 4", "go 5"]).await;
+
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    for expected_more in [true, true, false] {
+        let page = PageRequest::new(cursor.take(), Some(2)).unwrap();
+        let response = search_page(&pool, "go", SearchToggles::default(), &page).await;
+        assert_eq!(response.has_more, expected_more);
+        seen.extend(response.items.iter().map(|row| row.id.as_str().to_owned()));
+        cursor = response.next_cursor;
+    }
+    assert_eq!(
+        seen,
+        [5, 4, 3, 1, 0].map(short_id),
+        "three pages of two walk every match once, newest first"
+    );
+}
+
+#[tokio::test]
+async fn short_term_scan_honours_filters_and_skips_deleted_blocks() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, PAGE_ULID, "page", "Go notes", None, Some(0)).await;
+    insert_block(
+        &pool,
+        &short_id(0),
+        "content",
+        "go in",
+        Some(PAGE_ULID),
+        Some(0),
+    )
+    .await;
+    insert_block(&pool, &short_id(1), "content", "go out", None, Some(0)).await;
+    insert_block(
+        &pool,
+        &short_id(2),
+        "content",
+        "go away",
+        Some(PAGE_ULID),
+        Some(1),
+    )
+    .await;
+    soft_delete_block(&pool, &short_id(2)).await;
     rebuild_fts_index(&pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-
-    let one_char = search_fts(
+    let under_page = search_with_toggles(
         &pool,
-        "a",
+        "go",
         &page,
-        None,
+        Some(PAGE_ULID),
         None,
         &SearchScope::AllSpaces,
         &[],
         &[],
+        SearchToggles::default(),
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
         None,
     )
     .await
     .unwrap();
-    assert_eq!(
-        one_char.items.len(),
-        0,
-        "1-char query should return no results (sub-trigram filter)",
-    );
-    assert!(
-        !one_char.has_more,
-        "1-char query should not indicate more pages",
-    );
-    assert!(
-        one_char.next_cursor.is_none(),
-        "1-char query should have no cursor",
-    );
+    let ids: Vec<&str> = under_page.items.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(ids, [short_id(0)]);
 
-    let two_char = search_fts(
+    let scan = search_with_toggles_partitioned(
         &pool,
-        "he",
-        &page,
+        "go",
+        10,
+        10,
         None,
         None,
         &SearchScope::AllSpaces,
         &[],
         &[],
-        None,
+        SearchToggles::default(),
         &crate::fts::metadata_filter::MetadataPredicates::default(),
         None,
     )
     .await
     .unwrap();
+    let pages: Vec<&str> = scan.pages.iter().map(|row| row.id.as_str()).collect();
+    let blocks: Vec<&str> = scan.blocks.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(pages, [PAGE_ULID]);
     assert_eq!(
-        two_char.items.len(),
-        0,
-        "2-char query should return no results (sub-trigram filter)",
+        blocks,
+        [short_id(1).as_str(), short_id(0).as_str(), PAGE_ULID]
     );
-    assert!(
-        !two_char.has_more,
-        "2-char query should not indicate more pages",
+    assert_eq!(scan.pages[0].match_offsets.len(), 1);
+}
+
+#[tokio::test]
+async fn short_term_is_a_literal_in_any_letter_case() {
+    let (pool, _dir) = test_pool().await;
+    seed_short_term_blocks(
+        &pool,
+        &["a_b", "axb", "100%", "Не сегодня", "НЕ", "build UI"],
+    )
+    .await;
+
+    assert_eq!(
+        short_term_hits(&pool, "a_").await,
+        vec![(short_id(0), vec![(0, 2)])],
+        "`_` is not a LIKE wildcard"
     );
-    assert!(
-        two_char.next_cursor.is_none(),
-        "2-char query should have no cursor",
+    assert_eq!(
+        short_term_hits(&pool, "%").await,
+        vec![(short_id(2), vec![(3, 4)])],
+        "`%` is not a LIKE wildcard"
     );
+    assert_eq!(
+        short_term_hits(&pool, "не").await,
+        vec![(short_id(4), vec![(0, 2)]), (short_id(3), vec![(0, 2)])],
+        "a non-ASCII term folds case as the trigram index does"
+    );
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let case_sensitive = SearchToggles {
+        case_sensitive: true,
+        ..SearchToggles::default()
+    };
+    let exact = search_page(&pool, "UI", case_sensitive, &page).await;
+    let ids: Vec<&str> = exact.items.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(ids, [short_id(5)]);
+    assert_eq!(
+        exact.items[0].match_offsets,
+        vec![crate::search_types::MatchOffset { start: 6, end: 8 }],
+        "the case-sensitive toggle narrows the scan to `UI`, not `ui` in build"
+    );
+}
+
+#[test]
+fn a_repeated_short_term_is_scanned_for_once() {
+    let parsed = super::search::parse_query("go a go \"a\" going");
+    assert_eq!(parsed.short_terms, ["go", "a"]);
+    assert_eq!(parsed.match_expr, "\"going\"");
+}
+
+#[tokio::test]
+async fn short_term_beside_or_or_after_not_is_left_out() {
+    let (pool, _dir) = test_pool().await;
+    seed_short_term_blocks(&pool, &["cats and ab", "cats alone", "dogs"]).await;
+
+    let ids = |hits: Vec<(String, Vec<(u32, u32)>)>| {
+        let mut ids: Vec<String> = hits.into_iter().map(|(id, _)| id).collect();
+        ids.sort_unstable();
+        ids
+    };
+    assert_eq!(
+        ids(short_term_hits(&pool, "cats NOT ab").await),
+        [short_id(0), short_id(1)],
+        "requiring `ab` would invert the NOT"
+    );
+    assert_eq!(
+        ids(short_term_hits(&pool, "ab OR dogs").await),
+        [short_id(2)],
+        "an OR operand cannot be a required substring"
+    );
+    assert_eq!(ids(short_term_hits(&pool, "cats ab").await), [short_id(0)]);
 }
 
 #[tokio::test]
