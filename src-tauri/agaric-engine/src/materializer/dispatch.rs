@@ -457,9 +457,8 @@ fn inbound_sync_fts_tasks(changed_blocks: &[agaric_core::ulid::BlockId]) -> Vec<
 /// a changed page, tag or block-ref target): gating them on one threshold
 /// makes a large import cross into single-task territory for all of them at
 /// once. Below it the per-block fan-out is at most four tasks a block, so a
-/// near-threshold import of reference targets can fill the channel; a shed
-/// `ReindexFtsReferences` is not persisted, and its referrers stay stale
-/// until their next edit or a rebuild.
+/// near-threshold import of reference targets can fill the channel; each of
+/// the four leaves a retry row when shed.
 const SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX: usize = SYNC_FTS_PER_BLOCK_MAX;
 
 /// #2667: choose the `block_tag_refs`-reindex task(s) for an inbound-sync
@@ -589,60 +588,6 @@ impl Materializer {
                 "failed to dispatch background cache task"
             );
         }
-    }
-
-    #[cfg(test)]
-    pub fn dispatch_edit_background(
-        &self,
-        record: &OpRecord,
-        block_type: &str,
-    ) -> Result<(), AppError> {
-        self.enqueue_background_tasks(record, Some(block_type), None)
-    }
-
-    /// Dispatch the background fan-out for a `delete_block` / `restore_block`
-    /// / `purge_block` op, threading the block's `block_type` so
-    /// `invalidations_for_op` can narrow the rebuild set for a CONTENT
-    /// block (#2037 pt2 — skip the page-row `RebuildPagesCache`).
-    ///
-    /// `block_type` is the block's type as read at the lifecycle site
-    /// ("content" / "page" / "tag"). For "content" the fan-out drops the
-    /// page-row `RebuildPagesCache` rebuild; for any other value the full set is kept
-    /// (see `lifecycle_rebuild_tasks`). Shares the per-op-type dispatch
-    /// table with the plain/edit variants — the FTS-optimize threshold is
-    /// gated on `edit_block` so it never fires for these ops.
-    #[cfg(test)]
-    pub fn dispatch_lifecycle_background(
-        &self,
-        record: &OpRecord,
-        block_type: &str,
-    ) -> Result<(), AppError> {
-        self.enqueue_background_tasks(record, Some(block_type), None)
-    }
-
-    /// #2700: dispatch the background fan-out for a LOCAL `move_block` op,
-    /// threading whether the move provably kept the block's `page_id`
-    /// (`same_page`) so `invalidations_for_op` can skip the three
-    /// `page_id`-derived rebuilds (`RebuildPagesCache`, `RebuildPageLinkCache`,
-    /// `RebuildProjectedAgendaCache`) for a same-parent reorder / same-page
-    /// indent.
-    ///
-    /// `same_page` is computed at the move-command site
-    /// (`commands/blocks/move_ops.rs`) by comparing the moved block's `page_id`
-    /// BEFORE and AFTER the in-tx rederive — the direct, authoritative signal
-    /// for "did this move change page attribution?". Only the LOCAL command
-    /// path carries it; remote replay / inbound-sync / boot dispatch the same
-    /// op via the plain [`Self::dispatch_background_or_warn`] (hint absent →
-    /// `None` → full conservative set), so a cross-device move never
-    /// under-invalidates. When `same_page` is `false` (a cross-page reparent)
-    /// the full set is likewise retained.
-    #[cfg(test)]
-    pub fn dispatch_move_background(
-        &self,
-        record: &OpRecord,
-        same_page: bool,
-    ) -> Result<(), AppError> {
-        self.enqueue_background_tasks(record, None, Some(same_page))
     }
 
     /// Enqueue the full cache-rebuild fan-out that every block-structure

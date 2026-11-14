@@ -243,9 +243,9 @@ export function PageHeader({
     const fileName = `${nameToFlatSegment(title.slice(0, read))}.md`
     try {
       const markdown = await pageMarkdownForCopy(pageId)
-      await saveBlob(new Blob([markdown], { type: 'text/markdown' }), fileName)
-      // Android's save has already said where the file went, under the name the OS gave it.
-      if (!isAndroid()) notify.success(t('pageHeader.markdownFileSaved', { fileName }))
+      const savedAs = await saveBlob(new Blob([markdown], { type: 'text/markdown' }), fileName)
+      // Android's save has already said where the file went.
+      if (!isAndroid()) notify.success(t('pageHeader.markdownFileSaved', { fileName: savedAs }))
     } catch (err) {
       logger.error('PageHeader', 'Failed to save the page as a Markdown file', { pageId }, err)
       notify.error(t('pageHeader.markdownFileSaveFailed'))

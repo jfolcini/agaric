@@ -329,9 +329,16 @@ pub async fn prepare_outgoing(
                     engine.capturing_delta(|engine| engine.export_snapshot())
                 })
             })??;
-            if let Some(stamp) = &stamp {
-                let mut conn = pool.acquire().await?;
-                agaric_engine::loro::delta::insert_delta(&mut conn, space_id, stamp).await?;
+            if let Some(stamp) = &stamp
+                && let Err(error) = save_stamp_delta(pool, space_id, stamp).await
+            {
+                // As a post-commit cascade's write stands without its row:
+                // the space is marked, so the next snapshot pass saves it.
+                tracing::warn!(
+                    space_id = %space_id.as_str(),
+                    %error,
+                    "loro_sync: the export's format stamp has no loro_doc_delta row"
+                );
             }
             let bytes = bytes?;
             Ok(Some(LoroSyncMessage::Snapshot {
@@ -358,6 +365,16 @@ pub async fn prepare_outgoing(
             }))
         }
     }
+}
+
+async fn save_stamp_delta(
+    pool: &SqlitePool,
+    space_id: &SpaceId,
+    stamp: &[u8],
+) -> Result<(), AppError> {
+    let mut conn = pool.acquire().await?;
+    agaric_engine::loro::delta::insert_delta(&mut conn, space_id, stamp).await?;
+    Ok(())
 }
 
 /// #6565: write SQL's tombstone onto the engine for each of `stale_ids`, the

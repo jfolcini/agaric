@@ -332,3 +332,57 @@ async fn the_integrity_check_runs_what_the_queue_shed_before_it_reports() {
         "the shed block adds no divergence to a settled vault"
     );
 }
+
+/// A page rename shed by a full queue still reaches the blocks that link to
+/// the page: the reference reindex leaves a retry row, and a settle runs it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_shed_rename_still_reaches_the_blocks_that_link_to_the_page() {
+    let vault = vault().await;
+    let target = create_page_in_space_inner(
+        &vault.write,
+        DEV,
+        &vault.mat,
+        None,
+        "heron".into(),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    let referrer = append_child(
+        &vault.write,
+        &vault.mat,
+        &vault.page,
+        &format!("seen: [[{target}]]"),
+    )
+    .await;
+    settle(&vault.mat).await;
+    let stripped = || {
+        let read = vault.read.clone();
+        let id = referrer.to_string();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+                .bind(id)
+                .fetch_one(&read)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        stripped().await,
+        "seen: heron",
+        "the link is indexed as the page's title"
+    );
+
+    vault.mat.force_shed_after(0);
+    edit_block_inner(&vault.write, DEV, &vault.mat, target, "bittern".into())
+        .await
+        .unwrap();
+    vault.mat.force_shed_after(-1);
+    settle(&vault.mat).await;
+
+    assert_eq!(
+        stripped().await,
+        "seen: bittern",
+        "the linking block is indexed under the page's new title"
+    );
+}
