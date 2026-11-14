@@ -236,6 +236,12 @@ fn unreadable_snapshot(space_id: &str, engine: &LoroEngine, cause: &AppError) ->
     }
 }
 
+/// Held by [`save_all_engines`] from before its collect to after its last
+/// write. An export collected earlier but written later would leave a row
+/// older than its engine while the space reads clean, and the next pass would
+/// advance that row's watermark past ops its blob lacks.
+static ONE_PASS_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// What one [`save_all_engines`] pass did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SavePass {
@@ -250,13 +256,14 @@ pub struct SavePass {
 
 /// Walk the registry and persist every dirty engine's current snapshot.
 /// Per-space errors are logged + continued so one bad space never blocks the
-/// rest. Production passes go through [`save_engines_and_advance_cursor`].
+/// rest. Passes run one at a time, whoever starts them (#6521).
 ///
 /// #3309 — the pass ALSO advances the `applied_through_seq` watermark of
 /// every space it did not re-encode (see `advance_clean_space_watermarks`
 /// below), so a quiescent space's row cannot pin the boot heal's
 /// `MIN(applied_through_seq)` rewind target forever.
 pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) -> SavePass {
+    let _pass = ONE_PASS_AT_A_TIME.lock().await;
     // Issue #153 / #2205 / #2201 — `snapshot_dirty_engines` collects the
     // per-space engine `Arc`s of ONLY the dirty spaces under the registry's
     // locks, then per space takes that engine's own lock for the O(1)
@@ -535,20 +542,12 @@ async fn advance_clean_space_watermarks(
 /// first write failed has no row for the boot heal's `MIN(applied_through_seq)`
 /// to see, and only the old cursor still replays its ops.
 ///
-/// Passes run one at a time. An export collected earlier but written later
-/// would leave a row older than its engine while the space reads clean, and
-/// the next pass would advance that row's watermark past ops its blob lacks.
-/// No test pins this: the race needs two passes' collects and writes to
-/// interleave, which nothing outside the pass can schedule.
-///
 /// Returns `save_all_engines`' [`SavePass`]: compaction reads its
 /// `persisted_through` before it deletes any op (#6518).
 pub async fn save_engines_and_advance_cursor(
     pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
 ) -> SavePass {
-    static ONE_PASS_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let _pass = ONE_PASS_AT_A_TIME.lock().await;
     let pass = save_all_engines(pool, &materializer.loro_state().registry).await;
     let Some(head) = pass.persisted_through else {
         return pass;
@@ -1892,6 +1891,61 @@ mod tests {
             state.registry.dirty_count(),
             0,
             "and the space is clean once the rewound engine is saved"
+        );
+    }
+
+    /// #6521 — a pass started while another is in flight waits for it.
+    /// `mirror_sql_tombstones_onto_engine` and the one-time hydration call
+    /// [`save_all_engines`] themselves; a pass that had already exported a
+    /// space could otherwise write its row after theirs, leaving a row older
+    /// than its engine in a space that reads clean.
+    ///
+    /// The pass in flight is played by this test, holding the lock around a
+    /// pass's own steps: nothing outside a pass can park it between its export
+    /// and its write. The bounded wait is the time the second pass gets to run
+    /// to its end when nothing makes it wait.
+    #[tokio::test]
+    async fn a_pass_started_during_another_waits_for_it_6521() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let registry = LoroEngineRegistry::new();
+        let create = |block: &str| {
+            registry
+                .for_space(&space, "device-1")
+                .expect("engine")
+                .engine_mut()
+                .apply_create_block(block, "content", block, None, 0)
+                .expect("create");
+        };
+        create("OLDER");
+
+        let in_flight = ONE_PASS_AT_A_TIME.lock().await;
+        let exported = registry.snapshot_dirty_engines();
+        create("NEWER");
+        let second = save_all_engines(&pool, &registry);
+        tokio::pin!(second);
+        let ran_at_once = tokio::time::timeout(std::time::Duration::from_millis(250), &mut second)
+            .await
+            .is_ok();
+        for (space_id, mark_stamp, bytes) in exported {
+            write_snapshot_row(&pool, &space_id, bytes.expect("export"), 0)
+                .await
+                .expect("write");
+            registry.clear_dirty_if_unchanged(&space_id, mark_stamp);
+        }
+        drop(in_flight);
+        if !ran_at_once {
+            second.await;
+        }
+
+        assert!(
+            saved_row_holds(&pool, &space, "NEWER").await,
+            "the saved row must hold what the later pass exported"
+        );
+        assert_eq!(
+            registry.dirty_count(),
+            0,
+            "and the space is clean with its newest state saved"
         );
     }
 }
