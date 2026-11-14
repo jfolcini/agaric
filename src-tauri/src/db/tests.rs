@@ -891,6 +891,93 @@ async fn begin_immediate_logged_emits_warn_on_slow_acquire() {
     );
 }
 
+/// A migrated database behind a pool shaped like the app's write pool.
+async fn two_writer_pool(busy_timeout: std::time::Duration) -> (SqlitePool, TempDir) {
+    let (setup, dir) = test_pool().await;
+    setup.close().await;
+    let pool = SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(base_connect_options(&dir.path().join("test.db")).busy_timeout(busy_timeout))
+        .await
+        .unwrap();
+    (pool, dir)
+}
+
+const WRITE_HOLD: std::time::Duration = std::time::Duration::from_millis(30);
+
+/// Writers get the lock in the order they asked for it (#6567). Each is
+/// polled once while the first holds the lock, which is when it joins the
+/// queue. Left to SQLite's polling, the writer that takes the connection a
+/// commit just freed begins before the one already waiting on the lock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn writers_are_served_in_the_order_they_asked() {
+    use std::future::Future as _;
+    let (pool, _dir) = two_writer_pool(std::time::Duration::from_secs(5)).await;
+    let served = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let first = begin_immediate_logged(&pool, "test_first").await.unwrap();
+    let mut waiting = Vec::new();
+    for writer in 0..6 {
+        let (pool, served) = (pool.clone(), std::sync::Arc::clone(&served));
+        let mut turn = Box::pin(async move {
+            let tx = begin_immediate_logged(&pool, "test_queued").await.unwrap();
+            served.lock().unwrap().push(writer);
+            tokio::time::sleep(WRITE_HOLD).await;
+            tx.commit().await.unwrap();
+        });
+        let asked =
+            std::future::poll_fn(|cx| std::task::Poll::Ready(turn.as_mut().poll(cx).is_pending()))
+                .await;
+        assert!(
+            asked,
+            "writer {writer} waits while the first holds the lock"
+        );
+        waiting.push(tokio::spawn(turn));
+    }
+    tokio::time::sleep(WRITE_HOLD).await;
+    first.commit().await.unwrap();
+    for writer in waiting {
+        writer.await.unwrap();
+    }
+
+    assert_eq!(*served.lock().unwrap(), vec![0, 1, 2, 3, 4, 5]);
+}
+
+/// A writer that begins again the moment it commits does not keep another
+/// out (#6567): the other is next in line, where polling for the lock it
+/// lost every time and gave up at the busy timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_writer_that_begins_again_at_once_does_not_starve_another() {
+    let (pool, _dir) = two_writer_pool(std::time::Duration::from_millis(200)).await;
+    let patient_is_done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (eager_holds_tx, eager_holds) = tokio::sync::oneshot::channel();
+
+    let eager = tokio::spawn({
+        let (pool, patient_is_done) = (pool.clone(), std::sync::Arc::clone(&patient_is_done));
+        async move {
+            let mut eager_holds_tx = Some(eager_holds_tx);
+            while !patient_is_done.load(std::sync::atomic::Ordering::SeqCst) {
+                let tx = begin_immediate_logged(&pool, "test_eager").await.unwrap();
+                if let Some(holds) = eager_holds_tx.take() {
+                    let _ = holds.send(());
+                }
+                tokio::time::sleep(WRITE_HOLD).await;
+                tx.commit().await.unwrap();
+            }
+        }
+    });
+    eager_holds.await.unwrap();
+
+    let patient = match begin_immediate_logged(&pool, "test_patient").await {
+        Ok(tx) => tx.commit().await,
+        Err(refused) => Err(refused),
+    };
+    patient_is_done.store(true, std::sync::atomic::Ordering::SeqCst);
+    eager.await.unwrap();
+
+    patient.expect("the writer that waited is served, not refused at the busy timeout");
+}
+
 // ======================================================================
 // CommandTx newtype tests
 // ======================================================================

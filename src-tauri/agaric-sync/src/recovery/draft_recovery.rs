@@ -198,7 +198,7 @@ async fn write_back_unflushed_draft(
     // synthetic op AND update blocks.content — same pattern as
     // commands::edit_block_inner. The direct content UPDATE keeps SQL
     // consistent with op_log even if the engine dispatch below fails.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "draft_recovery").await?;
     let record = append_local_op_in_tx(&mut tx, device_id, op, agaric_store::db::now_ms()).await?;
     // #2895 slice 2: the direct content UPDATE now lives behind the
     // `blocks`-owning engine crate (`set_block_content` — unguarded

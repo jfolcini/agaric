@@ -370,7 +370,7 @@ pub async fn append_local_op_at(
     // append_local_op_in_tx on an outer CommandTx; this self-opened tx only
     // ever serves unit tests + benches, never a runtime path.
     // allow-raw-tx: test/bench-only helper (#224)
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = crate::db::begin_immediate_logged(pool, "append_local_op_at").await?;
     let record = append_local_op_in_tx(&mut tx, device_id, op_payload, created_at).await?;
     tx.commit().await?;
     Ok(record)

@@ -293,7 +293,7 @@ pub struct CommandTx {
     /// the `Option`, not out of `self`, which is allowed. It is `Some` for
     /// the entire useful life of the value and only becomes `None` once one
     /// of the consuming finalizers has run (after which the value is gone).
-    inner: Option<sqlx::Transaction<'static, Sqlite>>,
+    inner: Option<agaric_store::db::WriteTx>,
     /// Op records to dispatch to the materializer once the transaction
     /// commits successfully. FIFO order — `commit_and_dispatch` drains
     /// them in enqueue order.
@@ -635,7 +635,7 @@ impl CommandTx {
     /// most once, so `inner` is always `Some` here. After the call `inner`
     /// is `None`; the finalizer then drops `self`, and the [`Drop`] impl
     /// (which never touches `inner`) runs the debug-assert and finishes.
-    fn take_inner(&mut self) -> sqlx::Transaction<'static, Sqlite> {
+    fn take_inner(&mut self) -> agaric_store::db::WriteTx {
         self.inner
             .take()
             .expect("CommandTx inner transaction taken twice — finalizer called more than once")

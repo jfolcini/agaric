@@ -14,7 +14,9 @@
 use sqlx::pool::PoolConnection;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
 use sqlx::{Sqlite, SqlitePool};
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 /// Threshold (ms) above which [`acquire_logged`] emits a `warn` log.
 ///
@@ -205,23 +207,76 @@ pub async fn search_pool_acquire_logged(
     Ok(conn)
 }
 
-/// Start a `BEGIN IMMEDIATE` transaction, logging at `warn` if the
-/// underlying connection acquire + begin took longer than
-/// [`SLOW_ACQUIRE_WARN_MS`].
+/// A `BEGIN IMMEDIATE` transaction and its holder's turn at the writer.
 ///
-/// Command handlers that write through a `BEGIN IMMEDIATE` transaction use
-/// this helper instead of `pool.begin_with("BEGIN IMMEDIATE")` on hot
-/// paths. The timing measures the combined wait for the pool slot *and*
-/// the SQLite write lock, which is what actually matters operationally
-/// when the app appears to freeze.
+/// SQLite gives its write lock to whichever connection polls first, so a
+/// writer that begins again at once starved another until the busy timeout
+/// (#6567). Writers queue for a turn in arrival order instead, and the turn
+/// ends when the transaction commits, rolls back or is dropped. Holding one
+/// while waiting for another to begin never ends.
+///
+/// Derefs to the transaction, so `&mut tx` passes where a
+/// `&mut sqlx::Transaction` or a `&mut SqliteConnection` is taken and
+/// `&mut **tx` is an executor.
+pub struct WriteTx {
+    tx: sqlx::Transaction<'static, Sqlite>,
+    _turn: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl WriteTx {
+    pub async fn commit(self) -> Result<(), sqlx::Error> {
+        self.tx.commit().await
+    }
+
+    pub async fn rollback(self) -> Result<(), sqlx::Error> {
+        self.tx.rollback().await
+    }
+}
+
+impl std::ops::Deref for WriteTx {
+    type Target = sqlx::Transaction<'static, Sqlite>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.tx
+    }
+}
+
+impl std::ops::DerefMut for WriteTx {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.tx
+    }
+}
+
+/// The queue of writers to `pool`'s database. It is the file's, as the write
+/// lock is, so a second pool on the same file waits in the same line.
+fn write_turns(pool: &SqlitePool) -> Arc<tokio::sync::Mutex<()>> {
+    static TURNS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
+        LazyLock::new(Mutex::default);
+    let mut turns = TURNS.lock().unwrap_or_else(PoisonError::into_inner);
+    Arc::clone(
+        turns
+            .entry(pool.connect_options().get_filename().to_path_buf())
+            .or_default(),
+    )
+}
+
+/// Wait for a turn at the writer, then start a `BEGIN IMMEDIATE` transaction,
+/// logging at `warn` if that took longer than [`SLOW_ACQUIRE_WARN_MS`].
+///
+/// Every write transaction opens here: one opened another way is not in the
+/// queue, and takes the lock from the writers that are. The timing measures
+/// the combined wait for the turn, the pool slot *and* the SQLite write lock,
+/// which is what actually matters operationally when the app appears to
+/// freeze.
 ///
 /// The `label` argument mirrors [`acquire_logged`] — use a stable tag
 /// like `"cmd_delete_block"` so per-command slow writes can be filtered.
 pub async fn begin_immediate_logged(
     pool: &SqlitePool,
     label: &'static str,
-) -> Result<sqlx::Transaction<'static, Sqlite>, sqlx::Error> {
+) -> Result<WriteTx, sqlx::Error> {
     let start = std::time::Instant::now();
+    let turn = write_turns(pool).lock_owned().await;
     let tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let elapsed = start.elapsed();
     if elapsed.as_millis() > SLOW_ACQUIRE_WARN_MS {
@@ -231,7 +286,7 @@ pub async fn begin_immediate_logged(
             "slow BEGIN IMMEDIATE"
         );
     }
-    Ok(tx)
+    Ok(WriteTx { tx, _turn: turn })
 }
 
 /// Separated read/write connection pools for SQLite.
@@ -240,9 +295,9 @@ pub async fn begin_immediate_logged(
 /// Splitting into two pools enforces this at the connection level:
 ///
 /// - **`write`**: `max_connections(2)` — used for all INSERT/UPDATE/DELETE
-///   operations.  SQLite WAL mode serialises writers at the engine level;
-///   the second connection allows a queued writer to wait behind the first
-///   (avoiding pool-level timeouts) while the lock is held.
+///   operations.  Write transactions take turns ([`begin_immediate_logged`])
+///   and wait for theirs without a connection; the second connection serves
+///   the single statements and the reads that run on this pool beside one.
 /// - **`read`**: `max_connections(4)` with `PRAGMA query_only = ON` —
 ///   used for all SELECT-only queries.  The `query_only` pragma causes
 ///   SQLite to reject any writes attempted through these connections,

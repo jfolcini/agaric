@@ -44,7 +44,7 @@ pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
     let mut tx = crate::db::begin_immediate_logged(pool, "tag_inheritance_rebuild").await?;
 
     sqlx::query("DELETE FROM block_tag_inherited")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     sqlx::query(concat!(
@@ -55,7 +55,7 @@ pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
         " INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT block_id, tag_id, inherited_from FROM descendant_tags_nearest",
     ))
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     tx.commit().await?;

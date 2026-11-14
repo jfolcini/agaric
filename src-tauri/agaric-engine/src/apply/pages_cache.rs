@@ -619,7 +619,7 @@ pub async fn refresh_inbound_counts_after_reindex(
          WHERE bl.source_id = ? AND b.page_id IS NOT NULL",
         block_id,
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
     for r in rows {
         affected.insert(r.page_id);
@@ -640,7 +640,7 @@ pub async fn refresh_inbound_counts_after_reindex(
         "SELECT page_id, parent_id FROM blocks WHERE id = ?",
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     let source_page: String = match src_row {
         Some(r) => r
@@ -656,7 +656,7 @@ pub async fn refresh_inbound_counts_after_reindex(
         "SELECT target_page_id FROM page_link_cache WHERE source_page_id = ?",
         source_page,
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
     for r in cached {
         affected.insert(r.target_page_id);

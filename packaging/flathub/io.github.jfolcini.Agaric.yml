@@ -1,90 +1,57 @@
-# Flathub manifest draft for Agaric.
+# STATUS: DO NOT SUBMIT AS IT IS. An AI agent wrote this file, and Flathub
+# accepts no AI-generated or AI-assisted manifest. See README.md.
 #
-# STATUS: DO NOT SUBMIT. Flathub accepts neither an AI-drafted manifest
-# nor one that repackages a binary, and this is both; it is also stale
-# against the current release. See `packaging/flathub/README.md`.
-#
-# The manifest below mirrors the existing AppImage build path so the
-# Flatpak builder reuses the same compiled bundle (rather than
-# re-compiling Rust inside the Flatpak sandbox, which would 4x build
-# wall-clock for no behavioural difference). If Flathub reviewers
-# require an in-sandbox build, this scaffold has to flip to a
-# rust-toolchain extension + cargo build inside the sandbox.
-#
-# App ID rationale (io.github.jfolcini.Agaric): Flathub's convention
-# for personal-project apps without a registered domain. The
-# in-bundle Tauri identifier stays `com.agaric.app` (existing AppImage
-# identity); Flatpak's app ID is a separate addressing scheme for the
-# Flathub registry only.
-
+# Builds the checkout this file sits in. cargo-sources.json and
+# node-sources.json are generated, not committed (README.md).
 app-id: io.github.jfolcini.Agaric
-runtime: org.freedesktop.Platform
-runtime-version: '24.08'
-sdk: org.freedesktop.Sdk
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node24
 command: agaric
-
-# Sandbox permissions — keep MINIMAL. Each new permission requires
-# a written justification in the Flathub PR review thread.
 finish-args:
-  # Wayland-first, X11 fallback (Flatpak's standard graphical pair).
   - --socket=wayland
   - --socket=fallback-x11
   - --share=ipc
-  # GPU compositing for WebKit/CEF surface acceleration; Flatpak's
-  # standard hardware-accel share.
   - --device=dri
-  # Network: Agaric talks to LAN peers (sync), GitHub Releases
-  # (updater), and Google APIs (gcal push, opt-in only). The Flatpak
-  # network is the simplest model; Agaric's own permission model
-  # (capability allowlist + user-driven OAuth) is the load-bearing
-  # control.
+  # Voice notes and audio attachments.
+  - --socket=pulseaudio
+  # LAN sync between paired devices (mDNS discovery, QUIC) and link previews.
   - --share=network
-  # Persistent app data. Flatpak namespaces this under
-  # `~/.var/app/io.github.jfolcini.Agaric/data/` automatically; the
-  # extra `--filesystem=xdg-data/com.agaric.app:create` line below is
-  # for the migration path from a prior AppImage install that wrote
-  # under `~/.local/share/com.agaric.app/`. Remove this filesystem
-  # line once the in-app migration path is documented.
-  - --filesystem=xdg-data/com.agaric.app:create
-  # Notifications (sync, gcal push events).
+  # Exports are saved by the webview's own download, which writes there.
+  - --filesystem=xdg-download
+  # Due-task notifications go to the notification service directly.
   - --talk-name=org.freedesktop.Notifications
-  # Keyring access for the OAuth refresh token (Tauri's plugin-keychain
-  # routes through libsecret on Linux).
-  - --talk-name=org.freedesktop.secrets
-
-# The build pipeline mirrors the AppImage build. The simple-type
-# module just unpacks the bundled .deb from the GitHub release; this
-# keeps the Flatpak sandbox out of the Rust compile path.
-#
-# Replace `${VERSION}` and `${DEB_SHA256}` before submitting. A small
-# Python pre-submit script under `packaging/flathub/scripts/`
-# (TODO — file when actually submitting) can lift these from the
-# GitHub release JSON automatically.
+  # tauri-plugin-single-instance: a second launch hands over to the first.
+  - --own-name=com.agaric.app.SingleInstance
 modules:
   - name: agaric
     buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node24/bin
+      env:
+        CARGO_HOME: /run/build/agaric/cargo
+        SQLX_OFFLINE: 'true'
+        XDG_CACHE_HOME: /run/build/agaric/flatpak-node/cache
+        npm_config_cache: /run/build/agaric/flatpak-node/npm-cache
+        npm_config_offline: 'true'
     build-commands:
-      - install -Dm755 ./usr/bin/agaric /app/bin/agaric
-      - install -Dm644 ./usr/share/applications/agaric.desktop /app/share/applications/io.github.jfolcini.Agaric.desktop
-      - install -Dm644 ./usr/share/icons/hicolor/256x256/apps/agaric.png /app/share/icons/hicolor/256x256/apps/io.github.jfolcini.Agaric.png
-      # Rename the .desktop's Icon= field to match the new icon name.
-      - sed -i 's|^Icon=.*|Icon=io.github.jfolcini.Agaric|' /app/share/applications/io.github.jfolcini.Agaric.desktop
-      # Rename the binary path the .desktop launches.
-      - sed -i 's|^Exec=.*|Exec=agaric|' /app/share/applications/io.github.jfolcini.Agaric.desktop
-      # MetaInfo (AppStream metadata for Flathub presentation page).
-      - install -Dm644 io.github.jfolcini.Agaric.metainfo.xml /app/share/metainfo/io.github.jfolcini.Agaric.metainfo.xml
+      # The node24 extension ships npm 11; package.json asks for 12.
+      - npm ci --engine-strict=false
+      - npm run build
+      - cargo --offline build --release --locked --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol --bin agaric --bin agaric-mcp
+      - install -Dm755 -t $FLATPAK_DEST/bin src-tauri/target/release/agaric src-tauri/target/release/agaric-mcp
+      - install -Dm644 -t $FLATPAK_DEST/share/applications packaging/flathub/$FLATPAK_ID.desktop
+      - install -Dm644 -t $FLATPAK_DEST/share/metainfo packaging/flathub/$FLATPAK_ID.metainfo.xml
+      - install -Dm644 -t $FLATPAK_DEST/share/licenses/$FLATPAK_ID LICENSE
+      - for s in 32 64 128 256 512; do install -Dm644 src-tauri/icons/${s}x${s}.png $FLATPAK_DEST/share/icons/hicolor/${s}x${s}/apps/$FLATPAK_ID.png; done
     sources:
-      - type: archive
-        url: https://github.com/jfolcini/agaric/releases/download/${VERSION}/agaric_${VERSION}_amd64.deb
-        sha256: ${DEB_SHA256}
-        # The .deb is an ar archive; archive-type=deb tells flatpak-
-        # builder to unpack data.tar.* automatically.
-        archive-type: deb
-        only-arches: [x86_64]
-        # NOTE: no aarch64 source here. release.yml's Linux desktop
-        # matrix only builds ubuntu-24.04/x86_64-unknown-linux-gnu, so
-        # there is no `agaric_${VERSION}_arm64.deb` asset to consume.
-        # Add an aarch64 source back only once a matching release.yml
-        # build row exists.
-      - type: file
-        path: io.github.jfolcini.Agaric.metainfo.xml
+      - type: dir
+        path: ../..
+        skip:
+          - node_modules
+          - src-tauri/target
+      - cargo-sources.json
+      - node-sources.json
