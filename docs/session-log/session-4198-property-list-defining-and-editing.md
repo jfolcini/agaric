@@ -1,4 +1,4 @@
-# Session 4196 — a property can hold a list: defining and editing (#6741, PR 2 of 4)
+# Session 4198 — a property can hold a list: defining and editing (#6741, PR 2 of 4)
 
 The second of the four pull requests in the design the maintainer approved on #6741 ("Design for option 3 (a list value in the one row)"), on top of PR 1 (#6796, session 4189). This one makes a list reachable: a user can declare a key that holds several values, turn a key into a list or back, and edit, type, copy and review its items. No new migration, table, op type, store, queue, sync message or engine format change.
 
