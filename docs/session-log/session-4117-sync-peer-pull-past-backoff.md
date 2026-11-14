@@ -1,4 +1,4 @@
-# Session 4115 — the sync peer's pull runs past a backoff
+# Session 4117 — the sync peer's pull runs past a backoff
 
 The real-backend spec "unpairing refuses the peer's next sync and drops only this device's row" (`e2e-tauri/sync-two-device.e2e.ts`) failed once on a PR that touches no sync code: `waited 60s for the app to refuse this vault's pull; the daemon reported no error`. The task was the root cause, not a retry.
 
@@ -11,6 +11,8 @@ The spec before it, "after a restart the state card shows the last sync before a
 The unpair spec then reached `peer.syncRefused()` about a second and a half after the thaw. `sync_refused` only woke the peer's daemon (`notify_change`); the round it woke ran inside the backoff, `may_retry` skipped the app, and the wake was spent. The peer runs with `NO_PERIODIC_PULL`, so nothing dials again, and the command timed out at 60 s.
 
 The run's own logs show it: the peer books the busy failure at `22:55:19.427`, neither log holds a connection after `22:55:19.44`, and the 60 s wait ends at `22:56:20.9`.
+
+A second failure of the same spec, on #6724 (run `43525977672`), reads the same way: both devices discover each other at `23:29:13.902`, both dials are refused as busy, both book a backoff at `23:29:13.940`, and the peer dials nothing after.
 
 Why now: #6710 added the restart spec, which stages that crossed dial right before the unpair spec. #6676 had made the app's own Sync press clear the backoff before it wakes the daemon (`start_sync_inner`, `user_initiated`), while the peer's `sync` and `sync_refused`, documented as waking the daemon "as `start_sync` does", kept the bare wake.
 
@@ -43,6 +45,6 @@ The WebdriverIO lane cannot run in this container (no `WebKitWebDriver`, no `tau
 
 ## Ran
 
-On `eb66161` plus this change: `cargo nextest run --workspace` in two halves (4039 and 4033 tests pass), `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `just gen-sqlx` and `just gen-bindings` (no diff), `npm run typecheck`, `npm run lint`, `prek run --hook-stage manual --all-files`. Not run: vitest, Playwright (no frontend file changed), and WebdriverIO, which the PR's `e2e-tauri-gate` runs.
+On `eb66161` plus this change, and again with `main` at `67d9b68` merged in (it brought Rust changes, one of them a line in `e2e_sync_peer.rs`): `cargo nextest run --workspace` in two halves (4039 and 4033 tests pass, then 4047 and 4040), `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `just gen-sqlx` and `just gen-bindings` (no diff), `npm run typecheck`, `npm run lint`, `prek run --hook-stage manual --all-files`. Not run: vitest, Playwright (no frontend file changed), and WebdriverIO, which the PR's `e2e-tauri-gate` runs.
 
-`main` then moved by three commits, none of them in Rust. They were merged in, and `npm run typecheck` and `npm run lint` were run again on that tree.
+`main` moved once more before the push (`ddbbd1b`, #6731, the synced purge). It merged clean and touches neither the peer binary nor the scheduler. On that tree only the peer binary's own tests (22 pass) and the pre-push hooks ran; CI's run on the PR is the check of the whole.
