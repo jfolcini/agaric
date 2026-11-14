@@ -1572,7 +1572,7 @@ async fn commit_projection(
 /// an `Err` (same policy as the tag rebuild below); the next export
 /// mirrors the tombstones it missed ([`mirror_sql_tombstones_onto_engine`]),
 /// and the integrity check reports any block left live in the engine.
-async fn fan_out_swept_tombstones(
+pub(super) async fn fan_out_swept_tombstones(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     device_id: &str,

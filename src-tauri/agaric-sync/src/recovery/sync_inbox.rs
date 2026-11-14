@@ -630,6 +630,49 @@ mod tests {
         );
     }
 
+    /// #6521 — an import whose projection fails stays in the engine, so what it
+    /// added is saved on its own: the retry that later projects the same bytes
+    /// and clears their slots imports nothing, and would save nothing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_import_whose_projection_failed_has_its_delta_once_its_slots_clear_6521() {
+        let (pool, _dir) = test_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let (_parent_id, _block_ids, blobs) = chained_update_blobs(3);
+        for bytes in &blobs {
+            seed_inbox(&pool, space.as_str(), bytes, None).await;
+        }
+        sqlx::query(
+            "CREATE TRIGGER adversarial_block_insert_abort BEFORE INSERT ON blocks \
+             BEGIN SELECT RAISE(ABORT, 'adversarial: projection tx must fail'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install abort trigger");
+        let registry = LoroEngineRegistry::new();
+        let mat = Materializer::new(pool.clone());
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("a failing projection must not fail the boot walk");
+        assert_eq!(replayed, 0, "every projection aborted");
+
+        sqlx::query("DROP TRIGGER adversarial_block_insert_abort")
+            .execute(&pool)
+            .await
+            .expect("drop abort trigger");
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("replay");
+        assert_eq!(replayed, 3, "the retry projects and clears every slot");
+
+        assert_eq!(
+            agaric_engine::loro::delta::saved_engine_divergences(&pool, &registry)
+                .await
+                .expect("read the saved rows"),
+            Vec::<String>::new(),
+            "with the slots gone, the saved deltas alone rebuild the engine"
+        );
+    }
+
     /// #3164 happy path — every row of a space replays in ONE batch: all
     /// blocks projected, ALL slots deleted.
     ///

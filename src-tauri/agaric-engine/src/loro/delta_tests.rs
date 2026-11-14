@@ -145,6 +145,27 @@ async fn the_oracle_names_the_space_whose_engine_write_saved_no_delta_6521() {
     );
 }
 
+/// Equal versions do not make equal engines: an engine that lost its saved
+/// state and wrote again reuses the op ids its saved rows hold.
+#[tokio::test]
+async fn the_oracle_names_a_space_whose_saved_rows_hold_other_ops_under_the_same_ids_6521() {
+    let (pool, _dir) = agaric_store::test_support::test_pool().await;
+    let state = LoroState::new();
+    create_saved(&pool, &state, SPACE_A, "FIRST").await.unwrap();
+
+    state.registry.clear();
+    create_unsaved(&state, SPACE_A, "OTHER");
+
+    let divergences = saved_engine_divergences(&pool, &state.registry)
+        .await
+        .unwrap();
+    assert_eq!(divergences.len(), 1, "{divergences:?}");
+    assert!(
+        divergences[0].contains("another state"),
+        "the versions agree and the states do not: {divergences:?}"
+    );
+}
+
 async fn refuse_deltas(pool: &SqlitePool) {
     sqlx::query(
         "CREATE TRIGGER refuse_deltas BEFORE INSERT ON loro_doc_delta \

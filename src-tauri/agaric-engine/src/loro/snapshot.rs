@@ -2035,13 +2035,59 @@ mod tests {
             .await
             .expect("rehydrate");
 
-        assert_eq!(delta_spaces(&pool).await, Vec::<String>::new());
+        assert_eq!(
+            delta_spaces(&pool).await,
+            Vec::<String>::new(),
+            "the earlier process's delta is gone"
+        );
         assert_eq!(
             crate::loro::delta::saved_engine_divergences(&pool, &booted)
                 .await
                 .unwrap(),
             Vec::<String>::new(),
             "the booted engine equals its snapshot row"
+        );
+    }
+
+    /// #6521 — a rehydrate that migrates a pre-#400 snapshot's sibling order
+    /// writes the engine, and saves what it wrote.
+    #[tokio::test]
+    async fn a_rehydrate_that_migrates_sibling_order_saves_the_migration_6521() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let mut legacy = LoroEngine::with_peer_id("device-1").expect("engine");
+        legacy
+            .apply_create_block_at("P", "page", "P", None, 0)
+            .expect("page");
+        for (slot, id) in ["A", "B"].into_iter().enumerate() {
+            legacy
+                .apply_create_block_at(id, "content", "", Some("P"), slot)
+                .expect("child");
+        }
+        legacy.force_legacy_scheme_for_test(&[("A", 2), ("B", 1)]);
+        save_snapshot(&pool, &space, &legacy).await.expect("save");
+
+        let booted = LoroEngineRegistry::new();
+        rehydrate_registry(&pool, &booted, "device-1")
+            .await
+            .expect("rehydrate");
+
+        let children = booted
+            .with_engine(&space, "device-1", |engine| engine.list_children_walk("P"))
+            .expect("engine")
+            .expect("children");
+        assert_eq!(children, ["B", "A"], "the rehydrate migrated the order");
+        assert_eq!(
+            delta_spaces(&pool).await,
+            [SPACE_A],
+            "the migration's ops are saved as one delta"
+        );
+        assert_eq!(
+            crate::loro::delta::saved_engine_divergences(&pool, &booted)
+                .await
+                .unwrap(),
+            Vec::<String>::new(),
+            "the snapshot and that delta rebuild the migrated engine"
         );
     }
 }
