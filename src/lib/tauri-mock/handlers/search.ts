@@ -395,8 +395,9 @@ function splitShortTerms(query: string): { phrases: string[]; shortTerms: string
   const words = query.trim().split(/\s+/)
   const shortTerms = words.filter(isShort)
   if (shortTerms.length === 0) return { phrases: [query], shortTerms }
-  const indexed = words.filter((word) => !isShort(word)).join(' ')
-  return { phrases: indexed === '' ? [] : [indexed], shortTerms }
+  // Each longer word on its own, as the backend AND-joins them: with the short
+  // words taken out, the rest is no longer one substring of the content.
+  return { phrases: words.filter((word) => !isShort(word)), shortTerms }
 }
 
 /** `add_content_contains`: the raw content holds every short term, in any case. */
