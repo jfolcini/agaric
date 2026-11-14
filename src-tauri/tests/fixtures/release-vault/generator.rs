@@ -395,19 +395,9 @@ async fn main() {
         .fetch_one(&pools.write)
         .await
         .unwrap();
-    let frontier: String =
-        sqlx::query_scalar("SELECT up_to_seqs FROM compaction_watermark WHERE id = 1")
-            .fetch_one(&pools.write)
-            .await
-            .unwrap();
-    let frontier: std::collections::BTreeMap<String, i64> =
-        serde_json::from_str(&frontier).unwrap();
     std::fs::write(
         out.join("counts.txt"),
-        format!(
-            "blocks {blocks}\nops {ops}\ncompacted_through {}\n",
-            frontier[&v.device]
-        ),
+        format!("blocks {blocks}\nops {ops}\n"),
     )
     .unwrap();
 
