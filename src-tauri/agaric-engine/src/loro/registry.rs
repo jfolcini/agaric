@@ -358,7 +358,7 @@ impl LoroEngineRegistry {
     /// #2201 — mark `space_id` dirty ([`DirtySpaces::mark`]). Called from
     /// [`for_space`](Self::for_space) and [`with_engine`](Self::with_engine)
     /// with the map lock already released.
-    fn mark_dirty(&self, space_id: &SpaceId) {
+    pub(crate) fn mark_dirty(&self, space_id: &SpaceId) {
         self.dirty.mark(space_id);
     }
 

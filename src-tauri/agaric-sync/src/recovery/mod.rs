@@ -9,9 +9,12 @@
 //!
 //! # Recovery sequence
 //!
-//! 1. **C-2b — boot-time op-log replay.** Walks
+//! 1. **The ops past the apply cursor.** When the engines were built from
+//!    their saved rows (#6521) they hold every such op, and only its index
+//!    fan-out is dispatched again. Otherwise, **C-2b — boot-time op-log
+//!    replay**: walks
 //!    `op_log WHERE seq > materializer_apply_cursor.materialized_through_seq`,
-//!    leaves out the ops every saved engine holds (#6521),
+//!    leaves out the ops every saved snapshot holds,
 //!    and re-enqueues each other row through the materializer foreground queue
 //!    so any ops dropped by a mid-flight crash or `fg_apply_dropped`
 //!    event get re-applied. Drains the foreground queue via a Barrier

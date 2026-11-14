@@ -675,6 +675,21 @@ pub(crate) async fn pending_count(pool: &SqlitePool) -> Result<i64, AppError> {
     Ok(n)
 }
 
+/// Whether an op that exhausted its apply retries is still parked here. Such
+/// an op is in the op log and in no engine, so boot must not take the saved
+/// engine rows to hold every local op (#6521).
+pub async fn has_parked_apply_ops(pool: &SqlitePool) -> Result<bool, AppError> {
+    let parked = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+               SELECT 1 FROM materializer_retry_queue
+               WHERE task_kind LIKE 'ApplyOp:%' OR task_kind LIKE 'ReplayApplyOp:%'
+           ) AS "parked!: bool""#
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(parked)
+}
+
 /// Issue #157 sub-item D — give-up trigger thresholds.
 ///
 /// A row hitting either trigger is permanently dropped by the sweeper:
@@ -2642,6 +2657,43 @@ mod tests {
     ///   - repeated failures of one task escalate `attempts`, and only once
     ///     the row reaches the 1h-cap tier (`attempts >= 4`) does
     ///     `retry_persist_capped` bump — measure-item 2's signal.
+    /// #6521 — only a parked op counts: a cache rebuild waiting for its retry
+    /// is not an op missing from an engine.
+    #[tokio::test]
+    async fn has_parked_apply_ops_counts_ops_and_not_cache_tasks_6521() {
+        use agaric_store::op_log::OpRecord;
+        let (pool, _dir) = test_pool().await;
+        let metrics = test_metrics();
+        let cache_task = MaterializeTask::UpdateFtsBlock {
+            block_id: "BLK_6521".into(),
+        };
+        record_failure(&pool, &cache_task, "boom", &metrics)
+            .await
+            .unwrap();
+        assert!(
+            !has_parked_apply_ops(&pool).await.unwrap(),
+            "a parked cache task is not a parked op"
+        );
+
+        let record = Arc::new(OpRecord {
+            device_id: "dev-6521".into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: "h".into(),
+            op_type: "edit_block".into(),
+            payload: "{}".into(),
+            created_at: 0,
+            block_id: Some("BLK_6521".into()),
+        });
+        record_failure(&pool, &MaterializeTask::ApplyOp(record), "boom", &metrics)
+            .await
+            .unwrap();
+        assert!(
+            has_parked_apply_ops(&pool).await.unwrap(),
+            "an op that exhausted its apply retries is parked"
+        );
+    }
+
     #[tokio::test]
     async fn record_failure_classifies_persistent_enqueue_telemetry_2509() {
         use agaric_store::op_log::OpRecord;

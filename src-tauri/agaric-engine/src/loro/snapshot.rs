@@ -25,8 +25,11 @@
 //!   one transaction: all of them or none (#6521).
 //! - [`save_engines_and_advance_cursor`] — the pass the periodic, background,
 //!   exit, session-end, mobile-suspend and compaction triggers run: [`save_all_engines`],
-//!   then the apply cursor moves to what it persisted, so boot replays only the
-//!   ops after it (#5418).
+//!   then the apply cursor moves to what it persisted, so boot dispatches index
+//!   work, and a replay boot applies, only the ops after it (#5418).
+//! - [`rehydrate_registry`] — boot: each engine from its snapshot and its
+//!   `loro_doc_delta` rows (#6521), or from the snapshot alone for a replay
+//!   boot.
 //!
 //! ## Boot rehydration design
 //!
@@ -102,8 +105,8 @@ fn now_ms() -> i64 {
 /// their commit and their engine write.
 ///
 /// Replicated rows never reach an engine through the op log. A read error
-/// fails the pass: a row stamped below what it holds is an op boot applies a
-/// second time (#6521).
+/// fails the pass: a row stamped below what it holds is an op a replay boot
+/// applies a second time (#6521).
 async fn op_log_head(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
     let head = sqlx::query_scalar!(
         r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#
@@ -182,16 +185,23 @@ pub async fn load_all_space_snapshots(
     Ok(rows)
 }
 
-/// Boot-time rehydration: load every persisted snapshot and seed the
-/// registry with pre-built engines.  Called once during app setup
-/// before any op-apply runs.
+/// Boot-time rehydration: build every space's engine from what is saved for
+/// it and install it. Called once during app setup before any op-apply runs.
 ///
-/// A snapshot that will not import is an error and installs nothing (#6525):
-/// a skipped space would get an empty engine on first access, and the next save
-/// would replace the unreadable blob with it under the same PeerID. Boot turns
-/// the error into its fatal dialog.
+/// With the [`boots_from_saved_rows`](crate::loro::delta::boots_from_saved_rows)
+/// marker set, an engine is its snapshot with its `loro_doc_delta` rows
+/// imported (#6521), and boot recovery replays no op. Without it, or when a
+/// space's rows leave changes pending, the rows are deleted
+/// ([`start_replay_boot`](crate::loro::delta::start_replay_boot)), the engines
+/// are built from the snapshots alone, and boot recovery replays the op log
+/// past them.
 ///
-/// Every snapshot is imported before any index is rebuilt, and one log line
+/// A snapshot or a row that will not import is an error and installs nothing
+/// (#6525): a skipped space would get an empty engine on first access, and the
+/// next save would replace the unreadable blob with it under the same PeerID.
+/// Boot turns the error into its fatal dialog.
+///
+/// Every space is imported before any index is rebuilt, and one log line
 /// marks the boundary, so `scripts/measure-boot.mjs` times the two passes
 /// apart (#5707).
 ///
@@ -202,33 +212,33 @@ pub async fn rehydrate_registry(
     device_id: &str,
 ) -> Result<usize, AppError> {
     let started = std::time::Instant::now();
-    // #6521: these engines are built from the snapshots alone, and what the
-    // op log holds beyond them is replayed as new writes. The deltas an
-    // earlier process saved describe neither, so they go before anything
-    // writes an engine.
-    crate::loro::delta::clear_deltas(pool).await?;
-    let rows = load_all_space_snapshots(pool).await?;
-
-    let mut imported = Vec::with_capacity(rows.len());
-    for (space_id_str, bytes) in rows {
-        // #792: derive the engine's PeerID from the registry's current
-        // peer-id epoch (installed at boot from `app_settings`) so rehydrated
-        // engines and lazily-created ones agree on the device's peer id.
-        let mut engine = LoroEngine::with_peer_id_epoch(device_id, registry.peer_epoch())?;
-        match engine.import_deferring_index(&bytes) {
-            Ok(needs_index) => {
-                imported.push((SpaceId::from_trusted(&space_id_str), engine, needs_index));
-            }
-            Err(e) => return Err(unreadable_snapshot(&space_id_str, &engine, &e)),
+    let from_saved_rows = if crate::loro::delta::boots_from_saved_rows(pool).await? {
+        import_spaces(pool, registry, device_id, true).await?
+    } else {
+        None
+    };
+    let imported = match from_saved_rows {
+        Some(imported) => imported,
+        None => {
+            crate::loro::delta::start_replay_boot(pool).await?;
+            import_spaces(pool, registry, device_id, false)
+                .await?
+                .unwrap_or_default()
         }
-    }
+    };
     tracing::info!(
         imported_spaces = imported.len(),
         elapsed_ms = started.elapsed().as_millis(),
         "loro: imported per-space LoroDoc snapshots from loro_doc_state (index rebuild next)",
     );
     let ok = imported.len();
-    for (space_id, mut engine, needs_index) in imported {
+    for ImportedSpace {
+        space_id,
+        mut engine,
+        needs_index,
+        from_deltas,
+    } in imported
+    {
         if needs_index {
             // The rebuild can append the one-time sibling-order migration.
             let ((), migration) = engine.capturing_delta(LoroEngine::rebuild_index_after_import)?;
@@ -237,9 +247,96 @@ pub async fn rehydrate_registry(
                 crate::loro::delta::insert_delta(&mut conn, &space_id, migration).await?;
             }
         }
-        registry.install_engine(space_id, engine);
+        registry.install_engine(space_id.clone(), engine);
+        if from_deltas {
+            // A pass moves the stamp of every row it does not write, taking a
+            // clean engine to equal its row. This one holds more than its
+            // row, so the next pass must write it.
+            registry.mark_dirty(&space_id);
+        }
     }
     Ok(ok)
+}
+
+/// One space's engine, imported and not yet indexed or installed.
+struct ImportedSpace {
+    space_id: SpaceId,
+    engine: LoroEngine,
+    needs_index: bool,
+    /// The engine holds `loro_doc_delta` rows on top of its snapshot.
+    from_deltas: bool,
+}
+
+/// What is saved for one space: its `loro_doc_state` snapshot, if a pass has
+/// written one, and its `loro_doc_delta` rows.
+struct SavedRows {
+    space_id: String,
+    snapshot: Option<Vec<u8>>,
+    deltas: Vec<Vec<u8>>,
+}
+
+/// Import every space's snapshot, and with `with_deltas` its `loro_doc_delta`
+/// rows after it. `Ok(None)` when a space's rows leave changes pending, which
+/// only rows can: the engines must then be built without them.
+async fn import_spaces(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    with_deltas: bool,
+) -> Result<Option<Vec<ImportedSpace>>, AppError> {
+    let mut deltas = if with_deltas {
+        crate::loro::delta::load_deltas(pool).await?
+    } else {
+        std::collections::HashMap::new()
+    };
+    let mut saved: Vec<SavedRows> = load_all_space_snapshots(pool)
+        .await?
+        .into_iter()
+        .map(|(space_id, snapshot)| SavedRows {
+            deltas: deltas.remove(&space_id).unwrap_or_default(),
+            space_id,
+            snapshot: Some(snapshot),
+        })
+        .collect();
+    // A space no pass has saved yet has rows and no snapshot.
+    saved.extend(deltas.into_iter().map(|(space_id, deltas)| SavedRows {
+        space_id,
+        snapshot: None,
+        deltas,
+    }));
+
+    let mut imported = Vec::with_capacity(saved.len());
+    for SavedRows {
+        space_id,
+        snapshot,
+        deltas,
+    } in saved
+    {
+        // #792: derive the engine's PeerID from the registry's current
+        // peer-id epoch (installed at boot from `app_settings`) so rehydrated
+        // engines and lazily-created ones agree on the device's peer id.
+        let mut engine = LoroEngine::with_peer_id_epoch(device_id, registry.peer_epoch())?;
+        let rows = match engine.import_saved_rows(snapshot.as_deref(), &deltas) {
+            Ok(rows) => rows,
+            Err(e) => return Err(unreadable_snapshot(&space_id, &engine, &e)),
+        };
+        if with_deltas && !rows.complete {
+            tracing::error!(
+                space_id,
+                rows = deltas.len(),
+                "loro: a space's saved rows depend on engine writes no row holds; \
+                 discarding every space's rows and replaying the op log instead (#6521)",
+            );
+            return Ok(None);
+        }
+        imported.push(ImportedSpace {
+            space_id: SpaceId::from_trusted(&space_id),
+            engine,
+            needs_index: rows.needs_index,
+            from_deltas: !deltas.is_empty(),
+        });
+    }
+    Ok(Some(imported))
 }
 
 /// The error for a snapshot that failed to import into `engine`, worded for the
@@ -366,7 +463,7 @@ impl Collected {
 /// in one transaction (#6521). Returns the spaces written, each with the dirty
 /// stamp its export was collected under.
 ///
-/// Boot applies the local ops above the lowest stamp to every engine
+/// A replay boot applies the local ops above the lowest stamp to every engine
 /// (`recovery::replay`), and an op applied to an engine that holds it is a new
 /// write, over whatever a peer wrote to the same block since. So no row may
 /// hold an op above another row's stamp: a pass that cannot write one space
@@ -378,7 +475,8 @@ impl Collected {
 /// and then went quiescent would keep its first stamp forever, and
 /// `recovery::replay::heal_orphaned_apply_cursor` rewinds the apply cursor to
 /// the lowest one. A space outside `pairs` was clean at the collect, so its
-/// row equals its engine, and every row has an engine behind it: boot installs
+/// row equals its engine (a boot that built an engine from its row and delta
+/// rows marks it dirty), and every row has an engine behind it: boot installs
 /// one for each row or stops (#6525), and a pass writes rows only for engines.
 /// That engine holds the local ops up to the pass's head, bar the writes
 /// [`op_log_head`] lists, so its stamp moves with the others.
@@ -455,18 +553,18 @@ async fn write_pass(
 /// cursor moves up to the op-log head the pass persisted, so the next boot
 /// replays only the ops committed after it instead of the whole session.
 ///
-/// Boot replay restores two things for an op: its engine state, which the
-/// pass has just made durable (bar the late writes `op_log_head` lists), and
-/// its per-block index fan-out (FTS, links,
+/// Boot owes an op past the cursor its per-block index fan-out (FTS, links,
 /// tag refs; #3298), which lives in the background queue's memory until it
-/// runs. So the queue is drained before the cursor stops covering those ops.
+/// runs, and a replay boot also owes it its engine state, which the pass has
+/// just made durable (bar the late writes `op_log_head` lists). So the queue
+/// is drained before the cursor stops covering those ops.
 /// A pass that wrote nothing moves nothing: a space whose first write failed
 /// has no row for the boot heal's `MIN(applied_through_seq)` to see, and only
 /// the old cursor still replays its ops.
 ///
 /// The rows are committed before the drain, so a kill during it, or a queue
-/// that cannot drain, leaves the cursor behind them. Boot reads the rows'
-/// stamp and applies only the ops above it (`recovery::replay`, #6521).
+/// that cannot drain, leaves the cursor behind them. A replay boot reads the
+/// rows' stamp and applies only the ops above it (`recovery::replay`, #6521).
 ///
 /// Returns `save_all_engines`' [`SavePass`]: compaction reads its
 /// `persisted_through` before it deletes any op (#6518).
@@ -1925,8 +2023,9 @@ mod tests {
         );
     }
 
-    /// #6521 — boot builds its engines from the snapshots alone, so the deltas
-    /// an earlier process saved go before any of them is written.
+    /// #6521 — without the marker, boot builds its engines from the snapshots
+    /// alone, so the deltas an earlier process saved go before any of them is
+    /// written.
     #[tokio::test]
     async fn rehydrating_drops_the_deltas_an_earlier_process_saved_6521() {
         let (pool, _dir) = fresh_pool().await;
@@ -1997,6 +2096,233 @@ mod tests {
             Vec::<String>::new(),
             "the snapshot and that delta rebuild the migrated engine"
         );
+    }
+
+    /// Create `block` in `space` through a write that saves its delta.
+    async fn create_saving_its_delta(
+        pool: &SqlitePool,
+        state: &crate::loro::shared::LoroState,
+        space: &str,
+        block: &str,
+    ) {
+        let log = crate::loro::revert::RevertLog::new();
+        crate::loro::delta::write_engines(pool, &state.registry, &log, "test_write", || {
+            state
+                .registry
+                .for_space_recording(&SpaceId::from_trusted(space), "device-1", &log)
+                .expect("engine")
+                .engine_mut()
+                .apply_create_block(block, "content", block, None, 0)
+                .expect("create");
+        })
+        .await
+        .1
+        .expect("save the write");
+    }
+
+    /// A vault whose saved rows hold every engine write, as one that has
+    /// finished a boot is.
+    async fn vault_that_boots_from_saved_rows() -> (SqlitePool, TempDir) {
+        let (pool, dir) = fresh_pool().await;
+        crate::loro::delta::set_boots_from_saved_rows(&pool, true)
+            .await
+            .expect("set the marker");
+        (pool, dir)
+    }
+
+    fn holds(registry: &LoroEngineRegistry, space: &str, block: &str) -> bool {
+        registry
+            .with_engine(&SpaceId::from_trusted(space), "device-1", |engine| {
+                engine.contains_block(block)
+            })
+            .expect("engine")
+    }
+
+    /// #6521 — with the marker set, boot builds each engine from its snapshot
+    /// and the deltas saved since, a space with no snapshot from its deltas
+    /// alone. It deletes none of them, and leaves each such space dirty.
+    #[tokio::test]
+    async fn a_boot_from_saved_rows_builds_what_the_dead_process_held_6521() {
+        let (pool, _dir) = vault_that_boots_from_saved_rows().await;
+        let state = crate::loro::shared::LoroState::new();
+        create_saving_its_delta(&pool, &state, SPACE_A, "IN_SNAPSHOT").await;
+        assert_eq!(save_all_engines(&pool, &state.registry).await.saved, 1);
+        create_saving_its_delta(&pool, &state, SPACE_A, "IN_DELTA").await;
+        create_saving_its_delta(&pool, &state, SPACE_B, "NO_SNAPSHOT_YET").await;
+
+        let booted = LoroEngineRegistry::new();
+        let rehydrated = rehydrate_registry(&pool, &booted, "device-1")
+            .await
+            .expect("rehydrate");
+
+        assert_eq!(rehydrated, 2, "one engine per space with saved rows");
+        for space in [SPACE_A, SPACE_B] {
+            let space = SpaceId::from_trusted(space);
+            assert_eq!(
+                booted.loro_vv(&space),
+                state.registry.loro_vv(&space),
+                "the booted engine is at the version the dead process's was"
+            );
+        }
+        assert_eq!(
+            booted.dirty_count(),
+            2,
+            "a space built from deltas holds more than its row, so it is dirty"
+        );
+        assert_eq!(
+            delta_spaces(&pool).await,
+            [SPACE_A, SPACE_B],
+            "the rows are kept: until a pass covers them they are the saved engine"
+        );
+        assert!(holds(&booted, SPACE_A, "IN_SNAPSHOT"), "from the snapshot");
+        assert!(holds(&booted, SPACE_A, "IN_DELTA"), "from the delta");
+        assert!(
+            holds(&booted, SPACE_B, "NO_SNAPSHOT_YET"),
+            "from a delta with no snapshot under it"
+        );
+    }
+
+    /// #6521 — a pass moves the stamp of every row it does not write. An
+    /// engine built from its row and deltas is written by the next pass, so
+    /// no stamp moves over ops only a delta holds.
+    #[tokio::test]
+    async fn a_space_booted_from_its_deltas_is_saved_by_the_next_pass_6521() {
+        let (pool, _dir) = vault_that_boots_from_saved_rows().await;
+        let state = crate::loro::shared::LoroState::new();
+        create_saving_its_delta(&pool, &state, SPACE_A, "IN_SNAPSHOT").await;
+        assert_eq!(save_all_engines(&pool, &state.registry).await.saved, 1);
+        create_saving_its_delta(&pool, &state, SPACE_A, "IN_DELTA").await;
+        let booted = LoroEngineRegistry::new();
+        rehydrate_registry(&pool, &booted, "device-1")
+            .await
+            .expect("rehydrate");
+
+        assert_eq!(
+            save_all_engines(&pool, &booted).await.saved,
+            1,
+            "the pass after boot writes the space"
+        );
+
+        assert!(
+            saved_row_holds(&pool, &SpaceId::from_trusted(SPACE_A), "IN_DELTA").await,
+            "its row now holds what only the delta held"
+        );
+        assert_eq!(delta_spaces(&pool).await, Vec::<String>::new());
+    }
+
+    /// #6521 — a row that will not import stops boot, as a snapshot that will
+    /// not import does: nothing is installed and nothing is deleted.
+    #[tokio::test]
+    async fn a_delta_that_will_not_import_stops_boot_6521() {
+        let (pool, _dir) = vault_that_boots_from_saved_rows().await;
+        let state = crate::loro::shared::LoroState::new();
+        create_saving_its_delta(&pool, &state, SPACE_A, "READABLE").await;
+        save_delta(&pool, SPACE_A).await;
+
+        let booted = LoroEngineRegistry::new();
+        let refused = rehydrate_registry(&pool, &booted, "device-1").await;
+
+        assert!(
+            matches!(refused, Err(AppError::Snapshot(_))),
+            "an unreadable row is the unreadable-snapshot error: {refused:?}"
+        );
+        assert!(booted.is_empty(), "no engine is installed");
+        assert_eq!(
+            delta_spaces(&pool).await,
+            [SPACE_A, SPACE_A],
+            "both rows are still there"
+        );
+        assert!(
+            crate::loro::delta::boots_from_saved_rows(&pool)
+                .await
+                .expect("read the marker"),
+            "and the next boot reads them again"
+        );
+    }
+
+    /// #6521 — rows that depend on an engine write no row holds cannot build
+    /// the engine: it would lack that write and every later one of its peer.
+    /// Boot discards every row and the marker, and builds from the snapshots
+    /// for the op-log replay.
+    #[tokio::test]
+    async fn rows_that_depend_on_a_write_no_row_holds_are_discarded_6521() {
+        let (pool, _dir) = vault_that_boots_from_saved_rows().await;
+        let state = crate::loro::shared::LoroState::new();
+        create_saving_its_delta(&pool, &state, SPACE_A, "IN_SNAPSHOT").await;
+        assert_eq!(save_all_engines(&pool, &state.registry).await.saved, 1);
+        let at_snapshot = state.registry.loro_vv(&SpaceId::from_trusted(SPACE_A));
+        for block in ["FIRST", "LOST", "THIRD"] {
+            create_saving_its_delta(&pool, &state, SPACE_A, block).await;
+        }
+        let lost = sqlx::query!(
+            "DELETE FROM loro_doc_delta WHERE id = (SELECT id FROM loro_doc_delta ORDER BY id LIMIT 1 OFFSET 1)"
+        )
+        .execute(&pool)
+        .await
+        .expect("lose the middle row");
+        assert_eq!(lost.rows_affected(), 1);
+
+        let booted = LoroEngineRegistry::new();
+        rehydrate_registry(&pool, &booted, "device-1")
+            .await
+            .expect("rehydrate");
+
+        assert_eq!(
+            booted.loro_vv(&SpaceId::from_trusted(SPACE_A)),
+            at_snapshot,
+            "the engine is its snapshot alone, for the replay to build on"
+        );
+        assert_eq!(
+            delta_spaces(&pool).await,
+            Vec::<String>::new(),
+            "the rows are gone: a replayed op reuses the op ids they hold"
+        );
+        assert!(
+            !crate::loro::delta::boots_from_saved_rows(&pool)
+                .await
+                .expect("read the marker"),
+            "and boot recovery replays the op log"
+        );
+    }
+
+    /// #6521 — a row can depend on a later one: a sync import writes the
+    /// engine before its projection saves its delta, and a local write made
+    /// on top of it commits in between. That is not a gap.
+    #[tokio::test]
+    async fn a_row_that_depends_on_a_later_row_builds_the_engine_6521() {
+        let (pool, _dir) = vault_that_boots_from_saved_rows().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let state = crate::loro::shared::LoroState::new();
+        let mut peer = LoroEngine::with_peer_id("device-2").expect("engine");
+        peer.apply_create_block("FROM_PEER", "content", "peer", None, 0)
+            .expect("create");
+        let update = peer.export_snapshot().expect("export");
+        let (imported, import_delta) = state
+            .registry
+            .with_engine(&space, "device-1", |engine| {
+                engine.capturing_delta(|engine| engine.import(&update))
+            })
+            .expect("engine")
+            .expect("export the import's delta");
+        imported.expect("import");
+        create_saving_its_delta(&pool, &state, SPACE_A, "LOCAL_ON_TOP").await;
+        let mut conn = pool.acquire().await.expect("conn");
+        crate::loro::delta::insert_delta(&mut conn, &space, &import_delta.expect("a delta"))
+            .await
+            .expect("save the import's delta after the local write's");
+        drop(conn);
+
+        let booted = LoroEngineRegistry::new();
+        rehydrate_registry(&pool, &booted, "device-1")
+            .await
+            .expect("rehydrate");
+
+        assert_eq!(
+            booted.loro_vv(&space),
+            state.registry.loro_vv(&space),
+            "both rows are in the engine, whichever was imported first"
+        );
+        assert_eq!(delta_spaces(&pool).await, [SPACE_A, SPACE_A]);
     }
 
     /// Whether `space`'s saved row holds `block`.

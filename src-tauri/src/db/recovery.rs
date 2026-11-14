@@ -1244,10 +1244,12 @@ async fn rebuild_caches_after_engine_reproject(pool: &SqlitePool) {
 /// [`recover_blocks_from_op_log`] has already logged the remote-content-missing
 /// hazard).
 ///
-/// Local ops authored AFTER the last engine snapshot (the ≤60s snapshot lag) are
-/// not in these snapshots; they are replayed on top from the op_log tail by the
-/// always-on boot replay (`recovery::replay::replay_unmaterialized_ops`), so no
-/// op-log tail replay is needed here.
+/// Local ops authored AFTER the last engine snapshot are not in these
+/// snapshots; they are replayed on top from the op_log tail by the boot replay
+/// (`recovery::replay::replay_unmaterialized_ops`), so no op-log tail replay is
+/// needed here. That replay runs only on a boot that builds the engines from
+/// the snapshots alone (#6521), so this pass clears the marker that would have
+/// boot build them from their `loro_doc_delta` rows as well.
 ///
 /// ## Derived caches
 ///
@@ -1265,6 +1267,7 @@ pub(crate) async fn reproject_blocks_from_engine(
     if snapshots.is_empty() {
         return Ok(false);
     }
+    agaric_engine::loro::delta::set_boots_from_saved_rows(pool, false).await?;
 
     let mut tx = pool.begin().await?;
     let mut spaces_reprojected = 0usize;
@@ -7491,6 +7494,40 @@ mod tests {
         assert!(
             !fired,
             "no engine snapshots ⇒ engine reprojection does nothing and the op-log path stands"
+        );
+    }
+
+    /// #6521 — this pass rebuilds SQL from the snapshots, which lack what the
+    /// `loro_doc_delta` rows hold, and leaves the ops past them to boot
+    /// replay. So it clears the marker that would have boot build the engines
+    /// from those rows and replay nothing. With no snapshot it rebuilds
+    /// nothing, and leaves the marker alone.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_engine_reprojection_sends_the_boot_through_the_replay_6521() {
+        let (pool, _dir) = test_pool().await;
+        agaric_engine::loro::delta::set_boots_from_saved_rows(&pool, true)
+            .await
+            .unwrap();
+        assert!(!reproject_blocks_from_engine(&pool).await.unwrap());
+        assert!(
+            agaric_engine::loro::delta::boots_from_saved_rows(&pool)
+                .await
+                .unwrap(),
+            "nothing was rebuilt from a snapshot, so boot may still build from saved rows"
+        );
+
+        let mut engine = agaric_engine::loro::engine::LoroEngine::with_peer_id("dev-6521").unwrap();
+        engine
+            .apply_create_block("PAGE6521", "page", "a page", None, 0)
+            .unwrap();
+        insert_snapshot(&pool, "SPACE6521", engine.export_snapshot().unwrap()).await;
+
+        assert!(reproject_blocks_from_engine(&pool).await.unwrap());
+        assert!(
+            !agaric_engine::loro::delta::boots_from_saved_rows(&pool)
+                .await
+                .unwrap(),
+            "SQL was rebuilt from the snapshots alone, so boot must replay the op log past them"
         );
     }
 

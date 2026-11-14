@@ -6412,3 +6412,287 @@ async fn status_reports_quarantine_only_on_the_boot_that_moved_it_6057() {
     assert_eq!(second.sync_inbox_quarantine_pending, 1);
     assert_eq!(second.to_status().sync_quarantined_this_boot, 0);
 }
+
+// ---------------------------------------------------------------------------
+// #6521 — boot from each engine's saved rows
+// ---------------------------------------------------------------------------
+
+/// The app's boot over `pool`: a new process's materializer, the rehydrate,
+/// then boot recovery.
+async fn boot_6521(pool: &SqlitePool, device_id: &str) -> (Materializer, RecoveryReport) {
+    let mat = Materializer::new(pool.clone());
+    let registry = &mat.loro_state().registry;
+    agaric_engine::loro::snapshot::rehydrate_registry(pool, registry, device_id)
+        .await
+        .expect("rehydrate");
+    super::boot::reset_recovery_guard();
+    let report = recover_at_boot(pool, device_id, &mat, registry)
+        .await
+        .expect("recover");
+    (mat, report)
+}
+
+async fn boots_from_saved_rows(pool: &SqlitePool) -> bool {
+    agaric_engine::loro::delta::boots_from_saved_rows(pool)
+        .await
+        .expect("read the marker")
+}
+
+/// One child of `parent` created as a command does it: the op, its SQL and
+/// engine apply and, with `saving_its_delta`, the engine's delta in one
+/// transaction; the index fan-out is left to a queue the kill takes.
+async fn create_child_6521(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    device_id: &str,
+    (block, parent, content): (&str, &str, &str),
+    saving_its_delta: bool,
+) {
+    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::from_trusted(block),
+        block_type: "content".into(),
+        parent_id: Some(BlockId::from_trusted(parent)),
+        position: None,
+        index: None,
+        content: content.to_owned(),
+    });
+    let state = mat.loro_state();
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "test_command_6521")
+        .await
+        .unwrap();
+    let scope = agaric_engine::loro::revert::RevertScope::arm(state);
+    let record = agaric_store::op_log::append_local_op_in_tx(
+        &mut tx,
+        device_id,
+        payload,
+        agaric_store::db::now_ms(),
+    )
+    .await
+    .unwrap();
+    agaric_engine::apply::kernel::apply_op_projected(&mut tx, &record, state, false)
+        .await
+        .unwrap();
+    let pending = scope.detach();
+    if saving_its_delta {
+        agaric_engine::loro::delta::commit_with_deltas(tx, &state.registry, pending)
+            .await
+            .unwrap();
+    } else {
+        tx.commit().await.unwrap();
+    }
+}
+
+/// #6521 — a vault an older build left has a snapshot and, past it, ops that
+/// are in no saved row. Its first boot replays them, as every boot did, and
+/// from then on the saved rows hold every engine write: the next boot builds
+/// the engines from them and applies no op, so nothing a peer wrote since is
+/// written over. It still dispatches the index work the kill took.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_first_boot_replays_the_op_log_and_the_next_builds_from_saved_rows_6521() {
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ0000000000000006521PG2";
+    const SAVED: usize = 2;
+    const TAIL: usize = 3;
+    let device_id = "dev-6521-first-boot";
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE);
+    let child_ids = oracle_child_ids(SAVED + TAIL + 1);
+    let mut ids: Vec<&str> = child_ids.iter().map(String::as_str).collect();
+    ids.push(PAGE_ID);
+    let (pool, _dir) = test_pool().await;
+
+    let older_build = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, older_build.loro_state(), device_id, SPACE, PAGE_ID).await;
+    for id in &child_ids[..SAVED] {
+        let child = (id.as_str(), PAGE_ID, "in the snapshot");
+        create_child_6521(&pool, &older_build, device_id, child, false).await;
+    }
+    agaric_engine::loro::snapshot::save_all_engines(&pool, &older_build.loro_state().registry)
+        .await;
+    for id in &child_ids[SAVED..SAVED + TAIL] {
+        let child = (id.as_str(), PAGE_ID, "past the snapshot");
+        create_child_6521(&pool, &older_build, device_id, child, false).await;
+    }
+    older_build.shutdown();
+    drop(older_build);
+    assert!(
+        !boots_from_saved_rows(&pool).await,
+        "the fixture: no boot of this build has run"
+    );
+
+    let (first, report) = boot_6521(&pool, device_id).await;
+    assert_eq!(
+        report.ops_replayed,
+        u64::try_from(TAIL).unwrap(),
+        "the first boot replays the ops no saved row holds"
+    );
+    assert!(
+        boots_from_saved_rows(&pool).await,
+        "and then the saved rows hold every engine write"
+    );
+    let child = (
+        child_ids[SAVED + TAIL].as_str(),
+        PAGE_ID,
+        "findable after the update",
+    );
+    create_child_6521(&pool, &first, device_id, child, true).await;
+    let held = engine_blocks(&first, device_id, SPACE, &ids);
+    let version = first.loro_state().registry.loro_vv(&space);
+    first.shutdown();
+    drop(first);
+
+    let (second, report) = boot_6521(&pool, device_id).await;
+    second.flush_background().await.unwrap();
+
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+    assert_eq!(report.ops_replayed, 0, "the second boot applies no op");
+    assert_eq!(
+        second.loro_state().registry.loro_vv(&space),
+        version,
+        "the engine is at the dead process's version: nothing was written to it again"
+    );
+    assert_eq!(
+        engine_blocks(&second, device_id, SPACE, &ids),
+        held,
+        "and holds what the dead process's did"
+    );
+    // dynamic-sql: static SQL, test-only read-back.
+    let indexed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fts_blocks WHERE stripped = 'findable after the update'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        indexed, 1,
+        "an op past the cursor still gets the index work the kill took (#3298)"
+    );
+    second.shutdown();
+}
+
+/// #6521 — a replay that aborted left ops in no engine, so the saved rows do
+/// not hold every op and the next boot must replay again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_aborted_replay_leaves_the_next_boot_on_the_replay_6521() {
+    let (pool, _dir) = test_pool().await;
+    // Two local devices in one op log: the replay refuses it (#412).
+    for (d, dev) in ["dev-A-6521", "dev-B-6521"].iter().enumerate() {
+        append_local_op(
+            &pool,
+            dev,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(&format!("BLK6521D{d}")),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(1),
+                index: None,
+                content: "never replayed".into(),
+            }),
+        )
+        .await
+        .unwrap();
+    }
+
+    let (mat, report) = boot_6521(&pool, "dev-A-6521").await;
+
+    assert!(report.replay_failed(), "the fixture: the replay aborted");
+    assert!(
+        !boots_from_saved_rows(&pool).await,
+        "an aborted replay must not leave boot building from saved rows"
+    );
+    mat.shutdown();
+}
+
+/// #6521 — an op that exhausted its apply retries is in the op log and in no
+/// engine. While one is parked, boot keeps replaying.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_parked_op_leaves_the_next_boot_on_the_replay_6521() {
+    let (pool, _dir) = test_pool().await;
+    // dynamic-sql: static SQL, test-only fixture.
+    sqlx::query(
+        "INSERT INTO materializer_retry_queue (block_id, task_kind, next_attempt_at) \
+         VALUES ('BLOCK00000000000000006521A', 'ReplayApplyOp:7:dev-6521', 9999999999999)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let (mat, report) = boot_6521(&pool, "dev-6521").await;
+
+    assert!(!report.replay_failed(), "the fixture: the replay ran clean");
+    assert!(
+        !boots_from_saved_rows(&pool).await,
+        "a parked op is in no saved row"
+    );
+    mat.shutdown();
+}
+
+/// #6521 — a draft's op commits before its engine apply. Between the two the
+/// saved rows do not hold every op, so the marker is gone before the op
+/// commits (a kill there boots through the replay, which applies it) and back
+/// once the apply has run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_draft_is_written_back_with_the_marker_cleared_6521() {
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ0000000000000006521PG3";
+    let device_id = "dev-6521-draft";
+    let block = BlockId::test_id("DRAFT6521");
+    let (pool, _dir) = test_pool().await;
+    let (first, _) = boot_6521(&pool, device_id).await;
+    seed_space_and_page(&pool, first.loro_state(), device_id, SPACE, PAGE_ID).await;
+    agaric_engine::loro::snapshot::save_all_engines(&pool, &first.loro_state().registry).await;
+    let child = (block.as_str(), PAGE_ID, "typed and saved");
+    create_child_6521(&pool, &first, device_id, child, true).await;
+    save_draft(&pool, device_id, block.as_str(), "typed and not saved")
+        .await
+        .unwrap();
+    first.shutdown();
+    drop(first);
+    assert!(boots_from_saved_rows(&pool).await, "the fixture");
+    // dynamic-sql: static SQL, test-only probe of the marker at each op commit.
+    sqlx::query("CREATE TABLE marker_at_op_6521 (present INTEGER NOT NULL)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER probe_marker_6521 AFTER INSERT ON op_log BEGIN \
+           INSERT INTO marker_at_op_6521 \
+           SELECT EXISTS(SELECT 1 FROM app_settings WHERE key = 'loro.boots_from_saved_rows'); \
+         END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let (second, report) = boot_6521(&pool, device_id).await;
+
+    assert_eq!(report.drafts_recovered, [block.as_str().to_owned()]);
+    // dynamic-sql: static SQL, test-only read-back.
+    let marker_at_op: Vec<i64> = sqlx::query_scalar("SELECT present FROM marker_at_op_6521")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        marker_at_op,
+        [0],
+        "the draft's op committed with the marker cleared"
+    );
+    assert!(
+        boots_from_saved_rows(&pool).await,
+        "and the marker is back once the op is in the engine"
+    );
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE);
+    let in_engine = second
+        .loro_state()
+        .registry
+        .with_engine(&space, device_id, |engine| {
+            engine.read_block_content(block.as_str())
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(in_engine.as_deref(), Some("typed and not saved"));
+    second.shutdown();
+}

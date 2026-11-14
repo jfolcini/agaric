@@ -10,7 +10,10 @@ use agaric_store::db::MAX_SQL_PARAMS;
 
 use super::RecoveryReport;
 use super::draft_recovery::recover_single_draft;
-use super::replay::{heal_orphaned_apply_cursor, replay_unmaterialized_ops};
+use super::replay::{
+    REPROJECT_DEGRADED_PREFIX, fan_out_ops_past_the_cursor, heal_orphaned_apply_cursor,
+    replay_unmaterialized_ops,
+};
 
 // ---------------------------------------------------------------------------
 // Once-only guard
@@ -101,6 +104,110 @@ pub async fn recover_at_boot(
 
     let start = Instant::now();
 
+    // #6521: with the marker set, `rehydrate_registry` built every engine
+    // from its saved rows, which hold every op in the log, so no op is applied
+    // and the cursor needs no heal. Without it, the engines are the snapshots
+    // alone and steps 1 and 1.5 replay the op log past them.
+    let mut saved_rows_hold_every_op =
+        agaric_engine::loro::delta::boots_from_saved_rows(pool).await?;
+    let replay_report = if saved_rows_hold_every_op {
+        fan_out_ops_past_the_cursor(pool, materializer).await
+    } else {
+        heal_and_replay(pool, materializer).await
+    };
+    // Whether every local op is now in an engine, and so in a saved row.
+    let mut every_op_applied = !replay_report
+        .replay_errors
+        .iter()
+        .any(|e| !e.starts_with(REPROJECT_DEGRADED_PREFIX));
+
+    // -----------------------------------------------------------------
+    // Step 1.6: #535 — replay leftover write-ahead Loro-sync inbox slots.
+    //
+    // `apply_remote` durably writes each inbound message's raw bytes to
+    // `loro_sync_inbox` before importing them, and clears the slot in the
+    // SAME tx as the SQL projection. A crash in that window leaves the
+    // engine (and the periodically-persisted snapshot) ahead of SQL, but
+    // `op_log` never carries remote Loro-only data — so the op-log replay
+    // above cannot reconstruct it. Re-running the import+project for each
+    // leftover slot reconciles SQL and clears the slot. Placed AFTER the
+    // op-log replay and BEFORE the draft loop. #2541: the replay also fires
+    // the inbound cache/FTS rebuild fan-out for everything it imported,
+    // mirroring the live sync path (hence the `materializer` argument).
+    //
+    // Failures are non-fatal: `replay_sync_inbox` logs + continues per row
+    // and a hard error here is swallowed so boot still completes (same
+    // "log + continue" philosophy as the op-log replay above).
+    // -----------------------------------------------------------------
+    let sync_inbox =
+        replay_sync_inbox_with_quarantine_census(pool, registry, device_id, materializer).await;
+
+    // -----------------------------------------------------------------
+    // Step 2: Walk block_drafts and recover unflushed drafts
+    // -----------------------------------------------------------------
+    // A draft's op commits before its engine apply, so while one is written
+    // back the saved rows do not hold every op: a kill in between must boot
+    // through the replay.
+    if saved_rows_hold_every_op && !get_all_drafts(pool).await?.is_empty() {
+        agaric_engine::loro::delta::set_boots_from_saved_rows(pool, false).await?;
+        saved_rows_hold_every_op = false;
+    }
+    let drafts = recover_drafts(pool, device_id, materializer).await?;
+    every_op_applied &= drafts.errors.is_empty() && drafts.applied;
+
+    // -----------------------------------------------------------------
+    // Step 3: #1453 Phase 1 — backfill blake3 content_hash for attachment
+    // rows that pre-date migration 0093 (or were materialized from a remote
+    // AddAttachment op that predates the hash in its payload, #5728).
+    // Idempotent (only `content_hash IS NULL` rows are touched) and tolerant
+    // of a missing file (leaves NULL). Best-effort: a failure is logged and
+    // boot continues — the persisted hash is an availability optimization,
+    // not a correctness invariant. `app_data_dir` comes from the
+    // Materializer, which `lib.rs` sets before boot recovery runs; if it is
+    // somehow unset (test harnesses, an early boot path) the backfill is
+    // skipped.
+    // -----------------------------------------------------------------
+    run_attachment_backfills(pool, materializer).await;
+
+    // #6521: from here on boot may build the engines from their saved rows,
+    // unless an op is in the log and in no engine: the replay or a draft
+    // write-back did not finish, or an op that exhausted its retries is parked.
+    every_op_applied = every_op_applied
+        && !agaric_engine::materializer::retry_queue::has_parked_apply_ops(pool).await?;
+    if every_op_applied != saved_rows_hold_every_op {
+        agaric_engine::loro::delta::set_boots_from_saved_rows(pool, every_op_applied).await?;
+    }
+
+    // Elapsed millis for boot recovery won't exceed u64; saturate on overflow.
+    let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+
+    tracing::info!(
+        duration_ms,
+        drafts_recovered = drafts.recovered.len(),
+        already_flushed = drafts.already_flushed,
+        errors = drafts.errors.len(),
+        ops_replayed = replay_report.ops_replayed,
+        replay_errors = replay_report.replay_errors.len(),
+        "recovery completed"
+    );
+
+    Ok(RecoveryReport {
+        drafts_recovered: drafts.recovered,
+        drafts_already_flushed: drafts.already_flushed,
+        duration_ms,
+        draft_errors: drafts.errors,
+        ops_replayed: replay_report.ops_replayed,
+        ops_skipped_idempotent: replay_report.ops_skipped_idempotent,
+        replay_errors: replay_report.replay_errors,
+        sync_inbox_replayed: sync_inbox.replayed,
+        sync_inbox_quarantined: sync_inbox.quarantined,
+        sync_inbox_quarantine_pending: sync_inbox.quarantine_pending,
+    })
+}
+
+/// The boot of a vault whose engines are its snapshots alone: heal the apply
+/// cursor, then replay the op log past it into the engines.
+async fn heal_and_replay(pool: &SqlitePool, materializer: &Materializer) -> super::ReplayReport {
     // -----------------------------------------------------------------
     // Step 1: self-heal an orphaned apply cursor BEFORE the replay
     // walk. If the persisted Loro snapshot (`loro_doc_state`) is empty
@@ -142,7 +249,7 @@ pub async fn recover_at_boot(
     // they arrive inside `Ok(report)` as "reproject degraded (…)" entries
     // (ops applied, cursor advanced, only that group's positions stale).
     // -----------------------------------------------------------------
-    let replay_report = match replay_unmaterialized_ops(pool, materializer).await {
+    match replay_unmaterialized_ops(pool, materializer).await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, "C-2b replay failed — continuing with draft recovery");
@@ -152,73 +259,7 @@ pub async fn recover_at_boot(
                 replay_errors: vec![format!("replay aborted: {e}")],
             }
         }
-    };
-
-    // -----------------------------------------------------------------
-    // Step 1.6: #535 — replay leftover write-ahead Loro-sync inbox slots.
-    //
-    // `apply_remote` durably writes each inbound message's raw bytes to
-    // `loro_sync_inbox` before importing them, and clears the slot in the
-    // SAME tx as the SQL projection. A crash in that window leaves the
-    // engine (and the periodically-persisted snapshot) ahead of SQL, but
-    // `op_log` never carries remote Loro-only data — so the op-log replay
-    // above cannot reconstruct it. Re-running the import+project for each
-    // leftover slot reconciles SQL and clears the slot. Placed AFTER the
-    // op-log replay and BEFORE the draft loop. #2541: the replay also fires
-    // the inbound cache/FTS rebuild fan-out for everything it imported,
-    // mirroring the live sync path (hence the `materializer` argument).
-    //
-    // Failures are non-fatal: `replay_sync_inbox` logs + continues per row
-    // and a hard error here is swallowed so boot still completes (same
-    // "log + continue" philosophy as the op-log replay above).
-    // -----------------------------------------------------------------
-    let sync_inbox =
-        replay_sync_inbox_with_quarantine_census(pool, registry, device_id, materializer).await;
-
-    // -----------------------------------------------------------------
-    // Step 2: Walk block_drafts and recover unflushed drafts
-    // -----------------------------------------------------------------
-    let drafts = recover_drafts(pool, device_id, materializer).await?;
-
-    // -----------------------------------------------------------------
-    // Step 3: #1453 Phase 1 — backfill blake3 content_hash for attachment
-    // rows that pre-date migration 0093 (or were materialized from a remote
-    // AddAttachment op that predates the hash in its payload, #5728).
-    // Idempotent (only `content_hash IS NULL` rows are touched) and tolerant
-    // of a missing file (leaves NULL). Best-effort: a failure is logged and
-    // boot continues — the persisted hash is an availability optimization,
-    // not a correctness invariant. `app_data_dir` comes from the
-    // Materializer, which `lib.rs` sets before boot recovery runs; if it is
-    // somehow unset (test harnesses, an early boot path) the backfill is
-    // skipped.
-    // -----------------------------------------------------------------
-    run_attachment_backfills(pool, materializer).await;
-
-    // Elapsed millis for boot recovery won't exceed u64; saturate on overflow.
-    let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-
-    tracing::info!(
-        duration_ms,
-        drafts_recovered = drafts.recovered.len(),
-        already_flushed = drafts.already_flushed,
-        errors = drafts.errors.len(),
-        ops_replayed = replay_report.ops_replayed,
-        replay_errors = replay_report.replay_errors.len(),
-        "recovery completed"
-    );
-
-    Ok(RecoveryReport {
-        drafts_recovered: drafts.recovered,
-        drafts_already_flushed: drafts.already_flushed,
-        duration_ms,
-        draft_errors: drafts.errors,
-        ops_replayed: replay_report.ops_replayed,
-        ops_skipped_idempotent: replay_report.ops_skipped_idempotent,
-        replay_errors: replay_report.replay_errors,
-        sync_inbox_replayed: sync_inbox.replayed,
-        sync_inbox_quarantined: sync_inbox.quarantined,
-        sync_inbox_quarantine_pending: sync_inbox.quarantine_pending,
-    })
+    }
 }
 
 /// The boot sync-inbox replay, bracketed by the quarantine census.
@@ -383,9 +424,11 @@ async fn recover_drafts(
     // caller proceeds — `refresh_caches_for_recovered_drafts` and the first
     // user ops must observe a settled state. Non-fatal, same "log +
     // continue" philosophy as the replay step.
+    let mut applied = true;
     if !drafts_recovered.is_empty()
         && let Err(e) = materializer.flush_foreground().await
     {
+        applied = false;
         tracing::warn!(
             error = %e,
             "recovery: failed to drain foreground queue after draft recovery — continuing"
@@ -396,6 +439,7 @@ async fn recover_drafts(
         recovered: drafts_recovered,
         already_flushed: drafts_already_flushed,
         errors: draft_errors,
+        applied,
     })
 }
 
@@ -404,6 +448,9 @@ struct DraftRecoveryOutcome {
     recovered: Vec<String>,
     already_flushed: u64,
     errors: Vec<String>,
+    /// The foreground queue drained, so each written-back draft's op has had
+    /// its engine apply.
+    applied: bool,
 }
 
 /// The draft block_ids that still exist and are not soft-deleted.

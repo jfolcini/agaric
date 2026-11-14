@@ -8,10 +8,17 @@
 //! deletes the rows its snapshot covers
 //! ([`crate::loro::snapshot::save_all_engines`]).
 //!
-//! Nothing reads the rows at boot yet. Boot still builds each engine from its
-//! snapshot and the op log, so the rows an earlier process left do not
-//! describe the engine boot builds: boot deletes them before its first engine
-//! write ([`clear_deltas`]), and what it writes saves rows of its own.
+//! ## Who reads the rows
+//!
+//! Boot builds each engine from its snapshot and its rows
+//! ([`crate::loro::snapshot::rehydrate_registry`]) when the
+//! [`boots_from_saved_rows`] marker says the rows hold every engine write that
+//! committed, and replays no op. Without the marker (a vault last opened by a
+//! build that saved no rows, or kept none across a boot), or when a space's
+//! rows leave changes pending, boot is the older one: it deletes every row
+//! ([`start_replay_boot`]), builds the engines from the snapshots and replays
+//! the op log past them, saving rows of its own, and sets the marker when that
+//! replay has finished.
 //!
 //! ## Who saves a row
 //!
@@ -126,13 +133,89 @@ pub async fn write_engines<T>(
     (written, saved)
 }
 
-/// Delete every row: the ones an earlier process saved, which the engines boot
-/// is about to build from snapshots and the op log do not hold.
+/// `app_settings` key of the [`boots_from_saved_rows`] marker.
+const BOOTS_FROM_SAVED_ROWS_KEY: &str = "loro.boots_from_saved_rows";
+
+/// Whether every engine write that committed is in a saved row, so that boot
+/// builds the engines from the rows alone.
+///
+/// Absent on a vault no boot of this build has finished recovering, and while
+/// a local op is in the op log and in no engine: during a replay boot, and
+/// while boot writes back a draft, whose op commits before its engine apply.
+pub async fn boots_from_saved_rows(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM app_settings WHERE key = ?) AS "set!: bool""#,
+        BOOTS_FROM_SAVED_ROWS_KEY,
+    )
+    .fetch_one(pool)
+    .await
+}
+
+/// Set or clear the [`boots_from_saved_rows`] marker.
+pub async fn set_boots_from_saved_rows(pool: &SqlitePool, set: bool) -> Result<(), sqlx::Error> {
+    if set {
+        let now = agaric_store::db::now_ms();
+        sqlx::query!(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, '1', ?)",
+            BOOTS_FROM_SAVED_ROWS_KEY,
+            now,
+        )
+        .execute(pool)
+        .await?;
+    } else {
+        sqlx::query!(
+            "DELETE FROM app_settings WHERE key = ?",
+            BOOTS_FROM_SAVED_ROWS_KEY,
+        )
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Begin a boot that builds the engines from the snapshots and the op log:
+/// clear the [`boots_from_saved_rows`] marker and delete every row, in one
+/// transaction. The rows do not describe those engines, since a replayed op
+/// is a new engine write under the op ids a row already holds; what the replay
+/// writes saves rows of its own.
+pub async fn start_replay_boot(pool: &SqlitePool) -> Result<(), AppError> {
+    // allow-raw-tx: engine persistence (`loro_doc_delta`, its marker); no op_log write.
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "loro_start_replay_boot").await?;
+    sqlx::query!(
+        "DELETE FROM app_settings WHERE key = ?",
+        BOOTS_FROM_SAVED_ROWS_KEY,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!("DELETE FROM loro_doc_delta")
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx.commit().await?)
+}
+
+/// Delete every row, for a test fixture whose materializer wrote engines the
+/// test does not keep.
+#[cfg(any(test, feature = "test-util"))]
 pub async fn clear_deltas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query!("DELETE FROM loro_doc_delta")
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Every row's bytes by space, each space's in `id` order: what boot imports
+/// after the space's snapshot.
+pub(crate) async fn load_deltas(
+    pool: &SqlitePool,
+) -> Result<std::collections::HashMap<String, Vec<Vec<u8>>>, sqlx::Error> {
+    let mut by_space = std::collections::HashMap::<String, Vec<Vec<u8>>>::new();
+    for row in sqlx::query!("SELECT space_id, bytes FROM loro_doc_delta ORDER BY id")
+        .fetch_all(pool)
+        .await?
+    {
+        by_space.entry(row.space_id).or_default().push(row.bytes);
+    }
+    Ok(by_space)
 }
 
 /// The highest `loro_doc_delta.id`, 0 for an empty table. A snapshot pass
