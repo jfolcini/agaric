@@ -613,6 +613,10 @@ pub use attachments::{AttachmentFields, EngineAttachment};
 /// `count_alive_blocks`).
 mod reads;
 
+/// What a remote purge must not take (#6561).
+mod keep;
+pub use keep::KeptLocalText;
+
 /// Snapshot import/export I/O and the legacy-v1 rejection (#332).
 mod snapshot;
 /// #2036: how the caller should refresh the inherited-tag cache after an import.
