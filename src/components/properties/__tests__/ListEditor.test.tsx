@@ -248,6 +248,17 @@ describe('ListEditor', () => {
     )
   })
 
+  it('marks a list only when an item does not fit the definition', () => {
+    const unfitMark = (value: string) =>
+      screen.queryByRole('button', { name: t('property.unfitReview', { key: 'Tags', value }) })
+    const { unmount } = renderList(listDef('select', '["red","green"]'), ['red', 'green'])
+    expect(unfitMark('red, green')).not.toBeInTheDocument()
+    unmount()
+
+    renderList(listDef('select', '["red","green"]'), ['red', 'blue'])
+    expect(unfitMark('red, blue')).toBeInTheDocument()
+  })
+
   it('has no a11y violations', async () => {
     const { container } = renderList(listDef('select', '["red","green"]'), ['red'])
     await waitFor(async () => {

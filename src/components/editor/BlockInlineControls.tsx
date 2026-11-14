@@ -335,8 +335,7 @@ function InlineProperties({
             onEditKey={onEditKey}
             onNavigate={onNavigate}
             onShowProperties={onShowProperties}
-            // A list's fit is its items' (#6741), which this one-value check cannot read.
-            unfit={p.kind !== 'list' && isUnfit(p.key, p.kind ?? 'text', p.value, def)}
+            unfit={isUnfit(p.key, p.kind ?? 'text', p.value, def, p.items ?? null)}
             refItems={def?.value_type === 'ref'}
           />
         )

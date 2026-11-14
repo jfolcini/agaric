@@ -92,7 +92,7 @@ export function PropertyRowEditor({
     forceSaveOnBlur,
   })
   const valueLabel = t('pageProperty.valueLabel', { key: prop.key })
-  const unfit = isUnfit(prop.key, valueForm(prop), prop.value_text, def)
+  const unfit = isUnfit(prop.key, valueForm(prop), prop.value_text, def, prop.value_list ?? null)
   const refTitle = useRefTitle(prop.value_ref)
 
   return (
