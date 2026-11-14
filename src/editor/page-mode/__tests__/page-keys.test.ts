@@ -387,3 +387,40 @@ describe('a key on a chip in the text', () => {
     }
   })
 })
+
+describe('a caret the DOM moved since ProseMirror last read it', () => {
+  /** `two` with ProseMirror's caret at its end and the DOM's after the `t`, as right after a caret key. */
+  function caretMovedInTheDom(): Editor {
+    const ed = build([[A, 0, 'two']])
+    document.body.append(ed.options.element as HTMLElement)
+    ed.view.dom.focus()
+    caret(ed, 0, 3)
+    const { node, offset } = ed.view.domAtPos(posIn(ed, 0, 1))
+    // jsdom sends `selectionchange` inside `collapse`; a browser sends it a task later.
+    const hold = (event: Event) => event.stopImmediatePropagation()
+    window.addEventListener('selectionchange', hold, true)
+    document.getSelection()?.collapse(node, offset)
+    window.removeEventListener('selectionchange', hold, true)
+    return ed
+  }
+
+  afterEach(() => {
+    ;(editor?.options.element as HTMLElement | undefined)?.remove()
+  })
+
+  it('Enter splits at the DOM caret', () => {
+    const ed = caretMovedInTheDom()
+
+    fireEvent.keyDown(ed.view.dom, { key: 'Enter' })
+
+    expect(rowsOf(ed.state.doc).map(([, , text]) => text)).toEqual(['t', 'wo'])
+  })
+
+  it('a key of an IME composition leaves the DOM caret unread', () => {
+    const ed = caretMovedInTheDom()
+
+    fireEvent.keyDown(ed.view.dom, { key: 'Process', keyCode: 229 })
+
+    expect(ed.state.selection.from).toBe(posIn(ed, 0, 3))
+  })
+})
