@@ -13,6 +13,7 @@ import { isEscapableChar } from '@/editor/markdown-parse/parser'
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
+import { resolveNamedDate } from '@/lib/search-query/resolve-date'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import {
   buildPageMetaRow,
@@ -24,6 +25,7 @@ import {
   assertQueryFilterLeaves,
   metaRowMatchesExpr,
   metaRowMatchesFilter,
+  pagesCacheTitle,
   pageRequestLimit,
   blockLastEditedAt,
   type PageMetaRow,
@@ -1465,12 +1467,7 @@ function searchInferPropertyValue(raw: string): Record<string, unknown> {
  * `DatePredicate` shape {@link metaRowMatchesFilter}'s `DueDate` / `Scheduled`
  * arms read. `null` for an absent filter (no primitive emitted).
  *
- * `today` is the LOCAL date — `chrono::Local::now().date_naive()`
- * (`src-tauri/agaric-store/src/fts/metadata_filter.rs:149`) — so the ISO strings are built from
- * `getFullYear` / `getMonth` / `getDate` and never from `toISOString`, which
- * would shift the day by one either side of UTC for most of the world.
- *
- * Weeks are Mon..Sun (`resolve_named_range`'s own note, `:261-262`).
+ * A bucket goes through {@link resolveNamedDate}, the resolver a query block uses.
  *
  * An unknown bucket keyword resolves to `null` here where the backend raises
  * `InvalidDateFilter`; see {@link searchMetadataPrimitives} on the two
@@ -1503,70 +1500,7 @@ function searchResolveDateFilter(raw: unknown): Record<string, unknown> | null {
       }
     }
   }
-  const today = new Date()
-  const iso = (d: Date): string =>
-    `${String(d.getFullYear()).padStart(4, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  const shifted = (days: number): Date => {
-    const d = new Date(today)
-    d.setDate(d.getDate() + days)
-    return d
-  }
-  // `Weekday::num_days_from_monday()` — JS weeks start on Sunday, so rotate.
-  const mondayOffset = -((today.getDay() + 6) % 7)
-  const between = (from: Date, to: Date): Record<string, unknown> => ({
-    type: 'Between',
-    from: iso(from),
-    to: iso(to),
-  })
-  switch (df['named'] as string) {
-    case 'none': {
-      return { type: 'IsNull' }
-    }
-    case 'today': {
-      return between(today, today)
-    }
-    case 'yesterday': {
-      return between(shifted(-1), shifted(-1))
-    }
-    case 'overdue': {
-      return { type: 'Before', date: iso(today) }
-    }
-    case 'older': {
-      // The 30-day window `resolve_named_range` spells out (`:283-290`).
-      return { type: 'Before', date: iso(shifted(-30)) }
-    }
-    case 'this-week': {
-      return between(shifted(mondayOffset), shifted(mondayOffset + 6))
-    }
-    case 'next-week': {
-      return between(shifted(mondayOffset + 7), shifted(mondayOffset + 13))
-    }
-    case 'this-month': {
-      const first = new Date(today.getFullYear(), today.getMonth(), 1)
-      // First of next month minus a day — `resolve_named_range`'s own recipe.
-      const last = new Date(today.getFullYear(), today.getMonth() + 1, 0)
-      return between(first, last)
-    }
-    default: {
-      return null
-    }
-  }
-}
-
-/**
- * The `pages_cache` title a page-name glob resolves against, or `null` when
- * the owning page has no row there.
- *
- * `rebuild_pages_cache` populates it from `block_type = 'page' AND deleted_at
- * IS NULL AND content IS NOT NULL` (`agaric-store/src/cache/pages.rs:34-41`),
- * so all three predicates gate the lookup — a soft-deleted or content-less
- * page is absent from the cache and its blocks satisfy neither half of the
- * `IN` / `NOT IN` pair by membership.
- */
-function searchPagesCacheTitle(pageId: string): string | null {
-  const page = blocks.get(pageId)
-  if (!page || page['block_type'] !== 'page' || page['deleted_at']) return null
-  return (page['content'] as string | null) ?? null
+  return resolveNamedDate(df['named'] as string, new Date())
 }
 
 /**
@@ -1653,7 +1587,7 @@ function searchStructuralCandidates(
       // to a CHECK constraint.)
       const pageId = (b['page_id'] as string | null) ?? null
       if (pageId === null) return false
-      const title = searchPagesCacheTitle(pageId)
+      const title = pagesCacheTitle(pageId)
       if (includeGlobs.length > 0) {
         if (title === null) return false
         if (!includeGlobs.some((p) => pageGlobFilterMatches(p, title, false))) return false

@@ -2452,6 +2452,11 @@ export type FilterPrimitive =
  *  `Tag` is attached-only.
  */
 { type: "TagOrRef"; tag: string } | 
+/**
+ *  Block carries `tag` attached, written inline, or inherited from an
+ *  ancestor: the search syntax's `under:`.
+ */
+{ type: "TagUnder"; tag: string } | 
 /**  Shared — block's `parent_id` equals `parent` (its direct children). */
 { type: "ChildOf"; parent: string } | 
 /**

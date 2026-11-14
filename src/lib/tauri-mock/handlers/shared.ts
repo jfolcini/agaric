@@ -31,6 +31,7 @@ import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
+import { inheritedTagIds } from '@/lib/tauri-mock/handlers/tags'
 import { definitionSpaceOf, linksTo, ownerSpaceOf } from '@/lib/tauri-mock/link-index'
 import { type MockLinkEdge, linkTokenRe, scanLinkTargets } from '@/lib/tauri-mock/link-scan'
 import { pageNameHolder, pageNameRefusal } from '@/lib/tauri-mock/page-names'
@@ -807,6 +808,22 @@ export function titleSortKey(title: string): string {
 }
 
 /**
+ * The `pages_cache` title a page-name glob resolves against, or `null` when
+ * the owning page has no row there.
+ *
+ * `rebuild_pages_cache` populates it from `block_type = 'page' AND deleted_at
+ * IS NULL AND content IS NOT NULL` (`agaric-store/src/cache/pages.rs:34-41`),
+ * so all three predicates gate the lookup — a soft-deleted or content-less
+ * page is absent from the cache and its blocks satisfy neither half of the
+ * `IN` / `NOT IN` pair by membership.
+ */
+export function pagesCacheTitle(pageId: string): string | null {
+  const page = blocks.get(pageId)
+  if (!page || page['block_type'] !== 'page' || page['deleted_at']) return null
+  return (page['content'] as string | null) ?? null
+}
+
+/**
  * Does a page row satisfy one compound-filter primitive? Each arm mirrors the
  * SQL its primitive compiles to (`src-tauri/agaric-store/src/filters/primitive.rs`,
  * `query/projection.rs`). Callers refuse their surface's off-limits leaves first,
@@ -837,6 +854,11 @@ export function metaRowMatchesFilter(
     case 'TagOrRef': {
       // Ref-inclusive: attached `block_tags` ∪ inline `block_tag_refs`.
       return refInclusiveTags(r.id).has(f['tag'] as string)
+    }
+    case 'TagUnder': {
+      // `tag_leaf_subquery_body(true)`: attached, inline, or inherited.
+      const tag = f['tag'] as string
+      return refInclusiveTags(r.id).has(tag) || inheritedTagIds(r.id).includes(tag)
     }
     case 'LinksTo': {
       // An outbound `block_links` edge to `target` (`compile_links_to`).
@@ -871,11 +893,13 @@ export function metaRowMatchesFilter(
     case 'PathGlob': {
       // SQLite-`GLOB` dialect parity (#1910): brace expansion, `[class]`
       // ranges, validation and ASCII-only folding — see `pageGlobFilterMatches`.
-      return pageGlobFilterMatches(
-        (f['pattern'] as string) ?? '',
-        r.content ?? '',
-        (f['exclude'] as boolean) ?? false,
-      )
+      // On the title of the row's page (`page_id IN (SELECT … pages_cache)`), which
+      // for a page row is its own. A page absent from the cache is in no set.
+      const exclude = (f['exclude'] as boolean) ?? false
+      if (r.pageId === null) return false
+      const title = pagesCacheTitle(r.pageId)
+      if (title === null) return exclude
+      return pageGlobFilterMatches((f['pattern'] as string) ?? '', title, exclude)
     }
     case 'HasProperty': {
       return hasPropertyMatches(r, f)
@@ -1106,6 +1130,7 @@ function unknownFilterNode(expr: Record<string, unknown>): unknown {
 const QUERY_PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
   'Tag',
   'TagOrRef',
+  'TagUnder',
   'PathGlob',
   'HasProperty',
   'LastEdited',

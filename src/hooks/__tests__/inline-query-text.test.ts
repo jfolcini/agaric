@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core'
 import fc from 'fast-check'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { astFilterParams } from '@/components/SearchPanel/searchFilterParams'
 import {
   dispatchQuery,
   fetchRichInlineQuery,
@@ -19,11 +20,14 @@ import {
 } from '@/hooks/useQueryExecution'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { formatDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { resolveLegacyQueryToFilterExpr } from '@/lib/inline-query-resolve'
 import { decodeInlineQueryPayload, encodeInlineQueryPayload } from '@/lib/inline-query-spec'
+import { searchBlocks } from '@/lib/ipc-helpers'
 import { isLegacyQueryText } from '@/lib/query-text'
 import { parseQueryExpression } from '@/lib/query-utils'
+import { astToFilterProjection, parse } from '@/lib/search-query'
 import { requireActiveScope } from '@/lib/space-scope'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
@@ -148,6 +152,54 @@ describe('a query block in the search syntax', () => {
     )
     const sent = vi.mocked(invoke).mock.calls.map(([cmd]) => cmd)
     expect(sent).toEqual(['list_all_tags_in_space'])
+  })
+
+  // The same text through the search box's own request (`astFilterParams` → `searchBlocks`).
+  async function searchIds(text: string): Promise<string[]> {
+    const ast = parse(text)
+    const projection = astToFilterProjection(ast)
+    const tags = unwrap(await commands.listAllTagsInSpace(requireActiveScope(SPACE)))
+    const tagIds = projection.tagNames.flatMap(
+      (name) => tags.find((tag) => tag.name === name)?.tag_id ?? [],
+    )
+    const res = await searchBlocks({
+      query: ast.freeText,
+      ...astFilterParams(projection, tagIds),
+      spaceId: SPACE,
+    })
+    return res.items.map((b) => b.id).toSorted()
+  }
+
+  describe('runs what it refused before #6742, as the search box runs it', () => {
+    const OTHER = id('OTHER')
+    const C1 = id('C1') // under B1, so it inherits work; due today
+    const O1 = id('O1') // on the other page, TODO, due long ago
+
+    beforeEach(() => {
+      blocks.set(OTHER, { ...makeBlock(OTHER, 'page', 'Journal Notes', null, 2), space_id: SPACE })
+      const c1 = makeBlock(C1, 'text', 'weekly review', B1, 1)
+      blocks.set(C1, { ...c1, page_id: PAGE, due_date: formatDate(new Date()) })
+      const o1 = makeBlock(O1, 'text', 'review the block list', OTHER, 1)
+      blocks.set(O1, { ...o1, page_id: OTHER, todo_state: 'TODO', due_date: '2020-01-10' })
+    })
+
+    it.each([
+      ['path:journal', [O1, OTHER]],
+      ['not-path:journal state:TODO', [B1, B7]],
+      ['path:journal path:Page priority:1', [B1]],
+      ['under:#work', [B1, B3, B7, C1]],
+      ['under:#work review', [C1]],
+      ['review', [C1, O1]],
+      ['state:TODO review', [O1]],
+      ['due:today', [C1]],
+      ['due:this-week', [C1]],
+      ['due:this-month', [C1]],
+      ['due:overdue', [O1]],
+      ['due:older', [O1]],
+    ])('%s', async (text, expected) => {
+      expect(await ids(text)).toEqual(expected.toSorted())
+      expect(await searchIds(text)).toEqual(expected.toSorted())
+    })
   })
 
   it('refuses a block with no filter rather than listing every block', async () => {
@@ -319,14 +371,30 @@ describe('the search-syntax texts the repository holds', () => {
   // errors, naming what is wrong, and runs no query.
   it.each([
     ['todo:TODO', "unknown filter key 'todo:'"],
-    ['todo', t('query.text.freeText')],
-    ['status = "done"', t('query.text.freeText')],
-    ['(and [[page]] (task TODO))', t('query.text.freeText')],
     ['v2:!!!not-base64!!!', "unknown filter key 'v2:'"],
   ])('%j', async (text, message) => {
     expect(isLegacyQueryText(text)).toBe(false)
     const { sent, error } = await requests(resolveInlineQuery, text)
     expect(error).toContain(message)
     expect(sent).toEqual([])
+  })
+
+  // Words with no key errored too; since #6742 they are a search for those words.
+  it.each(['todo', 'status = "done"', '(and [[page]] (task TODO))'])('%j', async (text) => {
+    expect(isLegacyQueryText(text)).toBe(false)
+    const { sent } = await requests(resolveInlineQuery, text)
+    expect(sent).toEqual([
+      [
+        'run_advanced_query',
+        {
+          request: {
+            spaceId: SPACE,
+            filter: { type: 'And', children: [] },
+            limit: 50,
+            fulltext: text,
+          },
+        },
+      ],
+    ])
   })
 })

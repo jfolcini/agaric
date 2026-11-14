@@ -128,7 +128,9 @@ fn walk_refs<F: FnMut(RefKind, &mut String)>(expr: &mut FilterExpr, f: &mut F) {
 fn walk_primitive<F: FnMut(RefKind, &mut String)>(p: &mut FilterPrimitive, f: &mut F) {
     match p {
         // Tag identity fields carry a TAG ULID.
-        FilterPrimitive::Tag { tag } | FilterPrimitive::TagOrRef { tag } => f(RefKind::Tag, tag),
+        FilterPrimitive::Tag { tag }
+        | FilterPrimitive::TagOrRef { tag }
+        | FilterPrimitive::TagUnder { tag } => f(RefKind::Tag, tag),
         // Structural / relational fields carry a BLOCK ULID (a page, in the
         // common case) — routed through the page-title map.
         FilterPrimitive::ChildOf { parent } => f(RefKind::Page, parent),
@@ -284,6 +286,7 @@ fn describe_primitive(p: &FilterPrimitive, page_titles: &HashMap<String, String>
         FilterPrimitive::Tag { tag } | FilterPrimitive::TagOrRef { tag } => {
             format!("tag:{}", readable_ref(tag))
         }
+        FilterPrimitive::TagUnder { tag } => format!("under:{}", readable_ref(tag)),
         FilterPrimitive::ChildOf { parent } => format!("child-of:{}", readable_ref(parent)),
         FilterPrimitive::LinksTo { target } => format!("links-to:{}", readable_ref(target)),
         FilterPrimitive::LinkedFrom { source } => format!("linked-from:{}", readable_ref(source)),
