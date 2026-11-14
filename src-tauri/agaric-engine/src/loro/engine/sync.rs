@@ -46,6 +46,16 @@ impl LoroEngine {
             .export(ExportMode::updates(&vv))
             .map_err(|e| AppError::validation(format!("loro: export_update_since: {e}")))
     }
+    /// Whether the op log holds another peer's ops past `since_vv`: an import
+    /// landed after that version was read.
+    pub fn imported_since(&self, since_vv: &[u8]) -> Result<bool, AppError> {
+        let since = VersionVector::decode(since_vv)
+            .map_err(|e| AppError::validation(format!("loro: imported_since: decode vv: {e}")))?;
+        let own = self.doc.peer_id();
+        Ok(self.doc.oplog_vv().iter().any(|(peer, counter)| {
+            *peer != own && *counter > since.get(peer).copied().unwrap_or(0)
+        }))
+    }
     /// Run `write` and return, with its output, the Loro update it added to
     /// the op log: the `loro_doc_delta` row for an engine write made outside a
     /// rollback-armed transaction (#6521). `None` when it added nothing. A

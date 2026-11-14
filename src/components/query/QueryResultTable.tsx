@@ -7,8 +7,11 @@ import {
   QueryResultRowContent,
   useRefTitleResolver,
 } from '@/components/query/QueryResultRowContent'
+import { QueryTableCell } from '@/components/query/QueryTableCell'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import type { BlockRow } from '@/lib/bindings'
+import { useSpacePropertyDefs } from '@/hooks/useSpacePropertyDefs'
+import type { BlockRow, PropertyRow } from '@/lib/bindings'
+import { EXCLUDED_COLUMN_KEYS } from '@/lib/query-result-columns'
 import { handleBlockNavigation, resolveBlockDisplay } from '@/lib/query-result-utils'
 
 /** Column definition for table mode. */
@@ -42,6 +45,8 @@ export interface QueryResultTableProps {
   /** Per-block custom-property values (blockId → key → display value), used to
    * fill custom-property columns. Defaults to empty. */
   customProps?: Map<string, Map<string, string>> | undefined
+  /** Per-block property rows as stored, which a custom-property cell edits (#6743). */
+  propertyRows?: Record<string, PropertyRow[]> | undefined
   /**
    * #3315 item 3 — `true` when more pages of the result set remain unloaded.
    * The sort is client-side over `results` (see `useQuerySorting`, which has no
@@ -51,6 +56,28 @@ export interface QueryResultTableProps {
    * operation that cannot see rows 51+.
    */
   partial?: boolean | undefined
+}
+
+const DATE_COLUMNS: ReadonlySet<string> = new Set(['due_date', 'scheduled_date'])
+
+/** The cell's value as a property row: the block's own field, or its stored row. */
+function cellProperty(
+  block: BlockRow,
+  col: TableColumn,
+  propertyRows: Record<string, PropertyRow[]> | undefined,
+): PropertyRow {
+  const key = col.propKey ?? col.key
+  const empty: PropertyRow = {
+    key,
+    value_text: null,
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+    value_bool: null,
+  }
+  if (col.propKey) return propertyRows?.[block.id]?.find((row) => row.key === key) ?? empty
+  const value = block[col.key as keyof BlockRow] as string | null
+  return DATE_COLUMNS.has(key) ? { ...empty, value_date: value } : { ...empty, value_text: value }
 }
 
 export function QueryResultTable({
@@ -63,9 +90,12 @@ export function QueryResultTable({
   onNavigate,
   resolveBlockTitle,
   customProps,
+  propertyRows,
   partial = false,
 }: QueryResultTableProps): React.ReactElement {
   const { t } = useTranslation()
+  // A cell edits through its key's definition, so none does until they are read.
+  const defs = useSpacePropertyDefs()
   // #4719 — see `QueryResultList`: the cell's accessible name substitutes
   // inline references through the CHIP's resolver, so a caller that renders
   // this table without the optional `resolveBlockTitle` prop still names the
@@ -146,11 +176,17 @@ export function QueryResultTable({
                         )}
                       </button>
                     ) : (
-                      <span className="text-muted-foreground">
-                        {(col.propKey
-                          ? customProps?.get(block.id)?.get(col.propKey)
-                          : (block[col.key as keyof BlockRow] as string)) || '\u2014'}
-                      </span>
+                      <ValueCell
+                        block={block}
+                        col={col}
+                        display={
+                          (col.propKey
+                            ? customProps?.get(block.id)?.get(col.propKey)
+                            : (block[col.key as keyof BlockRow] as string)) || ''
+                        }
+                        prop={cellProperty(block, col, propertyRows)}
+                        defs={defs}
+                      />
                     )}
                   </td>
                 ))}
@@ -167,5 +203,34 @@ export function QueryResultTable({
         </tbody>
       </table>
     </ScrollArea>
+  )
+}
+
+/** A value cell: editable once the definitions are read, unless the app owns the key. */
+function ValueCell({
+  block,
+  col,
+  display,
+  prop,
+  defs,
+}: {
+  block: BlockRow
+  col: TableColumn
+  display: string
+  prop: PropertyRow
+  defs: ReturnType<typeof useSpacePropertyDefs>
+}): React.ReactElement {
+  // A named column can be any key; the app's own (`created_at`, `space`) are not the user's to set.
+  if (defs === undefined || (col.propKey !== undefined && EXCLUDED_COLUMN_KEYS.has(col.propKey))) {
+    return <span className="text-muted-foreground">{display || '\u2014'}</span>
+  }
+  return (
+    <QueryTableCell
+      block={block}
+      label={col.label}
+      prop={prop}
+      def={defs.get(prop.key)}
+      display={display}
+    />
   )
 }

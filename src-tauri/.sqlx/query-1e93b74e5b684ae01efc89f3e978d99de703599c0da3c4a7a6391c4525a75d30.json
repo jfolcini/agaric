@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS(\n               SELECT 1 FROM materializer_retry_queue\n               WHERE task_kind LIKE 'ApplyOp:%' OR task_kind LIKE 'ReplayApplyOp:%'\n           ) AS \"parked!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "parked!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1e93b74e5b684ae01efc89f3e978d99de703599c0da3c4a7a6391c4525a75d30"
+}

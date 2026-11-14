@@ -1,7 +1,12 @@
 //! C-2b: boot-time op-log replay for unmaterialized ops.
 //!
-//! On boot, walk `op_log WHERE seq > materialized_through_seq`, leave out the
-//! ops every saved engine already holds (#6521), and enqueue the rest in
+//! Runs on a boot that built its engines from the snapshots alone: the first
+//! after an update from a build that saved no engine rows, and any that cannot
+//! use the rows it has (#6521). A boot from saved rows applies no op and calls
+//! only `fan_out_ops_past_the_cursor`.
+//!
+//! Walk `op_log WHERE seq > materialized_through_seq`, leave out the
+//! ops every saved snapshot already holds (#6521), and enqueue the rest in
 //! chunks of at most `REPLAY_CHUNK_SIZE` as `ReplayApplyOps` tasks on the
 //! materializer's foreground queue. The materializer applies each
 //! chunk in one transaction, advancing the cursor with it (#5418). If the same
@@ -499,6 +504,56 @@ async fn fan_out_replayed_ops(
     Ok(dispatched)
 }
 
+/// [`fan_out_replayed_ops`], with a failure recorded in `report` and not
+/// propagated: the ops are applied, so a read failure here is stale indexes,
+/// not an aborted replay. `?` would reach `recover_at_boot` and surface the
+/// user-visible replay-failed banner for a replay that succeeded. The
+/// [`REPROJECT_DEGRADED_PREFIX`] marker is what keeps it a diagnostic (#3311),
+/// the same treatment the dense reproject gives its errors.
+async fn fan_out_or_record(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    from_seq: i64,
+    through_seq: i64,
+    report: &mut ReplayReport,
+) {
+    match fan_out_replayed_ops(pool, materializer, from_seq, through_seq).await {
+        Ok(fanned_out) => tracing::debug!(
+            fanned_out,
+            "replay: re-derived per-block index tasks for the ops past the cursor (#3298)"
+        ),
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "replay: could not walk the ops past the cursor to re-derive their per-block \
+                 indexes — they stay stale until each block is next edited (#3298)"
+            );
+            report
+                .replay_errors
+                .push(format!("{REPROJECT_DEGRADED_PREFIX}#3298 fan-out): {e}"));
+        }
+    }
+}
+
+/// What boot does with the ops past the cursor when the engines were built
+/// from their saved rows (#6521) and so hold every one of them: nothing is
+/// applied, and only the index fan-out a kill took with the queue is
+/// dispatched again (#3298). The cursor stays where the last snapshot pass
+/// left it; the next pass moves it once the queue has drained.
+pub(super) async fn fan_out_ops_past_the_cursor(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+) -> ReplayReport {
+    let mut report = ReplayReport::default();
+    match read_apply_cursor(pool).await {
+        Ok(cursor) => fan_out_or_record(pool, materializer, cursor, i64::MAX, &mut report).await,
+        Err(e) => report
+            .replay_errors
+            .push(format!("{REPROJECT_DEGRADED_PREFIX}#3298 fan-out): {e}")),
+    }
+    report
+}
+
 /// How the walked ops reach the materializer. Production chunks (#5418); the
 /// per-op shape it replaced stays as the oracle the chunked replay is
 /// compared against.
@@ -648,28 +703,7 @@ async fn replay_unmaterialized_ops_with(
     // AFTER the barrier and the reproject: a background task must see committed
     // `blocks` rows and final `position` ranks, the same ordering `dispatch_op`
     // documents.
-    // Recorded, not `?`-propagated: this runs after every op applied and the
-    // cursor advanced, so a read failure here is stale indexes, not an aborted
-    // replay. `?` would reach `recover_at_boot` and surface `ops_replayed: 0`
-    // plus the user-visible replay-failed banner for a replay that succeeded.
-    // The [`REPROJECT_DEGRADED_PREFIX`] marker is what keeps it a diagnostic
-    // (#3311), the same treatment the dense reproject above gives its errors.
-    match fan_out_replayed_ops(pool, materializer, cursor, last_seen).await {
-        Ok(fanned_out) => tracing::debug!(
-            fanned_out,
-            "replay: re-derived per-block index tasks for the replayed ops (#3298)"
-        ),
-        Err(e) => {
-            tracing::error!(
-                error = %e,
-                "replay: could not walk the replayed range to re-derive its per-block \
-                 indexes — they stay stale until each block is next edited (#3298)"
-            );
-            report
-                .replay_errors
-                .push(format!("{REPROJECT_DEGRADED_PREFIX}#3298 fan-out): {e}"));
-        }
-    }
+    fan_out_or_record(pool, materializer, cursor, last_seen, &mut report).await;
 
     tracing::info!(
         ops_replayed = report.ops_replayed,

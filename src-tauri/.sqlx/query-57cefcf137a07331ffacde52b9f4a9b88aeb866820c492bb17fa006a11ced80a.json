@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, '1', ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "57cefcf137a07331ffacde52b9f4a9b88aeb866820c492bb17fa006a11ced80a"
+}

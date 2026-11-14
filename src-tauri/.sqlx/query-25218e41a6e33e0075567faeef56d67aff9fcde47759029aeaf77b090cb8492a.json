@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM loro_doc_delta WHERE id = (SELECT id FROM loro_doc_delta ORDER BY id LIMIT 1 OFFSET 1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "25218e41a6e33e0075567faeef56d67aff9fcde47759029aeaf77b090cb8492a"
+}
