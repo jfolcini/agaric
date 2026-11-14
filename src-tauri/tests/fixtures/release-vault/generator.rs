@@ -303,8 +303,13 @@ async fn main() {
     // write, so it is set on the rows.
     v.mat.flush().await.unwrap();
     let saved =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pools.write, &v.mat).await;
-    assert!(saved >= 1, "the engine snapshot must be saved before the purge");
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pools.write, &v.mat)
+            .await
+            .saved;
+    assert!(
+        saved >= 1,
+        "the engine snapshot must be saved before the purge"
+    );
     let mut tx = v.pool.begin().await.unwrap();
     agaric_store::op_log::enable_op_log_mutation_bypass(&mut tx)
         .await
@@ -373,7 +378,9 @@ async fn main() {
     // `notes.db`.
     v.mat.flush().await.unwrap();
     let saved =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pools.write, &v.mat).await;
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pools.write, &v.mat)
+            .await
+            .saved;
     assert!(
         saved >= 2,
         "both spaces' engine snapshots must be saved, got {saved}"
