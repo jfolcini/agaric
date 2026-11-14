@@ -10,8 +10,9 @@
 //! # Recovery sequence
 //!
 //! 1. **C-2b — boot-time op-log replay.** Walks
-//!    `op_log WHERE seq > materializer_apply_cursor.materialized_through_seq`
-//!    and re-enqueues each row through the materializer foreground queue
+//!    `op_log WHERE seq > materializer_apply_cursor.materialized_through_seq`,
+//!    leaves out the ops every saved engine holds (#6521),
+//!    and re-enqueues each other row through the materializer foreground queue
 //!    so any ops dropped by a mid-flight crash or `fg_apply_dropped`
 //!    event get re-applied. Drains the foreground queue via a Barrier
 //!    before continuing so step 2 sees a fully-applied state.

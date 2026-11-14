@@ -380,7 +380,7 @@ fn is_write_contention(err: &AppError) -> bool {
 /// aborts the run. This is the same contract every other unattended loop
 /// in this domain already honours — `replay_unmaterialized_ops` logs and
 /// continues per op, `replay_sync_inbox` advances its cursor past poison
-/// slots, `save_all_engines` logs and continues per space — and it matters
+/// slots — and it matters
 /// most here because this is the only unattended disk-space-reclaiming
 /// path: a single bad root used to leave `blocks` growing monotonically
 /// with tombstones that were never reclaimed. On a batch error the run

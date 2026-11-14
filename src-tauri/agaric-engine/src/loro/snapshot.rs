@@ -21,9 +21,8 @@
 //!   `(space_id, snapshot)` pair.  Used by the eager-load boot pass
 //!   that rehydrates the registry without any synchronous-async glue
 //!   in `LoroEngineRegistry::for_space` (see decision note below).
-//! - [`save_all_engines`] — walk the registry, persist every dirty space.
-//!   Catches and logs per-space errors so one bad space never blocks the
-//!   others.
+//! - [`save_all_engines`] — walk the registry, persist every dirty space in
+//!   one transaction: all of them or none (#6521).
 //! - [`save_engines_and_advance_cursor`] — the pass the periodic, background,
 //!   exit, session-end, mobile-suspend and compaction triggers run: [`save_all_engines`],
 //!   then the apply cursor moves to what it persisted, so boot replays only the
@@ -59,9 +58,8 @@
 //!
 //! `load_snapshot` returns `Result<_, AppError>`.
 //! The periodic scheduler ([`save_all_engines`]) is the place that
-//! must NEVER abort the process: it catches per-space errors and
-//! logs `tracing::warn!`, mirroring the
-//! `flush_task::run_periodic_flush` failure pattern.
+//! must NEVER abort the process: a pass that fails logs `tracing::warn!`,
+//! writes nothing, and leaves its spaces dirty for the next one.
 
 use sqlx::SqlitePool;
 
@@ -104,22 +102,23 @@ fn now_ms() -> i64 {
 /// their commit and their engine write.
 ///
 /// Replicated rows never reach an engine through the op log. A read error
-/// degrades to 0, which claims nothing.
-async fn op_log_head(pool: &SqlitePool) -> i64 {
-    sqlx::query_scalar!(r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#)
-        .fetch_one(pool)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(0)
+/// fails the pass: a row stamped below what it holds is an op boot applies a
+/// second time (#6521).
+async fn op_log_head(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
+    let head = sqlx::query_scalar!(
+        r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(head.unwrap_or(0))
 }
 
 /// Write one `loro_doc_state` row, replacing any existing one for `space_id`.
 ///
 /// `op_count` resets to 0 on every save — the column is reserved for a future
 /// "snapshot every N ops" cadence and is unused by the time-driven scheduler.
-async fn write_snapshot_row(
-    pool: &SqlitePool,
+async fn write_snapshot_row<'e>(
+    db: impl sqlx::SqliteExecutor<'e>,
     space_id: &SpaceId,
     bytes: Vec<u8>,
     applied_through_seq: i64,
@@ -133,7 +132,7 @@ async fn write_snapshot_row(
     .bind(bytes)
     .bind(now_ms())
     .bind(applied_through_seq)
-    .execute(pool)
+    .execute(db)
     .await?;
     Ok(())
 }
@@ -247,21 +246,17 @@ static ONE_PASS_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_ne
 pub struct SavePass {
     /// Spaces whose snapshot was written.
     pub saved: usize,
-    /// The op-log head the pass read before collecting any engine, when every
-    /// dirty engine it collected was written: each op at or below it is then in
-    /// `loro_doc_state`. `None` when an export or a write failed, or the
-    /// registry was cleared mid-pass.
+    /// The op-log head the pass read before collecting any engine, when it
+    /// wrote its rows: each op at or below it is then in `loro_doc_state`.
+    /// `None` when it wrote nothing: the head read, an export or a write
+    /// failed, or the registry was cleared mid-pass.
     pub persisted_through: Option<i64>,
 }
 
-/// Walk the registry and persist every dirty engine's current snapshot.
-/// Per-space errors are logged + continued so one bad space never blocks the
-/// rest. Passes run one at a time, whoever starts them (#6521).
-///
-/// #3309 — the pass ALSO advances the `applied_through_seq` watermark of
-/// every space it did not re-encode (see `advance_clean_space_watermarks`
-/// below), so a quiescent space's row cannot pin the boot heal's
-/// `MIN(applied_through_seq)` rewind target forever.
+/// Walk the registry and persist every dirty engine's current snapshot, all
+/// of them or none ([`write_pass`]). A pass that fails is logged and leaves
+/// its spaces dirty for the next one. Passes run one at a time, whoever starts
+/// them (#6521).
 pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) -> SavePass {
     let _pass = ONE_PASS_AT_A_TIME.lock().await;
     // Issue #153 / #2205 / #2201 — `snapshot_dirty_engines` collects the
@@ -275,258 +270,111 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // see `LoroEngineRegistry::snapshot_dirty_engines` for the full
     // rationale and the (unchanged) cross-space consistency contract.
     //
-    // #2201 — only spaces mutated since their last successful persist are
-    // re-encoded; a clean space keeps its existing `loro_doc_state` row
-    // (still accurate for its unchanged engine, and backfilled by op-log /
-    // sync-inbox replay on boot regardless).
-    // #3309 — but its `applied_through_seq` watermark is NOT left frozen:
-    // see `advance_clean_space_watermarks` at the end of this function.
     // /C2: read the head BEFORE collecting any engine, so each export this
     // pass takes holds the ops at or below it (`op_log_head` lists the engine
-    // writes that land later). Rows are stamped with it: boot replays an op
-    // the stamp leaves out as a new write, over whatever a peer wrote to the
-    // same block since (#6521).
-    let applied_through_seq = op_log_head(pool).await;
-    // #607 review: capture the clear-generation BEFORE collecting doc
-    // handles. A `registry.clear()` + `loro_doc_state` wipe (the #4699-deleted
-    // RESET's shape) racing this pass would
-    // otherwise let us persist PRE-reset engine state into the freshly
-    // wiped table — the exact #779 resurrection this save exists to
-    // prevent. Re-checked before every write below.
-    let generation = registry.generation();
-    let pairs = registry.snapshot_dirty_engines();
-
-    let mut saved = 0usize;
-    // #3309 — every space this pass TOUCHED (persisted or failed). Spaces
-    // outside this set were clean at the dirty-set cut and are the ones
-    // whose watermark the tail of this function is allowed to advance.
-    let mut attempted: Vec<SpaceId> = Vec::with_capacity(pairs.len());
-    for (space_id, mark_stamp, bytes_result) in pairs {
-        attempted.push(space_id.clone());
-        if registry.generation() != generation {
+    // writes that land later). Rows are stamped with it.
+    let pass = async {
+        let applied_through_seq = op_log_head(pool).await?;
+        // #607 review: capture the clear-generation BEFORE collecting doc
+        // handles; `write_pass` checks it before it commits.
+        let generation = registry.generation();
+        let pairs = registry.snapshot_dirty_engines();
+        let written = write_pass(pool, registry, generation, pairs, applied_through_seq).await?;
+        Ok::<_, AppError>((written, applied_through_seq))
+    };
+    match pass.await {
+        Ok((written, applied_through_seq)) => {
+            // #2201 — a space re-marked since its export was collected carries
+            // a greater stamp, stays dirty and is persisted again next pass.
+            for (space_id, mark_stamp) in &written {
+                registry.clear_dirty_if_unchanged(space_id, *mark_stamp);
+            }
+            SavePass {
+                saved: written.len(),
+                persisted_through: Some(applied_through_seq),
+            }
+        }
+        Err(e) => {
             tracing::warn!(
-                space_id = %space_id,
-                "loro:save_all_engines: registry cleared mid-save (snapshot \
-                 RESET, #607); aborting — these handles predate the reset \
-                 and must not be persisted over the wiped loro_doc_state. \
-                 Dirty flags are left set (no per-space clear below), so the \
-                 post-reset engines re-persist on a later tick",
+                error = %e,
+                "loro:save_all_engines: the pass wrote nothing; its spaces stay dirty",
             );
-            return SavePass {
-                saved,
+            SavePass {
+                saved: 0,
                 persisted_through: None,
-            };
-        }
-        let bytes = match bytes_result {
-            Ok(b) => b,
-            Err(e) => {
-                // #2201 — export failed: this space's current state was NOT
-                // persisted, so LEAVE it dirty (skip the conditional clear)
-                // and let the next tick retry.
-                tracing::warn!(
-                    space_id = %space_id,
-                    error = %e,
-                    "loro:save_all_engines: export_snapshot failed; leaving space dirty",
-                );
-                continue;
-            }
-        };
-        match write_snapshot_row(pool, &space_id, bytes, applied_through_seq).await {
-            Ok(()) => {
-                // #2201 — persist succeeded: clear THIS space's dirty flag,
-                // but only if it was not re-marked since we captured
-                // `mark_stamp` (a racing `for_space` overwrote it with a
-                // strictly greater stamp and must be re-persisted next tick).
-                registry.clear_dirty_if_unchanged(&space_id, mark_stamp);
-                saved += 1;
-            }
-            Err(e) => {
-                // #2201 — INSERT failed: LEAVE the space dirty (skip the
-                // conditional clear) so the next tick retries it.
-                tracing::warn!(
-                    space_id = %space_id,
-                    error = %e,
-                    "loro:save_all_engines: INSERT OR REPLACE failed; leaving space dirty",
-                );
             }
         }
-    }
-
-    // #3309 — the watermark refresh for the spaces this pass did NOT
-    // re-encode. After a snapshot RESET the rows it would touch are exactly
-    // the ones that must not be trusted, so it must not run then.
-    //
-    // #4020 — that exclusion used to be delegated to the per-pair
-    // generation-check above ("the generation-guard `return ok` above skips
-    // it"). True only when the loop actually ran: with ZERO dirty spaces — the
-    // quiescent vault this whole #3309 mechanism exists for, and the case in
-    // which this tail does its only useful work — the loop body never executes
-    // and a RESET racing the pass met no guard at all. So the registry and the
-    // captured generation are threaded IN and re-checked there instead, which
-    // makes the exclusion a property of the function rather than of the
-    // caller's control flow.
-    advance_clean_space_watermarks(pool, applied_through_seq, &attempted, registry, generation)
-        .await;
-
-    SavePass {
-        saved,
-        persisted_through: (saved == attempted.len()).then_some(applied_through_seq),
     }
 }
 
-/// #3309 — advance `applied_through_seq` for every `loro_doc_state` row
-/// belonging to a space that was NOT touched by the enclosing
-/// [`save_all_engines`] pass.
+/// Write one pass's rows and move every other row's stamp up to the pass's,
+/// in one transaction (#6521). Returns the spaces written, each with the dirty
+/// stamp its export was collected under.
 ///
-/// ## Why this is needed
+/// Boot applies the local ops above the lowest stamp to every engine
+/// (`recovery::replay`), and an op applied to an engine that holds it is a new
+/// write, over whatever a peer wrote to the same block since. So no row may
+/// hold an op above another row's stamp: a pass that cannot write one space
+/// writes none, and a kill between two of its rows leaves none.
 ///
-/// Before #2201 every pass re-encoded every space, so every row's
-/// watermark tracked the apply cursor. Since #2201 only DIRTY spaces are
-/// re-encoded, and a space that was edited once and then went quiescent
-/// keeps its original row — including its original watermark — forever.
-/// `recovery::replay::heal_orphaned_apply_cursor` rewinds the global apply
-/// cursor to `MIN(applied_through_seq)` across all rows, so that one frozen
-/// watermark makes every subsequent boot re-drive the whole op-log tail
-/// through the foreground materializer before the UI comes up (and, once
-/// compaction has purged the head, fires the #619 under-rebuild `error!` on
-/// every healthy boot). Advancing the watermark here decouples the rewind
-/// target from the dirty-snapshot cadence at its source, without touching
-/// the (correct, conservative) `MIN` in the heal.
+/// ## The rows the pass did not write (#3309)
 ///
-/// ## Why it is sound
+/// Since #2201 only DIRTY spaces are re-encoded. A space that was edited once
+/// and then went quiescent would keep its first stamp forever, and
+/// `recovery::replay::heal_orphaned_apply_cursor` rewinds the apply cursor to
+/// the lowest one. A space outside `pairs` was clean at the collect, so its
+/// row equals its engine, and every row has an engine behind it: boot installs
+/// one for each row or stops (#6525), and a pass writes rows only for engines.
+/// That engine holds the local ops up to the pass's head, bar the writes
+/// [`op_log_head`] lists, so its stamp moves with the others.
 ///
-/// `applied_through_seq` claims only "this blob reflects every op with
-/// `seq <= watermark`". A row is advanced only when its space is absent from
-/// `attempted`, so it was clean at the dirty-set cut: its persisted blob
-/// equals its in-memory engine. Every row has an engine behind it, because
-/// boot installs one for each row or stops (#6525) and a pass writes rows only
-/// for engines.
-///
-/// The engine in turn reflects the ops up to the pass's op-log head, which is
-/// `applied_through_seq`, bar the engine writes that land after their op's
-/// commit (see [`op_log_head`]). This
-/// last premise holds for a rehydrated engine only AFTER
+/// This holds for a rehydrated engine only AFTER
 /// `recovery::boot::recover_at_boot` has run: between rehydration and the
-/// heal+replay, an engine reflects only its own row's watermark while the
-/// op log may be far ahead. Production ordering guarantees it —
-/// `lib.rs::run` calls `recover_and_bootstrap` BEFORE
-/// `spawn_background_tasks` starts the periodic pass, and the exit-time
-/// save runs later still — so no pass can observe that window. A future
-/// change that starts a snapshot pass before boot recovery would break
-/// this function's premise and the watermark every dirty row records.
+/// heal+replay, an engine reflects only its own row's stamp while the op log
+/// may be far ahead. Production ordering guarantees it — `lib.rs::run` calls
+/// `recover_and_bootstrap` BEFORE `spawn_background_tasks` starts the periodic
+/// pass, and the exit-time save runs later still — so no pass can observe that
+/// window. A future change that starts a snapshot pass before boot recovery
+/// would break this premise and the stamp every row records.
 ///
-/// Spaces in `attempted` are excluded because a dirty space whose export
-/// or INSERT FAILED still holds unpersisted mutations at seqs at or below
-/// the watermark — advancing its row would be a false claim, and would
-/// suppress exactly the boot rewind that heals it. (A dirty space that
-/// persisted successfully already had the current watermark written by the
-/// `INSERT OR REPLACE` above, so excluding it costs nothing.)
+/// `updated_at` is left alone: it records when the BLOB was written.
 ///
-/// `updated_at` is deliberately left alone: it records when the BLOB was
-/// written, and no blob is rewritten here.
+/// ## The generation check (#607, #4020, #2910)
 ///
-/// Errors are logged and swallowed — this is a best-effort optimisation of
-/// the next boot's rewind target, never a correctness requirement, and it
-/// must not turn into a reason for the surrounding snapshot pass to fail.
-/// Returns the number of rows advanced.
-///
-/// ## The generation guard (#4020)
-///
-/// `registry` + `generation` are the caller's pre-collect clear-generation
-/// capture (#607). Every premise above is a statement about the generation
-/// the enclosing pass observed, so either a `LoroEngineRegistry::clear`
-/// (test-only) or a [`LoroEngineRegistry::evict_space`] (a purged
-/// space's engine dropped mid-pass, #2910) landing in between invalidates
-/// all of them at once: `attempted` describes engines that may no longer
-/// exist, and the rows it would vouch for may belong to a wiped or shrunk
-/// table. This used to be inherited from
-/// [`save_all_engines`]' per-pair check, which does not run when the dirty set
-/// is EMPTY — the exact quiescent case this function was written for. Checking
-/// it here at entry makes the exclusion a property of this function rather
-/// than of the caller's control flow.
-///
-/// Neither cause was observably broken pre-#4020: a RESET wipes every
-/// `loro_doc_state` row inside its own transaction, and an eviction is
-/// preceded, in that SAME transaction, by the deletion of that one space's
-/// row (`purge_block_sql_cascade`, #2910) — so the UPDATEs matched zero
-/// rows for the affected space(s) either way. That is a property of the two
-/// callers' shapes, not of this function, and it is not the kind of thing to
-/// leave load-bearing. For the same reason the check is NOT repeated per
-/// UPDATE the way the enclosing loop repeats it around its
-/// `INSERT OR REPLACE`: that loop writes BLOBS, which a wiped or
-/// re-created row would resurrect, whereas every write here is an
-/// `UPDATE … WHERE space_id = ?` that matches nothing once the row backing
-/// it is gone.
-async fn advance_clean_space_watermarks(
+/// `generation` is the clear-generation the pass captured before its collect.
+/// A `LoroEngineRegistry::clear` (test-only) or an
+/// [`LoroEngineRegistry::evict_space`] (a purged space's engine dropped with
+/// its row) since then means `pairs` may hold an engine whose row is gone, and
+/// the rows may belong to a wiped or shrunk table: nothing is committed. It is
+/// checked once, last, so that it also covers a pass with no dirty space,
+/// which writes no row and still moves the stamps.
+async fn write_pass(
     pool: &SqlitePool,
-    applied_through_seq: i64,
-    attempted: &[SpaceId],
     registry: &LoroEngineRegistry,
     generation: u64,
-) -> usize {
-    if applied_through_seq <= 0 {
-        // Nothing can sit below 0 (`applied_through_seq` is
-        // `INTEGER NOT NULL DEFAULT 0`), so skip the read entirely.
-        return 0;
+    pairs: Vec<(SpaceId, u64, Result<Vec<u8>, AppError>)>,
+    applied_through_seq: i64,
+) -> Result<Vec<(SpaceId, u64)>, AppError> {
+    // allow-raw-tx: engine persistence (`loro_doc_state`); no op_log write.
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "loro_snapshot_pass").await?;
+    let mut written = Vec::with_capacity(pairs.len());
+    for (space_id, mark_stamp, bytes) in pairs {
+        write_snapshot_row(&mut *tx, &space_id, bytes?, applied_through_seq).await?;
+        written.push((space_id, mark_stamp));
     }
+    // `<` so a stamp is never walked back.
+    sqlx::query("UPDATE loro_doc_state SET applied_through_seq = ? WHERE applied_through_seq < ?")
+        .bind(applied_through_seq)
+        .bind(applied_through_seq)
+        .execute(&mut *tx)
+        .await?;
     if registry.generation() != generation {
-        tracing::warn!(
-            "loro:save_all_engines: registry generation changed before the clean-space \
-             watermark refresh (snapshot RESET or space eviction, #607/#4020/#2910); \
-             skipping it — the rows it would advance belong to a generation this pass \
-             no longer observes",
-        );
-        return 0;
+        return Err(AppError::Snapshot(
+            "the engine registry was cleared or a space evicted mid-pass (#607, #2910)".to_owned(),
+        ));
     }
-    let stale: Vec<(String,)> =
-        match sqlx::query_as("SELECT space_id FROM loro_doc_state WHERE applied_through_seq < ?")
-            .bind(applied_through_seq)
-            .fetch_all(pool)
-            .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "loro:save_all_engines: could not read stale snapshot watermarks (#3309)",
-                );
-                return 0;
-            }
-        };
-
-    let mut advanced = 0usize;
-    for (space_id,) in stale {
-        if attempted.iter().any(|s| s.as_str() == space_id) {
-            continue;
-        }
-        // Re-assert `applied_through_seq <` in the UPDATE so a concurrent
-        // persist that already wrote a HIGHER watermark is never walked back.
-        let res = sqlx::query(
-            "UPDATE loro_doc_state SET applied_through_seq = ? \
-             WHERE space_id = ? AND applied_through_seq < ?",
-        )
-        .bind(applied_through_seq)
-        .bind(&space_id)
-        .bind(applied_through_seq)
-        .execute(pool)
-        .await;
-        match res {
-            Ok(r) => advanced += usize::try_from(r.rows_affected()).unwrap_or(0),
-            Err(e) => tracing::warn!(
-                space_id = %space_id,
-                error = %e,
-                "loro:save_all_engines: watermark advance failed for a clean space (#3309)",
-            ),
-        }
-    }
-    if advanced > 0 {
-        tracing::debug!(
-            advanced,
-            applied_through_seq,
-            "loro:save_all_engines: refreshed the watermark of clean spaces (#3309)"
-        );
-    }
-    advanced
+    tx.commit().await?;
+    Ok(written)
 }
 
 /// One production snapshot pass (#5418): [`save_all_engines`], then the apply
@@ -538,9 +386,13 @@ async fn advance_clean_space_watermarks(
 /// its per-block index fan-out (FTS, links,
 /// tag refs; #3298), which lives in the background queue's memory until it
 /// runs. So the queue is drained before the cursor stops covering those ops.
-/// A pass that left a dirty engine unwritten moves nothing: a space whose
-/// first write failed has no row for the boot heal's `MIN(applied_through_seq)`
-/// to see, and only the old cursor still replays its ops.
+/// A pass that wrote nothing moves nothing: a space whose first write failed
+/// has no row for the boot heal's `MIN(applied_through_seq)` to see, and only
+/// the old cursor still replays its ops.
+///
+/// The rows are committed before the drain, so a kill during it, or a queue
+/// that cannot drain, leaves the cursor behind them. Boot reads the rows'
+/// stamp and applies only the ops above it (`recovery::replay`, #6521).
 ///
 /// Returns `save_all_engines`' [`SavePass`]: compaction reads its
 /// `persisted_through` before it deletes any op (#6518).
@@ -588,9 +440,9 @@ pub const SNAPSHOT_INTERVAL_SECS: u64 = 300;
 /// Every `interval_secs` it runs [`save_engines_and_advance_cursor`] over the
 /// materializer's engine registry, so the next boot rehydrates without
 /// replaying the full op-log. The task runs for
-/// the app's lifetime and stops once `shutdown` flips. Per-space errors
-/// are caught + logged inside [`save_all_engines`], so a transient
-/// SQL/Loro failure never crashes the app.
+/// the app's lifetime and stops once `shutdown` flips. A failed pass is
+/// logged inside [`save_all_engines`], so a transient SQL/Loro failure never
+/// crashes the app.
 /// `spawn` injects the async executor: the app passes
 /// `|fut| { tauri::async_runtime::spawn(fut); }` (so `agaric-engine` stays
 /// tauri-free), tests pass `|fut| { tokio::spawn(fut); }` (#2621, wave E1).
@@ -640,7 +492,7 @@ mod tests {
         space_id: &SpaceId,
         engine: &LoroEngine,
     ) -> Result<(), AppError> {
-        let applied_through_seq = op_log_head(pool).await;
+        let applied_through_seq = op_log_head(pool).await?;
         let bytes = engine.export_snapshot()?;
         write_snapshot_row(pool, space_id, bytes, applied_through_seq).await?;
         Ok(())
@@ -987,8 +839,7 @@ mod tests {
     /// Install a CLEAN engine for `space_id`, as boot rehydration does for
     /// every persisted space. `install_engine` does not mark the space
     /// dirty, so the registry state matches "persisted earlier, untouched
-    /// since" — the shape `advance_clean_space_watermarks` is allowed to
-    /// advance.
+    /// since" — the shape whose stamp a pass moves without writing its row.
     fn install_clean_engine(registry: &LoroEngineRegistry, space_id: &str) {
         registry.install_engine(
             SpaceId::from_trusted(space_id),
@@ -1092,21 +943,15 @@ mod tests {
         );
     }
 
-    /// #4020 — a snapshot RESET racing the pass must stop the clean-space
-    /// watermark refresh, and that exclusion must hold when the dirty set is
-    /// EMPTY.
+    /// #4020 — a snapshot RESET racing the pass must stop it from moving the
+    /// clean rows' stamps, and that must hold when the dirty set is EMPTY: the
+    /// quiescent vault, where moving them is all the pass does.
     ///
-    /// `save_all_engines` used to delegate it entirely to the per-pair
-    /// `registry.generation()` check inside its loop. With zero dirty spaces
-    /// — the quiescent vault this refresh exists for, and the only case in
-    /// which it does any work — that loop body never runs, so the tail met no
-    /// guard at all. The guard now lives at the top of the refresh itself.
-    ///
-    /// Driven against [`advance_clean_space_watermarks`] directly: the
-    /// generation is captured INSIDE `save_all_engines`, so a clear that lands
-    /// between the capture and the tail cannot be scheduled from the outside.
-    /// The matching positive direction — same shape, generation unchanged, row
-    /// advanced — is `save_all_engines_advances_watermark_of_quiescent_space_3309`.
+    /// Driven against [`write_pass`] directly: the generation is captured
+    /// INSIDE `save_all_engines`, so a clear that lands between the capture and
+    /// the write cannot be scheduled from the outside. The matching positive
+    /// direction — same shape, generation unchanged, row advanced — is
+    /// `save_all_engines_advances_watermark_of_quiescent_space_3309`.
     #[tokio::test]
     async fn clean_watermark_refresh_bails_when_the_registry_was_cleared_4020() {
         let (pool, _dir) = fresh_pool().await;
@@ -1118,10 +963,10 @@ mod tests {
         install_clean_engine(&registry, SPACE_B);
         assert_eq!(registry.dirty_count(), 0, "no dirty space in this pass");
 
-        // What `save_all_engines` captures before the (empty) loop.
+        // What `save_all_engines` captures before its collect.
         let generation = registry.generation();
 
-        // …and the RESET that lands before the tail runs.
+        // …and the RESET that lands before the write.
         registry.clear();
         assert_ne!(
             registry.generation(),
@@ -1129,12 +974,12 @@ mod tests {
             "clear() must bump the generation, or this test proves nothing"
         );
 
-        let advanced = advance_clean_space_watermarks(&pool, 499, &[], &registry, generation).await;
+        let pass = write_pass(&pool, &registry, generation, Vec::new(), 499).await;
 
-        assert_eq!(
-            advanced, 0,
-            "a refresh whose whole premise (`attempted`) describes engines the RESET \
-             destroyed must advance nothing (#607/#4020)"
+        assert!(
+            matches!(pass, Err(AppError::Snapshot(_))),
+            "a pass whose engines the RESET destroyed must write nothing \
+             (#607/#4020): {pass:?}"
         );
         assert_eq!(
             watermark_of(&pool, SPACE_B).await,
@@ -1144,76 +989,15 @@ mod tests {
         );
     }
 
-    /// #3309 — the other arm: a DIRTY space whose persist FAILED still holds
-    /// unpersisted mutations at seqs below the pass watermark, so its row
-    /// must NOT be advanced (advancing it would be a false claim and would
-    /// suppress the very boot rewind that heals it). The clean space in the
-    /// same pass is still advanced.
-    #[tokio::test]
-    async fn save_all_engines_does_not_advance_watermark_of_failed_dirty_space_3309() {
-        let (pool, _dir) = fresh_pool().await;
-        let registry = LoroEngineRegistry::new();
-        let space_a = SpaceId::from_trusted(SPACE_A);
-
-        seed_row(&pool, SPACE_A, 1).await;
-        seed_row(&pool, SPACE_B, 1).await;
-        install_clean_engine(&registry, SPACE_B);
-        seed_op_log_head(&pool, 500).await;
-
-        {
-            let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
-            g.engine_mut()
-                .apply_create_block("BLOCK_A", "content", "in A", None, 0)
-                .expect("create");
-        }
-        assert_eq!(registry.dirty_count(), 1, "A dirty after mutation");
-
-        // Force A's INSERT OR REPLACE to fail. Only the dirty space is
-        // INSERTed by the pass, so a blanket BEFORE INSERT abort poisons
-        // exactly A's write while leaving the clean-space UPDATE path alone.
-        sqlx::query(
-            "CREATE TRIGGER poison_loro_doc_state_insert \
-             BEFORE INSERT ON loro_doc_state \
-             BEGIN SELECT RAISE(ABORT, 'simulated persist failure'); END",
-        )
-        .execute(&pool)
-        .await
-        .expect("create poison trigger");
-
-        let n = save_all_engines(&pool, &registry).await.saved;
-        assert_eq!(n, 0, "A's persist failed, so no space is counted persisted");
-        assert_eq!(
-            registry.dirty_count(),
-            1,
-            "a failed persist leaves the space dirty (#2201)"
-        );
-
-        assert_eq!(
-            watermark_of(&pool, SPACE_A).await,
-            1,
-            "a dirty space whose persist FAILED must keep its old watermark — its \
-             engine holds mutations the blob does not reflect (#3309)"
-        );
-        assert_eq!(
-            watermark_of(&pool, SPACE_B).await,
-            500,
-            "the clean space is still advanced in the same pass (#3309)"
-        );
-    }
-
-    /// #3309 — the same exclusion, but with MORE THAN ONE space attempted in
-    /// the pass. This is the case the single-attempt test above cannot
-    /// distinguish: with exactly one entry in `attempted`,
-    /// `attempted.iter().any(eq)` and `attempted.iter().all(eq)` agree, so a
-    /// membership test degraded to `all` survives it — and `all` advances the
-    /// watermark of a dirty space whose persist FAILED, which is exactly the
-    /// silent-data-loss claim (`the blob reflects every op <= watermark`) the
-    /// exclusion exists to prevent.
+    /// #6521 — a pass that cannot write one space writes none. Boot replays
+    /// the ops above the lowest stamp onto every engine, so a row left holding
+    /// ops above another row's stamp gets them a second time, as new writes
+    /// over whatever a peer wrote since.
     ///
-    /// Two dirty spaces (A fails, B succeeds) plus one quiescent space (C).
-    /// The poison trigger is keyed on A's `space_id` so B's write still lands.
+    /// Two dirty spaces and one quiescent space (C). The trigger refuses the
+    /// second row of the pass, whichever space the pass writes first.
     #[tokio::test]
-    async fn failed_dirty_space_keeps_watermark_when_several_spaces_attempted_3309() {
+    async fn a_pass_that_cannot_write_one_space_writes_none_6521() {
         const SPACE_C: &str = "01D0Z9Z0Z9Z0Z9Z0Z9Z0Z9Z0Z9";
 
         let (pool, _dir) = fresh_pool().await;
@@ -1235,42 +1019,123 @@ mod tests {
         }
         assert_eq!(registry.dirty_count(), 2, "A and B are both dirty");
 
-        // Poison ONLY A's write, so the pass attempts two spaces and persists
-        // exactly one of them.
-        // NOTE: `CREATE TRIGGER` is DDL — SQLite does not accept bind
-        // parameters inside it, so A's id is spelled out in the literal. The
-        // assert keeps it in lockstep with `SPACE_A`.
-        assert_eq!(SPACE_A, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
         sqlx::query(
-            "CREATE TRIGGER poison_loro_doc_state_insert_a \
+            "CREATE TRIGGER poison_the_second_row_of_a_pass \
              BEFORE INSERT ON loro_doc_state \
-             WHEN NEW.space_id = '01ARZ3NDEKTSV4RRFFQ69G5FAV' \
+             WHEN EXISTS (SELECT 1 FROM loro_doc_state WHERE applied_through_seq = 500) \
              BEGIN SELECT RAISE(ABORT, 'simulated persist failure'); END",
         )
         .execute(&pool)
         .await
         .expect("create poison trigger");
 
-        let n = save_all_engines(&pool, &registry).await.saved;
-        assert_eq!(n, 1, "only B persisted; A's INSERT was aborted");
+        let pass = save_all_engines(&pool, &registry).await;
+        assert_eq!(
+            (pass.saved, pass.persisted_through),
+            (0, None),
+            "the pass saved nothing"
+        );
+        for space in [SPACE_A, SPACE_B, SPACE_C] {
+            assert_eq!(
+                watermark_of(&pool, space).await,
+                1,
+                "no row may move past another's stamp: {space}"
+            );
+        }
+        for space in [SPACE_A, SPACE_B] {
+            let blob: Vec<u8> =
+                sqlx::query_scalar("SELECT snapshot FROM loro_doc_state WHERE space_id = ?")
+                    .bind(space)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("blob");
+            assert_eq!(blob, vec![0u8], "the row is the one it had: {space}");
+        }
+        assert_eq!(registry.dirty_count(), 2, "and both spaces stay dirty");
+
+        sqlx::query("DROP TRIGGER poison_the_second_row_of_a_pass")
+            .execute(&pool)
+            .await
+            .expect("drop poison trigger");
+        let pass = save_all_engines(&pool, &registry).await;
+        assert_eq!(
+            (pass.saved, pass.persisted_through),
+            (2, Some(500)),
+            "the next pass writes both"
+        );
+        for space in [SPACE_A, SPACE_B, SPACE_C] {
+            assert_eq!(
+                watermark_of(&pool, space).await,
+                500,
+                "every row carries the pass's stamp: {space}"
+            );
+        }
+    }
+
+    /// #6521 — and so does a pass with an export that failed, whichever row
+    /// comes first.
+    #[tokio::test]
+    async fn a_pass_with_a_failed_export_writes_none_6521() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let exported = LoroEngine::with_peer_id("device-1")
+            .expect("engine")
+            .export_snapshot()
+            .expect("export");
+        let pairs = vec![
+            (SpaceId::from_trusted(SPACE_A), 1, Ok(exported)),
+            (
+                SpaceId::from_trusted(SPACE_B),
+                2,
+                Err(AppError::validation("simulated export failure".to_owned())),
+            ),
+        ];
+
+        let pass = write_pass(&pool, &registry, registry.generation(), pairs, 500).await;
+
+        assert!(pass.is_err(), "the pass fails: {pass:?}");
+        assert!(
+            load_snapshot(&pool, &SpaceId::from_trusted(SPACE_A))
+                .await
+                .expect("load")
+                .is_none(),
+            "the row written before the failed export is not kept"
+        );
+    }
+
+    /// #6521 — a pass that cannot read the op-log head writes nothing: a row
+    /// stamped below what it holds is an op boot applies a second time.
+    #[tokio::test]
+    async fn a_pass_that_cannot_read_the_head_writes_nothing_6521() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+        registry
+            .for_space(&space_a, "device-1")
+            .expect("for_space")
+            .engine_mut()
+            .apply_create_block("BLOCK_A", "content", "in A", None, 0)
+            .expect("create");
+        sqlx::query("DROP TABLE op_log")
+            .execute(&pool)
+            .await
+            .expect("drop table");
+
+        let pass = save_all_engines(&pool, &registry).await;
 
         assert_eq!(
-            watermark_of(&pool, SPACE_A).await,
-            1,
-            "the FAILED dirty space must keep its old watermark even when other \
-             spaces were attempted in the same pass — advancing it would claim \
-             its stale blob reflects ops it does not hold (#3309)"
+            (pass.saved, pass.persisted_through),
+            (0, None),
+            "the pass saved nothing"
         );
-        assert_eq!(
-            watermark_of(&pool, SPACE_B).await,
-            500,
-            "the successfully persisted space records the pass watermark"
+        assert!(
+            load_snapshot(&pool, &space_a)
+                .await
+                .expect("load")
+                .is_none(),
+            "no row carries a stamp the pass did not read"
         );
-        assert_eq!(
-            watermark_of(&pool, SPACE_C).await,
-            500,
-            "the quiescent space is still advanced (#3309)"
-        );
+        assert_eq!(registry.dirty_count(), 1, "and the space stays dirty");
     }
 
     /// #2201 — a per-space persist FAILURE leaves that space dirty so the

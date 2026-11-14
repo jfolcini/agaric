@@ -162,13 +162,13 @@ pub struct LoroEngineRegistry {
     /// [`evict_space`](Self::evict_space).
     ///
     /// `save_all_engines` collects O(1) doc handles, drops the registry
-    /// lock, then persists each export with its own awaited INSERT. A
+    /// lock, then persists the exports in one transaction. A
     /// drop of an engine whose `loro_doc_state` row was deleted with it that
     /// lands inside that collect→write span would otherwise let the saver
     /// re-persist the dropped engine's state into the deleted row (the #779
     /// resurrection, via the periodic tick or the `RunEvent::Exit` save). The
     /// saver captures this generation before collecting handles and re-checks
-    /// it before every write — a mismatch means the handles predate the drop
+    /// it before it commits — a mismatch means the handles predate the drop
     /// and must not be persisted.
     generation: AtomicU64,
     /// #792 — the Loro peer-id epoch every lazily-created engine derives
@@ -283,8 +283,8 @@ impl LoroEngineRegistry {
     /// this is what makes a mutation racing the persist non-droppable
     /// (invariant: no dirty flag is cleared without the persisted bytes
     /// reflecting that space's current mark). Called by
-    /// [`crate::loro::snapshot::save_all_engines`] after each successful
-    /// per-space INSERT.
+    /// [`crate::loro::snapshot::save_all_engines`] once its rows are
+    /// committed.
     pub fn clear_dirty_if_unchanged(&self, space_id: &SpaceId, stamp: u64) {
         let mut dirty = self.dirty.stamps.lock();
         if dirty.get(space_id) == Some(&stamp) {
@@ -613,7 +613,7 @@ impl LoroEngineRegistry {
     /// get-or-insert is atomic under the map lock and only creates
     /// FRESH engines), and the generation bump below happens while the
     /// map lock is held, so `save_all_engines`' pre-collect generation
-    /// capture vs. re-check-per-write protocol still detects any clear
+    /// capture vs. re-check-before-commit protocol still detects any clear
     /// that lands after its handle collection.
     #[cfg(any(test, feature = "test-util"))]
     pub fn clear(&self) {
@@ -660,7 +660,7 @@ impl LoroEngineRegistry {
     /// * bumps the clear-generation (ONLY when an entry was actually removed, so
     ///   a purge of a never-hydrated space does not needlessly abort a save
     ///   pass) so a [`save_all_engines`] pass that already collected this
-    ///   space's handle re-checks the generation and ABORTS before its write,
+    ///   space's handle re-checks the generation and ABORTS before its commit,
     ///   never resurrecting the deleted `loro_doc_state` row;
     /// * drops the map guard BEFORE taking the dirty lock (never nested — module
     ///   lock discipline), then clears the space's dirty flag so a
@@ -676,8 +676,8 @@ impl LoroEngineRegistry {
             let mut map = self.inner.lock();
             if map.remove(space_id).is_some() {
                 // Bump WHILE holding the map lock so any saver that collected
-                // handles before this eviction observes the new value on its
-                // next per-write check (see the `generation` field docs).
+                // handles before this eviction observes the new value at its
+                // check before commit (see the `generation` field docs).
                 self.generation.fetch_add(1, Ordering::AcqRel);
             }
             // Map guard drops HERE — before the distinct dirty lock below.
@@ -720,7 +720,7 @@ impl LoroEngineRegistry {
     /// [`crate::loro::snapshot::save_all_engines`], tolerates it by
     /// construction — its `applied_through_seq` watermark is a
     /// conservative per-space lower bound read BEFORE the collect, and
-    /// its generation re-check before every write handles a racing
+    /// its generation re-check before its commit handles a racing
     /// `clear`.
     pub fn snapshot_all_engines(&self) -> Vec<(SpaceId, Result<Vec<u8>, AppError>)> {
         // Phase 1: clone the Arc handles under the map lock, then release it
