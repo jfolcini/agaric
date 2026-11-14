@@ -1,4 +1,4 @@
-# Session 4186 — a property can hold a list: storage, engine and op (#6741, PR 1 of 4)
+# Session 4189 — a property can hold a list: storage, engine and op (#6741, PR 1 of 4)
 
 The first of the four pull requests in the design the maintainer approved on #6741 ("Design for option 3 (a list value in the one row)"). It adds the storage and nothing a user can reach: no screen offers the flag, and a key that no definition declares `multiple` refuses a list, so no list can exist on a device after this PR alone.
 
