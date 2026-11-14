@@ -1,5 +1,5 @@
 {
-  "description": "#6749 / #6746 — READ-command differential over `list_outgoing_links` and `count_backlinks_in_page`. Page S1's blocks link to page S2 twice (S5, S6), to block S4 of page S3 by reference (S5), to page S9 which is then trashed (S7), and to block C1 after it was purged (S8), which gets no `block_links` edge and is owed in `block_links_unresolved`. The backend reads both tables; the mock scans content and its owed-token map. A trashed and a purged target sort last, under no page. S3's block S4 is referenced once, from S5, which is what its count says.",
+  "description": "#6749 / #6746 — READ-command differential over `list_outgoing_links` and `count_backlinks_in_page`. Page S1's blocks link to page S2 twice (S5, S6), to block S4 of page S3 by reference (S5), to page S9 which is then trashed (S7), and to block C1 after it was purged (S8), which gets no `block_links` edge and is owed in `block_links_unresolved`. The backend reads both tables; the mock scans content and its owed-token map. A trashed and a purged target sort last, under no page. S3's block S4 is referenced once, from S5, which is what its count says; S1's block S10 references S5 on its own page, which a count leaves out, as the zoomed block's linked references do.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -119,10 +119,23 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "same page ((000000000000000000000000S5))",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 8,
+      "count": 9,
       "ops": [
         {
           "op_type": "edit_block"
@@ -144,6 +157,9 @@
         },
         {
           "op_type": "purge_block"
+        },
+        {
+          "op_type": "edit_block"
         },
         {
           "op_type": "edit_block"
@@ -174,6 +190,12 @@
         "source_id": "B7",
         "source_page_id": "B1",
         "target_id": "B9"
+      },
+      {
+        "kind": "block_ref",
+        "source_id": "B10",
+        "source_page_id": "B1",
+        "target_id": "B5"
       }
     ],
     "properties": []
@@ -183,19 +205,19 @@
       "code": null,
       "error": null,
       "name": "the_purged_target",
-      "returns": ["B10#block_type=content#content=doomed#parent_id=B3#position=1"]
+      "returns": ["B11#block_type=content#content=doomed#parent_id=B3#position=1"]
     },
     {
       "code": null,
       "error": null,
       "name": "trash_it",
-      "returns": ["B10#deleted_at=DELETED#descendants_affected=1"]
+      "returns": ["B11#deleted_at=DELETED#descendants_affected=1"]
     },
     {
       "code": null,
       "error": null,
       "name": "purge_it",
-      "returns": ["B10#purged_count=1"]
+      "returns": ["B11#purged_count=1"]
     }
   ],
   "expected_queries": [
@@ -205,11 +227,12 @@
       "has_more": false,
       "name": "outgoing_all",
       "rows": [
+        "B10#target_id=B5#kind=block_ref#target_page_id=B1#target_page_title=Home",
         "B5#target_id=B2#kind=page_link#target_page_id=B2#target_page_title=Alpha",
         "B6#target_id=B2#kind=page_link#target_page_id=B2#target_page_title=Alpha",
         "B5#target_id=B4#kind=block_ref#target_page_id=B3#target_page_title=Beta",
         "B7#target_id=B9#kind=page_link#target_page_id=null#target_page_title=null",
-        "B8#target_id=B10#kind=block_ref#target_page_id=null#target_page_title=null"
+        "B8#target_id=B11#kind=block_ref#target_page_id=null#target_page_title=null"
       ],
       "total_count": null
     },
@@ -219,8 +242,9 @@
       "has_more": false,
       "name": "outgoing_block_refs",
       "rows": [
+        "B10#target_id=B5#kind=block_ref#target_page_id=B1#target_page_title=Home",
         "B5#target_id=B4#kind=block_ref#target_page_id=B3#target_page_title=Beta",
-        "B8#target_id=B10#kind=block_ref#target_page_id=null#target_page_title=null"
+        "B8#target_id=B11#kind=block_ref#target_page_id=null#target_page_title=null"
       ],
       "total_count": null
     },
@@ -230,8 +254,8 @@
       "has_more": true,
       "name": "outgoing_page_1",
       "rows": [
-        "B5#target_id=B2#kind=page_link#target_page_id=B2#target_page_title=Alpha",
-        "B6#target_id=B2#kind=page_link#target_page_id=B2#target_page_title=Alpha"
+        "B10#target_id=B5#kind=block_ref#target_page_id=B1#target_page_title=Home",
+        "B5#target_id=B2#kind=page_link#target_page_id=B2#target_page_title=Alpha"
       ],
       "total_count": null
     },
@@ -241,8 +265,8 @@
       "has_more": true,
       "name": "outgoing_page_2",
       "rows": [
-        "B5#target_id=B4#kind=block_ref#target_page_id=B3#target_page_title=Beta",
-        "B7#target_id=B9#kind=page_link#target_page_id=null#target_page_title=null"
+        "B6#target_id=B2#kind=page_link#target_page_id=B2#target_page_title=Alpha",
+        "B5#target_id=B4#kind=block_ref#target_page_id=B3#target_page_title=Beta"
       ],
       "total_count": null
     },
@@ -260,6 +284,14 @@
       "has_more": null,
       "name": "ref_counts_of_beta",
       "rows": ["B4#count=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "ref_counts_of_alpha",
+      "rows": [],
       "total_count": null
     },
     {
@@ -337,6 +369,13 @@
         "toText": "owed ((C1))"
       },
       "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "toText": "same page ((000000000000000000000000S5))"
+      },
+      "command": "edit_block"
     }
   ],
   "queries": [
@@ -350,7 +389,7 @@
         }
       },
       "command": "list_outgoing_links",
-      "comment": "Grouped by the target's page, the unresolved last: S5 and S6 under S2, S5 under S3 for its block ref, then S7's trashed page and S8's purged block with no page.",
+      "comment": "Grouped by the target's page, the unresolved last: S10 under S1 for its ref to S5, S5 and S6 under S2, S5 under S3 for its block ref, then S7's trashed page and S8's purged block with no page.",
       "name": "outgoing_all"
     },
     {
@@ -422,6 +461,19 @@
     },
     {
       "args": {
+        "pageId": "S2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "count_backlinks_in_page",
+      "comment": "S2 itself is linked twice, but a page's own links are the Linked references header's count.",
+      "expect_empty": true,
+      "name": "ref_counts_of_alpha"
+    },
+    {
+      "args": {
         "pageId": "S1",
         "scope": {
           "kind": "active",
@@ -429,7 +481,7 @@
         }
       },
       "command": "count_backlinks_in_page",
-      "comment": "Nothing links to S1's blocks, so the map is empty rather than zeros.",
+      "comment": "S5 is referenced only from S10, on S1 itself, so the map is empty rather than zeros.",
       "expect_empty": true,
       "name": "ref_counts_of_home"
     }
@@ -498,6 +550,13 @@
         "id": "S9",
         "parent_id": null,
         "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S10",
+        "parent_id": "S1",
+        "position": 5
       }
     ],
     "properties": [],

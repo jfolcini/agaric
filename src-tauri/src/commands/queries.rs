@@ -540,9 +540,11 @@ pub async fn count_backlinks_batch_inner(
 }
 
 /// Count, for each block of `page_id` that something links to, the live
-/// blocks of the scope's space linking to it: the reference count a
-/// referenced block shows (#6746). One read for the whole page, whatever its
-/// size, and only the blocks with a count are in the map.
+/// blocks of the scope's space linking to it from another page: the
+/// reference count a referenced block shows (#6746), which counts what
+/// zooming the block lists (`count_grouped_backlinks` leaves the target's own
+/// page out too). One read for the whole page, whatever its size, and only
+/// the blocks with a count are in the map.
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty
@@ -565,7 +567,7 @@ pub async fn count_backlinks_in_page_inner(
              JOIN block_links bl ON bl.target_id = t.id
              JOIN blocks s ON s.id = bl.source_id
             WHERE t.page_id = ?1 AND t.id <> ?1 AND t.deleted_at IS NULL
-              AND s.deleted_at IS NULL AND +s.space_id = ?2
+              AND s.deleted_at IS NULL AND +s.space_id = ?2 AND s.page_id <> ?1
             GROUP BY bl.target_id"#,
         page_id_str,
         space_id,

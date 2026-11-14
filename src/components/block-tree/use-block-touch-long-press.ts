@@ -2,21 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 
 import { haptic } from '@/lib/haptics'
 import { pageLinkIdAt } from '@/lib/link-chip'
-
-/** Hold (ms) before a touch press is recognised; also the drag sensor's delay. */
-export const LONG_PRESS_DELAY = 400
-/**
- * Finger drift (px) that ends a pending press; also the drag sensor's tolerance.
- * The sensor and this hook share both constants (`useBlockDnD` imports them) and
- * the same per-axis measure (`exceedsThreshold`), so no drift can end one
- * gesture while sparing the other.
- */
-export const LONG_PRESS_MOVE_THRESHOLD = 5
-
-/** dnd-kit's `hasExceededDistance`: either axis past the threshold. */
-export function exceedsThreshold(dx: number, dy: number): boolean {
-  return Math.abs(dx) > LONG_PRESS_MOVE_THRESHOLD || Math.abs(dy) > LONG_PRESS_MOVE_THRESHOLD
-}
+import { exceedsThreshold, isInsideEditableText, LONG_PRESS_DELAY } from '@/lib/touch-press'
 
 /**
  * One touch gesture on a block row, shared with the dnd-kit TouchSensor that
@@ -43,13 +29,6 @@ export function exceedsThreshold(dx: number, dy: number): boolean {
  * already prevented (`NewTabTarget` opened its own menu) ends the press
  * instead, so one gesture opens one menu.
  */
-
-/** Whether a touch landed inside the mounted editor's contenteditable. */
-export function isInsideEditableText(target: EventTarget | null): boolean {
-  return (
-    target instanceof Element && target.closest('.ProseMirror, [contenteditable="true"]') !== null
-  )
-}
 
 export function linkUrlAt(target: EventTarget | null): string | undefined {
   if (!(target instanceof Element)) return undefined

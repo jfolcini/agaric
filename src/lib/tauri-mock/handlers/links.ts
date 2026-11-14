@@ -563,14 +563,20 @@ export const linksHandlers = {
   },
 
   // #6746 — `count_backlinks_in_page_inner`: for each live block of the page
-  // (the page itself aside), its live referrers of the scope's space; a block
-  // with none is absent.
+  // (the page itself aside), its live referrers of the scope's space on
+  // another page; a block with none is absent.
   count_backlinks_in_page: (args) => {
     const a = args as Record<string, unknown>
     const pageId = a['pageId'] as string
     if (pageId.trim().length === 0) throw validationRejection('page_id must not be empty')
     const spaceId = readActiveSpaceScope('count_backlinks_in_page', a)
-    const sources = [...blocks.values()].filter((b) => !b['deleted_at'] && inSpaceScope(b, spaceId))
+    const sources = [...blocks.values()].filter(
+      (b) =>
+        !b['deleted_at'] &&
+        inSpaceScope(b, spaceId) &&
+        b['page_id'] != null &&
+        b['page_id'] !== pageId,
+    )
     const result: Record<string, number> = {}
     for (const target of blocks.values()) {
       const id = target['id'] as string

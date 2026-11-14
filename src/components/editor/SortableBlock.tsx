@@ -34,10 +34,7 @@ import { useBlockActions } from '@/components/block-tree/use-block-actions'
 import { useBlockContextMenu } from '@/components/block-tree/use-block-context-menu'
 import { useBlockResolvers } from '@/components/block-tree/use-block-resolvers'
 import { useBlockSwipeActions } from '@/components/block-tree/use-block-swipe-actions'
-import {
-  isInsideEditableText,
-  useBlockTouchLongPress,
-} from '@/components/block-tree/use-block-touch-long-press'
+import { useBlockTouchLongPress } from '@/components/block-tree/use-block-touch-long-press'
 import { BlockContextMenu } from '@/components/editor/BlockContextMenu'
 import { BlockGutterControls } from '@/components/editor/BlockGutterControls'
 import {
@@ -66,6 +63,7 @@ import { performActivePageUndo } from '@/hooks/useUndoShortcuts'
 import { detectBlockType } from '@/lib/block-type-convert'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { notify } from '@/lib/notify'
+import { isInsideEditableText } from '@/lib/touch-press'
 import { cn } from '@/lib/utils'
 import { getPageStore, usePageBlockStoreOptional } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'

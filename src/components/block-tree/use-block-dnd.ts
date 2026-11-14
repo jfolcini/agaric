@@ -22,16 +22,12 @@ import {
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { type RefObject, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
-import {
-  exceedsThreshold,
-  LONG_PRESS_DELAY,
-  LONG_PRESS_MOVE_THRESHOLD,
-} from '@/components/block-tree/use-block-touch-long-press'
 import { INDENT_WIDTH } from '@/components/editor/SortableBlock'
 import { useAutoScrollOnDrag } from '@/hooks/useAutoScrollOnDrag'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { logger } from '@/lib/logger'
 import { consumePreDragFocus } from '@/lib/pre-drag-focus'
+import { exceedsThreshold, LONG_PRESS_DELAY, LONG_PRESS_MOVE_THRESHOLD } from '@/lib/touch-press'
 import {
   computeDropIndex,
   computeSelectionRoots,
