@@ -48,6 +48,7 @@ import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import { useSoftKeyboardInset } from '@/hooks/useSoftKeyboardInset'
 import { useSyncEvents } from '@/hooks/useSyncEvents'
 import { useSyncExportRefused } from '@/hooks/useSyncExportRefused'
+import { useSyncLocalTextKept } from '@/hooks/useSyncLocalTextKept'
 import { useSyncTrigger } from '@/hooks/useSyncTrigger'
 import { useTheme } from '@/hooks/useTheme'
 import { useUndoShortcuts } from '@/hooks/useUndoShortcuts'
@@ -435,6 +436,7 @@ function App() {
   // ── Sync event listeners (Tauri → store) ───────────────────────────
   useSyncEvents()
   useSyncExportRefused()
+  useSyncLocalTextKept()
 
   // ── Markdown mirror ingests (#5363): onto the page's undo stack ────
   useMirrorIngestEvents()
