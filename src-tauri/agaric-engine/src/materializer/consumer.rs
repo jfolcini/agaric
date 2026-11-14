@@ -430,8 +430,21 @@ pub(super) async fn record_failure_with_retry(
     metrics: &Arc<QueueMetrics>,
 ) -> bool {
     use super::retry_queue::record_failure;
+    persist_with_retry(metrics, || record_failure(pool, task, last_error, metrics)).await
+}
+
+/// The retry budget of [`record_failure_with_retry`], over any persist
+/// attempt: a test heals the failure between two attempts instead of racing
+/// the backoff from another task.
+pub(super) async fn persist_with_retry<Fut>(
+    metrics: &QueueMetrics,
+    mut persist: impl FnMut() -> Fut,
+) -> bool
+where
+    Fut: Future<Output = Result<(), agaric_core::error::AppError>>,
+{
     for attempt in 1..=PERSIST_RETRY_ATTEMPTS {
-        match record_failure(pool, task, last_error, metrics).await {
+        match persist().await {
             Ok(()) => {
                 if attempt > 1 {
                     tracing::info!(attempt, "#851: record_failure succeeded on retry");
