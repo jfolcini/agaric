@@ -82,7 +82,7 @@ test.describe('Agents card @mcp', () => {
     await page.getByRole('button', { name: 'Copy Claude Code command for Planner' }).click()
     await expect(page.getByText('Claude Code command copied')).toBeVisible()
     expect(await readClipboard(page)).toBe(
-      `claude mcp add -s user agaric-planner-${tail} -- agaric-mcp --socket "/mock/agaric/mcp.sock" --token ${token}`,
+      `claude mcp add -s user agaric-planner-${tail} -- "/mock/agaric/agaric-mcp" --socket "/mock/agaric/mcp.sock" --token ${token}`,
     )
 
     await page.getByRole('button', { name: 'Copy Claude Desktop config for Planner' }).click()
@@ -92,7 +92,7 @@ test.describe('Agents card @mcp', () => {
     }
     expect(Object.values(config.mcpServers)).toEqual([
       {
-        command: 'agaric-mcp',
+        command: '/mock/agaric/agaric-mcp',
         args: ['--socket', '/mock/agaric/mcp.sock', '--token', token],
       },
     ])

@@ -15,6 +15,12 @@ Two packaging issues found while checking the README against the 0.23.0 artifact
 - **Quoting stays double quotes** for both paths in the Claude Code command: bash, zsh, PowerShell and Command Prompt read them the same way for a path with spaces. Git Bash would turn the pipe path's leading `\\` into `\`, as it did before this change.
 - **On macOS a config copied while the app runs from the disk image, or translocated from Downloads, points at a path that goes away.** The README says to copy it once Agaric runs from Applications.
 
+## Existing assertions edited
+
+- `e2e/mcp-agents.spec.ts` and `AgentList.test.tsx` expected the copied command and config to run a bare `agaric-mcp`; they now expect the bridge path the status reports.
+- `agent-config.test.ts` took a socket path; it now takes what `get_mcp_status` reports, one case per desktop package.
+- `e2e-tauri/mcp-agent-token.e2e.ts` spawned a hard-coded `target/debug/agaric-mcp`; it now spawns `bridge_command` with `bridge_args`, as a pasted config does.
+
 ## What ran
 
-Rust: the new `bridge_*` and `status_*` tests (`cargo nextest run --workspace`), clippy over the workspace. vitest: `agent-config.test.ts`, `AgentList.test.tsx`, `AgentAccessTab.test.tsx`, `tauri-mock.test.ts`, `conformance-coverage.test.ts`. Each new test shown red against the old behaviour. Nothing ran on macOS, Windows or a built AppImage; those checks are lines on #6514 and #6515.
+Rust: the new `bridge_*` and `status_*` tests (`cargo nextest run --workspace`), clippy over the workspace. vitest: `agent-config.test.ts`, `AgentList.test.tsx`, `AgentAccessTab.test.tsx`, `tauri-mock.test.ts`, `conformance-coverage.test.ts`. Playwright: `e2e/mcp-agents.spec.ts`. Each new vitest and Rust test shown red against the old behaviour or a mutation of the new code. The real-backend spec was not run here (no `tauri-driver` or `webkit2gtk-driver` in the container, and too little disk to build them); CI's `e2e-tauri-gate` runs it. Nothing ran on macOS, Windows or a built AppImage; those checks are lines on #6514 and #6515.

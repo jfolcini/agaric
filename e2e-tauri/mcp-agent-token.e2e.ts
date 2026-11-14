@@ -5,8 +5,9 @@
 //
 // Settings › Agent access makes the agent; the real bridge, given its token,
 // reads and writes over the app's socket; Revoke in the same list refuses the
-// connection's next call. The bridge is `src-tauri/target/debug/agaric-mcp`,
-// which `wdio.conf.ts` builds and the workflow builds for CI.
+// connection's next call. The bridge is the one `get_mcp_status` names, as in
+// the copied config: `src-tauri/target/debug/agaric-mcp`, beside the app, which
+// `wdio.conf.ts` builds and the workflow builds for CI.
 //
 // The History view shows no origin, so a write's `agent:<name>` attribution
 // is read back through `block_history`, the agent's own view of the op log.
@@ -16,7 +17,6 @@
 
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import path from 'node:path'
 import { createInterface } from 'node:readline'
 
 import {
@@ -37,6 +37,12 @@ const READER = runScopedMarker('wdio-reader')
 const WRITER = runScopedMarker('wdio-writer')
 
 type Reply = Record<string, unknown>
+
+interface McpBridgeStatus {
+  socket_path: string
+  bridge_command: string
+  bridge_args: string[]
+}
 
 /** `agaric-mcp`, spawned as an MCP client spawns it, JSON-RPC on stdio. */
 class Bridge {
@@ -60,16 +66,16 @@ class Bridge {
     })
   }
 
-  static async start(socketPath: string, token: string): Promise<Bridge> {
-    const binary = path.resolve(
-      import.meta.dirname,
-      '..',
-      'src-tauri',
-      'target',
-      'debug',
-      'agaric-mcp',
-    )
-    const child = spawn(binary, ['--socket', socketPath, '--token', token])
+  /** Runs the bridge `get_mcp_status` names, as the copied agent config does (#6736). */
+  static async start(status: McpBridgeStatus, token: string): Promise<Bridge> {
+    const binary = status.bridge_command
+    const child = spawn(binary, [
+      ...status.bridge_args,
+      '--socket',
+      status.socket_path,
+      '--token',
+      token,
+    ])
     await new Promise<void>((resolve, reject) => {
       child.once('spawn', resolve)
       child.once('error', (error) => {
@@ -191,12 +197,12 @@ async function connectAs(name: string): Promise<Bridge> {
   const agents = await invoke<{ name: string; token: string }[]>('list_mcp_agents')
   const token = agents.find((agent) => agent.name === name)?.token
   if (token === undefined) throw new Error(`no agent named ${name}`)
-  const { socket_path: socketPath } = await invoke<{ socket_path: string }>('get_mcp_status')
-  await browser.waitUntil(() => existsSync(socketPath), {
+  const status = await invoke<McpBridgeStatus>('get_mcp_status')
+  await browser.waitUntil(() => existsSync(status.socket_path), {
     timeout: NAV_TIMEOUT,
-    timeoutMsg: `MCP socket never appeared at ${socketPath}`,
+    timeoutMsg: `MCP socket never appeared at ${status.socket_path}`,
   })
-  return Bridge.start(socketPath, token)
+  return Bridge.start(status, token)
 }
 
 describe('Agaric real-backend MCP agent token @mcp @spaces', () => {
