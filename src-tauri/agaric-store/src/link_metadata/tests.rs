@@ -1726,3 +1726,118 @@ async fn link_fetch_client_never_uses_the_system_proxy() {
         "the guarded request never arrived at the target host"
     );
 }
+
+// ======================================================================
+// #6763 — Android's bundled roots keep the platform verifier out
+// ======================================================================
+
+/// TLS stub on an ephemeral loopback port, presenting `issued` and answering
+/// `200` to every client that completes the handshake.
+#[cfg(target_os = "linux")]
+fn spawn_tls_stub(issued: &rcgen::CertifiedKey<rcgen::KeyPair>) -> std::net::SocketAddr {
+    use std::io::{Read as _, Write as _};
+
+    let key = rustls::pki_types::PrivatePkcs8KeyDer::from(issued.signing_key.serialize_der());
+    let config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("default protocol versions")
+    .with_no_client_auth()
+    .with_single_cert(vec![issued.cert.der().clone()], key.into())
+    .expect("stub certificate");
+    let config = std::sync::Arc::new(config);
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind stub listener");
+    let addr = listener.local_addr().expect("stub local_addr");
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { continue };
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+            let Ok(conn) = rustls::ServerConnection::new(config.clone()) else {
+                continue;
+            };
+            let mut tls = rustls::StreamOwned::new(conn, stream);
+            let mut buf = [0_u8; 4096];
+            // A client that rejects the certificate fails this read.
+            if tls.read(&mut buf).is_ok() {
+                let _ = tls.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                );
+                tls.conn.send_close_notify();
+                let _ = tls.flush();
+            }
+        }
+    });
+    addr
+}
+
+/// #6763: a client built with [`super::with_bundled_roots`] must not ask
+/// `rustls-platform-verifier` anything, because on Android asking it panics.
+///
+/// The host cannot run the Android verifier, so this pins the property that
+/// keeps it out: with `tls_certs_only`, reqwest trusts the given roots and never
+/// the platform's. `SSL_CERT_FILE` makes the Linux platform store hold exactly
+/// one throwaway certificate. The NEGATIVE CONTROL shows reqwest's default
+/// verifier reads that store (the stub is trusted); the guard shows the bundled
+/// roots client does not (the same stub is an unknown issuer). A reqwest update
+/// that sends `tls_certs_only` through the platform verifier turns the guard red.
+///
+/// Linux only: the other hosts' platform verifiers ignore `SSL_CERT_FILE`.
+/// Mutates process env, so it relies on nextest's per-test process isolation.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+#[allow(unsafe_code)] // `std::env::set_var` is `unsafe` on edition 2024.
+async fn bundled_roots_client_never_consults_the_platform_trust_store() {
+    let issued = rcgen::generate_simple_self_signed(vec!["preview.test".to_string()])
+        .expect("throwaway certificate");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let platform_store = dir.path().join("roots.pem");
+    std::fs::write(&platform_store, issued.cert.pem()).expect("write platform store");
+    // SAFETY: single-threaded test setup, before any client is built; the stub
+    // thread never reads the environment.
+    unsafe {
+        std::env::set_var("SSL_CERT_FILE", &platform_store);
+        std::env::remove_var("SSL_CERT_DIR");
+    }
+
+    let addr = spawn_tls_stub(&issued);
+    let url = format!("https://preview.test:{}/", addr.port());
+    let builder = || {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .no_proxy()
+            .resolve("preview.test", addr)
+    };
+
+    // -- Negative control: the same builder MINUS the bundled roots ----------
+    let platform = builder()
+        .build()
+        .expect("control client builds")
+        .get(&url)
+        .send()
+        .await;
+    assert!(
+        platform.is_ok(),
+        "NEGATIVE CONTROL FAILED: reqwest's default verifier did not trust the certificate \
+         in SSL_CERT_FILE, so the guard below is not observable and must not pass: \
+         {platform:?}"
+    );
+
+    // -- Guard: the Android root set trusts only what it bundles -------------
+    let bundled = super::with_bundled_roots(builder())
+        .build()
+        .expect("reqwest accepts every bundled root")
+        .get(&url)
+        .send()
+        .await;
+    let err = bundled.expect_err(
+        "the bundled-roots client trusted a certificate that only the platform store holds: \
+         the platform verifier is back in its handshake, and on Android that is a panic \
+         (#6763)",
+    );
+    assert!(
+        format!("{err:?}").contains("UnknownIssuer"),
+        "the stub must be refused as an unknown issuer, not for another reason: {err:?}"
+    );
+}
