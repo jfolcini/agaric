@@ -15,8 +15,7 @@
     <p>
       Agaric is a local-first outliner and personal knowledge base. All
       data lives on the user's device; LAN sync between paired devices
-      is opt-in and TLS-authenticated. Optional Google Calendar push
-      surfaces journal entries as calendar events.
+      is opt-in and TLS-authenticated.
     </p>
     <p>Features:</p>
     <ul>
@@ -26,7 +25,6 @@
       <li>Backlinks, page links, and a graph view.</li>
       <li>Local-first storage in SQLite; no server-side store, no telemetry.</li>
       <li>LAN sync between paired devices (TLS + TOFU, no cloud).</li>
-      <li>Optional Google Calendar push for journal entries.</li>
     </ul>
   </description>
 
@@ -42,7 +40,7 @@
 
   <!--
     Placeholder: the image is the repository's banner, not a screenshot of
-    the app, and Flathub rejects it (packaging/flathub/README.md, step 5).
+    the app, and Flathub rejects it (packaging/flathub/README.md, step 1).
   -->
   <screenshots>
     <screenshot type="default">
