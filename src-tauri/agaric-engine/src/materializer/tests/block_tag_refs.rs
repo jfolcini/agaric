@@ -460,9 +460,9 @@ async fn dispatch_edit_block_enqueues_reindex_block_tag_refs() {
     )
     .await;
 
-    // dispatch_edit_background is the path taken by the command handler
-    // after the op has been durably written and the edit applied.
-    mat.dispatch_edit_background(&r, "content").unwrap();
+    // The command handler's dispatch, after the op has been durably written
+    // and the edit applied.
+    dispatch_content_edit(&mat, &r);
     mat.flush_background().await.unwrap();
 
     let count = sqlx::query_scalar::<_, i64>(

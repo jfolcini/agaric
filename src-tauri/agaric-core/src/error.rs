@@ -363,6 +363,9 @@ impl AppError {
     /// SQLite release can extend. [`AppError::PoolTimedOut`] is the same signal
     /// one layer out — every write connection in the pool is already occupied,
     /// so the write never even reached SQLite.
+    ///
+    /// Constraint and trigger failures are not matched: they belong to the
+    /// rows written, and retrying behind the same writer does not clear them.
     #[must_use]
     pub fn is_write_contention(&self) -> bool {
         const SQLITE_BUSY: i32 = 5;

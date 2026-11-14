@@ -313,35 +313,6 @@ const TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN: usize = 50;
 #[cfg(test)]
 const TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN: usize = 4;
 
-/// #4018 — is `err` the single SQLite writer being BUSY/LOCKED, rather than
-/// a root that cannot be purged?
-///
-/// The #3311 per-root fallback in [`tombstone_purge`] exists to isolate a
-/// POISON root: one whose own rows trip a constraint or a trigger, so
-/// retrying it alone costs one root and lets the rest of the batch drain.
-/// Lock contention falsifies that premise outright — nothing about any
-/// individual root is wrong, and every per-root retry simply re-queues
-/// behind the same writer that just refused the batch.
-///
-/// The cost of getting this wrong is not a wasted branch. At production
-/// scale one transient `SQLITE_BUSY` sends the fallback through
-/// [`TOMBSTONE_PURGE_BATCH_LIMIT`] (1000) further `BEGIN IMMEDIATE`
-/// attempts, and the drain loop then opens the next batch into the same
-/// contention, up to `× TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN` (50). Each of
-/// those attempts does not fail fast either: the pool sets a 5 s
-/// `busy_timeout` (`agaric_store::db::base_connect_options`), so they are
-/// SERIALISED multi-second waits against the one writer the foreground UI
-/// also needs — hours of self-inflicted contention in response to a
-/// condition that would have cleared in seconds.
-///
-/// Deliberately NOT matched: constraint/trigger failures (the #3311 poison
-/// shape, which `tombstone_purge_skips_poison_root_and_drains_the_rest_3311`
-/// drives through `RAISE(ABORT)` → `SQLITE_CONSTRAINT_TRIGGER`), which keep
-/// the per-root fallback they were written for.
-fn is_write_contention(err: &AppError) -> bool {
-    err.is_write_contention()
-}
-
 /// Issue #157 sub-item E — hard-purge soft-deleted blocks whose
 /// `deleted_at` is older than [`TOMBSTONE_RETENTION_DAYS`]. Delegates
 /// to `purge_blocks_by_ids_inner` so the cascade order, FK-defer,
@@ -375,7 +346,7 @@ fn is_write_contention(err: &AppError) -> bool {
 /// **Contention is not poison (#4018):** the per-root fallback above is
 /// entered ONLY for a failure that could plausibly belong to one root. A
 /// busy/locked writer is the one failure shape that provably does not (see
-/// `is_write_contention`), and it is the shape these jobs actually hit —
+/// [`AppError::is_write_contention`]), and it is the shape these jobs actually hit —
 /// so it abandons the run with `Err` instead of re-queueing every root
 /// behind the same lock. Returning `Err` rather than `Ok` is load-bearing
 /// twice over: it is what stops the drain loop from opening the NEXT
@@ -554,12 +525,11 @@ async fn purge_batch(
     {
         Ok(_resp) => *total_purged += batch_count,
         // #4018 — the writer is busy, not the batch. Bail out BEFORE the
-        // per-root fallback: see [`is_write_contention`] for why retrying
-        // each root would be up to `batch_limit` serialised `busy_timeout`
-        // waits against the writer that just refused the whole batch, and
-        // why the run must end with `Err` (next-tick retry) rather than
-        // `Ok` (24 h).
-        Err(e) if is_write_contention(&e) => {
+        // per-root fallback: retrying each root would be up to `batch_limit`
+        // serialised `busy_timeout` waits against the writer that just
+        // refused the whole batch. The run ends with `Err` (next-tick retry)
+        // rather than `Ok` (24 h).
+        Err(e) if e.is_write_contention() => {
             tracing::warn!(
                 error = %e,
                 batch_count,
@@ -635,7 +605,7 @@ fn log_run_outcome(total_purged: usize, batches: usize, skipped: usize, cutoff_m
 /// # Errors
 ///
 /// The writer going busy/locked part-way through a fallback that started for
-/// a genuine poison root (see [`is_write_contention`]). Every remaining root
+/// a genuine poison root (see [`AppError::is_write_contention`]). Every remaining root
 /// would pay a full `busy_timeout` for a failure that belongs to none of
 /// them, so the error is returned and the caller's `?` abandons the run —
 /// which is also what re-arms `run_tick_at`'s next-tick retry. The un-attempted
@@ -659,7 +629,7 @@ async fn purge_roots_one_at_a_time(
         .await
         {
             Ok(_resp) => *total_purged += 1,
-            Err(e) if is_write_contention(&e) => {
+            Err(e) if e.is_write_contention() => {
                 tracing::warn!(
                     error = %e,
                     block_id = %id,
@@ -1630,7 +1600,7 @@ mod tests {
         String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned()
     }
 
-    /// #4018 — [`is_write_contention`] must split the two failure shapes the
+    /// #4018 — [`AppError::is_write_contention`] must split the two failure shapes the
     /// `tombstone_purge` fallback branches on, and it must do it against the
     /// errors sqlx ACTUALLY produces (the classifier parses a driver-formatted
     /// extended result code, so a hand-built error would not test the thing
@@ -1667,7 +1637,7 @@ mod tests {
             .expect_err("the trigger must abort the delete")
             .into();
         assert!(
-            !is_write_contention(&poison),
+            !poison.is_write_contention(),
             "a trigger ABORT is a poison root, not contention — it must keep the \
              #3311 per-root fallback; got {poison}"
         );
@@ -1689,7 +1659,7 @@ mod tests {
             .into();
         drop(holder);
         assert!(
-            is_write_contention(&busy),
+            busy.is_write_contention(),
             "a busy/locked writer must be classified as contention so the per-root \
              fallback is skipped (#4018); got {busy}"
         );
@@ -1699,7 +1669,7 @@ mod tests {
         // reachable from the walk above (it needs an exhausted pool, not a
         // held file lock), so it is asserted directly.
         assert!(
-            is_write_contention(&AppError::PoolTimedOut),
+            AppError::PoolTimedOut.is_write_contention(),
             "an exhausted write pool is the same 'the writer is busy' condition and \
              must not send the run into the per-root fallback either (#4018)"
         );
@@ -1709,9 +1679,8 @@ mod tests {
         // exactly this shape, and that IS a per-root failure: classifying it
         // as contention would abandon the run over one bad id.
         assert!(
-            !is_write_contention(&AppError::InvalidOperation(
-                "block 'X' must be soft-deleted before purging".into()
-            )),
+            !AppError::InvalidOperation("block 'X' must be soft-deleted before purging".into())
+                .is_write_contention(),
             "a non-database refusal belongs to the root that provoked it and must keep \
              the #3311 per-root fallback (#4018)"
         );
@@ -1784,7 +1753,7 @@ mod tests {
         drop(holder);
 
         assert!(
-            is_write_contention(&err),
+            err.is_write_contention(),
             "the surfaced error must be the contention itself; got {err}"
         );
         assert!(
@@ -1898,7 +1867,7 @@ mod tests {
              Captured logs:\n{out}"
         );
         assert!(
-            is_write_contention(&err),
+            err.is_write_contention(),
             "the surfaced error must be the contention itself, not a rewrapped or \
              synthesised one; got {err}"
         );
@@ -1919,7 +1888,7 @@ mod tests {
 
     /// #4018 — pins the classifier's actual input, not just its output.
     ///
-    /// [`is_write_contention`] only ever sees whatever crosses the `?` at
+    /// [`AppError::is_write_contention`] only ever sees whatever crosses the `?` at
     /// `purge_blocks_by_ids_inner`'s `CommandTx::begin_immediate(..).await?`
     /// UNWRAPPED. Every other #4018 test in this file drives the classifier
     /// with either a hand-built `AppError` or a real error observed several
@@ -1933,7 +1902,7 @@ mod tests {
     ///
     /// Drives a REAL `SQLITE_BUSY` through `purge_blocks_by_ids_inner`
     /// itself and asserts the concrete `AppError` variant it crosses the
-    /// boundary as — not merely that [`is_write_contention`] accepts it,
+    /// boundary as — not merely that [`AppError::is_write_contention`] accepts it,
     /// which a rewrap could still satisfy by accident for the wrong reason.
     #[tokio::test]
     async fn purge_blocks_by_ids_inner_surfaces_unwrapped_contention_at_the_boundary_4018() {
@@ -1976,7 +1945,7 @@ mod tests {
              failure it exists to catch; got {err:?}"
         );
         assert!(
-            is_write_contention(&err),
+            err.is_write_contention(),
             "and the classifier must actually accept the shape this boundary \
              produces; got {err}"
         );

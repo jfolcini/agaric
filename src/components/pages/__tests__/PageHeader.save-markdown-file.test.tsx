@@ -211,6 +211,21 @@ describe('PageHeader Save as Markdown file', () => {
       expect(saved).toEqual([])
     })
 
+    it('names the file as the backend saved it when the name was taken', async () => {
+      saveToDownloads = () => 'Work_Plans_ Q3_ (1).md'
+      const user = userEvent.setup()
+      renderHeader()
+      await openMenu(user)
+
+      await user.click(screen.getByRole('menuitem', { name: t('pageHeader.saveMarkdownFile') }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+          t('pageHeader.markdownFileSaved', { fileName: 'Work_Plans_ Q3_ (1).md' }),
+        )
+      })
+    })
+
     it('shows the error toast and no success toast when the backend cannot save', async () => {
       saveToDownloads = () => {
         throw new Error('disk full')

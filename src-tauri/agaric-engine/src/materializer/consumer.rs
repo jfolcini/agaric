@@ -1041,8 +1041,7 @@ async fn record_background_failure(
     //
     // The remaining truly-non-retryable tasks
     // (`Barrier`, `RebuildFtsIndex`, `FtsOptimize`,
-    // `CleanupOrphanedAttachments`, `ReindexFtsReferences`,
-    // `RemoveFtsBlock`) hit the `else` arm and are silently
+    // `CleanupOrphanedAttachments`, `RemoveFtsBlock`) hit the `else` arm and are silently
     // counted without persistence. (`ApplyOp` /
     // `BatchApplyOps` would be persisted by `from_task` after
     // But they are routed exclusively to the

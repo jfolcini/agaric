@@ -152,6 +152,10 @@ pub(crate) enum RetryKind {
     ReindexBlockLinks,
     /// Incremental `#[ULID]` tag-ref reindex for a single block.
     ReindexBlockTagRefs,
+    /// Mirror of [`MaterializeTask::ReindexFtsReferences`]: without a row, a
+    /// shed rename left the blocks naming the page or tag indexed under its
+    /// old name until their next edit.
+    ReindexFtsReferences,
     /// #676: scoped single-tag `usage_count` refresh. Keyed by `tag_id`
     /// (not a global sentinel) so failures of different tags' refreshes
     /// dedup independently and reconstruct the right scoped task.
@@ -209,6 +213,7 @@ impl RetryKind {
             Self::UpdateFtsBlock => Cow::Borrowed("UpdateFtsBlock"),
             Self::ReindexBlockLinks => Cow::Borrowed("ReindexBlockLinks"),
             Self::ReindexBlockTagRefs => Cow::Borrowed("ReindexBlockTagRefs"),
+            Self::ReindexFtsReferences => Cow::Borrowed("ReindexFtsReferences"),
             Self::RefreshTagUsageCount => Cow::Borrowed("RefreshTagUsageCount"),
             Self::UpdateProjectedAgendaBlock => Cow::Borrowed("UpdateProjectedAgendaBlock"),
             Self::RebuildTagsCache => Cow::Borrowed("RebuildTagsCache"),
@@ -255,6 +260,7 @@ impl RetryKind {
             "UpdateFtsBlock" => return Some(Self::UpdateFtsBlock),
             "ReindexBlockLinks" => return Some(Self::ReindexBlockLinks),
             "ReindexBlockTagRefs" => return Some(Self::ReindexBlockTagRefs),
+            "ReindexFtsReferences" => return Some(Self::ReindexFtsReferences),
             "RefreshTagUsageCount" => return Some(Self::RefreshTagUsageCount),
             "UpdateProjectedAgendaBlock" => return Some(Self::UpdateProjectedAgendaBlock),
             "RebuildTagsCache" => return Some(Self::RebuildTagsCache),
@@ -330,6 +336,9 @@ impl RetryKind {
             Self::ReindexBlockTagRefs => Some(MaterializeTask::ReindexBlockTagRefs {
                 block_id: Arc::from(block_id),
             }),
+            Self::ReindexFtsReferences => Some(MaterializeTask::ReindexFtsReferences {
+                block_id: Arc::from(block_id),
+            }),
             // #676: the persisted `block_id` column holds the tag id for
             // this scoped task (it is NOT global).
             Self::RefreshTagUsageCount => Some(MaterializeTask::RefreshTagUsageCount {
@@ -361,7 +370,7 @@ impl RetryKind {
     /// [`MaterializeTask`] if it is retryable. Returns `None` for
     /// non-retryable tasks (`BatchApplyOps`, `Barrier`,
     /// `RebuildFtsIndex`, `FtsOptimize`, `CleanupOrphanedAttachments`,
-    /// `ReindexFtsReferences`, `RemoveFtsBlock`).
+    /// `RemoveFtsBlock`).
     ///
     /// For per-block variants, returns the block id as a `String` for
     /// direct binding to the retry-queue SQL writes; the inbound
@@ -379,6 +388,7 @@ impl RetryKind {
     /// callers iterate the batch and call [`record_failure`] per
     /// record wrapped as [`MaterializeTask::ApplyOp`].
     pub(crate) fn from_task(task: &MaterializeTask) -> Option<(Self, String)> {
+        let global = |kind| Some((kind, GLOBAL_TASK_SENTINEL.to_string()));
         match task {
             MaterializeTask::UpdateFtsBlock { block_id } => {
                 Some((Self::UpdateFtsBlock, block_id.to_string()))
@@ -389,6 +399,9 @@ impl RetryKind {
             MaterializeTask::ReindexBlockTagRefs { block_id } => {
                 Some((Self::ReindexBlockTagRefs, block_id.to_string()))
             }
+            MaterializeTask::ReindexFtsReferences { block_id } => {
+                Some((Self::ReindexFtsReferences, block_id.to_string()))
+            }
             // #676: persist keyed by `tag_id` (the composite PK
             // `(block_id, task_kind)` dedups per-tag, not globally).
             MaterializeTask::RefreshTagUsageCount { tag_id } => {
@@ -397,40 +410,20 @@ impl RetryKind {
             MaterializeTask::UpdateProjectedAgendaBlock { block_id } => {
                 Some((Self::UpdateProjectedAgendaBlock, block_id.to_string()))
             }
-            MaterializeTask::RebuildTagsCache => {
-                Some((Self::RebuildTagsCache, GLOBAL_TASK_SENTINEL.to_string()))
+            MaterializeTask::RebuildTagsCache => global(Self::RebuildTagsCache),
+            MaterializeTask::RebuildPagesCache => global(Self::RebuildPagesCache),
+            MaterializeTask::RebuildPagesCacheCounts => global(Self::RebuildPagesCacheCounts),
+            MaterializeTask::RebuildAgendaCache => global(Self::RebuildAgendaCache),
+            MaterializeTask::RebuildProjectedAgendaCache => {
+                global(Self::RebuildProjectedAgendaCache)
             }
-            MaterializeTask::RebuildPagesCache => {
-                Some((Self::RebuildPagesCache, GLOBAL_TASK_SENTINEL.to_string()))
-            }
-            MaterializeTask::RebuildPagesCacheCounts => Some((
-                Self::RebuildPagesCacheCounts,
-                GLOBAL_TASK_SENTINEL.to_string(),
-            )),
-            MaterializeTask::RebuildAgendaCache => {
-                Some((Self::RebuildAgendaCache, GLOBAL_TASK_SENTINEL.to_string()))
-            }
-            MaterializeTask::RebuildProjectedAgendaCache => Some((
-                Self::RebuildProjectedAgendaCache,
-                GLOBAL_TASK_SENTINEL.to_string(),
-            )),
-            MaterializeTask::RebuildTagInheritanceCache => Some((
-                Self::RebuildTagInheritanceCache,
-                GLOBAL_TASK_SENTINEL.to_string(),
-            )),
-            MaterializeTask::RebuildPageIds => {
-                Some((Self::RebuildPageIds, GLOBAL_TASK_SENTINEL.to_string()))
-            }
+            MaterializeTask::RebuildTagInheritanceCache => global(Self::RebuildTagInheritanceCache),
+            MaterializeTask::RebuildPageIds => global(Self::RebuildPageIds),
             MaterializeTask::SetBlockPageId { block_id } => {
                 Some((Self::SetBlockPageId, block_id.to_string()))
             }
-            MaterializeTask::RebuildBlockTagRefsCache => Some((
-                Self::RebuildBlockTagRefsCache,
-                GLOBAL_TASK_SENTINEL.to_string(),
-            )),
-            MaterializeTask::RebuildPageLinkCache => {
-                Some((Self::RebuildPageLinkCache, GLOBAL_TASK_SENTINEL.to_string()))
-            }
+            MaterializeTask::RebuildBlockTagRefsCache => global(Self::RebuildBlockTagRefsCache),
+            MaterializeTask::RebuildPageLinkCache => global(Self::RebuildPageLinkCache),
             // #5647: a `ReplayApplyOp` that exhausts retries keeps its replay
             // flag, so the sweep brings it back with replay routing (the
             // sink is dropped: the re-apply runs after replay and reprojects
