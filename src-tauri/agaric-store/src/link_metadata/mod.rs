@@ -333,6 +333,25 @@ impl Resolve for SsrfGuardResolver {
 /// Maximum response body size (512 KB).
 const MAX_BODY_SIZE: usize = 512 * 1024;
 
+/// Trust the bundled Mozilla roots and nothing else, so the handshake never
+/// reaches `rustls-platform-verifier` (#6763).
+///
+/// On Android that verifier panics unless the app has handed it a JVM handle
+/// and ships its Kotlin component; this app does neither, and a release build
+/// aborts on a panic. The price is that a CA the user installed on the phone is
+/// not trusted: such a link fails to preview and stays a plain link.
+///
+/// Compiled into tests so the host can check the root set; that
+/// [`shared_client`] applies it on Android is checked only on a device (#6513).
+#[cfg(any(target_os = "android", test))]
+fn with_bundled_roots(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    builder.tls_certs_only(
+        webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .filter_map(|der| reqwest::Certificate::from_der(der).ok()),
+    )
+}
+
 /// Return the process-global `reqwest::Client`, lazily built on first
 /// use. `reqwest::Client` is `Arc`-backed, so cloning is cheap; the
 /// `OnceLock` keeps us from re-building (a ~ms operation that would
@@ -376,12 +395,15 @@ fn shared_client() -> Result<reqwest::Client, AppError> {
     // reach the internet through a proxy — an acceptable trade for a
     // non-essential preview whose only safety property is exactly the one a
     // proxy removes.
-    let built = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .redirect(redirect_policy)
         .no_proxy()
         .dns_resolver(Arc::new(SsrfGuardResolver))
-        .user_agent("Agaric/1.0")
+        .user_agent("Agaric/1.0");
+    #[cfg(target_os = "android")]
+    let builder = with_bundled_roots(builder);
+    let built = builder
         .build()
         .map_err(|e| AppError::InvalidOperation(format!("HTTP client error: {e}")))?;
     // Benign race: two threads may both get into `build()` on first
