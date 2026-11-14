@@ -1,4 +1,4 @@
-# Session 4113 — a bridge serves the real commands to Playwright (#6529 stage 1b)
+# Session 4117 — a bridge serves the real commands to Playwright (#6529 stage 1b)
 
 Stage 1b of #6529, after stage 1a (session 4092) landed `HeadlessApp`. One PR. It meets the stage's "done when"; three items of the stage's "Change" list are not in it, and the issue has the reasons and the options.
 
