@@ -91,10 +91,7 @@ pub(crate) async fn declared_def(
 ) -> Result<PropertyDefState, AppError> {
     user_property_def(conn, space_id, key)
         .await?
-        .map(|row| PropertyDefState {
-            value_type: row.value_type,
-            options: row.options,
-        })
+        .map(PropertyDefState::from)
         .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))
 }
 
@@ -166,6 +163,11 @@ async fn mergeable_defs(
         return Err(AppError::validation(format!(
             "'{from_key}' is a {} property and '{into_key}' a {} one: change one type first",
             from.value_type, into.value_type
+        )));
+    }
+    if from.multiple != into.multiple {
+        return Err(AppError::validation(format!(
+            "'{from_key}' and '{into_key}' do not both hold a list, or both one value"
         )));
     }
     Ok((from, into))
@@ -241,6 +243,7 @@ pub(crate) fn value_fields(value: &PropertyValue) -> Option<PropertyValueFields>
         PropertyValue::Str(s) => fields.value_text = Some(s.clone()),
         PropertyValue::Num(n) => fields.value_num = Some(*n),
         PropertyValue::Bool(b) => fields.value_bool = Some(*b),
+        PropertyValue::List(list) => fields.value_list = Some(list.clone()),
         PropertyValue::Null => return None,
     }
     Some(fields)
@@ -328,6 +331,7 @@ fn merge_def_writes(
     let merged = PropertyDefState {
         value_type: into.value_type.clone(),
         options: union_options(into.options.as_deref(), from.options.as_deref())?,
+        multiple: into.multiple,
     };
     Ok(vec![
         PropertyDefWrite {

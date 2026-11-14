@@ -30,7 +30,7 @@ use agaric_store::space::SpaceId;
 
 use super::properties::{
     append_and_apply, refuse_builtin_definition_write, user_property_def,
-    validate_property_def_shape,
+    validate_property_def_shape, validate_property_def_state,
 };
 use super::property_keys::{declared_def, refuse_internal_key, value_fields};
 use super::{PropertyDefinition, WithOps, capture_op_refs, sanitize_internal_error};
@@ -127,7 +127,9 @@ async fn type_change_defs(
     let to = PropertyDefState {
         value_type: target.value_type.clone(),
         options: target.options.clone(),
+        multiple: from.multiple,
     };
+    validate_property_def_state(key, &to)?;
     Ok((from, to))
 }
 
@@ -166,6 +168,7 @@ async fn conversions(
             value_date: row.value_date,
             value_ref: row.value_ref.map(BlockId::from),
             value_bool: row.value_bool.map(|b| b != 0),
+            value_list: None,
         });
         let converted = convert(&value, &to.value_type, options.as_deref());
         let conversion = (row.block_id, value, converted);

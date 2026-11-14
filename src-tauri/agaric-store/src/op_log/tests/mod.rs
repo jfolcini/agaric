@@ -153,6 +153,7 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
         ),
         (
@@ -217,6 +218,7 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
                 def: Some(PropertyDefState {
                     value_type: "text".into(),
                     options: None,
+                    multiple: false,
                 }),
                 prior: None,
             }),

@@ -273,6 +273,7 @@ pub async fn migrate_pages_to_personal_space(
             value_ref: Some(BlockId::from(SPACE_PERSONAL_ULID)),
             value_bool: None,
             prior: None,
+            value_list: None,
         });
         let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
         crate::apply::kernel::apply_op_projected(tx, &record, state, false).await?;
@@ -493,6 +494,7 @@ pub async fn migrate_orphan_tags_to_space(
             value_bool: None,
             // An orphan holds no space, so the set overwrites nothing.
             prior: None,
+            value_list: None,
         });
         let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
 
@@ -714,6 +716,7 @@ pub async fn repair_misfiled_tag_spaces(
                     .await?
                     .unwrap_or_default(),
             ),
+            value_list: None,
         });
         let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
 
@@ -1224,6 +1227,7 @@ mod tests {
                 value_ref: Some(BlockId::from(SPACE_PERSONAL_ULID)),
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             "the reverse moves the tag back to Personal"
         );

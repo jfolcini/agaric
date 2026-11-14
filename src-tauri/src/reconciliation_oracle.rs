@@ -2547,6 +2547,7 @@ enum PropertyCell {
     Date(String),
     Ref(String),
     Bool(bool),
+    List(agaric_store::op::PropertyList),
 }
 
 impl std::fmt::Display for PropertyCell {
@@ -2557,6 +2558,7 @@ impl std::fmt::Display for PropertyCell {
             Self::Date(s) => write!(f, "value_date {s:?}"),
             Self::Ref(s) => write!(f, "value_ref {s}"),
             Self::Bool(b) => write!(f, "value_bool {b}"),
+            Self::List(list) => write!(f, "value_list {}", list.to_json()),
         }
     }
 }
@@ -2570,6 +2572,7 @@ fn stored_cell(row: &BaseProperty) -> Option<PropertyCell> {
         .or_else(|| row.value_date.clone().map(PropertyCell::Date))
         .or_else(|| row.value_ref.clone().map(PropertyCell::Ref))
         .or_else(|| row.value_bool.map(PropertyCell::Bool))
+        .or_else(|| row.value_list.clone().map(PropertyCell::List))
 }
 
 /// Each row a correct vault can hold for one engine value under `value_type`
@@ -2578,6 +2581,8 @@ fn stored_cell(row: &BaseProperty) -> Option<PropertyCell> {
 /// and sharing nothing with `coerce`:
 ///
 /// * a number, a boolean: its own column, whatever the type; a null: no row;
+/// * a list: `value_list`, whatever the type; under a ref key only the items
+///   whose block has a row, and no row when none has;
 /// * a string under a number, boolean or date key: that column when it parses
 ///   as the type (trimmed and finite, exactly `true` / `false`, a strict
 ///   calendar date), else `value_text`;
@@ -2604,6 +2609,21 @@ fn admissible_rows(
         PropertyValue::Num(n) => return vec![Some(C::Num(*n))],
         PropertyValue::Bool(b) => return vec![Some(C::Bool(*b))],
         PropertyValue::Null => return vec![None],
+        PropertyValue::List(list) => {
+            use agaric_store::op::{PropertyList, PropertyListItem};
+            let kept: Vec<PropertyListItem> = list
+                .0
+                .iter()
+                .filter(|item| match item {
+                    PropertyListItem::Text(id) => {
+                        value_type != Some("ref") || by_id.contains_key(id.as_str())
+                    }
+                    PropertyListItem::Num(_) => value_type != Some("ref"),
+                })
+                .cloned()
+                .collect();
+            return vec![(!kept.is_empty()).then(|| C::List(PropertyList(kept)))];
+        }
         PropertyValue::Str(s) => s,
     };
     let text = Some(C::Text(s.clone()));
@@ -2860,8 +2880,8 @@ pub fn reconcile_engine(
 // Artefact 10 — `agenda_cache`, the date roll-up (#3345)
 // ---------------------------------------------------------------------------
 
-/// One `block_properties` row: its five value columns, exactly one of them set
-/// (CHECK `exactly_one_value`, migration 0062).
+/// One `block_properties` row: its six value columns, exactly one of them set
+/// (CHECK `exactly_one_value`, migration 0133).
 #[derive(Debug, Clone)]
 pub struct BaseProperty {
     block_id: String,
@@ -2879,12 +2899,15 @@ pub struct BaseProperty {
     value_ref: Option<String>,
     /// Read only to compare against the engine.
     value_bool: Option<bool>,
+    /// Read only to compare against the engine.
+    value_list: Option<agaric_store::op::PropertyList>,
 }
 
 async fn dump_block_properties(pool: &SqlitePool) -> Result<Vec<BaseProperty>, AppError> {
     let rows = sqlx::query!(
         r#"SELECT block_id, key, value_date, value_text, value_num, value_ref,
-                  value_bool AS "value_bool: bool"
+                  value_bool AS "value_bool: bool",
+                  value_list AS "value_list: agaric_store::op::PropertyList"
            FROM block_properties"#
     )
     .fetch_all(pool)
@@ -2899,6 +2922,7 @@ async fn dump_block_properties(pool: &SqlitePool) -> Result<Vec<BaseProperty>, A
             value_num: r.value_num,
             value_ref: r.value_ref,
             value_bool: r.value_bool,
+            value_list: r.value_list,
         })
         .collect())
 }

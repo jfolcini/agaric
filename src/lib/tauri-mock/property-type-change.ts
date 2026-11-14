@@ -214,7 +214,7 @@ function admitsShape(fields: Row, valueType: string): boolean {
  * `fit_reverse_to_declared_type`: an undo that puts `fields` back under
  * `blockId`'s `key` puts them in the slot the key's type now uses, converted;
  * a value the type does not take goes back in the slot of its own kind, a
- * string as text (#6206).
+ * string as text (#6206). A list goes back as it was: no type converts one.
  */
 export function fitToDeclaredType(blockId: string, key: string, fields: Row): Row {
   const b = blocks.get(blockId)

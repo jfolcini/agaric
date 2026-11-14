@@ -280,7 +280,9 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     async (key: string, valueType: string, options: string | null) => {
       if (spaceId === null) return
       try {
-        const newDef = unwrap(await commands.createPropertyDef(spaceId, key, valueType, options))
+        const newDef = unwrap(
+          await commands.createPropertyDef(spaceId, key, valueType, options, null),
+        )
         setDefinitions((prev) => [...prev, newDef])
         // #2804 — same rationale as `handleAddFromDef`: a brand-new
         // `DRAFT_ROW_VALUE_TYPES` def has no valid empty initializer, so add a

@@ -407,8 +407,9 @@ function resolveOpRefLabel(label: string): { device_id: string; seq: number } {
 /**
  * Rewrite an op's args for the mock: labels referenced by id-shaped arg keys
  * are resolved (`S1` → its 26-char seed id, `C1` → the first op-created block).
- * `value_ref` inside a `set_property` value bundle is resolved too, and so are
- * the link-token labels inside `content` and `toText` ({@link expandContentLabels}).
+ * `value_ref` inside a `set_property` value bundle is resolved too (a
+ * `value_list` item is sent as written), and so are the link-token labels
+ * inside `content` and `toText` ({@link expandContentLabels}).
  * Rust twin: `expand_op_args` in `conformance_ipc.rs`, which sends the same
  * wire args to the real commands.
  */

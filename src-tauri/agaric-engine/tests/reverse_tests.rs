@@ -586,6 +586,7 @@ async fn reverse_set_property_with_prior_produces_set_property() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_400_000,
     )
@@ -601,6 +602,7 @@ async fn reverse_set_property_with_prior_produces_set_property() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_460_000,
     )
@@ -628,6 +630,7 @@ async fn reverse_first_set_property_produces_delete_property() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         FIXED_TS,
     )
@@ -652,6 +655,7 @@ async fn reverse_delete_property_produces_set_property_with_prior() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_400_000,
     )
@@ -1468,6 +1472,7 @@ async fn reverse_set_property_value_num() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         FIXED_TS,
     )
@@ -1487,6 +1492,7 @@ async fn reverse_set_property_value_num() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_460_000,
     )
@@ -1511,6 +1517,7 @@ async fn reverse_set_property_value_date() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         FIXED_TS,
     )
@@ -1530,6 +1537,7 @@ async fn reverse_set_property_value_date() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_460_000,
     )
@@ -1558,6 +1566,7 @@ async fn reverse_set_property_value_bool() {
             value_ref: None,
             value_bool: Some(true),
             prior: None,
+            value_list: None,
         }),
         FIXED_TS,
     )
@@ -1577,6 +1586,7 @@ async fn reverse_set_property_value_bool() {
             value_ref: None,
             value_bool: Some(false),
             prior: None,
+            value_list: None,
         }),
         1_736_942_460_000,
     )
@@ -1610,6 +1620,7 @@ async fn reverse_delete_property_restores_value_bool() {
             value_ref: None,
             value_bool: Some(true),
             prior: None,
+            value_list: None,
         }),
         FIXED_TS,
     )
@@ -2035,6 +2046,7 @@ async fn reverse_set_reserved_property_todo_state() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         FIXED_TS,
     )
@@ -2058,6 +2070,7 @@ async fn reverse_set_reserved_property_todo_state_with_prior() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_400_000,
     )
@@ -2073,6 +2086,7 @@ async fn reverse_set_reserved_property_todo_state_with_prior() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_460_000,
     )
@@ -2097,6 +2111,7 @@ async fn reverse_delete_reserved_property_todo_state() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_400_000,
     )
@@ -2131,6 +2146,7 @@ async fn reverse_set_reserved_property_priority_with_prior() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_400_000,
     )
@@ -2146,6 +2162,7 @@ async fn reverse_set_reserved_property_priority_with_prior() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_460_000,
     )
@@ -2170,6 +2187,7 @@ async fn reverse_set_reserved_property_due_date_with_prior() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_400_000,
     )
@@ -2185,6 +2203,7 @@ async fn reverse_set_reserved_property_due_date_with_prior() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_460_000,
     )
@@ -2209,6 +2228,7 @@ async fn reverse_set_reserved_property_scheduled_date_with_prior() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_400_000,
     )
@@ -2224,6 +2244,7 @@ async fn reverse_set_reserved_property_scheduled_date_with_prior() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_460_000,
     )
@@ -2310,6 +2331,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             next_ts(&mut ts),
         )
@@ -2326,6 +2348,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             next_ts(&mut ts),
         )
@@ -2436,6 +2459,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             next_ts(&mut ts),
         )
@@ -2954,6 +2978,7 @@ async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         FIXED_TS + 60_000,
     )
@@ -2981,6 +3006,7 @@ async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         FIXED_TS + 180_000,
     )
@@ -3304,6 +3330,7 @@ async fn compute_reverse_set_property_skips_replicated_prior_2549() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         2_000,
     )
@@ -3322,6 +3349,7 @@ async fn compute_reverse_set_property_skips_replicated_prior_2549() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         3_000,
     )
@@ -3338,6 +3366,7 @@ async fn compute_reverse_set_property_skips_replicated_prior_2549() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         4_000,
     )
@@ -3376,6 +3405,7 @@ async fn compute_reverse_restores_the_replicated_prior_space_5262() {
             value_ref: Some(BlockId::test_id(id)),
             value_bool: None,
             prior: None,
+            value_list: None,
         })
     };
 
@@ -3837,6 +3867,7 @@ async fn reverse_set_property_tie_breaks_on_device_id_3646() {
                     value_ref: None,
                     value_bool: None,
                     prior: None,
+                    value_list: None,
                 }),
                 FIXED_TS,
             )
@@ -3855,6 +3886,7 @@ async fn reverse_set_property_tie_breaks_on_device_id_3646() {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             FIXED_TS,
         )
@@ -4097,6 +4129,7 @@ async fn compute_reverse_batch_property_group_stays_aligned_across_chunks_4656()
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         })
     };
 

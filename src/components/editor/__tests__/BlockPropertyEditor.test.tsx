@@ -36,7 +36,14 @@ function validateSetPropertyPayload(
   key: string,
   values: Record<string, unknown> | undefined,
 ): string | null {
-  const fields = ['value_text', 'value_num', 'value_date', 'value_ref', 'value_bool'] as const
+  const fields = [
+    'value_text',
+    'value_num',
+    'value_date',
+    'value_ref',
+    'value_bool',
+    'value_list',
+  ] as const
   const present = fields.filter((f) => values?.[f] != null)
   if (present.length === 0) {
     // count == 0 is legal for reserved keys ONLY (op.rs — "Reserved keys allow
@@ -1161,7 +1168,7 @@ describe('BlockPropertyEditor', () => {
       })
 
       await waitFor(() => {
-        expect(mockCreatePropertyDef).toHaveBeenCalledWith('SPACE_1', 'dueBy', 'date', null)
+        expect(mockCreatePropertyDef).toHaveBeenCalledWith('SPACE_1', 'dueBy', 'date', null, null)
       })
       // The engine validates the payload shape against the definition row, so
       // the definition has to exist before the typed write lands.
@@ -1521,6 +1528,7 @@ describe('BlockPropertyEditor', () => {
           'SPACE_1',
           'effortPoints',
           'number',
+          null,
           null,
         )
         // ...and nothing survives the rename that did not happen. `defs` is

@@ -57,6 +57,7 @@ pub struct RawProperty {
     pub value_date: Option<String>,
     pub value_ref: Option<String>,
     pub value_bool: Option<bool>,
+    pub value_list: Option<agaric_store::op::PropertyList>,
 }
 
 pub struct RawTag {
@@ -284,7 +285,8 @@ pub(super) fn token_key(token: &str) -> (String, i64, String) {
 }
 
 /// Derive `(value_type, value)` for a property row from whichever typed column
-/// is set. Mirrors the TS twin exactly. Ref values are relabeled.
+/// is set. Mirrors the TS twin exactly. Ref values are relabeled, and so are
+/// the string items of a list.
 fn property_typed_value(p: &RawProperty, relabel: &dyn Fn(&str) -> String) -> (Value, Value) {
     if let Some(v) = &p.value_text {
         (json!("Text"), json!(v))
@@ -296,6 +298,16 @@ fn property_typed_value(p: &RawProperty, relabel: &dyn Fn(&str) -> String) -> (V
         (json!("Ref"), json!(relabel(v)))
     } else if let Some(v) = p.value_bool {
         (json!("Bool"), json!(v))
+    } else if let Some(list) = &p.value_list {
+        let items: Vec<Value> = list
+            .0
+            .iter()
+            .map(|item| match item {
+                agaric_store::op::PropertyListItem::Text(s) => json!(relabel(s)),
+                agaric_store::op::PropertyListItem::Num(n) => json!(n),
+            })
+            .collect();
+        (json!("List"), json!(items))
     } else {
         (Value::Null, Value::Null)
     }

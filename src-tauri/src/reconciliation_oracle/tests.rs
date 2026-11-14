@@ -4692,6 +4692,7 @@ fn eq_engines() -> agaric_engine::loro::shared::LoroState {
             let def = PropertyDefState {
                 value_type: value_type.to_owned(),
                 options: None,
+                multiple: false,
             };
             engine
                 .apply_set_property_def(key, Some(&def))

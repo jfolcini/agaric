@@ -255,6 +255,7 @@ async fn dispatch_op_set_property() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
     )
     .await;
@@ -343,6 +344,7 @@ async fn dispatch_op_set_property_space_sql_only_802() {
             value_ref: Some(BlockId::test_id("space-802")),
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
     )
     .await;
@@ -430,6 +432,7 @@ async fn dispatch_op_set_property_space_sql_only_skips_unregistered_target_802()
             value_ref: Some(BlockId::test_id("not-a-space")),
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
     )
     .await;

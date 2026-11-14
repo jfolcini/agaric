@@ -744,6 +744,7 @@ export function BlockPropertyEditor({
                       newKey,
                       carried.valueType,
                       carried.options,
+                      null,
                     ),
                   )
                   declaredKey = newKey

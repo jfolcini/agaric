@@ -208,6 +208,7 @@ describe('PropertyDefinitionsList', () => {
       key: 'my-prop',
       valueType: 'text',
       options: null,
+      multiple: null,
     })
 
     expect(keyInput).toHaveValue('')
@@ -246,6 +247,7 @@ describe('PropertyDefinitionsList', () => {
       key: 'size',
       valueType: 'select',
       options: '["small","large"]',
+      multiple: null,
     })
   })
 
@@ -825,6 +827,7 @@ describe('PropertyDefinitionsList', () => {
         key: 'project',
         valueType: 'select',
         options: '["alpha","beta","gamma"]',
+        multiple: null,
       })
       await user.selectOptions(spacePicker(), WORK.id)
       expect(await screen.findByText('Project')).toBeInTheDocument()

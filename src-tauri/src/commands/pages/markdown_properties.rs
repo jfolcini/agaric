@@ -33,8 +33,8 @@ impl PropertyLines {
         mode: PropertyWrite,
     ) -> Result<Self, AppError> {
         let rows = sqlx::query!(
-            r#"SELECT key AS "key!", value_type, options FROM property_definitions
-               WHERE space_id = ?"#,
+            r#"SELECT key AS "key!", value_type, options, multiple AS "multiple: bool"
+               FROM property_definitions WHERE space_id = ?"#,
             space_id,
         )
         .fetch_all(&mut *conn)
@@ -45,6 +45,7 @@ impl PropertyLines {
                 let declaration = PropertyDeclaration {
                     value_type: row.value_type,
                     options: row.options,
+                    multiple: row.multiple,
                 };
                 (row.key, declaration)
             })

@@ -173,15 +173,16 @@ pub use pages::{
 };
 pub use properties::{
     DEFAULT_PROPERTY_DEFS, PropertyUsage, count_property_usage, count_property_usage_inner,
-    create_property_def, create_property_def_in_tx, create_property_def_inner, delete_property,
-    delete_property_def, delete_property_def_inner, delete_property_inner, get_batch_properties,
+    create_property_def, create_property_def_in_tx, create_property_def_inner,
+    create_property_def_state_inner, delete_property, delete_property_def,
+    delete_property_def_inner, delete_property_inner, get_batch_properties,
     get_batch_properties_inner, get_properties, get_properties_inner, get_property,
     get_property_def, get_property_def_inner, get_property_inner, list_property_defs,
     list_property_defs_inner, list_property_keys, list_property_keys_inner, list_property_values,
     list_property_values_inner, seed_default_property_defs_in_tx, set_due_date, set_due_date_inner,
     set_priority, set_priority_inner, set_property, set_property_batch, set_property_batch_inner,
-    set_property_inner, set_scheduled_date, set_scheduled_date_inner, set_todo_state,
-    set_todo_state_batch, set_todo_state_batch_inner, set_todo_state_inner,
+    set_property_inner, set_property_list_inner, set_scheduled_date, set_scheduled_date_inner,
+    set_todo_state, set_todo_state_batch, set_todo_state_batch_inner, set_todo_state_inner,
     update_property_def_options, update_property_def_options_inner,
 };
 pub use property_keys::{
@@ -662,6 +663,11 @@ pub struct PropertyRow {
     /// Native boolean property storage. SQLite represents booleans
     /// as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
     pub value_bool: Option<i64>,
+    /// A list value (#6741), its items in the order written. Left out when
+    /// the row holds none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[specta(optional)]
+    pub value_list: Option<agaric_store::op::PropertyList>,
 }
 
 /// Input bundle for the `set_property` Tauri command — collects all
@@ -684,6 +690,9 @@ pub struct SetPropertyArgs {
     /// Native boolean property value (`true` / `false`).
     #[serde(default)]
     pub value_bool: Option<bool>,
+    /// A list value (#6741), taken by a key its space declares `multiple`.
+    #[serde(default)]
+    pub value_list: Option<agaric_store::op::PropertyList>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, sqlx::FromRow, specta::Type)]
@@ -784,6 +793,21 @@ pub struct PropertyDefinition {
     /// A built-in definition (#5841): fixed in code, never stored, and refused
     /// by every definition write.
     pub builtin: bool,
+    /// The key holds a list of `value_type` items (#6741); never a built-in.
+    /// Left out when `false`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[specta(optional)]
+    pub multiple: bool,
+}
+
+impl From<PropertyDefinition> for agaric_store::op::PropertyDefState {
+    fn from(def: PropertyDefinition) -> Self {
+        Self {
+            value_type: def.value_type,
+            options: def.options,
+            multiple: def.multiple,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1005,6 +1029,7 @@ struct BatchPropertyRow {
     value_date: Option<String>,
     value_ref: Option<String>,
     value_bool: Option<i64>,
+    value_list: Option<agaric_store::op::PropertyList>,
 }
 
 // ---------------------------------------------------------------------------

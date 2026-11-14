@@ -146,7 +146,7 @@ fn citation_display_name(entry: &BibEntry) -> String {
 async fn declare_bib_property_defs(
     tx: &mut CommandTx,
     ctx: &BibImportCtx<'_>,
-    decls: &mut HashMap<String, (String, Option<String>)>,
+    decls: &mut HashMap<String, (String, Option<String>, bool)>,
     warnings: &mut Vec<String>,
 ) -> Result<(), AppError> {
     let space_id = ctx.space_id;
@@ -230,7 +230,7 @@ async fn declare_bib_property_defs(
             None,
         )
         .await?;
-        decls.insert((*key).to_string(), ((*value_type).to_string(), None));
+        decls.insert((*key).to_string(), ((*value_type).to_string(), None, false));
     }
 
     Ok(())
@@ -345,12 +345,12 @@ async fn fetch_taken_page_titles(
 async fn fetch_bib_property_declarations(
     tx: &mut CommandTx,
     space_id: &str,
-) -> Result<HashMap<String, (String, Option<String>)>, AppError> {
+) -> Result<HashMap<String, (String, Option<String>, bool)>, AppError> {
     Ok({
         let keys: Vec<&str> = BIB_PROPERTY_DEFS.iter().map(|(k, _)| *k).collect();
         let keys_json = serde_json::to_string(&keys)?;
         let rows = sqlx::query!(
-            r#"SELECT key AS "key!", value_type, options
+            r#"SELECT key AS "key!", value_type, options, multiple AS "multiple: bool"
                FROM property_definitions
                WHERE space_id = ?2 AND key IN (SELECT value FROM json_each(?1))"#,
             keys_json,
@@ -359,7 +359,7 @@ async fn fetch_bib_property_declarations(
         .fetch_all(&mut ***tx)
         .await?;
         rows.into_iter()
-            .map(|r| (r.key, (r.value_type, r.options)))
+            .map(|r| (r.key, (r.value_type, r.options, r.multiple)))
             .collect()
     })
 }
@@ -548,15 +548,15 @@ async fn set_entry_properties_in_tx(
     ctx: &BibImportCtx<'_>,
     entry: &BibEntry,
     page_id: &str,
-    decls: &HashMap<String, (String, Option<String>)>,
+    decls: &HashMap<String, (String, Option<String>, bool)>,
     warnings: &mut Vec<String>,
 ) -> Result<u64, AppError> {
     let mut properties_set: u64 = 0;
     let props = entry_property_values(entry);
     for (key, value) in props {
-        let (value_type, options) = match decls.get(key) {
-            Some((t, o)) => (Some(t.clone()), o.clone()),
-            None => (None, None),
+        let (value_type, options, multiple) = match decls.get(key) {
+            Some((t, o, m)) => (Some(t.clone()), o.clone(), *m),
+            None => (None, None, false),
         };
         let (value_text, value_num, value_date, value_ref, value_bool) =
             agaric_engine::block_ops::typed_property_args_for_registry_value(
@@ -567,6 +567,7 @@ async fn set_entry_properties_in_tx(
         let declaration = value_type.map(|vt| agaric_engine::block_ops::PropertyDeclaration {
             value_type: vt,
             options,
+            multiple,
         });
         match agaric_engine::block_ops::set_property_in_tx_with_declaration(
             tx,

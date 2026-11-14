@@ -354,6 +354,39 @@ async fn project_reserved_property_to_column(
     Ok(())
 }
 
+/// The text `block_properties.value_list` holds for `list` (#6741). Under a
+/// `ref` key it keeps only the items whose target has a `blocks` row, as the
+/// foreign key keeps a single `value_ref`; `None` when no item is left, which
+/// is no row.
+async fn list_column_text(
+    conn: &mut SqliteConnection,
+    list: &agaric_store::op::PropertyList,
+    is_ref: bool,
+) -> Result<Option<String>, AppError> {
+    use agaric_store::op::{PropertyList, PropertyListItem};
+    if !is_ref {
+        return Ok((!list.0.is_empty()).then(|| list.to_json()));
+    }
+    let targets_json = serde_json::to_string(&list.texts().collect::<Vec<_>>())?;
+    let present: std::collections::HashSet<String> = sqlx::query_scalar!(
+        r#"SELECT b.id AS "id!: String" FROM blocks b
+           WHERE b.id IN (SELECT value FROM json_each(?1))"#,
+        targets_json,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
+    let kept = PropertyList(
+        list.0
+            .iter()
+            .filter(|item| matches!(item, PropertyListItem::Text(id) if present.contains(id)))
+            .cloned()
+            .collect(),
+    );
+    Ok((!kept.0.is_empty()).then(|| kept.to_json()))
+}
+
 /// [`project_set_property_to_sql`]'s non-reserved arm: the `block_properties`
 /// row (INSERT OR REPLACE, or DELETE for a cleared value).
 async fn project_property_row(
@@ -362,6 +395,23 @@ async fn project_property_row(
 ) -> Result<(), AppError> {
     let value_bool_int: Option<i64> = payload.value_bool.map(i64::from);
     let block_id = payload.block_id.as_str();
+    let value_list = match &payload.value_list {
+        Some(list) => {
+            let is_ref = sqlx::query_scalar!(
+                r#"SELECT EXISTS(
+                       SELECT 1 FROM blocks b JOIN property_definitions d
+                         ON d.space_id = b.space_id AND d.key = ?2
+                       WHERE b.id = ?1 AND d.value_type = 'ref') AS "e!: i64""#,
+                block_id,
+                payload.key,
+            )
+            .fetch_one(&mut *conn)
+            .await?
+                != 0;
+            list_column_text(conn, list, is_ref).await?
+        }
+        None => None,
+    };
     // The `block_properties.exactly_one_value` CHECK (migration 0062)
     // forbids an all-NULL row. An all-None payload represents a cleared
     // property, whose correct SQL representation is row-absent (DELETE) —
@@ -377,6 +427,7 @@ async fn project_property_row(
         && payload.value_date.is_none()
         && payload.value_ref.is_none()
         && value_bool_int.is_none()
+        && value_list.is_none()
     {
         sqlx::query!(
             "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
@@ -403,8 +454,8 @@ async fn project_property_row(
     // row that violates the `exactly_one_value` CHECK (migration 0062).
     sqlx::query!(
         "INSERT OR REPLACE INTO block_properties \
-             (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-         SELECT ?, ?, ?, ?, ?, ?, ? \
+             (block_id, key, value_text, value_num, value_date, value_ref, value_bool, value_list) \
+         SELECT ?, ?, ?, ?, ?, ?, ?, ? \
          WHERE ? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
         block_id,
         payload.key,
@@ -413,6 +464,7 @@ async fn project_property_row(
         payload.value_date,
         payload.value_ref,
         value_bool_int,
+        value_list,
         payload.value_ref,
         payload.value_ref,
     )
@@ -553,6 +605,7 @@ async fn delete_purge_ids_relation_rows(conn: &mut SqliteConnection) -> Result<(
     )
     .execute(&mut *conn)
     .await?;
+    agaric_store::cache::purge_refs_from_lists(conn, "", "SELECT id FROM _purge_ids", None).await?;
     sqlx::query(
         "DELETE FROM block_links \
          WHERE source_id IN (SELECT id FROM _purge_ids) \
@@ -1444,8 +1497,8 @@ fn declared_value_type_or_text<'a>(
 
 /// [`reproject_block_properties_from_engine`]'s per-key row: route the engine
 /// value to its typed `block_properties` column and INSERT it, a string its
-/// key's type does not take to `value_text` (#6206); row-absent for a cleared
-/// or dangling value.
+/// key's type does not take to `value_text` (#6206) and a list to `value_list`
+/// ([`list_column_text`]); row-absent for a cleared or dangling value.
 async fn reproject_property_row_from_engine(
     conn: &mut SqliteConnection,
     block_id: &agaric_core::ulid::BlockId,
@@ -1469,6 +1522,10 @@ async fn reproject_property_row_from_engine(
             ..Default::default()
         },
         PropertyValue::Null => PropertyValueFields::default(),
+        PropertyValue::List(list) => PropertyValueFields {
+            value_list: Some(list.clone()),
+            ..Default::default()
+        },
         // A String value is text/date/ref/select (or a legacy pre-§2.1
         // Str-encoded number/bool): it lands where the key's declared type
         // puts it, as that type reads it (`coerce`), defaulting to "text" for
@@ -1494,6 +1551,13 @@ async fn reproject_property_row_from_engine(
         .as_ref()
         .map(agaric_core::ulid::BlockId::as_str);
     let value_bool = fields.value_bool.map(i64::from);
+    let value_list = match &fields.value_list {
+        Some(list) => {
+            let is_ref = value_types.get(key).is_some_and(|ty| ty == "ref");
+            list_column_text(conn, list, is_ref).await?
+        }
+        None => None,
+    };
 
     // The `block_properties.exactly_one_value` CHECK (migration 0062)
     // forbids an all-NULL row. An explicit-null engine value (a cleared
@@ -1506,6 +1570,7 @@ async fn reproject_property_row_from_engine(
         && value_date.is_none()
         && value_ref.is_none()
         && value_bool.is_none()
+        && value_list.is_none()
     {
         return Ok(());
     }
@@ -1527,8 +1592,8 @@ async fn reproject_property_row_from_engine(
     // dropped ref again once its target has a row (#6236).
     sqlx::query!(
         "INSERT INTO block_properties \
-             (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-         SELECT ?, ?, ?, ?, ?, ?, ? \
+             (block_id, key, value_text, value_num, value_date, value_ref, value_bool, value_list) \
+         SELECT ?, ?, ?, ?, ?, ?, ?, ? \
          WHERE ? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
         block_id_str,
         key,
@@ -1537,6 +1602,7 @@ async fn reproject_property_row_from_engine(
         value_date,
         value_ref,
         value_bool,
+        value_list,
         value_ref,
         value_ref,
     )
@@ -1728,15 +1794,18 @@ pub async fn project_property_def_to_sql(
     };
     let now = agaric_core::time::now_rfc3339();
     sqlx::query!(
-        "INSERT INTO property_definitions (space_id, key, value_type, options, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5) \
+        "INSERT INTO property_definitions \
+             (space_id, key, value_type, options, created_at, multiple) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
          ON CONFLICT (space_id, key) DO UPDATE \
-         SET value_type = excluded.value_type, options = excluded.options",
+         SET value_type = excluded.value_type, options = excluded.options, \
+             multiple = excluded.multiple",
         space_id,
         key,
         def.value_type,
         def.options,
         now,
+        def.multiple,
     )
     .execute(&mut *conn)
     .await?;
@@ -1794,9 +1863,10 @@ pub async fn reproject_key_values(
 
 /// Re-project the refs the FK guard dropped (#6236): each value an engine holds
 /// under a key its space declares `ref`, whose holder has no row for the key
-/// while the target has a `blocks` row. The guard drops a ref whose target has
-/// no row yet, as when the target's space is imported after the holder's, and
-/// nothing else revisits the holder. `holders_of(space_id, key)` reads that
+/// while the target has a `blocks` row; and each list there with an item its
+/// row lacks while the item's target has one (#6741). The guard drops a ref
+/// whose target has no row yet, as when the target's space is imported after
+/// the holder's, and nothing else revisits the holder. `holders_of(space_id, key)` reads that
 /// space's engine and holds no guard past its return. Returns the blocks it
 /// re-projected.
 pub async fn project_dropped_refs(
@@ -1814,14 +1884,20 @@ pub async fn project_dropped_refs(
             .await?;
     let mut healed = Vec::new();
     for def in ref_keys {
-        let targets: serde_json::Map<String, serde_json::Value> =
-            holders_of(&def.space_id, &def.key)?
-                .into_iter()
-                .filter_map(|(holder, value)| match coerce(&value, "ref") {
-                    Some(PropertyValue::Str(target)) => Some((holder, target.into())),
-                    _ => None,
-                })
-                .collect();
+        let holders = holders_of(&def.space_id, &def.key)?;
+        let lists: std::collections::HashMap<String, PropertyValue> = holders
+            .iter()
+            .filter(|(_, value)| matches!(value, PropertyValue::List(_)))
+            .cloned()
+            .collect();
+        healed.extend(project_dropped_list_refs(conn, &def.space_id, &def.key, lists).await?);
+        let targets: serde_json::Map<String, serde_json::Value> = holders
+            .into_iter()
+            .filter_map(|(holder, value)| match coerce(&value, "ref") {
+                Some(PropertyValue::Str(target)) => Some((holder, target.into())),
+                _ => None,
+            })
+            .collect();
         if targets.is_empty() {
             continue;
         }
@@ -1846,6 +1922,50 @@ pub async fn project_dropped_refs(
         );
     }
     Ok(healed)
+}
+
+/// [`project_dropped_refs`] for the lists `space_id`'s engine holds under its
+/// `ref` key `key`: a holder whose list has an item its row lacks, while the
+/// item's target has a `blocks` row, is projected again.
+async fn project_dropped_list_refs(
+    conn: &mut SqliteConnection,
+    space_id: &str,
+    key: &str,
+    mut lists: std::collections::HashMap<String, crate::loro::engine::PropertyValue>,
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    use crate::loro::engine::PropertyValue;
+    if lists.is_empty() {
+        return Ok(Vec::new());
+    }
+    let items: serde_json::Map<String, serde_json::Value> = lists
+        .iter()
+        .filter_map(|(holder, value)| match value {
+            PropertyValue::List(list) => {
+                Some((holder.clone(), list.texts().collect::<Vec<_>>().into()))
+            }
+            _ => None,
+        })
+        .collect();
+    let items_json = serde_json::Value::Object(items).to_string();
+    let dropped: Vec<(String, PropertyValue)> = sqlx::query_scalar!(
+        r#"SELECT CAST(h.key AS TEXT) AS "block_id!: String"
+           FROM json_each(?1) h
+           WHERE EXISTS (
+               SELECT 1 FROM json_each(h.value) item
+               WHERE EXISTS (SELECT 1 FROM blocks WHERE id = item.value)
+                 AND NOT EXISTS (
+                     SELECT 1 FROM block_properties bp, json_each(bp.value_list) held
+                     WHERE bp.block_id = h.key AND bp.key = ?2
+                       AND held.value = item.value))"#,
+        items_json,
+        key,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .filter_map(|holder| lists.remove_entry(&holder))
+    .collect();
+    reproject_key_values(conn, space_id, key, Some("ref"), &dropped).await
 }
 
 /// Project the tag edges the FK guard in [`reproject_block_tags_from_engine`]
@@ -1930,8 +2050,9 @@ pub async fn project_rename_property_key_to_sql(
 }
 
 /// Project a `RenamePropertyOption` (#5841): every row of `space_id` under
-/// `key` holding `old` gets `new`. A select's string value always lands in
-/// `value_text`, so this is the engine's rule.
+/// `key` holding `old`, alone or as items of a list, gets `new` there. A
+/// select's string value always lands in `value_text`, so this is the engine's
+/// rule.
 pub async fn project_rename_property_option_to_sql(
     conn: &mut SqliteConnection,
     space_id: &str,
@@ -1942,6 +2063,23 @@ pub async fn project_rename_property_option_to_sql(
     sqlx::query!(
         "UPDATE block_properties SET value_text = ?4 \
          WHERE key = ?2 AND value_text = ?3 \
+           AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = block_properties.block_id \
+                       AND (b.space_id = ?1 OR b.id = ?1))",
+        space_id,
+        key,
+        old,
+        new,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "UPDATE block_properties \
+         SET value_list = (SELECT json_group_array( \
+                               CASE WHEN je.value = ?3 THEN ?4 ELSE je.value END ORDER BY je.key) \
+                           FROM json_each(block_properties.value_list) je) \
+         WHERE key = ?2 \
+           AND EXISTS (SELECT 1 FROM json_each(block_properties.value_list) je \
+                       WHERE je.value = ?3) \
            AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = block_properties.block_id \
                        AND (b.space_id = ?1 OR b.id = ?1))",
         space_id,
@@ -2589,6 +2727,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         project_set_property_to_sql(&mut conn, &hot_path_payload)
@@ -2631,6 +2770,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         project_set_property_to_sql(&mut conn, &non_reserved_payload)
@@ -2679,6 +2819,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         project_set_property_to_sql(&mut conn, &due_payload)
@@ -2750,6 +2891,7 @@ mod tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         // Before the fix this aborts with the `exactly_one_value` CHECK; the
@@ -2801,6 +2943,7 @@ mod tests {
             value_ref: Some(BlockId::from_trusted(BLOCK_B)),
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         // Before the fix this aborts with FOREIGN KEY constraint failed (787);
@@ -2855,6 +2998,7 @@ mod tests {
             value_ref: Some(BlockId::from_trusted(BLOCK_B)),
             value_bool: None,
             prior: None,
+            value_list: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         project_set_property_to_sql(&mut conn, &ref_payload)
@@ -4835,6 +4979,167 @@ mod tests {
                 (HEALED.to_owned(), Some(TARGET.to_owned())),
             ],
             "the healed ref lands, the held row stays, the dangling ref has none"
+        );
+    }
+
+    fn ref_list(ids: &[&str]) -> PropertyValue {
+        use agaric_store::op::{PropertyList, PropertyListItem};
+        PropertyValue::List(PropertyList(
+            ids.iter()
+                .map(|id| PropertyListItem::Text((*id).to_owned()))
+                .collect(),
+        ))
+    }
+
+    /// Give `holder` the `link` list row `list` (a JSON array), replacing
+    /// whatever row it held.
+    async fn hold_link_list(pool: &SqlitePool, holder: &str, list: &str) {
+        sqlx::query(
+            "INSERT OR REPLACE INTO block_properties (block_id, key, value_list) \
+             VALUES (?, 'link', ?)",
+        )
+        .bind(holder)
+        .bind(list)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn link_lists(pool: &SqlitePool) -> Vec<(String, Option<String>)> {
+        sqlx::query_as(
+            "SELECT block_id, value_list FROM block_properties WHERE key = 'link' ORDER BY block_id",
+        )
+        .fetch_all(pool)
+        .await
+        .expect("link rows")
+    }
+
+    /// #6741 — a list under a ref key lands with only the items whose target
+    /// has a `blocks` row, in the order written, and with no row when none
+    /// has; under any other key it lands whole.
+    #[tokio::test]
+    async fn a_list_under_a_ref_key_lands_without_its_dangling_items_6741() {
+        const DANGLING: &str = "01HZ000000000000000000DANG";
+        let (pool, _dir) = fresh_pool().await;
+        seed_ref_holders(&pool).await;
+        let value_types = crate::block_ops::load_value_types(
+            &mut *pool.acquire().await.expect("acquire"),
+            DEFS_SPACE,
+        )
+        .await
+        .expect("value types");
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        for (holder, props) in [
+            (
+                HEALED,
+                vec![
+                    ("link".to_owned(), ref_list(&[DANGLING, TARGET, BLOCK_A])),
+                    ("note".to_owned(), ref_list(&[DANGLING, "plain"])),
+                ],
+            ),
+            (MISSING, vec![("link".to_owned(), ref_list(&[DANGLING]))]),
+        ] {
+            reproject_block_properties_from_engine(
+                &mut conn,
+                &BlockId::from_trusted(holder),
+                &props,
+                &value_types,
+            )
+            .await
+            .expect("reproject");
+        }
+        drop(conn);
+
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT block_id, key, value_list FROM block_properties \
+             WHERE value_list IS NOT NULL ORDER BY block_id, key",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("list rows");
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    HEALED.to_owned(),
+                    "link".to_owned(),
+                    format!(r#"["{TARGET}","{BLOCK_A}"]"#)
+                ),
+                (
+                    HEALED.to_owned(),
+                    "note".to_owned(),
+                    format!(r#"["{DANGLING}","plain"]"#)
+                ),
+            ],
+            "the ref list lost its dangling item and the all-dangling one its row"
+        );
+    }
+
+    /// #6741 — the ref pass projects a list again once an item its row lacks
+    /// has a `blocks` row. A list whose row holds every item that has one is
+    /// left alone, as is one with none.
+    #[tokio::test]
+    async fn a_ref_list_gains_an_item_once_its_target_has_a_row_6741() {
+        const DANGLING: &str = "01HZ000000000000000000DANG";
+        let (pool, _dir) = fresh_pool().await;
+        seed_ref_holders(&pool).await;
+        // HEALED was projected before TARGET had a row; HELD's row is whole.
+        hold_link_list(&pool, HEALED, &format!(r#"["{BLOCK_A}"]"#)).await;
+        hold_link_list(&pool, HELD, &format!(r#"["{BLOCK_A}"]"#)).await;
+        let holders = vec![
+            (HEALED.to_owned(), ref_list(&[DANGLING, TARGET, BLOCK_A])),
+            (MISSING.to_owned(), ref_list(&[DANGLING])),
+            (HELD.to_owned(), ref_list(&[BLOCK_A, DANGLING])),
+        ];
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        let healed = project_dropped_refs(&mut conn, |_, _| Ok(holders.clone()))
+            .await
+            .expect("ref pass");
+        drop(conn);
+
+        assert_eq!(
+            healed,
+            vec![BlockId::from_trusted(HEALED)],
+            "only the holder whose row lacked an item that now has a target"
+        );
+        assert_eq!(
+            link_lists(&pool).await,
+            vec![
+                (HELD.to_owned(), Some(format!(r#"["{BLOCK_A}"]"#))),
+                (
+                    HEALED.to_owned(),
+                    Some(format!(r#"["{TARGET}","{BLOCK_A}"]"#))
+                ),
+            ],
+            "the healed list holds the new item in the order written"
+        );
+    }
+
+    /// #6741 — the sync purge takes the purged ids out of the lists of refs
+    /// holding them, and the row of a list left empty, as it deletes a
+    /// `value_ref` row. No foreign key does this: the holders are not purged.
+    #[tokio::test]
+    async fn project_purge_blocks_takes_the_purged_ids_out_of_ref_lists_6741() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_ref_holders(&pool).await;
+        hold_link_list(&pool, HEALED, &format!(r#"["{TARGET}","{BLOCK_A}"]"#)).await;
+        hold_link_list(&pool, MISSING, &format!(r#"["{TARGET}"]"#)).await;
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_purge_blocks_to_sql(&mut conn, &[TARGET])
+            .await
+            .expect("project purge set");
+        drop(conn);
+
+        assert_eq!(
+            link_lists(&pool).await,
+            vec![
+                (HELD.to_owned(), None),
+                (HEALED.to_owned(), Some(format!(r#"["{BLOCK_A}"]"#))),
+            ],
+            "the list lost the purged id, the emptied one its row, the single ref nothing"
         );
     }
 

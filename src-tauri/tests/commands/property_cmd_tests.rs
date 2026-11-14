@@ -9732,6 +9732,7 @@ fn select_def(options: &str) -> agaric_store::op::PropertyDefState {
     agaric_store::op::PropertyDefState {
         value_type: "select".into(),
         options: Some(options.into()),
+        multiple: false,
     }
 }
 

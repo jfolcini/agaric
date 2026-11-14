@@ -3456,6 +3456,11 @@ async fn replay_set_property_op(
         .get("value_bool")
         .and_then(serde_json::Value::as_bool)
         .map(i64::from);
+    // A list (#6741), as the JSON array text `value_list` holds.
+    let value_list = payload
+        .get("value_list")
+        .filter(|list| list.as_array().is_some_and(|items| !items.is_empty()))
+        .map(ToString::to_string);
 
     // A `SetProperty` with NO value set is an explicit *clear*
     // (value = None) — the live projection represents a cleared
@@ -3469,7 +3474,8 @@ async fn replay_set_property_op(
         + i32::from(value_num.is_some())
         + i32::from(value_date.is_some())
         + i32::from(value_ref.is_some())
-        + i32::from(value_bool.is_some());
+        + i32::from(value_bool.is_some())
+        + i32::from(value_list.is_some());
     if value_count == 0 {
         replay_set_property_clear(conn, block_id, key).await?;
         return Ok(());
@@ -3534,10 +3540,12 @@ async fn replay_set_property_op(
     // row's sole value, and its FK is ON DELETE CASCADE, so a dead
     // ref means the whole property is dead — nulling it would just
     // trade FK 787 for a CHECK violation on the now all-NULL row.
+    // A list of refs keeps an item whose block is gone until the reprojection
+    // that follows rewrites the row (#6741).
     sqlx::query(
         "INSERT OR REPLACE INTO block_properties \
-     (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-     SELECT ?, ?, ?, ?, ?, ?, ? \
+     (block_id, key, value_text, value_num, value_date, value_ref, value_bool, value_list) \
+     SELECT ?, ?, ?, ?, ?, ?, ?, ? \
      WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?) \
        AND (? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?))",
     )
@@ -3548,6 +3556,7 @@ async fn replay_set_property_op(
     .bind(value_date)
     .bind(value_ref)
     .bind(value_bool)
+    .bind(value_list)
     .bind(block_id)
     .bind(value_ref)
     .bind(value_ref)
@@ -7198,6 +7207,7 @@ mod tests {
         let date = agaric_store::op::PropertyDefState {
             value_type: "date".into(),
             options: None,
+            multiple: false,
         };
         engine.apply_set_property_def("due2", Some(&date)).unwrap();
         sqlx::query(
@@ -7269,6 +7279,7 @@ mod tests {
         let date = agaric_store::op::PropertyDefState {
             value_type: "date".into(),
             options: None,
+            multiple: false,
         };
         engine.apply_set_property_def("due2", Some(&date)).unwrap();
         insert_snapshot(&pool, SPACE, engine.export_snapshot().unwrap()).await;
@@ -7312,6 +7323,7 @@ mod tests {
         let ref_def = agaric_store::op::PropertyDefState {
             value_type: "ref".into(),
             options: None,
+            multiple: false,
         };
         holder_doc
             .apply_set_property_def("link", Some(&ref_def))
@@ -7346,6 +7358,150 @@ mod tests {
             link,
             Some((Some(TARGET.to_owned()), None)),
             "the holder keeps its ref to the target"
+        );
+    }
+
+    /// #6741: disaster recovery rebuilds a list and the definition that holds
+    /// it from the engine's saved snapshot: the definition's `multiple`, and
+    /// the list's items in the order written, numbers as numbers.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recovery_restores_a_list_and_its_definition_from_the_engine_6741() {
+        use agaric_engine::loro::engine::PropertyValue;
+        use agaric_store::op::{PropertyList, PropertyListItem};
+        const SPACE: &str = "01HZ00000000000000000000S1";
+        const BLOCK: &str = "01HZ0000000000000000000B01";
+        let (pool, _dir) = test_pool().await;
+        let mut engine = agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+        engine
+            .apply_create_block(BLOCK, "content", "x", None, 0)
+            .unwrap();
+        let authors = PropertyList(vec![
+            PropertyListItem::Text("Smith, John".into()),
+            PropertyListItem::Text("Doe".into()),
+        ]);
+        let scores = PropertyList(vec![PropertyListItem::Num(2.5), PropertyListItem::Num(4.0)]);
+        for (key, value_type, list) in
+            [("authors", "text", &authors), ("scores", "number", &scores)]
+        {
+            engine
+                .apply_set_property_typed(BLOCK, key, &PropertyValue::List(list.clone()))
+                .unwrap();
+            let def = agaric_store::op::PropertyDefState {
+                value_type: value_type.into(),
+                options: None,
+                multiple: true,
+            };
+            engine.apply_set_property_def(key, Some(&def)).unwrap();
+        }
+        insert_snapshot(&pool, SPACE, engine.export_snapshot().unwrap()).await;
+
+        assert!(
+            reproject_blocks_from_engine(&pool).await.unwrap(),
+            "reprojection fired"
+        );
+
+        let defs: Vec<(String, String, bool)> = sqlx::query_as(
+            "SELECT key, value_type, multiple FROM property_definitions \
+             WHERE space_id = ? ORDER BY key",
+        )
+        .bind(SPACE)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            defs,
+            vec![
+                ("authors".to_owned(), "text".to_owned(), true),
+                ("scores".to_owned(), "number".to_owned(), true),
+            ],
+            "both definitions are back, holding a list"
+        );
+        let lists: Vec<(String, PropertyList)> = sqlx::query_as(
+            "SELECT key, value_list FROM block_properties WHERE block_id = ? ORDER BY key",
+        )
+        .bind(BLOCK)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            lists,
+            vec![
+                ("authors".to_owned(), authors),
+                ("scores".to_owned(), scores)
+            ],
+            "each list is back, item for item"
+        );
+    }
+
+    /// #6741: disaster recovery keeps the item of a ref list whose target is
+    /// in a space it projects later, as it keeps a single ref (#6236), and
+    /// leaves out the one whose target no doc holds.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recovery_keeps_a_ref_list_item_into_a_space_it_projects_later_6741() {
+        use agaric_engine::loro::engine::PropertyValue;
+        use agaric_store::op::{PropertyList, PropertyListItem};
+        const HOLDER_SPACE: &str = "01HZ00000000000000000000S1";
+        const TARGET_SPACE: &str = "01HZ00000000000000000000S2";
+        const HOLDER: &str = "01HZ0000000000000000000H01";
+        const NEAR: &str = "01HZ0000000000000000000N01";
+        const TARGET: &str = "01HZ0000000000000000000T01";
+        const GONE: &str = "01HZ0000000000000000000G01";
+        let (pool, _dir) = test_pool().await;
+        for space in [HOLDER_SPACE, TARGET_SPACE] {
+            for sql in [
+                "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'S', ?1)",
+                "INSERT INTO spaces (id) VALUES (?1)",
+            ] {
+                sqlx::query(sql).bind(space).execute(&pool).await.unwrap();
+            }
+        }
+        let mut holder_doc =
+            agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+        let ref_list_def = agaric_store::op::PropertyDefState {
+            value_type: "ref".into(),
+            options: None,
+            multiple: true,
+        };
+        holder_doc
+            .apply_set_property_def("links", Some(&ref_list_def))
+            .unwrap();
+        for (id, title) in [(HOLDER, "Holder"), (NEAR, "Near")] {
+            holder_doc
+                .apply_create_block(id, "page", title, None, 0)
+                .unwrap();
+        }
+        let links = PropertyList(
+            [TARGET, GONE, NEAR]
+                .map(|id| PropertyListItem::Text(id.to_owned()))
+                .to_vec(),
+        );
+        holder_doc
+            .apply_set_property_typed(HOLDER, "links", &PropertyValue::List(links))
+            .unwrap();
+        insert_snapshot(&pool, HOLDER_SPACE, holder_doc.export_snapshot().unwrap()).await;
+        let mut target_doc =
+            agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+        target_doc
+            .apply_create_block(TARGET, "page", "Target", None, 0)
+            .unwrap();
+        insert_snapshot(&pool, TARGET_SPACE, target_doc.export_snapshot().unwrap()).await;
+
+        assert!(
+            reproject_blocks_from_engine(&pool).await.unwrap(),
+            "both snapshots reproject"
+        );
+
+        let held: Option<String> = sqlx::query_scalar(
+            "SELECT value_list FROM block_properties WHERE block_id = ? AND key = 'links'",
+        )
+        .bind(HOLDER)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            held,
+            Some(format!(r#"["{TARGET}","{NEAR}"]"#)),
+            "the item in the later space is kept, in order; the dangling one is not"
         );
     }
 
@@ -8097,6 +8253,63 @@ mod tests {
             "…and it must RETIRE the pending marker on the way out. A marker \
              nothing will ever clear re-trips this probe on every boot for the \
              life of the vault"
+        );
+    }
+
+    /// #6741: the op-log replay writes a `set_property` that carries a list as
+    /// a list row, and the single-value set and the delete after it as they
+    /// replay any other. With no engine snapshot to reproject from, this pass
+    /// is the only one that restores the row.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_op_log_replay_restores_a_list_row_6741() {
+        let (pool, _dir) = test_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES ('local-a', 'content', '', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (seq, op_type, payload) in [
+            (
+                1,
+                "set_property",
+                serde_json::json!({
+                    "block_id": "local-a", "key": "authors", "value_list": ["Smith, John", 2.5],
+                }),
+            ),
+            (
+                2,
+                "set_property",
+                serde_json::json!({
+                    "block_id": "local-a", "key": "scores", "value_list": [1],
+                }),
+            ),
+            (
+                3,
+                "delete_property",
+                serde_json::json!({ "block_id": "local-a", "key": "scores" }),
+            ),
+        ] {
+            seed_op(&pool, seq, op_type, &payload, 0).await;
+        }
+
+        recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ true)
+            .await
+            .unwrap();
+
+        let rows: Vec<(String, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT key, value_text, value_list FROM block_properties ORDER BY key")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            vec![(
+                "authors".to_owned(),
+                None,
+                Some(r#"["Smith, John",2.5]"#.to_owned())
+            )],
+            "the list is back as a list, and the deleted one stays deleted"
         );
     }
 

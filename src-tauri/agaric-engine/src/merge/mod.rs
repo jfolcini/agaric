@@ -247,7 +247,7 @@ fn apply_set_property_op(
     // validation (e.g. a pre-fix legacy row already on disk, or a
     // future ingest path that forgets the check). The coercion below
     // resolves it deterministically by precedence
-    // (text→num→date→ref→bool), silently dropping the extra fields.
+    // (text→num→date→ref→bool→list), silently dropping the extra fields.
     // Emit a warn + the durable divergence signal BEFORE coercing so
     // the silent drop is observable; the coercion RESULT is
     // intentionally left unchanged.
@@ -257,6 +257,7 @@ fn apply_set_property_op(
         p.value_date.is_some(),
         p.value_ref.is_some(),
         p.value_bool.is_some(),
+        p.value_list.is_some(),
     ]
     .iter()
     .filter(|&&set| set)

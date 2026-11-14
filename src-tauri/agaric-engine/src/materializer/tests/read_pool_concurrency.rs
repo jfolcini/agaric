@@ -75,6 +75,7 @@ async fn reserved_key_todo_state() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
     )
     .await;

@@ -23,7 +23,12 @@ import {
   relinkRestored,
 } from '@/lib/tauri-mock/link-index'
 import { pageNameHolder, pageNameRefusal, rejectTakenPageNames } from '@/lib/tauri-mock/page-names'
-import { forwardPropertyKey, revertPropertyKeyOp, rowOf } from '@/lib/tauri-mock/property-keys'
+import {
+  forwardPropertyKey,
+  listField,
+  revertPropertyKeyOp,
+  rowOf,
+} from '@/lib/tauri-mock/property-keys'
 import { fitToDeclaredType } from '@/lib/tauri-mock/property-type-change'
 import { type MockOpLogEntry, opLog, spacePropertyDefs } from '@/lib/tauri-mock/seed'
 
@@ -40,6 +45,7 @@ export function valueFieldsOf(p: Record<string, unknown>): Record<string, unknow
     value_date: p['value_date'] ?? null,
     value_ref: p['value_ref'] ?? null,
     value_bool: p['value_bool'] ?? null,
+    ...listField(p),
   }
 }
 

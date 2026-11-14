@@ -4853,6 +4853,7 @@ async fn live_noop_redelivery_with_leftover_slot_projects_definitions_5841() {
         let def = agaric_store::op::PropertyDefState {
             value_type: "text".into(),
             options: None,
+            multiple: false,
         };
         g.engine_mut()
             .apply_set_property_def("stage", Some(&def))
@@ -6784,10 +6785,12 @@ async fn apply_remote_projects_definitions_and_retypes_their_values_5841() {
     let date = PropertyDefState {
         value_type: "date".into(),
         options: None,
+        multiple: false,
     };
     let select = |options: &str| PropertyDefState {
         value_type: "select".into(),
         options: Some(options.into()),
+        multiple: false,
     };
     on_a(&|e| {
         e.apply_set_property_def("due2", Some(&date))
@@ -6881,6 +6884,7 @@ async fn apply_remote_follows_a_rename_and_a_merge_5841() {
     let date = PropertyDefState {
         value_type: "date".into(),
         options: None,
+        multiple: false,
     };
     on_a(&|e| {
         e.apply_set_property_def("due2", Some(&date))
@@ -7049,6 +7053,7 @@ async fn two_devices(key: &str, held: &str) -> TwoDevices {
         let text = PropertyDefState {
             value_type: "text".into(),
             options: None,
+            multiple: false,
         };
         e.apply_set_property_def(key, Some(&text)).expect("declare");
         for block in [BLOCK_A, BLOCK_B] {
@@ -7081,6 +7086,7 @@ async fn change_on_a(
     let def = |value_type: &str| PropertyDefState {
         value_type: value_type.into(),
         options: None,
+        multiple: false,
     };
     let change = RewritePropertiesPayload {
         space_id: BlockId::from_trusted(SPACE_A),
@@ -7279,6 +7285,7 @@ async fn an_option_renamed_on_a() -> TwoDevices {
         def: Some(PropertyDefState {
             value_type: "select".into(),
             options: Some(r#"["draft","review"]"#.into()),
+            multiple: false,
         }),
         prior: None,
     };
@@ -7401,6 +7408,7 @@ async fn apply_remote_keeps_a_ref_to_a_block_the_same_import_brings_6232() {
         let ref_def = PropertyDefState {
             value_type: "ref".into(),
             options: None,
+            multiple: false,
         };
         e.apply_set_property_def("link", Some(&ref_def))
             .expect("declare link as a ref");

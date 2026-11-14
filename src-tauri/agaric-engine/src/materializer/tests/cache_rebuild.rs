@@ -494,6 +494,7 @@ async fn agenda_cache_after_set_property() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
     )
     .await;

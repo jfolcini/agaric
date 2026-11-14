@@ -138,7 +138,9 @@ export function PropertyDefinitionsList(): React.ReactElement {
     if (!key || spaceId === null) return
     setIsCreating(true)
     try {
-      const def = unwrap(await commands.createPropertyDef(spaceId, key, newType, newOptionsJson))
+      const def = unwrap(
+        await commands.createPropertyDef(spaceId, key, newType, newOptionsJson, null),
+      )
       setDefinitions((prev) => [...prev, def])
       setNewKey('')
       setNewType('text')

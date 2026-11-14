@@ -432,6 +432,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             1_736_942_400_000,
         )
@@ -452,6 +453,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             1_736_942_430_000,
         )
@@ -469,6 +471,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             1_736_942_460_000,
         )
@@ -506,6 +509,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             1_736_942_400_000,
         )
@@ -524,6 +528,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             1_736_942_430_000,
         )
@@ -579,6 +584,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             1_736_942_400_000,
         )
@@ -651,6 +657,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             1_736_942_400_000,
         )
@@ -682,6 +689,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             1_736_942_445_000,
         )
@@ -699,6 +707,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             1_736_942_460_000,
         )
@@ -813,6 +822,7 @@ mod option_walk_tests {
                 prior: Some(PropertyDefState {
                     value_type: "select".into(),
                     options: None,
+                    multiple: false,
                 }),
             }],
             values: vec![
@@ -931,6 +941,7 @@ mod option_walk_tests {
                     def: Some(PropertyDefState {
                         value_type: "select".into(),
                         options: None,
+                        multiple: false,
                     }),
                     prior: None,
                 }],

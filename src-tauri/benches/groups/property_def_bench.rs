@@ -445,6 +445,7 @@ fn date_def() -> PropertyDefState {
     PropertyDefState {
         value_type: "date".into(),
         options: None,
+        multiple: false,
     }
 }
 
@@ -911,6 +912,7 @@ fn bench_import_rename_property_key(c: &mut Criterion) {
         let text = PropertyDefState {
             value_type: "text".into(),
             options: None,
+            multiple: false,
         };
         let mut peer = holders_engine(PEER_DEVICE, n);
         peer.apply_set_property_def(RETYPE_KEY, Some(&text))

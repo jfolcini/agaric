@@ -300,6 +300,7 @@ async fn seed_property_def(
             .expect("seed def value_type")
             .to_owned(),
         options: d["options"].as_str().map(str::to_owned),
+        multiple: false,
     };
     let mut conn = pool.acquire().await.expect("seed def connection");
     agaric_engine::loro::projection::project_property_def_to_sql(
@@ -399,6 +400,7 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value, created_ids
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         })
     };
 
@@ -457,6 +459,10 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value, created_ids
                     .map(|s| BlockId::from(resolve_op_arg_id(s, created_ids).as_str())),
                 value_bool: v.get("value_bool").and_then(Value::as_bool),
                 prior: None,
+                value_list: v
+                    .get("value_list")
+                    .filter(|list| !list.is_null())
+                    .map(|list| serde_json::from_value(list.clone()).expect("value_list")),
             })
         }
         "set_todo_state" => reserved("todo_state", arg_str("state"), false),
@@ -592,9 +598,11 @@ async fn read_raw_state(pool: &SqlitePool) -> super::conformance_snapshot::RawSt
             Option<String>, // value_date
             Option<String>, // value_ref
             Option<i64>,    // value_bool
+            Option<agaric_store::op::PropertyList>,
         ),
     >(
-        "SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool \
+        "SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool, \
+                value_list \
          FROM block_properties \
          WHERE key NOT IN ('created_at', 'completed_at')",
     )
@@ -611,6 +619,7 @@ async fn read_raw_state(pool: &SqlitePool) -> super::conformance_snapshot::RawSt
             value_date: r.4,
             value_ref: r.5,
             value_bool: r.6.map(|n| n != 0),
+            value_list: r.7,
         })
         .collect();
 
@@ -1078,6 +1087,8 @@ async fn verify_fixture_engine_parity(
             PropertyValue::Str(value.clone())
         } else if let Some(value) = property.value_bool {
             PropertyValue::Bool(value)
+        } else if let Some(value) = &property.value_list {
+            PropertyValue::List(value.clone())
         } else {
             return fail(format!(
                 "SQL property {}/{} has no typed value",
@@ -1196,12 +1207,13 @@ async fn verify_fixture_engine_parity(
 }
 
 fn fixture_set_property_is_clear(args: &Value) -> bool {
-    const TYPED_FIELDS: [&str; 5] = [
+    const TYPED_FIELDS: [&str; 6] = [
         "value_text",
         "value_num",
         "value_date",
         "value_ref",
         "value_bool",
+        "value_list",
     ];
     let value = args.get("value").unwrap_or(&Value::Null);
     TYPED_FIELDS
@@ -1309,6 +1321,7 @@ fn set_property_clear_detection_matches_fixture_payload_projection() {
         json!({ "value_date": "2026-08-05" }),
         json!({ "value_ref": "S1" }),
         json!({ "value_bool": false }),
+        json!({ "value_list": ["a"] }),
     ] {
         assert!(!fixture_set_property_is_clear(&json!({ "value": value })));
     }

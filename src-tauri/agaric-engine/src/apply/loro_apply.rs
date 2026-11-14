@@ -851,8 +851,8 @@ async fn read_seed_node(
 
 /// `block_id`'s `block_properties` rows as the engine's native values,
 /// recovered by the same precedence as `PropertyValue::from(&SetPropertyPayload)`
-/// (text→num→date→ref→bool); the `exactly_one_value` CHECK guarantees exactly
-/// one column is set.
+/// (text→num→date→ref→bool→list); the `exactly_one_value` CHECK guarantees
+/// exactly one column is set.
 async fn read_seed_property_rows(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
@@ -860,7 +860,8 @@ async fn read_seed_property_rows(
     use crate::loro::engine::PropertyValue;
 
     let prop_rows = sqlx::query!(
-        r#"SELECT key, value_text, value_num, value_date, value_ref, value_bool
+        r#"SELECT key, value_text, value_num, value_date, value_ref, value_bool,
+                  value_list AS "value_list: agaric_store::op::PropertyList"
                  FROM block_properties WHERE block_id = ?"#,
         block_id,
     )
@@ -879,6 +880,8 @@ async fn read_seed_property_rows(
                 PropertyValue::Str(rf)
             } else if let Some(b) = r.value_bool {
                 PropertyValue::Bool(b != 0)
+            } else if let Some(list) = r.value_list {
+                PropertyValue::List(list)
             } else {
                 PropertyValue::Null
             };
@@ -1959,6 +1962,8 @@ async fn delete_purge_relation_rows(conn: &mut sqlx::SqliteConnection) -> Result
     )
     .execute(&mut *conn)
     .await?;
+    agaric_store::cache::purge_refs_from_lists(conn, "", "SELECT id FROM _purge_descendants", None)
+        .await?;
     sqlx::query(
         "DELETE FROM block_links \
          WHERE source_id IN (SELECT id FROM _purge_descendants) \

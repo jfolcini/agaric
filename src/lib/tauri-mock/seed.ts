@@ -412,9 +412,18 @@ export const DEFAULT_PROPERTY_DEFS: ReadonlyArray<[string, string, readonly stri
   ['location', 'text', null],
 ]
 
-/** The `{ value_type, options }` a `set_property_def` op carries for a definition row. */
+/**
+ * The `{ value_type, options }` a `set_property_def` op carries for a
+ * definition row, with `multiple` only when it holds a list (#6741).
+ */
 function defState(row: Record<string, unknown> | null): Record<string, unknown> | null {
-  return row && { value_type: row['value_type'], options: row['options'] ?? null }
+  return (
+    row && {
+      value_type: row['value_type'],
+      options: row['options'] ?? null,
+      ...(row['multiple'] === true ? { multiple: true } : {}),
+    }
+  )
 }
 
 /**

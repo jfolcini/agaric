@@ -107,7 +107,8 @@ function canonicalizeOp(opType: string, key: string | null): Record<string, unkn
 
 /**
  * Derive the `value_type` + `value` for a property row from whichever typed
- * column is set. Ref values are relabeled. Mirrors `property_typed_value`.
+ * column is set. Ref values are relabeled, and so are the string items of a
+ * list. Mirrors `property_typed_value`.
  */
 function propertyTypedValue(
   row: MockPropRow,
@@ -123,6 +124,13 @@ function propertyTypedValue(
   if (date != null) return { value_type: 'Date', value: date }
   if (ref != null) return { value_type: 'Ref', value: relabel(ref) }
   if (bool != null) return { value_type: 'Bool', value: bool === true || bool === 1 }
+  const list = row['value_list'] as unknown[] | null | undefined
+  if (list != null) {
+    return {
+      value_type: 'List',
+      value: list.map((item) => (typeof item === 'string' ? relabel(item) : item)),
+    }
+  }
   return { value_type: null, value: null }
 }
 

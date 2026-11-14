@@ -1437,6 +1437,7 @@ mod incremental_detection_tests {
         let def = agaric_store::op::PropertyDefState {
             value_type: "date".into(),
             options: None,
+            multiple: false,
         };
         a.apply_set_property_def("due2", Some(&def)).unwrap();
         let d = push_delta(&a, &mut b);

@@ -144,16 +144,19 @@ client must produce the identical canonical form:
   `create_block.position` / `create_block.index` and `move_block.new_index`
   (the post-#400 sibling-slot fields), `add_attachment.content_hash`
   (#5728), `delete_property.prior` (#5918), `set_property.prior` (#6014),
-  `move_block.prior` and `edit_block.prior_text` (#6046) are **omitted
-  entirely** when `None`, whereas e.g. `set_property.value_*` fields (and
+  `move_block.prior` and `edit_block.prior_text` (#6046), and
+  `value_list` wherever a property value is carried (#6741), are **omitted
+  entirely** when `None`, as a definition's `multiple` is when `false`,
+  whereas e.g. the five scalar `set_property.value_*` fields (and
   the same five inside a present `prior`, and `parent_id` inside a present
   `move_block.prior`) serialize as explicit `null`.
   Backwards-compat: a missing `value_bool` (`set_property`), `fs_path`
   (`delete_attachment`), `content_hash` (`add_attachment`), `prior`
   (`delete_property`, `set_property`, `move_block`) or `prior_text`
   (`edit_block`) deserializes to `None` / `""` / `None` / `None` / `None`
-  respectively, and an omitted `content_hash`, `prior` or `prior_text`
-  re-serializes to the text the op's hash was computed over.
+  respectively, a missing `value_list` or `multiple` to `None` / `false`,
+  and an omitted `content_hash`, `prior`, `prior_text`, `value_list` or
+  `multiple` re-serializes to the text the op's hash was computed over.
 - **All ULID fields must be uppercase Crockford Base32** before
   serialization. The local writer calls `OpPayload::normalize_block_ids()`
   (a no-op marker today, because `BlockId` auto-uppercases on construction

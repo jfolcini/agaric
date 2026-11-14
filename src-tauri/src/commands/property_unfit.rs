@@ -215,6 +215,7 @@ async fn unfit_values(
                 value_date: row.value_date,
                 value_ref: row.value_ref.map(BlockId::from),
                 value_bool: row.value_bool.map(|b| b != 0),
+                value_list: None,
             },
             deleted: row.deleted,
             page_id: row.page_id,
@@ -629,6 +630,7 @@ async fn move_target(
     Ok(PropertyDeclaration {
         value_type: def.value_type,
         options: def.options,
+        multiple: def.multiple,
     })
 }
 

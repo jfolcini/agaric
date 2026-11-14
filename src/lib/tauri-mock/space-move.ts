@@ -4,7 +4,7 @@
  * it moves, which both `space` writers share.
  *
  * A move keeps a property when both spaces define its key identically (same
- * `value_type` and `options`) or neither defines it; a built-in is never a
+ * `value_type`, `options` and `multiple`) or neither defines it; a built-in is never a
  * definition row, so it compares as undeclared on both sides and stays. The
  * blocks a move takes are each live root and its page group (`page_id` =
  * root), trashed rows included; a nested page keeps its own space.
@@ -19,6 +19,7 @@ import {
   spaceRootGroup,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
+import { listField } from '@/lib/tauri-mock/property-keys'
 import { setPageGroupSpace } from '@/lib/tauri-mock/revert'
 import { blocks, properties, propertyDefs, pushOp } from '@/lib/tauri-mock/seed'
 
@@ -38,7 +39,8 @@ function sameDefinition(key: string, source: string | null, target: string): boo
   const to = propertyDefs.get(target)?.get(key)
   return (
     (from?.['value_type'] ?? null) === (to?.['value_type'] ?? null) &&
-    (from?.['options'] ?? null) === (to?.['options'] ?? null)
+    (from?.['options'] ?? null) === (to?.['options'] ?? null) &&
+    (from?.['multiple'] ?? null) === (to?.['multiple'] ?? null)
   )
 }
 
@@ -67,6 +69,7 @@ export function spaceMoveLossValues(ids: string[], target: string): LossValue[] 
         value_date: row['value_date'] ?? null,
         value_ref: row['value_ref'] ?? null,
         value_bool: row['value_bool'] ?? null,
+        ...listField(row),
       })
     }
   }
@@ -128,6 +131,7 @@ export function dropAcknowledgedLosses(ids: string[], target: string, rawAck: un
         value_date: value['value_date'],
         value_ref: value['value_ref'],
         value_bool: value['value_bool'],
+        ...listField(value),
       },
     })
   }

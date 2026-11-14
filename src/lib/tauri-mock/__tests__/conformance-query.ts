@@ -389,8 +389,9 @@ const HISTORY_TOKEN = {
 } as const
 /** A `PropertyDefinition` (#3830): the registry `key` plus what the
  *  declaration says. `created_at` is a wall clock and stays off the token.
+ *  `multiple?` (#6741) is on it only when the row carries it.
  *  MUST match `PROPERTY_DEF_ATTRS` in the Rust twin. */
-export const PROPERTY_DEF_ATTRS = ['value_type', 'options', 'builtin'] as const
+export const PROPERTY_DEF_ATTRS = ['value_type', 'options', 'builtin', 'multiple?'] as const
 const PROPERTY_DEF_TOKEN = {
   kind: 'id',
   idKey: 'key',
@@ -1379,14 +1380,19 @@ export function idToken(
   return withAttrs((row[idKey] as string | undefined) ?? '<missing-id>', row, attrKeys)
 }
 
-/** `head` plus one `#<attr>=<value>` segment per `attrKeys` entry. */
+/**
+ * `head` plus one `#<attr>=<value>` segment per `attrKeys` entry. An attribute
+ * named with a trailing `?` is left off the token when the row lacks it.
+ */
 function withAttrs(
   head: string,
   row: Record<string, unknown>,
   attrKeys: readonly string[],
 ): string {
   let token = head
-  for (const attr of attrKeys) {
+  for (const key of attrKeys) {
+    const attr = key.endsWith('?') ? key.slice(0, -1) : key
+    if (attr !== key && row[attr] == null) continue
     token += `#${attr}=${attrValue(attr, row[attr])}`
   }
   return token
@@ -1397,7 +1403,8 @@ function withAttrs(
  * first-non-null-column precedence is the SAME rule the #763 snapshot uses
  * (`propertyTypedValue` in `conformance-snapshot.ts`), so a property read and
  * the snapshot row behind it disagree only when the command's own projection is
- * wrong. `Bool` keeps SQLite's raw `0`/`1` INTEGER — both stacks store it.
+ * wrong. `Bool` keeps SQLite's raw `0`/`1` INTEGER — both stacks store it. A
+ * list is `List=[item,item]`, each item rendered as a single value is.
  */
 function propertyToken(row: Record<string, unknown>): string {
   const key = (row['key'] as string | undefined) ?? '<missing-key>'
@@ -1409,6 +1416,10 @@ function propertyToken(row: Record<string, unknown>): string {
     ['value_bool', 'Bool'],
   ] as const) {
     if (row[column] != null) return `${key}#${tag}=${attrValue(column, row[column])}`
+  }
+  const list = row['value_list']
+  if (Array.isArray(list)) {
+    return `${key}#List=[${list.map((item) => attrValue('value_list', item)).join(',')}]`
   }
   return `${key}#null=null`
 }

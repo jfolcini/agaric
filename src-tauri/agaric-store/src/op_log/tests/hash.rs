@@ -283,3 +283,128 @@ async fn move_and_edit_without_priors_keep_their_pre_6046_bytes_and_hashes() {
         );
     }
 }
+
+/// #6741: a property op with no list, and a definition op with no `multiple`,
+/// are stored as exactly the bytes they were stored as before those fields
+/// existed, so they hash as they did, and those stored bytes still decode.
+/// `SET` is the release vault's own op (`tests/fixtures/release-vault/0.24.0`).
+#[tokio::test]
+async fn property_ops_without_a_list_keep_their_pre_6741_bytes_and_hashes() {
+    const SET: &str = r#"{"block_id":"01M7CXWP2BDM4GND8RMJPC5SNK","key":"space","prior":{"value_bool":null,"value_date":null,"value_num":null,"value_ref":null,"value_text":null},"value_bool":null,"value_date":null,"value_num":null,"value_ref":"00000000000000000AGAR1CWRK","value_text":null}"#;
+    const DELETE: &str = r#"{"block_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","key":"effort","prior":{"value_bool":null,"value_date":null,"value_num":null,"value_ref":null,"value_text":"2h"}}"#;
+    const DEF: &str = r#"{"def":{"options":"[\"a\",\"b\"]","value_type":"select"},"key":"stage","prior":{"options":null,"value_type":"text"},"space_id":"00000000000000000AGAR1CPER"}"#;
+    const REWRITE: &str = r#"{"defs":[{"def":{"options":null,"value_type":"number"},"key":"pages","prior":{"options":null,"value_type":"text"}}],"reason":"change_type","space_id":"00000000000000000AGAR1CPER","values":[{"block_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","key":"pages","prior":{"value_bool":null,"value_date":null,"value_num":null,"value_ref":null,"value_text":"387"},"value":{"value_bool":null,"value_date":null,"value_num":387.0,"value_ref":null,"value_text":null}}]}"#;
+    let (pool, _dir) = test_pool().await;
+
+    // One device per op, so each is its device's first and chains to nothing.
+    for (device, payload, op_type, bytes) in [
+        (
+            "dev-6741-a",
+            OpPayload::SetProperty(serde_json::from_str(SET).unwrap()),
+            "set_property",
+            SET,
+        ),
+        (
+            "dev-6741-b",
+            OpPayload::DeleteProperty(serde_json::from_str(DELETE).unwrap()),
+            "delete_property",
+            DELETE,
+        ),
+        (
+            "dev-6741-c",
+            OpPayload::SetPropertyDef(serde_json::from_str(DEF).unwrap()),
+            "set_property_def",
+            DEF,
+        ),
+        (
+            "dev-6741-d",
+            OpPayload::RewriteProperties(serde_json::from_str(REWRITE).unwrap()),
+            "rewrite_properties",
+            REWRITE,
+        ),
+    ] {
+        let record = append_local_op_at(&pool, device, payload, FIXED_TS)
+            .await
+            .unwrap();
+        assert_eq!(
+            record.payload, bytes,
+            "{op_type}: stored bytes are unchanged"
+        );
+        assert_eq!(
+            record.hash,
+            compute_op_hash(device, 1, None, op_type, bytes),
+            "{op_type}: the hash is the one the pre-#6741 bytes give"
+        );
+    }
+}
+
+/// #6741: a list and a `multiple` definition are stored, and decode to what
+/// was written.
+#[tokio::test]
+async fn a_list_and_a_multiple_definition_round_trip_through_the_log_6741() {
+    use crate::op::{PropertyDefState, PropertyList, PropertyListItem, SetPropertyDefPayload};
+    let (pool, _dir) = test_pool().await;
+    let list = PropertyList(vec![
+        PropertyListItem::Text("Smith, John".into()),
+        PropertyListItem::Num(2.5),
+    ]);
+    let set = SetPropertyPayload {
+        block_id: BlockId::from_trusted("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        key: "authors".into(),
+        value_text: None,
+        value_num: None,
+        value_date: None,
+        value_ref: None,
+        value_bool: None,
+        value_list: Some(list),
+        prior: None,
+    };
+    let def = SetPropertyDefPayload {
+        space_id: BlockId::from_trusted("00000000000000000AGAR1CPER"),
+        key: "authors".into(),
+        def: Some(PropertyDefState {
+            value_type: "text".into(),
+            options: None,
+            multiple: true,
+        }),
+        prior: None,
+    };
+
+    let set_record = append_local_op_at(
+        &pool,
+        "dev-6741-e",
+        OpPayload::SetProperty(set.clone()),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+    let def_record = append_local_op_at(
+        &pool,
+        "dev-6741-f",
+        OpPayload::SetPropertyDef(def.clone()),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        set_record.payload,
+        r#"{"block_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","key":"authors","value_bool":null,"value_date":null,"value_list":["Smith, John",2.5],"value_num":null,"value_ref":null,"value_text":null}"#,
+        "the list is stored as a JSON array of strings and numbers"
+    );
+    assert_eq!(
+        serde_json::from_str::<SetPropertyPayload>(&set_record.payload).unwrap(),
+        set,
+        "and decodes to the list written"
+    );
+    assert_eq!(
+        def_record.payload,
+        r#"{"def":{"multiple":true,"options":null,"value_type":"text"},"key":"authors","prior":null,"space_id":"00000000000000000AGAR1CPER"}"#,
+        "`multiple` is stored when set"
+    );
+    assert_eq!(
+        serde_json::from_str::<SetPropertyDefPayload>(&def_record.payload).unwrap(),
+        def,
+        "and decodes to the definition written"
+    );
+}

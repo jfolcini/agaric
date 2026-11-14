@@ -51,6 +51,9 @@ pub struct PropertyLossValue {
     pub value_date: Option<String>,
     pub value_ref: Option<String>,
     pub value_bool: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[specta(optional)]
+    pub value_list: Option<agaric_store::op::PropertyList>,
 }
 
 /// Per key, the values moving `block_ids_json` (a JSON id array) to
@@ -78,7 +81,8 @@ async fn space_move_losses(
            LEFT JOIN property_definitions src ON src.space_id = b.space_id AND src.key = bp.key
            LEFT JOIN property_definitions dst ON dst.space_id = ?2 AND dst.key = bp.key
            WHERE b.space_id IS NOT ?2
-             AND NOT (src.value_type IS dst.value_type AND src.options IS dst.options)
+             AND NOT (src.value_type IS dst.value_type AND src.options IS dst.options
+                      AND src.multiple IS dst.multiple)
            GROUP BY bp.key
            ORDER BY bp.key"#,
         block_ids_json,
@@ -112,7 +116,8 @@ async fn space_move_loss_values(
            SELECT b.id AS "block_id!: String", b.page_id, pg.content AS page_title,
                   b.content, b.deleted_at IS NOT NULL AS "deleted!: bool",
                   bp.key AS "key!: String", bp.value_text, bp.value_num, bp.value_date,
-                  bp.value_ref, bp.value_bool
+                  bp.value_ref, bp.value_bool,
+                  bp.value_list AS "value_list: agaric_store::op::PropertyList"
            FROM moved m
            JOIN blocks b ON b.id = m.id
            JOIN block_properties bp ON bp.block_id = b.id
@@ -120,7 +125,8 @@ async fn space_move_loss_values(
            LEFT JOIN property_definitions src ON src.space_id = b.space_id AND src.key = bp.key
            LEFT JOIN property_definitions dst ON dst.space_id = ?2 AND dst.key = bp.key
            WHERE b.space_id IS NOT ?2
-             AND NOT (src.value_type IS dst.value_type AND src.options IS dst.options)
+             AND NOT (src.value_type IS dst.value_type AND src.options IS dst.options
+                      AND src.multiple IS dst.multiple)
              AND (?3 IS NULL OR bp.key = ?3)
              AND (?4 IS NULL OR b.id > ?4)
            ORDER BY b.id, bp.key
@@ -186,6 +192,7 @@ pub(super) async fn drop_acknowledged_losses_in_tx(
                 value_date: row.value_date,
                 value_ref: row.value_ref.map(BlockId::from),
                 value_bool: row.value_bool.map(|b| b != 0),
+                value_list: row.value_list,
             }),
         });
         let record =

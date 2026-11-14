@@ -4,7 +4,8 @@
 //! `property_definitions` projection is rebuilt from.
 //!
 //! Under [`PROPERTY_DEFINITIONS_ROOT`] each key the space declares holds one
-//! plain map value `{value_type, options}`, never a container: two devices
+//! plain map value `{value_type, options}`, with `multiple: true` when it
+//! holds a list (#6741), never a container: two devices
 //! that declare one key concurrently write the same slot, and Loro's per-key
 //! last-writer-wins keeps one whole definition rather than orphaning the
 //! entries of a losing container.
@@ -15,23 +16,26 @@ use super::*;
 
 const FIELD_VALUE_TYPE: &str = "value_type";
 const FIELD_OPTIONS: &str = "options";
+const FIELD_MULTIPLE: &str = "multiple";
 
-/// `def` as the root stores it.
+/// `def` as the root stores it. `multiple` is written only when set, so a
+/// definition written before it existed is still the map this builds.
 fn def_to_loro(def: &PropertyDefState) -> LoroValue {
     let options = def
         .options
         .as_deref()
         .map_or(LoroValue::Null, LoroValue::from);
-    LoroValue::Map(
-        vec![
-            (
-                FIELD_VALUE_TYPE.to_owned(),
-                LoroValue::from(def.value_type.as_str()),
-            ),
-            (FIELD_OPTIONS.to_owned(), options),
-        ]
-        .into(),
-    )
+    let mut fields = vec![
+        (
+            FIELD_VALUE_TYPE.to_owned(),
+            LoroValue::from(def.value_type.as_str()),
+        ),
+        (FIELD_OPTIONS.to_owned(), options),
+    ];
+    if def.multiple {
+        fields.push((FIELD_MULTIPLE.to_owned(), LoroValue::Bool(true)));
+    }
+    LoroValue::Map(fields.into())
 }
 
 /// The definition the root holds under `key`.
@@ -53,9 +57,15 @@ fn def_from_loro(key: &str, value: &LoroValue) -> Result<PropertyDefState, AppEr
         None | Some(LoroValue::Null) => None,
         Some(_) => return Err(shape("options is neither a string nor null")),
     };
+    let multiple = match fields.get(FIELD_MULTIPLE) {
+        Some(LoroValue::Bool(b)) => *b,
+        None => false,
+        Some(_) => return Err(shape("multiple is not a boolean")),
+    };
     Ok(PropertyDefState {
         value_type,
         options,
+        multiple,
     })
 }
 
@@ -185,7 +195,8 @@ impl LoroEngine {
     }
 
     /// Mirrors `RenamePropertyOption`: every block whose `key` holds the
-    /// string `old` gets `new`, and the definition's options swap `old` for
+    /// string `old`, alone or as items of a list, gets `new` there, and the
+    /// definition's options swap `old` for
     /// `new` in place when they hold `old` and not `new`. One commit; nothing
     /// to change records no op. Returns the definition the root holds after.
     pub fn apply_rename_property_option(
@@ -196,9 +207,20 @@ impl LoroEngine {
     ) -> Result<Option<PropertyDefState>, AppError> {
         let rename_err =
             |e: loro::LoroError| AppError::validation(format!("loro: rename option {key}: {e}"));
-        for block_props in self.blocks_holding_str(key, old)? {
+        for (block_props, held) in self.blocks_holding_str(key, old)? {
+            let renamed = match held {
+                PropertyValue::List(mut list) => {
+                    for item in &mut list.0 {
+                        if matches!(item, PropertyListItem::Text(s) if s == old) {
+                            *item = PropertyListItem::Text(new.to_owned());
+                        }
+                    }
+                    PropertyValue::List(list)
+                }
+                _ => PropertyValue::Str(new.to_owned()),
+            };
             block_props
-                .insert(key, LoroValue::from(new))
+                .insert(key, renamed.to_loro())
                 .map_err(rename_err)?;
         }
         let mut def = self.read_property_def(key)?;
@@ -212,9 +234,13 @@ impl LoroEngine {
         Ok(def)
     }
 
-    /// The per-block maps whose `key` holds the string `value`, collected
-    /// before any is changed.
-    fn blocks_holding_str(&self, key: &str, value: &str) -> Result<Vec<LoroMap>, AppError> {
+    /// The per-block maps whose `key` holds the string `value`, alone or as
+    /// an item of a list, with what they hold, collected before any is changed.
+    fn blocks_holding_str(
+        &self,
+        key: &str,
+        value: &str,
+    ) -> Result<Vec<(LoroMap, PropertyValue)>, AppError> {
         let mut holding = Vec::new();
         let mut err = None;
         self.doc
@@ -230,9 +256,17 @@ impl LoroEngine {
                     )));
                     return;
                 };
-                let held = block_props.get(key).and_then(|voc| voc.into_value().ok());
-                if matches!(held, Some(LoroValue::String(s)) if s.as_str() == value) {
-                    holding.push(block_props);
+                let held = block_props
+                    .get(key)
+                    .and_then(|voc| voc.into_value().ok())
+                    .and_then(|held| PropertyValue::from_loro(held).ok());
+                let holds = match &held {
+                    Some(PropertyValue::Str(s)) => s == value,
+                    Some(PropertyValue::List(list)) => list.texts().any(|s| s == value),
+                    _ => false,
+                };
+                if let (Some(held), true) = (held, holds) {
+                    holding.push((block_props, held));
                 }
             });
         err.map_or(Ok(holding), Err)
@@ -350,6 +384,7 @@ mod tests {
         PropertyDefState {
             value_type: value_type.to_owned(),
             options: options.map(str::to_owned),
+            multiple: false,
         }
     }
 
@@ -422,6 +457,121 @@ mod tests {
             e.doc.oplog_frontiers(),
             before,
             "a replayed op leaves the doc as it was"
+        );
+    }
+
+    fn list(items: &[&str]) -> PropertyValue {
+        PropertyValue::List(PropertyList(
+            items
+                .iter()
+                .map(|item| PropertyListItem::Text((*item).to_owned()))
+                .collect(),
+        ))
+    }
+
+    /// #6741: a definition that holds a list reads back with the flag, and one
+    /// that does not is the two-field map every doc written before the flag
+    /// holds, so re-applying an old definition still records no op.
+    #[test]
+    fn multiple_is_stored_only_when_set_6741() {
+        let mut e = LoroEngine::with_peer_id("dev-a").expect("peer");
+        let authors = PropertyDefState {
+            multiple: true,
+            ..def("text", None)
+        };
+        e.apply_set_property_def("authors", Some(&authors))
+            .expect("declare");
+        assert_eq!(e.read_property_def("authors").unwrap(), Some(authors));
+
+        let LoroValue::Map(single) = def_to_loro(&def("text", None)) else {
+            panic!("a definition is stored as a map");
+        };
+        let mut fields: Vec<&str> = single.keys().map(String::as_str).collect();
+        fields.sort_unstable();
+        assert_eq!(fields, [FIELD_OPTIONS, FIELD_VALUE_TYPE]);
+    }
+
+    /// #6741: a list is one plain value in its slot. It reads back as written,
+    /// numbers and order included.
+    #[test]
+    fn a_list_reads_back_as_written_6741() {
+        let mut e = LoroEngine::with_peer_id("dev-a").expect("peer");
+        e.apply_create_block("B1", "content", "", None, 0)
+            .expect("create block");
+        let written = PropertyValue::List(PropertyList(vec![
+            PropertyListItem::Text("Smith, John".into()),
+            PropertyListItem::Num(2.5),
+            PropertyListItem::Text("Doe".into()),
+        ]));
+        e.apply_set_property_typed("B1", "authors", &written)
+            .expect("set");
+        assert_eq!(
+            e.read_property_typed("B1", "authors").unwrap(),
+            Some(written.clone())
+        );
+        assert_eq!(
+            e.read_all_properties_typed("B1").unwrap(),
+            vec![("authors".to_owned(), written)]
+        );
+    }
+
+    /// #6741: two devices that each add an item to one list before they sync
+    /// both end with the later write, whole: the other device's item is lost,
+    /// as a single value's concurrent write is. `a` is the later writer: it
+    /// made one more edit before its write.
+    #[test]
+    fn concurrent_list_writes_keep_the_later_write_whole_6741() {
+        let mut a = LoroEngine::with_peer_id("dev-a").expect("peer a");
+        let mut b = LoroEngine::with_peer_id("dev-b").expect("peer b");
+        a.apply_create_block("B1", "content", "", None, 0)
+            .expect("create block");
+        a.apply_set_property_typed("B1", "authors", &list(&["x"]))
+            .expect("base");
+        merge_both_ways(&mut a, &mut b);
+
+        a.apply_set_property("B1", "note", Some("one more edit"))
+            .expect("a edits");
+        a.apply_set_property_typed("B1", "authors", &list(&["x", "a"]))
+            .expect("a adds an item");
+        b.apply_set_property_typed("B1", "authors", &list(&["x", "b"]))
+            .expect("b adds an item");
+        merge_both_ways(&mut a, &mut b);
+
+        let on_a = a.read_property_typed("B1", "authors").unwrap();
+        assert_eq!(
+            on_a,
+            b.read_property_typed("B1", "authors").unwrap(),
+            "peers converge"
+        );
+        assert_eq!(on_a, Some(list(&["x", "a"])), "the later write, whole");
+    }
+
+    /// #6741: an option rename reaches the items of a list, in place.
+    #[test]
+    fn an_option_rename_reaches_the_items_of_a_list_6741() {
+        let mut e = LoroEngine::with_peer_id("dev-a").expect("peer");
+        let stages = PropertyDefState {
+            multiple: true,
+            ..def("select", Some(r#"["draft","review"]"#))
+        };
+        e.apply_set_property_def("stage", Some(&stages))
+            .expect("declare");
+        for (id, items) in [("B1", &["review", "draft"][..]), ("B2", &["draft"][..])] {
+            e.apply_create_block(id, "content", id, None, 0)
+                .expect("create block");
+            e.apply_set_property_typed(id, "stage", &list(items))
+                .expect("set");
+        }
+
+        e.apply_rename_property_option("stage", "review", "in_review")
+            .expect("rename");
+
+        assert_eq!(
+            values_of(&e, "stage"),
+            vec![
+                ("B1".to_owned(), list(&["in_review", "draft"])),
+                ("B2".to_owned(), list(&["draft"])),
+            ]
         );
     }
 

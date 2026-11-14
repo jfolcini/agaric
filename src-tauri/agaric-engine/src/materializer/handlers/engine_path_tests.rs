@@ -316,6 +316,7 @@ async fn apply_op_tx_set_property_engine_path() {
         value_ref: None,
         value_bool: None,
         prior: None,
+        value_list: None,
     });
     let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await
@@ -907,6 +908,7 @@ async fn apply_op_tx_delete_property_engine_path() {
         value_ref: None,
         value_bool: None,
         prior: None,
+        value_list: None,
     });
     let rec = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, set)
         .await

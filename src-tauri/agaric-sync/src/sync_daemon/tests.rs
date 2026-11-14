@@ -8060,6 +8060,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_400_100,
     )
@@ -10632,6 +10633,7 @@ async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
                 value_ref: None,
                 value_bool: None,
                 prior: None,
+                value_list: None,
             }),
             1_736_942_500_000,
         )
@@ -14665,6 +14667,7 @@ async fn property_def_declared_on_a_retypes_bs_values_on_an_ordinary_sync_5841()
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }),
         1_736_942_400_100,
     )
@@ -14696,6 +14699,7 @@ async fn property_def_declared_on_a_retypes_bs_values_on_an_ordinary_sync_5841()
             def: Some(PropertyDefState {
                 value_type: "date".into(),
                 options: None,
+                multiple: false,
             }),
             prior: None,
         }),

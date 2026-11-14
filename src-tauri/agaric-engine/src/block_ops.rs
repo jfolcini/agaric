@@ -38,8 +38,9 @@
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_store::op::{
-    BuiltinPropertyDef, CreateBlockPayload, OpPayload, PropertyValueFields, SPACE_PROPERTY_KEY,
-    SetPropertyPayload, builtin_property_def, is_reserved_property_key, validate_set_property,
+    BuiltinPropertyDef, CreateBlockPayload, OpPayload, PropertyList, PropertyListItem,
+    PropertyValueFields, SPACE_PROPERTY_KEY, SetPropertyPayload, builtin_property_def,
+    is_reserved_property_key, validate_set_property,
 };
 use agaric_store::op_log;
 use agaric_store::pagination::BlockRow;
@@ -554,6 +555,8 @@ pub async fn create_block_in_tx(
 pub struct PropertyDeclaration {
     pub value_type: String,
     pub options: Option<String>,
+    /// The key holds a list of `value_type` items (#6741); never a built-in.
+    pub multiple: bool,
 }
 
 impl From<&BuiltinPropertyDef> for PropertyDeclaration {
@@ -561,6 +564,7 @@ impl From<&BuiltinPropertyDef> for PropertyDeclaration {
         Self {
             value_type: def.value_type.to_owned(),
             options: def.options_json(),
+            multiple: false,
         }
     }
 }
@@ -584,7 +588,8 @@ pub async fn property_declaration(
         return Ok(None);
     };
     Ok(sqlx::query!(
-        "SELECT value_type, options FROM property_definitions WHERE space_id = ? AND key = ?",
+        r#"SELECT value_type, options, multiple AS "multiple: bool"
+           FROM property_definitions WHERE space_id = ? AND key = ?"#,
         space_id,
         key,
     )
@@ -593,6 +598,7 @@ pub async fn property_declaration(
     .map(|row| PropertyDeclaration {
         value_type: row.value_type,
         options: row.options,
+        multiple: row.multiple,
     }))
 }
 
@@ -641,12 +647,65 @@ pub async fn load_value_types(
     .collect())
 }
 
+/// [`validate_property_value`]'s list check (#6741): a list is taken only by
+/// a definition that holds several values, and such a definition takes
+/// nothing else. Each item is then held to the definition's type as a single
+/// value is: a number under `number`, a string otherwise, which is a
+/// `YYYY-MM-DD` date under `date`, a block id under `ref` and one of the
+/// options under `select`.
+fn validate_list_value(
+    payload: &SetPropertyPayload,
+    declaration: Option<&PropertyDeclaration>,
+) -> Result<(), AppError> {
+    let key = &payload.key;
+    let list_decl = declaration.filter(|decl| decl.multiple);
+    let Some(list) = &payload.value_list else {
+        return match list_decl {
+            Some(_) => Err(AppError::validation(format!(
+                "Property '{key}' holds a list; set it with value_list."
+            ))),
+            None => Ok(()),
+        };
+    };
+    let Some(decl) = list_decl else {
+        return Err(AppError::validation(format!(
+            "Property '{key}' holds one value, not a list."
+        )));
+    };
+    for item in &list.0 {
+        let fits = match (item, decl.value_type.as_str()) {
+            (PropertyListItem::Num(_), ty) => ty == "number",
+            (PropertyListItem::Text(_), "number" | "boolean") => false,
+            (PropertyListItem::Text(s), "date") => is_valid_iso_date(s),
+            (PropertyListItem::Text(s), "ref") => {
+                agaric_core::ulid::canonical_ulid(s).is_ok_and(|id| id == *s)
+            }
+            (PropertyListItem::Text(_), _) => true,
+        };
+        if !fits {
+            return Err(AppError::validation(format!(
+                "Property '{key}' expects a list of '{}', got the item {item:?}.",
+                decl.value_type
+            )));
+        }
+        if let (PropertyListItem::Text(s), "select", Some(opts_json)) =
+            (item, decl.value_type.as_str(), decl.options.as_ref())
+        {
+            validate_select_option(key, opts_json, s)?;
+        }
+    }
+    Ok(())
+}
+
 /// Step 4 of [`validate_property_value`]: the payload's populated field must
 /// match the declared `value_type`.
 fn validate_declared_type(
     payload: &SetPropertyPayload,
     expected_type: &str,
 ) -> Result<(), AppError> {
+    if payload.value_list.is_some() {
+        return Ok(());
+    }
     let type_matches = match expected_type {
         "text" | "select" => payload.value_text.is_some() || payload.value_ref.is_some(),
         "ref" => payload.value_ref.is_some(),
@@ -739,14 +798,11 @@ pub(crate) fn validate_property_value(
     // `validate_set_property` already enforced that — and they skip the
     // shape/type/options checks below: the column-clear is performed by
     // the caller's dual-write step.
-    let is_clear = payload.value_text.is_none()
-        && payload.value_num.is_none()
-        && payload.value_date.is_none()
-        && payload.value_ref.is_none()
-        && payload.value_bool.is_none();
+    let is_clear = payload.value() == PropertyValueFields::default();
     if is_clear {
         return Ok(());
     }
+    validate_list_value(payload, declaration)?;
 
     // 3. Reserved-key field-shape: route the right typed field to the
     //    right native column on `blocks`.
@@ -812,6 +868,7 @@ pub fn check_property_value(
         value_date,
         value_ref: value_ref.map(BlockId::from),
         value_bool,
+        value_list: None,
         prior: None,
     };
     validate_property_value(&payload, declaration)
@@ -915,7 +972,8 @@ pub async fn held_property_value(
     let Some(col) = agaric_store::db::reserved_key_blocks_column(key) else {
         return Ok(sqlx::query!(
             r#"SELECT value_text, value_num, value_date,
-                      value_ref AS "value_ref: BlockId", value_bool AS "value_bool: bool"
+                      value_ref AS "value_ref: BlockId", value_bool AS "value_bool: bool",
+                      value_list AS "value_list: PropertyList"
                FROM block_properties WHERE block_id = ? AND key = ?"#,
             block_id,
             key,
@@ -928,6 +986,7 @@ pub async fn held_property_value(
             value_date: r.value_date,
             value_ref: r.value_ref,
             value_bool: r.value_bool,
+            value_list: r.value_list,
         }));
     };
     // dynamic-sql: `col` is a fixed literal from the helper's allowlist.
@@ -1035,20 +1094,43 @@ pub async fn set_property_in_tx_with_declaration(
     value_bool: Option<bool>,
     declaration: Option<PropertyDeclaration>,
 ) -> Result<(BlockRow, op_log::OpRecord), AppError> {
+    let value = PropertyValueFields {
+        value_text,
+        value_num,
+        value_date,
+        value_ref: value_ref.map(BlockId::from),
+        value_bool,
+        value_list: None,
+    };
+    set_property_value_in_tx(tx, state, device_id, block_id, key, value, declaration).await
+}
+
+/// [`set_property_in_tx_with_declaration`] for a value in any of its six
+/// slots, a list among them (#6741).
+pub async fn set_property_value_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    block_id: String,
+    key: &str,
+    value: PropertyValueFields,
+    declaration: Option<PropertyDeclaration>,
+) -> Result<(BlockRow, op_log::OpRecord), AppError> {
     // 1. Build and validate the payload before touching the DB.
     // Validation logic lives in `validate_property_value`
     //    above. The `property_definitions` row is supplied by the caller so the
     //    helper stays sync and unit-testable.
-    let prop_payload = SetPropertyPayload {
-        block_id: BlockId::from_trusted(&block_id),
-        key: key.to_owned(),
-        value_text: value_text.clone(),
-        value_num,
-        value_date: value_date.clone(),
-        value_ref: value_ref.clone().map(BlockId::from),
-        value_bool,
-        prior: None,
+    let ref_targets: Vec<String> = match (&value.value_ref, &value.value_list, &declaration) {
+        (Some(target), _, _) => vec![target.as_str().to_owned()],
+        (None, Some(list), Some(decl)) if decl.value_type == "ref" => {
+            list.texts().map(str::to_owned).collect()
+        }
+        _ => Vec::new(),
     };
+    let value_text = value.value_text.clone();
+    let value_date = value.value_date.clone();
+    let prop_payload =
+        SetPropertyPayload::with_value(BlockId::from_trusted(&block_id), key.to_owned(), value);
     validate_property_value(&prop_payload, declaration.as_ref())?;
 
     // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx).
@@ -1056,20 +1138,23 @@ pub async fn set_property_in_tx_with_declaration(
 
     // Referential cross-space integrity (Phase 2):
     // reject a ref-type property whose target lives in a different space
-    // than the source block. No-op when `value_ref` is None (clear) and
-    // exempts the reserved `space` key (how blocks move between spaces).
-    agaric_store::cross_space_validation::validate_ref_property_cross_space(
-        tx,
-        &BlockId::from_trusted(&block_id),
-        value_ref.as_deref(),
-        key,
-    )
-    .await?;
+    // than the source block: the `value_ref`, or every item of a list of refs.
+    // Exempts the reserved `space` key (how blocks move between spaces).
+    for target in &ref_targets {
+        agaric_store::cross_space_validation::validate_ref_property_cross_space(
+            tx,
+            &BlockId::from_trusted(&block_id),
+            Some(target),
+            key,
+        )
+        .await?;
+    }
 
     // 3. Append SetProperty op to the op_log. An empty `prior` records that
     // the key was absent: `None` would read as an op written before #6014, and
     // its reverse would ask the op log, which can still hold a value a peer
     // has since deleted.
+    let prop_payload_ref = prop_payload.value_ref.clone();
     let payload = OpPayload::SetProperty(SetPropertyPayload {
         prior: Some(
             held_property_value(tx, &block_id, key)
@@ -1083,7 +1168,8 @@ pub async fn set_property_in_tx_with_declaration(
 
     // 3b. `space` key registration backstop, BEFORE the engine helper runs.
     if key == SPACE_PROPERTY_KEY {
-        validate_space_target_in_tx(tx, &existing, &block_id, value_ref.as_deref()).await?;
+        let target = prop_payload_ref.as_ref().map(BlockId::as_str);
+        validate_space_target_in_tx(tx, &existing, &block_id, target).await?;
     }
 
     // 4. #1257 route the property write through the SAME engine-apply +
@@ -1442,6 +1528,7 @@ mod validate_property_value_tests {
             value_ref: None,
             value_bool: None,
             prior: None,
+            value_list: None,
         }
     }
 
@@ -1449,6 +1536,7 @@ mod validate_property_value_tests {
         PropertyDeclaration {
             value_type: value_type.to_string(),
             options: options.map(str::to_string),
+            multiple: false,
         }
     }
 

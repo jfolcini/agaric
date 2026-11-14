@@ -172,6 +172,7 @@ mod tests {
         PropertyDefState {
             value_type: value_type.into(),
             options: None,
+            multiple: false,
         }
     }
 
@@ -295,6 +296,7 @@ mod tests {
                     Some(&PropertyDefState {
                         value_type: "select".into(),
                         options: Some(options.into()),
+                        multiple: false,
                     }),
                 )
                 .unwrap();

@@ -148,6 +148,38 @@ pub async fn set_property_inner(
     Ok(ActiveBlockRow::from_block_row_unchecked(block))
 }
 
+/// [`set_property_inner`] for a list value (#6741), which only a key its
+/// space declares `multiple` takes. `value` is every slot the caller sent, so
+/// a list beside a single value is refused as two values are.
+#[instrument(skip(pool, device_id, materializer), err)]
+pub async fn set_property_list_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: ActiveBlockId,
+    key: String,
+    value: agaric_store::op::PropertyValueFields,
+) -> Result<ActiveBlockRow, AppError> {
+    let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
+    tx.arm_engine_rollback(materializer.loro_state());
+    let declaration =
+        agaric_engine::block_ops::block_property_declaration(&mut tx, block_id.as_str(), &key)
+            .await?;
+    let (block, op_record) = agaric_engine::block_ops::set_property_value_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        block_id.into_string(),
+        &key,
+        value,
+        declaration,
+    )
+    .await?;
+    tx.enqueue_background(Arc::new(op_record));
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(ActiveBlockRow::from_block_row_unchecked(block))
+}
+
 /// [`set_property_inner`] inside the caller's rollback-armed transaction
 /// (MCP `batch`, #5399).
 #[allow(clippy::too_many_arguments)]
@@ -1201,8 +1233,9 @@ pub async fn get_properties_inner<'e>(
     let block_id = block_id.as_str();
     let rows = sqlx::query_as!(
         PropertyRow,
-        "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
-         FROM block_properties WHERE block_id = ?",
+        r#"SELECT key, value_text, value_num, value_date, value_ref, value_bool,
+                  value_list AS "value_list: agaric_store::op::PropertyList"
+           FROM block_properties WHERE block_id = ?"#,
         block_id
     )
     .fetch_all(executor)
@@ -1242,8 +1275,9 @@ pub async fn get_property_inner<'e>(
     let block_id = block_id.as_str();
     let row = sqlx::query_as!(
         PropertyRow,
-        "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
-         FROM block_properties WHERE block_id = ?1 AND key = ?2",
+        r#"SELECT key, value_text, value_num, value_date, value_ref, value_bool,
+                  value_list AS "value_list: agaric_store::op::PropertyList"
+           FROM block_properties WHERE block_id = ?1 AND key = ?2"#,
         block_id,
         key,
     )
@@ -1275,7 +1309,23 @@ fn builtin_definition(def: &agaric_store::op::BuiltinPropertyDef) -> PropertyDef
         options: def.options_json(),
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
         builtin: true,
+        multiple: false,
     }
+}
+
+/// [`validate_property_def_shape`] of `def`, and the one rule `multiple` adds:
+/// a boolean is never a list (#6741).
+pub(crate) fn validate_property_def_state(
+    key: &str,
+    def: &PropertyDefState,
+) -> Result<(), AppError> {
+    validate_property_def_shape(key, &def.value_type, def.options.as_deref())?;
+    if def.multiple && def.value_type == "boolean" {
+        return Err(AppError::validation(format!(
+            "property '{key}' cannot hold a list of booleans"
+        )));
+    }
+    Ok(())
 }
 
 /// Shape validation shared by every `property_definitions` writer:
@@ -1352,7 +1402,9 @@ pub(crate) fn validate_property_def_shape(
 /// `select` admit `value_ref` as well as `value_text`, and the catch-all
 /// mirrors step 4's `_ => true` (an unrecognised declared type constrains
 /// nothing, so nothing conflicts with it). The `CASE` in `unfit_values`
-/// (`property_unfit.rs`) is this table in SQL: change them together.
+/// (`property_unfit.rs`) is this table in SQL: change them together. A list
+/// is no row of this table: `conflicting_existing_values` holds it to
+/// `multiple` (#6741).
 fn declared_type_admits_shape(value_type: &str, shape: &str) -> bool {
     match value_type {
         "text" | "select" => shape == "text" || shape == "ref",
@@ -1425,12 +1477,12 @@ async fn conflicting_existing_values(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,
     key: &str,
-    value_type: &str,
-    options: Option<&str>,
+    def: &PropertyDefState,
 ) -> Result<Option<String>, AppError> {
+    let (value_type, options) = (def.value_type.as_str(), def.options.as_deref());
     // One aggregate pass over the key's rows in the space. The
-    // `exactly_one_value` CHECK (migrations 0062 / 0088) guarantees exactly
-    // one non-NULL value column per row, so these five counts partition
+    // `exactly_one_value` CHECK (migrations 0062 / 0088 / 0133) guarantees
+    // exactly one non-NULL value column per row, so these six counts partition
     // `total` and a row can never be counted under two shapes.
     let counts = sqlx::query!(
         r#"SELECT
@@ -1439,7 +1491,8 @@ async fn conflicting_existing_values(
              COALESCE(SUM(CASE WHEN bp.value_num  IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_num!: i64",
              COALESCE(SUM(CASE WHEN bp.value_date IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_date!: i64",
              COALESCE(SUM(CASE WHEN bp.value_ref  IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_ref!: i64",
-             COALESCE(SUM(CASE WHEN bp.value_bool IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_bool!: i64"
+             COALESCE(SUM(CASE WHEN bp.value_bool IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_bool!: i64",
+             COALESCE(SUM(CASE WHEN bp.value_list IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_list!: i64"
            FROM block_properties bp
            JOIN blocks b ON b.id = bp.block_id
            WHERE bp.key = ?1 AND b.space_id = ?2"#,
@@ -1462,10 +1515,15 @@ async fn conflicting_existing_values(
         (counts.n_ref, "ref"),
         (counts.n_bool, "boolean"),
     ] {
-        if n > 0 && !declared_type_admits_shape(value_type, shape) {
+        // A definition that holds a list takes no single value (#6741).
+        if n > 0 && (def.multiple || !declared_type_admits_shape(value_type, shape)) {
             offending += n;
             parts.push(format!("{n} stored as {shape}"));
         }
+    }
+    if counts.n_list > 0 && !def.multiple {
+        offending += counts.n_list;
+        parts.push(format!("{} stored as a list", counts.n_list));
     }
 
     // Step 5 (`validate_property_value`): a `select` declaration with a
@@ -1550,7 +1608,26 @@ pub async fn create_property_def_inner(
     value_type: String,
     options: Option<String>,
 ) -> Result<PropertyDefinition, AppError> {
-    validate_property_def_shape(&key, &value_type, options.as_deref())?;
+    let def = PropertyDefState {
+        value_type,
+        options,
+        multiple: false,
+    };
+    create_property_def_state_inner(pool, device_id, materializer, space_id, key, def).await
+}
+
+/// [`create_property_def_inner`] for any definition, one that holds a list
+/// among them (#6741).
+#[instrument(skip(pool, device_id, materializer, def), err)]
+pub async fn create_property_def_state_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    space_id: &str,
+    key: String,
+    def: PropertyDefState,
+) -> Result<PropertyDefinition, AppError> {
+    validate_property_def_state(&key, &def)?;
 
     let mut tx = CommandTx::begin_immediate(pool, "create_property_def").await?;
     tx.arm_engine_rollback(materializer.loro_state());
@@ -1564,17 +1641,10 @@ pub async fn create_property_def_inner(
         return Ok(row);
     }
 
-    if let Some(reason) =
-        conflicting_existing_values(&mut tx, space_id, &key, &value_type, options.as_deref())
-            .await?
-    {
+    if let Some(reason) = conflicting_existing_values(&mut tx, space_id, &key, &def).await? {
         return Err(AppError::validation(reason));
     }
 
-    let def = PropertyDefState {
-        value_type,
-        options,
-    };
     write_property_def_in_tx(
         &mut tx,
         materializer.loro_state(),
@@ -1603,7 +1673,8 @@ pub(crate) async fn user_property_def(
 ) -> Result<Option<PropertyDefinition>, AppError> {
     Ok(sqlx::query_as!(
         PropertyDefinition,
-        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool"
+        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool",
+                  multiple AS "multiple: bool"
            FROM property_definitions WHERE space_id = ? AND key = ?"#,
         space_id,
         key,
@@ -1654,6 +1725,7 @@ pub async fn create_property_def_in_tx(
     let def = PropertyDefState {
         value_type: value_type.to_owned(),
         options: options.map(str::to_owned),
+        multiple: false,
     };
     write_property_def_in_tx(tx, state, device_id, space_id, key, Some(def)).await
 }
@@ -1668,7 +1740,7 @@ pub async fn create_property_def_in_tx(
 /// - [`AppError::Validation`] coded [`ValidationCode::BuiltinPropertyLocked`]
 ///   for a built-in key.
 /// - [`AppError::Validation`] for a malformed definition, or one that changes
-///   the type the space declares the key with.
+///   the type the space declares the key with, or whether it holds a list.
 pub(crate) async fn write_property_def_in_tx(
     tx: &mut CommandTx,
     state: &LoroState,
@@ -1679,21 +1751,23 @@ pub(crate) async fn write_property_def_in_tx(
 ) -> Result<(), AppError> {
     refuse_builtin_definition_write(key)?;
     if let Some(def) = &def {
-        validate_property_def_shape(key, &def.value_type, def.options.as_deref())?;
+        validate_property_def_state(key, def)?;
     }
     let prior = user_property_def(tx, space_id, key)
         .await?
-        .map(|row| PropertyDefState {
-            value_type: row.value_type,
-            options: row.options,
-        });
-    if let (Some(def), Some(prior)) = (&def, &prior)
-        && def.value_type != prior.value_type
-    {
-        return Err(AppError::validation(format!(
-            "property '{key}' is declared as '{}' and cannot change to '{}'",
-            prior.value_type, def.value_type
-        )));
+        .map(PropertyDefState::from);
+    if let (Some(def), Some(prior)) = (&def, &prior) {
+        if def.value_type != prior.value_type {
+            return Err(AppError::validation(format!(
+                "property '{key}' is declared as '{}' and cannot change to '{}'",
+                prior.value_type, def.value_type
+            )));
+        }
+        if def.multiple != prior.multiple {
+            return Err(AppError::validation(format!(
+                "property '{key}' cannot switch between one value and a list"
+            )));
+        }
     }
     if def == prior {
         return Ok(());
@@ -1737,18 +1811,11 @@ pub(crate) async fn refuse_restoring_def_over_conflicting_values(
     let held = user_property_def(conn, space_id, &p.key).await?;
     if str_column_for(held.as_ref().map(|row| row.value_type.as_str()))
         == str_column_for(Some(&def.value_type))
+        && held.as_ref().is_some_and(|row| row.multiple) == def.multiple
     {
         return Ok(());
     }
-    match conflicting_existing_values(
-        conn,
-        space_id,
-        &p.key,
-        &def.value_type,
-        def.options.as_deref(),
-    )
-    .await?
-    {
+    match conflicting_existing_values(conn, space_id, &p.key, def).await? {
         Some(reason) => Err(AppError::validation(reason)),
         None => Ok(()),
     }
@@ -1820,7 +1887,8 @@ pub async fn list_property_defs_inner(
     let fetch_limit = page.limit + 1;
     let mut rows = sqlx::query_as!(
         PropertyDefinition,
-        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool"
+        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool",
+                multiple AS "multiple: bool"
          FROM property_definitions
          WHERE space_id = ?1 AND (?2 IS NULL OR key > ?3)
          ORDER BY key ASC
@@ -1992,6 +2060,7 @@ pub async fn update_property_def_options_inner(
     let def = PropertyDefState {
         value_type: existing.value_type,
         options: Some(options),
+        multiple: existing.multiple,
     };
     write_property_def_in_tx(
         &mut tx,
@@ -2216,7 +2285,8 @@ pub async fn get_batch_properties_inner(
 
     let rows = sqlx::query_as!(
         BatchPropertyRow,
-        r#"SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool
+        r#"SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool,
+                  value_list AS "value_list: agaric_store::op::PropertyList"
            FROM block_properties
            WHERE block_id IN (SELECT value FROM json_each(?1))"#,
         ids_json,
@@ -2235,6 +2305,7 @@ pub async fn get_batch_properties_inner(
                 value_date: r.value_date,
                 value_ref: r.value_ref,
                 value_bool: r.value_bool,
+                value_list: r.value_list,
             });
     }
 
@@ -2287,6 +2358,26 @@ pub async fn set_property<R: tauri::Runtime>(
     let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
     let events = property_changed_events([block_id], std::slice::from_ref(&key));
     let result = capture_op_refs(async {
+        if value.value_list.is_some() {
+            let value = agaric_store::op::PropertyValueFields {
+                value_text: value.value_text,
+                value_num: value.value_num,
+                value_date: value.value_date,
+                value_ref: value.value_ref.map(BlockId::from),
+                value_bool: value.value_bool,
+                value_list: value.value_list,
+            };
+            return set_property_list_inner(
+                ctx.pool(),
+                ctx.device_id(),
+                ctx.materializer(),
+                active_id,
+                key,
+                value,
+            )
+            .await
+            .map(Into::into);
+        }
         set_property_inner(
             ctx.pool(),
             ctx.device_id(),
@@ -2593,16 +2684,21 @@ pub async fn create_property_def(
     key: String,
     value_type: String,
     options: Option<String>,
+    multiple: Option<bool>,
 ) -> Result<WithOps<PropertyDefinition>, AppError> {
     space_id.validate_shape()?;
-    capture_op_refs(create_property_def_inner(
+    let def = PropertyDefState {
+        value_type,
+        options,
+        multiple: multiple.unwrap_or(false),
+    };
+    capture_op_refs(create_property_def_state_inner(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         space_id.as_str(),
         key,
-        value_type,
-        options,
+        def,
     ))
     .await
     .map_err(sanitize_internal_error)
@@ -3010,6 +3106,7 @@ mod count_property_usage_tests {
             Some(PropertyDefState {
                 value_type: "date".into(),
                 options: None,
+                multiple: false,
             })
         };
         let retyped = write("stage", date()).await;
@@ -3022,6 +3119,21 @@ mod count_property_usage_tests {
                     .contains("cannot change"),
             "a type change is refused, got {retyped:?}"
         );
+        let listed = write(
+            "stage",
+            Some(PropertyDefState {
+                value_type: "text".into(),
+                options: None,
+                multiple: true,
+            }),
+        )
+        .await;
+        assert!(
+            listed.as_ref().is_err_and(|e| e
+                .to_string()
+                .contains("cannot switch between one value and a list")),
+            "a change to holding a list is refused (#6741), got {listed:?}"
+        );
         for def in [date(), None] {
             let builtin = write("todo_state", def).await;
             assert_eq!(
@@ -3030,16 +3142,17 @@ mod count_property_usage_tests {
                 "a built-in is refused"
             );
         }
-        let declared: Option<String> = sqlx::query_scalar(
-            "SELECT value_type FROM property_definitions WHERE space_id = ? AND key = 'stage'",
+        let declared: Option<(String, bool)> = sqlx::query_as(
+            "SELECT value_type, multiple FROM property_definitions \
+             WHERE space_id = ? AND key = 'stage'",
         )
         .bind(TEST_SPACE_ID)
         .fetch_optional(&pool)
         .await
         .unwrap();
         assert_eq!(
-            declared.as_deref(),
-            Some("text"),
+            declared,
+            Some(("text".to_owned(), false)),
             "the declaration is unchanged"
         );
     }
@@ -3055,6 +3168,7 @@ mod count_property_usage_tests {
         let def = PropertyDefState {
             value_type: "text".into(),
             options: None,
+            multiple: false,
         };
         write_property_def_in_tx(
             &mut tx,

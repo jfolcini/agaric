@@ -30,6 +30,7 @@ import {
   type TypedHandlers,
   appErrorRejection,
   assertValidDateFormat,
+  assertValidListValue,
   assertValidReservedPropertyValue,
   assertValidSetPropertyValue,
   definitionSpaceOf,
@@ -45,6 +46,7 @@ import {
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveRefValue } from '@/lib/tauri-mock/names'
 import {
+  listField,
   mergePropertyKey,
   parsePropertyDefOptions,
   previewPropertyMerge,
@@ -109,6 +111,7 @@ function typedValueOf(row: Record<string, unknown>): Record<string, unknown> {
     value_date: (row['value_date'] as string | null) ?? null,
     value_ref: (row['value_ref'] as string | null) ?? null,
     value_bool: (row['value_bool'] as number | null) ?? null,
+    ...listField(row),
   }
 }
 
@@ -511,19 +514,27 @@ export const propertiesHandlers = {
     const valueDate = (valueArgs?.['value_date'] as string | null) ?? null
     let valueRef = (valueArgs?.['value_ref'] as string | null) ?? null
     const valueBool = (valueArgs?.['value_bool'] as boolean | null) ?? null
+    const valueList = (valueArgs?.['value_list'] as unknown[] | null) ?? null
     // #2656 — mirror the real backend's op-log value validation so contract
     // drift fails e2e/unit instead of storing an invalid value silently. The
     // block's space's definitions apply (#5841).
     const defSpace = definitionSpaceOf(blockId)
     assertValidSetPropertyValue(defSpace, key, valueText)
     // `validate_set_property`: one value, or none to clear a reserved column.
-    const valueCount = [valueText, valueNum, valueDate, valueRef, valueBool].filter(
+    const valueCount = [valueText, valueNum, valueDate, valueRef, valueBool, valueList].filter(
       (v) => v !== null,
     ).length
     if (valueCount > 1 || (valueCount === 0 && RESERVED_PROPERTY_COLUMN[key] === undefined)) {
       throw validationRejection(
         `SetProperty must have exactly 1 non-null value field, found ${valueCount}`,
       )
+    }
+    // #6741 — a list is taken only by a definition that holds one, and such a
+    // definition takes nothing else.
+    const listDef = propertyDefinition(defSpace, key)
+    if (valueList !== null) assertValidListValue(key, valueList, listDef)
+    else if (valueCount === 1 && listDef?.['multiple'] === true) {
+      throw validationRejection(`Property '${key}' holds a list; set it with value_list.`)
     }
     // `validate_set_property`, then `validate_property_value`: every
     // `value_date` is a non-blank calendar day.
@@ -572,6 +583,7 @@ export const propertiesHandlers = {
       value_date: valueDate,
       value_ref: valueRef,
       value_bool: valueBool === null ? null : valueBool ? 1 : 0,
+      ...listField({ value_list: valueList }),
     })
     const b = blocks.get(blockId)
     // #2468 — `WithOps<BlockRow>`.
@@ -931,7 +943,12 @@ export const propertiesHandlers = {
     const key = a['key'] as string
     const valueType = a['valueType'] as string
     const options = (a['options'] as string | null) ?? null
+    const multiple = a['multiple'] === true
     validatePropertyDefShape(key, valueType, options)
+    // `validate_property_def_state` (#6741).
+    if (multiple && valueType === 'boolean') {
+      throw validationRejection(`property '${key}' cannot hold a list of booleans`)
+    }
     // INSERT OR IGNORE (`create_property_def_inner`): the space's existing
     // declaration wins untouched, so re-asserting a key under a different
     // value_type answers with the FIRST one rather than overwriting it.
@@ -943,6 +960,8 @@ export const propertiesHandlers = {
       value_type: valueType,
       options,
       created_at: new Date().toISOString(),
+      // Left out of a definition that holds one value, as the wire leaves it.
+      ...(multiple ? { multiple: true } : {}),
     }
     const op = pushPropertyDefOp(spaceId, key, def, null)
     spacePropertyDefs(spaceId).set(key, def)
