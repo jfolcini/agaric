@@ -133,11 +133,11 @@ status builder and shown in Settings › App health. A nonzero count in a normal
 session means an op took the fallback and is worth explaining.
 
 The in-transaction `apply_*_via_loro` handlers are not the only recorders
-(#4472). The post-commit engine fan-outs (`dispatch_delete_descendants`,
+(#4472). The engine cohort fan-outs (`dispatch_delete_descendants`,
 `dispatch_unswept_cohort`) skip any cohort member absent from the target
 space's engine and record that skip on this same counter, with
 `EngineMissingTarget`, off the identical membership probe — it is the same
-decision about the same block, one transaction later. They deliberately do
+decision about the same block, later in the same transaction. They deliberately do
 *not* use `descendant_fanout_dropped`, which means "the engine may now be
 divergent from SQL": the population the probe is written for — a member
 projected SQL-only during a no-space window — has no node in *any* engine, so
@@ -156,8 +156,8 @@ Two caveats on reading that counter, both written up in full on
   never happened either way), and the integrity check reports the member
   live in Y's engine.
 - It counts *decisions*, not distinct blocks. A `DeleteBlock` whose seed is
-  absent records once in-tx and once again from the fan-out, whose cohort
-  includes the seed.
+  absent records once from its own apply and once again from the fan-out,
+  whose cohort includes the seed.
 
 ## Test strategy
 

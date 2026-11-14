@@ -91,7 +91,6 @@ mod engine_apply_unit_tests {
             &space,
             "2025-01-15T12:00:00Z",
             &state,
-            &state.revert,
         );
 
         // The engine for SPACE_A must hold BLOCK_1 with content "hello".
@@ -134,7 +133,6 @@ mod engine_apply_unit_tests {
                 &space,
                 "2025-01-15T12:00:00Z",
                 &state,
-                &state.revert,
             );
         }
 
@@ -167,7 +165,6 @@ mod engine_apply_unit_tests {
             &space_a,
             "2025-01-15T12:00:00Z",
             &state,
-            &state.revert,
         );
         let op_b = create_op(BLOCK_2, "in B");
         engine_apply(
@@ -177,7 +174,6 @@ mod engine_apply_unit_tests {
             &space_b,
             "2025-01-15T12:00:00Z",
             &state,
-            &state.revert,
         );
 
         assert_eq!(state.registry.len(), 2, "must hold two distinct engines");
@@ -249,15 +245,7 @@ mod engine_apply_unit_tests {
     /// Helper: drive an op through `engine_apply`.  Mirrors the pattern
     /// from the existing tests.
     fn dispatch(state: &LoroState, space: &SpaceId, op_id: &str, op: &OpPayload) {
-        engine_apply(
-            op_id,
-            op,
-            DEVICE_ID,
-            space,
-            "2025-01-15T12:00:00Z",
-            state,
-            &state.revert,
-        );
+        engine_apply(op_id, op, DEVICE_ID, space, "2025-01-15T12:00:00Z", state);
     }
 
     #[test]
@@ -458,8 +446,7 @@ mod engine_apply_unit_tests {
     }
 
     /// #1571: when a swallowed `engine_apply` failure occurs in a
-    /// post-commit cohort fan-out (the SQL tx already committed, so the
-    /// failure cannot be rolled back), `engine_apply` must bump the
+    /// cohort fan-out, `engine_apply` must bump the
     /// dedicated, machine-detectable divergence counter — not only emit a
     /// free-text warn.
     ///

@@ -10,11 +10,11 @@
 //! (#603 — the old `dispatch_for_record` re-apply ignored the
 //! new-scheme `index`/`new_index` routing and converged engine sibling
 //! order toward ULID order). `engine_apply` remains the shared
-//! dispatcher for the post-commit Restore/Delete descendant-cohort
-//! fanout (`dispatch_restore_descendants` /
-//! `dispatch_delete_descendants` in `materializer::handlers`), which
-//! synthesises per-descendant payloads the engine applies one block id
-//! at a time.
+//! dispatcher for the Restore/Delete/Purge descendant-cohort fanout
+//! (`dispatch_restore_descendants` / `dispatch_delete_descendants` in
+//! `materializer::handlers`), which runs in the op's transaction too
+//! (#6521) and synthesises per-descendant payloads the engine applies
+//! one block id at a time.
 
 mod apply;
 pub(crate) mod divergence;
@@ -49,9 +49,9 @@ pub(crate) mod divergence;
 /// `created_at` / `deleted_at` the attachment arms store. Other arms ignore it
 /// (their ops carry no timestamp the engine stores).
 ///
-/// `revert` is the fan-out's own log, which
-/// [`write_engines`](crate::loro::delta::write_engines) arms to save what this
-/// writes (#6521).
+/// The write records into `state`'s rollback log, which the caller's
+/// transaction armed: its commit saves the write's delta, and its rollback
+/// rewinds it (#6521).
 ///
 /// Returns nothing.  Errors `tracing::warn!` and never propagate —
 /// the engine dispatch must not break the materializer hot path.
@@ -62,13 +62,12 @@ pub fn engine_apply(
     space_id: &agaric_store::space::SpaceId,
     op_created_at: &str,
     state: &crate::loro::shared::LoroState,
-    revert: &crate::loro::revert::RevertLog,
 ) {
     // #2295: `LoroState` gained private replay-suppression fields, so bind the
     // registry by field access rather than an exhaustive destructure.
     let registry = &state.registry;
 
-    let mut guard = match registry.for_space_recording(space_id, device_id, revert) {
+    let mut guard = match registry.for_space_recording(space_id, device_id, &state.revert) {
         Ok(g) => g,
         Err(e) => {
             tracing::warn!(
@@ -77,9 +76,9 @@ pub fn engine_apply(
                 error = %e,
                 "engine_apply: registry.for_space failed; skipping",
             );
-            // #1571: the SQL apply tx already committed; failing to reach
-            // the engine here silently diverges the LoroDoc mirror from
-            // the SQL source of truth. Emit the dedicated, durable signal.
+            // #1571: failing to reach the engine here silently diverges the
+            // LoroDoc mirror from the SQL source of truth. Emit the dedicated,
+            // durable signal.
             divergence::record(
                 op_id,
                 op.op_type_str(),
@@ -97,10 +96,8 @@ pub fn engine_apply(
             error = %e,
             "engine_apply: engine apply failed; skipping",
         );
-        // #1571: the SQL apply tx already committed by the time the
-        // post-commit cohort fan-out reaches here, so a swallowed engine
-        // apply failure leaves the per-space LoroDoc diverged from the
-        // op-log / SQL source of truth with no rollback possible. Emit a
+        // #1571: a swallowed engine apply failure leaves the per-space
+        // LoroDoc diverged from the op-log / SQL source of truth. Emit a
         // durable, machine-detectable signal (counter + stable marker) so
         // a health check can observe the drift, not just a free-text warn.
         divergence::record(op_id, op.op_type_str(), &e.to_string());

@@ -559,8 +559,7 @@ pub(super) async fn fan_out_ops_past_the_cursor(
 /// compared against.
 #[derive(Clone, Copy)]
 enum ReplayGranularity {
-    /// `ReplayApplyOps` chunks of at most [`REPLAY_CHUNK_SIZE`] rows, cut by
-    /// [`split_after_cascades`].
+    /// `ReplayApplyOps` chunks of at most [`REPLAY_CHUNK_SIZE`] rows.
     Chunked,
     /// One `ReplayApplyOp` per row.
     #[cfg(test)]
@@ -755,9 +754,9 @@ async fn ensure_single_device_op_log(pool: &SqlitePool) -> Result<(), AppError> 
     Ok(())
 }
 
-/// Enqueue every locally-authored op past `after` as `ReplayApplyOps` chunks
-/// ([`split_after_cascades`]), carrying `dirty` so each replayed create/move
-/// defers its inline reprojection to the single end-of-replay pass.
+/// Enqueue every locally-authored op past `after` as `ReplayApplyOps` chunks,
+/// carrying `dirty` so each replayed create/move defers its inline
+/// reprojection to the single end-of-replay pass.
 ///
 /// Returns the highest seq the walk reached and the device id the
 /// end-of-replay reproject needs to reach the per-space engine.
@@ -809,16 +808,13 @@ async fn enqueue_ops_for_replay(
         // #2896: carry a clone of the replay-owned sink on each task so the
         // consumer applies its ops in `ApplyMode::ReplaySuppressed(dirty)`.
         let tasks: Vec<(MaterializeTask, u64)> = match granularity {
-            ReplayGranularity::Chunked => split_after_cascades(rows)
-                .into_iter()
-                .map(|chunk| {
-                    let ops = chunk.len() as u64;
-                    (
-                        MaterializeTask::ReplayApplyOps(Arc::new(chunk), dirty.clone()),
-                        ops,
-                    )
-                })
-                .collect(),
+            ReplayGranularity::Chunked => {
+                let ops = rows.len() as u64;
+                vec![(
+                    MaterializeTask::ReplayApplyOps(Arc::new(rows), dirty.clone()),
+                    ops,
+                )]
+            }
             #[cfg(test)]
             ReplayGranularity::PerOp => rows
                 .into_iter()
@@ -851,34 +847,6 @@ async fn enqueue_ops_for_replay(
     }
 
     Ok((last_seen, replay_device_id))
-}
-
-/// Split one walked page into replay chunks, each ending at its first
-/// `delete_block` / `restore_block`. Those ops reach the engine's descendant
-/// cohort only after their transaction commits, so an op behind them in the
-/// same transaction would see the cohort's old `deleted_at` (a create under a
-/// restored block lands after its still-tombstoned children; a purge behind a
-/// delete removes the cohort before it is mirrored) where the per-op replay
-/// saw the new one. `move_block` has the same post-commit fan-out, but
-/// its cohort is empty for every local move (`ApplyEffects::unswept_cohort`),
-/// and replay walks local ops only.
-fn split_after_cascades(rows: Vec<OpRecord>) -> Vec<Vec<OpRecord>> {
-    use agaric_store::op::OpType;
-
-    let mut chunks = Vec::new();
-    let mut chunk = Vec::new();
-    for record in rows {
-        let cascades = record.op_type == OpType::DeleteBlock.as_str()
-            || record.op_type == OpType::RestoreBlock.as_str();
-        chunk.push(record);
-        if cascades {
-            chunks.push(std::mem::take(&mut chunk));
-        }
-    }
-    if !chunk.is_empty() {
-        chunks.push(chunk);
-    }
-    chunks
 }
 
 /// #2541: per-group failures are LOGGED + RECORDED, never propagated.

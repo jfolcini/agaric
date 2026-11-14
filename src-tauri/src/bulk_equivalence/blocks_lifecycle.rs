@@ -1081,7 +1081,7 @@ async fn restore_block_inner_fans_the_restored_subtree_to_the_engine() {
 
 /// #3834 + #3856, batch path. `restore_blocks_by_ids_inner` had the ANCESTOR
 /// defect too — and was internally inconsistent about it, since it already
-/// hand-rolls the post-commit `dispatch_restore_descendants` fan-out for
+/// hand-rolls the `dispatch_restore_descendants` fan-out for
 /// exactly this reason and simply did not do the symmetric upward one.
 ///
 /// The seed/cohort half of this assertion is a REGRESSION GUARD rather than a
@@ -1107,7 +1107,7 @@ async fn restore_blocks_by_ids_inner_fans_the_restored_subtree_to_the_engine() {
 }
 
 /// #3856, restore-ALL path. `restore_all_deleted_inner` had the TOTAL gap: no
-/// in-tx engine apply and no post-commit fan-out, so every block it un-deleted
+/// engine apply and no engine fan-out, so every block it un-deleted
 /// — the whole trash — stayed tombstoned in the per-space CRDT. Measured on the
 /// #3856 probe as `engine_deleted=true` for all three roles, the ancestor
 /// included (the other two paths at least converged R1 via #3834's upward
