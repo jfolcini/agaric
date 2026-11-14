@@ -709,7 +709,7 @@ async fn commit_chunk_and_reopen(
             error = %e,
             "import: chunk commit failed; committed chunks remain durable"
         );
-        AppError::from(e)
+        e
     })?;
     counters.chunks_committed += 1;
     // #1932 (OBS-LOG-05) — per-chunk durability signal so a partial
@@ -749,7 +749,7 @@ async fn commit_final_chunk(
             error = %e,
             "import: final chunk commit failed"
         );
-        AppError::from(e)
+        e
     })?;
     Ok(())
 }

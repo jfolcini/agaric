@@ -7395,3 +7395,195 @@ async fn apply_remote_keeps_a_ref_to_a_block_the_same_import_brings_6232() {
         "B holds P.link as a ref to C"
     );
 }
+
+// ======================================================================
+// #6521 — each engine write a sync session makes saves its delta: the
+// `loro_doc_delta` oracle rebuilds the engine from its saved rows.
+// ======================================================================
+
+async fn delta_rows(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_delta")
+        .fetch_one(pool)
+        .await
+        .expect("count the deltas")
+}
+
+async fn saved_divergences(pool: &SqlitePool, registry: &LoroEngineRegistry) -> Vec<String> {
+    agaric_engine::loro::delta::saved_engine_divergences(pool, registry)
+        .await
+        .expect("read the saved rows")
+}
+
+/// A sender whose space holds BLOCK_A, seeded as a fixture's state.
+fn sender_with_block_a(space: &SpaceId) -> LoroEngineRegistry {
+    let registry = LoroEngineRegistry::new();
+    registry
+        .seed(space, "device-A", |engine| {
+            engine.apply_create_block(BLOCK_A, "content", "from-A", None, 0)
+        })
+        .expect("create");
+    registry
+}
+
+/// The export stamps the sender's doc and the import writes the receiver's:
+/// each saves its delta.
+#[tokio::test]
+async fn a_snapshot_export_and_its_import_each_save_their_delta_6521() {
+    let (pool_a, _dir_a) = fresh_pool().await;
+    let (pool_b, _dir_b) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let registry_a = sender_with_block_a(&space);
+    let registry_b = LoroEngineRegistry::new();
+
+    let msg = prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
+        .await
+        .expect("prepare")
+        .expect("a consistent space exports");
+    assert_eq!(
+        delta_rows(&pool_a).await,
+        1,
+        "the sender saved the format stamp its export wrote"
+    );
+    assert_eq!(
+        saved_divergences(&pool_a, &registry_a).await,
+        Vec::<String>::new(),
+        "the sender's engine equals its saved rows"
+    );
+
+    apply_remote(&pool_b, &registry_b, "device-B", msg)
+        .await
+        .expect("apply_remote");
+    assert_eq!(
+        delta_rows(&pool_b).await,
+        1,
+        "the receiver saved what the import added"
+    );
+    assert_eq!(
+        saved_divergences(&pool_b, &registry_b).await,
+        Vec::<String>::new(),
+        "the receiver's engine equals its saved rows, its inbox slot cleared"
+    );
+}
+
+/// An update can add ops and change nothing a projection reads: the format
+/// stamp alone. Its slot is cleared without a projection, and its ops are
+/// saved all the same.
+#[tokio::test]
+async fn an_update_that_projects_nothing_still_saves_the_ops_it_added_6521() {
+    let (pool_a, _dir_a) = fresh_pool().await;
+    let (pool_b, _dir_b) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let registry_a = sender_with_block_a(&space);
+    let registry_b = LoroEngineRegistry::new();
+    // The receiver first learns the block from an update, which stamps nothing.
+    let nothing = LoroEngine::with_peer_id("device-B")
+        .expect("engine")
+        .version_vector();
+    let block = prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", Some(&nothing))
+        .await
+        .expect("prepare")
+        .expect("exports");
+    apply_remote(&pool_b, &registry_b, "device-B", block)
+        .await
+        .expect("apply the block");
+    assert_eq!(delta_rows(&pool_b).await, 1, "the block's import");
+    // A snapshot export then stamps the sender's doc, and the next update
+    // carries the stamp alone.
+    prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
+        .await
+        .expect("prepare")
+        .expect("exports");
+    let held = registry_b.loro_vv(&space).expect("the receiver's version");
+    let stamp = prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", Some(&held))
+        .await
+        .expect("prepare")
+        .expect("exports");
+
+    let outcome = apply_remote(&pool_b, &registry_b, "device-B", stamp)
+        .await
+        .expect("apply the stamp");
+
+    let ApplyOutcome::Imported { changed_blocks, .. } = outcome else {
+        panic!("the stamp imports, got {outcome:?}");
+    };
+    assert!(changed_blocks.is_empty(), "the stamp changes no block");
+    assert_ne!(
+        registry_b.loro_vv(&space).expect("version"),
+        held,
+        "precondition: the update added an op"
+    );
+    assert_eq!(delta_rows(&pool_b).await, 2, "the stamp's op is saved too");
+    assert_eq!(
+        saved_divergences(&pool_b, &registry_b).await,
+        Vec::<String>::new(),
+        "the receiver's engine equals its saved rows"
+    );
+}
+
+/// The tombstones the export repair mirrors are saved in its transaction, so
+/// they are held even when the snapshot save that follows fails.
+#[tokio::test]
+async fn mirrored_tombstones_are_saved_when_the_snapshot_save_fails_6521() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let registry = sender_with_block_a(&space);
+    sql_insert_block(&pool, BLOCK_A, None, Some(TOMBSTONE_MS)).await;
+    sqlx::query(
+        "CREATE TRIGGER refuse_snapshots BEFORE INSERT ON loro_doc_state \
+         BEGIN SELECT RAISE(ABORT, 'no snapshot today'); END",
+    )
+    .execute(&pool)
+    .await
+    .expect("install the trigger");
+
+    let mirrored = mirror_sql_tombstones_onto_engine(
+        &pool,
+        &registry,
+        &space,
+        "device-A",
+        &[BLOCK_A.to_owned()],
+    )
+    .await;
+
+    assert!(mirrored.is_err(), "the failed save refuses the round");
+    assert_eq!(
+        engine_deleted_at(&registry, &space, BLOCK_A),
+        Some(TOMBSTONE_MS.to_string()),
+        "the engine holds the tombstone"
+    );
+    assert_eq!(
+        saved_divergences(&pool, &registry).await,
+        Vec::<String>::new(),
+        "and so do its saved rows"
+    );
+}
+
+/// The tombstones a projection swept reach the engine after its commit, with
+/// their delta.
+#[tokio::test]
+async fn swept_tombstones_are_saved_with_their_engine_write_6521() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let registry = sender_with_block_a(&space);
+
+    fan_out_swept_tombstones(
+        &pool,
+        &registry,
+        "device-A",
+        &space,
+        &[(BLOCK_A.to_owned(), TOMBSTONE_MS)],
+    )
+    .await;
+
+    assert_eq!(
+        engine_deleted_at(&registry, &space, BLOCK_A),
+        Some(TOMBSTONE_MS.to_string()),
+        "the engine holds the tombstone"
+    );
+    assert_eq!(delta_rows(&pool).await, 1, "one delta for the fan-out");
+    assert_eq!(
+        saved_divergences(&pool, &registry).await,
+        Vec::<String>::new(),
+        "the engine equals its saved rows"
+    );
+}

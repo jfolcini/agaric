@@ -155,13 +155,10 @@ async fn apply_records_in_one_tx(
     let applied = apply_records_in_tx(&mut tx, records, &mode, state).await;
     let pending = revert.detach();
     match applied {
-        Ok(effects) => match tx.commit().await {
-            Ok(()) => Ok(effects),
-            Err(e) => {
-                pending.revert();
-                Err(e.into())
-            }
-        },
+        Ok(effects) => {
+            crate::loro::delta::commit_with_deltas(tx, &state.registry, pending).await?;
+            Ok(effects)
+        }
         Err(e) => {
             drop(tx); // roll back the SQL projection before rewinding the engines
             pending.revert();
@@ -308,6 +305,7 @@ async fn dispatch_committed_cohorts(
         // rationale), on the batch path too.
         super::apply::dispatch_restore_effects(pool, record, effects, state).await;
         dispatch_delete_descendants(
+            pool,
             record,
             &effects.deleted_cohort,
             effects.delete_space_id.as_ref(),
@@ -320,6 +318,7 @@ async fn dispatch_committed_cohorts(
         // delivers, so leaving this off the batch arm would leave the
         // fix on the single-op path only.
         super::apply::dispatch_unswept_cohort(
+            pool,
             record,
             &effects.unswept_cohort,
             effects.unswept_space_id.as_ref(),

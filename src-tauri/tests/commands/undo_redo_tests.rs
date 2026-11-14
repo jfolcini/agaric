@@ -6643,15 +6643,12 @@ async fn seed_block_into_sql_and_engine(
 ) {
     insert_block(pool, id, block_type, content, parent_id, Some(position)).await;
     let space = SpaceId::from_trusted(TEST_SPACE_ID);
-    let mut guard = state
+    state
         .registry
-        .for_space(&space, DEV)
-        .expect("for_space seed");
-    guard
-        .engine_mut()
-        .apply_create_block(id, block_type, content, parent_id, position)
+        .seed(&space, DEV, |engine| {
+            engine.apply_create_block(id, block_type, content, parent_id, position)
+        })
         .expect("seed apply_create_block into engine");
-    drop(guard);
 }
 
 /// Drive a single op through the production ENGINE path: append to the

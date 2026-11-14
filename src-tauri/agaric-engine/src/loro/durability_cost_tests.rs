@@ -12,7 +12,17 @@
 //!
 //! The delta row is written to `loro_sync_inbox`, the one table that already
 //! takes a Loro blob beside a space id, so the harness needs no table of its
-//! own. Every timing prints as `durability_cost: <case> @ <n>x<m> = median
+//! own.
+//!
+//! Stage A built the delta per write, and two more cases time it as built,
+//! each against the same write without its delta, the two arms interleaved
+//! sample by sample: one edit's transaction (`BEGIN IMMEDIATE`, the engine
+//! edit, the commit, with the delta through the rollback log and
+//! [`commit_with_deltas`](super::delta::commit_with_deltas) as a command's
+//! transaction goes), and a sync import of one update of `TAIL` edits (with
+//! the delta under
+//! [`capturing_delta`](super::engine::LoroEngine::capturing_delta) and its
+//! row inserted, as `import_and_project` does). Every timing prints as `durability_cost: <case> @ <n>x<m> = median
 //! [min–max]`. Nothing is budgeted; the assertions are on what a rebuilt
 //! engine holds.
 //!
@@ -304,6 +314,129 @@ fn kept_sync_blob(snapshot: &[u8], session: &[u8], scale: &str) {
     );
 }
 
+/// One edit's transaction on the engine `snapshot` rebuilds, without its delta
+/// and with it as stage A saves it.
+async fn edit_transaction(pool: &sqlx::SqlitePool, snapshot: &[u8], target: &str, scale: &str) {
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE);
+    let state = super::shared::LoroState::new();
+    state
+        .registry
+        .install_engine(space.clone(), rehydrate(snapshot));
+    let mut without = Vec::with_capacity(SAMPLES);
+    let mut with = Vec::with_capacity(SAMPLES);
+    for _ in 0..SAMPLES {
+        let start = Instant::now();
+        let tx = agaric_store::db::begin_immediate_logged(pool, "durability_cost")
+            .await
+            .expect("begin");
+        type_a_word(
+            state
+                .registry
+                .for_space(&space, DEVICE)
+                .expect("engine")
+                .engine_mut(),
+            target,
+        );
+        tx.commit().await.expect("commit");
+        without.push(start.elapsed());
+
+        let start = Instant::now();
+        let tx = agaric_store::db::begin_immediate_logged(pool, "durability_cost")
+            .await
+            .expect("begin");
+        let scope = super::revert::RevertScope::arm(&state);
+        type_a_word(
+            state
+                .registry
+                .for_space_recording(&space, DEVICE, &state.revert)
+                .expect("engine")
+                .engine_mut(),
+            target,
+        );
+        super::delta::commit_with_deltas(tx, &state.registry, scope.detach())
+            .await
+            .expect("commit");
+        with.push(start.elapsed());
+    }
+    let (rows, bytes) = saved_deltas(pool).await;
+    assert_eq!(
+        usize::try_from(rows).ok(),
+        Some(SAMPLES),
+        "each edit with a delta saved one row"
+    );
+    without.sort();
+    with.sort();
+    Timings(without).report("edit transaction, no delta", scale, "");
+    Timings(with).report(
+        "edit transaction, with its delta",
+        scale,
+        &format!(", {} bytes a row", bytes / rows),
+    );
+}
+
+/// `session`, one update of `TAIL` edits, imported into the engine `snapshot`
+/// rebuilds, without its delta and with it as stage A saves it.
+async fn import_with_its_delta(
+    pool: &sqlx::SqlitePool,
+    snapshot: &[u8],
+    session: &[u8],
+    scale: &str,
+) {
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE);
+    let (rows_before, bytes_before) = saved_deltas(pool).await;
+    let mut without = Vec::with_capacity(5);
+    let mut with = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let mut engine = rehydrate(snapshot);
+        let start = Instant::now();
+        engine
+            .import_with_changed_purged_tagscope(session)
+            .expect("import");
+        without.push(start.elapsed());
+
+        let mut engine = rehydrate(snapshot);
+        let start = Instant::now();
+        let (imported, delta) = engine
+            .capturing_delta(|engine| engine.import_with_changed_purged_tagscope(session))
+            .expect("export the delta");
+        imported.expect("import");
+        let mut tx = agaric_store::db::begin_immediate_logged(pool, "durability_cost")
+            .await
+            .expect("begin");
+        super::delta::insert_delta(&mut tx, &space, &delta.expect("the import added ops"))
+            .await
+            .expect("save the delta");
+        tx.commit().await.expect("commit");
+        with.push(start.elapsed());
+    }
+    let (rows, bytes) = saved_deltas(pool).await;
+    assert_eq!(
+        rows - rows_before,
+        5,
+        "each import with a delta saved one row"
+    );
+    without.sort();
+    with.sort();
+    Timings(without).report(
+        &format!("import of {TAIL} edits, no delta"),
+        scale,
+        &format!(", {} bytes inbound", session.len()),
+    );
+    Timings(with).report(
+        &format!("import of {TAIL} edits, with its delta"),
+        scale,
+        &format!(", {} bytes a row", (bytes - bytes_before) / 5),
+    );
+}
+
+/// `loro_doc_delta`'s row count and total bytes.
+async fn saved_deltas(pool: &sqlx::SqlitePool) -> (i64, i64) {
+    sqlx::query_as("SELECT COUNT(*), COALESCE(SUM(LENGTH(bytes)), 0) FROM loro_doc_delta")
+        .fetch_one(pool)
+        .await
+        .expect("count the deltas")
+}
+
 async fn measure(n: usize, rounds: usize) {
     let scale = format!("{n}x{rounds}");
     let (pool, _dir) = agaric_store::test_support::test_pool().await;
@@ -325,6 +458,9 @@ async fn measure(n: usize, rounds: usize) {
 
     let session = boot_with_a_tail(&snapshot, &ids, &scale);
     kept_sync_blob(&snapshot, &session, &scale);
+
+    edit_transaction(&pool, &snapshot, &ids[ids.len() / 2 + 1], &scale).await;
+    import_with_its_delta(&pool, &snapshot, &session, &scale).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

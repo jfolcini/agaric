@@ -191,6 +191,9 @@ pub struct LoroEngineRegistry {
     /// Engine locks handed out, read by [`Self::guard_acquisitions`].
     #[cfg(any(test, feature = "test-util"))]
     acquisitions: AtomicU64,
+    /// What test fixtures wrote through [`Self::seed`], by space.
+    #[cfg(any(test, feature = "test-util"))]
+    seeded: Mutex<Vec<(SpaceId, Vec<u8>)>>,
 }
 
 impl LoroEngineRegistry {
@@ -205,7 +208,41 @@ impl LoroEngineRegistry {
             inbound_syncs: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-util"))]
             acquisitions: AtomicU64::new(0),
+            #[cfg(any(test, feature = "test-util"))]
+            seeded: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Run `write` on `space_id`'s engine for a test fixture that seeds state
+    /// no production path wrote, and keep the Loro update it added: the
+    /// `loro_doc_delta` oracle
+    /// ([`crate::loro::delta::saved_engine_divergences`]) counts it as saved,
+    /// so a fixture's seed does not read as a production write that saved no
+    /// delta.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn seed<T>(
+        &self,
+        space_id: &SpaceId,
+        device_id: &str,
+        write: impl FnOnce(&mut LoroEngine) -> T,
+    ) -> T {
+        let shared = self
+            .shared_for_space(space_id, device_id)
+            .expect("the fixture's engine");
+        let (out, delta) = shared
+            .lock()
+            .capturing_delta(write)
+            .expect("export the fixture's seed");
+        if let Some(delta) = delta {
+            self.seeded.lock().push((space_id.clone(), delta));
+        }
+        out
+    }
+
+    /// The updates [`Self::seed`] kept.
+    #[cfg(any(test, feature = "test-util"))]
+    pub(crate) fn seeded(&self) -> Vec<(SpaceId, Vec<u8>)> {
+        self.seeded.lock().clone()
     }
 
     /// #5712: an inbound sync session starts importing docs, and so may hold
@@ -357,7 +394,10 @@ impl LoroEngineRegistry {
         // op in the same tx must NOT overwrite the pre-tx frontier — the rewind
         // discards ALL ops since the first).
         revert.record_first_touch(space_id, &shared, &self.dirty, || {
-            guard.checkpoint_frontiers()
+            crate::loro::revert::Checkpoint {
+                frontier: guard.checkpoint_frontiers(),
+                since: guard.version_vector(),
+            }
         });
         Ok(EngineGuard { guard })
     }
@@ -486,6 +526,15 @@ impl LoroEngineRegistry {
         shared.is_some_and(|shared| shared.lock().created_here(block_id))
     }
 
+    /// Whether `engine` is the engine registered for `space_id`: false once
+    /// [`Self::evict_space`] or [`Self::install_engine`] has replaced it.
+    pub(crate) fn holds(&self, space_id: &SpaceId, engine: &SharedEngine) -> bool {
+        self.inner
+            .lock()
+            .get(space_id)
+            .is_some_and(|held| Arc::ptr_eq(held, engine))
+    }
+
     /// All [`SpaceId`]s currently registered, in arbitrary order.
     ///
     /// Used by the sync orchestrator to enumerate which spaces to
@@ -543,6 +592,13 @@ impl LoroEngineRegistry {
             .map(|(_, edges)| edges)
             .collect::<Result<Vec<_>, _>>()
             .map(|per_space| per_space.into_iter().flatten().collect())
+    }
+
+    /// Every registered engine's document, for the `loro_doc_delta` test
+    /// oracle ([`crate::loro::delta::saved_engine_divergences`]).
+    #[cfg(any(test, feature = "test-util"))]
+    pub(crate) fn doc_handles(&self) -> Vec<(SpaceId, LoroDoc)> {
+        self.probe_engines(|engine| Some(engine.doc_handle()))
     }
 
     /// `probe`'s answer from every registered engine that has one, locking

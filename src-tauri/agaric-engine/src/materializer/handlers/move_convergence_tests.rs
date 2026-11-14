@@ -2969,7 +2969,7 @@ async fn the_unswept_mirror_skips_a_block_absent_from_the_engine_4468() {
         );
     let log_guard = tracing::subscriber::set_default(subscriber);
 
-    super::apply::dispatch_unswept_cohort(&root, &unswept, Some(&space), &state).await;
+    super::apply::dispatch_unswept_cohort(&pool, &root, &unswept, Some(&space), &state).await;
 
     drop(log_guard);
     let log = writer.contents();
@@ -3106,7 +3106,7 @@ async fn the_delete_cascade_mirror_skips_a_cohort_member_absent_from_the_engine_
     let log_guard = tracing::subscriber::set_default(subscriber);
 
     let fallbacks_before = super::sql_only_fallback::count();
-    super::apply::dispatch_delete_descendants(&root, &cohort, Some(&space), &state).await;
+    super::apply::dispatch_delete_descendants(&pool, &root, &cohort, Some(&space), &state).await;
     let fallbacks_after = super::sql_only_fallback::count();
 
     drop(log_guard);

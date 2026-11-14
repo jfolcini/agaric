@@ -237,7 +237,7 @@ impl LoroEngine {
     /// doc whose tree (fractional) order disagrees with position order — the
     /// only shape that actually drives the migration reorder loop.
     #[cfg(test)]
-    pub(super) fn force_legacy_scheme_for_test(&self, positions: &[(&str, i64)]) {
+    pub(crate) fn force_legacy_scheme_for_test(&self, positions: &[(&str, i64)]) {
         let tree = self.tree();
         for (id, pos) in positions {
             let node = self.node_for(id).expect("force_legacy: node exists");

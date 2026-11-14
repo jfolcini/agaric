@@ -46,6 +46,26 @@ impl LoroEngine {
             .export(ExportMode::updates(&vv))
             .map_err(|e| AppError::validation(format!("loro: export_update_since: {e}")))
     }
+    /// Run `write` and return, with its output, the Loro update it added to
+    /// the op log: the `loro_doc_delta` row for an engine write made outside a
+    /// rollback-armed transaction (#6521). `None` when it added nothing. A
+    /// `write` that fails partway still yields what it added before it failed.
+    pub fn capturing_delta<T>(
+        &mut self,
+        write: impl FnOnce(&mut Self) -> T,
+    ) -> Result<(T, Option<Vec<u8>>), AppError> {
+        let since = self.doc.oplog_vv();
+        let before = self.doc.oplog_frontiers();
+        let out = write(self);
+        if self.doc.oplog_frontiers() == before {
+            return Ok((out, None));
+        }
+        let delta = self
+            .doc
+            .export(ExportMode::updates(&since))
+            .map_err(|e| AppError::validation(format!("loro: export delta: {e}")))?;
+        Ok((out, Some(delta)))
+    }
     /// Detect a `(peer, counter)` fork of OUR OWN peer id in an inbound
     /// blob, BEFORE importing it (#792).
     ///

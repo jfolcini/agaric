@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT space_id AS \"space_id!\", snapshot FROM loro_doc_state",
+  "describe": {
+    "columns": [
+      {
+        "name": "space_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "loro_doc_state",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "snapshot",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "loro_doc_state",
+            "name": "snapshot"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "4f01fbeb6325d8340b3a82429e2893c14ac687e270e0a67471b6bfe3db9358e5"
+}

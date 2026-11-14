@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM loro_doc_delta",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "c050247bf937082909e39ed2ff66ab92b68f5b3aeb500d18c6cd75d0295e51b6"
+}

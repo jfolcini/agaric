@@ -382,7 +382,7 @@ async fn flush_bib_chunk(
             error = %e,
             "import: bibliography chunk commit failed; committed chunks remain durable"
         );
-        AppError::from(e)
+        e
     })?;
     let mut next = CommandTx::begin_immediate(pool, "import_bibliography").await?;
     // #2604 — re-arm rollback for the new per-chunk tx.

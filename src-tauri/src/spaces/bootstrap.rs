@@ -356,6 +356,9 @@ pub async fn bootstrap_spaces_for_test(pool: &SqlitePool, device_id: &str) -> Re
     let mat = Materializer::new(pool.clone());
     let result = bootstrap_spaces(pool, device_id, &mat).await;
     mat.shutdown();
+    // The engines this bootstrap wrote go with its materializer, and the
+    // caller's own starts from empty ones: the deltas go too (#6521).
+    agaric_engine::loro::delta::clear_deltas(pool).await?;
     result
 }
 

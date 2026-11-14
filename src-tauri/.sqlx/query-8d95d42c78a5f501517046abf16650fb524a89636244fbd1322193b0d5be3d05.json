@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO loro_doc_delta (space_id, bytes) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "8d95d42c78a5f501517046abf16650fb524a89636244fbd1322193b0d5be3d05"
+}

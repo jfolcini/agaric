@@ -60,15 +60,7 @@ async fn run(
         tx.enqueue_lifecycle_background(Arc::clone(record), "content");
     }
     tx.commit_and_dispatch(materializer).await?;
-    for (record, effects) in &swept {
-        crate::materializer::dispatch_delete_descendants(
-            record,
-            &effects.deleted_cohort,
-            effects.delete_space_id.as_ref(),
-            state,
-        )
-        .await;
-    }
+    crate::repair::fan_out_deletes(pool, state, &swept).await;
 
     tracing::info!(
         swept = swept.len(),

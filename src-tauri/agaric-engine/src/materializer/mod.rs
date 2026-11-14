@@ -71,7 +71,7 @@ pub use handlers::purge_block_sql_cascade;
 pub use handlers::{
     collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
     dispatch_restore_ancestors, dispatch_restore_descendants, reindex_restored_cohort_fts,
-    reindex_restored_cohort_links, remove_deleted_cohort_fts,
+    reindex_restored_cohort_links, remove_deleted_cohort_fts, saving_fan_out,
 };
 // #2325/#2250: the single collapsed apply-projection entry point the LOCAL
 // command sites route through (`advance_cursor = false`).
