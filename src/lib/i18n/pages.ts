@@ -157,6 +157,8 @@ export const pages: Record<string, string> = {
   'pageHeader.exportCopied': 'Markdown copied to clipboard',
   'pageHeader.exportFailed': 'Export failed',
   'pageHeader.saveMarkdownFile': 'Save as Markdown file',
+  'pageHeader.print': 'Print…',
+  'pageHeader.printFailed': 'Could not open the print dialog',
   'pageHeader.markdownFileSaved': 'Saved {{fileName}} to Downloads',
   'pageHeader.markdownFileSaveFailed': 'Could not save the Markdown file',
   'pageHeader.copyAppLink': 'Copy app link',

@@ -6,6 +6,7 @@
   "platforms": ["linux", "macOS", "windows"],
   "permissions": [
     "core:webview:allow-set-webview-zoom",
+    "core:webview:allow-print",
     "core:window:allow-unminimize",
     "core:window:allow-show",
     "core:window:allow-set-focus",

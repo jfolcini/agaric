@@ -2,10 +2,8 @@
  * ZIP composition for the bug-report export.
  *
  * Mirrors `src/lib/export-graph.ts`: JSZip-based, no new Rust dep, no new
- * Tauri plugin. The returned `Blob` is handed to `downloadBlob` (same
- * module) which routes through the browser's `a[download]` machinery — on
- * desktop this opens the platform save-as dialog; on Android the webview's
- * download manager drops the file in the system Downloads directory.
+ * Tauri plugin. The returned `Blob` is handed to `saveBlob`
+ * (`src/lib/attachment-utils.ts`).
  */
 
 import JSZip from 'jszip'

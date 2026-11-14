@@ -11,6 +11,7 @@ import {
   List,
   MoreVertical,
   Network,
+  Printer,
   Redo2,
   Settings2,
   Smile,
@@ -66,6 +67,8 @@ export interface PageHeaderMenuProps {
   onExport: () => void
   /** Saves the page as a `.md` file; the row is hidden without it. */
   onSaveMarkdownFile?: (() => void) | undefined
+  /** Opens the webview's print dialog; the row is hidden without it. */
+  onPrint?: (() => void) | undefined
   /** Copies the page's `agaric://` link. */
   onCopyAppLink: () => void
   /** Opens source mode; the row is hidden without it. */
@@ -114,6 +117,7 @@ export function PageHeaderMenu({
   onToggleJournalTemplate,
   onExport,
   onSaveMarkdownFile,
+  onPrint,
   onCopyAppLink,
   onEditSource,
   editMode,
@@ -168,6 +172,7 @@ export function PageHeaderMenu({
     'toggleJournalTemplate',
     'export',
     ...(onSaveMarkdownFile != null ? ['saveMarkdownFile'] : []),
+    ...(onPrint != null ? ['print'] : []),
     ...(onEditModeChange != null ? ['editMode'] : []),
     ...(onEditSource != null ? ['editSource'] : []),
     ...(showMoveEntry ? ['moveTo'] : []),
@@ -421,6 +426,17 @@ export function PageHeaderMenu({
         >
           <Download className="h-3.5 w-3.5" />
           {t('pageHeader.saveMarkdownFile')}
+        </button>
+      )}
+      {onPrint != null && (
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onPrint}
+          {...menuItemProps('print')}
+        >
+          <Printer className="h-3.5 w-3.5" />
+          {t('pageHeader.print')}
         </button>
       )}
       {onEditModeChange != null && (

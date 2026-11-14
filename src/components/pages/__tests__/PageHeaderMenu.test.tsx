@@ -21,6 +21,7 @@ vi.mock('lucide-react', () => ({
   Download: (props: React.SVGProps<SVGSVGElement>) => (
     <svg data-testid="download-icon" {...props} />
   ),
+  Printer: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="printer-icon" {...props} />,
   ExternalLink: (props: React.SVGProps<SVGSVGElement>) => (
     <svg data-testid="external-link-icon" {...props} />
   ),

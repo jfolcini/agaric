@@ -96,6 +96,7 @@ vi.mock('lucide-react', () => ({
   Clock: () => <svg data-testid="clock-icon" />,
   Copy: () => <svg data-testid="copy-icon" />,
   Download: () => <svg data-testid="download-icon" />,
+  Printer: () => <svg data-testid="printer-icon" />,
   ExternalLink: () => <svg data-testid="external-link-icon" />,
   FileCode: () => <svg data-testid="file-code-icon" />,
   FileText: () => <svg data-testid="file-text-icon" />,
