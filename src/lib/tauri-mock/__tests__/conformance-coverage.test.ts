@@ -93,10 +93,11 @@ function extractRustCommandSignatures(): Map<string, string> {
       } else if (entry.name.endsWith('.rs')) {
         const source = readFileSync(full, 'utf8')
         // `#[tauri::command…]`, any further attributes (`#[instrument…]`), then
-        // the fn header. The arg list is balance-scanned so nested generics /
-        // tuples in a parameter type cannot truncate it.
+        // the fn header, with the `<R: tauri::Runtime>` a command taking an
+        // `AppHandle<R>` carries. The arg list is balance-scanned so nested
+        // generics / tuples in a parameter type cannot truncate it.
         const re =
-          /#\[tauri::command[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*pub\s+(?:async\s+)?fn\s+(\w+)\s*\(/g
+          /#\[tauri::command[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*pub\s+(?:async\s+)?fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(/g
         for (const m of source.matchAll(re)) {
           let depth = 0
           let i = (m.index ?? 0) + m[0].length - 1
@@ -258,6 +259,10 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   stop_speaking: 'no persistent state — silences the OS text-to-speech engine (#5745)',
   mcp_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_disconnect_all: 'no persistent domain state — MCP transport reset',
+
+  save_to_downloads:
+    'no persistent state — writes a file into the OS Downloads folder (#6652); ' +
+    '`commands::downloads` tests pin the backend',
 
   // ── Markdown mirror (#5363) ──
   pick_mirror_folder: 'no persistent state — an OS folder dialog; it stores nothing',
@@ -542,6 +547,8 @@ const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
   'mcp_disconnect_all',
   // An OS folder dialog (#5363).
   'pick_mirror_folder',
+  // A file in the OS Downloads folder (#6652).
+  'save_to_downloads',
   // The OS file manager (#6554).
   'open_data_folder',
 ])

@@ -26,7 +26,7 @@ use super::*;
 /// The `block:properties-changed` events a property write's wrapper emits once
 /// its `_inner` commits: one per block the caller named, whether or not the
 /// write changed it, each carrying `changed_keys`. The conformance harness
-/// records this same list, which holds the mock to it.
+/// records them as the wrapper emits them, which holds the mock to them.
 pub fn property_changed_events(
     block_ids: impl IntoIterator<Item = BlockId>,
     changed_keys: &[String],
@@ -42,10 +42,36 @@ pub fn property_changed_events(
 
 /// A failed emit is logged by `main_thread::emit`, never returned: the write
 /// has already committed.
-fn emit_property_changed_events(app: &tauri::AppHandle, events: Vec<PropertyChangedEvent>) {
-    for event in events {
+///
+/// The events go out twice: at once, and again when the background queue has
+/// drained. The agenda's views read `agenda_cache` on this event, and the
+/// write's rebuild of it runs after the command has answered, so a read that
+/// came before the rebuild is followed by one that comes after (#6567). The
+/// second sending says `after_rebuild`, which the conformance harness reads
+/// to leave it out of an op's events: it lands whenever the queue drains.
+fn emit_property_changed_events<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    materializer: &Materializer,
+    events: Vec<PropertyChangedEvent>,
+) {
+    for event in events.clone() {
         crate::main_thread::emit(app, EVENT_PROPERTY_CHANGED, event);
     }
+    let app = app.clone();
+    let materializer = materializer.clone();
+    tauri::async_runtime::spawn(async move {
+        // Fails only at shutdown, when nothing listens either.
+        if materializer.flush_background().await.is_ok() {
+            for event in events {
+                let again = serde_json::json!({
+                    "block_id": event.block_id,
+                    "changed_keys": event.changed_keys,
+                    "after_rebuild": true,
+                });
+                crate::main_thread::emit(&app, EVENT_PROPERTY_CHANGED, again);
+            }
+        }
+    });
 }
 
 /// List all distinct property keys currently in use across all blocks.
@@ -2246,8 +2272,8 @@ pub async fn list_property_values(
 /// frontend undo stack can address the action by exact ref (`undo_op`).
 #[tauri::command]
 #[specta::specta]
-pub async fn set_property(
-    app: tauri::AppHandle,
+pub async fn set_property<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     key: String,
@@ -2278,7 +2304,7 @@ pub async fn set_property(
     })
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_events(&app, events);
+    emit_property_changed_events(&app, ctx.materializer(), events);
     Ok(result)
 }
 
@@ -2288,8 +2314,8 @@ pub async fn set_property(
 /// the next occurrence's among them, so the frontend undoes it by those refs.
 #[tauri::command]
 #[specta::specta]
-pub async fn set_todo_state(
-    app: tauri::AppHandle,
+pub async fn set_todo_state<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     state: Option<String>,
@@ -2311,7 +2337,7 @@ pub async fn set_todo_state(
     })
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_events(&app, events);
+    emit_property_changed_events(&app, ctx.materializer(), events);
     Ok(result)
 }
 
@@ -2330,8 +2356,8 @@ pub async fn set_todo_state(
 /// stamps' among them, so the frontend undoes it by those refs.
 #[tauri::command]
 #[specta::specta]
-pub async fn set_todo_state_batch(
-    app: tauri::AppHandle,
+pub async fn set_todo_state_batch<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
     state: Option<String>,
@@ -2350,7 +2376,7 @@ pub async fn set_todo_state_batch(
     })
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_events(&app, events);
+    emit_property_changed_events(&app, ctx.materializer(), events);
     Ok(set)
 }
 
@@ -2367,8 +2393,8 @@ pub async fn set_todo_state_batch(
 /// changes — mirroring the `set_todo_state_batch` emit loop.
 #[tauri::command]
 #[specta::specta]
-pub async fn set_property_batch(
-    app: tauri::AppHandle,
+pub async fn set_property_batch<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
     key: String,
@@ -2385,7 +2411,7 @@ pub async fn set_property_batch(
     )
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_events(&app, events);
+    emit_property_changed_events(&app, ctx.materializer(), events);
     Ok(updated)
 }
 
@@ -2399,8 +2425,8 @@ pub async fn set_property_batch(
 /// does not propagate as a command error.
 #[tauri::command]
 #[specta::specta]
-pub async fn set_priority(
-    app: tauri::AppHandle,
+pub async fn set_priority<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     level: Option<String>,
@@ -2417,15 +2443,15 @@ pub async fn set_priority(
     )
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_events(&app, events);
+    emit_property_changed_events(&app, ctx.materializer(), events);
     Ok(result.into())
 }
 
 /// Tauri command: set due date on a block. Delegates to [`set_due_date_inner`].
 #[tauri::command]
 #[specta::specta]
-pub async fn set_due_date(
-    app: tauri::AppHandle,
+pub async fn set_due_date<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     date: Option<String>,
@@ -2442,15 +2468,15 @@ pub async fn set_due_date(
     )
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_events(&app, events);
+    emit_property_changed_events(&app, ctx.materializer(), events);
     Ok(result.into())
 }
 
 /// Tauri command: set scheduled date on a block. Delegates to [`set_scheduled_date_inner`].
 #[tauri::command]
 #[specta::specta]
-pub async fn set_scheduled_date(
-    app: tauri::AppHandle,
+pub async fn set_scheduled_date<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     date: Option<String>,
@@ -2467,7 +2493,7 @@ pub async fn set_scheduled_date(
     )
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_events(&app, events);
+    emit_property_changed_events(&app, ctx.materializer(), events);
     Ok(result.into())
 }
 
@@ -2480,8 +2506,8 @@ pub async fn set_scheduled_date(
 /// current call sites discard the result).
 #[tauri::command]
 #[specta::specta]
-pub async fn delete_property(
-    app: tauri::AppHandle,
+pub async fn delete_property<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     key: String,
@@ -2503,7 +2529,11 @@ pub async fn delete_property(
     .await
     .map_err(sanitize_internal_error)?;
     // The keys it actually removed, which may be none: `repeat` takes its bounds with it.
-    emit_property_changed_events(&app, property_changed_events([block_id], &deleted.inner));
+    emit_property_changed_events(
+        &app,
+        ctx.materializer(),
+        property_changed_events([block_id], &deleted.inner),
+    );
     Ok(WithOps {
         inner: DeletePropertyResponse {
             block_id: block_id_clone,
@@ -3103,5 +3133,83 @@ mod count_property_usage_tests {
             matches!(result, Err(AppError::NotFound(_))),
             "a space that is not registered is refused, got {result:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod property_changed_events_tests {
+    use std::time::Duration;
+
+    use tauri::Listener;
+
+    use super::*;
+    use crate::commands::create_block_inner;
+    use crate::commands::tests::common::{DEV, test_pool};
+
+    /// #6567: a view that reads the agenda on this event can read before the
+    /// rebuild the write queued. The event's second sending follows it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn property_events_go_out_again_once_the_caches_are_rebuilt_6567() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+        let (app, _main_thread) = crate::main_thread::test_support::running_mock_app();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.listen(EVENT_PROPERTY_CHANGED, move |event| {
+            let _ = tx.send(event.payload().to_owned());
+        });
+
+        let active = ActiveBlockId::from_trusted_active(block.id.as_str());
+        set_due_date_inner(&pool, DEV, &mat, active, Some("2031-03-04".into()))
+            .await
+            .unwrap();
+        emit_property_changed_events(
+            &app,
+            &mat,
+            property_changed_events([block.id.clone()], &["due_date".to_owned()]),
+        );
+
+        let id = block.id.as_str();
+        for (when, payload) in [
+            (
+                "at once",
+                serde_json::json!({ "block_id": id, "changed_keys": ["due_date"] }),
+            ),
+            (
+                "again after the rebuild",
+                serde_json::json!({
+                    "block_id": id,
+                    "changed_keys": ["due_date"],
+                    "after_rebuild": true,
+                }),
+            ),
+        ] {
+            let sent = rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| panic!("the event was not sent {when}"));
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&sent).unwrap(),
+                payload,
+                "the event sent {when}"
+            );
+        }
+        let cached: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agenda_cache WHERE block_id = ?")
+                .bind(block.id.as_str())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(cached, 1, "the second sending follows the agenda rebuild");
     }
 }

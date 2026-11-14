@@ -4,20 +4,30 @@
 //! at head, so it may only use what the tag it is run at exports.
 //!
 //! Usage: `gen_release_vault <empty output dir>`. Writes `notes.db`,
-//! `device-id` and `export-projects.txt` (the tag's own Markdown export of the
-//! "Projects" page).
+//! `attachments/`, `device-id`, `export-projects.txt` (the tag's own Markdown
+//! export of the "Projects" page) and `counts.txt` (how many blocks and ops
+//! the tag left, and the seq its compaction purged through).
 
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{
-    add_tag_inner, create_block_inner, create_block_inner_with_space, create_page_in_space_inner,
-    create_property_def_inner, delete_block_inner, edit_block_inner, export_page_markdown_inner,
-    move_block_inner, set_due_date_inner, set_page_aliases_inner, set_priority_inner,
-    set_property_inner, set_scheduled_date_inner, set_todo_state_inner,
+    add_attachment_with_bytes_inner, add_tag_inner, compact_op_log_cmd_inner, create_block_inner,
+    create_block_inner_with_space, create_page_in_space_inner, create_property_def_inner,
+    delete_block_inner, edit_block_inner, export_page_markdown_inner, move_block_inner,
+    set_due_date_inner, set_page_aliases_inner, set_peer_address_inner, set_priority_inner,
+    set_property_inner, set_scheduled_date_inner, set_todo_state_inner, update_peer_name_inner,
 };
 use agaric_lib::materializer::Materializer;
 use agaric_lib::ulid::verify_active;
 use agaric_store::space::{SpaceId, SpaceScope};
 use sqlx::SqlitePool;
+
+/// The device this vault is paired with: its device id, and the iroh endpoint
+/// id pairing pinned it to (RFC 8032's first test vector, a real ed25519
+/// point, which the tag's `bind_endpoint_id` requires).
+const PEER: &str = "0f6b2c1e-8d43-4a57-9c1e-2b7a5d9e4f10";
+const PEER_ENDPOINT_ID: &str = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+
+const DAY_MS: i64 = 86_400_000;
 
 struct Vault {
     pool: SqlitePool,
@@ -142,7 +152,8 @@ async fn main() {
     .id;
     v.mat.flush_background().await.unwrap();
 
-    // A task with every promoted column, and a nested child that links out.
+    // A task with every promoted column, and a nested child (its text, with
+    // the link out, is written after the compaction).
     let task = v.block(&projects, "Write the upgrade test").await;
     let active = verify_active(&v.pool, &task).await.unwrap();
     set_todo_state_inner(
@@ -177,16 +188,6 @@ async fn main() {
     .unwrap();
     v.mat.flush_background().await.unwrap();
     let nested = v.block(&task, "placeholder").await;
-    edit_block_inner(
-        &v.pool,
-        &v.device,
-        &v.mat,
-        nested.clone(),
-        format!("Notes live in [[{reading}]] zebrafish"),
-    )
-    .await
-    .unwrap();
-    v.mat.flush_background().await.unwrap();
 
     // A tagged block.
     let tagged = v.block(&projects, "A block the tag is on").await;
@@ -297,7 +298,68 @@ async fn main() {
         .unwrap();
     v.mat.flush_background().await.unwrap();
 
-    // The second space.
+    // A year passes and the daily job compacts the log. The engine snapshots
+    // were saved long before; the ops' age is the one thing no command can
+    // write, so it is set on the rows.
+    v.mat.flush().await.unwrap();
+    let saved =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pools.write, &v.mat).await;
+    assert!(saved >= 1, "the engine snapshot must be saved before the purge");
+    let mut tx = v.pool.begin().await.unwrap();
+    agaric_store::op_log::enable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE op_log SET created_at = created_at - ?")
+        .bind(400 * DAY_MS)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    agaric_store::op_log::disable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let purged = compact_op_log_cmd_inner(&v.pool, 90).await.unwrap();
+    assert!(purged.ops_deleted > 0, "the aged ops must be purged");
+
+    // Written after the compaction: an edit of a block whose create op is
+    // gone, an attachment, a paired device, the second space.
+    edit_block_inner(
+        &v.pool,
+        &v.device,
+        &v.mat,
+        nested,
+        format!("Notes live in [[{reading}]] zebrafish"),
+    )
+    .await
+    .unwrap();
+    v.mat.flush_background().await.unwrap();
+
+    add_attachment_with_bytes_inner(
+        &v.pool,
+        &v.device,
+        &v.mat,
+        &out,
+        book,
+        "margin-notes.txt".into(),
+        "text/plain".into(),
+        b"Bytes the release wrote to disk.\n".to_vec(),
+    )
+    .await
+    .unwrap();
+    v.mat.flush_background().await.unwrap();
+
+    // The row pairing pins a peer with, then the two commands the device list
+    // edits it through. Pairing itself needs a second device on the wire.
+    agaric_store::peer_refs::bind_endpoint_id(&v.pool, PEER, PEER_ENDPOINT_ID)
+        .await
+        .unwrap();
+    update_peer_name_inner(&v.pool, PEER.into(), Some("Phone".into()))
+        .await
+        .unwrap();
+    set_peer_address_inner(&v.pool, PEER.into(), "192.168.1.20:4433".into())
+        .await
+        .unwrap();
+
     let meetings = v.page(work, "Meetings").await;
     v.block(&meetings, "Standup at ten").await;
 
@@ -317,6 +379,31 @@ async fn main() {
         "both spaces' engine snapshots must be saved, got {saved}"
     );
     v.mat.shutdown();
+
+    let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pools.write)
+        .await
+        .unwrap();
+    let ops: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pools.write)
+        .await
+        .unwrap();
+    let frontier: String =
+        sqlx::query_scalar("SELECT up_to_seqs FROM compaction_watermark WHERE id = 1")
+            .fetch_one(&pools.write)
+            .await
+            .unwrap();
+    let frontier: std::collections::BTreeMap<String, i64> =
+        serde_json::from_str(&frontier).unwrap();
+    std::fs::write(
+        out.join("counts.txt"),
+        format!(
+            "blocks {blocks}\nops {ops}\ncompacted_through {}\n",
+            frontier[&v.device]
+        ),
+    )
+    .unwrap();
+
     sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
         .execute(&pools.write)
         .await

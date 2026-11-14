@@ -34,7 +34,10 @@ const mockDownloadBlob = vi.fn()
 vi.mock('@/lib/export-graph', () => ({
   exportGraphAsZip: (...args: unknown[]) => mockExportGraphAsZip(...args),
   exportAllSpacesAsZip: (...args: unknown[]) => mockExportAllSpacesAsZip(...args),
-  downloadBlob: (...args: unknown[]) => mockDownloadBlob(...args),
+}))
+vi.mock('@/lib/attachment-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/attachment-utils')>()),
+  saveBlob: (...args: unknown[]) => mockDownloadBlob(...args),
 }))
 
 const mockImportMarkdown = vi.fn()
@@ -544,6 +547,29 @@ describe('DataTab', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Export failed')
     })
+  })
+
+  // #6652: the success toast waits for the save, so a save that failed never shows it.
+  it.each([
+    ['Export this space', mockExportGraphAsZip],
+    ['Export all spaces', mockExportAllSpacesAsZip],
+  ])('%s shows the error toast and no success toast when the save fails', async (name, build) => {
+    const user = userEvent.setup()
+    build.mockResolvedValueOnce({
+      blob: new Blob(['zip']),
+      spaceCount: 1,
+      skippedPages: 0,
+      skippedAttachments: 0,
+    })
+    mockDownloadBlob.mockRejectedValueOnce(new Error('disk full'))
+
+    render(<DataTab />)
+    await user.click(screen.getByRole('button', { name }))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Export failed')
+    })
+    expect(toast.success).not.toHaveBeenCalled()
   })
 
   // #2965 — `exportGraphAsZip` no longer silently reports success when it

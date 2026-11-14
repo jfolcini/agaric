@@ -2996,7 +2996,7 @@ pub async fn run_query_steps(
     Value::Array(out)
 }
 
-pub(super) mod reader_delegation_tests {
+mod reader_delegation_tests {
     /// #3928 — pin that the harness arm and the SHIPPED command reach the same
     /// reader.
     ///
@@ -3320,13 +3320,8 @@ pub(super) mod reader_delegation_tests {
     /// reddens and asks for a human, rather than passing while under-counting.
     ///
     /// `fn_needle` names the dispatching function and `dispatch` its `match`
-    /// header; the mutating leg (`conformance_command.rs`) walks its own
-    /// dispatcher with the same scanner.
-    pub(crate) fn wired_commands(
-        src: &str,
-        fn_needle: &str,
-        dispatch: &str,
-    ) -> (Vec<String>, usize) {
+    /// header.
+    fn wired_commands(src: &str, fn_needle: &str, dispatch: &str) -> (Vec<String>, usize) {
         let body = body_after(src, fn_needle, "\n}\n");
         let start = body.find(dispatch).unwrap_or_else(|| {
             panic!("{dispatch:?} not found inside `{fn_needle}` — did the dispatch move or rename?")

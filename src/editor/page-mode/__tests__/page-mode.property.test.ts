@@ -231,6 +231,28 @@ function mockPage(rows: readonly Row[]): MockPage {
           const deleted = command<WithRefs<{ deleted_at: number }>>('delete_block', { blockId: id })
           return { deletedAt: deleted.deleted_at, refs: deleted.op_refs }
         }),
+      createBatch: (creates) =>
+        answer(() => {
+          if (refusing && creates.some(({ markdown }) => refusedText(markdown))) {
+            throw new Error('create_blocks_batch: content refused')
+          }
+          return command<WithRefs<unknown>>('create_blocks_batch', {
+            specs: creates.map(({ id, parentId, index, markdown }) => ({
+              blockType: 'content',
+              content: markdown,
+              parentId,
+              blockId: id,
+              position: index + 1,
+            })),
+          }).op_refs
+        }),
+      removeBatch: (ids) =>
+        answer(() => {
+          const deleted = command<WithRefs<{ deleted_at: number }>>('delete_blocks_by_ids', {
+            blockIds: ids,
+          })
+          return { deletedAt: deleted.deleted_at, refs: deleted.op_refs }
+        }),
       tree: () => answer(() => tree()),
     },
   }

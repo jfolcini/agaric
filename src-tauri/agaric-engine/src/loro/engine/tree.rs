@@ -7,6 +7,31 @@
 
 use super::*;
 
+/// How many siblings [`LoroEngine::ranked_slot`] and
+/// [`LoroEngine::children_ordered_block_ids_from`] read since the last
+/// `reset`: what a create costs in a parent of many children.
+#[cfg(any(test, feature = "test-util"))]
+pub mod sibling_read_spy {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static READS: AtomicUsize = AtomicUsize::new(0);
+    pub(super) fn bump() {
+        READS.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn reset() {
+        READS.store(0, Ordering::Relaxed);
+    }
+    pub fn count() -> usize {
+        READS.load(Ordering::Relaxed)
+    }
+    /// Run `read` without counting it.
+    pub fn uncounted<T>(read: impl FnOnce() -> T) -> T {
+        let before = count();
+        let out = read();
+        READS.store(before, Ordering::Relaxed);
+        out
+    }
+}
+
 impl LoroEngine {
     /// Read the doc's recorded sibling-order scheme version (0 if the marker
     /// is absent — a pre-#400 snapshot). See [`FIELD_SIBLING_ORDER_V`].
@@ -122,6 +147,8 @@ impl LoroEngine {
             if Some(child) == exclude {
                 continue;
             }
+            #[cfg(any(test, feature = "test-util"))]
+            sibling_read_spy::bump();
             let Ok(meta) = tree.get_meta(child) else {
                 continue;
             };
@@ -167,6 +194,16 @@ impl LoroEngine {
         &self,
         parent_id: Option<&str>,
     ) -> Result<Vec<String>, AppError> {
+        self.children_ordered_block_ids_from(parent_id, 0)
+    }
+    /// [`Self::children_ordered_block_ids`] from index `start` on. The
+    /// siblings before it are not read: reading one costs a meta-map lookup,
+    /// and a space's root holds every page and tag it has.
+    pub fn children_ordered_block_ids_from(
+        &self,
+        parent_id: Option<&str>,
+        start: usize,
+    ) -> Result<Vec<String>, AppError> {
         let parent = match parent_id {
             None => TreeParentId::Root,
             Some(pid) => match self.node_for(pid) {
@@ -178,14 +215,21 @@ impl LoroEngine {
         let Some(children) = tree.children(parent) else {
             return Ok(Vec::new());
         };
-        let mut out = Vec::with_capacity(children.len());
-        for child in children {
+        let mut out = Vec::with_capacity(children.len().saturating_sub(start));
+        for child in children.into_iter().skip(start) {
+            #[cfg(any(test, feature = "test-util"))]
+            sibling_read_spy::bump();
             let meta = tree.get_meta(child).map_err(|e| {
                 AppError::validation(format!("loro: children_ordered_block_ids: get_meta: {e}"))
             })?;
             out.push(read_string(&meta, FIELD_BLOCK_ID)?);
         }
         Ok(out)
+    }
+    /// How many blocks sit at the root of this doc's tree, soft-deleted ones
+    /// included.
+    pub fn root_count(&self) -> usize {
+        self.tree().children_num(TreeParentId::Root).unwrap_or(0)
     }
     /// Test-only: forge a genuine pre-#400 doc in place. Stamps each named
     /// node's legacy [`FIELD_POSITION`] meta to the given value and removes the scheme

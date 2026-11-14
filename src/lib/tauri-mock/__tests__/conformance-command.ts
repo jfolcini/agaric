@@ -54,10 +54,9 @@ interface ReturnShape {
   lists: readonly string[]
   /**
    * #5140 — the key the LIST OF ROWS rides under when the wrapper answers
-   * `WithOps<{ [rows]: T[] }>` (a `Vec` cannot be flattened). The Rust runner
-   * calls the `_inner`, which returns the bare list, so this is TS-only: it
-   * strips the envelope the mock mirrors, as ignoring `op_refs` does. It also
-   * names the one row a response nests (#6531), which the Rust arm picks.
+   * `WithOps<{ [rows]: T[] }>` (a `Vec` cannot be flattened). It also names
+   * the one row a response nests (#6531). MUST match `ROWS_KEY` in the Rust
+   * twin, which reads the same envelope off the wire.
    */
   rows?: string
 }
@@ -169,7 +168,7 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // cohort the cascade reached, not the ids the caller listed.
   delete_blocks_by_ids: {
     idKey: HEADED_ID_KEY,
-    attrs: ['deleted_count'],
+    attrs: ['deleted_at', 'deleted_count'],
     lists: ['affected_page_ids'],
   },
   restore_blocks_by_ids: { idKey: HEADED_ID_KEY, attrs: ['affected_count'], lists: [] },
@@ -345,7 +344,7 @@ export function projectReturn(command: string, response: unknown): string[] {
   if (!shape) {
     throw new Error(
       `conformance op '${command}' has no RETURN_SHAPE entry in the TS runner (add it here ` +
-        `and the matching arm in conformance_command.rs)`,
+        `and the matching entry in conformance_command.rs)`,
     )
   }
   // A headed shape has no id column: the head is the command name and the

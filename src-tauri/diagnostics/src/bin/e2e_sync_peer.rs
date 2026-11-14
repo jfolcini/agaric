@@ -616,6 +616,7 @@ impl Peer {
                     parent_id: Some(page_row.id.clone()),
                     position: None,
                     parent_index: None,
+                    block_id: None,
                     typed_properties: std::collections::HashMap::new(),
                     properties: std::collections::HashMap::new(),
                 })

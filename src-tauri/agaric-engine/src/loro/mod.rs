@@ -55,9 +55,9 @@ mod tests;
 #[cfg(test)]
 mod delta_tests;
 
-// What saving a delta adds to a write (#6521); `#[ignore]`d.
+// What each way of making engine state durable costs (#6521); `#[ignore]`d.
 #[cfg(test)]
-mod delta_cost_tests;
+mod durability_cost_tests;
 
 // Randomised LoroEngine regression streams. Assert direct convergence
 // invariants (single-author replay, two-device snapshot exchange) on

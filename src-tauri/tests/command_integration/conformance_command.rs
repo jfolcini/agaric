@@ -2,9 +2,9 @@
 //! side / source of truth). TS twin:
 //! `src/lib/tauri-mock/__tests__/conformance-command.ts`.
 //!
-//! A fixture op carrying `"via": "command"` calls its `*_inner` — the function
-//! its `#[tauri::command]` wrapper calls — instead of the payload replay, and
-//! its return value or refusal (the `AppErrorKind` wire string plus, for
+//! A fixture op carrying `"via": "command"` is sent through the app's IPC
+//! surface (`conformance_ipc.rs`, #6529) instead of the payload replay, and
+//! its response or refusal (the `AppErrorKind` wire string plus, for
 //! `validation`, the `ValidationCode`) lands as one record in the fixture's
 //! `expected_ops`, authored by `CONFORMANCE_UPDATE=1` and asserted by both
 //! runners:
@@ -14,14 +14,11 @@
 //!   "error": null, "code": null }
 //! ```
 //!
-//! An op whose wrapper emits Tauri events once its `_inner` commits also
-//! records them, in emission order, under `events` (#6054):
+//! An op whose wrapper emits `block:properties-changed` also records those
+//! events, in emission order, under `events` (#6054):
 //! `["block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]"]`.
-//! The harness builds them with the function the wrapper builds them with
-//! (`property_changed_events`), from the ids and keys each arm restates, so the
-//! mock is held to the payloads the app emits. The wrapper itself does not run
-//! here: one that stops emitting, or names other ids, is not caught. An op that
-//! emits nothing records no `events` key.
+//! They are the payloads the wrapper emitted, so the mock is held to what the
+//! app emits. An op that emits none records no `events` key.
 //!
 //! `returns` and `events` reuse the query leg's row-token grammar
 //! ([`row_token`] / [`relabel_token`]), so id relabelling, the `deleted_at` →
@@ -38,21 +35,10 @@
 //! carries a `ValidationCode`) under the #3946 discipline of `run_query_steps`;
 //! see [`check_declaration`].
 
-use super::common::*;
-use super::conformance::{
-    expand_content_labels, label_created_ids, resolve_attachment_label, resolve_op_arg_id,
-    resolve_op_ref_label,
-};
-use super::conformance_query::{
-    PROJECTING_STEP, PROPERTY_DEF_ATTRS, SPACE_TOKEN, relabel_token, row_token,
-};
-use agaric_core::ulid::{ActiveBlockId, AttachmentId, BlockId};
-use agaric_engine::import::{ImportAnchor, ImportDialect};
-use agaric_lib::commands::properties::property_changed_events;
-use agaric_store::op::OpRef;
-use agaric_store::space::{SpaceId, SpaceScope};
-use agaric_sync::sync_events::{EVENT_PROPERTY_CHANGED, PropertyChangedEvent};
-use serde::Serialize;
+use super::conformance::label_created_ids;
+use super::conformance_ipc::IpcTransport;
+use super::conformance_query::{PROJECTING_STEP, PROPERTY_DEF_ATTRS, relabel_token, row_token};
+use agaric_sync::sync_events::EVENT_PROPERTY_CHANGED;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -192,7 +178,7 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     (
         "delete_blocks_by_ids",
         HEADED_ID_KEY,
-        &["deleted_count"],
+        &["deleted_at", "deleted_count"],
         &["affected_page_ids"],
     ),
     (
@@ -229,11 +215,9 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // #5057 — the two batch commands that answer with a LIST OF ROWS. Each
     // element becomes its own row token in the order returned, so the returned
     // ORDER is pinned as well as the rows: a batch that answers with the right
-    // set in the wrong order reds. The `_inner` returns the bare list; the
-    // wrapper wraps it (`CreatedBlocks` / `MovedBlocks`, #5140), which is why
-    // the TS twin's rows carry a `rows` key and these do not. A paste's rows
-    // are read off `PastedBlocks` beside its warnings, which are grammar the
-    // mock does not model.
+    // set in the wrong order reds. The wire nests the list ([`ROWS_KEY`]). A
+    // paste's rows ride beside its warnings, which are grammar the mock does
+    // not model.
     (
         "create_blocks_batch",
         "id",
@@ -420,1048 +404,31 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     ("link_import_anchors", HEADED_ID_KEY, &["warning"], &[]),
 ];
 
-fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
-    outcome.map(|v| serde_json::to_value(v).expect("serialize command response"))
-}
-
-/// [`to_json`], appending to `emitted` the events the command's wrapper emits
-/// when it succeeds.
-fn emitting<T: Serialize>(
-    outcome: Result<T, AppError>,
-    emitted: &mut Vec<PropertyChangedEvent>,
-    events: Vec<PropertyChangedEvent>,
-) -> Result<Value, AppError> {
-    if outcome.is_ok() {
-        emitted.extend(events);
-    }
-    to_json(outcome)
-}
-
-/// Run one fixture op through its `*_inner`, with the same arg expansion
-/// `apply_op` gives the payload path. `Ok` is the serialized response; `Err`
-/// is the command's own refusal, untouched. The events its wrapper would emit
-/// are appended to `emitted`.
-pub(super) async fn apply_op_via_command(
-    pool: &SqlitePool,
-    mat: &Materializer,
-    // The fixture's own `TempDir`. Threaded rather than faked because the
-    // attachment commands take it by signature; `delete_attachment_inner`
-    // ignores it (#1993 moved byte reclamation to the GC pass) but
-    // `add_attachment_with_bytes_inner` writes into it, so a placeholder here
-    // would work today and silently write somewhere real tomorrow.
-    app_data_dir: &std::path::Path,
-    op: &Value,
-    created_ids: &[String],
-    op_refs: &[(String, i64)],
-    emitted: &mut Vec<PropertyChangedEvent>,
-) -> Result<Value, AppError> {
-    let command = op["command"].as_str().expect("op command");
-    let args = &op["args"];
-    let arg = |k: &str| args.get(k);
-    // `$SPACE` names the harness space, as inside a `scope` below.
-    let arg_label_id = |k: &str| {
-        arg(k).and_then(Value::as_str).map(|l| {
-            if l == SPACE_TOKEN {
-                TEST_SPACE_ID.to_owned()
-            } else {
-                resolve_op_arg_id(l, created_ids)
-            }
-        })
-    };
-    let space_id = || {
-        arg_label_id("spaceId")
-            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'spaceId'"))
-    };
-    let block_id = || BlockId::from(arg_label_id("blockId").expect("blockId").as_str());
-    let tag_id = || BlockId::from(arg_label_id("tagId").expect("tagId").as_str());
-    // A batch command's `blockIds` is a LIST of the same labels `blockId`
-    // takes, each expanded through `resolve_op_arg_id`, so a fixture names
-    // seed rows and op-created blocks in a batch exactly as it does singly.
-    // `create_blocks_batch` is the one batch command whose list is not ids but
-    // SPECS. Only `parentId` inside a spec is a label — everything else is the
-    // caller's own text or value, as for the scalar args above.
-    let block_specs = || {
-        arg("specs")
-            .and_then(Value::as_array)
-            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'specs'"))
-            .iter()
-            .map(|spec| CreateBlockSpec {
-                block_type: spec["blockType"]
-                    .as_str()
-                    .unwrap_or_else(|| panic!("conformance op '{command}': spec blockType"))
-                    .to_owned(),
-                content: spec["content"].as_str().unwrap_or_default().to_owned(),
-                parent_id: spec["parentId"]
-                    .as_str()
-                    .map(|l| BlockId::from(resolve_op_arg_id(l, created_ids).as_str())),
-                position: spec["position"].as_i64(),
-                parent_index: spec["parentIndex"]
-                    .as_u64()
-                    .map(|i| u32::try_from(i).expect("spec parentIndex fits u32")),
-                typed_properties: spec["typedProperties"]
-                    .as_object()
-                    .map(|map| {
-                        map.iter()
-                            .map(|(k, v)| {
-                                let value = serde_json::from_value(v.clone()).unwrap_or_else(|e| {
-                                    panic!("conformance op '{command}': typed property {k}: {e}")
-                                });
-                                (k.clone(), value)
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                properties: spec["properties"]
-                    .as_object()
-                    .map(|map| {
-                        map.iter()
-                            .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_owned()))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            })
-            .collect::<Vec<_>>()
-    };
-    let label_ids = |key: &str| {
-        arg(key)
-            .and_then(Value::as_array)
-            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{key}'"))
-            .iter()
-            .map(|l| {
-                let label = l.as_str().unwrap_or_else(|| {
-                    panic!("conformance op '{command}': {key} entry is not a string")
-                });
-                BlockId::from(resolve_op_arg_id(label, created_ids).as_str())
-            })
-            .collect::<Vec<_>>()
-    };
-    let block_ids = || label_ids("blockIds");
-    // String args take no label expansion: a `property_definitions` key is
-    // the user's own text, not a seed id.
-    let opt_str = |k: &str| arg(k).and_then(Value::as_str).map(str::to_owned);
-    let req_str = |k: &str| {
-        opt_str(k).unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
-    };
-    // A block's text, whose link tokens may name labels (`expand_content_labels`).
-    let text = |k: &str| expand_content_labels(&req_str(k), created_ids);
-    // #6531 — a command taking one `request` object, whose block ids are
-    // labels as the scalar `blockId` is.
-    let request = || {
-        let mut request = arg("request")
-            .cloned()
-            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'request'"));
-        for key in ["blockId", "intoId", "newBlockId"] {
-            if let Some(label) = request[key].as_str().map(str::to_owned) {
-                request[key] = json!(resolve_op_arg_id(&label, created_ids));
-            }
-        }
-        for key in ["before", "after", "mergedText"] {
-            if let Some(text) = request[key].as_str() {
-                request[key] = json!(expand_content_labels(text, created_ids));
-            }
-        }
-        request
-    };
-    // #5057 — an `OpRef` arg is an `On` label, never a literal: the two
-    // runners mint their own `(device_id, seq)`. Mirrors `block_id()` above.
-    let op_ref = |k: &str| {
-        let label = arg(k)
-            .and_then(Value::as_str)
-            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"));
-        let (device_id, seq) = resolve_op_ref_label(label, op_refs);
-        OpRef { device_id, seq }
-    };
-    // The list form of the above: `ops` is an array of `On` labels, expanded
-    // exactly as `blockIds` expands the scalar `blockId`.
-    let op_ref_list = |k: &str| {
-        arg(k)
-            .and_then(Value::as_array)
-            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
-            .iter()
-            .map(|label| {
-                let label = label.as_str().unwrap_or_else(|| {
-                    panic!("conformance op '{command}': '{k}' entry is not a string")
-                });
-                let (device_id, seq) = resolve_op_ref_label(label, op_refs);
-                OpRef { device_id, seq }
-            })
-            .collect::<Vec<_>>()
-    };
-    // The SPLIT form: two commands take an op coordinate as two positional
-    // args rather than an `OpRef`. The fixture still spells one `On` label —
-    // splitting it here keeps a single convention across all five.
-    let op_ref_split = |k: &str| {
-        let label = arg(k)
-            .and_then(Value::as_str)
-            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"));
-        resolve_op_ref_label(label, op_refs)
-    };
-    let req_i64 = |k: &str| {
-        arg(k)
-            .and_then(Value::as_i64)
-            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
-    };
-    // #5236 — a `SpaceScope` arg as the wire spells it. The `space_id` inside
-    // is a label like `spaceId` (`C<n>`, `S<n>`), or `$SPACE` for the harness
-    // space; any other shape is a fixture error. TS twin: `expandOpArgs`.
-    let scope = |k: &str| match arg(k) {
-        Some(Value::Object(scope))
-            if scope.get("kind").and_then(Value::as_str) == Some("active") =>
-        {
-            let label = scope
-                .get("space_id")
-                .and_then(Value::as_str)
-                .unwrap_or_else(|| {
-                    panic!("conformance op '{command}': an active scope needs 'space_id'")
-                });
-            let id = if label == SPACE_TOKEN {
-                TEST_SPACE_ID.to_owned()
-            } else {
-                resolve_op_arg_id(label, created_ids)
-            };
-            SpaceScope::Active(SpaceId::from_trusted(&id))
-        }
-        other => panic!("conformance op '{command}': arg '{k}' is not an active scope: {other:?}"),
-    };
-
-    match command {
-        "delete_block" => to_json(delete_block_inner(pool, DEV, mat, block_id()).await),
-        "purge_block" => to_json(purge_block_inner(pool, DEV, mat, block_id()).await),
-        "create_property_def" => to_json(
-            create_property_def_inner(
-                pool,
-                DEV,
-                mat,
-                &space_id(),
-                req_str("key"),
-                req_str("valueType"),
-                opt_str("options"),
-            )
-            .await,
-        ),
-        "update_property_def_options" => to_json(
-            update_property_def_options_inner(
-                pool,
-                DEV,
-                mat,
-                &space_id(),
-                req_str("key"),
-                req_str("options"),
-            )
-            .await,
-        ),
-        // `save_draft` and `delete_draft` have no `*_inner`: their wrappers are
-        // the thin layer over these engine functions directly.
-        "save_draft" => to_json(
-            agaric_engine::draft::save_draft(pool, DEV, block_id().as_str(), &text("content"))
-                .await,
-        ),
-        "delete_draft" => {
-            to_json(agaric_engine::draft::delete_draft(pool, block_id().as_str()).await)
-        }
-        "flush_draft" => to_json(flush_draft_inner(pool, DEV, block_id(), mat).await),
-        "flush_all_drafts" => to_json(flush_all_drafts_inner(pool, DEV, mat).await),
-        "delete_blocks_by_ids" => {
-            to_json(delete_blocks_by_ids_inner(pool, DEV, mat, block_ids()).await)
-        }
-        "restore_blocks_by_ids" => {
-            to_json(restore_blocks_by_ids_inner(pool, DEV, mat, block_ids()).await)
-        }
-        "purge_blocks_by_ids" => {
-            to_json(purge_blocks_by_ids_inner(pool, DEV, mat, block_ids()).await)
-        }
-        // The value is the caller's own text, except a `value_ref`, which is a
-        // label like the block (`expandOpArgs` in `conformance-replay.ts`).
-        "set_property" => {
-            let value: SetPropertyArgs =
-                serde_json::from_value(arg("value").cloned().unwrap_or_else(|| {
-                    panic!("conformance op '{command}' is missing arg 'value'")
-                }))
-                .unwrap_or_else(|e| panic!("conformance op '{command}': value: {e}"));
-            emitting(
-                set_property_inner(
-                    pool,
-                    DEV,
-                    mat,
-                    block_id().into_string().into(),
-                    req_str("key"),
-                    value.value_text,
-                    value.value_num,
-                    value.value_date,
-                    value.value_ref.map(|l| resolve_op_arg_id(&l, created_ids)),
-                    value.value_bool,
-                    None,
-                )
-                .await,
-                emitted,
-                property_changed_events([block_id()], &[req_str("key")]),
-            )
-        }
-        "set_property_batch" => emitting(
-            set_property_batch_inner(
-                pool,
-                DEV,
-                mat,
-                block_ids(),
-                req_str("key"),
-                opt_str("value"),
-            )
-            .await,
-            emitted,
-            property_changed_events(block_ids(), &[req_str("key")]),
-        ),
-        "set_todo_state" => emitting(
-            set_todo_state_inner(
-                pool,
-                DEV,
-                mat,
-                block_id().into_string().into(),
-                opt_str("state"),
-            )
-            .await,
-            emitted,
-            property_changed_events([block_id()], &["todo_state".to_owned()]),
-        ),
-        "set_todo_state_batch" => emitting(
-            set_todo_state_batch_inner(pool, DEV, mat, block_ids(), opt_str("state")).await,
-            emitted,
-            property_changed_events(block_ids(), &["todo_state".to_owned()]),
-        ),
-        "set_priority" => emitting(
-            set_priority_inner(
-                pool,
-                DEV,
-                mat,
-                block_id().into_string().into(),
-                opt_str("level"),
-            )
-            .await,
-            emitted,
-            property_changed_events([block_id()], &["priority".to_owned()]),
-        ),
-        "set_due_date" => emitting(
-            set_due_date_inner(
-                pool,
-                DEV,
-                mat,
-                block_id().into_string().into(),
-                opt_str("date"),
-            )
-            .await,
-            emitted,
-            property_changed_events([block_id()], &["due_date".to_owned()]),
-        ),
-        "set_scheduled_date" => emitting(
-            set_scheduled_date_inner(
-                pool,
-                DEV,
-                mat,
-                block_id().into_string().into(),
-                opt_str("date"),
-            )
-            .await,
-            emitted,
-            property_changed_events([block_id()], &["scheduled_date".to_owned()]),
-        ),
-        "add_tags_by_ids" => to_json(
-            add_tags_by_ids_inner(
-                pool,
-                DEV,
-                mat,
-                block_ids(),
-                BlockId::from(arg_label_id("tagId").expect("tagId").as_str()),
-            )
-            .await,
-        ),
-        "delete_peer_ref" => to_json(delete_peer_ref_inner(pool, req_str("peerId")).await),
-        "update_peer_name" => {
-            to_json(update_peer_name_inner(pool, req_str("peerId"), opt_str("deviceName")).await)
-        }
-        "set_peer_address" => {
-            to_json(set_peer_address_inner(pool, req_str("peerId"), req_str("address")).await)
-        }
-        // No `*_inner`: the wrapper is the thin layer over this directly.
-        "set_reminder_settings" => to_json(
-            agaric_lib::reminders::set_settings(
-                pool,
-                // The IPC arg is the whole `ReminderSettings` under `settings`,
-                // so the fixture spells it nested exactly as a caller does.
-                &agaric_lib::reminders::ReminderSettings {
-                    enabled: args["settings"]["enabled"].as_bool().unwrap_or_else(|| {
-                        panic!("conformance op '{command}' is missing arg 'settings.enabled'")
-                    }),
-                    time: args["settings"]["time"]
-                        .as_str()
-                        .unwrap_or_else(|| {
-                            panic!("conformance op '{command}' is missing arg 'settings.time'")
-                        })
-                        .to_owned(),
-                },
-            )
-            .await,
-        ),
-        "set_sync_relay_settings" => to_json(
-            set_sync_relay_settings_inner(
-                pool,
-                agaric_lib::commands::SyncRelaySettings {
-                    enabled: args["settings"]["enabled"].as_bool().unwrap_or_else(|| {
-                        panic!("conformance op '{command}' is missing arg 'settings.enabled'")
-                    }),
-                },
-            )
-            .await,
-        ),
-        "delete_property_def" => {
-            to_json(delete_property_def_inner(pool, DEV, mat, &space_id(), req_str("key")).await)
-        }
-        "rename_property_key" => to_json(
-            rename_property_key_inner(
-                pool,
-                DEV,
-                mat,
-                &space_id(),
-                req_str("oldKey"),
-                req_str("newKey"),
-            )
-            .await,
-        ),
-        "rename_property_option" => to_json(
-            rename_property_option_inner(
-                pool,
-                DEV,
-                mat,
-                &space_id(),
-                req_str("key"),
-                req_str("oldOption"),
-                req_str("newOption"),
-            )
-            .await,
-        ),
-        "merge_property_key" => to_json(
-            merge_property_key_inner(
-                pool,
-                DEV,
-                mat,
-                &space_id(),
-                req_str("fromKey"),
-                req_str("intoKey"),
-                serde_json::from_value(arg("acknowledged").cloned().unwrap_or_else(|| {
-                    panic!("conformance op '{command}' is missing arg 'acknowledged'")
-                }))
-                .expect("acknowledged is {moved, dropped}"),
-            )
-            .await,
-        ),
-        "change_property_type" => to_json(
-            change_property_type_inner(
-                pool,
-                DEV,
-                mat,
-                &space_id(),
-                PropertyTypeTarget {
-                    key: req_str("key"),
-                    value_type: req_str("valueType"),
-                    options: opt_str("options"),
-                },
-                serde_json::from_value(arg("acknowledged").cloned().unwrap_or_else(|| {
-                    panic!("conformance op '{command}' is missing arg 'acknowledged'")
-                }))
-                .expect("acknowledged is {converted, unfit}"),
-            )
-            .await,
-        ),
-        "remove_unfit_property_values" => to_json(
-            remove_unfit_property_values_inner(
-                pool,
-                DEV,
-                mat,
-                &space_id(),
-                req_str("key"),
-                serde_json::from_value(arg("acknowledged").cloned().unwrap_or_else(|| {
-                    panic!("conformance op '{command}' is missing arg 'acknowledged'")
-                }))
-                .expect("acknowledged is {unfit, unfit_in_trash}"),
-            )
-            .await,
-        ),
-        "convert_unfit_property_values" => to_json(
-            convert_unfit_property_values_inner(
-                pool,
-                DEV,
-                mat,
-                &space_id(),
-                req_str("key"),
-                serde_json::from_value(arg("replacements").cloned().unwrap_or_else(|| {
-                    panic!("conformance op '{command}' is missing arg 'replacements'")
-                }))
-                .expect("replacements are [{value, replacement, acknowledged}]"),
-            )
-            .await,
-        ),
-        "move_unfit_property_values" => to_json(
-            move_unfit_property_values_inner(
-                pool,
-                DEV,
-                mat,
-                &space_id(),
-                req_str("key"),
-                req_str("intoKey"),
-                serde_json::from_value(arg("acknowledged").cloned().unwrap_or_else(|| {
-                    panic!("conformance op '{command}' is missing arg 'acknowledged'")
-                }))
-                .expect("acknowledged is {moved, occupied, unfit_there}"),
-            )
-            .await,
-        ),
-        "add_unfit_values_to_options" => to_json(
-            add_unfit_values_to_options_inner(pool, DEV, mat, &space_id(), req_str("key")).await,
-        ),
-        // The deleted keys name the changed-property event; the wire returns none.
-        "delete_property" => {
-            let outcome = delete_property_inner(
-                pool,
-                DEV,
-                mat,
-                ActiveBlockId::from_trusted_active(block_id().as_str()),
-                req_str("key"),
-            )
-            .await;
-            let deleted = outcome.as_ref().cloned().unwrap_or_default();
-            emitting(
-                outcome.map(drop),
-                emitted,
-                property_changed_events([block_id()], &deleted),
-            )
-        }
-        // #5057 — positional undo. `pageId` is a label like any other block
-        // arg; `undoDepth` is an ORDINAL ("the newest undoable op on this
-        // page"), which is why this one is spellable where the ref-addressed
-        // undo commands are not: an `OpRef` carries a device id, and the two
-        // runners' differ.
-        "undo_page_op" => to_json(
-            undo_page_op_inner(
-                pool,
-                DEV,
-                mat,
-                arg_label_id("pageId").expect("undo_page_op pageId"),
-                req_i64("undoDepth"),
-            )
-            .await,
-        ),
-        // #5057 — the grouped positional undo. Same ordinal `depth` as
-        // `undo_page_op`, plus a `windowMs` that decides how many ops around
-        // that depth are reversed together. Both are the fixture's own
-        // literals, so the group is deterministic.
-        "undo_page_group" => to_json(
-            undo_page_group_inner(
-                pool,
-                DEV,
-                mat,
-                arg_label_id("pageId").expect("undo_page_group pageId"),
-                req_i64("depth"),
-                req_i64("windowMs"),
-            )
-            .await,
-        ),
-        // #5057 — the first of the ref-addressed undo commands, and the one
-        // that proves the `On` convention: the fixture names the op it wants
-        // undone by position in its own op list, and each runner resolves that
-        // to its own coordinate.
-        "undo_op" => to_json(undo_op_inner(pool, DEV, mat, op_ref("opRef")).await),
-        "undo_ops" => to_json(undo_ops_inner(pool, DEV, mat, op_ref_list("ops")).await),
-        "revert_ops" => to_json(revert_ops_inner(pool, DEV, mat, op_ref_list("ops")).await),
-        "redo_page_op" => {
-            let (device_id, seq) = op_ref_split("undoOp");
-            to_json(redo_page_op_inner(pool, DEV, mat, device_id, seq).await)
-        }
-        "restore_page_to_op" => {
-            let (device_id, seq) = op_ref_split("targetOp");
-            to_json(
-                restore_page_to_op_inner(
-                    pool,
-                    DEV,
-                    mat,
-                    arg_label_id("pageId").expect("restore_page_to_op pageId"),
-                    device_id,
-                    seq,
-                )
-                .await,
-            )
-        }
-        // A seeded attachment id is the fixture's own short label (`ATT1`),
-        // and `An` the n-th op-added one.
-        "delete_attachment" => to_json(
-            delete_attachment_inner(
-                pool,
-                DEV,
-                mat,
-                app_data_dir,
-                AttachmentId::from(
-                    resolve_attachment_label(pool, &req_str("attachmentId"))
-                        .await
-                        .as_str(),
-                ),
-            )
-            .await,
-        ),
-        "rename_attachment" => to_json(
-            rename_attachment_inner(
-                pool,
-                DEV,
-                mat,
-                AttachmentId::from(
-                    resolve_attachment_label(pool, &req_str("attachmentId"))
-                        .await
-                        .as_str(),
-                ),
-                req_str("newFilename"),
-            )
-            .await,
-        ),
-        // The BYTES are the fixture's own base64 string, so the two stacks
-        // upload the same content and agree on `size_bytes` — what they cannot
-        // agree on is what each MINTS from it (see the `RETURN_SHAPE` entry).
-        // The blob lands under the fixture's `TempDir`, which is what
-        // `app_data_dir` is threaded for.
-        "add_attachment_with_bytes" => to_json(
-            add_attachment_with_bytes_inner(
-                pool,
-                DEV,
-                mat,
-                app_data_dir,
-                block_id(),
-                req_str("filename"),
-                req_str("mimeType"),
-                serde_json::from_value::<agaric_core::base64_bytes::Base64Bytes>(
-                    arg("bytes").cloned().unwrap_or_default(),
-                )
-                .unwrap_or_else(|e| panic!("conformance op '{command}': bytes: {e}"))
-                .0,
-            )
-            .await,
-        ),
-        // #5364 — one `input` object, as the frontend sends it: its space and
-        // its two block ids are labels, as the scalar keys are.
-        "add_meeting" => {
-            let mut input = arg("input")
-                .cloned()
-                .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'input'"));
-            for key in ["space_id", "template_id", "link_block_id"] {
-                if let Some(label) = input[key].as_str().map(str::to_owned) {
-                    input[key] = if label == SPACE_TOKEN {
-                        json!(TEST_SPACE_ID)
-                    } else {
-                        json!(resolve_op_arg_id(&label, created_ids))
-                    };
-                }
-            }
-            let input: agaric_lib::commands::meeting_attachments::AddMeetingInput =
-                serde_json::from_value(input)
-                    .unwrap_or_else(|e| panic!("conformance op '{command}': input: {e}"));
-            to_json(match input.into_request() {
-                Ok(req) => {
-                    agaric_lib::commands::meeting_attachments::add_meeting_inner(
-                        pool,
-                        DEV,
-                        mat,
-                        app_data_dir,
-                        req,
-                    )
-                    .await
-                }
-                Err(e) => Err(e),
-            })
-        }
-        // `retentionDays` is the fixture's own literal, and the cutoff it
-        // derives is `now()`-relative — which is exactly why this corpus can
-        // only reach the no-op and the refusal.
-        "compact_op_log_cmd" => to_json(
-            compact_op_log_cmd_inner(
-                pool,
-                u64::try_from(req_i64("retentionDays")).unwrap_or_else(|_| {
-                    panic!("conformance op '{command}': retentionDays must be non-negative")
-                }),
-            )
-            .await,
-        ),
-        // Both of `confirm_pairing`'s non-DB collaborators are constructed
-        // here rather than faked: a joiner has no local session to begin with
-        // (the command nulls it), and the scheduler wake is an in-process
-        // notify with nothing to observe. `scanned` stays `None` — the QR
-        // candidate is published to that same scheduler and writes no row.
-        "confirm_pairing" => {
-            let pairing_state = std::sync::Mutex::new(None);
-            let scheduler = agaric_sync::sync_scheduler::SyncScheduler::new();
-            to_json(
-                confirm_pairing_inner(
-                    pool,
-                    &pairing_state,
-                    &scheduler,
-                    req_str("passphrase"),
-                    None,
-                )
-                .await,
-            )
-        }
-        // The host half, with the same two constructed collaborators — plus a
-        // published endpoint advert, which is NOT decoration. `start_pairing_
-        // armed` waits on `SyncScheduler::await_local_endpoint` before it
-        // renders the QR, and its budget is five seconds of REAL time on this
-        // module's multi-thread runtime (no `start_paused`). A freshly
-        // `new()`ed scheduler has published nothing, so without this the
-        // conformance run would sit out the whole budget on every replay.
-        // Publishing first makes the wait return on its first `borrow`, and
-        // the advert is invisible to the fixture: it only feeds the QR
-        // payload, and neither `PairingInfo` field is projected.
-        "start_pairing" => {
-            let pairing_state = std::sync::Mutex::new(None);
-            let scheduler = agaric_sync::sync_scheduler::SyncScheduler::new();
-            scheduler.publish_local_endpoint(agaric_sync::sync_scheduler::LocalEndpointAdvert {
-                device_id: "conformance-host".to_string(),
-                endpoint_id: "conformance-endpoint".to_string(),
-                addrs: Vec::new(),
-            });
-            to_json(
-                start_pairing_armed_inner(pool, &pairing_state, &scheduler, "conformance-host")
-                    .await,
-            )
-        }
-        // An alias is the caller's own text, so `aliases` takes no label
-        // expansion — the same rule `req_str` states for the scalar args.
-        "set_page_aliases" => to_json(
-            set_page_aliases_inner(
-                pool,
-                DEV,
-                mat,
-                arg_label_id("pageId")
-                    .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'pageId'"))
-                    .as_str(),
-                arg("aliases")
-                    .and_then(Value::as_array)
-                    .unwrap_or_else(|| {
-                        panic!("conformance op '{command}' is missing arg 'aliases'")
-                    })
-                    .iter()
-                    .map(|v| {
-                        v.as_str()
-                            .unwrap_or_else(|| {
-                                panic!("conformance op '{command}': aliases entry is not a string")
-                            })
-                            .to_owned()
-                    })
-                    .collect(),
-            )
-            .await,
-        ),
-        // A space NAME and an accent token are the caller's own text; only
-        // `spaceId` / `parentId` are labels.
-        "create_space" => to_json(
-            create_space_inner(pool, DEV, mat, req_str("name"), opt_str("accentColor")).await,
-        ),
-        "create_page_in_space" => to_json(
-            create_page_in_space_inner(
-                pool,
-                DEV,
-                mat,
-                arg_label_id("parentId"),
-                text("content"),
-                arg_label_id("spaceId").unwrap_or_else(|| {
-                    panic!("conformance op '{command}' is missing arg 'spaceId'")
-                }),
-            )
-            .await,
-        ),
-        // #5841 S0.6 — `acknowledgedLoss` is the `preview_space_move` rows the
-        // caller confirmed: keys are the user's own text, so no label expansion.
-        "move_blocks_to_space" => to_json(
-            move_blocks_to_space_inner(
-                pool,
-                DEV,
-                mat,
-                block_ids(),
-                arg_label_id("spaceId").expect("spaceId"),
-                &arg("acknowledgedLoss")
-                    .filter(|v| !v.is_null())
-                    .map(|v| {
-                        serde_json::from_value::<Vec<PropertyLoss>>(v.clone())
-                            .expect("acknowledgedLoss is a list of {key, count}")
-                    })
-                    .unwrap_or_default(),
-            )
-            .await,
-        ),
-        "create_blocks_batch" => {
-            to_json(create_blocks_batch_inner(pool, DEV, mat, block_specs()).await)
-        }
-        // The IPC's own shape: `blockType` / `content` are the caller's text,
-        // `parentId` a label, `scope` the space; the server mints the id.
-        "create_block" => to_json(
-            create_block_inner_with_space(
-                pool,
-                DEV,
-                mat,
-                req_str("blockType"),
-                text("content"),
-                arg_label_id("parentId").map(|id| BlockId::from(id.as_str())),
-                arg("index").and_then(Value::as_i64),
-                &scope("scope"),
-                // #2849 — the optimistic create's client id, a label like any other.
-                arg_label_id("blockId").map(|id| BlockId::from(id.as_str())),
-            )
-            .await,
-        ),
-        "edit_block" => to_json(
-            edit_block_inner_with_base(
-                pool,
-                DEV,
-                mat,
-                block_id(),
-                text("toText"),
-                opt_str("baseText"),
-            )
-            .await,
-        ),
-        "edit_blocks_batch" => {
-            let edits = arg("edits")
-                .and_then(Value::as_array)
-                .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'edits'"))
-                .iter()
-                .map(|edit| {
-                    let field = |k: &str| {
-                        edit[k]
-                            .as_str()
-                            .unwrap_or_else(|| panic!("conformance op '{command}': edit {k}"))
-                    };
-                    BlockEdit {
-                        block_id: BlockId::from(
-                            resolve_op_arg_id(field("blockId"), created_ids).as_str(),
-                        ),
-                        expected: field("expected").to_owned(),
-                        to_text: field("toText").to_owned(),
-                    }
-                })
-                .collect();
-            to_json(edit_blocks_batch_inner(pool, DEV, mat, edits).await)
-        }
-        "move_block" => to_json(
-            move_block_inner(
-                pool,
-                DEV,
-                mat,
-                block_id(),
-                arg_label_id("newParentId").map(|id| BlockId::from(id.as_str())),
-                req_i64("newIndex"),
-            )
-            .await,
-        ),
-        // The guard is the live tombstone, as the trash view passes it; a block
-        // with none passes 0, which the command refuses as not restorable.
-        "restore_block" => {
-            let id = block_id();
-            let deleted_at_ref: Option<i64> =
-                sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
-                    .bind(id.as_str())
-                    .fetch_optional(pool)
-                    .await
-                    .expect("restore_block: read the tombstone")
-                    .flatten();
-            to_json(restore_block_inner(pool, DEV, mat, id, deleted_at_ref.unwrap_or(0)).await)
-        }
-        "add_tag" => to_json(add_tag_inner(pool, DEV, mat, block_id(), tag_id()).await),
-        "remove_tag" => to_json(remove_tag_inner(pool, DEV, mat, block_id(), tag_id()).await),
-        "record_page_open" => to_json(
-            agaric_lib::commands::pages::record_page_open_inner(
-                pool,
-                BlockId::from(arg_label_id("pageId").expect("pageId").as_str()),
-            )
-            .await,
-        ),
-        "duplicate_block" => to_json(duplicate_block_inner(pool, DEV, mat, block_id()).await),
-        // The name and mode are the caller's own; `spaceIds` is a list of
-        // labels, each read as the wire reads a `SpaceId`. An absent or null
-        // list grants every space.
-        "create_mcp_agent" => to_json(
-            agaric_lib::commands::mcp_agents::create_mcp_agent_inner(
-                pool,
-                req_str("name"),
-                serde_json::from_value(
-                    arg("mode").cloned().unwrap_or_else(|| {
-                        panic!("conformance op '{command}' is missing arg 'mode'")
-                    }),
-                )
-                .unwrap_or_else(|e| panic!("conformance op '{command}': mode: {e}")),
-                arg("spaceIds").filter(|v| !v.is_null()).map(|_| {
-                    label_ids("spaceIds")
-                        .into_iter()
-                        .map(|id| {
-                            serde_json::from_value::<SpaceId>(json!(id.as_str())).unwrap_or_else(
-                                |e| panic!("conformance op '{command}': spaceIds: {e}"),
-                            )
-                        })
-                        .collect()
-                }),
-            )
-            .await,
-        ),
-        // An agent id is the fixture's own seeded literal, as the seed loader
-        // inserts it, so it takes no expansion.
-        "revoke_mcp_agent" => to_json(
-            agaric_lib::commands::mcp_agents::revoke_mcp_agent_inner(pool, req_str("id")).await,
-        ),
-        // `input` and `splice` are the caller's own text, so they
-        // take no label expansion; only the anchor is a label. `splice` came
-        // after the first fixture's steps, so it is `None` when absent.
-        "paste_blocks" => to_json(
-            paste_blocks_inner(
-                pool,
-                DEV,
-                mat,
-                BlockId::from(
-                    arg_label_id("anchorBlockId")
-                        .expect("anchorBlockId")
-                        .as_str(),
-                ),
-                serde_json::from_value(arg("input").cloned().unwrap_or_else(|| {
-                    panic!("conformance op '{command}' is missing arg 'input'")
-                }))
-                .unwrap_or_else(|e| panic!("conformance op '{command}': input: {e}")),
-                arg("splice")
-                    .filter(|v| !v.is_null())
-                    .cloned()
-                    .map(|splice| {
-                        serde_json::from_value(splice)
-                            .unwrap_or_else(|e| panic!("conformance op '{command}': splice: {e}"))
-                    }),
-            )
-            .await
-            .map(|pasted| pasted.blocks),
-        ),
-        // The text and the base are the caller's own, ids spelled as the seed
-        // labels' expanded ids, in `lineIds` and in the base's anchors; only
-        // the page is a label.
-        "apply_page_source" => to_json(
-            Box::pin(apply_page_source_inner(
-                pool,
-                DEV,
-                mat,
-                arg_label_id("pageId").expect("pageId").as_str(),
-                req_str("source"),
-                req_str("baseSource"),
-                SourceSaveFlags {
-                    merge: arg("merge").and_then(Value::as_bool).unwrap_or_else(|| {
-                        panic!("conformance op '{command}' is missing arg 'merge'")
-                    }),
-                    line_ids: serde_json::from_value(
-                        arg("lineIds")
-                            .unwrap_or_else(|| {
-                                panic!("conformance op '{command}' is missing arg 'lineIds'")
-                            })
-                            .clone(),
-                    )
-                    .unwrap_or_else(|e| panic!("conformance op '{command}': lineIds: {e}")),
-                },
-            ))
-            .await,
-        ),
-        "move_blocks_batch" => to_json(
-            move_blocks_batch_inner(
-                pool,
-                DEV,
-                mat,
-                block_ids(),
-                arg_label_id("newParentId").map(|id| BlockId::from(id.as_str())),
-                arg("newIndex").and_then(Value::as_i64).unwrap_or_else(|| {
-                    panic!("conformance op '{command}' is missing arg 'newIndex'")
-                }),
-            )
-            .await,
-        ),
-        // #6531 — the record is the row each command is asked for: the block a
-        // split creates, the block a merge writes; the snapshot pins the rest.
-        "split_block" => to_json(
-            split_block_inner(pool, DEV, mat, from_request(request()))
-                .await
-                .map(|split| split.created),
-        ),
-        "merge_blocks" => to_json(
-            merge_blocks_inner(pool, DEV, mat, from_request(request()))
-                .await
-                .map(|merged| merged.block),
-        ),
-        // #5071 — the document is the caller's own text, spelled inline; only
-        // the target space is a label. The markdown import's vault-file bytes
-        // are left out, so it ingests no attachment.
-        "import_markdown" => to_json(
-            import_markdown_with_progress(
-                pool,
-                DEV,
-                mat,
-                app_data_dir,
-                text("content"),
-                opt_str("filename"),
-                arg_label_id("spaceId").expect("spaceId"),
-                serde_json::from_value::<ImportDialect>(arg("dialect").cloned().unwrap_or_else(
-                    || panic!("conformance op '{command}' is missing arg 'dialect'"),
-                ))
-                .expect("dialect"),
-                None,
-                None,
-                None,
-            )
-            .await,
-        ),
-        "import_bibliography" => to_json(
-            import_bibliography_inner(
-                pool,
-                DEV,
-                mat,
-                text("content"),
-                opt_str("format"),
-                arg_label_id("spaceId").expect("spaceId"),
-            )
-            .await,
-        ),
-        // The end of a folder import. The blocks it links and the pages and
-        // blocks its anchors name are labels; an anchor's own text, a `^id` or
-        // a Logseq uuid, is the caller's.
-        "link_import_anchors" => {
-            let anchors: Vec<ImportAnchor> = arg("anchors")
-                .and_then(Value::as_array)
-                .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'anchors'"))
-                .iter()
-                .map(|anchor| {
-                    let field = |key: &str| {
-                        anchor[key].as_str().unwrap_or_else(|| {
-                            panic!("conformance op '{command}': anchor {key} is not a string")
-                        })
-                    };
-                    ImportAnchor {
-                        page_id: resolve_op_arg_id(field("page_id"), created_ids),
-                        anchor: field("anchor").to_owned(),
-                        block_id: resolve_op_arg_id(field("block_id"), created_ids),
-                    }
-                })
-                .collect();
-            to_json(
-                link_import_anchors_inner(
-                    pool,
-                    DEV,
-                    mat,
-                    arg_label_id("spaceId").expect("spaceId").as_str(),
-                    &anchors,
-                    &label_ids("blocks"),
-                )
-                .await,
-            )
-        }
-        other => panic!("conformance op '{other}' is not wired in the command leg"),
-    }
-}
+/// `(command, key)`: the key a command's rows ride under. A LIST OF ROWS is
+/// nested because the wrapper answers `WithOps<{ <key>: T[] }>` (a `Vec`
+/// cannot be flattened beside `op_refs`, #5140); a split and a merge nest the
+/// one row their record is (#6531). MUST match `rows` in the TS twin's
+/// `RETURN_SHAPE`.
+const ROWS_KEY: &[(&str, &str)] = &[
+    ("create_blocks_batch", "blocks"),
+    ("move_blocks_batch", "moves"),
+    ("split_block", "created"),
+    ("merge_blocks", "block"),
+    ("duplicate_block", "blocks"),
+    ("paste_blocks", "blocks"),
+    ("set_page_aliases", "aliases"),
+];
 
 /// Project a command's serialized response into row tokens (raw ids; the
 /// caller relabels): the row token, then one `<field>-><id>` per element of
 /// each list-valued field.
 pub(super) fn project_return(command: &str, response: &Value) -> Vec<String> {
+    let response = match ROWS_KEY.iter().find(|(c, _)| *c == command) {
+        Some((_, key)) => response.get(*key).unwrap_or_else(|| {
+            panic!("conformance op '{command}' answered nothing under '{key}': {response}")
+        }),
+        None => response,
+    };
     let (_, id_key, attrs, lists) = RETURN_SHAPE
         .iter()
         .find(|(c, ..)| *c == command)
@@ -1522,11 +489,6 @@ pub(super) fn project_return(command: &str, response: &Value) -> Vec<String> {
         }
     }
     out
-}
-
-/// A `request` arg as the struct its command takes.
-fn from_request<T: serde::de::DeserializeOwned>(request: Value) -> T {
-    serde_json::from_value(request).unwrap_or_else(|e| panic!("conformance request: {e}"))
 }
 
 /// A declaration key as the wire string it must be; `None` when absent or
@@ -1597,14 +559,11 @@ pub(super) enum Declarations {
     Recorded,
 }
 
-/// Run one `via: "command"` op, enforce its declarations, and build its
-/// `expected_ops` record with raw ids (the caller relabels once the canonical
-/// order is final).
-#[allow(clippy::too_many_arguments)]
+/// Run one `via: "command"` op through `ipc`, enforce its declarations, and
+/// build its `expected_ops` record with raw ids (the caller relabels once the
+/// canonical order is final).
 pub(super) async fn run_command_op(
-    pool: &SqlitePool,
-    mat: &Materializer,
-    app_data_dir: &std::path::Path,
+    ipc: &IpcTransport,
     fixture_name: &str,
     op: &Value,
     created_ids: &[String],
@@ -1619,18 +578,8 @@ pub(super) async fn run_command_op(
         )
     });
     let at = format!("fixture '{fixture_name}' op '{name}' (command '{command}')");
-    let mut emitted = Vec::new();
-    let outcome = apply_op_via_command(
-        pool,
-        mat,
-        app_data_dir,
-        op,
-        created_ids,
-        op_refs,
-        &mut emitted,
-    )
-    .await;
-    let (returns, error, code) = match outcome {
+    let outcome = ipc.apply_op(op, created_ids, op_refs).await;
+    let (returns, error, code) = match outcome.result {
         Ok(mut response) => (
             PROJECTING_STEP.sync_scope(at.clone(), || {
                 // A returned row's text, as the snapshot reads it.
@@ -1642,11 +591,7 @@ pub(super) async fn run_command_op(
             Value::Null,
             Value::Null,
         ),
-        Err(e) => (
-            Vec::new(),
-            serde_json::to_value(e.kind()).expect("serialize AppErrorKind"),
-            serde_json::to_value(e.validation_code()).expect("serialize ValidationCode"),
-        ),
+        Err((kind, code)) => (Vec::new(), kind, code),
     };
     if declarations == Declarations::Enforced {
         check_declaration(
@@ -1658,9 +603,10 @@ pub(super) async fn run_command_op(
         );
     }
     let mut record = json!({ "name": name, "returns": returns, "error": error, "code": code });
-    if !emitted.is_empty() {
+    if !outcome.property_events.is_empty() {
         let events: Vec<String> = PROJECTING_STEP.sync_scope(at, || {
-            emitted
+            outcome
+                .property_events
                 .iter()
                 .map(|payload| event_token(EVENT_PROPERTY_CHANGED, payload))
                 .collect()
@@ -1673,9 +619,8 @@ pub(super) async fn run_command_op(
 /// One emitted event as a token: the event name as the head, then every
 /// payload field in name order, so an id-valued field relabels like an id in
 /// `returns`. MUST match `eventToken` in the TS twin.
-fn event_token(event: &str, payload: &impl Serialize) -> String {
-    let Value::Object(mut row) = serde_json::to_value(payload).expect("serialize event payload")
-    else {
+fn event_token(event: &str, payload: &Value) -> String {
+    let Value::Object(mut row) = payload.clone() else {
         panic!("event '{event}' carries a payload that is not an object");
     };
     let mut fields: Vec<String> = row.keys().cloned().collect();
@@ -1859,38 +804,5 @@ mod tests {
     #[should_panic(expected = "`expect_error` must be a wire string, got true")]
     fn a_non_string_declaration_is_rejected() {
         declared("at", &json!({ "expect_error": true }), "expect_error");
-    }
-
-    /// Every command the dispatcher wires has a `RETURN_SHAPE` entry and
-    /// vice versa, and the count is the one this module claims — so a
-    /// mutating command cannot join one table without the other, and cannot
-    /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 72;
-
-    #[test]
-    fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {
-        let (commands, arms) =
-            super::super::conformance_query::reader_delegation_tests::wired_commands(
-                include_str!("conformance_command.rs"),
-                "async fn apply_op_via_command(",
-                "match command {",
-            );
-        assert_eq!(
-            commands.len(),
-            MUTATING_ARM_COUNT,
-            "dispatcher wires {commands:?}"
-        );
-        assert_eq!(
-            arms,
-            MUTATING_ARM_COUNT + 1,
-            "the arm walk crossed {arms} arms but found {} command literals; it should have \
-             crossed exactly one MORE arm than commands — the `other =>` catch-all",
-            commands.len()
-        );
-        let mut shaped: Vec<&str> = RETURN_SHAPE.iter().map(|(c, ..)| *c).collect();
-        shaped.sort_unstable();
-        let mut wired: Vec<&str> = commands.iter().map(String::as_str).collect();
-        wired.sort_unstable();
-        assert_eq!(wired, shaped, "RETURN_SHAPE and the dispatcher disagree");
     }
 }

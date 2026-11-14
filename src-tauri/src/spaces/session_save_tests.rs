@@ -27,7 +27,8 @@ use agaric_sync::sync_protocol::loro_sync::{
 use super::SpacePlacementSink;
 use crate::commands::{
     BlockEdit, create_block_inner, create_page_in_space_inner, create_space_inner,
-    edit_block_inner, edit_block_inner_with_base, edit_blocks_batch_inner, set_todo_state_inner,
+    edit_block_inner, edit_block_inner_with_base, edit_blocks_batch_inner, set_property_inner,
+    set_todo_state_inner,
 };
 use crate::materializer::Materializer;
 use crate::mcp::view_notify::RecordingViewChangeEmitter;
@@ -642,7 +643,7 @@ async fn a_child_stranded_under_a_peers_page()
 /// task state, and the peer then receives it once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hydration_brings_a_stranded_local_block_to_the_engine_and_the_peer_6525() {
-    let (a, mut b, space, x, y, child) = a_child_stranded_under_a_peers_page().await;
+    let (a, mut b, space, _x, y, child) = a_child_stranded_under_a_peers_page().await;
     set_todo_state_inner(
         &b.pool,
         DEV_B,
@@ -652,10 +653,6 @@ async fn the_hydration_brings_a_stranded_local_block_to_the_engine_and_the_peer_
     )
     .await
     .unwrap();
-    // Boot replays the last local op, so the child's ops must not be it.
-    edit_block_inner(&b.pool, DEV_B, &b.mat, x, "abcZ".into())
-        .await
-        .unwrap();
     b.save().await;
     let changed = b.pull(&a, &space).await;
     b.end_session(complete(changed)).await;
@@ -915,6 +912,106 @@ async fn a_batch_edit_between_a_sync_import_and_its_projection_leaves_the_block_
             b.sql_content(&x).await.as_str()
         ),
         (Some("Xabc"), "abc")
+    );
+    a.shutdown();
+    b.shutdown();
+}
+
+/// #6521 — B's last own op edits X; A then rewrites X and B's session brings
+/// that in and saves it. A restart of B must leave A's text alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restart_keeps_a_peers_edit_made_after_this_devices_last_op_6521() {
+    let (a, mut b, space, _page, x) = paired().await;
+    edit_block_inner(&b.pool, DEV_B, &b.mat, x.clone(), "abcB".into())
+        .await
+        .unwrap();
+    b.save().await;
+    a.pull(&b, &space).await;
+    edit_block_inner(
+        &a.pool,
+        DEV_A,
+        &a.mat,
+        x.clone(),
+        "abcB, and A went on".into(),
+    )
+    .await
+    .unwrap();
+    let changed = b.pull(&a, &space).await;
+    b.end_session(complete(changed)).await;
+    assert_eq!(
+        b.sql_content(&x).await,
+        "abcB, and A went on",
+        "the fixture"
+    );
+
+    b.kill_and_boot().await;
+
+    assert_eq!(
+        (
+            b.engine_content(&space, &x).as_deref(),
+            b.sql_content(&x).await.as_str()
+        ),
+        (Some("abcB, and A went on"), "abcB, and A went on"),
+        "B still holds A's text after the restart"
+    );
+    a.pull(&b, &space).await;
+    a.mat.flush_background().await.unwrap();
+    assert_eq!(
+        a.sql_content(&x).await,
+        "abcB, and A went on",
+        "and B's restart sent A nothing that undoes it"
+    );
+    a.shutdown();
+    b.shutdown();
+}
+
+/// #6521 — the same for a property, where the replayed write would win as the
+/// newer one: B's last own op sets a value, A changes it afterwards, and B's
+/// session saves that.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restart_keeps_a_peers_property_write_made_after_this_devices_last_op_6521() {
+    let (a, mut b, space, _page, x) = paired().await;
+    let set_effort = async |device: &Device, value: &str| {
+        set_property_inner(
+            &device.pool,
+            device.id,
+            &device.mat,
+            x.to_string().into(),
+            "effort".into(),
+            Some(value.into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    };
+    set_effort(&b, "1h").await;
+    b.save().await;
+    a.pull(&b, &space).await;
+    set_effort(&a, "2h").await;
+    let changed = b.pull(&a, &space).await;
+    b.end_session(complete(changed)).await;
+
+    b.kill_and_boot().await;
+    a.pull(&b, &space).await;
+    a.mat.flush_background().await.unwrap();
+
+    let effort = async |device: &Device| -> Option<String> {
+        sqlx::query_scalar(
+            "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'effort'",
+        )
+        .bind(x.as_str())
+        .fetch_one(&device.pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        (effort(&b).await.as_deref(), effort(&a).await.as_deref()),
+        (Some("2h"), Some("2h")),
+        "A's value stands on B and on A"
     );
     a.shutdown();
     b.shutdown();

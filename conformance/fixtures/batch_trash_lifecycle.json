@@ -128,19 +128,22 @@
       "code": null,
       "error": null,
       "name": "delete_alpha_and_beta",
-      "returns": ["delete_blocks_by_ids#deleted_count=4"]
+      "returns": ["delete_blocks_by_ids#deleted_at=DELETED#deleted_count=4"]
     },
     {
       "code": null,
       "error": null,
       "name": "delete_nested_page",
-      "returns": ["delete_blocks_by_ids#deleted_count=2", "affected_page_ids->B6"]
+      "returns": [
+        "delete_blocks_by_ids#deleted_at=DELETED#deleted_count=2",
+        "affected_page_ids->B6"
+      ]
     },
     {
       "code": null,
       "error": null,
       "name": "delete_skips_an_already_deleted_id",
-      "returns": ["delete_blocks_by_ids#deleted_count=2"]
+      "returns": ["delete_blocks_by_ids#deleted_at=DELETED#deleted_count=2"]
     },
     {
       "code": null,
@@ -176,7 +179,7 @@
       "code": null,
       "error": null,
       "name": "delete_gamma_again_for_the_overlap_arm",
-      "returns": ["delete_blocks_by_ids#deleted_count=2"]
+      "returns": ["delete_blocks_by_ids#deleted_at=DELETED#deleted_count=2"]
     },
     {
       "code": null,

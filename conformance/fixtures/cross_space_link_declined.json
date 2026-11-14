@@ -24,7 +24,7 @@
         "id": "B2",
         "page_id": "B2",
         "parent_id": null,
-        "position": 1,
+        "position": 2,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -50,7 +50,7 @@
         "id": "B4",
         "page_id": "B4",
         "parent_id": null,
-        "position": 2,
+        "position": 1,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null

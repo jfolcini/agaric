@@ -332,6 +332,9 @@ async fn bring_up_endpoint(
     ctx: &SyncDaemonContext,
     bind_policy: &dyn BindPolicy,
 ) -> Result<BoundEndpoint, AppError> {
+    // Before the bind, so a bring-up that fails stops describing the endpoint it replaces.
+    ctx.event_sink.on_sync_event(SyncEvent::EndpointBinding);
+
     // 1. Bind the LAN-only QUIC endpoint (responder mode — #615, #78).
     //
     // One endpoint serves both roles: it accepts here and `try_sync_with_peer` dials
@@ -1082,11 +1085,10 @@ fn maybe_gc_peer_locks(scheduler: &SyncScheduler, ticks_since_gc: &mut u64) {
 /// Translate the outcome of [`crate::mdns::attach`] into an optional lookup, emitting
 /// [`SyncEvent::MdnsDisabled`] on failure.
 ///
-/// `MdnsDisabled` is a **latching** claim: `TauriEventSink` writes
-/// `MdnsStatus { disabled: true }` and nothing writes it back, so only a failure that
-/// proves discovery is dead may emit it. `attach` failing proves it for this endpoint:
-/// there is no discoverer at all. A later bind (#6526) attaches again, and nothing
-/// clears the status when that one succeeds.
+/// `MdnsDisabled` holds until the next bind: `TauriEventSink` writes
+/// `MdnsStatus { disabled: true }` and only [`SyncEvent::EndpointBinding`] writes it
+/// back, so only a failure that proves discovery is dead on this endpoint may emit it.
+/// `attach` failing proves it: there is no discoverer at all.
 ///
 /// Extracted so a unit test can exercise the failure path without opening multicast
 /// sockets.

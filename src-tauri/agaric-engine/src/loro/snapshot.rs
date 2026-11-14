@@ -114,20 +114,6 @@ async fn op_log_head(pool: &SqlitePool) -> i64 {
         .unwrap_or(0)
 }
 
-/// The `applied_through_seq` a pass that read `head` stamps (C2 watermark):
-/// one below it.
-///
-/// [`save_engines_and_advance_cursor`] then moves the apply cursor to `head`,
-/// so a healthy vault's watermarks sit at exactly `cursor - 1` and boot
-/// re-applies that one op, the shape
-/// `recovery::replay::heal_orphaned_apply_cursor` treats as routine (#4018).
-/// When compaction has purged the local log to zero rows the head is 0, and a
-/// pass writes 0 over a dirty space's higher watermark: an under-claim, never
-/// a false one (`recovery::replay::read_apply_cursor` explains leaving it).
-fn snapshot_watermark(head: i64) -> i64 {
-    (head - 1).max(0)
-}
-
 /// Write one `loro_doc_state` row, replacing any existing one for `space_id`,
 /// and delete the space's `loro_doc_delta` rows up to `covered_delta_id` in the
 /// same transaction (#6521): the snapshot holds them, and a row left behind
@@ -314,9 +300,10 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // see `advance_clean_space_watermarks` at the end of this function.
     // /C2: read the head BEFORE collecting any engine, so each export this
     // pass takes holds the ops at or below it (`op_log_head` lists the engine
-    // writes that land later).
-    let head = op_log_head(pool).await;
-    let applied_through_seq = snapshot_watermark(head);
+    // writes that land later). Rows are stamped with it: boot replays an op
+    // the stamp leaves out as a new write, over whatever a peer wrote to the
+    // same block since (#6521).
+    let applied_through_seq = op_log_head(pool).await;
     // #6521: likewise read before any engine is collected, so each export
     // holds the deltas at or below it. A read error covers nothing.
     let covered_delta_id = crate::loro::delta::delta_head(pool).await.unwrap_or(0);
@@ -411,7 +398,7 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 
     SavePass {
         saved,
-        persisted_through: (saved == attempted.len()).then_some(head),
+        persisted_through: (saved == attempted.len()).then_some(applied_through_seq),
     }
 }
 
@@ -443,9 +430,9 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 /// boot installs one for each row or stops (#6525) and a pass writes rows only
 /// for engines.
 ///
-/// The engine in turn reflects the ops up to the pass's op-log head, of
-/// which `applied_through_seq` is one less, bar the engine writes that land
-/// after their op's commit (see [`op_log_head`]). This
+/// The engine in turn reflects the ops up to the pass's op-log head, which is
+/// `applied_through_seq`, bar the engine writes that land after their op's
+/// commit (see [`op_log_head`]). This
 /// last premise holds for a rehydrated engine only AFTER
 /// `recovery::boot::recover_at_boot` has run: between rehydration and the
 /// heal+replay, an engine reflects only its own row's watermark while the
@@ -689,7 +676,7 @@ mod tests {
         space_id: &SpaceId,
         engine: &LoroEngine,
     ) -> Result<(), AppError> {
-        let applied_through_seq = snapshot_watermark(op_log_head(pool).await);
+        let applied_through_seq = op_log_head(pool).await;
         let bytes = engine.export_snapshot()?;
         write_snapshot_row(pool, space_id, bytes, applied_through_seq, 0).await?;
         Ok(())
@@ -1107,12 +1094,12 @@ mod tests {
 
         assert_eq!(
             watermark_of(&pool, SPACE_A).await,
-            499,
-            "the re-encoded space records the pass watermark (head - 1)"
+            500,
+            "the re-encoded space records the head the pass read"
         );
         assert_eq!(
             watermark_of(&pool, SPACE_B).await,
-            499,
+            500,
             "the quiescent space's watermark must be advanced too — otherwise it \
              pins MIN(applied_through_seq) and every boot rewinds to it (#3309)"
         );
@@ -1245,7 +1232,7 @@ mod tests {
         );
         assert_eq!(
             watermark_of(&pool, SPACE_B).await,
-            499,
+            500,
             "the clean space is still advanced in the same pass (#3309)"
         );
     }
@@ -1312,12 +1299,12 @@ mod tests {
         );
         assert_eq!(
             watermark_of(&pool, SPACE_B).await,
-            499,
+            500,
             "the successfully persisted space records the pass watermark"
         );
         assert_eq!(
             watermark_of(&pool, SPACE_C).await,
-            499,
+            500,
             "the quiescent space is still advanced (#3309)"
         );
     }
@@ -1378,7 +1365,7 @@ mod tests {
     }
 
     /// #5418 — a pass that wrote every dirty engine moves the apply cursor to
-    /// the op-log head it read, and stamps the row one below it.
+    /// the op-log head it read, and stamps the row with it.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn snapshot_pass_advances_the_apply_cursor_to_the_op_log_head_5418() {
         let (pool, _dir) = fresh_pool().await;
@@ -1394,8 +1381,8 @@ mod tests {
         assert_eq!(saved, 1, "the dirty space is written");
         assert_eq!(
             watermark_of(&pool, SPACE_A).await,
-            6,
-            "the row is stamped one below the head"
+            7,
+            "the row is stamped with the head"
         );
         assert_eq!(
             apply_cursor(&pool).await,
@@ -1485,8 +1472,8 @@ mod tests {
         assert_eq!(saved, 1, "the rows do not wait for the queue");
         assert_eq!(
             watermark_of(&pool, SPACE_A).await,
-            6,
-            "the row is stamped one below the head"
+            7,
+            "the row is stamped with the head"
         );
         assert_eq!(
             apply_cursor(&pool).await,

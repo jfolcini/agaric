@@ -929,8 +929,8 @@ pub fn collect_bug_report_metadata_inner(
 /// goes through the same redaction pipeline as the ZIP export.
 #[tauri::command]
 #[specta::specta]
-pub async fn collect_bug_report_metadata(
-    app: tauri::AppHandle,
+pub async fn collect_bug_report_metadata<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     pool: tauri::State<'_, crate::db::ReadPool>,
     device_id: tauri::State<'_, agaric_sync::device::DeviceId>,
 ) -> Result<BugReport, AppError> {
@@ -2265,8 +2265,8 @@ async fn fetch_redaction_extras(pool: &SqlitePool) -> Vec<String> {
 /// Delegates to [`read_logs_for_report_inner`].
 #[tauri::command]
 #[specta::specta]
-pub async fn read_logs_for_report(
-    app: tauri::AppHandle,
+pub async fn read_logs_for_report<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     pool: tauri::State<'_, crate::db::ReadPool>,
     device_id: tauri::State<'_, agaric_sync::device::DeviceId>,
     redact: bool,
