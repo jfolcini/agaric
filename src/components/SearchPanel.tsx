@@ -6,7 +6,6 @@
  *  - Immediate search on form submit (Enter / button click), a history pick,
  *    or a filter-chip add / remove / clear
  *  - Cursor-based pagination (`t('search.loadMoreButton')`) via `useSearchResults`
- *  - CJK limitation notice (p3-t6)
  *
  * Opened via the `focusSearch` shortcut (Ctrl+Shift+F by default, handled in
  * `useAppKeyboardShortcuts.ts`).
@@ -97,13 +96,6 @@ function isSearchToggleState(value: unknown): value is SearchToggleState {
     typeof v['caseSensitive'] === 'boolean' &&
     typeof v['wholeWord'] === 'boolean' &&
     typeof v['isRegex'] === 'boolean'
-  )
-}
-
-/** Returns true if the text contains CJK codepoints. */
-function hasCJK(text: string): boolean {
-  return /[\u4E00-\u9FFF\u3400-\u4DBF\u3000-\u303F\u30A0-\u30FF\u3040-\u309F\uAC00-\uD7AF]/.test(
-    text,
   )
 }
 
@@ -690,18 +682,6 @@ export function SearchPanel(): React.ReactElement {
 
       <SearchReplaceBar mode={replaceMode} replace={replace} />
 
-      {/* CJK limitation notice sits directly below the input so CJK
-          users see it before scanning results. */}
-      {hasCJK(query) && (
-        <div
-          className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground"
-          data-testid="cjk-notice"
-        >
-          <span className="font-medium">{t('search.cjkNoteLabel')}</span>{' '}
-          {t('search.cjkLimitationNote')}
-        </div>
-      )}
-
       {/* chip row projected from the parsed AST. */}
       <FilterChipRow
         filters={ast.filters}
@@ -716,14 +696,6 @@ export function SearchPanel(): React.ReactElement {
           />
         }
       />
-
-      {/* info, not warning: search still runs at 1–2 chars, so this
-          is an FYI rather than a problem. */}
-      {query.trim().length > 0 && query.trim().length < 3 && (
-        <div className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground">
-          {t('search.minCharsHint')}
-        </div>
-      )}
 
       {query === '' && recentPages.length > 0 && (
         <div className="recent-pages">

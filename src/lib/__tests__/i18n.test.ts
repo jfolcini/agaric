@@ -197,9 +197,6 @@ describe('key existence', () => {
     // Due Panel
     'duePanel.header',
 
-    // Search
-    'search.minCharsHint',
-
     // Editor
     'editor.templatePlaceholder',
     'editor.emptyBlockPlaceholder',

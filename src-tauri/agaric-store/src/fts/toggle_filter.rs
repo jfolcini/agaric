@@ -137,8 +137,8 @@ async fn fts_page_with_toggles(
     snippet_len: Option<usize>,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
     if !toggles.any() {
-        // All toggles off → straight FTS path verbatim (zero overhead).
-        return super::search::search_fts(
+        // All toggles off → straight FTS path.
+        let mut response = super::search::search_fts(
             pool,
             query,
             page,
@@ -151,7 +151,9 @@ async fn fts_page_with_toggles(
             metadata,
             snippet_len,
         )
-        .await;
+        .await?;
+        highlight_short_term_rows(&mut response.items, query);
+        return Ok(response);
     }
 
     // `case_sensitive` and/or `whole_word` is on. Calling `search_fts`
@@ -439,9 +441,8 @@ async fn fts_partitioned_with_toggles(
     cancel: Option<crate::cancellation::CancellationToken>,
 ) -> Result<super::search::FtsPartitionedScan, AppError> {
     if !toggles.any() {
-        // All toggles off → straight FTS partitioned scan, snippets kept
-        // (zero overhead).
-        return super::search::search_fts_partitioned(
+        // All toggles off → straight FTS partitioned scan, snippets kept.
+        let mut scan = super::search::search_fts_partitioned(
             pool,
             query,
             page_limit,
@@ -460,7 +461,10 @@ async fn fts_partitioned_with_toggles(
             Some(super::search::PALETTE_CONTENT_PREVIEW_CAP),
             cancel,
         )
-        .await;
+        .await?;
+        highlight_short_term_rows(&mut scan.pages, query);
+        highlight_short_term_rows(&mut scan.blocks, query);
+        return Ok(scan);
     }
 
     // `case_sensitive` and/or `whole_word` is on. This path has NO
@@ -708,6 +712,28 @@ pub(crate) fn build_regex(pattern: &str) -> Result<Regex, AppError> {
 /// UTF-16 match offsets.
 fn apply_post_filter(rows: &mut Vec<SearchBlockRow>, re: &Regex) {
     rows.retain_mut(|row| post_filter_row(row, re));
+}
+
+/// Mark the matches of a query that has a short term (#6752). FTS5's
+/// `snippet()` marks only what the trigram index matched, so such a query's
+/// rows carry offsets for every term instead, and a row they mark drops its
+/// snippet as the toggle rows do. A query without a short term is untouched.
+fn highlight_short_term_rows(rows: &mut [SearchBlockRow], query: &str) {
+    let parsed = super::search::parse_query(query);
+    if parsed.short_terms.is_empty() {
+        return;
+    }
+    // Longest first: at one position the regex takes the first alternative.
+    let mut terms = parsed.terms;
+    terms.sort_by_key(|term| std::cmp::Reverse(term.len()));
+    let alternatives: Vec<String> = terms.iter().map(|term| regex::escape(term)).collect();
+    // A query past `MAX_PATTERN_LEN` keeps its rows, unmarked.
+    let Ok(re) = build_regex(&format!("(?i)(?:{})", alternatives.join("|"))) else {
+        return;
+    };
+    for row in rows {
+        post_filter_row(row, &re);
+    }
 }
 
 /// Per-row post-filter predicate, extracted

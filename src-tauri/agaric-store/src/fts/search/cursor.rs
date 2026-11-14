@@ -11,12 +11,12 @@ use super::super::metadata_filter::MetadataPredicates;
 use super::constants::MAX_SEARCH_RESULTS;
 use super::fetch::fts_fetch_rows;
 use super::row::{FtsSearchRow, fts_row_to_block_row};
-use super::sanitizer::prepare_match_expression;
+use super::sanitizer::prepare_query;
 
 /// Search blocks via FTS5 MATCH with cursor-based pagination.
 ///
 /// Results are ordered by FTS5 rank (best match first) with `block_id` as
-/// tiebreaker.  The cursor is a composite `(rank, id)` pair.  Rank comparison
+/// tiebreaker; a query of short terms alone has no rank and is newest first.  The cursor is a composite `(rank, id)` pair.  Rank comparison
 /// uses a *relative* epsilon — `ABS(rank - cursor_rank) <= 1e-9 * MAX(1, ABS(cursor_rank))`
 /// (#1598) — instead of a fixed absolute band, so the tolerance scales with the
 /// rank's magnitude.  This absorbs floating-point precision drift between cursor
@@ -42,7 +42,7 @@ use super::sanitizer::prepare_match_expression;
 /// case_sensitive 0'`, see migration `0006_fts5_trigram.sql`).  Trigrams
 /// give substring search across all scripts including CJK, at the cost
 /// of increased index size and a 3-character minimum match length —
-/// queries shorter than 3 characters return no results.  Earlier
+/// shorter terms are matched by a substring scan instead (#6752).  Earlier
 /// versions of this module used the default `unicode61` tokenizer, which
 /// split CJK incorrectly; the trigram switch is what fixes that.
 ///
@@ -64,7 +64,7 @@ pub async fn search_fts(
     // `None`; the MCP `search` tool passes `Some(SEARCH_SNIPPET_CAP)`.
     snippet_len: Option<usize>,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
-    let Some(sanitized) = prepare_match_expression(query)? else {
+    let Some(parsed) = prepare_query(query)? else {
         return Ok(PageResponse {
             items: vec![],
             next_cursor: None,
@@ -87,7 +87,7 @@ pub async fn search_fts(
 
     let rows = fts_fetch_rows(
         pool,
-        &sanitized,
+        &parsed,
         cursor_flag,
         cursor_rank,
         &cursor_id,

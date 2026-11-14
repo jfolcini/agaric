@@ -175,10 +175,6 @@ export const references: Record<string, string> = {
   'graph.filter.priorityValue.1': 'High (1)',
   'graph.filter.priorityValue.2': 'Medium (2)',
   'graph.filter.priorityValue.3': 'Low (3)',
-  // Search actually fires at 1 char; this is a soft hint (the
-  // FTS trigram index matches whole words of 3+ chars best), not a hard
-  // requirement, so the copy must not promise a gate that doesn't exist.
-  'search.minCharsHint': 'Tip: words of 3+ characters return the best matches.',
   'search.parentPage': 'in: {{title}}',
   'tags.loadFailed': 'Failed to load tags',
   'tags.nameTooLong': 'Tag name must be under 100 characters',
@@ -297,9 +293,6 @@ export const references: Record<string, string> = {
   'search.searchLabel': 'Search blocks',
   'search.regexModeHint':
     'Free-text is matched as a regular expression. Filters like tag: and path: still apply.',
-  'search.cjkNoteLabel': 'Note:',
-  'search.cjkLimitationNote':
-    'CJK search is limited in v1. Some results may be incomplete. Try queries of 3 or more characters for the best matches.',
   'search.recentTitle': 'Recent',
   'search.noResultsHeadline': 'No results',
   'search.noResultsFound': 'No results found. Try different keywords or check your spelling.',
