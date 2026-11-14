@@ -223,7 +223,7 @@ export interface InlineSetPropertyParams {
   valueNum?: number
   valueDate?: string
   valueBool?: boolean
-  /** A list's items (#6741); a ref list's are the names as typed, for the caller to resolve. */
+  /** A list's items (#6741); a ref list's are the names as typed, which `set_property` resolves. */
   valueList?: PropertyList
 }
 
