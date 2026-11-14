@@ -129,6 +129,52 @@ mod purge_derived_tables_tests {
         assert_eq!(post_links.0, 0, "purge must clear page_link_cache rows");
     }
 
+    /// #6741: the cascade takes every block of the purged subtree out of the
+    /// lists of refs holding it, as it deletes their `value_ref` rows; a list
+    /// the subtree emptied loses its row.
+    #[tokio::test]
+    async fn purge_takes_the_subtree_out_of_lists_of_refs_6741() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let pool = init_pool(&dir.path().join("purge_lists.db"))
+            .await
+            .expect("init_pool");
+        for sql in [
+            "INSERT INTO blocks (id, block_type, content) VALUES ('SPACE', 'page', 'S')",
+            "INSERT INTO spaces (id) VALUES ('SPACE')",
+            "INSERT INTO property_definitions (space_id, key, value_type, created_at, multiple) \
+             VALUES ('SPACE', 'related', 'ref', '2026-01-01T00:00:00.000Z', 1)",
+            "INSERT INTO blocks (id, block_type, content, space_id) VALUES \
+             ('ROOT', 'content', '', 'SPACE'), ('KEPT', 'content', '', 'SPACE'), \
+             ('BOTH', 'content', '', 'SPACE'), ('ONLY', 'content', '', 'SPACE')",
+            "INSERT INTO blocks (id, block_type, content, space_id, parent_id) \
+             VALUES ('CHILD', 'content', '', 'SPACE', 'ROOT')",
+            r#"INSERT INTO block_properties (block_id, key, value_list) VALUES
+               ('BOTH', 'related', '["CHILD","KEPT"]'), ('ONLY', 'related', '["CHILD","ROOT"]')"#,
+        ] {
+            sqlx::query(sql).execute(&pool).await.expect("seed");
+        }
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        let payload = PurgeBlockPayload {
+            block_id: BlockId::from_trusted("ROOT"),
+        };
+        super::purge_block_sql_cascade(&mut conn, &payload)
+            .await
+            .expect("purge");
+        drop(conn);
+
+        let lists: Vec<(String, String)> =
+            sqlx::query_as("SELECT block_id, value_list FROM block_properties ORDER BY block_id")
+                .fetch_all(&pool)
+                .await
+                .expect("read back");
+        assert_eq!(
+            lists,
+            [("BOTH".to_owned(), r#"["KEPT"]"#.to_owned())],
+            "the purged child left the list; the list of only purged ids lost its row"
+        );
+    }
+
     /// #1993 cascade safety: purging a block whose attachment shares a
     /// content-addressed blob with ANOTHER block must NOT unlink the blob
     /// bytes. `purge_block_sql_cascade` deletes only the attachment ROW; the
