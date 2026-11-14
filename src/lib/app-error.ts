@@ -65,10 +65,10 @@ export function isNotFound(err: unknown): err is TypedAppError & { kind: 'not_fo
 }
 
 /**
- * Was this a sqlx connection-pool back-pressure error? Issue #106 —
- * the backend emits this when every pool connection is checked out
- * AND the acquire timed out. It is transient: the next attempt has a
- * good chance of succeeding once an in-flight query completes.
+ * Was the writer busy? Issue #106 — the backend emits this when the
+ * wait for a pool connection, or for SQLite's write lock, ran out. It is
+ * transient: the next attempt has a good chance of succeeding once the
+ * in-flight write completes.
  *
  * Callers MUST NOT hand-roll a retry loop; route through the shared
  * {@link retryOnPoolBusy} helper so the backoff schedule is uniform
@@ -263,8 +263,8 @@ const defaultSleep = (ms: number): Promise<void> =>
 
 /**
  * Single shared retry helper for the `pool_busy` IPC error. Issue
- * #106 — wraps any IPC-returning thunk so a transient pool-exhaustion
- * blip is retried with a short backoff before bubbling up.
+ * #106 — wraps any IPC-returning thunk so a transient busy writer
+ * is retried with a short backoff before bubbling up.
  *
  * The wrapper RE-THROWS any non-`pool_busy` error immediately (no
  * exponential retry on `database`, `conflict`, etc.) so the

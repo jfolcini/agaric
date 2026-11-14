@@ -1904,6 +1904,8 @@ mod tests {
     /// itself and asserts the concrete `AppError` variant it crosses the
     /// boundary as — not merely that [`AppError::is_write_contention`] accepts it,
     /// which a rewrap could still satisfy by accident for the wrong reason.
+    /// That variant is `PoolTimedOut`, the `pool_busy` kind the frontend
+    /// retries (#6567).
     #[tokio::test]
     async fn purge_blocks_by_ids_inner_surfaces_unwrapped_contention_at_the_boundary_4018() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -1938,11 +1940,11 @@ mod tests {
         drop(holder);
 
         assert!(
-            matches!(err, AppError::Database(sqlx::Error::Database(_))),
-            "the boundary must surface the sqlx driver error UNWRAPPED as \
-             `AppError::Database` — a future rewrap (e.g. into `AppError::Internal`) \
-             would make `is_write_contention` start returning false for the exact \
-             failure it exists to catch; got {err:?}"
+            matches!(err, AppError::PoolTimedOut),
+            "the boundary must surface SQLite's busy code as `AppError::PoolTimedOut` — \
+             a future rewrap (e.g. into `AppError::Internal`) would make \
+             `is_write_contention` start returning false for the exact failure it \
+             exists to catch, and the frontend stop retrying it; got {err:?}"
         );
         assert!(
             err.is_write_contention(),
