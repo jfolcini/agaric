@@ -7,11 +7,12 @@
  */
 
 import { Plus } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
@@ -36,7 +37,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
-import { formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
+import { formatPropertyName, selectOptionsJson, valueTypeLabel } from '@/lib/property-utils'
 
 export interface AddPropertyPopoverProps {
   /** Definitions to show in the picker. Already filtered by the parent. */
@@ -47,9 +48,15 @@ export interface AddPropertyPopoverProps {
   supportCreateDef?: boolean
   /**
    * Called when a new definition is created via the create flow. `options` is
-   * the select's options JSON, `null` for every other type.
+   * the select's options JSON, `null` for every other type; `multiple` that the
+   * key holds a list of `valueType` items.
    */
-  onCreateDef?: (key: string, valueType: string, options: string | null) => void | Promise<void>
+  onCreateDef?: (
+    key: string,
+    valueType: string,
+    options: string | null,
+    multiple: boolean,
+  ) => void | Promise<void>
   /** Controlled open state (optional). */
   open?: boolean
   /** Controlled open-change handler (optional). */
@@ -81,6 +88,10 @@ export function AddPropertyPopover({
   const [newDefType, setNewDefType] = useState('text')
   const [newDefOptions, setNewDefOptions] = useState('')
   const newDefOptionsJson = newDefType === 'select' ? selectOptionsJson(newDefOptions) : null
+  // A boolean never holds a list.
+  const [newDefSeveral, setNewDefSeveral] = useState(false)
+  const newDefMultiple = newDefSeveral && newDefType !== 'boolean'
+  const severalId = useId()
 
   const isControlled = controlledOpen !== undefined
   const popoverOpen = isControlled ? controlledOpen : internalOpen
@@ -118,13 +129,14 @@ export function AddPropertyPopover({
   const handleCreateDef = useCallback(async () => {
     const key = defSearch.trim()
     if (!key || !onCreateDef) return
-    await onCreateDef(key, newDefType, newDefOptionsJson)
+    await onCreateDef(key, newDefType, newDefOptionsJson, newDefMultiple)
     setPopoverOpen(false)
     setDefSearch('')
     setCreatingDef(false)
     setNewDefType('text')
     setNewDefOptions('')
-  }, [defSearch, newDefType, newDefOptionsJson, onCreateDef, setPopoverOpen])
+    setNewDefSeveral(false)
+  }, [defSearch, newDefType, newDefOptionsJson, newDefMultiple, onCreateDef, setPopoverOpen])
 
   const triggerButton = (
     <Button
@@ -181,7 +193,7 @@ export function AddPropertyPopover({
           >
             <span className="flex-1 text-left">{formatPropertyName(def.key)}</span>
             <Badge tone="outline" className="font-mono text-xs">
-              {def.value_type}
+              {valueTypeLabel(def, t)}
             </Badge>
           </Button>
         ))}
@@ -235,6 +247,18 @@ export function AddPropertyPopover({
               aria-label={t('properties.newSelectOptions')}
               className="h-8"
             />
+          )}
+          {newDefType !== 'boolean' && (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id={severalId}
+                checked={newDefSeveral}
+                onCheckedChange={(checked) => setNewDefSeveral(checked === true)}
+              />
+              <Label size="xs" htmlFor={severalId} muted={false}>
+                {t('properties.holdsSeveralValues')}
+              </Label>
+            </div>
           )}
           <Button
             size="sm"

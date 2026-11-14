@@ -268,6 +268,34 @@ describe('useBatchPropertyRows', () => {
     expect(batchCalls).toHaveLength(2)
   })
 
+  // #6741 — a refetch that changes only a list's items is fresh data, not
+  // the cached rows again.
+  it('a refetch that changes only a list publishes the new items', async () => {
+    let callCount = 0
+    stubInvoke({
+      get_batch_properties: () => {
+        callCount += 1
+        const items = callCount === 1 ? ['a'] : ['a', 'b']
+        return { A: [makeRow({ key: 'tags', value_text: null, value_list: items })] }
+      },
+    })
+
+    const { result } = renderHook(() => useBatchPropertyRows(), {
+      wrapper: makeWrapper(['A']),
+    })
+    await waitFor(() => {
+      expect(result.current?.get('A')?.[0]?.value_list).toEqual(['a'])
+    })
+
+    act(() => {
+      result.current?.invalidate('A')
+    })
+
+    await waitFor(() => {
+      expect(result.current?.get('A')?.[0]?.value_list).toEqual(['a', 'b'])
+    })
+  })
+
   it('invalidationKey prop bump triggers a refetch', async () => {
     stubInvoke({ get_batch_properties: () => ({ A: [makeRow({ key: 'a' })] }) })
 

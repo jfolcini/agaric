@@ -8,13 +8,17 @@
 
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { joinListItems } from '@/lib/property-list'
 
 /**
  * Extract the canonical string value for the current property, picking the
- * first non-null typed slot. Lifted out of the component body so the main
- * function stays under oxlint's eslint/complexity budget.
+ * first non-null typed slot; a list (#6741) is its items as one line of text,
+ * so an editor of one value fed a list never shows it blank. Lifted out of the
+ * component body so the main function stays under oxlint's eslint/complexity
+ * budget.
  */
 export function readCurrentValue(prop: PropertyRow): string {
+  if (prop.value_list != null) return joinListItems(prop.value_list.map(String))
   if (prop.value_ref != null) return prop.value_ref
   if (prop.value_text != null) return prop.value_text
   if (prop.value_num != null) return String(prop.value_num)

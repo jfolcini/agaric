@@ -324,18 +324,22 @@ function InlineProperties({
   const defs = useSpacePropertyDefs()
   return (
     <>
-      {filteredProperties.slice(0, inlinePropLimit).map((p) => (
-        <InlinePropertyChip
-          key={p.key}
-          blockId={blockId}
-          property={p}
-          onEditProp={onEditProp}
-          onEditKey={onEditKey}
-          onNavigate={onNavigate}
-          onShowProperties={onShowProperties}
-          unfit={isUnfit(p.key, p.kind ?? 'text', p.value, defs?.get(p.key))}
-        />
-      ))}
+      {filteredProperties.slice(0, inlinePropLimit).map((p) => {
+        const def = defs?.get(p.key)
+        return (
+          <InlinePropertyChip
+            key={p.key}
+            blockId={blockId}
+            property={p}
+            onEditProp={onEditProp}
+            onEditKey={onEditKey}
+            onNavigate={onNavigate}
+            onShowProperties={onShowProperties}
+            unfit={isUnfit(p.key, p.kind ?? 'text', p.value, def, p.items ?? null)}
+            refItems={def?.value_type === 'ref'}
+          />
+        )
+      })}
       {filteredProperties.length > inlinePropLimit && (
         <Tooltip>
           <TooltipTrigger asChild>

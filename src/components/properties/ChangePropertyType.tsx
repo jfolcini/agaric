@@ -6,24 +6,25 @@
  * `preview_property_type_change`'s counts and the blocks behind each first,
  * and the change sends the counts back as its acknowledgement. When the
  * backend refuses that (the values changed since), the dialog previews again
- * and asks again, as `MergePropertyDefinition` does.
+ * and asks again, as `MergePropertyDefinition` does. "Holds several values"
+ * turns the key into a list or back (#6741); a change from one value to a
+ * list asks where to split each value, and one from a list to text how to
+ * join each list.
  */
 
-import { useInfiniteQuery } from '@tanstack/react-query'
 import { Shapes } from 'lucide-react'
 import type React from 'react'
-import { useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { fetchAndCacheLinks } from '@/components/block-tree/use-block-link-resolve'
-import { LoadMoreButton } from '@/components/common/LoadMoreButton'
-import { holderLabel } from '@/components/pages/SpaceMoveConfirmDialog'
 import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
-import { useRefTitle } from '@/components/properties/useRefTitle'
+import { type Preview, type Target, TypeChangeTabs } from '@/components/properties/TypeChangeValues'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { DialogBody } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -31,29 +32,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Spinner } from '@/components/ui/spinner'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { unwrap, validationCode } from '@/lib/app-error'
-import type {
-  PageResponse,
-  PropertyDefinition,
-  PropertyTypeChangeCounts,
-  PropertyTypeChangeKind,
-  PropertyTypeChangeValue,
-} from '@/lib/bindings'
+import type { ListSeparator, PropertyDefinition } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
-import { PAGINATION_LIMIT } from '@/lib/constants'
-import { logger } from '@/lib/logger'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
-import { selectOptionsJson, VALUE_TYPES } from '@/lib/property-utils'
-import { queryClient } from '@/lib/query-client'
+import { selectOptionsJson, VALUE_TYPES, valueTypeLabel } from '@/lib/property-utils'
 import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import { useResolveStore } from '@/stores/resolve'
-import { useSpaceStore } from '@/stores/space'
 
 export interface ChangePropertyTypeProps {
   definition: PropertyDefinition
@@ -63,17 +52,49 @@ export interface ChangePropertyTypeProps {
   className?: string
 }
 
-/** The type a change goes to, and the options a select takes. */
-interface Target {
-  valueType: string
-  options: string | null
+/** Where to split or join, or `none` for neither; null until the user picks. */
+type SeparatorPick = ListSeparator | 'none'
+
+/** What the dialog's controls hold; a null type keeps the key's own. */
+interface Draft {
+  valueType: string | null
+  optionsText: string
+  several: boolean
+  separator: SeparatorPick | null
 }
 
-/** A preview shown: its target, its counts, and its number, which keys the value lists. */
-interface Preview {
-  target: Target
-  counts: PropertyTypeChangeCounts
-  seq: number
+/** Whether a change to `valueType` holding a list or not asks where to split or how to join. */
+function separatorAsked(
+  definition: PropertyDefinition,
+  valueType: string,
+  multiple: boolean,
+): 'split' | 'join' | null {
+  const wasMultiple = definition.multiple === true
+  if (multiple && !wasMultiple) return 'split'
+  // Only a text can hold a whole list's items.
+  if (!multiple && wasMultiple && (valueType === 'text' || valueType === 'url')) return 'join'
+  return null
+}
+
+/** The change `draft` asks for; null while it changes nothing or misses an answer. */
+function targetOf(definition: PropertyDefinition, draft: Draft): Target | null {
+  const valueType = draft.valueType ?? definition.value_type
+  // A boolean never holds a list.
+  const multiple = draft.several && valueType !== 'boolean'
+  const sameType = valueType === definition.value_type
+  if (sameType && multiple === (definition.multiple === true)) return null
+  const options =
+    valueType !== 'select'
+      ? null
+      : sameType
+        ? definition.options
+        : selectOptionsJson(draft.optionsText)
+  // A select needs its options before the backend can say what fits.
+  if (valueType === 'select' && options === null) return null
+  const asked = separatorAsked(definition, valueType, multiple)
+  if (asked !== null && draft.separator === null) return null
+  const separator = asked === null || draft.separator === 'none' ? null : draft.separator
+  return { valueType, options, multiple, separator }
 }
 
 export function ChangePropertyType({
@@ -85,8 +106,13 @@ export function ChangePropertyType({
   const { t } = useTranslation()
   const parts = useDialogOrSheet('dialog')
   const [open, setOpen] = useState(false)
-  const [valueType, setValueType] = useState<string | null>(null)
-  const [optionsText, setOptionsText] = useState('')
+  const unchanged = (): Draft => ({
+    valueType: null,
+    optionsText: '',
+    several: definition.multiple === true,
+    separator: null,
+  })
+  const [draft, setDraft] = useState<Draft>(unchanged)
   const [shown, setShown] = useState<Preview | null>(null)
   // Asked again: the values changed after the user saw them.
   const [askedAgain, setAskedAgain] = useState(false)
@@ -94,16 +120,23 @@ export function ChangePropertyType({
   // A preview answered after another pick must not show its counts.
   const previewSeq = useRef(0)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const severalId = useId()
+  const separatorLabelId = useId()
   const { key } = definition
 
   const preview = async (target: Target): Promise<void> => {
     const seq = ++previewSeq.current
     setShown(null)
-    // A select needs its options before the backend can say what fits.
-    if (target.valueType === 'select' && target.options === null) return
     try {
       const counts = unwrap(
-        await commands.previewPropertyTypeChange(spaceId, key, target.valueType, target.options),
+        await commands.previewPropertyTypeChange(
+          spaceId,
+          key,
+          target.valueType,
+          target.options,
+          target.multiple,
+          target.separator,
+        ),
       )
       if (seq === previewSeq.current) setShown({ target, counts, seq })
     } catch (error) {
@@ -117,9 +150,11 @@ export function ChangePropertyType({
     }
   }
 
-  const previewOptions = useDebouncedCallback((text) => {
+  // Reads the draft of the commit before it fires: the typed options among it.
+  const previewOptions = useDebouncedCallback(() => {
+    const target = targetOf(definition, draft)
     // `preview` reports its own failure; never rejects.
-    void preview({ valueType: 'select', options: selectOptionsJson(text) })
+    if (target !== null) void preview(target)
   }, 300)
 
   if (definition.builtin || INTERNAL_PROPERTY_KEYS.has(key)) return null
@@ -129,23 +164,19 @@ export function ChangePropertyType({
     invalidatePropertyCaches()
   }
 
-  const pick = (next: string): void => {
-    setValueType(next)
+  /** Take `patch` into the draft and preview what it asks for, typed options after a pause. */
+  const update = (patch: Partial<Draft>, typed = false): void => {
+    const next = { ...draft, ...patch }
+    setDraft(next)
     setAskedAgain(false)
     previewOptions.cancel()
-    // `preview` reports its own failure; never rejects.
-    void preview({
-      valueType: next,
-      options: next === 'select' ? selectOptionsJson(optionsText) : null,
-    })
-  }
-
-  const typeOptions = (text: string): void => {
-    setOptionsText(text)
-    setAskedAgain(false)
     previewSeq.current += 1
     setShown(null)
-    previewOptions.schedule(text)
+    const target = targetOf(definition, next)
+    if (target === null) return
+    if (typed) previewOptions.schedule()
+    // `preview` reports its own failure; never rejects.
+    else void preview(target)
   }
 
   const onOpenChange = (next: boolean): void => {
@@ -153,8 +184,6 @@ export function ChangePropertyType({
     if (next) return
     previewOptions.cancel()
     previewSeq.current += 1
-    setValueType(null)
-    setOptionsText('')
     setShown(null)
     setAskedAgain(false)
   }
@@ -165,11 +194,22 @@ export function ChangePropertyType({
     setChanging(true)
     try {
       const result = unwrap(
-        await commands.changePropertyType(spaceId, key, target.valueType, target.options, counts),
+        await commands.changePropertyType(
+          spaceId,
+          key,
+          target.valueType,
+          target.options,
+          target.multiple,
+          target.separator,
+          counts,
+        ),
       )
       onOpenChange(false)
       notifyDefinitionWrite(
-        t('propertiesView.typeChanged', { key, type: target.valueType }),
+        t('propertiesView.typeChanged', {
+          key,
+          type: valueTypeLabel({ value_type: target.valueType, multiple: target.multiple }, t),
+        }),
         result.op_refs,
         changed,
       )
@@ -195,28 +235,70 @@ export function ChangePropertyType({
     }
   }
 
+  const valueType = draft.valueType ?? definition.value_type
+  const asked = separatorAsked(definition, valueType, draft.several && valueType !== 'boolean')
   const { Root, Content, Header, Title, Description, Footer } = parts
   const body = (
     <div className="space-y-3 text-sm">
-      <Select value={valueType ?? ''} onValueChange={pick}>
+      <Select value={valueType} onValueChange={(next) => update({ valueType: next })}>
         <SelectTrigger aria-label={t('propertiesView.typeChangeTypeLabel')}>
-          <SelectValue placeholder={t('propertiesView.typeChangeTypePlaceholder')} />
+          <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {VALUE_TYPES.filter((type) => type !== definition.value_type).map((type) => (
+          {VALUE_TYPES.map((type) => (
             <SelectItem key={type} value={type}>
               {type}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
-      {valueType === 'select' && (
+      {valueType === 'select' && definition.value_type !== 'select' && (
         <Input
-          value={optionsText}
-          onChange={(e) => typeOptions(e.target.value)}
+          value={draft.optionsText}
+          onChange={(e) => update({ optionsText: e.target.value }, true)}
           placeholder={t('properties.newSelectOptions')}
           aria-label={t('properties.newSelectOptions')}
         />
+      )}
+      {valueType !== 'boolean' && (
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id={severalId}
+            checked={draft.several}
+            onCheckedChange={(checked) => update({ several: checked === true, separator: null })}
+          />
+          <Label htmlFor={severalId} muted={false}>
+            {t('properties.holdsSeveralValues')}
+          </Label>
+        </div>
+      )}
+      {asked !== null && (
+        <div className="space-y-1">
+          <span id={separatorLabelId} className="block font-medium">
+            {t(
+              asked === 'split'
+                ? 'propertiesView.typeChangeSplitLabel'
+                : 'propertiesView.typeChangeJoinLabel',
+            )}
+          </span>
+          <ToggleGroup
+            type="single"
+            className="flex-wrap"
+            value={draft.separator ?? ''}
+            onValueChange={(value) => {
+              if (value === 'comma' || value === 'semicolon' || value === 'none') {
+                update({ separator: value })
+              }
+            }}
+            aria-labelledby={separatorLabelId}
+          >
+            {SEPARATOR_PICKS.map((pick) => (
+              <ToggleGroupItem key={pick} value={pick}>
+                {t(SEPARATOR_LABELS[asked][pick])}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </div>
       )}
       {askedAgain && (
         <p role="alert" className="text-destructive">
@@ -257,7 +339,11 @@ export function ChangePropertyType({
         tooltip={t('propertiesView.typeChangeTooltip')}
         ariaLabel={t('propertiesView.typeChangeLabel', { key })}
         className={className}
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          // From the definition as it stands now: a change or its undo may have moved it.
+          setDraft(unchanged())
+          setOpen(true)
+        }}
       >
         <Shapes />
       </IconButton>
@@ -294,170 +380,17 @@ export function ChangePropertyType({
   )
 }
 
-interface TypeChangeTabsProps {
-  spaceId: string
-  propertyKey: string
-  fromType: string
-  preview: Preview
-}
+const SEPARATOR_PICKS: readonly SeparatorPick[] = ['comma', 'semicolon', 'none']
 
-/** The values that don't fit and the converted ones, a tab each; a tab with none is disabled. */
-function TypeChangeTabs({
-  spaceId,
-  propertyKey,
-  fromType,
-  preview,
-}: TypeChangeTabsProps): React.ReactElement | null {
-  const { t } = useTranslation()
-  const { converted, unfit } = preview.counts
-  const [picked, setPicked] = useState<PropertyTypeChangeKind | null>(null)
-  if (converted + unfit === 0) return null
-  const tab = picked ?? (unfit > 0 ? 'unfit' : 'converted')
-  const values = (kind: PropertyTypeChangeKind) => (
-    <TabsContent value={kind} className="pt-2">
-      <TypeChangeValues
-        spaceId={spaceId}
-        propertyKey={propertyKey}
-        fromType={fromType}
-        preview={preview}
-        kind={kind}
-      />
-    </TabsContent>
-  )
-  return (
-    <Tabs
-      value={tab}
-      onValueChange={(next) => setPicked(next === 'converted' ? 'converted' : 'unfit')}
-    >
-      <TabsList aria-label={t('propertiesView.typeChangeValuesLabel')}>
-        <TabsTrigger value="unfit" disabled={unfit === 0}>
-          {t('propertiesView.typeChangeUnfitTab', { count: unfit })}
-        </TabsTrigger>
-        <TabsTrigger value="converted" disabled={converted === 0}>
-          {t('propertiesView.typeChangeConvertedTab', { count: converted })}
-        </TabsTrigger>
-      </TabsList>
-      {values('unfit')}
-      {values('converted')}
-    </Tabs>
-  )
-}
-
-interface TypeChangeValuesProps extends TypeChangeTabsProps {
-  kind: PropertyTypeChangeKind
-}
-
-/** The blocks holding the values of `kind`, a page at a time. */
-function TypeChangeValues({
-  spaceId,
-  propertyKey,
-  fromType,
-  preview,
-  kind,
-}: TypeChangeValuesProps): React.ReactElement {
-  const { t } = useTranslation()
-  const { valueType, options } = preview.target
-  const refs = { value: fromType === 'ref', converted: valueType === 'ref' }
-  const { data, isPending, isError, hasNextPage, fetchNextPage, isFetchingNextPage } =
-    useInfiniteQuery(
-      {
-        // The preview's number: a preview again reads the values again.
-        queryKey: ['propertyTypeChangeValues', spaceId, propertyKey, kind, preview.seq],
-        queryFn: async ({ pageParam }): Promise<PageResponse<PropertyTypeChangeValue>> => {
-          try {
-            const page = unwrap(
-              await commands.listPropertyTypeChangeValues(
-                spaceId,
-                propertyKey,
-                valueType,
-                options,
-                kind,
-                pageParam ?? null,
-                PAGINATION_LIMIT,
-              ),
-            )
-            await resolveRefs(page.items, refs)
-            return page
-          } catch (err) {
-            logger.warn('ChangePropertyType', 'failed to load values', { propertyKey, kind }, err)
-            throw err
-          }
-        },
-        initialPageParam: undefined as string | undefined,
-        getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
-        // Dropped once unmounted: the preview number restarts with the
-        // dialog's row, so a later preview could find a page cached here.
-        gcTime: 0,
-      },
-      queryClient,
-    )
-  const rows = data?.pages.flatMap((page) => page.items) ?? []
-  if (isPending) return <Spinner label />
-  if (isError) {
-    return (
-      <p role="alert" className="text-destructive">
-        {t('spaceMove.valuesFailed')}
-      </p>
-    )
-  }
-  return (
-    <div className="flex flex-col gap-1">
-      <ul className="flex flex-col gap-1">
-        {rows.map((row) => (
-          <li key={row.block_id} className="flex min-w-0 items-baseline gap-2">
-            <span className="min-w-0 flex-1 truncate">{holderLabel(row)}</span>
-            {row.deleted && (
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {t('spaceMove.inTrash')}
-              </span>
-            )}
-            <ValueText row={row} refs={refs} />
-          </li>
-        ))}
-      </ul>
-      <LoadMoreButton
-        hasMore={hasNextPage}
-        loading={isFetchingNextPage}
-        onLoadMore={() => {
-          void fetchNextPage()
-        }}
-      />
-    </div>
-  )
-}
-
-/** A row's value, and what it becomes; a ref shows its target's title as the cache holds it now. */
-function ValueText({
-  row,
-  refs,
-}: {
-  row: PropertyTypeChangeValue
-  refs: { value: boolean; converted: boolean }
-}): React.ReactElement {
-  const valueTitle = useRefTitle(refs.value ? row.value : null)
-  const convertedTitle = useRefTitle(refs.converted ? row.converted : null)
-  const value = valueTitle ?? row.value
-  return (
-    <span className="max-w-[40%] shrink-0 truncate text-muted-foreground">
-      {row.converted === null ? value : `${value} → ${convertedTitle ?? row.converted}`}
-    </span>
-  )
-}
-
-/** Asks the backend for the titles of the referenced blocks the resolve store has no answer for. */
-async function resolveRefs(
-  rows: readonly PropertyTypeChangeValue[],
-  refs: { value: boolean; converted: boolean },
-): Promise<void> {
-  const store = useResolveStore.getState()
-  const ids = new Set(
-    rows.flatMap((row) =>
-      [refs.value ? row.value : null, refs.converted ? row.converted : null].filter(
-        (id): id is string => id !== null && !store.has(id),
-      ),
-    ),
-  )
-  if (ids.size === 0) return
-  const spaceId = useSpaceStore.getState().currentSpaceId
-  await fetchAndCacheLinks(ids, spaceId, () => useSpaceStore.getState().currentSpaceId !== spaceId)
+const SEPARATOR_LABELS: Readonly<Record<'split' | 'join', Record<SeparatorPick, string>>> = {
+  split: {
+    comma: 'propertiesView.typeChangeSplitComma',
+    semicolon: 'propertiesView.typeChangeSplitSemicolon',
+    none: 'propertiesView.typeChangeSplitNone',
+  },
+  join: {
+    comma: 'propertiesView.typeChangeJoinComma',
+    semicolon: 'propertiesView.typeChangeJoinSemicolon',
+    none: 'propertiesView.typeChangeJoinNone',
+  },
 }

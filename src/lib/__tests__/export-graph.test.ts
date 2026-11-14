@@ -1177,7 +1177,13 @@ describe('the space file and the title line (#6277 decision 8)', () => {
               has_more: true,
               total_count: null,
             }
-          : { ...NO_DEFS, items: [def('stage', 'select', '["a","b"]')] },
+          : {
+              ...NO_DEFS,
+              items: [
+                def('stage', 'select', '["a","b"]'),
+                { ...def('authors', 'text'), multiple: true },
+              ],
+            },
       list_all_pages_in_space: () => [
         makePageHeading({ id: 'P1', content: 'a:b' }),
         makePageHeading({ id: 'P2', content: 'Project/API' }),
@@ -1194,6 +1200,8 @@ describe('the space file and the title line (#6277 decision 8)', () => {
       propertyDefinitions: [
         { key: 'effort', value_type: 'number', options: null },
         { key: 'stage', value_type: 'select', options: '["a","b"]' },
+        // #6741 — the flag, written only on a key that holds several values.
+        { key: 'authors', value_type: 'text', options: null, multiple: true },
       ],
       titles: { 'a_b.md': 'a:b' },
     })

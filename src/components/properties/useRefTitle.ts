@@ -24,3 +24,22 @@ export function useRefTitle(targetId: string | null): string | null {
   }, [targetId, cached])
   return title
 }
+
+/**
+ * The titles of a ref list's targets (#6741), each as {@link useRefTitle}
+ * reads it, joined by `, `. A target the cache lacks is asked for the same way.
+ */
+export function useRefTitles(targetIds: readonly string[]): string {
+  const titles = useResolveStore((s) => targetIds.map((id) => s.resolveTitle(id)).join(', '))
+  const missing = useResolveStore((s) => targetIds.filter((id) => !s.has(id)).join('\0'))
+  useEffect(() => {
+    if (missing === '') return
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    void fetchAndCacheLinks(
+      new Set(missing.split('\0')),
+      spaceId,
+      () => useSpaceStore.getState().currentSpaceId !== spaceId,
+    )
+  }, [missing])
+  return titles
+}
