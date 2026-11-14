@@ -26,8 +26,9 @@ import {
   isInlinePropertyKey,
 } from '@/lib/inline-property-parse'
 import { nameKey, normalizeTagName } from '@/lib/name-tokens'
+import { joinListItems, splitListItems } from '@/lib/property-list'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
-import { RUST_TRIM } from '@/lib/tauri-mock/coerce'
+import { RUST_F64, RUST_TRIM } from '@/lib/tauri-mock/coerce'
 import { withoutEvents } from '@/lib/tauri-mock/events'
 import { blocksHandlers } from '@/lib/tauri-mock/handlers/blocks'
 import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
@@ -36,6 +37,7 @@ import {
   appErrorRejection,
   assertTagFilterWithinCap,
   assertValidDateFormat,
+  assertValidListValue,
   assertValidSetPropertyValue,
   blockLastEditedAt,
   buildPageMetaRow,
@@ -324,8 +326,13 @@ const FOLDED_RESERVED_KEYS: ReadonlySet<string> = new Set(
   [...INLINE_PROPERTY_RESERVED_KEYS].map(foldPropertyKey),
 )
 
-/** `frontmatter_row_value` with no titles: a ref value is its id. */
+/**
+ * `frontmatter_row_value` with no titles: a ref value is its id. A list is one
+ * line of text (#6741).
+ */
 function frontMatterValue(row: Record<string, unknown>): string {
+  const list = row['value_list']
+  if (Array.isArray(list)) return joinListItems(list.map(String))
   const text = row['value_date'] ?? row['value_text'] ?? row['value_ref']
   if (typeof text === 'string') return text
   if (typeof row['value_num'] === 'number') return String(row['value_num'])
@@ -472,7 +479,8 @@ function frontMatterWrites(
   )
   for (const [key, value] of set) {
     try {
-      assertValidSetPropertyValue(spaceId, key, value)
+      if (propertyDefinition(spaceId, key)?.['multiple'] === true) checkValue(spaceId, key, value)
+      else assertValidSetPropertyValue(spaceId, key, value)
     } catch (err) {
       const reason = (err as { message?: unknown }).message
       throw refusedAt(lines.get(key), `\`${key}: ${value}\` cannot be saved: ${String(reason)}`)
@@ -578,16 +586,19 @@ function writeFrontMatter(
       out.opRefs.push(...propertiesHandlers.delete_property({ blockId: pageId, key }).op_refs)
     }
     for (const [key, value] of writes.set) {
+      const holdsList = propertyDefinition(spaceId, key)?.['multiple'] === true
       const row = propertiesHandlers.set_property({
         blockId: pageId,
         key,
-        value: {
-          value_text: value,
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-          value_bool: null,
-        },
+        value: holdsList
+          ? lineColumns(spaceId, key, value)
+          : {
+              value_text: value,
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+              value_bool: null,
+            },
       }) as { op_refs: OpRefs } | null
       out.opRefs.push(...(row?.op_refs ?? []))
     }
@@ -1069,11 +1080,22 @@ function newMarkWrites(marks: Marks): MarkWrites {
   return { deleted: [], set, todoState: null }
 }
 
-/** The typed value columns `key:: value` is written to (`typed_property_args_for_registry_value`). */
+/**
+ * The typed value columns `key:: value` is written to
+ * (`typed_property_args_for_registry_value`); under a key that holds a list,
+ * the list its text writes (`PropertyLines::read_list`, #6741).
+ */
 function lineColumns(spaceId: string | null, key: string, value: string): Record<string, unknown> {
-  const type = propertyDefinition(spaceId, key)?.['value_type']
+  const def = propertyDefinition(spaceId, key)
+  const type = def?.['value_type']
+  if (def?.['multiple'] === true) {
+    const items = splitListItems(value)
+    const read = (item: string) =>
+      type === 'number' && RUST_F64.test(item.trim()) ? Number(item.trim()) : item
+    return { value_list: items.map(read) }
+  }
   const word = value.trim()
-  if (type === 'number' && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(word)) {
+  if (type === 'number' && RUST_F64.test(word)) {
     return { value_num: Number(word) }
   }
   if (type === 'boolean' && /^(?:true|false)$/i.test(word)) {
@@ -1086,13 +1108,29 @@ function lineColumns(spaceId: string | null, key: string, value: string): Record
 /** Refuse a `key:: value` line `set_property` would, as the save refuses it: naming the line. */
 function checkLineValue(bullet: SourceBullet, spaceId: string | null, key: string, value: string) {
   try {
-    assertValidSetPropertyValue(spaceId, key, value)
-    if (lineColumns(spaceId, key, value)['value_date'] !== undefined) assertValidDateFormat(value)
-    if (propertyDefinition(spaceId, key)?.['value_type'] === 'ref') resolveRefValue(value, spaceId)
+    checkValue(spaceId, key, value)
   } catch (err) {
     const reason = (err as { message?: unknown }).message
     throw refusedAt(bullet.line, `\`${key}:: ${value}\` cannot be saved: ${String(reason)}`)
   }
+}
+
+/** `PropertyLines::read` in an Edit as Markdown save: throws what refuses `value` under `key`. */
+function checkValue(spaceId: string | null, key: string, value: string): void {
+  const def = propertyDefinition(spaceId, key)
+  if (def?.['multiple'] === true) {
+    const list = lineColumns(spaceId, key, value)['value_list'] as unknown[]
+    if (list.length === 0) throw validationRejection('it has no value')
+    const items =
+      def['value_type'] === 'ref'
+        ? list.map((item) => resolveRefValue(String(item), spaceId))
+        : list
+    assertValidListValue(key, items, def)
+    return
+  }
+  assertValidSetPropertyValue(spaceId, key, value)
+  if (lineColumns(spaceId, key, value)['value_date'] !== undefined) assertValidDateFormat(value)
+  if (def?.['value_type'] === 'ref') resolveRefValue(value, spaceId)
 }
 
 /**

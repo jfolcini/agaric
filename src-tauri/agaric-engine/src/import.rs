@@ -4351,6 +4351,71 @@ pub fn write_source_property_value(value: &str) -> String {
     }
 }
 
+/// The items of `value`, a list's text (#6741): split at each comma outside
+/// `[[…]]` and outside a double-quoted item, each trimmed, a quoted item read
+/// as a JSON string, blanks dropped. `splitListItems` in
+/// `src/lib/property-list.ts` reads the same text.
+pub fn property_list_items(value: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut flush = |item: &str| {
+        let read = read_source_property_value(item);
+        if !read.trim().is_empty() {
+            items.push(read);
+        }
+    };
+    let mut item = String::new();
+    let (mut depth, mut quoted, mut escaped) = (0usize, false, false);
+    for c in value.chars() {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                quoted = false;
+            }
+        } else {
+            match c {
+                ',' if depth == 0 => {
+                    flush(&item);
+                    item.clear();
+                    continue;
+                }
+                '[' => depth += 1,
+                ']' => depth = depth.saturating_sub(1),
+                '"' if item.trim().is_empty() => quoted = true,
+                _ => {}
+            }
+        }
+        item.push(c);
+    }
+    flush(&item);
+    items
+}
+
+/// The text of `items`, joined by `, `, to read back as them
+/// ([`property_list_items`]): an item that holds a comma or a double quote,
+/// begins or ends with whitespace, or leaves a `[` open, which would take the
+/// next item's comma, is written as a JSON string.
+pub fn write_property_list(items: &[String]) -> String {
+    let leaves_bracket_open = |item: &str| {
+        let depth = item.chars().fold(0usize, |depth, c| match c {
+            '[' => depth + 1,
+            ']' => depth.saturating_sub(1),
+            _ => depth,
+        });
+        depth > 0
+    };
+    let written = items.iter().map(|item| {
+        if item.contains([',', '"']) || item.trim() != item || leaves_bracket_open(item) {
+            serde_json::to_string(item).expect("a string serialises")
+        } else {
+            item.clone()
+        }
+    });
+    written.collect::<Vec<_>>().join(", ")
+}
+
 /// #2716 — `true` when `line` matches the `key:: value` property shape
 /// ([`split_property_line`]), an empty value included, the shape
 /// [`continuation_line_is_ambiguous`] escapes and the un-escape reverses.
@@ -9463,5 +9528,64 @@ mod tests_document_dialect_5691 {
                 ("i", None, Some("CANCELLED")),
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_property_list_6741 {
+    use super::{property_list_items, write_property_list};
+
+    fn strings(items: &[&str]) -> Vec<String> {
+        items.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn splits_at_commas_and_trims_each_item() {
+        assert_eq!(property_list_items("Ann,  Bob , Cy"), ["Ann", "Bob", "Cy"]);
+    }
+
+    #[test]
+    fn keeps_a_comma_inside_brackets_and_inside_a_quoted_item() {
+        assert_eq!(
+            property_list_items(r#"[[Smith, John]], "Doe, Jane", x"#),
+            ["[[Smith, John]]", "Doe, Jane", "x"]
+        );
+    }
+
+    #[test]
+    fn drops_blank_items_a_quoted_blank_one_included() {
+        assert_eq!(property_list_items(r#" , a,, "  " ,"#), ["a"]);
+    }
+
+    #[test]
+    fn keeps_a_malformed_quote_as_written() {
+        assert_eq!(property_list_items(r#""open, b"#), [r#""open, b"#]);
+    }
+
+    #[test]
+    fn quotes_only_an_item_the_split_would_change() {
+        assert_eq!(
+            write_property_list(&strings(&["Ann", "Doe, Jane", "say \"hi\"", " pad"])),
+            r#"Ann, "Doe, Jane", "say \"hi\"", " pad""#
+        );
+        assert_eq!(
+            write_property_list(&strings(&["[[Page]]", "a]b", "a [b"])),
+            r#"[[Page]], a]b, "a [b""#
+        );
+    }
+
+    #[test]
+    fn reads_back_as_the_items_it_was_given() {
+        let items = strings(&[
+            "Doe, Jane",
+            "[[A, B]]",
+            "say \"hi\"",
+            " pad ",
+            "plain",
+            "a [b",
+            "[[Page]]",
+            "last",
+        ]);
+        assert_eq!(property_list_items(&write_property_list(&items)), items);
     }
 }

@@ -3,6 +3,9 @@
 //! under the key, the Trash's included, and keeping the ones the new type
 //! does not take as they are, after the user has seen which (#6206).
 //!
+//! A change may also turn the key into one that holds a list, or back
+//! (#6741): [`convert`] is the one rule for what each held value becomes.
+//!
 //! Preview, list and write read the values from the `block_properties` rows.
 //! A value only the space's doc holds (a ref whose block is gone) is left
 //! there, and its projection follows the new type.
@@ -22,8 +25,8 @@ use agaric_core::ulid::BlockId;
 use agaric_engine::loro::coerce::coerce;
 use agaric_engine::loro::engine::PropertyValue;
 use agaric_store::op::{
-    OpPayload, PropertyDefState, PropertyDefWrite, PropertyValueFields, PropertyValueWrite,
-    RewritePropertiesPayload, RewriteReason,
+    OpPayload, PropertyDefState, PropertyDefWrite, PropertyList, PropertyListItem,
+    PropertyValueFields, PropertyValueWrite, RewritePropertiesPayload, RewriteReason,
 };
 use agaric_store::pagination::{Cursor, PageRequest, PageResponse, build_page_response};
 use agaric_store::space::SpaceId;
@@ -32,7 +35,7 @@ use super::properties::{
     append_and_apply, refuse_builtin_definition_write, user_property_def,
     validate_property_def_shape, validate_property_def_state,
 };
-use super::property_keys::{declared_def, refuse_internal_key, value_fields};
+use super::property_keys::{declared_def, refuse_internal_key, shown_value, value_fields};
 use super::{PropertyDefinition, WithOps, capture_op_refs, sanitize_internal_error};
 
 /// What changing a key's type does to a space's values, the Trash's included:
@@ -70,33 +73,127 @@ pub struct PropertyTypeChangeValue {
     pub converted: Option<String>,
 }
 
-/// The type a change takes `key` to: `value_type`, and for a select its
-/// `options` (a JSON array).
+/// Where a type change splits one text into a list's items, and what it
+/// joins a list's items with into one text (#6741).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ListSeparator {
+    Comma,
+    Semicolon,
+}
+
+impl ListSeparator {
+    fn char(self) -> char {
+        match self {
+            Self::Comma => ',',
+            Self::Semicolon => ';',
+        }
+    }
+
+    fn joiner(self) -> &'static str {
+        match self {
+            Self::Comma => ", ",
+            Self::Semicolon => "; ",
+        }
+    }
+}
+
+/// The type a change takes `key` to: `value_type`, for a select its
+/// `options` (a JSON array), and whether the key holds a list (`multiple`;
+/// `None` keeps what it holds now). `separator` splits a text into a list's
+/// items, or joins a list into one text; `None` does neither.
 #[derive(Debug, Clone)]
 pub struct PropertyTypeTarget {
     pub key: String,
     pub value_type: String,
     pub options: Option<String>,
+    pub multiple: Option<bool>,
+    pub separator: Option<ListSeparator>,
 }
 
 /// A held value: the block, the value, and what it becomes under the new type
 /// (`None`: it does not fit).
 type Conversion = (String, PropertyValue, Option<PropertyValue>);
 
-/// `value` under a definition of `value_type` with `options` (a select's,
-/// parsed): what [`coerce`] makes of it, and under a select only one of the
-/// options.
-fn convert(
-    value: &PropertyValue,
-    value_type: &str,
-    options: Option<&[String]>,
-) -> Option<PropertyValue> {
-    let fit = coerce(value, value_type)?;
-    let listed = match (&fit, options) {
-        (PropertyValue::Str(s), Some(options)) => options.contains(s),
-        _ => true,
-    };
-    listed.then_some(fit)
+/// The definition a change leaves, with its select options parsed, and the
+/// separator the change splits or joins with.
+struct ConversionRule<'a> {
+    to: &'a PropertyDefState,
+    options: Option<Vec<String>>,
+    separator: Option<ListSeparator>,
+}
+
+impl ConversionRule<'_> {
+    /// One value under the new type: what [`coerce`] makes of it, and under a
+    /// select only one of the options.
+    fn item(&self, value: &PropertyValue) -> Option<PropertyValue> {
+        let fit = coerce(value, &self.to.value_type)?;
+        let listed = match (&fit, &self.options) {
+            (PropertyValue::Str(s), Some(options)) => options.contains(s),
+            _ => true,
+        };
+        listed.then_some(fit)
+    }
+
+    /// `items` as the list the new definition holds: every one converted, and
+    /// at least one, or nothing.
+    fn list(&self, items: &[PropertyValue]) -> Option<PropertyValue> {
+        let converted = items
+            .iter()
+            .map(|item| match self.item(item)? {
+                PropertyValue::Str(s) => Some(PropertyListItem::Text(s)),
+                PropertyValue::Num(n) => Some(PropertyListItem::Num(n)),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        (!converted.is_empty()).then_some(PropertyValue::List(PropertyList(converted)))
+    }
+
+    /// What a held `value` becomes under the new definition, or `None` when it
+    /// does not fit (#6741): a single value becomes a list of one item, or of
+    /// the parts its text splits into at the separator; a list of one item
+    /// becomes that item, and a longer one only a text or URL, joined by the
+    /// separator.
+    fn convert(&self, value: &PropertyValue) -> Option<PropertyValue> {
+        match (value, self.to.multiple) {
+            (PropertyValue::List(list), true) => {
+                self.list(&list.0.iter().map(item_value).collect::<Vec<_>>())
+            }
+            (PropertyValue::List(list), false) => match (list.0.as_slice(), self.separator) {
+                ([only], _) => self.item(&item_value(only)),
+                (items, Some(separator))
+                    if matches!(self.to.value_type.as_str(), "text" | "url") =>
+                {
+                    let texts: Vec<String> = items.iter().map(item_text).collect();
+                    Some(PropertyValue::Str(texts.join(separator.joiner())))
+                }
+                _ => None,
+            },
+            (PropertyValue::Str(text), true) if self.separator.is_some() => {
+                let separator = self.separator.map(ListSeparator::char)?;
+                let parts = text.split(separator).map(str::trim);
+                self.list(
+                    &parts
+                        .filter(|part| !part.is_empty())
+                        .map(|part| PropertyValue::Str(part.to_owned()))
+                        .collect::<Vec<_>>(),
+                )
+            }
+            (single, true) => self.list(std::slice::from_ref(single)),
+            (single, false) => self.item(single),
+        }
+    }
+}
+
+fn item_value(item: &PropertyListItem) -> PropertyValue {
+    match item {
+        PropertyListItem::Text(s) => PropertyValue::Str(s.clone()),
+        PropertyListItem::Num(n) => PropertyValue::Num(*n),
+    }
+}
+
+fn item_text(item: &PropertyListItem) -> String {
+    item_value(item).as_legacy_string().unwrap_or_default()
 }
 
 /// A definition's options, parsed.
@@ -106,8 +203,9 @@ fn parse_options(options: Option<&str>) -> Result<Option<Vec<String>>, AppError>
 
 /// `space_id`'s definition of `target.key` and the one the change leaves,
 /// refused in this order: a built-in key, one of the app's own, a malformed
-/// target, an undeclared key, and a change to the type the key already has (a
-/// select's options change through `update_property_def_options`).
+/// target, an undeclared key, and a change that changes neither the type nor
+/// whether the key holds a list (a select's options change through
+/// `update_property_def_options`).
 async fn type_change_defs(
     conn: &mut SqliteConnection,
     space_id: &str,
@@ -118,7 +216,8 @@ async fn type_change_defs(
     refuse_internal_key(key)?;
     validate_property_def_shape(key, &target.value_type, target.options.as_deref())?;
     let from = declared_def(conn, space_id, key).await?;
-    if from.value_type == target.value_type {
+    let multiple = target.multiple.unwrap_or(from.multiple);
+    if from.value_type == target.value_type && from.multiple == multiple {
         return Err(AppError::validation(format!(
             "'{key}' is already a {} property",
             from.value_type
@@ -127,28 +226,34 @@ async fn type_change_defs(
     let to = PropertyDefState {
         value_type: target.value_type.clone(),
         options: target.options.clone(),
-        multiple: from.multiple,
+        multiple,
     };
     validate_property_def_state(key, &to)?;
     Ok((from, to))
 }
 
 /// The values `space_id`'s blocks hold under `key`, the Trash's included, by
-/// block id from after `after`, each with what it becomes under `to`: those
-/// `keep` takes, up to the first `wanted` of them.
+/// block id from after `after`, each with what it becomes under `to`, split
+/// or joined at `separator`: those `keep` takes, up to the first `wanted` of
+/// them.
 async fn conversions(
     conn: &mut SqliteConnection,
     space_id: &str,
     key: &str,
-    to: &PropertyDefState,
+    (to, separator): (&PropertyDefState, Option<ListSeparator>),
     after: Option<&str>,
     keep: impl Fn(&Conversion) -> bool,
     wanted: usize,
 ) -> Result<Vec<Conversion>, AppError> {
-    let options = parse_options(to.options.as_deref())?;
+    let rule = ConversionRule {
+        to,
+        options: parse_options(to.options.as_deref())?,
+        separator,
+    };
     let mut rows = sqlx::query!(
         r#"SELECT bp.block_id AS "block_id!: String", bp.value_text, bp.value_num,
-                  bp.value_date, bp.value_ref, bp.value_bool
+                  bp.value_date, bp.value_ref, bp.value_bool,
+                  bp.value_list AS "value_list: PropertyList"
            FROM block_properties bp JOIN blocks b ON b.id = bp.block_id
            WHERE bp.key = ?2 AND (+b.space_id = ?1 OR +b.id = ?1)
              AND (?3 IS NULL OR bp.block_id > ?3)
@@ -168,9 +273,9 @@ async fn conversions(
             value_date: row.value_date,
             value_ref: row.value_ref.map(BlockId::from),
             value_bool: row.value_bool.map(|b| b != 0),
-            value_list: None,
+            value_list: row.value_list,
         });
-        let converted = convert(&value, &to.value_type, options.as_deref());
+        let converted = rule.convert(&value);
         let conversion = (row.block_id, value, converted);
         if keep(&conversion) {
             kept.push(conversion);
@@ -204,7 +309,7 @@ pub async fn preview_property_type_change_inner(
             &mut conn,
             space_id,
             &target.key,
-            &to,
+            (&to, target.separator),
             None,
             |_| true,
             usize::MAX,
@@ -242,8 +347,8 @@ async fn with_holders(
                 page_title: holder.page_title,
                 content: holder.content,
                 deleted: holder.deleted,
-                value: value.as_legacy_string().unwrap_or_default(),
-                converted: converted.and_then(|w| w.as_legacy_string()),
+                value: shown_value(&value),
+                converted: converted.as_ref().map(shown_value),
             })
         })
         .collect())
@@ -279,7 +384,7 @@ pub async fn list_property_type_change_values_inner(
         &mut conn,
         space_id,
         &target.key,
-        &to,
+        (&to, target.separator),
         after,
         of_kind,
         wanted,
@@ -314,8 +419,8 @@ fn type_change_writes(key: &str, conversions: Vec<Conversion>) -> Vec<PropertyVa
 /// in one `RewriteProperties` op: the definition, and every value the
 /// space's blocks hold under the key, the Trash's included, converted to the
 /// new type, or, when it does not take it, kept as it is (#6206). A select
-/// takes only values among its options. Returns the definition after the
-/// change.
+/// takes only values among its options. With `target.multiple` the key starts
+/// or stops holding a list (#6741). Returns the definition after the change.
 ///
 /// `acknowledged` is what [`preview_property_type_change_inner`] answered;
 /// the change counts again in its transaction and refuses when the answer
@@ -326,7 +431,8 @@ fn type_change_writes(key: &str, conversions: Vec<Conversion>) -> Vec<PropertyVa
 /// - [`AppError::Validation`] coded [`ValidationCode::BuiltinPropertyLocked`]
 ///   when the key is built in.
 /// - [`AppError::Validation`] when the key is the app's own, the target type
-///   or its options are malformed, or the key already has the type.
+///   or its options are malformed, a boolean would hold a list, or the change
+///   changes neither the type nor whether the key holds a list.
 /// - [`AppError::NotFound`] when the space does not declare the key.
 /// - [`AppError::Validation`] coded [`ValidationCode::UnacknowledgedPropertyLoss`]
 ///   when the counts differ from `acknowledged`.
@@ -343,7 +449,8 @@ pub async fn change_property_type_inner(
     tx.arm_engine_rollback(materializer.loro_state());
     let key = target.key.as_str();
     let (from, to) = type_change_defs(&mut tx, space_id, &target).await?;
-    let held = conversions(&mut tx, space_id, key, &to, None, |_| true, usize::MAX).await?;
+    let rule = (&to, target.separator);
+    let held = conversions(&mut tx, space_id, key, rule, None, |_| true, usize::MAX).await?;
     let counts = counts_of(&held);
     if counts != acknowledged {
         return Err(AppError::validation_coded(
@@ -383,12 +490,16 @@ pub async fn preview_property_type_change(
     key: String,
     value_type: String,
     options: Option<String>,
+    multiple: Option<bool>,
+    separator: Option<ListSeparator>,
 ) -> Result<PropertyTypeChangeCounts, AppError> {
     space_id.validate_shape()?;
     let target = PropertyTypeTarget {
         key,
         value_type,
         options,
+        multiple,
+        separator,
     };
     preview_property_type_change_inner(&read_pool.0, space_id.as_str(), target)
         .await
@@ -409,6 +520,8 @@ pub async fn list_property_type_change_values(
     key: String,
     value_type: String,
     options: Option<String>,
+    multiple: Option<bool>,
+    separator: Option<ListSeparator>,
     kind: PropertyTypeChangeKind,
     cursor: Option<String>,
     limit: Option<i64>,
@@ -418,6 +531,8 @@ pub async fn list_property_type_change_values(
         key,
         value_type,
         options,
+        multiple,
+        separator,
     };
     list_property_type_change_values_inner(
         &read_pool.0,
@@ -435,12 +550,18 @@ pub async fn list_property_type_change_values(
 /// [`change_property_type_inner`]; the response carries the op ref.
 #[tauri::command]
 #[specta::specta]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the IPC's arguments are positional; its inner takes them as one target"
+)]
 pub async fn change_property_type(
     ctx: State<'_, WriteCtx>,
     space_id: SpaceId,
     key: String,
     value_type: String,
     options: Option<String>,
+    multiple: Option<bool>,
+    separator: Option<ListSeparator>,
     acknowledged: PropertyTypeChangeCounts,
 ) -> Result<WithOps<PropertyDefinition>, AppError> {
     space_id.validate_shape()?;
@@ -448,6 +569,8 @@ pub async fn change_property_type(
         key,
         value_type,
         options,
+        multiple,
+        separator,
     };
     capture_op_refs(change_property_type_inner(
         ctx.pool(),

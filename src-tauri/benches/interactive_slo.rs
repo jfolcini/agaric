@@ -3736,6 +3736,8 @@ fn bench_preview_property_type_change(c: &mut Criterion) {
             key: KEY.into(),
             value_type: "number".into(),
             options: None,
+            multiple: None,
+            separator: None,
         };
         preview_property_type_change_inner(&pool, SLO_SPACE_ID, target)
     };

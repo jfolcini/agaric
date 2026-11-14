@@ -191,10 +191,10 @@ pub use property_keys::{
 };
 pub use property_options::{rename_property_option, rename_property_option_inner};
 pub use property_types::{
-    PropertyTypeChangeCounts, PropertyTypeChangeKind, PropertyTypeChangeValue, PropertyTypeTarget,
-    change_property_type, change_property_type_inner, list_property_type_change_values,
-    list_property_type_change_values_inner, preview_property_type_change,
-    preview_property_type_change_inner,
+    ListSeparator, PropertyTypeChangeCounts, PropertyTypeChangeKind, PropertyTypeChangeValue,
+    PropertyTypeTarget, change_property_type, change_property_type_inner,
+    list_property_type_change_values, list_property_type_change_values_inner,
+    preview_property_type_change, preview_property_type_change_inner,
 };
 pub use property_unfit::{
     DistinctUnfitValue, PropertyUnfitCounts, PropertyValueForm, UnfitMoveCounts,

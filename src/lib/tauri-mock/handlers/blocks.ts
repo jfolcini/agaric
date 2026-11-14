@@ -57,6 +57,7 @@ import {
   pageNameRefusal,
   rejectTakenPageNames,
 } from '@/lib/tauri-mock/page-names'
+import { listField } from '@/lib/tauri-mock/property-keys'
 import {
   allOrNothing,
   attachmentBytes,
@@ -906,6 +907,7 @@ interface BatchTypedValue {
   value_date?: string | null
   value_ref?: string | null
   value_bool?: boolean | null
+  value_list?: Array<string | number> | null
 }
 
 /**
@@ -932,7 +934,7 @@ function assertBatchSpec(spec: Record<string, unknown>, i: number): void {
   const typed = (spec['typedProperties'] as Record<string, BatchTypedValue> | undefined) ?? {}
   for (const value of Object.values(typed)) {
     const fields = [value.value_text, value.value_num, value.value_date, value.value_ref]
-    const count = [...fields, value.value_bool].filter((v) => v != null).length
+    const count = [...fields, value.value_bool, value.value_list].filter((v) => v != null).length
     if (count !== 1) {
       throw validationRejection(
         `SetProperty must have exactly 1 non-null value field, found ${count}`,
@@ -968,6 +970,7 @@ function writeBatchTypedProperties(
       value_date: value.value_date ?? null,
       value_ref: value.value_ref ?? null,
       value_bool: value.value_bool == null ? null : value.value_bool ? 1 : 0,
+      ...listField({ value_list: value.value_list ?? null }),
     }
     if (!properties.has(id)) properties.set(id, new Map())
     properties.get(id)?.set(key, { block_id: id, key, ...fields })

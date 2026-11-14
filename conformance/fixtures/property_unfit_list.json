@@ -1,0 +1,659 @@
+{
+  "description": "#6741 — the don't-fit rules for a key that holds a list. `stages` (a multi-select of draft and review) loses `review`: `Y`'s [draft, review] no longer fits, `X`'s [draft] does. `phases` (a multi-select) loses `b`, and `add_unfit_values_to_options` adds back the item of the list that lacks it. `people` (text) becomes a list split at commas; `Z`'s \" , \" has no part and stays a single text, which a key that holds a list doesn't take, and a replacement's text is read as a list (`property_list_items`). `scores` stops holding a list of numbers: `X`'s [1, 2] doesn't fit, moves to `mark` (one number) as nothing and to `marks` (a list of text) as text items. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 17,
+      "ops": [
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "stages",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stages",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "phases",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "people",
+          "op_type": "set_property"
+        },
+        {
+          "key": "people",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "scores",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "rewrite_properties"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "marks",
+        "value": ["1", "2"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B2",
+        "key": "people",
+        "value": ["Ann"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B2",
+        "key": "phases",
+        "value": ["a", "b"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B2",
+        "key": "stages",
+        "value": ["draft"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B3",
+        "key": "stages",
+        "value": ["draft", "review"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B4",
+        "key": "people",
+        "value": ["Ann", "Doe, Jane"],
+        "value_type": "List"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_stages",
+      "returns": [
+        "stages#value_type=select#options=[\"draft\",\"review\"]#builtin=false#multiple=true"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "stages_loses_review",
+      "returns": ["stages#value_type=select#options=[\"draft\"]#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_phases",
+      "returns": ["phases#value_type=select#options=[\"a\",\"b\"]#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "phases_loses_b",
+      "returns": ["phases#value_type=select#options=[\"a\"]#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "add_b_to_phases",
+      "returns": ["phases#value_type=select#options=[\"a\",\"b\"]#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "people_becomes_a_list",
+      "returns": ["people#value_type=text#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_replacement_with_no_item_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "convert_into_a_list",
+      "returns": ["convert_unfit_property_values#unfit=1#unfit_in_trash=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_scores",
+      "returns": ["scores#value_type=number#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "scores_holds_one_value",
+      "returns": ["scores#value_type=number#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_marks",
+      "returns": ["marks#value_type=text#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "move_the_list_into_a_list_key",
+      "returns": ["move_unfit_property_values#moved=1#occupied=0#unfit_there=0"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "usage_per_key",
+      "rows": [
+        "completed_at#count=0#unfit=0#unfit_in_trash=0",
+        "created_at#count=0#unfit=0#unfit_in_trash=0",
+        "due_date#count=0#unfit=0#unfit_in_trash=0",
+        "listStyle#count=0#unfit=0#unfit_in_trash=0",
+        "mark#count=0#unfit=0#unfit_in_trash=0",
+        "marks#count=1#unfit=0#unfit_in_trash=0",
+        "meeting_date#count=0#unfit=0#unfit_in_trash=0",
+        "people#count=2#unfit=0#unfit_in_trash=0",
+        "phases#count=1#unfit=0#unfit_in_trash=0",
+        "priority#count=0#unfit=0#unfit_in_trash=0",
+        "repeat#count=0#unfit=0#unfit_in_trash=0",
+        "repeat-count#count=0#unfit=0#unfit_in_trash=0",
+        "repeat-origin#count=0#unfit=0#unfit_in_trash=0",
+        "repeat-seq#count=0#unfit=0#unfit_in_trash=0",
+        "repeat-until#count=0#unfit=0#unfit_in_trash=0",
+        "scheduled_date#count=0#unfit=0#unfit_in_trash=0",
+        "scores#count=0#unfit=0#unfit_in_trash=0",
+        "stages#count=2#unfit=1#unfit_in_trash=0",
+        "todo_state#count=0#unfit=0#unfit_in_trash=0"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "stages_unfit",
+      "rows": ["B3#page_id=B1#deleted=false#value=draft, review#form=list"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "stages_distinct",
+      "rows": ["draft, review#unfit=1#unfit_in_trash=0"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "phases_after",
+      "rows": ["phases#value_type=select#options=[\"a\",\"b\"]#builtin=false#multiple=true"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "a_list_does_not_move_to_a_single_key",
+      "rows": ["unfit_move_counts#moved=0#occupied=0#unfit_there=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "people_unfit",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "property_unfit_list",
+  "ops": [
+    {
+      "args": {
+        "key": "stages",
+        "multiple": true,
+        "options": "[\"draft\",\"review\"]",
+        "spaceId": "$SPACE",
+        "valueType": "select"
+      },
+      "command": "create_property_def",
+      "comment": "O1.",
+      "name": "declare_stages",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "stages",
+        "value": {
+          "value_list": ["draft"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O2"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "stages",
+        "value": {
+          "value_list": ["draft", "review"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O3"
+    },
+    {
+      "args": {
+        "key": "stages",
+        "options": "[\"draft\"]",
+        "spaceId": "$SPACE"
+      },
+      "command": "update_property_def_options",
+      "comment": "O4 — `Y`'s list holds an item no longer an option.",
+      "name": "stages_loses_review",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "phases",
+        "multiple": true,
+        "options": "[\"a\",\"b\"]",
+        "spaceId": "$SPACE",
+        "valueType": "select"
+      },
+      "command": "create_property_def",
+      "comment": "O5.",
+      "name": "declare_phases",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "phases",
+        "value": {
+          "value_list": ["a", "b"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O6"
+    },
+    {
+      "args": {
+        "key": "phases",
+        "options": "[\"a\"]",
+        "spaceId": "$SPACE"
+      },
+      "command": "update_property_def_options",
+      "comment": "O7.",
+      "name": "phases_loses_b",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "phases",
+        "spaceId": "$SPACE"
+      },
+      "command": "add_unfit_values_to_options",
+      "comment": "O8 — `b`, the item `X`'s list holds outside the options.",
+      "name": "add_b_to_phases",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "people",
+        "value": {
+          "value_text": "Ann"
+        }
+      },
+      "command": "set_property",
+      "comment": "O9"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "people",
+        "value": {
+          "value_text": " , "
+        }
+      },
+      "command": "set_property",
+      "comment": "O10"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 1,
+          "unfit": 1
+        },
+        "key": "people",
+        "multiple": true,
+        "options": null,
+        "separator": "comma",
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "change_property_type",
+      "comment": "O11 — `Z`'s text has no part: kept as a single text, which doesn't fit.",
+      "name": "people_becomes_a_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "people",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 1,
+              "unfit_in_trash": 0
+            },
+            "replacement": " , ",
+            "value": " , "
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "The text reads as no item.",
+      "expect_error": "validation",
+      "name": "a_replacement_with_no_item_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "people",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 1,
+              "unfit_in_trash": 0
+            },
+            "replacement": "Ann, \"Doe, Jane\"",
+            "value": " , "
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "O12 — the replacement's text read as a list: Ann and Doe, Jane.",
+      "name": "convert_into_a_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "scores",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "create_property_def",
+      "comment": "O13.",
+      "name": "declare_scores",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "scores",
+        "value": {
+          "value_list": [1, 2]
+        }
+      },
+      "command": "set_property",
+      "comment": "O14"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 0,
+          "unfit": 1
+        },
+        "key": "scores",
+        "multiple": false,
+        "options": null,
+        "separator": null,
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "change_property_type",
+      "comment": "O15 — `X`'s two items don't make one number.",
+      "name": "scores_holds_one_value",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "marks",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "create_property_def",
+      "comment": "O16.",
+      "name": "declare_marks",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "moved": 1,
+          "occupied": 0,
+          "unfit_there": 0
+        },
+        "intoKey": "marks",
+        "key": "scores",
+        "spaceId": "$SPACE"
+      },
+      "command": "move_unfit_property_values",
+      "comment": "O17 — each item read as text under `marks`.",
+      "name": "move_the_list_into_a_list_key",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "spaceId": "$SPACE"
+      },
+      "command": "count_property_usage",
+      "comment": "`stages` 1 unfit; `people`, `phases`, `scores` and `marks` none.",
+      "name": "usage_per_key"
+    },
+    {
+      "args": {
+        "key": "stages",
+        "limit": 50,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_unfit_property_values",
+      "comment": "`Y`'s list, as its line of text, form list.",
+      "name": "stages_unfit"
+    },
+    {
+      "args": {
+        "key": "stages",
+        "limit": 50,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_distinct_unfit_property_values",
+      "comment": "The same list, once.",
+      "name": "stages_distinct"
+    },
+    {
+      "args": {
+        "key": "phases",
+        "spaceId": "$SPACE"
+      },
+      "command": "get_property_def",
+      "comment": "`b` is an option again.",
+      "name": "phases_after"
+    },
+    {
+      "args": {
+        "intoKey": "mark",
+        "key": "stages",
+        "spaceId": "$SPACE"
+      },
+      "command": "preview_unfit_property_move",
+      "comment": "A list does not fit a key that holds one value.",
+      "name": "a_list_does_not_move_to_a_single_key"
+    },
+    {
+      "args": {
+        "key": "people",
+        "limit": 50,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_unfit_property_values",
+      "comment": "None: `Z` holds the converted list.",
+      "expect_empty": true,
+      "name": "people_unfit"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "people",
+        "options": null,
+        "value_type": "text"
+      },
+      {
+        "key": "mark",
+        "options": null,
+        "value_type": "number"
+      }
+    ],
+    "tags": []
+  }
+}

@@ -117,20 +117,15 @@ pub(super) async fn apply_frontmatter_properties(
                 continue;
             }
         };
-        let (value_text, value_num, value_date, value_ref, value_bool) = args;
-        let (_page_block, prop_op) = agaric_engine::block_ops::set_property_in_tx_with_declaration(
+        let (_page_block, prop_op) = Box::pin(agaric_engine::block_ops::set_property_value_in_tx(
             &mut tx,
             materializer.loro_state(),
             device_id,
             page_id.clone(),
             &key,
-            value_text,
-            value_num,
-            value_date,
-            value_ref,
-            value_bool,
+            args,
             declaration,
-        )
+        ))
         .await?;
         counters.properties_set += 1;
         tx.enqueue_background(prop_op);

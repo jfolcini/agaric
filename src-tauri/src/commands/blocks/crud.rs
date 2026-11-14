@@ -1,8 +1,8 @@
 use crate::db::{CommandTx, WriteCtx};
 use agaric_core::error::ValidationCode;
 use agaric_store::op::{
-    DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, PurgeBlockPayload,
-    RestoreBlockPayload, SPACE_PROPERTY_KEY,
+    DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, PropertyValueFields,
+    PurgeBlockPayload, RestoreBlockPayload, SPACE_PROPERTY_KEY,
 };
 use std::sync::Arc;
 
@@ -13,7 +13,7 @@ use super::super::*;
 // `agaric_engine::block_ops` layer. The `*_inner` wrappers below (which own
 // the transaction + post-commit dispatch) stay here and call into domain.
 use agaric_engine::apply::loro_apply::engine_block_content;
-use agaric_engine::block_ops::{create_block_in_tx, set_property_in_tx};
+use agaric_engine::block_ops::{create_block_in_tx, set_property_in_tx, set_property_value_in_tx};
 use agaric_store::space::{SpaceId, SpaceScope};
 
 /// What an edit of `block_id` records about the text it overwrites, read on
@@ -3459,7 +3459,7 @@ pub struct CreateBlockSpec {
     /// `import_markdown_inner` for parsed markdown property lines.
     #[serde(default)]
     pub properties: std::collections::HashMap<String, String>,
-    /// Properties held as a number, date, ref or boolean, each written as
+    /// Properties held as a number, date, ref, boolean or list, each written as
     /// `set_property` writes it, inside the same transaction.
     #[serde(default)]
     pub typed_properties: std::collections::HashMap<String, SetPropertyArgs>,
@@ -3598,32 +3598,47 @@ async fn create_spec_in_tx(
     // A flat value is typed by its key: the reserved date keys need the
     // `value_date` shape, not `value_text`, to validate (#623).
     let text = spec.properties.into_iter().map(|(key, value)| {
-        let typed = agaric_engine::block_ops::typed_property_args_for_string_value(&key, value);
-        (key, typed)
-    });
-    let typed = spec.typed_properties.into_iter().map(|(key, v)| {
-        let args = (
-            v.value_text,
-            v.value_num,
-            v.value_date,
-            v.value_ref,
-            v.value_bool,
-        );
-        (key, args)
-    });
-    for (key, (value_text, value_num, value_date, value_ref, value_bool)) in text.chain(typed) {
-        let (_block, prop_op) = set_property_in_tx(
-            tx,
-            materializer.loro_state(),
-            device_id,
-            block.id.clone().into_string(),
-            &key,
+        let (value_text, value_num, value_date, value_ref, value_bool) =
+            agaric_engine::block_ops::typed_property_args_for_string_value(&key, value);
+        let value = PropertyValueFields {
             value_text,
             value_num,
             value_date,
-            value_ref,
+            value_ref: value_ref.map(BlockId::from),
             value_bool,
-        )
+            value_list: None,
+        };
+        (key, value)
+    });
+    // A template's list block keeps its list (#6741).
+    let typed = spec.typed_properties.into_iter().map(|(key, v)| {
+        let value = PropertyValueFields {
+            value_text: v.value_text,
+            value_num: v.value_num,
+            value_date: v.value_date,
+            value_ref: v.value_ref.map(BlockId::from),
+            value_bool: v.value_bool,
+            value_list: v.value_list,
+        };
+        (key, value)
+    });
+    for (key, value) in text.chain(typed) {
+        let block_id = block.id.clone().into_string();
+        // A clear write needs no declaration, as `set_property_in_tx` skips it.
+        let declaration = if value == PropertyValueFields::default() {
+            None
+        } else {
+            agaric_engine::block_ops::block_property_declaration(tx, &block_id, &key).await?
+        };
+        let (_block, prop_op) = Box::pin(set_property_value_in_tx(
+            tx,
+            materializer.loro_state(),
+            device_id,
+            block_id,
+            &key,
+            value,
+            declaration,
+        ))
         .await?;
         tx.enqueue_background(prop_op);
     }

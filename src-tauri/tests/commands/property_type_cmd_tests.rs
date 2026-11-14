@@ -151,6 +151,8 @@ fn target(key: &str, ty: &str, opts: Option<&str>) -> PropertyTypeTarget {
         key: key.into(),
         value_type: ty.into(),
         options: opts.map(str::to_owned),
+        multiple: None,
+        separator: None,
     }
 }
 

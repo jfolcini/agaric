@@ -860,17 +860,25 @@ pub fn check_property_value(
     declaration: Option<&PropertyDeclaration>,
 ) -> Result<(), AppError> {
     let (value_text, value_num, value_date, value_ref, value_bool) = args.clone();
-    let payload = SetPropertyPayload {
-        block_id: BlockId::from_trusted(""),
-        key: key.to_owned(),
+    let value = PropertyValueFields {
         value_text,
         value_num,
         value_date,
         value_ref: value_ref.map(BlockId::from),
         value_bool,
         value_list: None,
-        prior: None,
     };
+    check_property_fields(key, value, declaration)
+}
+
+/// [`check_property_value`] for a value in any of its six slots, a list among
+/// them (#6741).
+pub fn check_property_fields(
+    key: &str,
+    value: PropertyValueFields,
+    declaration: Option<&PropertyDeclaration>,
+) -> Result<(), AppError> {
+    let payload = SetPropertyPayload::with_value(BlockId::from_trusted(""), key.to_owned(), value);
     validate_property_value(&payload, declaration)
 }
 

@@ -15,7 +15,7 @@ import type { AppError, PropertyMergeCounts } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
-import { coerce, type HeldValue } from '@/lib/tauri-mock/coerce'
+import { coerce, type Held, isList } from '@/lib/tauri-mock/coerce'
 import {
   blocks,
   type MockOpLogEntry,
@@ -461,7 +461,8 @@ export function mergePropertyKey(
 }
 
 /** The value `fields` holds as the engine holds it, or null for none (an engine Null). */
-export function heldValueOf(fields: Row): HeldValue | null {
+export function heldValueOf(fields: Row): Held | null {
+  if (Array.isArray(fields['value_list'])) return fields['value_list'] as Held
   const str = fields['value_text'] ?? fields['value_date'] ?? fields['value_ref']
   if (str != null) return str as string
   if (fields['value_num'] != null) return fields['value_num'] as number
@@ -484,10 +485,12 @@ function strColumnFor(valueType: unknown): string {
  * under `valueType`. A string is read as the type reads it (`coerce`) and
  * takes the type's slot; under no type, or text, it is `value_text`, the
  * engine's own kind of it, as a rewrite's payload records it; and one the type
- * does not take stays in `value_text` (#6206).
+ * does not take stays in `value_text` (#6206). A list is `value_list` under
+ * any type (#6741).
  */
-export function fieldsUnder(value: HeldValue, valueType: unknown): ValueFields {
+export function fieldsUnder(value: Held, valueType: unknown): ValueFields {
   const fields: ValueFields = Object.fromEntries(VALUE_SLOTS.map((slot) => [slot, null]))
+  if (isList(value)) return { ...fields, value_list: [...value] }
   const fit =
     typeof value === 'string' && typeof valueType === 'string' ? coerce(value, valueType) : value
   if (fit === null) {

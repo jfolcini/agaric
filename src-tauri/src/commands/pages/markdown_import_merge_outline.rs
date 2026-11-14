@@ -172,6 +172,8 @@ fn text_row(key: &str, value: &str) -> FrontmatterRow {
         value_num: None,
         value_ref: None,
         value_bool: None,
+        value_list: None,
+        list_of_refs: false,
     }
 }
 

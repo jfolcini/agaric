@@ -539,6 +539,8 @@ pub fn summarise_set_property(args: &Value, _result: &Value) -> String {
     } else if let Some(b) = args.get("value_bool").and_then(Value::as_bool) {
         // #697 — booleans are included by the field-filtering contract.
         Some(format!("={b}"))
+    } else if let Some(items) = args.get("value_list").and_then(Value::as_array) {
+        Some(format!("={}", list_summary(items)))
     } else {
         // `value_text` is content (never embedded); `value_ref` (when
         // present) is a ULID we surface as an 8-char prefix.
@@ -566,6 +568,27 @@ pub fn summarise_set_property(args: &Value, _result: &Value) -> String {
                 format!("set_property —{target}")
             }
         }
+    }
+}
+
+/// A list value's items, each as a single value of its kind is shown: a
+/// number, an ISO date, a block id's prefix. A list holding any other text,
+/// which is content, shows how many items it has.
+fn list_summary(items: &[Value]) -> String {
+    let shown: Option<Vec<String>> = items
+        .iter()
+        .map(|item| match item {
+            Value::Number(n) => Some(n.to_string()),
+            Value::String(s) if agaric_core::date_validation::is_valid_iso_date(s) => {
+                Some(s.clone())
+            }
+            Value::String(s) => BlockId::from_string(s).ok().map(|_| ulid_prefix(s)),
+            _ => None,
+        })
+        .collect();
+    match shown {
+        Some(shown) => format!("[{}]", shown.join(", ")),
+        None => format!("[{} items]", items.len()),
     }
 }
 
@@ -858,6 +881,30 @@ mod tests {
     // -----------------------------------------------------------------
     // ulid_prefix helper
     // -----------------------------------------------------------------
+
+    /// #6741 — a list's numbers, dates and block ids are shown as a single
+    /// one is; a list holding any other text shows only how many items.
+    #[test]
+    fn summarise_set_property_shows_a_lists_structural_items_only_6741() {
+        const TARGET: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let summary = |items: Value| {
+            let args = json!({ "block_id": ULID_A, "key": "k", "value_list": items });
+            summarise_set_property(&args, &json!({ "id": ULID_A }))
+        };
+        let on = format!(" on {}", &ULID_A[..ULID_PREFIX_LEN]);
+        assert_eq!(
+            summary(json!([2.5, 4])),
+            format!("set_property — set k=[2.5, 4]{on}")
+        );
+        assert_eq!(
+            summary(json!(["2026-01-05", TARGET])),
+            format!("set_property — set k=[2026-01-05, 01ARZ3ND]{on}")
+        );
+        assert_eq!(
+            summary(json!([TARGET, "SECRET_TEXT_VALUE"])),
+            format!("set_property — set k=[2 items]{on}")
+        );
+    }
 
     #[test]
     fn ulid_prefix_truncates_to_eight_chars() {
