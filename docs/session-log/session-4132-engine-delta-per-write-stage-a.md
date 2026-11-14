@@ -1,4 +1,4 @@
-# Session 4127 — a `loro_doc_delta` row for every engine write (#6521, stage A)
+# Session 4132 — a `loro_doc_delta` row for every engine write (#6521, stage A)
 
 `Refs #6521`. Stage A of option (2) from the spike (session 4096): every write to a space's Loro engine saves, in a transaction, the update it added, in the one table the maintainer approved. Boot is unchanged apart from one delete, nothing reads the rows in production, and a test oracle rebuilds every engine from its saved rows.
 
