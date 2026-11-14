@@ -9039,3 +9039,30 @@ async fn tag_any_of_needs_one_tag_of_every_group_6760() {
         ["ON-SITE", "ON-WEB"],
     );
 }
+
+/// #6752 beside #6760: a short term's scan and its predicate beside a MATCH
+/// both sit behind a parent-tag group. `we` is in `projects/web` and
+/// `projects/web/site`; the group admits the site and api blocks.
+#[tokio::test]
+async fn short_term_is_narrowed_by_a_tag_group() {
+    let (pool, _dir) = test_pool().await;
+    seed_nested_tags(&pool).await;
+    rebuild_fts_index(&pool).await.unwrap();
+    let site_or_api = || MetadataPredicates {
+        tag_any_of: vec![vec![NEST_SITE.to_owned(), NEST_API.to_owned()]],
+        ..MetadataPredicates::default()
+    };
+
+    assert_eq!(
+        nested_tag_search_for(&pool, "we", &[], site_or_api()).await,
+        ["ON-SITE"],
+    );
+    assert_eq!(
+        nested_tag_search_for(&pool, "projects we", &[], site_or_api()).await,
+        ["ON-SITE"],
+    );
+    assert_eq!(
+        nested_tag_search_for(&pool, "projects", &[], site_or_api()).await,
+        ["ON-API", "ON-SITE"],
+    );
+}
