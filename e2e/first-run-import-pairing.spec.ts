@@ -41,6 +41,25 @@ test.describe('first run on a desktop @boot @settings @sync @markdown', () => {
     ).toBeVisible()
   })
 
+  test('waitForBoot sees the shell under a welcome that opened before the page loaded', async ({
+    page,
+  }) => {
+    // `goto` returns at the load event; this image holds it until the welcome is up.
+    await page.route('**/slow-load.png', async (route) => {
+      await expect(page.getByRole('dialog', { name: 'Welcome to Agaric' })).toBeVisible()
+      await route.fulfill({ status: 204 })
+    })
+    await page.addInitScript(() => {
+      document.addEventListener('DOMContentLoaded', () => {
+        const img = document.createElement('img')
+        img.src = '/slow-load.png'
+        document.body.append(img)
+      })
+    })
+
+    await waitForBoot(page)
+  })
+
   test('Pair a device closes the welcome and shows the pairing section', async ({ page }) => {
     await waitForBoot(page)
     const welcome = page.getByRole('dialog', { name: 'Welcome to Agaric' })
