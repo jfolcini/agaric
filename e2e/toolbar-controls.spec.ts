@@ -45,7 +45,7 @@ import {
   waitForBoot,
 } from './helpers'
 
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 /** Insert a 3×3 table via the toolbar grid picker and leave the cursor in it. */
 async function insertTableViaPicker(page: Page): Promise<void> {

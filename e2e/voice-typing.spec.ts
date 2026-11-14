@@ -34,9 +34,9 @@ import {
 } from './helpers'
 
 // `SEED_IDS` in src/lib/tauri-mock/seed.ts.
-const GS_1 = '0000000000000000000BLOCK01'
-const GS_3 = '0000000000000000000BLOCK03'
-const MTG_1 = '0000000000000000000BLOCK17'
+const GS_1 = '0000000000000000000B10CK01'
+const GS_3 = '0000000000000000000B10CK03'
+const MTG_1 = '0000000000000000000B10CK17'
 const GS_3_TEXT = 'Create new blocks by pressing Enter at the end of any block.'
 const QUICK_NOTES = '00000000000000000000PAGE02'
 const GETTING_STARTED = 'Getting Started'

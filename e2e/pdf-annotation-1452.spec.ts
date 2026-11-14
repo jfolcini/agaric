@@ -28,7 +28,7 @@ import {
  * Seed data (tauri-mock): BLOCK_GS_1 — first child of "Getting Started".
  */
 
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 // Minimal valid 1-page PDF with selectable text ("Hi 6.0"). Same fixture as
 // pdfjs-v6-smoke.spec.ts so we know pdf.js parses + renders it.

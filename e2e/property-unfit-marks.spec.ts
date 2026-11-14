@@ -22,8 +22,8 @@ import {
  */
 
 const MEETINGS = '00000000000000000000PAGE05'
-const MTG_1 = '0000000000000000000BLOCK17'
-const MTG_2 = '0000000000000000000BLOCK18'
+const MTG_1 = '0000000000000000000B10CK17'
+const MTG_2 = '0000000000000000000B10CK18'
 const MARK = "beta doesn't fit Project: review its values"
 
 test.beforeEach(async ({ page }) => {

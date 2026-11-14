@@ -22,7 +22,7 @@ import {
  */
 
 /** `SEED_IDS.BLOCK_GS_1` in `src/lib/tauri-mock/seed.ts`. */
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 /** A 1x1 GIF: a local image, so nothing touches the network. */
 const DOT_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'

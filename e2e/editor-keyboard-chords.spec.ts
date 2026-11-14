@@ -22,8 +22,8 @@ import {
 
 const PAGE = 'Getting Started'
 // SEED_IDS.BLOCK_GS_1 / BLOCK_GS_3 in src/lib/tauri-mock/seed.ts.
-const GS1 = '0000000000000000000BLOCK01'
-const GS3 = '0000000000000000000BLOCK03'
+const GS1 = '0000000000000000000B10CK01'
+const GS3 = '0000000000000000000B10CK03'
 
 function staticBlock(page: Page, blockId: string) {
   return page.locator(`[data-testid="block-static"][data-block-id="${blockId}"]`)
