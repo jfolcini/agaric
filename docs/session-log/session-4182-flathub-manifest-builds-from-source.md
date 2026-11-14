@@ -1,4 +1,4 @@
-# Session 4179 — the Flathub manifest builds from source; submitting it is still blocked (#6660)
+# Session 4182 — the Flathub manifest builds from source; submitting it is still blocked (#6660)
 
 The maintainer decided on 2026-11-14 to make the Flathub manifest submittable and to submit it themselves. The session set out to fix everything in `packaging/flathub/` that blocks a submission.
 
