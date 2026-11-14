@@ -160,7 +160,7 @@ export function QueryTableCell(props: QueryTableCellProps): React.ReactElement {
     <button
       ref={buttonRef}
       type="button"
-      className="touch-target w-full rounded-sm text-left text-muted-foreground hover:bg-muted/60 focus-ring-visible"
+      className="touch-hit-area w-full rounded-sm text-left text-muted-foreground hover:bg-muted/60 focus-ring-visible"
       aria-label={
         display === ''
           ? t('queryResult.cell.set', { column: label })
