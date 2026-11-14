@@ -1988,7 +1988,7 @@ const ENGINE_COLUMN_OWNER: &str = "the per-op projections in agaric-engine's lor
      on the engine's";
 
 const ENGINE_LIVENESS_OWNER: &str = "a delete that reached SQL but not the engine: the \
-     post-commit cohort fan-out (dispatch_delete_descendants) skipped or not yet run, or a \
+     cohort fan-out (dispatch_delete_descendants) skipped the block, or a \
      delete replayed at boot that could not resolve its space (#5630). While it stands the \
      #1257 freshness gate in loro_sync::prepare_outgoing refuses to export this space, so \
      sync stops for it";

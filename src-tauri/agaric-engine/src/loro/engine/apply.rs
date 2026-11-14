@@ -419,7 +419,7 @@ impl LoroEngine {
     /// Derivation (per the boundary); this writes only the
     /// seed's timestamp. The local materializer mirrors the same
     /// timestamp onto the descendant cohort for engine parity via the
-    /// post-commit `dispatch_delete_descendants` fanout, but **inbound
+    /// `dispatch_delete_descendants` fanout, but **inbound
     /// sync does not depend on that** — `reproject_block_deleted_at_from_engine`
     /// re-derives the cascade in SQL from the seed timestamp alone.
     pub fn apply_delete_block(&mut self, block_id: &str, deleted_at: &str) -> Result<(), AppError> {

@@ -89,7 +89,7 @@ pub async fn handle_foreground_task(
 }
 
 /// The `BatchApplyOps` / `ReplayApplyOps` body: the single-device guard, one
-/// transaction for the whole batch, then the post-commit cohort fan-out.
+/// transaction for the whole batch, then the cohorts' link and FTS repair.
 async fn apply_batch(
     pool: &SqlitePool,
     records: &[OpRecord],
@@ -127,13 +127,13 @@ async fn apply_batch(
         ));
     }
     let per_record_effects = apply_records_in_one_tx(pool, records, mode, state).await?;
-    dispatch_committed_cohorts(pool, records, &per_record_effects, state).await;
+    dispatch_committed_cohorts(pool, &per_record_effects).await;
     Ok(())
 }
 
 /// Applies one `BatchApplyOps` / `ReplayApplyOps` batch inside a single
 /// transaction, advancing the apply cursor and committing. Returns the
-/// per-record effects the post-commit fan-out needs.
+/// per-record effects the post-commit repair needs.
 async fn apply_records_in_one_tx(
     pool: &SqlitePool,
     records: &[OpRecord],
@@ -180,12 +180,10 @@ async fn apply_records_in_tx(
     // empty batch leaves `max_seq` at None so the cursor is not
     // touched (the MAX query is skipped entirely).
     let mut max_seq: Option<i64> = None;
-    // Buffer the per-record `ApplyEffects` so the post-commit
-    // dispatch fanout has the RestoreBlock descendant cohorts
-    // available. Indexed by record position to mirror the
-    // `records.iter()` order; an empty effects struct is the
-    // default for non-RestoreBlock ops so the post-commit walk
-    // just no-ops on those slots.
+    // Buffer the per-record `ApplyEffects` so the post-commit link
+    // and FTS repair has the cascades' cohorts available. An empty
+    // effects struct is the default for an op with no cascade, so
+    // the post-commit walk just no-ops on those slots.
     let mut per_record_effects: Vec<ApplyEffects> = Vec::with_capacity(records.len());
     // #2200 Tier-2 import scaling: a `BatchApplyOps` IS the chunk. The
     // accumulator collects (a) the latest sibling ordering per touched
@@ -281,50 +279,11 @@ async fn apply_records_in_tx(
     Ok(per_record_effects)
 }
 
-/// Post-commit cohort fan-out for an applied `BatchApplyOps` batch.
-async fn dispatch_committed_cohorts(
-    pool: &SqlitePool,
-    records: &[OpRecord],
-    per_record_effects: &[ApplyEffects],
-    state: &crate::loro::shared::LoroState,
-) {
-    // Post-commit cohort fan-out for the batch. Runs AFTER
-    // `tx.commit` so any record whose sibling rolled the tx
-    // back is not visible here (an Err inside the loop above
-    // returns early before we reach this point). Each op was
-    // already engine-applied INSIDE the tx (`apply_op_tx` →
-    // `apply_*_via_loro`) — there is deliberately NO per-op
-    // re-dispatch here (#603: a second engine apply routed
-    // new-scheme create/move ops through the legacy position
-    // path, converging sibling order toward ULID order). Only
-    // the Restore/Delete descendant cohorts fan out, so the
-    // engine's per-block-id mutation matches the SQL cascade.
-    for (record, effects) in records.iter().zip(per_record_effects.iter()) {
-        // The restore cohort and, #2017, its symmetric UPWARD fan-out for
-        // the restored ancestor chain (see `apply_op` for the divergence
-        // rationale), on the batch path too.
-        super::apply::dispatch_restore_effects(pool, record, effects, state).await;
-        dispatch_delete_descendants(
-            pool,
-            record,
-            &effects.deleted_cohort,
-            effects.delete_space_id.as_ref(),
-            state,
-        )
-        .await;
-        // #4390: the un-sweep's engine mirror, on the batch path too.
-        // A `MoveBlock` whose subject arrives already tombstoned by a
-        // concurrent cascade is exactly the shape a REMOTE batch
-        // delivers, so leaving this off the batch arm would leave the
-        // fix on the single-op path only.
-        super::apply::dispatch_unswept_cohort(
-            pool,
-            record,
-            &effects.unswept_cohort,
-            effects.unswept_space_id.as_ref(),
-            state,
-        )
-        .await;
+/// The link and FTS repair an applied batch's cascades owe once it has
+/// committed. Their engine half ran in the batch's transaction, each with its
+/// op (`dispatch_cohorts`, #6521).
+async fn dispatch_committed_cohorts(pool: &SqlitePool, per_record_effects: &[ApplyEffects]) {
+    for effects in per_record_effects {
         // #4285: repair the LINK edges of everything this record's
         // restore un-deleted — the whole cohort, not just the seed.
         // Mirrors `apply_op`'s single-op call; a batch of remote ops

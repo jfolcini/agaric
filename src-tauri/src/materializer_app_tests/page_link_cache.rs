@@ -2171,7 +2171,7 @@ async fn a_cohort_restore_re_derives_a_restored_descendants_own_outbound_edges_4
 /// users are on and which the natural single-site fix does not reach.
 ///
 /// `restore_block_inner` never routes through `apply_op`: it does its own SQL
-/// cohort walk and its own post-commit `dispatch_restore_descendants` (#3856),
+/// cohort walk and its own `dispatch_restore_descendants` (#3856),
 /// deliberately leaving the apply cursor put (#1257). So a fix that lives only
 /// in `handlers::apply` covers the remote / replay path and nothing the user
 /// does. Both cohort sets are in hand at this site, which is why the repair is

@@ -994,11 +994,9 @@ async fn remote_apply_op_move_same_parent_reorder_skips_maintenance_2344() {
 // **Scope of "same state".** These tests compare `(parent_id, deleted_at)` —
 // the columns the merge decides. `position` is excluded for the reason the
 // module header already gives (#1245 / #1257: the dense reproject is an
-// engine-arm-only pass). The per-space ENGINE state is likewise out of scope
-// here: this harness drives `apply_op_tx` without the post-commit
-// `dispatch_delete_descendants` fan-out, so the delete-first and move-first
-// orders legitimately differ in how much of the cohort reached the engine —
-// pinning that would be pinning the harness, not the merge.
+// engine-arm-only pass). The per-space ENGINE state is not compared here;
+// `unsweep_reaches_the_engine_register_4204_4390` and the two-device tests
+// read it.
 // ---------------------------------------------------------------------------
 
 /// A grandchild under C1A, so the sweep has a descendant to cascade over (the
@@ -1977,7 +1975,7 @@ async fn move_out_of_a_deleted_parent_converges_across_replay_orders_4204() {
     // Pinned rather than merely tolerated, for two reasons: it proves the
     // move-first order really did exercise production's engine arm (#891), and
     // it is why #4204's engine-register half had to be closed by threading the
-    // un-sweep's cleared ids OUT to a post-commit mirror rather than by writing
+    // un-sweep's cleared ids OUT to an engine mirror rather than by writing
     // the engine from either move arm (#4390) — see
     // `unsweep_reaches_the_engine_register_4204_4390`. Changing the move routing
     // reddens this and forces that question to be re-answered.
@@ -2141,13 +2139,11 @@ async fn delete_of_both_endpoints_and_move_converge_across_all_six_orders_4188()
 }
 
 /// Drive one already-appended record through the REAL single-op production
-/// entry point, `handlers::apply_op` — the tx, the commit, and every
-/// post-commit engine fan-out it dispatches.
+/// entry point, `handlers::apply_op`: the transaction, the engine cohort
+/// fan-out the kernel runs in it, and the commit.
 ///
-/// [`replay`] deliberately omits the fan-out (the #4112 harness calls
-/// `apply_op_tx` directly and pins SQL only, and says so). The un-sweep's
-/// DURABILITY, though, is a claim about the engine REGISTER, and the register
-/// is reachable only through those fan-outs —
+/// The un-sweep's DURABILITY is a claim about the engine REGISTER, and the
+/// register is reachable only through that fan-out —
 /// `dispatch_delete_descendants` is what puts a cascade member's cohort ts on
 /// the engine in the first place, and #4390's `dispatch_unswept_cohort` is what
 /// takes it back off when a move re-derives the tombstone from a new position.
@@ -2206,7 +2202,7 @@ fn engine_deleted_at(state: &crate::loro::shared::LoroState, block_id: &str) -> 
 ///    `apply_move_block_sql_only` — the arm with no engine to mirror onto.
 /// 3. SQL is re-derived (live) and — since #4390 — so is the register: the
 ///    un-sweep threads the ids it cleared out through
-///    `ApplyEffects::unswept_cohort`, and the post-commit
+///    `ApplyEffects::unswept_cohort`, and
 ///    `dispatch_unswept_cohort` replays the SETTLED SQL value onto the engine.
 ///    The next `reproject_block_deleted_at_from_engine` therefore takes its
 ///    `None` branch and leaves the subtree live.
@@ -2217,9 +2213,9 @@ fn engine_deleted_at(state: &crate::loro::shared::LoroState, block_id: &str) -> 
 /// with the canonical statement of the mechanism on
 /// `crate::apply::sql_only::unsweep_inherited_cohort_after_move`.
 ///
-/// This and the two-device tests below are the only ones in the file that run
-/// the post-commit fan-out (see [`replay_with_fanout`]), because the register
-/// is what they are about.
+/// This and the two-device tests below are the ones in the file that read the
+/// engine register, so they go through `apply_op` (see
+/// [`replay_with_fanout`]).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unsweep_reaches_the_engine_register_4204_4390() {
     let (_dir, pool, state) = seed_engine_world("unsweep_engine_register.db").await;
@@ -2507,7 +2503,7 @@ async fn two_device_import_shapes(
 /// visible-vs-invisible split.
 ///
 /// Reverting either half of the plumbing (`unsweep_inherited_cohort_after_move`
-/// returning `()`, or dropping `dispatch_unswept_cohort` from the post-commit
+/// returning `()`, or dropping `dispatch_unswept_cohort` from the cohort
 /// fan-out) reddens this, in BOTH import orders.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_snapshot_import_peer_agrees_with_the_op_replay_peer_4204_4390() {
@@ -2969,7 +2965,7 @@ async fn the_unswept_mirror_skips_a_block_absent_from_the_engine_4468() {
         );
     let log_guard = tracing::subscriber::set_default(subscriber);
 
-    super::apply::dispatch_unswept_cohort(&pool, &root, &unswept, Some(&space), &state).await;
+    super::apply::dispatch_unswept_cohort(&root, &unswept, Some(&space), &state);
 
     drop(log_guard);
     let log = writer.contents();
@@ -3012,7 +3008,7 @@ async fn the_unswept_mirror_skips_a_block_absent_from_the_engine_4468() {
 /// `apply_delete_block_via_loro` has already probed the SAME membership
 /// in-transaction, recorded `SqlOnlyFallbackReason::EngineMissingTarget`, and
 /// taken the SQL-only cascade — calling the state a legitimate soft fallback.
-/// The post-commit fan-out then called the identical state drift.
+/// The cohort fan-out then called the identical state drift.
 ///
 /// # Why the assertion is a TRIPLE
 ///
@@ -3106,7 +3102,7 @@ async fn the_delete_cascade_mirror_skips_a_cohort_member_absent_from_the_engine_
     let log_guard = tracing::subscriber::set_default(subscriber);
 
     let fallbacks_before = super::sql_only_fallback::count();
-    super::apply::dispatch_delete_descendants(&pool, &root, &cohort, Some(&space), &state).await;
+    super::apply::dispatch_delete_descendants(&root, &cohort, Some(&space), &state);
     let fallbacks_after = super::sql_only_fallback::count();
 
     drop(log_guard);
