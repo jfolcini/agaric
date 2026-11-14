@@ -8,6 +8,7 @@ import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { type Preview, TypeChangeTabs } from '@/components/properties/TypeChangeValues'
 import type { PageResponse, PropertyTypeChangeValue } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
@@ -53,7 +54,9 @@ describe('TypeChangeTabs', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValue(page)
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({ list_property_type_change_values: () => Promise.resolve(page) }),
+    )
     const { container } = renderTabs()
     expect(await screen.findByText('Ann, Bob → Ann, Bob')).toBeInTheDocument()
     expect(mockedInvoke).toHaveBeenCalledWith(
@@ -64,7 +67,12 @@ describe('TypeChangeTabs', () => {
   })
 
   it('says so in place when the values cannot be read', async () => {
-    mockedInvoke.mockRejectedValue({ kind: 'database', message: 'boom' })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_property_type_change_values: () =>
+          Promise.reject({ kind: 'database', message: 'boom' }),
+      }),
+    )
     renderTabs()
     expect(await screen.findByRole('alert')).toHaveTextContent(t('spaceMove.valuesFailed'))
   })
