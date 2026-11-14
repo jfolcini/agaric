@@ -68,8 +68,13 @@ impl IpcTransport {
         let property_events = Arc::new(Mutex::new(Vec::new()));
         let sink = property_events.clone();
         app.app.listen_any(EVENT_PROPERTY_CHANGED, move |event| {
-            let payload = serde_json::from_str(event.payload()).expect("event payload is JSON");
-            sink.lock().expect("event sink").push(payload);
+            let payload: Value =
+                serde_json::from_str(event.payload()).expect("event payload is JSON");
+            // A property command sends its events again once the background
+            // queue has drained (#6567), which can be during a later op.
+            if payload.get("after_rebuild").is_none() {
+                sink.lock().expect("event sink").push(payload);
+            }
         });
         Self {
             app,
