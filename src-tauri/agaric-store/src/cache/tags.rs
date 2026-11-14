@@ -325,7 +325,7 @@ async fn refresh_tag_usage_count_impl(pool: &SqlitePool, tag_id: &str) -> Result
         cnt,
         now,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     tx.commit().await?;
     Ok(res.rows_affected())

@@ -480,7 +480,7 @@ async fn rebuild_pages_cache_impl(
 pub async fn rekey_title_sort_keys(pool: &SqlitePool) -> Result<u64, AppError> {
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_pages_rekey").await?;
     let rows = sqlx::query!(r#"SELECT page_id AS "page_id!", title AS "title!" FROM pages_cache"#)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut **tx)
         .await?;
     let keyed: Vec<(String, String)> = rows
         .into_iter()
@@ -497,10 +497,10 @@ pub async fn rekey_title_sort_keys(pool: &SqlitePool) -> Result<u64, AppError> {
            AND pages_cache.title_sort_key != json_extract(j.value, '$[1]')",
         keyed_json,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?
     .rows_affected();
-    crate::derivations::record(&mut *tx, crate::derivations::Derivation::TitleSortKey).await?;
+    crate::derivations::record(&mut **tx, crate::derivations::Derivation::TitleSortKey).await?;
     tx.commit().await?;
     Ok(rewritten)
 }

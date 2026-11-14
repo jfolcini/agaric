@@ -663,7 +663,8 @@ async fn record_catchup_pull(pool: &SqlitePool, peer_id: &str, local_device_id: 
             .find(|h| h.device_id == local_device_id)
             .map(|h| h.hash)
             .unwrap_or_default();
-        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx =
+            agaric_store::db::begin_immediate_logged(pool, "snapshot_catchup_record_pull").await?;
         peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
         peer_refs::update_on_sync_in_tx(&mut tx, peer_id, &last_hash, "").await?;
         tx.commit().await?;

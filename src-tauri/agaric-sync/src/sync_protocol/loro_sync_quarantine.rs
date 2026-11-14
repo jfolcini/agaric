@@ -189,7 +189,7 @@ pub async fn note_unresolved_slot(
         "SELECT unresolved_boots FROM loro_sync_inbox WHERE id = ?",
         inbox_id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?
     else {
         // A concurrent replay already cleared it — nothing to account for, and
@@ -206,7 +206,7 @@ pub async fn note_unresolved_slot(
             unresolved_boots,
             inbox_id,
         )
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         tx.commit().await?;
         return Ok(SlotDisposition::Kept { unresolved_boots });
@@ -229,10 +229,10 @@ pub async fn note_unresolved_slot(
         now,
         inbox_id,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     tx.commit().await?;
 
@@ -382,7 +382,7 @@ pub async fn readmit_quarantined_slot(
          FROM loro_sync_quarantine WHERE id = ?",
         quarantine_id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?
     else {
         tx.commit().await?;
@@ -401,14 +401,14 @@ pub async fn readmit_quarantined_slot(
         row.first_seen_at_ms,
         one_boot_left,
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
 
     sqlx::query!(
         "DELETE FROM loro_sync_quarantine WHERE id = ?",
         quarantine_id,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     tx.commit().await?;
 

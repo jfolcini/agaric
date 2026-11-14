@@ -176,21 +176,21 @@ pub async fn update_fts_for_block_with_maps(
         r#"SELECT id, content, deleted_at FROM blocks WHERE id = ?"#,
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
 
     match row {
         None => {
             // Block doesn't exist — remove from FTS if present
-            delete_fts_row_query(block_id).execute(&mut *tx).await?;
+            delete_fts_row_query(block_id).execute(&mut **tx).await?;
         }
         Some(ref r) if r.deleted_at.is_some() => {
             // deleted_at IS NOT NULL — remove from FTS
-            delete_fts_row_query(block_id).execute(&mut *tx).await?;
+            delete_fts_row_query(block_id).execute(&mut **tx).await?;
         }
         Some(ref r) if r.content.is_none() => {
             // content IS NULL — remove from FTS
-            delete_fts_row_query(block_id).execute(&mut *tx).await?;
+            delete_fts_row_query(block_id).execute(&mut **tx).await?;
         }
         Some(r) => {
             // Active block with content — strip via pre-loaded maps and index.
@@ -199,7 +199,7 @@ pub async fn update_fts_for_block_with_maps(
                 strip_for_fts_with_maps(block_id, &content, tag_names, page_titles, block_titles);
 
             // Delete existing entry
-            delete_fts_row_query(block_id).execute(&mut *tx).await?;
+            delete_fts_row_query(block_id).execute(&mut **tx).await?;
 
             // Insert new entry
             sqlx::query!(
@@ -207,12 +207,12 @@ pub async fn update_fts_for_block_with_maps(
                 block_id,
                 stripped
             )
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
 
             // #345 / C6 — verify the DELETE-then-INSERT discipline left
             // exactly one row (debug/test only; compiled out in release).
-            debug_assert_single_fts_row(&mut *tx, block_id).await;
+            debug_assert_single_fts_row(&mut **tx, block_id).await;
         }
     }
 
@@ -284,17 +284,17 @@ pub async fn update_fts_for_block_split_with_maps(
 
     // Phase 2b: Write — minimal transaction
     let mut tx = crate::db::begin_immediate_logged(write_pool, "fts_update_block_write").await?;
-    delete_fts_row_query(block_id).execute(&mut *tx).await?;
+    delete_fts_row_query(block_id).execute(&mut **tx).await?;
     sqlx::query!(
         "INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)",
         block_id,
         stripped
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     // #345 / C6 — verify the single-row invariant before commit (debug/test
     // only; compiled out in release).
-    debug_assert_single_fts_row(&mut *tx, block_id).await;
+    debug_assert_single_fts_row(&mut **tx, block_id).await;
     tx.commit().await?;
     Ok(())
 }
@@ -476,11 +476,11 @@ pub async fn reindex_fts_for_ids(pool: &SqlitePool, ids: &[String]) -> Result<()
                WHERE id IN (SELECT value FROM json_each(?))"#,
             ids_json
         )
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut **tx)
         .await?;
 
         // Batch delete this chunk's old FTS entries (1 query per chunk)
-        delete_fts_rows_query(&ids_json).execute(&mut *tx).await?;
+        delete_fts_rows_query(&ids_json).execute(&mut **tx).await?;
 
         // Stage (id, stripped) pairs for the chunk, then emit
         // multi-row `INSERT INTO fts_blocks` via QueryBuilder. The previous
@@ -494,7 +494,7 @@ pub async fn reindex_fts_for_ids(pool: &SqlitePool, ids: &[String]) -> Result<()
             .filter_map(|row| Some((row.id.as_str(), row.content.as_deref()?)))
             .collect();
         let block_titles =
-            load_block_ref_titles(&mut *tx, live.iter().map(|&(_, content)| content)).await?;
+            load_block_ref_titles(&mut **tx, live.iter().map(|&(_, content)| content)).await?;
         let to_insert: Vec<(String, String)> = live
             .iter()
             .map(|&(id, content)| {
@@ -572,7 +572,7 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     {
         let mut tx = crate::db::begin_immediate_logged(pool, "fts_rebuild_index_clear").await?;
         sqlx::query!("DELETE FROM fts_blocks")
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         tx.commit().await?;
     }
@@ -658,7 +658,7 @@ async fn rebuild_fts_index_split_impl(
         let mut tx =
             crate::db::begin_immediate_logged(write_pool, "fts_rebuild_index_clear_write").await?;
         sqlx::query!("DELETE FROM fts_blocks")
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         tx.commit().await?;
     }
