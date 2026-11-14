@@ -16,8 +16,8 @@ import { blurEditors, expect, focusBlockById, ipc, reopenPage, test, waitForBoot
 
 const PAGE = 'Getting Started'
 const PAGE_ID = '00000000000000000000PAGE01'
-const GS1 = '0000000000000000000BLOCK01'
-const GS3 = '0000000000000000000BLOCK03'
+const GS1 = '0000000000000000000B10CK01'
+const GS3 = '0000000000000000000B10CK03'
 const FENCED = '```\nfirst line\nsecond line\n```'
 const CHILD_TEXT = 'a child that travels with its parent'
 

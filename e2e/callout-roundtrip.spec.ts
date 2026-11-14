@@ -52,7 +52,7 @@ test.describe('Callout round-trip (#258) @editor @markdown', () => {
   // never stored; the `-` is the block's text and survives an edit.
   test.describe('a folded callout (#6033)', () => {
     const PAGE = 'Getting Started'
-    const GS1 = '0000000000000000000BLOCK01'
+    const GS1 = '0000000000000000000B10CK01'
     const FOLDED = '> [!FAQ]- Why fold?\n> Because it is long.'
 
     const calloutOf = (page: import('@playwright/test').Page) =>

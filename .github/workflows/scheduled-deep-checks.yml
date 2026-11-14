@@ -405,7 +405,11 @@ jobs:
         # `--workspace`: lint every member, incl. agaric-diagnostics (the
         # per-PR hook omits it, so those bins are otherwise never linted).
         # `-D warnings`: any lint is a failure. Cold build → no cache masking.
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        # The `bridge` bin (#6529) sits behind `required-features`, which
+        # `--all-targets` skips, so it is linted by name.
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy -p agaric-diagnostics --features bridge --bin bridge -- -D warnings
 
   # ---------------------------------------------------------------------------
   # bench-smoke (#639/#978) — SHARDED compile + seed/fixture smoke-run.
@@ -3062,7 +3066,8 @@ jobs:
   # run the FULL, UNSKIPPED prek suite (both pre-commit and pre-push stages)
   # plus the FULL vitest / playwright / nextest / doc-test suites over the
   # entire tree, so a latent breach in an untouched, unchanged-category file
-  # is caught here even when no PR re-linted it. Nothing is category-gated:
+  # is caught here even when no PR re-linted it. The nextest leg also runs the
+  # `real-backend` Playwright project (#6529), which no PR runs. Nothing is category-gated:
   # every hook and every test runs. Not a required check — a maintainer
   # triages any failure.
   #
@@ -3357,6 +3362,26 @@ jobs:
         if: matrix.shard == 2
         working-directory: src-tauri
         run: cargo test --doc --workspace
+
+      # #6529 — the `real-backend` Playwright project: the specs
+      # `playwright.config.ts` lists, on the real commands through the `bridge`
+      # bin. Here because this job has already compiled the workspace, so the
+      # bin costs a link and no runner of its own; shard 2 for the reason the
+      # doc-tests are. `!cancelled()`: a red nextest must not hide a red spec.
+      - name: Build the bridge (real-backend Playwright)
+        if: ${{ !cancelled() && matrix.shard == 2 }}
+        working-directory: src-tauri
+        run: cargo build -p agaric-diagnostics --features bridge --bin bridge
+
+      - name: Playwright setup (browser, system deps)
+        if: ${{ !cancelled() && matrix.shard == 2 }}
+        uses: ./.github/actions/playwright-setup
+
+      - name: Playwright on the real backend
+        if: ${{ !cancelled() && matrix.shard == 2 }}
+        env:
+          AGARIC_E2E_BRIDGE: ${{ github.workspace }}/src-tauri/target/debug/bridge
+        run: npx playwright test
 
   full-suite:
     # The one job `report-scheduled-failures` needs for this lane (#3394): it

@@ -10,8 +10,8 @@ import { expect, focusBlockById, ipc, openPage, saveBlock, test, waitForBoot } f
  */
 
 const PAGE = 'Getting Started'
-const GS1 = '0000000000000000000BLOCK01'
-const GS2 = '0000000000000000000BLOCK02'
+const GS1 = '0000000000000000000B10CK01'
+const GS2 = '0000000000000000000B10CK02'
 const TAG_REF = /#\[([0-9A-Z]{26})\]/g
 
 interface TagRow {

@@ -490,7 +490,7 @@ async function seedBigPage(
       tasks,
       png: PNG_1X1,
       // The mock's first block of Getting Started (`src/lib/tauri-mock/seed.ts`).
-      embedded: '0000000000000000000BLOCK01',
+      embedded: '0000000000000000000B10CK01',
     },
   )
 }
@@ -1819,7 +1819,7 @@ test('perf: page mode next to block mode (#5691) @editor @pages @journal @search
 })
 
 /** BLOCK_GS_1, the first child of "Getting Started" in the mock seed. */
-const TRANSCRIPT_BLOCK = '0000000000000000000BLOCK01'
+const TRANSCRIPT_BLOCK = '0000000000000000000B10CK01'
 const TRANSCRIPT_SEGMENTS = Number(process.env['AGARIC_PERF_SEGMENTS'] ?? 1500)
 
 /** A two-hour meeting's transcript: `segments` timed paragraphs, three speakers. */

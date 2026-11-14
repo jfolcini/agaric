@@ -22,7 +22,7 @@ import {
  * Seed data (tauri-mock): BLOCK_GS_1, first child of "Getting Started".
  */
 
-const BLOCK_GS_1 = '0000000000000000000BLOCK01'
+const BLOCK_GS_1 = '0000000000000000000B10CK01'
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 
 // Two 200 × 200 pages, Helvetica 24 pt: "Page one", then "Page two".
@@ -57,7 +57,7 @@ async function seedPdf(page: Page): Promise<void> {
     const bin = atob(b64)
     const bytes = Array.from({ length: bin.length }, (_, i) => bin.charCodeAt(i))
     ;(window as unknown as MockBytesWindow).__addMockAttachmentWithBytes?.(
-      '0000000000000000000BLOCK01',
+      '0000000000000000000B10CK01',
       'report.pdf',
       'application/pdf',
       bytes,

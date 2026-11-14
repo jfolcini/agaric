@@ -22,10 +22,10 @@ import {
 
 const PAGE = 'Getting Started'
 // SEED_IDS in src/lib/tauri-mock/seed.ts
-const GS_1 = '0000000000000000000BLOCK01'
-const GS_2 = '0000000000000000000BLOCK02'
-const GS_3 = '0000000000000000000BLOCK03'
-const GS_5 = '0000000000000000000BLOCK05'
+const GS_1 = '0000000000000000000B10CK01'
+const GS_2 = '0000000000000000000B10CK02'
+const GS_3 = '0000000000000000000B10CK03'
+const GS_5 = '0000000000000000000B10CK05'
 
 const row = (page: Page, id: string) =>
   page.locator(`[data-testid="sortable-block"][data-block-id="${id}"]`)

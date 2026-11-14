@@ -574,8 +574,8 @@ test.describe('Per-space property definitions @editor @spaces @settings', () => 
 // ===========================================================================
 
 test.describe('Property definitions view usage count @editor @settings', () => {
-  const MTG_1 = '0000000000000000000BLOCK17'
-  const MTG_2 = '0000000000000000000BLOCK18'
+  const MTG_1 = '0000000000000000000B10CK17'
+  const MTG_2 = '0000000000000000000B10CK18'
 
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)

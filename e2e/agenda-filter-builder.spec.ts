@@ -32,9 +32,9 @@ import { expect, ipc, openAddFilter, test, waitForBoot } from './helpers'
 const PERSONAL = 'SPACE_PERSONAL'
 // SEED_IDS (src/lib/tauri-mock/seed.ts): BLOCK_DAILY_3, BLOCK_PROJ_2, BLOCK_PROJ_4.
 const ERRAND_TASKS = [
-  '0000000000000000000BLOCK10',
-  '0000000000000000000BLOCK14',
-  '0000000000000000000BLOCK16',
+  '0000000000000000000B10CK10',
+  '0000000000000000000B10CK14',
+  '0000000000000000000B10CK16',
 ]
 
 const ALL_TASKS = [
@@ -167,9 +167,9 @@ test.describe('Agenda filter builder narrows the rendered list (#5366) @journal 
 test.describe('Agenda date preset and property filter (#5735) @journal @search', () => {
   // SEED_IDS (src/lib/tauri-mock/seed.ts): BLOCK_PROJ_1, BLOCK_PROJ_2, BLOCK_PROJ_4.
   const OFFICE_TASKS = [
-    '0000000000000000000BLOCK13',
-    '0000000000000000000BLOCK14',
-    '0000000000000000000BLOCK16',
+    '0000000000000000000B10CK13',
+    '0000000000000000000B10CK14',
+    '0000000000000000000B10CK16',
   ]
   const DEFAULT_LIST = [
     'Buy groceries',

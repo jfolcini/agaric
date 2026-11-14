@@ -4,7 +4,8 @@
 //! worker. The page's `invoke()` calls arrive as requests, the app's events
 //! leave as pushes, and a `reset` between tests swaps in a fresh copy of a
 //! template vault: a new vault as the app's first boot leaves it, booted once
-//! when the bridge starts. The browser half is `src/lib/tauri-mock/bridge.ts`.
+//! when the bridge starts, until a `keep` puts a vault the worker seeded in
+//! its place. The browser half is `src/lib/tauri-mock/bridge.ts`.
 //!
 //! # Protocol
 //!
@@ -17,6 +18,7 @@
 //! | `listen` | `event` | start pushing that event, as `{ "event", "payload" }` frames to every client |
 //! | `emit` | `event`, `payload` | emit the event in the app, as its backend would |
 //! | `reset` | | the open vault is dropped and a new copy of the template opens |
+//! | `keep` | | the open vault becomes the template, and a copy of it opens |
 //!
 //! Requests are taken in the order they arrive, on the thread that owns the
 //! app; an `invoke` is only started there, so commands run concurrently, as a
@@ -117,6 +119,9 @@ impl Bridge {
             (Some("reset"), ..) => {
                 reply(self.reset().map(|()| Value::Null).map_err(|e| json!(e)));
             }
+            (Some("keep"), ..) => {
+                reply(self.keep().map(|()| Value::Null).map_err(|e| json!(e)));
+            }
             _ => reply(Err(json!(format!("not a bridge request: {request}")))),
         }
     }
@@ -147,6 +152,21 @@ impl Bridge {
         self.listening.clear();
         std::fs::remove_dir_all(&self.open)
             .map_err(|e| format!("remove {}: {e}", self.open.display()))?;
+        self.open_copy()
+    }
+
+    /// Make the open vault the template: every later copy starts from what
+    /// it holds now.
+    fn keep(&mut self) -> Result<(), String> {
+        let Some(app) = self.app.take() else {
+            return Err("no vault is open".to_owned());
+        };
+        app.shutdown();
+        self.listening.clear();
+        std::fs::remove_dir_all(&self.template)
+            .map_err(|e| format!("remove {}: {e}", self.template.display()))?;
+        std::fs::rename(&self.open, &self.template)
+            .map_err(|e| format!("keep {}: {e}", self.open.display()))?;
         self.open_copy()
     }
 
