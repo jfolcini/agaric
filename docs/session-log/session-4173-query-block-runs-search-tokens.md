@@ -21,8 +21,10 @@ returns for the same text.
   `BlockType {values: [page]}` for the old rows. The builder has no path control, so no stored
   `v2:` block written by it holds one.
 - **`under:`** needed a leaf that reads inherited tags. `FilterPrimitive::TagUnder` (key
-  `tag-under`, advanced query only) wraps `tag_leaf_subquery_body(true)`, the SQL search runs for
-  `under:`, so whatever that body matches the leaf matches. `tag:` is untouched.
+  `tag-under`, advanced query only) is compiled by `SearchProjection::compile_tag_under`, which
+  search's own `under:` now calls too, so the two cannot differ. After #6783 that SQL takes the
+  tag and the tags nested under it, as `tag:` does. A name that stands only for its nested tags
+  compiles to an `Or`, which the builder leaves to the block like the other text-only parts.
 - **The builder** does not open a text holding free text, `under:`, a page name or a relative
   date (`CompiledQueryText.textOnly`): its form has no control for them, and would save a relative
   date as today's dates.
