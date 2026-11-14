@@ -5280,7 +5280,7 @@ port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; ch
  *  previous one ([`Self::MdnsDisabled`], [`Self::InternetFacingBind`]) no longer
  *  holds. Those that still apply are emitted again once the new endpoint is up.
  */
-({ type: "endpoint_binding" }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+({ type: "endpoint_binding" }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
  *  #3852: the operating system says it is blocking (or has stopped
  *  blocking) **this application's** network traffic.
@@ -5438,7 +5438,7 @@ port: number }) & { blocked?: never; bytes_done?: never; bytes_total?: never; ch
  *  previous one ([`Self::MdnsDisabled`], [`Self::InternetFacingBind`]) no longer
  *  holds. Those that still apply are emitted again once the new endpoint is up.
  */
-({ type: "endpoint_binding" }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
+({ type: "endpoint_binding" }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; changed_blocks?: never; changed_page_ids?: never; code?: never; files_done?: never; files_total?: never; message?: never; ops_received?: never; ops_sent?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; remote_device_id?: never; space_ids?: never; state?: never } | 
 /**
  *  #3852: the operating system says it is blocking (or has stopped
  *  blocking) **this application's** network traffic.
