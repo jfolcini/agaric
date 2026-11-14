@@ -76,17 +76,20 @@ pub(in crate::fts) struct ParsedQuery {
     pub(in crate::fts) terms: Vec<String>,
 }
 
-/// Whether the short term at `i` is a plain AND-ed operand. Beside an `OR` or
-/// after a `NOT` it is not: a required substring cannot express either, and
-/// requiring the term would invert `cats NOT ab`, so there it is left out.
+/// Whether the short term at `i` is a plain AND-ed operand. In a query with an
+/// `OR` anywhere it is not: FTS5 binds the implicit AND tighter than OR, so
+/// `cats OR dogs ab` asks `ab` only of the `dogs` rows, and a required
+/// substring would drop the `cats` ones. After a `NOT` it is not either:
+/// requiring the term would invert `cats NOT ab`. There it is left out.
 fn short_term_stands_alone(tokens: &[QueryToken], i: usize) -> bool {
-    let is_word = |at: Option<usize>, op: &str| {
-        at.and_then(|at| tokens.get(at))
-            .is_some_and(|t| matches!(t, QueryToken::Word(w) if w.eq_ignore_ascii_case(op)))
-    };
-    !is_word(i.checked_sub(1), "OR")
-        && !is_word(Some(i + 1), "OR")
-        && !is_word(i.checked_sub(1), "NOT")
+    fn is_word(token: &QueryToken, op: &str) -> bool {
+        matches!(token, QueryToken::Word(w) if w.eq_ignore_ascii_case(op))
+    }
+    !tokens.iter().any(|t| is_word(t, "OR"))
+        && !i
+            .checked_sub(1)
+            .and_then(|at| tokens.get(at))
+            .is_some_and(|t| is_word(t, "NOT"))
 }
 
 /// Record a short term once: a repeat would only repeat its SQL predicate.

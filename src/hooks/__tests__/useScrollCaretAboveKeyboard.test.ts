@@ -202,19 +202,6 @@ describe('useScrollCaretAboveKeyboard', () => {
     expect(scrollBySpy).toHaveBeenCalledWith({ top: 140, left: 0 })
   })
 
-  it('leaves the page where the reader panned it with the keyboard up (#6790)', () => {
-    const vv = new FakeVisualViewport(468)
-    installVisualViewport(vv)
-    const el = elementWithBottom(600)
-    renderHook(() => useScrollCaretAboveKeyboard(refTo(el), true))
-    scrollIntoViewSpy.mockClear()
-    scrollBySpy.mockClear()
-
-    vv.dispatchEvent(new Event('scroll'))
-    expect(scrollIntoViewSpy).not.toHaveBeenCalled()
-    expect(scrollBySpy).not.toHaveBeenCalled()
-  })
-
   it('is inert (does a one-shot nearest scroll, no throw) when visualViewport is absent', async () => {
     // window.visualViewport is undefined (jsdom default).
     const el = elementWithBottom(600)

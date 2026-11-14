@@ -1267,7 +1267,7 @@ async fn short_term_is_a_literal_in_any_letter_case() {
     let (pool, _dir) = test_pool().await;
     seed_short_term_blocks(
         &pool,
-        &["a_b", "axb", "100%", "Не сегодня", "НЕ", "build UI"],
+        &["a_b", "axb", "100%", "Не сегодня", "НЕ", "build UI", "яБ"],
     )
     .await;
 
@@ -1285,6 +1285,11 @@ async fn short_term_is_a_literal_in_any_letter_case() {
         short_term_hits(&pool, "не").await,
         vec![(short_id(4), vec![(0, 2)]), (short_id(3), vec![(0, 2)])],
         "a non-ASCII term folds case as the trigram index does"
+    );
+    assert_eq!(
+        short_term_hits(&pool, "яб").await,
+        vec![(short_id(6), vec![(0, 2)])],
+        "in every mix of its letters' cases"
     );
 
     let page = PageRequest::new(None, Some(50)).unwrap();
@@ -1337,7 +1342,7 @@ fn a_repeated_short_term_is_scanned_for_once() {
 }
 
 #[tokio::test]
-async fn short_term_beside_or_or_after_not_is_left_out() {
+async fn short_term_in_an_or_query_or_after_not_is_left_out() {
     let (pool, _dir) = test_pool().await;
     seed_short_term_blocks(&pool, &["cats and ab", "cats alone", "dogs"]).await;
 
@@ -1355,6 +1360,11 @@ async fn short_term_beside_or_or_after_not_is_left_out() {
         ids(short_term_hits(&pool, "ab OR dogs").await),
         [short_id(2)],
         "an OR operand cannot be a required substring"
+    );
+    assert_eq!(
+        ids(short_term_hits(&pool, "cats OR dogs ab").await),
+        [short_id(0), short_id(1), short_id(2)],
+        "AND binds tighter than OR, so `ab` cannot be required of the `cats` rows"
     );
     assert_eq!(ids(short_term_hits(&pool, "cats ab").await), [short_id(0)]);
 }

@@ -396,7 +396,8 @@ function splitShortTerms(query: string): { phrases: string[]; shortTerms: string
     }
   }
   const words = query.trim().split(/\s+/)
-  const shortTerms = words.filter(isShort)
+  // An OR anywhere keeps the query whole: the backend leaves its short terms out.
+  const shortTerms = words.some((word) => word.toUpperCase() === 'OR') ? [] : words.filter(isShort)
   if (shortTerms.length === 0) return { phrases: [query], shortTerms }
   // Each longer word on its own, as the backend AND-joins them: with the short
   // words taken out, the rest is no longer one substring of the content.
