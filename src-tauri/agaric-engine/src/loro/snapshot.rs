@@ -1840,4 +1840,58 @@ mod tests {
             "the surviving space must still rehydrate at boot"
         );
     }
+
+    /// Whether `space`'s saved row holds `block`.
+    async fn saved_row_holds(pool: &SqlitePool, space: &SpaceId, block: &str) -> bool {
+        let bytes = load_snapshot(pool, space)
+            .await
+            .expect("load")
+            .expect("row");
+        let mut saved = LoroEngine::with_peer_id("device-1").expect("engine");
+        saved.import(&bytes).expect("import");
+        saved.read_block(block).expect("read").is_some()
+    }
+
+    /// #6521 — a pass can export an engine while a transaction's write sits in
+    /// it uncommitted. When that transaction rolls back, the engine is
+    /// rewound, and the row the pass wrote holds a block that SQL, the op log
+    /// and the engine do not. The rewind marks the space dirty, so the next
+    /// pass writes the engine as it now is.
+    #[tokio::test]
+    async fn a_pass_that_saved_a_write_which_then_rolled_back_is_saved_over_6521() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let state = crate::loro::shared::LoroState::new();
+
+        let scope = crate::loro::revert::RevertScope::arm(&state);
+        state
+            .registry
+            .for_space_recording(&space, "device-1", &state.revert)
+            .expect("engine")
+            .engine_mut()
+            .apply_create_block("ROLLED_BACK", "content", "never committed", None, 0)
+            .expect("create");
+        assert_eq!(
+            save_all_engines(&pool, &state.registry).await.saved,
+            1,
+            "the pass runs while the transaction is open"
+        );
+        assert!(
+            saved_row_holds(&pool, &space, "ROLLED_BACK").await,
+            "the fixture: the pass exported the uncommitted write"
+        );
+        scope.detach().revert();
+
+        save_all_engines(&pool, &state.registry).await;
+
+        assert!(
+            !saved_row_holds(&pool, &space, "ROLLED_BACK").await,
+            "the saved row must not keep a write its transaction rolled back"
+        );
+        assert_eq!(
+            state.registry.dirty_count(),
+            0,
+            "and the space is clean once the rewound engine is saved"
+        );
+    }
 }

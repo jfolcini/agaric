@@ -94,6 +94,38 @@ use agaric_store::space::SpaceId;
 /// entry is later replaced/removed ("detached engines").
 pub(crate) type SharedEngine = Arc<Mutex<LoroEngine>>;
 
+/// #2201 — the spaces with a mutation not yet persisted, each under the stamp
+/// of its most recent mark.
+///
+/// The saver captures a space's stamp when it collects the export, then
+/// clears the flag after a successful persist ONLY if the stamp is
+/// unchanged. Stamps come from one ever-increasing counter, never reset (not
+/// even by `clear`), so a re-mark (even one that races a `clear` and a
+/// re-insert of the same space) always produces a STRICTLY GREATER stamp than
+/// any the saver captured, and the conditional clear never wipes the dirty
+/// signal of a mutation whose new state wasn't the one persisted. The lock is
+/// a short O(1) critical section, NEVER nested with the map lock or an engine
+/// lock (module lock discipline).
+///
+/// Shared, so that a transaction's rollback can mark the engines it rewinds
+/// without the registry (#6521).
+#[derive(Default)]
+pub(crate) struct DirtySpaces {
+    stamps: Mutex<HashMap<SpaceId, u64>>,
+    mark_seq: AtomicU64,
+}
+
+impl DirtySpaces {
+    /// Mark `space_id` dirty under a fresh stamp.
+    pub(crate) fn mark(&self, space_id: &SpaceId) {
+        let stamp = self
+            .mark_seq
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
+        self.stamps.lock().insert(space_id.clone(), stamp);
+    }
+}
+
 /// Lazily-instantiated map of `SpaceId -> LoroEngine`.
 ///
 /// Lookup-or-insert is `for_space`; production callers pass the
@@ -125,28 +157,7 @@ pub struct LoroEngineRegistry {
     /// engine work happens under the per-space inner mutex with this
     /// lock released. See the module-level lock discipline.
     inner: Mutex<HashMap<SpaceId, SharedEngine>>,
-    /// #2201 — per-space dirty set. A key's PRESENCE means "this space has
-    /// a mutation not yet persisted"; the value is the global-monotonic
-    /// mark STAMP (from `mark_seq`) recorded by the most recent mark of that
-    /// space ([`mark_dirty`](Self::mark_dirty)).
-    ///
-    /// The saver captures a space's stamp when it collects the export, then
-    /// clears the flag after a successful persist ONLY if the stamp is
-    /// unchanged. Because stamps are drawn from a single ever-increasing
-    /// counter, a re-mark (even one that races a `clear` and
-    /// a re-insert of the same space) always produces a STRICTLY GREATER
-    /// stamp than any the saver captured — so the conditional clear never
-    /// wipes the dirty signal of a mutation whose new state wasn't the one
-    /// persisted. Guarded by its own mutex, taken as a short O(1) critical
-    /// section and NEVER nested with the map lock or an engine lock (module
-    /// lock discipline).
-    dirty: Mutex<HashMap<SpaceId, u64>>,
-    /// #2201 — monotonic source of dirty-mark stamps. `fetch_add`-bumped on
-    /// every [`mark_dirty`](Self::mark_dirty); never reset (not even by
-    /// `clear`), so a stamp is globally unique-and-ordered
-    /// across the registry's lifetime. That is what lets a stale captured
-    /// stamp never collide with a fresh post-clear re-mark.
-    mark_seq: AtomicU64,
+    dirty: Arc<DirtySpaces>,
     /// #607 review: monotone counter bumped by `clear` and by
     /// [`evict_space`](Self::evict_space).
     ///
@@ -188,8 +199,7 @@ impl LoroEngineRegistry {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
-            dirty: Mutex::new(HashMap::new()),
-            mark_seq: AtomicU64::new(0),
+            dirty: Arc::default(),
             generation: AtomicU64::new(0),
             peer_epoch: AtomicU64::new(0),
             inbound_syncs: Arc::new(AtomicUsize::new(0)),
@@ -241,7 +251,7 @@ impl LoroEngineRegistry {
     /// proxy, only now it counts distinct dirty spaces rather than raw
     /// `for_space` calls.
     pub fn dirty_count(&self) -> usize {
-        self.dirty.lock().len()
+        self.dirty.stamps.lock().len()
     }
 
     /// #4100 test instrument — how many engine locks this registry has handed
@@ -258,19 +268,11 @@ impl LoroEngineRegistry {
         self.acquisitions.load(Ordering::Relaxed)
     }
 
-    /// #2201 — mark `space_id` dirty. Records a fresh global-monotonic
-    /// stamp (see the `mark_seq` field docs) so a re-mark that races a
-    /// concurrent persist always out-ranks the stamp the saver captured.
-    /// Called from [`for_space`](Self::for_space) and
-    /// [`with_engine`](Self::with_engine); the map lock is already
-    /// released, and the dirty lock is a short O(1) critical section taken
-    /// on its own (never nested with the map lock or an engine lock).
+    /// #2201 — mark `space_id` dirty ([`DirtySpaces::mark`]). Called from
+    /// [`for_space`](Self::for_space) and [`with_engine`](Self::with_engine)
+    /// with the map lock already released.
     fn mark_dirty(&self, space_id: &SpaceId) {
-        let stamp = self
-            .mark_seq
-            .fetch_add(1, Ordering::Relaxed)
-            .wrapping_add(1);
-        self.dirty.lock().insert(space_id.clone(), stamp);
+        self.dirty.mark(space_id);
     }
 
     /// #2201 — clear `space_id`'s dirty flag, but ONLY if it still carries
@@ -284,7 +286,7 @@ impl LoroEngineRegistry {
     /// [`crate::loro::snapshot::save_all_engines`] after each successful
     /// per-space INSERT.
     pub fn clear_dirty_if_unchanged(&self, space_id: &SpaceId, stamp: u64) {
-        let mut dirty = self.dirty.lock();
+        let mut dirty = self.dirty.stamps.lock();
         if dirty.get(space_id) == Some(&stamp) {
             dirty.remove(space_id);
         }
@@ -354,7 +356,9 @@ impl LoroEngineRegistry {
         // armed AND this is the first time this tx touches this space (a later
         // op in the same tx must NOT overwrite the pre-tx frontier — the rewind
         // discards ALL ops since the first).
-        revert.record_first_touch(space_id, &shared, || guard.checkpoint_frontiers());
+        revert.record_first_touch(space_id, &shared, &self.dirty, || {
+            guard.checkpoint_frontiers()
+        });
         Ok(EngineGuard { guard })
     }
 
@@ -630,7 +634,7 @@ impl LoroEngineRegistry {
         // just-set flag here is consistent — op_log / sync-inbox / SQL remain
         // the durable record.
         drop(map);
-        self.dirty.lock().clear();
+        self.dirty.stamps.lock().clear();
     }
 
     /// Evict a SINGLE space's engine and dirty flag (#2910).
@@ -680,7 +684,7 @@ impl LoroEngineRegistry {
         }
         // Always drop a possibly-set dirty flag (cheap, independent lock;
         // no-op when the space had none).
-        self.dirty.lock().remove(space_id);
+        self.dirty.stamps.lock().remove(space_id);
     }
 
     /// Snapshot every registered engine via `LoroDoc::export` and
@@ -771,7 +775,7 @@ impl LoroEngineRegistry {
     pub fn snapshot_dirty_engines(&self) -> Vec<(SpaceId, u64, Result<Vec<u8>, AppError>)> {
         // Phase 1: atomic cut of the dirty set (space -> captured stamp).
         let dirty: Vec<(SpaceId, u64)> = {
-            let d = self.dirty.lock();
+            let d = self.dirty.stamps.lock();
             d.iter().map(|(s, stamp)| (s.clone(), *stamp)).collect()
         };
         if dirty.is_empty() {
