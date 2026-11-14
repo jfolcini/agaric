@@ -16,6 +16,7 @@ Set out to make the cells of a `{{query … table:true}}` table editable: a prop
 - **Keys the app manages are not editable**, the ones `buildCustomPropsMap` already hides: a `columns:created_at` query would otherwise write bookkeeping.
 - **Enter in a field is prevented.** The editors commit by blurring, the close hands focus back to the cell's button, and the same key press then pressed that button and reopened the cell. Seen red in vitest before the fix; the e2e spec pins it in Chromium.
 - **`SelectEditor` takes `onClose`**: given, its list starts open and reports closing, so a select cell is one click and never an idle trigger.
+- **The cell is `touch-hit-area`, not `touch-target`.** A 44 px minimum width per cell widened the table on a tablet and scrolled the Page column out of view; `e2e/background-tabs.spec.ts`'s long-press case caught it.
 - **The table has no arrow-key row navigation**, before or after; the issue's "arrow keys still move between rows" is pinned as "a closed cell leaves the arrow keys alone".
 - A ref cell shows the target's id, as the column did before; resolving it to a title is not part of this change.
 
