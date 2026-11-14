@@ -17,8 +17,9 @@
  * whose newer save owns the content and the draft.
  */
 
+import { ULID_RE } from '@/editor/markdown-common'
 import { unwrap } from '@/lib/app-error'
-import type { OpRef, PropertyDefinition } from '@/lib/bindings'
+import type { OpRef, PropertyDefinition, PropertyList } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import {
@@ -80,6 +81,27 @@ async function resolveTypedKey(
 }
 
 /**
+ * The block each item of a typed ref list names in `spaceId` (#6741), as a
+ * single typed ref is read (#5160 D11): `[[Title]]` less its brackets, or the
+ * item, is a block id, else a page title. An item naming no page stays as
+ * written, for `set_property` to refuse.
+ */
+async function resolveRefItems(items: PropertyList, spaceId: string): Promise<PropertyList> {
+  const ids: PropertyList = []
+  for (const item of items) {
+    const text = String(item)
+    const name = text.startsWith('[[') && text.endsWith(']]') ? text.slice(2, -2).trim() : text
+    if (ULID_RE.test(name)) {
+      ids.push(name)
+      continue
+    }
+    const { page_id } = unwrap(await commands.resolvePageTitle(name, requireActiveScope(spaceId)))
+    ids.push(page_id ?? name)
+  }
+  return ids
+}
+
+/**
  * Bump and return the block's flush token. Call synchronously at the start of
  * every save of its content; async flows keep the value for their stale check,
  * sync saves bump only to invalidate runs in flight.
@@ -133,6 +155,10 @@ export async function commitInlineProperties(opts: {
         keptAsText.push(`${prop.key}:: ${prop.value}`)
         continue
       }
+      const valueList =
+        params.valueList && def?.value_type === 'ref' && spaceId !== null
+          ? await resolveRefItems(params.valueList, spaceId)
+          : params.valueList
       const resp = unwrap(
         await commands.setProperty(params.blockId, params.key, {
           value_text: params.valueText ?? null,
@@ -140,6 +166,7 @@ export async function commitInlineProperties(opts: {
           value_date: params.valueDate ?? null,
           value_ref: null,
           value_bool: params.valueBool ?? null,
+          ...(valueList === undefined ? {} : { value_list: valueList }),
         }),
       )
       if (resp?.op_refs) opRefs.push(...resp.op_refs)

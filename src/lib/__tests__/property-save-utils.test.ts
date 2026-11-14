@@ -26,7 +26,9 @@ import {
   handleDeleteProperty,
   handleSaveProperty,
   NON_DELETABLE_PROPERTIES,
+  opensDraftRow,
   renameMayDeclareKey,
+  savePropertyList,
 } from '@/lib/property-save-utils'
 
 beforeEach(() => {
@@ -173,6 +175,68 @@ describe('buildInitParams', () => {
   it('returns null for unknown types', () => {
     const result = buildInitParams('B1', makeDef('mystery', 'blob'))
     expect(result).toBeNull()
+  })
+
+  // #6741 — a key that holds several values takes a list and nothing else, so
+  // a scalar placeholder is a write the backend refuses.
+  it.each(['number', 'date'])('returns null for a %s definition that holds a list', (valueType) => {
+    expect(buildInitParams('B1', { ...makeDef('k', valueType), multiple: true })).toBeNull()
+  })
+})
+
+describe('opensDraftRow', () => {
+  it('opens a draft for a type with no empty value, and for any list definition', () => {
+    expect(opensDraftRow({ value_type: 'text' })).toBe(true)
+    expect(opensDraftRow({ value_type: 'number' })).toBe(false)
+    expect(opensDraftRow({ value_type: 'number', multiple: true })).toBe(true)
+    expect(opensDraftRow({ value_type: 'date', multiple: true })).toBe(true)
+  })
+})
+
+describe('savePropertyList (#6741)', () => {
+  it('writes the items as the value_list and nothing else', async () => {
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({ set_property: () => withOps(makeBlockRow({ id: 'B1' })) }),
+    )
+
+    await savePropertyList('B1', 'tags', ['a', 2])
+
+    expect(mockedInvoke).toHaveBeenCalledExactlyOnceWith('set_property', {
+      blockId: 'B1',
+      key: 'tags',
+      value: {
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+        value_list: ['a', 2],
+      },
+    })
+  })
+
+  it('deletes the property when no item is left', async () => {
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        delete_property: () => withOps({ block_id: 'B1', key: 'tags' }),
+        set_property: () => withOps(makeBlockRow({ id: 'B1' })),
+      }),
+    )
+
+    await savePropertyList('B1', 'tags', [])
+
+    expect(mockedInvoke).toHaveBeenCalledExactlyOnceWith('delete_property', {
+      blockId: 'B1',
+      key: 'tags',
+    })
+  })
+
+  it('propagates a refused write', async () => {
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({ set_property: () => Promise.reject(new Error('refused')) }),
+    )
+
+    await expect(savePropertyList('B1', 'tags', ['a'])).rejects.toThrow('refused')
   })
 })
 
@@ -438,6 +502,41 @@ describe('carriedRenameDefinition', () => {
     // Empty array: `create_property_def_inner` rejects it up front.
     expect(
       carriedRenameDefinition({ value_type: 'select', options: '[]' }, row({ value_text: 'a' })),
+    ).toBeNull()
+  })
+
+  // #6741 — a list is taken only by a key whose definition holds several
+  // values, so the flag goes with it, and a scalar never carries it.
+  it('carries a list definition with its flag, and only over a list', () => {
+    expect(
+      carriedRenameDefinition(
+        { value_type: 'number', options: null, multiple: true },
+        row({ value_list: [1, 2] }),
+      ),
+    ).toEqual({ valueType: 'number', options: null, multiple: true })
+    expect(
+      carriedRenameDefinition(
+        { value_type: 'select', options: '["a","b"]', multiple: true },
+        row({ value_list: ['a', 'b'] }),
+      ),
+    ).toEqual({ valueType: 'select', options: '["a","b"]', multiple: true })
+    expect(
+      carriedRenameDefinition(
+        { value_type: 'text', options: null, multiple: true },
+        row({ value_text: 'one' }),
+      ),
+    ).toBeNull()
+    expect(
+      carriedRenameDefinition({ value_type: 'text', options: null }, row({ value_list: ['a'] })),
+    ).toBeNull()
+  })
+
+  it('skips a select list holding an item the options no longer list', () => {
+    expect(
+      carriedRenameDefinition(
+        { value_type: 'select', options: '["a"]', multiple: true },
+        row({ value_list: ['a', 'c'] }),
+      ),
     ).toBeNull()
   })
 

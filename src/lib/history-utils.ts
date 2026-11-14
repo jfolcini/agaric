@@ -172,6 +172,7 @@ export function getPayloadRawContent(entry: HistoryEntry): string | null {
 
 /**
  * Extract property key/value from set_property or delete_property payloads.
+ * A list op's value is its items joined (#6741).
  * Returns null when the payload is invalid or not a property operation.
  */
 export function getPropertyPayload(entry: HistoryEntry): { key: string; value?: string } | null {
@@ -180,9 +181,11 @@ export function getPropertyPayload(entry: HistoryEntry): { key: string; value?: 
   }
   const parsed = parsePayloadObject(entry.payload)
   if (parsed !== null && typeof parsed['key'] === 'string') {
+    const list = parsed['value_list']
+    const value = Array.isArray(list) ? list.map(String).join(', ') : parsed['value']
     return {
       key: parsed['key'],
-      ...(typeof parsed['value'] === 'string' ? { value: parsed['value'] } : {}),
+      ...(typeof value === 'string' ? { value } : {}),
     }
   }
   return null

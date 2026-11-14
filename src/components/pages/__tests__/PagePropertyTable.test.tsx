@@ -2363,3 +2363,53 @@ describe('PagePropertyTable offers the user-set built-ins', () => {
     expect(screen.queryByText('Repeat Until')).not.toBeInTheDocument()
   })
 })
+
+// #6741 — a key that holds several values is edited as its items in the
+// page's Properties table too, and adding it writes nothing until it has one.
+describe('PagePropertyTable list property against the real tauri-mock', () => {
+  const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
+  const addItem = () => screen.getByLabelText(t('property.addListItem', { key: 'when' }))
+
+  beforeEach(() => {
+    seedBlocks()
+    properties.set(PAGE_ID, new Map())
+    spacePropertyDefs('SPACE_PERSONAL').set('when', {
+      key: 'when',
+      value_type: 'date',
+      options: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+      builtin: false,
+      multiple: true,
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  })
+
+  it('adds a date list as a draft, then writes its items and removes one', async () => {
+    const user = userEvent.setup()
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    await user.click(await screen.findByText('When'))
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+
+    await user.type(addItem(), '2026-03-01{Enter}')
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.get('when')?.['value_list']).toEqual(['2026-03-01'])
+    })
+    await user.type(addItem(), '2026-04-01{Enter}')
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.get('when')?.['value_list']).toEqual([
+        '2026-03-01',
+        '2026-04-01',
+      ])
+    })
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: t('property.removeListItem', { item: '2026-03-01' }),
+      }),
+    )
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.get('when')?.['value_list']).toEqual(['2026-04-01'])
+    })
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+})

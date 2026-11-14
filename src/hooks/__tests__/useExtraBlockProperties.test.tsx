@@ -264,6 +264,13 @@ describe('useExtraBlockProperties (provider-projected, #2288)', () => {
 
 // #5736 — a ref and a boolean are chips: the projection keeps them, with their kind.
 describe('extraPropertiesOf', () => {
+  // #6741 — a list row is a chip of its items, not dropped as empty.
+  it('keeps a list as its items, joined for the chip', () => {
+    expect(extraPropertiesOf([row({ key: 'tags', value_list: ['a', 'b, c', 3] })])).toEqual([
+      { key: 'tags', value: 'a, b, c, 3', kind: 'list', items: ['a', 'b, c', 3] },
+    ])
+  })
+
   it('keeps a ref as its target id and a boolean as true or false', () => {
     expect(
       extraPropertiesOf([

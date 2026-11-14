@@ -54,7 +54,8 @@
  */
 
 import { trailingBackslashRun } from '@/editor/markdown-parse/vocab'
-import type { PropertyDefinition } from '@/lib/bindings'
+import type { PropertyDefinition, PropertyList } from '@/lib/bindings'
+import { splitListItems } from '@/lib/property-list'
 
 /**
  * Keys the parser never treats as inline properties. Mirrors
@@ -222,6 +223,8 @@ export interface InlineSetPropertyParams {
   valueNum?: number
   valueDate?: string
   valueBool?: boolean
+  /** A list's items (#6741); a ref list's are the names as typed, for the caller to resolve. */
+  valueList?: PropertyList
 }
 
 /**
@@ -246,7 +249,10 @@ export interface InlineSetPropertyParams {
  *     mangling for free-typed text,
  *   - `ref` → `valueText`, which the backend reads as a block id, `[[Title]]`
  *     or a page title in the block's space (#5160 D11) and refuses when it
- *     names no one block (the line stays literal).
+ *     names no one block (the line stays literal),
+ *   - a definition that holds several values (#6741) → `valueList`, the
+ *     value's items (`splitListItems`), each read as one value of the item
+ *     type is above; one that cannot be, or no item at all, refuses the line.
  *
  * Returns `null` when the value cannot be represented for the key's type;
  * the caller must then leave the property line literal in the content.
@@ -257,6 +263,10 @@ export function buildInlinePropertySetParams(
   value: string,
   def: PropertyDefinition | null,
 ): InlineSetPropertyParams | null {
+  if (def?.multiple === true) {
+    const valueList = listItems(value, def.value_type)
+    return valueList === null ? null : { blockId, key, valueList }
+  }
   switch (def?.value_type) {
     case 'number': {
       const num = Number(value)
@@ -276,4 +286,23 @@ export function buildInlinePropertySetParams(
       return { blockId, key, valueText: value }
     }
   }
+}
+
+/** The items of a list line under an item type, or null when one does not read as it. */
+function listItems(value: string, valueType: string): PropertyList | null {
+  const items = splitListItems(value)
+  if (items.length === 0) return null
+  const list: PropertyList = []
+  for (const item of items) {
+    if (valueType === 'number') {
+      const num = Number(item)
+      if (Number.isNaN(num)) return null
+      list.push(num)
+    } else if (valueType === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(item)) {
+      return null
+    } else {
+      list.push(item)
+    }
+  }
+  return list
 }

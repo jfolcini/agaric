@@ -25,7 +25,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import {
   buildInitParams,
-  DRAFT_ROW_VALUE_TYPES,
+  opensDraftRow,
   APP_MANAGED_BUILTIN_KEYS,
   SYSTEM_MANAGED_PROPERTY_KEYS,
 } from '@/lib/property-save-utils'
@@ -51,8 +51,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
   const [showAddPopover, setShowAddPopover] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  // #2792 — keys of `DRAFT_ROW_VALUE_TYPES` properties added but not yet
-  // persisted. Mirrors `BlockPropertyDrawer`'s `draftKeys` (#2656): such
+  // #2792 — keys of properties added but not yet persisted (`opensDraftRow`). Mirrors `BlockPropertyDrawer`'s `draftKeys` (#2656): such
   // properties have no valid empty value (the real backend rejects it), so we
   // render a local DRAFT row for value entry and only write on the first
   // non-empty save. A draft is dropped (no backend call) if the user leaves it
@@ -215,9 +214,10 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     }
   }, [deleteTarget, doDeleteProperty, draftKeys, dropDraft])
 
-  // #2792 / #2804 — `DRAFT_ROW_VALUE_TYPES` have no valid empty initializer
-  // (the backend rejects an empty `value_text`, a ref with no target and, for
-  // select, any value outside the definition's options). Add a local draft row
+  // #2792 / #2804 — `opensDraftRow` names the definitions with no valid empty
+  // initializer (the backend rejects an empty `value_text`, a ref with no
+  // target, for select any value outside the definition's options, and
+  // anything but a list under a list definition, #6741). Add a local draft row
   // for value entry instead of persisting an invalid placeholder; it writes on
   // the first non-empty save (see `doSaveProperty`). Shared by both
   // `handleAddFromDef` (existing def) and `handleCreateDef` (brand-new
@@ -249,9 +249,8 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
   const handleAddFromDef = useCallback(
     async (def: PropertyDefinition) => {
-      // #2792 — mirrors `BlockPropertyDrawer.handleAddFromDef` (#2656). A list
-      // has no empty value either (#6741).
-      if (def.multiple === true || DRAFT_ROW_VALUE_TYPES.has(def.value_type)) {
+      // #2792 — mirrors `BlockPropertyDrawer.handleAddFromDef` (#2656).
+      if (opensDraftRow(def)) {
         addDraftRow(def)
         return
       }
@@ -291,10 +290,10 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
           ),
         )
         setDefinitions((prev) => [...prev, newDef])
-        // #2804 — same rationale as `handleAddFromDef`: a brand-new
-        // `DRAFT_ROW_VALUE_TYPES` def has no valid empty initializer, so add a
-        // draft row instead of init-persisting an empty value; nor has a list (#6741).
-        if (newDef.multiple === true || DRAFT_ROW_VALUE_TYPES.has(newDef.value_type)) {
+        // #2804 — same rationale as `handleAddFromDef`: a brand-new def
+        // `opensDraftRow` names has no valid empty initializer, so add a
+        // draft row instead of init-persisting an empty value.
+        if (opensDraftRow(newDef)) {
           addDraftRow(newDef)
           return
         }

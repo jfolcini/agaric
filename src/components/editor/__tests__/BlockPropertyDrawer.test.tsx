@@ -1250,6 +1250,57 @@ describe('BlockPropertyDrawer', () => {
     })
   })
 
+  // #6741 — a key that holds several values is edited as its items, never
+  // through the text field, and adding it writes nothing until it has one.
+  describe('list property, against the real mock', () => {
+    const blockId = SEED_IDS.BLOCK_GS_1
+    const addItem = () => screen.getByLabelText(t('property.addListItem', { key: 'scores' }))
+
+    beforeEach(() => {
+      seedBlocks()
+      spacePropertyDefs('SPACE_PERSONAL').set('scores', {
+        key: 'scores',
+        value_type: 'number',
+        options: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        builtin: false,
+        multiple: true,
+      })
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    })
+
+    it('adds a list from its definition as a draft, then writes and re-reads its items', async () => {
+      const user = userEvent.setup()
+      renderWithProvider(<BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />)
+      await waitFor(() => {
+        expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
+      })
+      await user.click(screen.getByRole('button', { name: 'Add property' }))
+      await user.click(await screen.findByText('Scores'))
+      expect(properties.get(blockId)?.has('scores') ?? false).toBe(false)
+      expect(screen.queryByTestId('property-value-input-scores')).not.toBeInTheDocument()
+
+      await user.type(addItem(), '3{Enter}')
+      await waitFor(() => {
+        expect(properties.get(blockId)?.get('scores')?.['value_list']).toEqual([3])
+      })
+      await user.type(addItem(), '5{Enter}')
+      await waitFor(() => {
+        expect(properties.get(blockId)?.get('scores')?.['value_list']).toEqual([3, 5])
+      })
+      expect(
+        await screen.findByRole('button', { name: t('property.removeListItem', { item: '5' }) }),
+      ).toBeInTheDocument()
+
+      await user.click(
+        screen.getByRole('button', { name: t('property.removeListItem', { item: '3' }) }),
+      )
+      await waitFor(() => {
+        expect(properties.get(blockId)?.get('scores')?.['value_list']).toEqual([5])
+      })
+    })
+  })
+
   it('does not crash when reloading properties after ref save fails', async () => {
     const props = [makeProp('linked_page', { value_ref: null })]
     const defs = [makeDef('linked_page', 'ref')]
@@ -1304,6 +1355,16 @@ describe("BlockPropertyDrawer values that don't fit", () => {
       'true',
     )
     expect(mark('Note', 'true')).toBeInTheDocument()
+  })
+
+  // #6741 — a list a key of one value does not take still shows, as its text.
+  it("shows a text key's list as its items' text", async () => {
+    setupMock([makeProp('note', { value_list: ['a', 'b, c'] })], [makeDef('note')])
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+    expect(await screen.findByLabelText(t('property.valueLabel', { key: 'note' }))).toHaveValue(
+      'a, "b, c"',
+    )
   })
 
   it("shows a ref under a number key as its target's title, and an untouched blur writes nothing", async () => {
