@@ -422,7 +422,7 @@ pub(super) async fn mirror_sql_tombstones_onto_engine(
                AS "unprojected!: bool""#,
         space,
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     if inbound_unprojected {
         return Ok(false);
@@ -433,7 +433,7 @@ pub(super) async fn mirror_sql_tombstones_onto_engine(
            WHERE deleted_at IS NOT NULL AND id IN (SELECT value FROM json_each(?))"#,
         ids,
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
     let (mirrored, delta) = registry.with_engine(space_id, device_id, |engine| {
         engine.capturing_delta(|engine| {
@@ -1319,14 +1319,12 @@ async fn project_pass_b(
 /// inconsistent result still aborts at COMMIT, a merely inconvenient write
 /// order no longer can. The pragma resets at COMMIT/ROLLBACK, so it never
 /// leaks to the next user of the pooled connection.
-async fn begin_projection_tx(
-    pool: &SqlitePool,
-) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>, AppError> {
+async fn begin_projection_tx(pool: &SqlitePool) -> Result<agaric_store::db::WriteTx, AppError> {
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "sync_apply_remote").await?;
     // dynamic-sql: a PRAGMA has no `sqlx::query!` macro form (nothing to
     // compile-check against the schema).
     sqlx::query("PRAGMA defer_foreign_keys = ON")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     Ok(tx)
 }
@@ -1588,7 +1586,7 @@ pub async fn sweep_deferred_purges_if_last(
     }
     let deferred: Vec<String> =
         sqlx::query_scalar!("SELECT block_id FROM sync_deferred_purges ORDER BY block_id")
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut **tx)
             .await?;
     let unheld: Vec<&str> = deferred
         .iter()
@@ -1598,7 +1596,7 @@ pub async fn sweep_deferred_purges_if_last(
     agaric_engine::loro::projection::project_purge_blocks_to_sql(&mut tx, &unheld).await?;
     agaric_engine::loro::projection::project_unheld_page_alias_claims(&mut tx, registry).await?;
     sqlx::query!("DELETE FROM sync_deferred_purges")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     tx.commit().await?;
     Ok(unheld
@@ -1672,7 +1670,7 @@ async fn clear_inbox_slots(
 /// propagating, so the next occurrence is diagnosable from the log alone
 /// instead of from a live two-device pairing.
 async fn commit_projection(
-    tx: sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: agaric_store::db::WriteTx,
     pool: &SqlitePool,
     space_id: &SpaceId,
     block_states: &[ProjectedBlockState],

@@ -1520,7 +1520,8 @@ impl SyncOrchestrator {
         // `peer_refs::update_on_sync` documents for exactly that ("we sent
         // nothing trackable this session"). `snapshot_transfer` passes the same
         // literal for the same reason.
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx =
+            agaric_store::db::begin_immediate_logged(&self.pool, "sync_record_pull").await?;
         peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
         complete_sync_in_tx(&mut tx, peer_id, last_hash, "").await?;
         tx.commit().await?;
@@ -1560,7 +1561,8 @@ impl SyncOrchestrator {
         if !self.may_key_bookkeeping_on(peer_id).await {
             return Ok(());
         }
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx =
+            agaric_store::db::begin_immediate_logged(&self.pool, "sync_record_stream").await?;
         peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
         peer_refs::update_on_stream_in_tx(&mut tx, peer_id).await?;
         tx.commit().await?;
@@ -1588,7 +1590,8 @@ impl SyncOrchestrator {
         }
         let bytes =
             crate::sync_protocol::types::encode_persisted_loro_vvs(&self.peer_advertised_loro_vvs);
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx =
+            agaric_store::db::begin_immediate_logged(&self.pool, "sync_persist_peer_vvs").await?;
         peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
         peer_refs::update_loro_vv_bytes_in_tx(&mut tx, peer_id, &bytes).await?;
         tx.commit().await?;

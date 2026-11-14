@@ -537,7 +537,7 @@ async fn write_pass(
     sqlx::query("UPDATE loro_doc_state SET applied_through_seq = ? WHERE applied_through_seq < ?")
         .bind(applied_through_seq)
         .bind(applied_through_seq)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     if registry.generation() != collected.generation {
         return Err(AppError::Snapshot(
@@ -2003,7 +2003,9 @@ mod tests {
         let payload = PurgeBlockPayload {
             block_id: BlockId::from_trusted(SPACE_PURGE_2910),
         };
-        let mut tx = pool.begin().await.expect("begin");
+        let mut tx = agaric_store::db::begin_immediate_logged(&pool, "test_purge")
+            .await
+            .expect("begin");
         let scope = crate::loro::revert::RevertScope::arm(&state);
         // The transaction writes the space's engine before it purges the space.
         state

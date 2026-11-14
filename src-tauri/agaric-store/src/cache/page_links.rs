@@ -151,7 +151,7 @@ pub async fn reindex_page_link_cache_for_block(
         "SELECT page_id, parent_id FROM blocks WHERE id = ?",
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     let (page_id, parent_id) = match row {
         Some(r) => (r.page_id, r.parent_id),
@@ -232,7 +232,7 @@ pub async fn reindex_page_link_cache_for_block(
             "SELECT 1 AS \"one!\" FROM page_link_cache WHERE source_page_id = ?1 LIMIT 1",
             stale_key,
         )
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
         if stranded.is_none() {
             continue;
@@ -471,7 +471,7 @@ async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_page_links_rebuild").await?;
 
     sqlx::query!("DELETE FROM page_link_cache")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     // Materialise the rolled-up edge set into Rust memory then chunk
@@ -550,7 +550,7 @@ async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError
            )
          GROUP BY 1, 2",
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
 
     let mut inserted: u64 = 0;
@@ -574,7 +574,7 @@ async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError
                 .bind(r.tgt_is_page)
                 .bind(&r.space_id);
         }
-        let res = q.execute(&mut *tx).await?;
+        let res = q.execute(&mut **tx).await?;
         inserted += res.rows_affected();
     }
 
@@ -647,7 +647,7 @@ async fn rebuild_page_link_cache_split_impl(
         crate::db::begin_immediate_logged(write_pool, "cache_page_links_rebuild_write").await?;
 
     sqlx::query!("DELETE FROM page_link_cache")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     let mut inserted: u64 = 0;
@@ -671,7 +671,7 @@ async fn rebuild_page_link_cache_split_impl(
                 .bind(r.tgt_is_page)
                 .bind(&r.space_id);
         }
-        let res = q.execute(&mut *tx).await?;
+        let res = q.execute(&mut **tx).await?;
         inserted += res.rows_affected();
     }
 

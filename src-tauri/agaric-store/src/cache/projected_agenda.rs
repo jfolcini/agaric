@@ -214,7 +214,7 @@ async fn rebuild_projected_agenda_cache_impl(
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_projected_agenda_rebuild").await?;
 
     sqlx::query!("DELETE FROM projected_agenda_cache")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     let written = project_and_write_chunked(&mut tx, today, &rows).await?;
@@ -533,7 +533,7 @@ async fn rebuild_projected_agenda_cache_split_impl(
             .await?;
 
     sqlx::query!("DELETE FROM projected_agenda_cache")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     let written = project_and_write_chunked(&mut tx, today, &rows).await?;
@@ -578,7 +578,7 @@ pub async fn update_projected_agenda_block_with_today(
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_projected_agenda_block").await?;
     let rebuild_today: Option<String> =
         sqlx::query_scalar!("SELECT rebuild_today FROM projected_agenda_horizon WHERE id = 0")
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?
             .flatten();
     if rebuild_today.as_deref() != Some(today_str.as_str()) {
@@ -590,7 +590,7 @@ pub async fn update_projected_agenda_block_with_today(
         "DELETE FROM projected_agenda_cache WHERE block_id = ?",
         block_id
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // The full rebuild's qualifying predicate, narrowed to one block.
@@ -618,7 +618,7 @@ pub async fn update_projected_agenda_block_with_today(
            )"#,
         block_id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
 
     if let Some(row) = row {
