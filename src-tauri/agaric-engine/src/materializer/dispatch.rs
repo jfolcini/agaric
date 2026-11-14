@@ -330,7 +330,7 @@ fn narrows_to_content_lifecycle(op_type: &OpType, block_type_hint: Option<&str>)
 /// local lifecycle (`delete` / `restore` / `purge`) arm fans out — every
 /// member of [`FULL_CACHE_REBUILD_TASKS`] (`CONTENT_LIFECYCLE_REBUILD_TASKS`
 /// is a subset). These are the idempotent O(vault) recomputes routed through
-/// the trailing debounce in [`Materializer::enqueue_background_tasks`]. The
+/// the trailing debounce in [`Materializer::collect_fan_out`]. The
 /// per-block TARGETED tasks a lifecycle arm also emits (`RemoveFtsBlock` /
 /// `UpdateFtsBlock`, which carry a `block_id`) are NOT members, so they stay
 /// enqueued inline.
@@ -591,6 +591,7 @@ impl Materializer {
         }
     }
 
+    #[cfg(test)]
     pub fn dispatch_edit_background(
         &self,
         record: &OpRecord,
@@ -610,6 +611,7 @@ impl Materializer {
     /// (see `lifecycle_rebuild_tasks`). Shares the per-op-type dispatch
     /// table with the plain/edit variants — the FTS-optimize threshold is
     /// gated on `edit_block` so it never fires for these ops.
+    #[cfg(test)]
     pub fn dispatch_lifecycle_background(
         &self,
         record: &OpRecord,
@@ -634,6 +636,7 @@ impl Materializer {
     /// `None` → full conservative set), so a cross-device move never
     /// under-invalidates. When `same_page` is `false` (a cross-page reparent)
     /// the full set is likewise retained.
+    #[cfg(test)]
     pub fn dispatch_move_background(
         &self,
         record: &OpRecord,
@@ -1230,16 +1233,73 @@ impl Materializer {
         self.enqueue_background_tasks(record, None, None)
     }
 
-    /// Enqueue the background fan-out for `record`, then drive any
-    /// metric-driven side effects (FTS optimize threshold) that aren't
-    /// captured by the pure dispatch table.
+    /// Enqueue the background fan-out for `record`, one task at a time.
+    fn enqueue_background_tasks(
+        &self,
+        record: &OpRecord,
+        block_type_hint: Option<&str>,
+        move_same_page: Option<bool>,
+    ) -> Result<(), AppError> {
+        let mut tasks = Vec::new();
+        self.collect_fan_out(record, block_type_hint, move_same_page, &mut tasks)?;
+        for task in tasks {
+            self.try_enqueue_background(task)?;
+        }
+        Ok(())
+    }
+
+    /// Dispatch the background fan-out of every op one commit wrote.
+    ///
+    /// A commit of one op enqueues its tasks one at a time, as
+    /// [`Self::dispatch_background`] does, which leaves the ordinary write's
+    /// queue depth and high-water mark as they were. A commit of several sends them as
+    /// one [`MaterializeTask::CommitFanOut`]: enqueued singly, a batch command
+    /// at its cap offers the channel several times its capacity before the
+    /// consumer has run, and the surplus is shed to the retry queue, where it
+    /// waits out the sweeper's minute with the blocks missing from search and
+    /// the agenda.
+    ///
+    /// A failure is logged and not returned, as in
+    /// [`Self::dispatch_background_or_warn`]: the ops have committed.
+    pub fn dispatch_commit(&self, ops: &[CommitOp<'_>]) {
+        let mut tasks = Vec::new();
+        for op in ops {
+            let collected =
+                self.collect_fan_out(op.record, op.block_type, op.move_same_page, &mut tasks);
+            if let Err(e) = collected {
+                tracing::warn!(
+                    op_type = %op.record.op_type,
+                    seq = op.record.seq,
+                    device_id = %op.record.device_id,
+                    error = %e,
+                    "failed to dispatch background cache task"
+                );
+            }
+        }
+        let enqueued = if ops.len() == 1 {
+            tasks
+                .into_iter()
+                .try_for_each(|task| self.try_enqueue_background(task).map(drop))
+        } else if tasks.is_empty() {
+            Ok(())
+        } else {
+            self.try_enqueue_background(MaterializeTask::CommitFanOut(tasks))
+                .map(drop)
+        };
+        if let Err(e) = enqueued {
+            tracing::warn!(error = %e, "failed to enqueue a commit's background cache tasks");
+        }
+    }
+
+    /// Push the tasks `record` enqueues now onto `tasks`, in enqueue order.
     ///
     /// The per-op-type → required-task matrix lives in
     /// [`invalidations_for_op`] as a focused, side-effect-free function
     /// returning `Vec<MaterializeTask>` so tests can pin "every op of
     /// kind X invalidates cache Y" without driving the full materializer.
-    /// This dispatcher is a thin loop over that vec plus the
-    /// metric-conditional FTS-optimize enqueue for `edit_block`.
+    /// This adds the two parts that read `&self`: the lifecycle debounce
+    /// below, and the metric-conditional `FtsOptimize` for `edit_block`,
+    /// pushed last so it lands after every other `edit_block` task.
     ///
     /// #2935: a LOCAL `delete` / `restore` / `purge` fans out the
     /// argument-less global full-vault rebuild set
@@ -1252,11 +1312,12 @@ impl Materializer {
     /// `UpdateFtsBlock`) the same arm emits stays enqueued INLINE — it is
     /// per-block, not an idempotent O(vault) recompute, and must land
     /// immediately.
-    fn enqueue_background_tasks(
+    fn collect_fan_out(
         &self,
         record: &OpRecord,
         block_type_hint: Option<&str>,
         move_same_page: Option<bool>,
+        tasks: &mut Vec<MaterializeTask>,
     ) -> Result<(), AppError> {
         // The op, when it is a local lifecycle one. Binding it here leaves the
         // burst flags below no unparsed case to choose a default for.
@@ -1274,7 +1335,7 @@ impl Materializer {
                 arm_lifecycle = true;
                 continue;
             }
-            self.try_enqueue_background(task)?;
+            tasks.push(task);
         }
         if let (true, Some(op)) = (arm_lifecycle, &lifecycle_op) {
             self.arm_lifecycle_rebuild_debounce(
@@ -1282,23 +1343,16 @@ impl Materializer {
                 keeps_page_ids_rebuild(op),
             );
         }
-        if record.op_type == "edit_block" {
-            self.maybe_enqueue_fts_optimize()?;
+        if record.op_type == "edit_block" && self.count_edit_toward_fts_optimize() {
+            tasks.push(MaterializeTask::FtsOptimize);
         }
         Ok(())
     }
 
-    /// Drive the FTS-optimize threshold counter and conditionally enqueue
+    /// Count one `edit_block` toward the FTS-optimize threshold and say
+    /// whether it crossed it, in which case the caller enqueues
     /// [`MaterializeTask::FtsOptimize`].
-    ///
-    /// Extracted from the former inline `edit_block` arm of
-    /// [`Self::enqueue_background_tasks`] because it is the one piece of
-    /// the per-op fan-out that mutates `&self` state (atomic counter,
-    /// last-optimize timestamp, block-count cache refresh) rather than
-    /// just enqueueing tasks. Keeping it here, side-by-side with its sole
-    /// caller, preserves the original ordering guarantee that
-    /// `FtsOptimize` lands after every other `edit_block` task.
-    fn maybe_enqueue_fts_optimize(&self) -> Result<(), AppError> {
+    fn count_edit_toward_fts_optimize(&self) -> bool {
         let edits = self
             .metrics
             .fts_edits_since_optimize
@@ -1316,21 +1370,29 @@ impl Materializer {
         let elapsed_ms = now_ms.saturating_sub(last_ms);
         let block_count = self.metrics.cached_block_count.load(Ordering::Relaxed);
         let threshold = std::cmp::max(500, block_count / 10_000);
-        if (edits >= threshold || elapsed_ms >= 3_600_000)
+        let due = (edits >= threshold || elapsed_ms >= 3_600_000)
             && self
                 .metrics
                 .fts_edits_since_optimize
                 .compare_exchange(edits, 0, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-        {
-            self.try_enqueue_background(MaterializeTask::FtsOptimize)?;
+                .is_ok();
+        if due {
             self.metrics
                 .fts_last_optimize_ms
                 .store(now_ms, Ordering::Relaxed);
             self.refresh_block_count_cache();
         }
-        Ok(())
+        due
     }
+}
+
+/// One op of a commit, with what its command proved about it: the block's
+/// type for an edit or a lifecycle op, and whether a move kept its page
+/// ([`move_same_page_hint`]). `None` keeps the full rebuild set.
+pub struct CommitOp<'a> {
+    pub record: &'a OpRecord,
+    pub block_type: Option<&'a str>,
+    pub move_same_page: Option<bool>,
 }
 
 /// #3886 — compute the `move_same_page` hint a LOCAL move command may claim,
@@ -1441,9 +1503,9 @@ pub fn move_same_page_hint(
 /// returns no tasks (preserving the prior unknown-op behaviour), and the
 /// arms that read their payload propagate JSON parse failures via `?`. The
 /// metric-driven FTS-optimize threshold for `edit_block` is **not**
-/// captured here — it depends on `&Materializer` state and is driven
-/// by [`Materializer::maybe_enqueue_fts_optimize`] after the returned
-/// vec has been enqueued.
+/// captured here — it depends on `&Materializer` state, and
+/// [`Materializer::collect_fan_out`] pushes that task after the returned
+/// vec.
 pub fn invalidations_for_op(
     record: &OpRecord,
     block_type_hint: Option<&str>,
@@ -1704,9 +1766,8 @@ fn push_edit_block_invalidations(
             // The no-hint path is not hypothetical: UNDO/REDO takes it.
             // All three revert sites in `commands/history.rs` enqueue
             // the reverse op through the unhinted
-            // `CommandTx::enqueue_background`, which routes to
-            // `Materializer::dispatch_background` →
-            // `enqueue_background_tasks(record, None, None)`, while the
+            // `CommandTx::enqueue_background`, which reaches
+            // `Materializer::collect_fan_out` with no hint, while the
             // FORWARD rename goes through the hinted
             // `enqueue_edit_background(record, "tag"|"page")`. So
             // undoing a rename refreshed the renamed block's own FTS row
@@ -1725,9 +1786,8 @@ fn push_edit_block_invalidations(
     tasks.push(MaterializeTask::UpdateFtsBlock {
         block_id: Arc::from(block_id),
     });
-    // FTS-optimize threshold (metric-driven) is enqueued
-    // separately by `Materializer::maybe_enqueue_fts_optimize`
-    // after the caller has drained this vec.
+    // The metric-driven `FtsOptimize` is pushed after this vec by
+    // `Materializer::collect_fan_out`.
     Ok(())
 }
 
@@ -1851,7 +1911,7 @@ fn push_restore_block_invalidations(
         // reindex dropped them.
         //
         // SCOPE (path): this arm is the LOCAL command fan-out.
-        // `enqueue_background_tasks` is reached only from
+        // `collect_fan_out` is reached only from
         // `CommandTx::commit_and_dispatch`; an inbound-sync import
         // fans out through `enqueue_inbound_sync_rebuilds`, which
         // enqueues the same per-changed-block `ReindexBlockLinks`
@@ -2210,8 +2270,8 @@ mod tests {
     //! invalidates Y" claims that were previously only auditable by
     //! reading the imperative match arms.
     //!
-    //! The metric-driven `FtsOptimize` enqueue in
-    //! [`Materializer::maybe_enqueue_fts_optimize`] is intentionally
+    //! The metric-driven `FtsOptimize` push in
+    //! [`Materializer::collect_fan_out`] is intentionally
     //! out of scope here — these tests pin the structural matrix only.
     //! End-to-end coverage of the FtsOptimize threshold lives in
     //! `materializer::tests`.
@@ -2281,6 +2341,7 @@ mod tests {
             }
             MaterializeTask::RebuildBlockTagRefsCache => "RebuildBlockTagRefsCache".into(),
             MaterializeTask::RebuildPageLinkCache => "RebuildPageLinkCache".into(),
+            MaterializeTask::CommitFanOut(tasks) => format!("CommitFanOut({})", tasks.len()),
             MaterializeTask::Barrier(_) => "Barrier".into(),
         }
     }

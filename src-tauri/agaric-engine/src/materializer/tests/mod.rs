@@ -100,6 +100,7 @@ mod apply_op;
 mod batch_purge;
 mod block_tag_refs;
 mod cache_rebuild;
+mod commit_fan_out;
 mod dispatch;
 mod enqueue_shutdown;
 mod fifo_regression;

@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id, task_kind, attempts, created_at, last_error FROM materializer_retry_queue WHERE last_error = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "block_id"
+          }
+        }
+      },
+      {
+        "name": "task_kind",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "task_kind"
+          }
+        }
+      },
+      {
+        "name": "attempts",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "last_error",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "last_error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "0dd6ca23f0bcc9197b314a631948b92e630b4d0f3d1d6d98e95d5e4696b0c3c8"
+}

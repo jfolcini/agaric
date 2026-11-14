@@ -334,30 +334,12 @@ const TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN: usize = 4;
 /// also needs — hours of self-inflicted contention in response to a
 /// condition that would have cleared in seconds.
 ///
-/// Classified on the SQLite PRIMARY result code (`extended & 0xFF`), so
-/// every extended `SQLITE_BUSY_*` / `SQLITE_LOCKED_*` variant (261, 262,
-/// 517, 518, 773, …) is covered without enumerating a list that a future
-/// SQLite release can extend. [`AppError::PoolTimedOut`] is the same signal
-/// one layer out — every write connection in the pool is already occupied,
-/// so the batch never even reached SQLite.
-///
 /// Deliberately NOT matched: constraint/trigger failures (the #3311 poison
 /// shape, which `tombstone_purge_skips_poison_root_and_drains_the_rest_3311`
 /// drives through `RAISE(ABORT)` → `SQLITE_CONSTRAINT_TRIGGER`), which keep
 /// the per-root fallback they were written for.
 fn is_write_contention(err: &AppError) -> bool {
-    /// SQLite primary result code `SQLITE_BUSY`.
-    const SQLITE_BUSY: i32 = 5;
-    /// SQLite primary result code `SQLITE_LOCKED`.
-    const SQLITE_LOCKED: i32 = 6;
-    match err {
-        AppError::PoolTimedOut => true,
-        AppError::Database(sqlx::Error::Database(db_err)) => db_err
-            .code()
-            .and_then(|code| code.parse::<i32>().ok())
-            .is_some_and(|code| matches!(code & 0xFF, SQLITE_BUSY | SQLITE_LOCKED)),
-        _ => false,
-    }
+    err.is_write_contention()
 }
 
 /// Issue #157 sub-item E — hard-purge soft-deleted blocks whose

@@ -29,6 +29,7 @@ mod glob_filter_tests;
 mod heading_link_tests;
 mod history_cmd_tests;
 mod import_stored_construct_tests;
+mod large_batch_fanout_tests;
 mod list_pages_with_metadata_tests;
 mod mcp_agents_tests;
 mod meeting_cmd_tests;

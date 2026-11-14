@@ -21,6 +21,16 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     let mut pages_cache_counts_tail = None;
     let mut result = Vec::with_capacity(tasks.len());
     for task in tasks {
+        // A removal deletes the row whatever the block's state, where an
+        // update re-reads the block. So an update that follows a removal must
+        // run after it: keeping only the block's first update leaves a block
+        // that was deleted and restored in one commit with no row.
+        if let MaterializeTask::RemoveFtsBlock { block_id } = &task {
+            let update = MaterializeTask::UpdateFtsBlock {
+                block_id: Arc::clone(block_id),
+            };
+            seen_ids.remove(&(mem::discriminant(&update), Arc::clone(block_id)));
+        }
         match &task {
             // Per-id tasks collapse only on an exact (kind, id) repeat: two of
             // one kind for DIFFERENT ids in one drain must both survive. A
@@ -101,6 +111,38 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One commit that deletes a block and restores it: the restore's update
+    /// runs after the removal, or the live block ends with no FTS row.
+    #[test]
+    fn an_fts_update_after_a_removal_survives_the_block_s_earlier_update() {
+        let update = || MaterializeTask::UpdateFtsBlock {
+            block_id: Arc::from("z"),
+        };
+        let remove = || MaterializeTask::RemoveFtsBlock {
+            block_id: Arc::from("z"),
+        };
+        let kinds = |tasks: Vec<MaterializeTask>| -> Vec<&'static str> {
+            dedup_tasks(tasks)
+                .iter()
+                .map(|task| match task {
+                    MaterializeTask::UpdateFtsBlock { .. } => "update",
+                    MaterializeTask::RemoveFtsBlock { .. } => "remove",
+                    _ => "other",
+                })
+                .collect()
+        };
+        assert_eq!(
+            kinds(vec![update(), remove(), update(), update()]),
+            ["update", "remove", "update"],
+            "the update after the removal is kept once"
+        );
+        assert_eq!(
+            kinds(vec![update(), update(), remove()]),
+            ["update", "remove"],
+            "with no update after the removal, repeats still collapse"
+        );
+    }
 
     /// #4293: two batches from two inbound frames carry different ids; the
     /// task is not persisted for retry, so a discriminant collapse would lose

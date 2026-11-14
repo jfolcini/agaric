@@ -353,6 +353,29 @@ impl AppError {
             _ => None,
         }
     }
+
+    /// Whether another writer held the database: nothing is wrong with the
+    /// write that was refused, and it never ran.
+    ///
+    /// Classified on the SQLite PRIMARY result code (`extended & 0xFF`), so
+    /// every extended `SQLITE_BUSY_*` / `SQLITE_LOCKED_*` variant (261, 262,
+    /// 517, 518, 773, …) is covered without enumerating a list that a future
+    /// SQLite release can extend. [`AppError::PoolTimedOut`] is the same signal
+    /// one layer out — every write connection in the pool is already occupied,
+    /// so the write never even reached SQLite.
+    #[must_use]
+    pub fn is_write_contention(&self) -> bool {
+        const SQLITE_BUSY: i32 = 5;
+        const SQLITE_LOCKED: i32 = 6;
+        match self {
+            AppError::PoolTimedOut => true,
+            AppError::Database(sqlx::Error::Database(db_err)) => db_err
+                .code()
+                .and_then(|code| code.parse::<i32>().ok())
+                .is_some_and(|code| matches!(code & 0xFF, SQLITE_BUSY | SQLITE_LOCKED)),
+            _ => false,
+        }
+    }
 }
 
 /// Manual `From<sqlx::Error>` (issue #106).
