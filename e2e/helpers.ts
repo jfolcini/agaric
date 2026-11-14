@@ -2,6 +2,8 @@ import { createRequire } from 'node:module'
 
 import { test as baseTest, expect, type Locator, type Page } from '@playwright/test'
 
+import { BRIDGE_BINARY, type Bridge, startBridge } from './bridge'
+
 // ---------------------------------------------------------------------------
 // Console-error watcher.
 //
@@ -99,7 +101,39 @@ function expectNoConsoleErrors(page: Page): void {
 // this module once, so module-level hooks attach only to the first spec file
 // it runs and every later file in that worker goes ungated. A page the test
 // opens itself (`page.context().newPage()`) is gated too.
-export const test = baseTest.extend<{ consoleErrorGate: void }>({
+export const test = baseTest.extend<
+  { consoleErrorGate: void; realBackend: void },
+  { bridge: Bridge | null }
+>({
+  // #6529 — one bridge to the real backend per worker, when a run names its
+  // binary (`e2e/bridge.ts`). `null` on the mock.
+  bridge: [
+    // oxlint-disable-next-line no-empty-pattern -- Playwright reads a fixture's dependencies from this destructuring
+    async ({}, use) => {
+      if (BRIDGE_BINARY === undefined) {
+        await use(null)
+        return
+      }
+      const bridge = await startBridge(BRIDGE_BINARY)
+      await use(bridge)
+      await bridge.stop()
+    },
+    { scope: 'worker' },
+  ],
+  // Each test gets a fresh copy of the template vault, and every page of its
+  // context is told where the bridge is before the app boots.
+  realBackend: [
+    async ({ context, bridge }, use) => {
+      if (bridge !== null) {
+        await bridge.request('reset')
+        await context.addInitScript((url) => {
+          ;(window as unknown as Record<string, unknown>)['__AGARIC_BRIDGE__'] = url
+        }, bridge.url)
+      }
+      await use()
+    },
+    { auto: true },
+  ],
   consoleErrorGate: [
     async ({ page, context }, use) => {
       const pages = [page]

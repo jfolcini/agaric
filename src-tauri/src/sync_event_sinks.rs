@@ -10,8 +10,9 @@
 use agaric_sync::sync_events::{
     BindExposureStatus, BindExposureStatusState, EVENT_SYNC_COMPLETE, EVENT_SYNC_ENDPOINT_BINDING,
     EVENT_SYNC_ERROR, EVENT_SYNC_EXPORT_REFUSED, EVENT_SYNC_INTERNET_FACING_BIND,
-    EVENT_SYNC_MDNS_DISABLED, EVENT_SYNC_NETWORK_BLOCKED, EVENT_SYNC_PROGRESS, InternetFacingBind,
-    MdnsStatus, MdnsStatusState, SyncEvent, SyncEventSink, SyncProgressUpdate,
+    EVENT_SYNC_LOCAL_TEXT_KEPT, EVENT_SYNC_MDNS_DISABLED, EVENT_SYNC_NETWORK_BLOCKED,
+    EVENT_SYNC_PROGRESS, InternetFacingBind, MdnsStatus, MdnsStatusState, SyncEvent, SyncEventSink,
+    SyncProgressUpdate,
 };
 
 // ---------------------------------------------------------------------------
@@ -37,6 +38,7 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             // device-management surface, not an active sync's progress stream.
             SyncEvent::NetworkBlockedByOs { .. } => EVENT_SYNC_NETWORK_BLOCKED,
             SyncEvent::ExportRefused { .. } => EVENT_SYNC_EXPORT_REFUSED,
+            SyncEvent::LocalTextKept { .. } => EVENT_SYNC_LOCAL_TEXT_KEPT,
             // File-transfer progress was never on the
             // legacy `app.emit` bus, so this sink drops it. The
             // canonical path is `ChannelEventSink` → `Channel<…>::Files`;

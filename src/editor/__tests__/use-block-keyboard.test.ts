@@ -2531,3 +2531,59 @@ describe('followLink — Alt+Enter at a page link or block ref follows it', () =
     }
   })
 })
+
+describe('useBlockKeyboard — a caret the DOM moved since ProseMirror last read it', () => {
+  /** `two` with ProseMirror's caret at its end and the DOM's after the `t`, as right after a caret key. */
+  function setup() {
+    const element = document.createElement('div')
+    document.body.append(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text],
+      content: {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'two' }] }],
+      },
+    })
+    const callbacks = makeCallbacks()
+    const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+    editor.view.dom.focus()
+    editor.commands.setTextSelection(4)
+    // jsdom sends `selectionchange` inside `collapse`; a browser sends it a task later.
+    const hold = (event: Event) => event.stopImmediatePropagation()
+    window.addEventListener('selectionchange', hold, true)
+    document.getSelection()?.collapse(editor.view.dom.querySelector('p')?.firstChild as Node, 1)
+    window.removeEventListener('selectionchange', hold, true)
+    const cleanup = () => {
+      unmount()
+      editor.destroy()
+      element.remove()
+    }
+    return { editor, target: editor.view.dom.parentElement as HTMLElement, cleanup }
+  }
+
+  it('a key reads the DOM caret before its rule runs', () => {
+    const { editor, target, cleanup } = setup()
+    expect(editor.state.selection.from).toBe(4)
+
+    target.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    )
+
+    expect(editor.state.selection.from).toBe(2)
+
+    cleanup()
+  })
+
+  it('a key during IME composition leaves the DOM caret unread', () => {
+    const { editor, target, cleanup } = setup()
+
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'isComposing', { value: true })
+    target.dispatchEvent(event)
+
+    expect(editor.state.selection.from).toBe(4)
+
+    cleanup()
+  })
+})

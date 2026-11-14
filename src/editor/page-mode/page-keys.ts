@@ -48,6 +48,7 @@ import {
   startOf,
   subtreeEnd,
 } from '@/editor/page-mode/page-document'
+import { readDomSelection } from '@/editor/read-dom-selection'
 import { linkAtCaret } from '@/editor/revealed-markers'
 import { blockIdOf } from '@/editor/token-ids'
 import { announce } from '@/lib/announcer'
@@ -353,9 +354,13 @@ export const PageKeys = Extension.create<PageKeysOptions>({
       new Plugin({
         props: {
           handleDOMEvents: {
-            // True skips ProseMirror's handling, keymaps included, and keeps the key's default:
-            // a key on a chip is the chip's, but Escape leaves the text from there too.
-            keydown: (view, event) => !view.hasFocus() && event.key !== 'Escape',
+            keydown: (view, event) => {
+              // Before the keymaps read the caret.
+              if (!event.isComposing && event.keyCode !== 229) readDomSelection(view)
+              // True skips ProseMirror's handling, keymaps included, and keeps the key's default:
+              // a key on a chip is the chip's, but Escape leaves the text from there too.
+              return !view.hasFocus() && event.key !== 'Escape'
+            },
           },
           // The rebindable shortcuts, which still indent where Tab is left to move focus.
           handleKeyDown(view, event) {
