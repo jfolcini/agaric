@@ -28,8 +28,10 @@ export function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
 
 /**
  * Save `blob` as `filename` in the user's Downloads folder: the one path every
- * file save takes. Resolves once the save is handed over, rejects when it
- * failed, so a caller claims success only after it.
+ * file save takes. Resolves once the save is handed over, with the name the
+ * file has there where the backend wrote it (it differs when `filename` was
+ * taken) and `filename` where the webview did; rejects when the save failed,
+ * so a caller claims success only after it.
  *
  * - Android and macOS write through the backend. The Android WebView handles
  *   no `blob:` download (#6546), and WKWebView cancels a download no handler
@@ -38,11 +40,11 @@ export function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
  *   went, under the name the OS gave it.
  * - Elsewhere the webview downloads a transient anchor's `blob:` URL.
  */
-export async function saveBlob(blob: Blob, filename: string): Promise<void> {
+export async function saveBlob(blob: Blob, filename: string): Promise<string> {
   if (isAndroid() || isMac()) {
     const savedAs = unwrap(await commands.saveToDownloads(filename, await blobToBase64(blob)))
     if (isAndroid()) notify.success(t('data.savedToDownloads', { fileName: savedAs }))
-    return
+    return savedAs
   }
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
@@ -54,6 +56,7 @@ export async function saveBlob(blob: Blob, filename: string): Promise<void> {
   // #2275: WebKitGTK can start the download after `click()` returns, so a
   // revoke on the next line races the fetch and can abort it.
   setTimeout(() => URL.revokeObjectURL(url), 0)
+  return filename
 }
 
 /** {@link saveBlob} for raw bytes. */
@@ -61,7 +64,7 @@ export function triggerDownload(
   bytes: Uint8Array,
   mimeType: string,
   filename: string,
-): Promise<void> {
+): Promise<string> {
   return saveBlob(bytesToBlob(bytes, mimeType), filename)
 }
 
