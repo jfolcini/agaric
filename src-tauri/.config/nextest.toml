@@ -189,6 +189,14 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 filter = 'test(/reconcile_all_scale_sweep_4901/)'
 slow-timeout = { period = "60s", terminate-after = 10 }
 
+# `loro::durability_cost_tests::durability_cost` (#6521) is the same kind of
+# measurement: it prints its timings and bounds none, so a kill loses the
+# numbers and catches nothing. Its 1K-block debug run outlasts the default
+# 2x30s kill on a CI runner, so it gets 6x30s.
+[[profile.default.overrides]]
+filter = 'test(=loro::durability_cost_tests::durability_cost)'
+slow-timeout = { period = "30s", terminate-after = 6 }
+
 # The Pages 20k-page perf gates (`list_pages_with_metadata_tests`) assert the
 # median of a first-page query, but most of their wall time is seeding 20k
 # pages through `pages_cache` and its per-sort indexes, which on a debug
