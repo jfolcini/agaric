@@ -8,14 +8,18 @@
 import { devices, type Locator, type Page } from '@playwright/test'
 
 import {
+  carryOver,
+  centerOf,
   chooseSelectOption,
   dndClickGuardLifted,
   expect,
   expectNoHorizontalOverflow,
   navigateToView,
+  renderedFrame,
   seedSearchBlocks,
   test,
   waitForBoot,
+  withTouch,
 } from './helpers'
 
 test.beforeEach(async ({ page }) => {
@@ -42,39 +46,9 @@ async function moveCard(page: Page, from: string, text: string, to: string): Pro
     .click()
 }
 
-const centre = async (locator: Locator): Promise<{ x: number; y: number }> => {
-  const box = await locator.boundingBox()
-  if (!box) throw new Error('no layout box')
-  return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
-}
-
-/** Two frames: the last move's render, then dnd-kit's "over" state from its effect. */
-const renderedFrame = (page: Page): Promise<unknown> =>
-  page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
-
 /** dnd-kit's live region, while it says something about the card with `text`. */
 const announced = (page: Page, text: string): Locator =>
   page.locator('[id^="DndLiveRegion-"]').filter({ hasText: text })
-
-/** Real touches through Chromium's own pipeline, as on a device (`withTouch` in helpers.ts). */
-async function touches(
-  page: Page,
-  run: (
-    send: (type: 'touchStart' | 'touchMove' | 'touchEnd', x?: number, y?: number) => Promise<void>,
-  ) => Promise<void>,
-): Promise<void> {
-  const cdp = await page.context().newCDPSession(page)
-  try {
-    await run(async (type, x, y) => {
-      await cdp.send('Input.dispatchTouchEvent', {
-        type,
-        touchPoints: x === undefined || y === undefined ? [] : [{ x, y }],
-      })
-    })
-  } finally {
-    await cdp.detach()
-  }
-}
 
 /** Leave Advanced Query and come back, so every column is queried afresh. */
 async function reopenBoard(page: Page): Promise<void> {
@@ -192,14 +166,11 @@ test('a card dragged onto another column moves there, and the toast takes it bac
   await seedSearchBlocks(page, [{ content: 'Board spec dragged', todo: 'TODO' }])
   await openStateBoard(page)
   await column(page, 'DOING').evaluate((el) => el.scrollIntoView({ block: 'center' }))
-  const from = await centre(card(page, 'TODO', 'Board spec dragged'))
-  const to = await centre(column(page, 'DOING'))
+  const from = await centerOf(card(page, 'TODO', 'Board spec dragged'), 'card')
 
   await page.mouse.move(from.x, from.y)
   await page.mouse.down()
-  for (let i = 1; i <= 20; i++) {
-    await page.mouse.move(from.x + ((to.x - from.x) * i) / 20, from.y + ((to.y - from.y) * i) / 20)
-  }
+  await carryOver(from, column(page, 'DOING'), (x, y) => page.mouse.move(x, y))
   await expect(page.getByTestId('query-board-drag-overlay')).toHaveText('Board spec dragged')
   await renderedFrame(page)
   await page.mouse.up()
@@ -247,11 +218,11 @@ test.describe('The board on a touch tablet @search @mobile', () => {
         el.addEventListener('scrollend', () => resolve(el.scrollLeft), { once: true })
       }),
     }))
-    const swipe = await centre(card(page, 'TODO', 'Board spec touched'))
-    await touches(page, async (send) => {
-      await send('touchStart', swipe.x, swipe.y)
-      for (let i = 1; i <= 10; i++) await send('touchMove', swipe.x - i * 30, swipe.y)
-      await send('touchEnd')
+    const swipe = await centerOf(card(page, 'TODO', 'Board spec touched'), 'card')
+    await withTouch(page, async (touch) => {
+      await touch.start(swipe.x, swipe.y)
+      for (let i = 1; i <= 10; i++) await touch.move(swipe.x - i * 30, swipe.y)
+      await touch.end()
     })
     expect(await swipeEnd.evaluate((end) => end.scrollLeft)).toBeGreaterThan(0)
     // Nothing was picked up: the drop below shows the region would say so.
@@ -262,23 +233,16 @@ test.describe('The board on a touch tablet @search @mobile', () => {
     await dndClickGuardLifted(page)
     await expect(card(page, 'TODO', 'Board spec touched')).toHaveCount(1)
 
-    const from = await centre(card(page, 'TODO', 'Board spec touched'))
-    const to = await centre(column(page, 'DOING'))
-    await touches(page, async (send) => {
-      await send('touchStart', from.x, from.y)
+    const from = await centerOf(card(page, 'TODO', 'Board spec touched'), 'card')
+    await withTouch(page, async (touch) => {
+      await touch.start(from.x, from.y)
       // The card lifts once the long-press hold has passed.
       await expect(page.getByTestId('query-board-drag-overlay')).toHaveText('Board spec touched')
-      for (let i = 1; i <= 20; i++) {
-        await send(
-          'touchMove',
-          from.x + ((to.x - from.x) * i) / 20,
-          from.y + ((to.y - from.y) * i) / 20,
-        )
-      }
+      await carryOver(from, column(page, 'DOING'), touch.move)
       await renderedFrame(page)
       // A drag between columns mid-board leaves the board where it was.
       expect(await viewport.evaluate((el) => el.scrollLeft)).toBe(0)
-      await send('touchEnd')
+      await touch.end()
     })
     await dndClickGuardLifted(page)
 
@@ -304,22 +268,22 @@ test.describe('The board on a touch tablet @search @mobile', () => {
     await column(page, 'TODO').evaluate((el) => el.scrollIntoView({ block: 'center' }))
     await expect(column(page, 'No value')).not.toBeInViewport()
 
-    const from = await centre(card(page, 'TODO', 'Board spec edge'))
+    const from = await centerOf(card(page, 'TODO', 'Board spec edge'), 'card')
     const right = await viewport.evaluate((el) => el.getBoundingClientRect().right)
-    await touches(page, async (send) => {
-      await send('touchStart', from.x, from.y)
+    await withTouch(page, async (touch) => {
+      await touch.start(from.x, from.y)
       await expect(page.getByTestId('query-board-drag-overlay')).toHaveText('Board spec edge')
       for (let i = 1; i <= 10; i++) {
-        await send('touchMove', from.x + ((right - 10 - from.x) * i) / 10, from.y)
+        await touch.move(from.x + ((right - 10 - from.x) * i) / 10, from.y)
       }
       // Held at the edge, the board scrolls to its end.
       await expect
         .poll(() => viewport.evaluate((el) => el.scrollWidth - el.clientWidth - el.scrollLeft))
         .toBeLessThan(1)
-      const to = await centre(column(page, 'No value'))
-      await send('touchMove', to.x, to.y)
+      // The board has scrolled since the press: aim at the column where it is now.
+      await carryOver({ x: right - 10, y: from.y }, column(page, 'No value'), touch.move, 1)
       await renderedFrame(page)
-      await send('touchEnd')
+      await touch.end()
     })
     await dndClickGuardLifted(page)
 
