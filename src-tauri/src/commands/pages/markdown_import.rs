@@ -426,7 +426,7 @@ pub(super) async fn create_import_page(
         }
     };
     let mut lines = PropertyLines::load(&mut tx, Some(space_id), PropertyWrite::Import).await?;
-    let front = frontmatter_values(&parse_output);
+    let front = frontmatter_values(parse_output);
     let values = parse_output
         .blocks
         .iter()

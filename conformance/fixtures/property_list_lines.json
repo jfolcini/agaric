@@ -57,7 +57,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 16,
+      "count": 20,
       "ops": [
         {
           "op_type": "set_property_def"
@@ -78,6 +78,14 @@
           "op_type": "set_property"
         },
         {
+          "key": "keywords",
+          "op_type": "set_property"
+        },
+        {
+          "key": "cssclasses",
+          "op_type": "set_property"
+        },
+        {
           "key": "authors",
           "op_type": "set_property"
         },
@@ -90,10 +98,18 @@
           "op_type": "set_property"
         },
         {
+          "key": "keywords",
+          "op_type": "set_property"
+        },
+        {
           "op_type": "create_block"
         },
         {
           "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "key": "cssclasses",
           "op_type": "set_property"
         },
         {
@@ -128,9 +144,21 @@
         "value_type": "List"
       },
       {
+        "block_id": "B1",
+        "key": "keywords",
+        "value": ["x", "w"],
+        "value_type": "List"
+      },
+      {
         "block_id": "B2",
         "key": "authors",
         "value": ["Zed", "x, y"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B2",
+        "key": "cssclasses",
+        "value": ["wide", "dark, mode"],
         "value_type": "List"
       },
       {
@@ -149,6 +177,12 @@
         "block_id": "B3",
         "key": "authors",
         "value": ["Zed", "x, y"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B3",
+        "key": "cssclasses",
+        "value": ["wide", "dark, mode"],
         "value_type": "List"
       },
       {
@@ -235,16 +269,19 @@
       "name": "the_buffer_after_the_saves",
       "rows": [
         "line#text=---",
-        "line#text=authors: Zoe, Doe",
+        "line#text=authors: [Zoe, Doe]",
+        "line#text=keywords: [x, w]",
         "line#text=---",
         "line#text=",
         "B2#text=card",
         "line#text=  authors:: Zed, \"x, y\"",
+        "line#text=  cssclasses:: wide, \"dark, mode\"",
         "line#text=  marks:: \"\\\"1, 2\\\"\"",
         "line#text=  scores:: 7, 100",
         "line#text=",
         "B3#text=card",
         "line#text=  authors:: Zed, \"x, y\"",
+        "line#text=  cssclasses:: wide, \"dark, mode\"",
         "line#text=  scores:: 7, 100",
         "line#text=",
         "B4#text=from a template",
