@@ -3113,6 +3113,16 @@ export type McpAgentMode = "read_only" | "read_write";
 export type McpStatus = {
 	enabled: boolean,
 	socket_path: string,
+	/**
+	 *  The absolute path an agent config runs to start the bridge
+	 *  ([`mcp::bridge_invocation`]).
+	 */
+	bridge_command: string,
+	/**
+	 *  Arguments before the bridge's own: `["agaric-mcp"]` when
+	 *  `bridge_command` is the AppImage, else none.
+	 */
+	bridge_args: string[],
 	active_connections: number,
 };
 

@@ -160,7 +160,7 @@ export function AgentAccessTab(): React.ReactElement {
 
       <Card>
         <CardContent>
-          <AgentList socketPath={status?.socket_path ?? ''} />
+          <AgentList bridge={status} />
         </CardContent>
       </Card>
 
