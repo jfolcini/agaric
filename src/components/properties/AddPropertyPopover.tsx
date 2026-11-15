@@ -39,6 +39,14 @@ import type { PropertyDefinition } from '@/lib/bindings'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { formatPropertyName, selectOptionsJson, valueTypeLabel } from '@/lib/property-utils'
 
+// Radix refocuses the trigger one timer after the picker unmounts. By then the
+// value input of the row just added may have the focus, and taking it away
+// commits that input while it is still empty, which drops the row.
+function keepFocusThatMovedOn(event: Event): void {
+  const focused = document.activeElement
+  if (focused != null && focused !== document.body) event.preventDefault()
+}
+
 export interface AddPropertyPopoverProps {
   /** Definitions to show in the picker. Already filtered by the parent. */
   definitions: PropertyDefinition[]
@@ -278,7 +286,11 @@ export function AddPropertyPopover({
     return (
       <Sheet open={popoverOpen} onOpenChange={setPopoverOpen}>
         <SheetTrigger asChild>{trigger}</SheetTrigger>
-        <SheetContent side="bottom" data-testid="add-property-sheet">
+        <SheetContent
+          side="bottom"
+          data-testid="add-property-sheet"
+          onCloseAutoFocus={keepFocusThatMovedOn}
+        >
           <SheetHeader>
             <SheetTitle>{t('pageProperty.addPropertyButton')}</SheetTitle>
             <SheetDescription>{t('pageProperty.pickerLabel')}</SheetDescription>
@@ -293,7 +305,11 @@ export function AddPropertyPopover({
   return (
     <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <MenuPopoverContent className="space-y-2 p-3" aria-label={t('pageProperty.pickerLabel')}>
+      <MenuPopoverContent
+        className="space-y-2 p-3"
+        aria-label={t('pageProperty.pickerLabel')}
+        onCloseAutoFocus={keepFocusThatMovedOn}
+      >
         {pickerBody}
       </MenuPopoverContent>
     </Popover>
