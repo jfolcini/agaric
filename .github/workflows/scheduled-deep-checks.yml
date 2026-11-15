@@ -952,8 +952,11 @@ jobs:
         # A gate comes once a few weekly runs have shown the noise band
         # (docs/architecture/operations.md § Loro engine cost). 10K blocks, not
         # the 100K scale: the lane's budget is for the SLO run. The shipped
-        # profile's values are set so this reuses the build above, and
+        # profile's values are set so this reuses the dependencies built above;
+        # engine_bench still compiles and links on its own. A failure here must
+        # not redden the SLO results already in, hence continue-on-error.
         # `scripts/measure-loro.sh` is what `just measure-loro` runs.
+        continue-on-error: true
         working-directory: src-tauri
         shell: bash
         env:
