@@ -14,7 +14,8 @@
 # (dnf/pacman, best-effort), macOS (brew, best-effort).
 #
 # Best-effort and idempotent by design:
-#   * tools already on PATH are skipped (fast re-runs);
+#   * tools already on PATH are skipped (fast re-runs), a pinned one only at
+#     its pinned version;
 #   * anything that can't be auto-installed on a platform prints a manual hint
 #     instead of aborting — a partial toolchain still builds and runs the app,
 #     you just can't run every hook until the gap is filled.
@@ -64,7 +65,7 @@ set -uo pipefail
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-ok()   { printf '  \033[32m✓ %s\033[0m\n' "$*"; }
+ok() { printf '  \033[32m✓ %s\033[0m\n' "$*"; }
 note() { printf '  \033[36m%s\033[0m\n' "$*"; }
 warn() { printf '  \033[33m! %s\033[0m\n' "$*"; }
 
@@ -80,11 +81,15 @@ export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 # as the dnf/pacman name; override by hand if a distro diverges.)
 pkg_install() {
   local brew_name="$1" apt_name="$2" bin="$3"
-  if have "$bin"; then ok "$bin (already installed)"; return; fi
+  if have "$bin"; then
+    ok "$bin (already installed)"
+    return
+  fi
   case "$OS" in
     Darwin)
       if have brew; then
-        if brew install "$brew_name" >/dev/null 2>&1; then ok "$bin (brew)"
+        if brew install "$brew_name" >/dev/null 2>&1; then
+          ok "$bin (brew)"
         else warn "brew install $brew_name failed — install $bin manually"; fi
       else
         warn "Homebrew not found — install $bin manually (https://brew.sh)"
@@ -93,13 +98,16 @@ pkg_install() {
     Linux)
       if have apt-get; then
         sudo apt-get update -qq >/dev/null 2>&1 || true
-        if sudo apt-get install -y "$apt_name" >/dev/null 2>&1; then ok "$bin (apt)"
+        if sudo apt-get install -y "$apt_name" >/dev/null 2>&1; then
+          ok "$bin (apt)"
         else warn "apt could not install '$apt_name' — install $bin manually"; fi
       elif have dnf; then
-        if sudo dnf install -y "$apt_name" >/dev/null 2>&1; then ok "$bin (dnf)"
+        if sudo dnf install -y "$apt_name" >/dev/null 2>&1; then
+          ok "$bin (dnf)"
         else warn "install $bin manually"; fi
       elif have pacman; then
-        if sudo pacman -S --noconfirm "$apt_name" >/dev/null 2>&1; then ok "$bin (pacman)"
+        if sudo pacman -S --noconfirm "$apt_name" >/dev/null 2>&1; then
+          ok "$bin (pacman)"
         else warn "install $bin manually"; fi
       else
         warn "no supported package manager — install $bin manually"
@@ -146,12 +154,21 @@ BINSTALL_VERSION="1.20.1"
 BINSTALL_SHA256_X86_64="f12954bc382e1d0b2df3fbfb217a05d92c25570e4517841e0613499a24f4594e"
 BINSTALL_SHA256_AARCH64="23679581c4cfa1782953264a6e36965198aed995b3a5287550dd78a113ce2288"
 ensure_cargo_binstall() {
-  if have cargo-binstall; then ok "cargo-binstall (already installed)"; return; fi
+  if have cargo-binstall; then
+    ok "cargo-binstall (already installed)"
+    return
+  fi
   note "installing cargo-binstall (prebuilt-binary fetcher)…"
   local triple="" want=""
   case "${OS}-$(uname -m)" in
-    Linux-x86_64)               triple="x86_64-unknown-linux-musl";  want="$BINSTALL_SHA256_X86_64" ;;
-    Linux-aarch64|Linux-arm64)  triple="aarch64-unknown-linux-musl"; want="$BINSTALL_SHA256_AARCH64" ;;
+    Linux-x86_64)
+      triple="x86_64-unknown-linux-musl"
+      want="$BINSTALL_SHA256_X86_64"
+      ;;
+    Linux-aarch64 | Linux-arm64)
+      triple="aarch64-unknown-linux-musl"
+      want="$BINSTALL_SHA256_AARCH64"
+      ;;
   esac
   if [ -n "$triple" ]; then
     local url="https://github.com/cargo-bins/cargo-binstall/releases/download/v${BINSTALL_VERSION}/cargo-binstall-${triple}.tgz"
@@ -175,10 +192,10 @@ ensure_cargo_binstall() {
       # single `cargo-binstall` binary and install it. No downloaded content
       # is ever handed to a shell interpreter.
       if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/cb.tgz" \
-           && verify_sha256 "$tmp/cb.tgz" "$want" \
-           && tar -xzf "$tmp/cb.tgz" -C "$tmp" cargo-binstall \
-           && install -m 0755 "$tmp/cargo-binstall" "$dest/cargo-binstall" \
-           && have cargo-binstall; then
+        && verify_sha256 "$tmp/cb.tgz" "$want" \
+        && tar -xzf "$tmp/cb.tgz" -C "$tmp" cargo-binstall \
+        && install -m 0755 "$tmp/cargo-binstall" "$dest/cargo-binstall" \
+        && have cargo-binstall; then
         ok "cargo-binstall (prebuilt v${BINSTALL_VERSION}, ${triple})"
         rm -rf "$tmp"
         return
@@ -214,13 +231,28 @@ UV_SHA256_AARCH64="bd141b7e263935d14f5725f2a5c1c942fd89642e37683cb904f1984ce7e36
 UV_SHA256_DARWIN_ARM64="e4d4859d7726298daa4c12e114f269ff282b2cfc2b415dc0b2ca44ae2dbd358e"
 UV_SHA256_DARWIN_X86_64="31ed353cfd8e6c962e7c60617bd8a9d6b97b704c1ecb5b5eceaff8c6121b54ac"
 ensure_uv() {
-  if have uv; then ok "uv (already installed)"; return; fi
+  if have uv; then
+    ok "uv (already installed)"
+    return
+  fi
   local triple="" want=""
   case "${OS}-$(uname -m)" in
-    Linux-x86_64)               triple="x86_64-unknown-linux-musl";  want="$UV_SHA256_X86_64" ;;
-    Linux-aarch64|Linux-arm64)  triple="aarch64-unknown-linux-musl"; want="$UV_SHA256_AARCH64" ;;
-    Darwin-arm64)               triple="aarch64-apple-darwin";       want="$UV_SHA256_DARWIN_ARM64" ;;
-    Darwin-x86_64)              triple="x86_64-apple-darwin";        want="$UV_SHA256_DARWIN_X86_64" ;;
+    Linux-x86_64)
+      triple="x86_64-unknown-linux-musl"
+      want="$UV_SHA256_X86_64"
+      ;;
+    Linux-aarch64 | Linux-arm64)
+      triple="aarch64-unknown-linux-musl"
+      want="$UV_SHA256_AARCH64"
+      ;;
+    Darwin-arm64)
+      triple="aarch64-apple-darwin"
+      want="$UV_SHA256_DARWIN_ARM64"
+      ;;
+    Darwin-x86_64)
+      triple="x86_64-apple-darwin"
+      want="$UV_SHA256_DARWIN_X86_64"
+      ;;
   esac
   if [ -z "$triple" ]; then
     warn "no pinned uv build for ${OS}-$(uname -m) — zizmor may be MISSING; it now rests on binstall finding a prebuilt, since a source build hits the rust-toolchain.toml pin"
@@ -239,11 +271,11 @@ ensure_uv() {
   # Verify the pinned digest, then extract the two binaries. No downloaded
   # content is ever handed to a shell interpreter.
   if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/uv.tgz" \
-       && verify_sha256 "$tmp/uv.tgz" "$want" \
-       && tar -xzf "$tmp/uv.tgz" -C "$tmp" "uv-${triple}/uv" "uv-${triple}/uvx" \
-       && install -m 0755 "$tmp/uv-${triple}/uv" "$dest/uv" \
-       && install -m 0755 "$tmp/uv-${triple}/uvx" "$dest/uvx" \
-       && have uv; then
+    && verify_sha256 "$tmp/uv.tgz" "$want" \
+    && tar -xzf "$tmp/uv.tgz" -C "$tmp" "uv-${triple}/uv" "uv-${triple}/uvx" \
+    && install -m 0755 "$tmp/uv-${triple}/uv" "$dest/uv" \
+    && install -m 0755 "$tmp/uv-${triple}/uvx" "$dest/uvx" \
+    && have uv; then
     ok "uv ${UV_VERSION} (prebuilt, ${triple})"
   else
     warn "uv download/verify failed — zizmor may be MISSING; it now rests on binstall finding a prebuilt, since a source build hits the rust-toolchain.toml pin"
@@ -277,6 +309,9 @@ ensure_uv() {
 # a green tree went red with no repo change, and the fix that passed locally
 # still failed in CI, unreproducible by construction until the two matched.
 #
+# The shellcheck and shfmt rows are not crates: `release_get_pinned` reads them
+# for the same reason, local and CI running one version.
+#
 # A plain `case` (not an associative array) so this stays bash-3.2/macOS
 # compatible. Keep in lockstep with the `tool:` pins above — bumping one
 # without the other reintroduces the exact drift this table exists to
@@ -288,6 +323,8 @@ pinned_version_for() {
     prek) echo "0.3.8" ;;
     taplo-cli) echo "0.10.0" ;;
     typos-cli) echo "1.46.0" ;;
+    shellcheck) echo "0.11.0" ;;
+    shfmt) echo "3.14.1" ;;
     *) echo "" ;;
   esac
 }
@@ -337,14 +374,16 @@ prebuilt_get() {
     tmp="$(mktemp)"
     [ -n "$tmp" ] || return 1
     if curl -fsSL "https://github.com/tamasfe/taplo/releases/download/${version}/taplo-linux-${arch}.gz" 2>/dev/null \
-         | gunzip >"$tmp" 2>/dev/null && install -m 0755 "$tmp" "$dest/taplo"; then
-      rm -f "$tmp"; return 0
+      | gunzip >"$tmp" 2>/dev/null && install -m 0755 "$tmp" "$dest/taplo"; then
+      rm -f "$tmp"
+      return 0
     fi
-    rm -f "$tmp"; return 1
+    rm -f "$tmp"
+    return 1
   fi
   for libc in gnu musl; do
     if curl -fsSL "https://github.com/cargo-bins/cargo-quickinstall/releases/download/${crate}-${version}/${crate}-${version}-${arch}-unknown-linux-${libc}.tar.gz" 2>/dev/null \
-         | tar -xzf - -C "$dest" >/dev/null 2>&1 && have "$bin"; then
+      | tar -xzf - -C "$dest" >/dev/null 2>&1 && have "$bin"; then
       return 0
     fi
   done
@@ -376,20 +415,29 @@ prebuilt_get() {
 # faster routes after it were never tried. `cargo install` is the last one.
 cargo_get() {
   local crate="$1" bin="${2:-$1}" msrv_fallback
-  if have "$bin"; then ok "$bin (already installed)"; return; fi
+  if have "$bin"; then
+    ok "$bin (already installed)"
+    return
+  fi
 
   msrv_fallback="$(msrv_fallback_version_for "$crate")"
   if have cargo-binstall; then
     if cargo binstall -y --disable-strategies compile "$crate" >/dev/null 2>&1; then
-      ok "$bin (binstall)"; return
+      ok "$bin (binstall)"
+      return
     fi
     if [ -n "$msrv_fallback" ] && cargo binstall -y --disable-strategies compile "${crate}@${msrv_fallback}" >/dev/null 2>&1; then
-      ok "$bin (binstall ${msrv_fallback} — latest release exceeds this box's rustc)"; return
+      ok "$bin (binstall ${msrv_fallback} — latest release exceeds this box's rustc)"
+      return
     fi
   fi
-  if prebuilt_get "$crate" "" "$bin"; then ok "$bin (prebuilt)"; return; fi
+  if prebuilt_get "$crate" "" "$bin"; then
+    ok "$bin (prebuilt)"
+    return
+  fi
   if [ -n "$msrv_fallback" ] && cargo install --locked "${crate}@${msrv_fallback}" >/dev/null 2>&1; then
-    ok "$bin (cargo install ${msrv_fallback} — pinned fallback)"; return
+    ok "$bin (cargo install ${msrv_fallback} — pinned fallback)"
+    return
   fi
   if cargo install --locked "$crate" >/dev/null 2>&1; then
     ok "$bin (cargo install)"
@@ -435,13 +483,20 @@ cargo_get_pinned() {
   fi
   if have "$bin"; then
     current="$("$bin" --version 2>/dev/null | awk "$field")"
-    if [ "$current" = "$version" ]; then ok "$bin $version (already installed)"; return; fi
+    if [ "$current" = "$version" ]; then
+      ok "$bin $version (already installed)"
+      return
+    fi
     note "$bin ${current:-unknown} differs from the pinned $version — reinstalling"
   fi
   if have cargo-binstall && cargo binstall -y --disable-strategies compile "${crate}@${version}" >/dev/null 2>&1; then
-    ok "$bin $version (binstall)"; return
+    ok "$bin $version (binstall)"
+    return
   fi
-  if prebuilt_get "$crate" "$version" "$bin"; then ok "$bin $version (prebuilt)"; return; fi
+  if prebuilt_get "$crate" "$version" "$bin"; then
+    ok "$bin $version (prebuilt)"
+    return
+  fi
   # zizmor also ships prebuilt wheels on PyPI. Try that before a source
   # build: binstall fails in seconds when a proxy blocks its GitHub lookup,
   # but `cargo install` compiles for minutes before an MSRV mismatch kills it.
@@ -460,11 +515,13 @@ cargo_get_pinned() {
     uv_bin="$(uv tool dir --bin 2>/dev/null)/$bin"
     if [ -x "$uv_bin" ] && mkdir -p "$HOME/.cargo/bin" \
       && ln -sf "$uv_bin" "$HOME/.cargo/bin/$bin" && [ -x "$HOME/.cargo/bin/$bin" ]; then
-      ok "$bin $version (uv tool, linked into ~/.cargo/bin)"; return
+      ok "$bin $version (uv tool, linked into ~/.cargo/bin)"
+      return
     fi
   fi
   if cargo install --locked "${crate}@${version}" >/dev/null 2>&1; then
-    ok "$bin $version (cargo install)"; return
+    ok "$bin $version (cargo install)"
+    return
   fi
   warn "could not install ${crate}@${version} — run: cargo install --locked ${crate}@${version}"
 }
@@ -495,11 +552,9 @@ ZIZMOR_VERSION_AWK="$(
 # provisioning flow over one tool — the same reason `cargo_get_pinned` warns
 # and installs unpinned when ZIZMOR_PINNED_VERSION comes back empty. A
 # degraded zizmor pin is a slow reinstall-every-run, not a broken box; a hard
-# exit here is taken BEFORE every installer below, so it would take the other
-# fourteen hook binaries down with it — HOOK_BINS names fourteen and sqlx-cli
-# is checked separately, so fifteen in all, of which zizmor is one; none of
-# the cargo tools, shellcheck, go or python3 would be reached. The guard below
-# is the runtime notice (#3545, finding 1).
+# exit here is taken BEFORE every installer below, so it would take every
+# other hook binary in HOOK_BINS down with it. The guard below is the runtime
+# notice (#3545, finding 1).
 if [ -z "$ZIZMOR_VERSION_AWK" ]; then
   warn "could not source ZIZMOR_VERSION_AWK from zizmor-hook.sh — falling back to cargo_get_pinned's \$NF default, which can disagree with the wrapper's \$2 and reinstall zizmor on every run (#3545)"
 fi
@@ -523,6 +578,119 @@ PREK_VERSION_AWK='NR == 1 { print $2 }'
 TAPLO_VERSION_AWK='NR == 1 { print $2 }'
 TYPOS_VERSION_AWK='NR == 1 { print $2 }'
 
+# The shellcheck and shfmt hooks run the upstream release binary at the
+# pinned version, verified against these digests: the ones the CI lint job's
+# taiki-e/install-action manifest checks for the same `tool:` pins. A package
+# manager's copy is whatever its distro carries, so a differing one on PATH is
+# replaced, as `cargo_get_pinned` does. It lands in ~/.cargo/bin, which
+# rustup's env puts ahead of the system directories that hold an apt or brew
+# copy.
+#
+# To bump: change the version in `pinned_version_for` and the CI `tool:`
+# lists, and refresh the digests below from the new release assets with
+# `sha256sum` (shellcheck publishes no checksum file).
+SHELLCHECK_SHA256_LINUX_X86_64="8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+SHELLCHECK_SHA256_LINUX_AARCH64="12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588"
+SHELLCHECK_SHA256_DARWIN_X86_64="3c89db4edcab7cf1c27bff178882e0f6f27f7afdf54e859fa041fca10febe4c6"
+SHELLCHECK_SHA256_DARWIN_ARM64="56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79"
+SHFMT_SHA256_LINUX_X86_64="76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf"
+SHFMT_SHA256_LINUX_AARCH64="5f2db09dae91fca848f7adbdd014632e921a383863a2ad7e0450ad3aba0c6489"
+SHFMT_SHA256_DARWIN_X86_64="d33eee0da0f92835b3562e9767a05cee7e4eaeef47daa03bfd09da17b4b590a6"
+SHFMT_SHA256_DARWIN_ARM64="b7c872db63553ccffc7253aba3ed7d4885a27d83f1ba567b1138c6315a5847e5"
+# `shellcheck --version` prints `version: 0.11.0` on its second line;
+# `shfmt --version` prints `v3.14.1`.
+SHELLCHECK_VERSION_AWK='$1 == "version:" { print $2 }'
+SHFMT_VERSION_AWK='NR == 1 { sub(/^v/, ""); print }'
+
+# release_get_pinned <tool> — install shellcheck or shfmt at its pinned
+# version. The download is verified before anything is extracted or
+# installed, and no downloaded content reaches a shell.
+release_get_pinned() {
+  local bin="$1" version field current="" platform="" want="" url member=""
+  local dest="${CARGO_HOME:-$HOME/.cargo}/bin" tmp
+  version="$(pinned_version_for "$bin")"
+  case "$bin" in
+    shellcheck) field="$SHELLCHECK_VERSION_AWK" ;;
+    shfmt) field="$SHFMT_VERSION_AWK" ;;
+  esac
+  if have "$bin"; then
+    current="$("$bin" --version 2>/dev/null | awk "$field")"
+    if [ "$current" = "$version" ]; then
+      ok "$bin $version (already installed)"
+      return
+    fi
+    note "$bin ${current:-unknown} differs from the pinned $version — reinstalling"
+  fi
+  case "${OS}-$(uname -m)" in
+    Linux-x86_64) platform=LINUX_X86_64 ;;
+    Linux-aarch64 | Linux-arm64) platform=LINUX_AARCH64 ;;
+    Darwin-x86_64) platform=DARWIN_X86_64 ;;
+    Darwin-arm64) platform=DARWIN_ARM64 ;;
+  esac
+  if [ -z "$platform" ]; then
+    warn "no pinned $bin build for ${OS}-$(uname -m) — install $bin $version by hand"
+    return
+  fi
+  case "$bin-$platform" in
+    shellcheck-LINUX_X86_64)
+      want="$SHELLCHECK_SHA256_LINUX_X86_64"
+      url=linux.x86_64
+      ;;
+    shellcheck-LINUX_AARCH64)
+      want="$SHELLCHECK_SHA256_LINUX_AARCH64"
+      url=linux.aarch64
+      ;;
+    shellcheck-DARWIN_X86_64)
+      want="$SHELLCHECK_SHA256_DARWIN_X86_64"
+      url=darwin.x86_64
+      ;;
+    shellcheck-DARWIN_ARM64)
+      want="$SHELLCHECK_SHA256_DARWIN_ARM64"
+      url=darwin.aarch64
+      ;;
+    shfmt-LINUX_X86_64)
+      want="$SHFMT_SHA256_LINUX_X86_64"
+      url=linux_amd64
+      ;;
+    shfmt-LINUX_AARCH64)
+      want="$SHFMT_SHA256_LINUX_AARCH64"
+      url=linux_arm64
+      ;;
+    shfmt-DARWIN_X86_64)
+      want="$SHFMT_SHA256_DARWIN_X86_64"
+      url=darwin_amd64
+      ;;
+    shfmt-DARWIN_ARM64)
+      want="$SHFMT_SHA256_DARWIN_ARM64"
+      url=darwin_arm64
+      ;;
+  esac
+  if [ "$bin" = shellcheck ]; then
+    member="shellcheck-v${version}/shellcheck"
+    url="https://github.com/koalaman/shellcheck/releases/download/v${version}/shellcheck-v${version}.${url}.tar.xz"
+  else
+    url="https://github.com/mvdan/sh/releases/download/v${version}/shfmt_v${version}_${url}"
+  fi
+  tmp="$(mktemp -d)"
+  # Same guard, same reasoning as ensure_cargo_binstall above (#3622).
+  if [ -z "$tmp" ] || [ ! -d "$tmp" ]; then
+    warn "mktemp -d failed (no writable temp dir?) — skipping the $bin download"
+    return
+  fi
+  if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/download" \
+    && verify_sha256 "$tmp/download" "$want" \
+    && { [ -z "$member" ] || { tar -xJf "$tmp/download" -C "$tmp" "$member" && mv "$tmp/$member" "$tmp/download"; }; } \
+    && mkdir -p "$dest" && install -m 0755 "$tmp/download" "$dest/$bin"; then
+    current="$("$dest/$bin" --version 2>/dev/null | awk "$field")"
+    if [ "$current" = "$version" ]; then
+      ok "$bin $version (release binary, $platform)"
+    else warn "$dest/$bin reports ${current:-no version} after install, not $version"; fi
+  else
+    warn "$bin $version download/verify failed — install it by hand from $url"
+  fi
+  rm -rf "$tmp"
+}
+
 # lychee is a heavy crate that cargo-binstall can't fetch prebuilt (it falls
 # back to a slow from-source compile), so — exactly like CI — pull the official
 # prebuilt release tarball instead. macOS prefers brew.
@@ -536,17 +704,21 @@ TYPOS_VERSION_AWK='NR == 1 { print $2 }'
 # (crates.io, reachable), then `cargo install --locked` (slow from-source
 # compile) as the last resort, instead of just warning and stopping.
 install_lychee() {
-  if have lychee; then ok "lychee (already installed)"; return; fi
+  if have lychee; then
+    ok "lychee (already installed)"
+    return
+  fi
   if [ "$OS" = "Darwin" ] && have brew && brew install lychee >/dev/null 2>&1; then
-    ok "lychee (brew)"; return
+    ok "lychee (brew)"
+    return
   fi
   local arch triple
   arch="$(uname -m)"
   case "$OS-$arch" in
-    Linux-x86_64)               triple=x86_64-unknown-linux-gnu ;;
-    Linux-aarch64|Linux-arm64)  triple=aarch64-unknown-linux-gnu ;;
-    Darwin-x86_64)              triple=x86_64-apple-darwin ;;
-    Darwin-arm64|Darwin-aarch64) triple=aarch64-apple-darwin ;;
+    Linux-x86_64) triple=x86_64-unknown-linux-gnu ;;
+    Linux-aarch64 | Linux-arm64) triple=aarch64-unknown-linux-gnu ;;
+    Darwin-x86_64) triple=x86_64-apple-darwin ;;
+    Darwin-arm64 | Darwin-aarch64) triple=aarch64-apple-darwin ;;
     *) triple="" ;;
   esac
   if [ -n "$triple" ]; then
@@ -584,10 +756,12 @@ install_lychee() {
     warn "no prebuilt lychee tarball for $OS-$arch — falling back to cargo binstall"
   fi
   if have cargo && have cargo-binstall && cargo binstall -y --disable-strategies compile lychee >/dev/null 2>&1; then
-    ok "lychee (binstall fallback)"; return
+    ok "lychee (binstall fallback)"
+    return
   fi
   if have cargo && cargo install --locked lychee >/dev/null 2>&1; then
-    ok "lychee (cargo install fallback, slow from-source build)"; return
+    ok "lychee (cargo install fallback, slow from-source build)"
+    return
   fi
   warn "could not install lychee (prebuilt tarball and cargo fallbacks all failed) — install manually (https://github.com/lycheeverse/lychee/releases)"
 }
@@ -596,21 +770,26 @@ install_lychee() {
 # a cloud session's boot, and it competed with the agent's own first cargo run.
 # binstall without its compile fallback, then upstream's prebuilt tarball.
 install_nextest() {
-  if have cargo-nextest; then ok "cargo-nextest (already installed)"; return; fi
+  if have cargo-nextest; then
+    ok "cargo-nextest (already installed)"
+    return
+  fi
   if have cargo-binstall && cargo binstall -y --disable-strategies compile cargo-nextest >/dev/null 2>&1; then
-    ok "cargo-nextest (binstall)"; return
+    ok "cargo-nextest (binstall)"
+    return
   fi
   local platform=""
   case "$OS-$(uname -m)" in
-    Linux-x86_64)               platform=linux ;;
-    Linux-aarch64|Linux-arm64)  platform=linux-arm ;;
-    Darwin-*)                   platform=mac ;;
+    Linux-x86_64) platform=linux ;;
+    Linux-aarch64 | Linux-arm64) platform=linux-arm ;;
+    Darwin-*) platform=mac ;;
   esac
   local dest="${CARGO_HOME:-$HOME/.cargo}/bin"
   if [ -n "$platform" ] && mkdir -p "$dest" \
     && curl -LsSf "https://get.nexte.st/latest/$platform" | tar zxf - -C "$dest" >/dev/null 2>&1 \
     && have cargo-nextest; then
-    ok "cargo-nextest (prebuilt $platform)"; return
+    ok "cargo-nextest (prebuilt $platform)"
+    return
   fi
   warn "could not install cargo-nextest — run: curl -LsSf https://get.nexte.st/latest/${platform:-linux} | tar zxf - -C \"$dest\""
 }
@@ -618,11 +797,18 @@ install_nextest() {
 # sqlx-cli needs custom features (rustls + sqlite only) — same as CI.
 install_sqlx_cli() {
   # sqlx-cli ships both `cargo-sqlx` and `sqlx`; check either so the skip fires.
-  if have cargo-sqlx || have sqlx; then ok "sqlx-cli (already installed)"; return; fi
-  if have cargo-binstall && cargo binstall -y --disable-strategies compile sqlx-cli >/dev/null 2>&1; then
-    ok "sqlx-cli (binstall)"; return
+  if have cargo-sqlx || have sqlx; then
+    ok "sqlx-cli (already installed)"
+    return
   fi
-  if prebuilt_get sqlx-cli "" sqlx; then ok "sqlx-cli (prebuilt)"; return; fi
+  if have cargo-binstall && cargo binstall -y --disable-strategies compile sqlx-cli >/dev/null 2>&1; then
+    ok "sqlx-cli (binstall)"
+    return
+  fi
+  if prebuilt_get sqlx-cli "" sqlx; then
+    ok "sqlx-cli (prebuilt)"
+    return
+  fi
   if cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite >/dev/null 2>&1; then
     ok "sqlx-cli (cargo install)"
   else
@@ -658,8 +844,8 @@ else
 fi
 
 # --- System hook tools -----------------------------------------------------
-# The ShellCheck hook calls the system `shellcheck` binary directly.
-pkg_install shellcheck shellcheck shellcheck
+release_get_pinned shellcheck
+release_get_pinned shfmt
 
 # go: prek BUILDS the `gitleaks` and `actionlint` hooks from their pinned
 # upstream repos via its Go backend, so the box needs a Go toolchain (the
@@ -688,7 +874,8 @@ if have prek; then
   note "pre-provisioning hook environments…"
   if prek install-hooks >/dev/null 2>&1; then
     ok "all hook environments provisioned"
-    if prek install >/dev/null 2>&1; then ok "git hooks wired (prek install)"
+    if prek install >/dev/null 2>&1; then
+      ok "git hooks wired (prek install)"
     else warn "prek install failed — run it manually: prek install"; fi
   else
     warn "upstream hook repos (gitleaks/actionlint/conventional-pre-commit) are unreachable —"
@@ -718,7 +905,7 @@ fi
 # surfaced later as a hard-failed push), so instead of relying on the exit
 # code, print an impossible-to-miss `MISSING:` block naming every hook
 # binary still absent after every installer + fallback above ran.
-HOOK_BINS="prek cargo-deny cargo-machete cargo-audit sqruff typos zizmor taplo cargo-nextest just lychee shellcheck go python3"
+HOOK_BINS="prek cargo-deny cargo-machete cargo-audit sqruff typos zizmor taplo cargo-nextest just lychee shellcheck shfmt go python3"
 missing=""
 for bin in $HOOK_BINS; do
   have "$bin" || missing="$missing $bin"

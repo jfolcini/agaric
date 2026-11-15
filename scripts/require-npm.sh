@@ -18,7 +18,10 @@ install=0
 case "${1:-}" in
   '') ;;
   --install) install=1 ;;
-  *) echo "usage: scripts/require-npm.sh [--install]" >&2; exit 2 ;;
+  *)
+    echo "usage: scripts/require-npm.sh [--install]" >&2
+    exit 2
+    ;;
 esac
 
 # Floor major and pin, from package.json. Fail closed on a shape this cannot read.

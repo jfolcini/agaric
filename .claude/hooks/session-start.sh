@@ -11,7 +11,7 @@
 # Node version (.nvmrc), runs `npm ci`, installs Playwright's chromium, seeds
 # src-tauri/.env, provisions the sqlx dev DB, and installs the prek hook
 # toolchain + wires the git hooks (just, prek, cargo-deny, sqruff, typos,
-# zizmor, taplo, lychee, shellcheck, …).
+# zizmor, taplo, lychee, shellcheck, shfmt, …).
 #
 # This hook runs under a hard ~600s provisioning timeout. The fast critical
 # path (Node, npm ci, .env, dev DB) runs synchronously and finishes well inside

@@ -41,7 +41,10 @@ while [ $# -gt 0 ]; do
     --range)
       RANGE="${2:-}"
       shift 2 || true
-      [ -z "$RANGE" ] && { echo "ERROR: --range requires a revspec" >&2; exit 2; }
+      [ -z "$RANGE" ] && {
+        echo "ERROR: --range requires a revspec" >&2
+        exit 2
+      }
       ;;
     *)
       echo "ERROR: unknown arg: $1" >&2

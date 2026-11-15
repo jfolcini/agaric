@@ -44,8 +44,14 @@ fi
 PUBKEY_B64="$1"
 DIR="$2"
 
-command -v minisign >/dev/null 2>&1 || { echo "::error::minisign CLI not found on PATH" >&2; exit 2; }
-[ -d "$DIR" ] || { echo "::error::not a directory: $DIR" >&2; exit 2; }
+command -v minisign >/dev/null 2>&1 || {
+  echo "::error::minisign CLI not found on PATH" >&2
+  exit 2
+}
+[ -d "$DIR" ] || {
+  echo "::error::not a directory: $DIR" >&2
+  exit 2
+}
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -53,11 +59,15 @@ trap 'rm -rf "$work"' EXIT
 # base64 -> minisign public key file. `tr -d` strips any stray whitespace/newlines
 # that a copied-in config value might carry before decoding.
 pub="$work/updater.pub"
-printf '%s' "$PUBKEY_B64" | tr -d '[:space:]' | base64 -d > "$pub" || {
-  echo "::error::failed to base64-decode updater pubkey" >&2; exit 1; }
+printf '%s' "$PUBKEY_B64" | tr -d '[:space:]' | base64 -d >"$pub" || {
+  echo "::error::failed to base64-decode updater pubkey" >&2
+  exit 1
+}
 # Sanity-check we decoded a real minisign public key, not garbage.
 grep -q 'minisign public key' "$pub" || {
-  echo "::error::decoded pubkey is not a minisign public key file" >&2; exit 1; }
+  echo "::error::decoded pubkey is not a minisign public key file" >&2
+  exit 1
+}
 
 shopt -s nullglob
 sigs=("$DIR"/*.sig)
@@ -77,7 +87,7 @@ for sig in "${sigs[@]}"; do
   fi
   # base64 -> minisign signature file (`.minisig`).
   minisig="$work/$(basename "$sig").minisig"
-  if ! printf '%s' "$(cat "$sig")" | tr -d '[:space:]' | base64 -d > "$minisig"; then
+  if ! printf '%s' "$(cat "$sig")" | tr -d '[:space:]' | base64 -d >"$minisig"; then
     echo "::error::failed to base64-decode signature $sig" >&2
     failed=1
     continue
