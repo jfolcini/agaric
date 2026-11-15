@@ -78,6 +78,7 @@ describe('useTagResolution', () => {
       tagAnyOf: [],
       pending: false,
       hasUnresolved: false,
+      byName: expect.any(Map),
     })
     expect(mockedListTags).not.toHaveBeenCalled()
   })
@@ -107,8 +108,11 @@ describe('useTagResolution', () => {
         tagAnyOf: [],
         pending: false,
         hasUnresolved: false,
+        byName: expect.any(Map),
       })
     })
+    // #6742 — the per-name answer an OR query's tree reads, by lowercased name.
+    expect([...result.current.byName]).toEqual([['wip', 'TAG_WIP']])
   })
 
   it('settles an unknown name as unresolved — NOT as "no tag filter" (#717)', async () => {
@@ -235,6 +239,7 @@ describe('useTagResolution', () => {
         tagAnyOf: [],
         pending: false,
         hasUnresolved: false,
+        byName: expect.any(Map),
       })
     })
   })
@@ -254,6 +259,7 @@ describe('useTagResolution', () => {
         tagAnyOf: [],
         pending: false,
         hasUnresolved: false,
+        byName: expect.any(Map),
       })
     })
     expect(mockedListTags).toHaveBeenCalledWith({ kind: 'active', space_id: 'SPACE_A' })
@@ -282,6 +288,7 @@ describe('useTagResolution', () => {
         tagAnyOf: [],
         pending: false,
         hasUnresolved: false,
+        byName: expect.any(Map),
       })
     })
   })
@@ -331,6 +338,7 @@ describe('useTagResolution', () => {
         tagAnyOf: [],
         pending: false,
         hasUnresolved: false,
+        byName: expect.any(Map),
       })
     })
   })
@@ -353,6 +361,7 @@ describe('useTagResolution', () => {
         tagAnyOf: [],
         pending: false,
         hasUnresolved: false,
+        byName: expect.any(Map),
       })
     })
   })
@@ -375,6 +384,7 @@ describe('useTagResolution', () => {
         tagAnyOf: [],
         pending: false,
         hasUnresolved: false,
+        byName: expect.any(Map),
       })
     })
   })
@@ -412,6 +422,7 @@ describe('useTagResolution', () => {
       tagAnyOf: [],
       pending: false,
       hasUnresolved: false,
+      byName: expect.any(Map),
     })
     expect(mockedListTags).toHaveBeenCalledTimes(settledCallCount)
   })

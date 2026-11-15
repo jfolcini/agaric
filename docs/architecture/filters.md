@@ -131,6 +131,9 @@ defence-in-depth.
   keys on `b.id` (the Pages list on `pc.page_id`, through
   `PagesProjection::compile_path_glob_on`) and Search on `b.page_id`; Pages also
   bounds a pattern's literal head on `idx_pages_cache_title_nocase` (#5426).
+  A search whose `OR` joins filters (#6742) sends them as one
+  `SearchFilter.filter_expr`, compiled by `compile_expr`; `prepare_metadata`
+  accepts only the leaves the search syntax writes.
 - **`BacklinkProjection`** ([`backlink/projection.rs`](../../src-tauri/agaric-store/src/backlink/projection.rs))
   compiles the correlated backlink leaf fragments: `has-property`, `priority`,
   and the #1280 metadata set (`state` / `block-type` / `due-date` / `scheduled`

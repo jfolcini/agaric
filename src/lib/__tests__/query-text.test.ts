@@ -27,6 +27,7 @@ import {
 
 const TAG_WORK = '01HZY3V9Q8K2M4N6P7R8S9T0VW'
 const TAG_HOME = '01HZY3V9Q8K2M4N6P7R8S9T0VX'
+const TAG_NESTED = '01HZY3V9Q8K2M4N6P7R8S9T0VY'
 
 const deps: QueryTextDeps = {
   listTags: async () => [
@@ -483,6 +484,81 @@ describe('compileQueryText: what it cannot run, named with its column', () => {
   })
 })
 
+describe('compileQueryText: OR between conditions (#6742)', () => {
+  const tags = [
+    { tag_id: TAG_WORK, name: 'Work' },
+    { tag_id: TAG_HOME, name: 'home' },
+    { tag_id: TAG_NESTED, name: 'projects/web' },
+  ]
+  const leaf = (primitive: FilterPrimitive): FilterExpr => ({ type: 'Leaf', primitive })
+  const todo = leaf({ type: 'State', values: ['TODO'], is_null: false, exclude: false })
+  const run = (text: string) => {
+    const result = compileQueryTextWithTags(text, tags)
+    if (!result.ok) throw new Error(`"${text}" did not compile: ${JSON.stringify(result.problems)}`)
+    return result
+  }
+
+  it('compiles the implicit AND tighter than OR, each AND run as a flat text', () => {
+    expect(run('state:TODO tag:#work OR tag:#home')).toEqual({
+      ok: true,
+      filter: {
+        type: 'Or',
+        children: [
+          { type: 'And', children: [leaf({ type: 'Tag', tag: TAG_WORK }), todo] },
+          leaf({ type: 'Tag', tag: TAG_HOME }),
+        ],
+      },
+      fulltext: '',
+      textOnly: false,
+    })
+  })
+
+  it('compiles a group, and repeated states within a run OR as they always did', () => {
+    expect(run('state:TODO state:DOING (tag:#work OR priority:1)').filter).toEqual({
+      type: 'And',
+      children: [
+        leaf({ type: 'State', values: ['TODO', 'DOING'], is_null: false, exclude: false }),
+        {
+          type: 'Or',
+          children: [
+            leaf({ type: 'Tag', tag: TAG_WORK }),
+            leaf({ type: 'Priority', values: ['1'], is_null: false, exclude: false }),
+          ],
+        },
+      ],
+    })
+  })
+
+  it('compiles each tag on its own: tag: beside under: across an OR', () => {
+    const result = run('tag:#work OR under:#projects')
+    expect(result.filter).toEqual({
+      type: 'Or',
+      children: [
+        leaf({ type: 'Tag', tag: TAG_WORK }),
+        { type: 'Or', children: [leaf({ type: 'TagUnder', tag: TAG_NESTED })] },
+      ],
+    })
+    // `under:` and a name standing for its nested tags have no form control.
+    expect(result.textOnly).toBe(true)
+  })
+
+  it('keeps free text beside a group as the full-text term', () => {
+    const result = run('meeting (tag:#work OR tag:#home)')
+    expect(result.fulltext).toBe('meeting')
+    expect(result.textOnly).toBe(true)
+  })
+
+  it('names what it cannot run with its column: a word in an OR of filters, an unknown tag', () => {
+    expect(compileQueryTextWithTags('notes tag:#work OR tag:#nope', tags)).toEqual({
+      ok: false,
+      problems: [
+        { token: 'notes', column: 1, message: t('searchQuery.textBesideFilterOr') },
+        { token: 'tag:#nope', column: 20, message: t('query.text.unknownTag', { name: 'nope' }) },
+      ],
+    })
+  })
+})
+
 describe('filterToQueryText: the text the builder saves', () => {
   const text = (value: string): FilterPrimitive => ({
     type: 'HasProperty',
@@ -495,6 +571,21 @@ describe('filterToQueryText: the text the builder saves', () => {
   function leafSet(filter: FilterExpr): string[] {
     if (filter.type !== 'And') throw new Error('not an And')
     return filter.children.map((child) => JSON.stringify(child)).toSorted()
+  }
+
+  /** `filter` with nested nodes of one kind flattened, a single child unwrapped and children sorted. */
+  function sortedTree(filter: FilterExpr): unknown {
+    if (filter.type === 'Leaf') return filter
+    if (filter.type === 'Not') return { not: sortedTree(filter.child) }
+    const children = filter.children
+      .map(sortedTree)
+      .flatMap((c) =>
+        typeof c === 'object' && c !== null && filter.type in c
+          ? ((c as Record<string, unknown[]>)[filter.type] ?? [])
+          : [c],
+      )
+      .toSorted((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    return children.length === 1 ? children[0] : { [filter.type]: children }
   }
 
   it.each<[FilterPrimitive, string]>([
@@ -565,11 +656,41 @@ describe('filterToQueryText: the text the builder saves', () => {
     expect(leafSet(reopened)).toEqual(leafSet(filter))
   })
 
+  // #6742 — an OR between leaves, and parentheses for an OR inside an AND.
+  const asLeaf = (primitive: FilterPrimitive): FilterExpr => ({ type: 'Leaf', primitive })
+  const work = asLeaf({ type: 'Tag', tag: TAG_WORK })
+  const home = asLeaf({ type: 'Tag', tag: TAG_HOME })
+  it.each<[string, FilterExpr, string]>([
+    [
+      'an Or',
+      { type: 'Or', children: [asLeaf(todo), asLeaf(text('a'))] },
+      'state:TODO OR prop:k=a',
+    ],
+    [
+      'an Or inside an And',
+      { type: 'And', children: [asLeaf(todo), { type: 'Or', children: [work, home] }] },
+      `state:TODO (#[${TAG_WORK}] OR #[${TAG_HOME}])`,
+    ],
+    [
+      'an And inside an Or',
+      { type: 'Or', children: [{ type: 'And', children: [asLeaf(todo), work] }, home] },
+      `state:TODO #[${TAG_WORK}] OR #[${TAG_HOME}]`,
+    ],
+    ['a nested group of one', { type: 'And', children: [built(todo)] }, 'state:TODO'],
+  ])('%s is written as text, and reads back as the same tree', (_name, filter, expected) => {
+    expect(filterToQueryText(filter)).toBe(expected)
+    const read = compileQueryTextWithTags(expected, [])
+    if (!read.ok) throw new Error('did not compile')
+    expect(sortedTree(read.filter)).toEqual(sortedTree(filter))
+  })
+
   it.each<[string, FilterExpr]>([
-    ['an Or', { type: 'Or', children: [built(todo), built(text('a'))] }],
-    ['a nested group', { type: 'And', children: [built(todo)] }],
     ['a negated leaf', { type: 'And', children: [{ type: 'Not', child: built(todo) }] }],
-    ['a leaf at the root', { type: 'Leaf', primitive: todo }],
+    [
+      'a negated group',
+      { type: 'Not', child: { type: 'Or', children: [asLeaf(todo), asLeaf(text('a'))] } },
+    ],
+    ['an empty Or', { type: 'And', children: [asLeaf(todo), { type: 'Or', children: [] }] }],
     ['no filter', built()],
     ['a tag matched inline too', built({ type: 'TagOrRef', tag: TAG_WORK })],
     ['a block type', built({ type: 'BlockType', values: ['page'], exclude: false })],
@@ -651,21 +772,53 @@ describe('filterToQueryText: the text the builder saves', () => {
         )
         .map(([type, op, d]) => ({ type, predicate: { type: op, date: d } })),
     )
+    // #6742 — trees of And and Or over those leaves, as the builder's groups nest.
+    const { tree } = fc.letrec<{ tree: FilterExpr }>((tie) => ({
+      tree: fc.oneof(
+        { depthSize: 'small', withCrossShrink: true },
+        fc
+          .oneof(
+            leaf,
+            fc.constantFrom<FilterPrimitive>(
+              { type: 'Tag', tag: TAG_WORK },
+              { type: 'Tag', tag: TAG_HOME },
+              todo,
+              { type: 'Priority', values: ['1'], is_null: false, exclude: false },
+              text('done'),
+            ),
+          )
+          .map((primitive): FilterExpr => ({ type: 'Leaf', primitive })),
+        fc
+          .tuple(
+            fc.constantFrom('And' as const, 'Or' as const),
+            fc.array(tie('tree'), { maxLength: 3 }),
+          )
+          .map(([type, children]): FilterExpr => ({ type, children })),
+      ),
+    }))
     let written = 0
+    let writtenWithOr = 0
     fc.assert(
-      fc.property(fc.array(leaf, { maxLength: 4 }), (primitives) => {
-        const filter = built(...primitives)
-        const queryText = filterToQueryText(filter)
-        if (queryText === null) return
-        written += 1
-        expect(isLegacyQueryText(queryText)).toBe(false)
-        const read = compileQueryTextWithTags(queryText, [])
-        if (!read.ok) throw new Error(`"${queryText}" did not compile`)
-        expect(leafSet(read.filter)).toEqual(leafSet(filter))
-      }),
-      { numRuns: 1000 },
+      fc.property(
+        fc.oneof(
+          fc.array(leaf, { maxLength: 4 }).map((primitives) => built(...primitives)),
+          tree.map((root): FilterExpr => ({ type: 'And', children: [root] })),
+        ),
+        (filter) => {
+          const queryText = filterToQueryText(filter)
+          if (queryText === null) return
+          written += 1
+          if (queryText.includes(' OR ')) writtenWithOr += 1
+          expect(isLegacyQueryText(queryText)).toBe(false)
+          const read = compileQueryTextWithTags(queryText, [])
+          if (!read.ok) throw new Error(`"${queryText}" did not compile`)
+          expect(sortedTree(read.filter)).toEqual(sortedTree(filter))
+        },
+      ),
+      { numRuns: 2000 },
     )
     // The property is vacuous if nothing was ever written as text.
-    expect(written).toBeGreaterThan(50)
+    expect(written).toBeGreaterThan(100)
+    expect(writtenWithOr).toBeGreaterThan(20)
   })
 })

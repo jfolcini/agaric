@@ -80,12 +80,26 @@ export type FilterToken =
   | { kind: 'notProp'; key: string; value: string; span: [number, number] }
   | { kind: 'invalid'; source: string; error: string; span: [number, number] }
 
+/**
+ * How the filters of a query holding `OR` combine: an AND or OR node over
+ * children, a leaf the filter at `index` in `SearchQueryAST.filters`. The
+ * implicit AND binds tighter than OR, as in FTS5.
+ */
+export type FilterNode =
+  | { kind: 'token'; index: number }
+  | { kind: 'and' | 'or'; children: FilterNode[] }
+
 /** Parsed result of a full query string. */
 export interface SearchQueryAST {
   /** Recognised structured filters (one chip per entry). */
   filters: FilterToken[]
   /** Everything that wasn't a structured filter — passed verbatim to FTS5. */
   freeText: string
+  /**
+   * Present only when an `OR` joins filters: their tree, over every entry of
+   * `filters`. Absent, the filters AND together.
+   */
+  expr?: FilterNode
 }
 
 /**

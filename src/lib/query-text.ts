@@ -23,19 +23,16 @@
 
 import { ULID_RE } from '@/editor/markdown-common'
 import { isEscapableChar } from '@/editor/markdown-parse/parser'
-import type {
-  DatePredicate,
-  FilterExpr,
-  FilterPrimitive,
-  PropertyPredicate,
-  PropertyValue,
-} from '@/lib/bindings'
+import type { FilterExpr, FilterPrimitive } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { type FilterToken, parse, type SearchQueryAST, tokenize } from '@/lib/search-query'
-import type { DateFilterValue } from '@/lib/search-query'
-import { prepareGlobs } from '@/lib/search-query/glob-validate'
-import { isIsoDate } from '@/lib/search-query/is-iso-date'
-import { resolveNamedDate } from '@/lib/search-query/resolve-date'
+import {
+  canonical,
+  compileFilterTree,
+  conditions,
+  leafOf,
+  pathPatterns,
+} from '@/lib/search-query/compile-filter'
 import { quoteValueIfNeeded } from '@/lib/search-query/serialize'
 
 /** The keys only the older query text reads (`parseQueryExpression` and its resolver). */
@@ -115,49 +112,6 @@ export function chipTagId(value: string): string | null {
   return ULID_RE.test(inner) ? inner : null
 }
 
-/** `infer_property_value` (Rust): a finite number, else an ISO date, else text, as the search box types a value. */
-function inferPropertyValue(raw: string): PropertyValue {
-  if (/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(raw)) {
-    const value = Number(raw)
-    if (Number.isFinite(value)) return { type: 'Num', value }
-  }
-  if (isIsoDate(raw)) return { type: 'Date', value: raw }
-  return { type: 'Text', value: raw }
-}
-
-/** `resolve_date_filter` + `meta_date_to_primitive` (Rust): a date token as search runs it on `today`. */
-function datePredicate(value: DateFilterValue, today: Date): DatePredicate | null {
-  if (value.kind === 'named') return resolveNamedDate(value.name, today)
-  const { date } = value
-  switch (value.op) {
-    case '<': {
-      return { type: 'Before', date }
-    }
-    case '<=': {
-      return { type: 'OnOrBefore', date }
-    }
-    case '=': {
-      return { type: 'On', date }
-    }
-    case '>=': {
-      return { type: 'OnOrAfter', date }
-    }
-    case '>': {
-      return { type: 'After', date }
-    }
-  }
-}
-
-/**
- * A `path:` / `not-path:` token as the prepared patterns search binds
- * (`prepare_globs`): the engine binds a `PathGlob` pattern as it stands.
- */
-function pathPatterns(token: FilterToken): string[] {
-  return token.kind === 'pathInclude' || token.kind === 'pathExclude'
-    ? prepareGlobs([token.value])
-    : []
-}
-
 /** Why `token` cannot run in a query block, or `null` when it can. */
 function tokenProblem(token: FilterToken): string | null {
   if (token.kind === 'invalid') return token.error
@@ -169,75 +123,6 @@ function tokenProblem(token: FilterToken): string | null {
   }
 }
 
-/** One `State` / `Priority` leaf over `values`, `none` as the null bucket, as search builds it. */
-function membership(
-  type: 'State' | 'Priority',
-  values: string[],
-  exclude: boolean,
-): FilterPrimitive | null {
-  const named = [...new Set(values.filter((v) => v.toLowerCase() !== 'none'))]
-  const isNull = values.some((v) => v.toLowerCase() === 'none')
-  if (named.length === 0 && !isNull) return null
-  return { type, values: named, is_null: isNull, exclude }
-}
-
-type MembershipKind = 'state' | 'notState' | 'priority' | 'notPriority'
-
-function valuesOf(filters: FilterToken[], kind: MembershipKind): string[] {
-  return filters
-    .filter((f): f is Extract<FilterToken, { kind: MembershipKind }> => f.kind === kind)
-    .map((f) => f.value)
-}
-
-function propertyLeaf(key: string, value: string, exclude: boolean): FilterPrimitive {
-  let predicate: PropertyPredicate
-  if (value === '') predicate = { type: exclude ? 'NotExists' : 'Exists' }
-  else predicate = { type: exclude ? 'Ne' : 'Eq', value: inferPropertyValue(value) }
-  return { type: 'HasProperty', key: key.trim(), predicate }
-}
-
-const leafOf = (primitive: FilterPrimitive): FilterExpr => ({ type: 'Leaf', primitive })
-
-/** The conditions of a text whose every token can run, in the order search adds them. */
-function conditions(
-  filters: FilterToken[],
-  tagIds: string[],
-  type: 'Tag' | 'TagUnder',
-  today: Date,
-): FilterExpr[] {
-  const out: FilterExpr[] = [...new Set(tagIds)].map((tag) => leafOf({ type, tag }))
-  // Search ORs the page names to keep and drops a block on any name to leave out.
-  const keep = filters
-    .filter((f) => f.kind === 'pathInclude')
-    .flatMap(pathPatterns)
-    .map((pattern) => leafOf({ type: 'PathGlob', pattern, exclude: false }))
-  if (keep.length === 1) out.push(...keep)
-  else if (keep.length > 1) out.push({ type: 'Or', children: keep })
-  for (const pattern of filters.filter((f) => f.kind === 'pathExclude').flatMap(pathPatterns)) {
-    out.push(leafOf({ type: 'PathGlob', pattern, exclude: true }))
-  }
-  for (const primitive of [
-    membership('State', valuesOf(filters, 'state'), false),
-    membership('State', valuesOf(filters, 'notState'), true),
-    membership('Priority', valuesOf(filters, 'priority'), false),
-    membership('Priority', valuesOf(filters, 'notPriority'), true),
-  ]) {
-    if (primitive) out.push(leafOf(primitive))
-  }
-  for (const f of filters) {
-    if (f.kind === 'prop' || f.kind === 'notProp') {
-      out.push(leafOf(propertyLeaf(f.key, f.value, f.kind === 'notProp')))
-    }
-  }
-  for (const f of filters) {
-    // `parse` leaves one valid `due:` and one `scheduled:` at most.
-    const predicate =
-      f.kind === 'due' || f.kind === 'scheduled' ? datePredicate(f.value, today) : null
-    if (predicate) out.push(leafOf({ type: f.kind === 'due' ? 'DueDate' : 'Scheduled', predicate }))
-  }
-  return out
-}
-
 /** Whether the builder's form has no control for `token`. */
 function isTextOnly(token: FilterToken): boolean {
   if (token.kind === 'pathInclude' || token.kind === 'pathExclude') return true
@@ -247,6 +132,24 @@ function isTextOnly(token: FilterToken): boolean {
     token.value.kind === 'named' &&
     token.value.name !== 'none'
   )
+}
+
+/**
+ * A token's tag, looked up by name in `tags` as the search box looks it up
+ * (exact, any case) or a chip's own id; a name no tag holds is an `Or` of the
+ * tags nested under it, and `null` with none.
+ */
+function tagConditionIn(
+  tags: ReadonlyArray<{ tag_id: string; name: string }>,
+  token: Extract<FilterToken, { kind: 'tag' | 'under' }>,
+): FilterExpr | null {
+  const type = token.kind === 'under' ? 'TagUnder' : 'Tag'
+  const name = token.value.normalize('NFC').toLowerCase()
+  const id = chipTagId(token.value) ?? tags.find((tag) => tag.name.toLowerCase() === name)?.tag_id
+  if (id !== undefined) return leafOf({ type, tag: id })
+  const nested = tags.filter((tag) => tag.name.toLowerCase().startsWith(`${name}/`))
+  if (nested.length === 0) return null
+  return { type: 'Or', children: nested.map((tag) => leafOf({ type, tag: tag.tag_id })) }
 }
 
 /**
@@ -273,6 +176,36 @@ export function compileQueryTextWithTags(
   for (const token of ast.filters) {
     const message = tokenProblem(token)
     if (message !== null) problems.push({ ...at(token), message })
+  }
+
+  if (ast.expr) {
+    const { expr } = ast
+    let nestedOnly = false
+    const tree = compileFilterTree(
+      { ...ast, expr },
+      (token) => {
+        const condition = tagConditionIn(tags, token)
+        if (condition === null) {
+          problems.push({
+            ...at(token),
+            message: t('query.text.unknownTag', { name: token.value }),
+          })
+        } else if (condition.type === 'Or') {
+          nestedOnly = true
+        }
+        return condition
+      },
+      today,
+    )
+    if (problems.length > 0) {
+      return { ok: false, problems: problems.toSorted((a, b) => a.column - b.column) }
+    }
+    return {
+      ok: true,
+      filter: tree,
+      fulltext: ast.freeText,
+      textOnly: ast.freeText !== '' || nestedOnly || ast.filters.some(isTextOnly),
+    }
   }
 
   const tagIds: string[] = []
@@ -360,36 +293,47 @@ function leafWords(leaf: FilterPrimitive): string[] {
   }
 }
 
-/** A value with its object keys in one order, so two leaves compare whatever built them. */
-function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, v: unknown) =>
-    typeof v === 'object' && v !== null && !Array.isArray(v)
-      ? Object.fromEntries(Object.entries(v).toSorted(([a], [b]) => a.localeCompare(b)))
-      : v,
-  )
+/** `expr` with nested nodes of one kind flattened, single children unwrapped and children sorted, so two trees compare whatever order built them. */
+function normalisedTree(expr: FilterExpr): string {
+  const flat = (e: FilterExpr): FilterExpr => {
+    if (e.type === 'Leaf') return e
+    if (e.type === 'Not') return { type: 'Not', child: flat(e.child) }
+    const children = e.children
+      .map(flat)
+      .flatMap((c) => (c.type === e.type ? (c as { children: FilterExpr[] }).children : [c]))
+      .toSorted((a, b) => canonical(a).localeCompare(canonical(b)))
+    return children.length === 1 ? (children[0] as FilterExpr) : { type: e.type, children }
+  }
+  return canonical(flat(expr))
 }
 
-const leafSet = (children: FilterExpr[]): string[] => children.map(canonical).toSorted()
+/** The search-syntax words of `expr`, an OR inside an AND parenthesised; `null` for what the syntax cannot say. */
+function exprWords(expr: FilterExpr): string | null {
+  if (expr.type === 'Leaf') {
+    const words = leafWords(expr.primitive)
+    return words.length > 0 ? words.join(' ') : null
+  }
+  if (expr.type === 'Not' || expr.children.length === 0) return null
+  const parts: string[] = []
+  for (const child of expr.children) {
+    const words = exprWords(child)
+    if (words === null) return null
+    parts.push(expr.type === 'And' && child.type === 'Or' ? `(${words})` : words)
+  }
+  return parts.join(expr.type === 'And' ? ' ' : ' OR ')
+}
 
 /**
  * The search-syntax text the builder saves for `filter`, or `null` when only a
- * `v2:` payload holds it. The words are written leaf by leaf and kept only when
- * the block would read them back as the same `And` of the same leaves, so a
- * filter the syntax cannot say (an `Or`, a value the reader would retype, text
+ * `v2:` payload holds it. The words are written node by node and kept only when
+ * the block would read them back as the same tree of the same leaves, so a
+ * filter the syntax cannot say (a `Not`, a value the reader would retype, text
  * the older reader would claim) is never saved as a text that means something
  * else. A tag is its chip, which follows a rename as the payload's id does.
  */
 export function filterToQueryText(filter: FilterExpr): string | null {
-  if (filter.type !== 'And') return null
-  const words = filter.children.flatMap((child) =>
-    child.type === 'Leaf' ? leafWords(child.primitive) : [],
-  )
-  const text = words.join(' ')
-  if (isLegacyQueryText(text)) return null
+  const text = exprWords(filter)
+  if (text === null || isLegacyQueryText(text)) return null
   const read = compileQueryTextWithTags(text, [])
-  const same =
-    read.ok &&
-    read.filter.type === 'And' &&
-    canonical(leafSet(read.filter.children)) === canonical(leafSet(filter.children))
-  return same ? text : null
+  return read.ok && normalisedTree(read.filter) === normalisedTree(filter) ? text : null
 }

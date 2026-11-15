@@ -808,6 +808,10 @@ describe('QueryBuilderModal', () => {
       primitive: { type: 'State' as const, values: ['TODO'], is_null: false, exclude: false },
     }
     const tagged = { type: 'Leaf' as const, primitive: { type: 'Tag' as const, tag: TAG } }
+    const done = {
+      type: 'Leaf' as const,
+      primitive: { type: 'Priority' as const, values: ['1'], is_null: false, exclude: false },
+    }
 
     it('saves an And of search tokens as text, and previews it', async () => {
       const user = userEvent.setup()
@@ -825,10 +829,29 @@ describe('QueryBuilderModal', () => {
       expect(onSave).toHaveBeenCalledWith(text)
     })
 
-    it('saves an Or as a v2 payload, and says it is not text', async () => {
+    it('saves an Or of search tokens as text (#6742)', async () => {
       const user = userEvent.setup()
       const onSave = vi.fn()
-      const filter = { type: 'Or' as const, children: [todo, tagged] }
+      const filter = {
+        type: 'And' as const,
+        children: [todo, { type: 'Or' as const, children: [tagged, done] }],
+      }
+      const payload = encodeInlineQueryPayload({ filter, table: false })
+      render(<QueryBuilderModal {...defaultProps} onSave={onSave} initialExpression={payload} />)
+
+      const text = `state:TODO (#[${TAG}] OR priority:1)`
+      expect(screen.getByTestId('expression-preview')).toHaveTextContent(text)
+      await user.click(screen.getByRole('button', { name: /update query/i }))
+      expect(onSave).toHaveBeenCalledWith(text)
+    })
+
+    it('saves a Not as a v2 payload, and says it is not text', async () => {
+      const user = userEvent.setup()
+      const onSave = vi.fn()
+      const filter = {
+        type: 'And' as const,
+        children: [{ type: 'Not' as const, child: todo }, tagged],
+      }
       const payload = encodeInlineQueryPayload({ filter, table: false })
       render(<QueryBuilderModal {...defaultProps} onSave={onSave} initialExpression={payload} />)
 

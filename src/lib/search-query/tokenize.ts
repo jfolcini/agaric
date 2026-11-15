@@ -40,12 +40,16 @@ export type RawToken =
  *   boundary `"` would turn that quote into a phrase and swallow the text
  *   in between.
  *
+ * - With `parenClose` (a query holding `OR`, where `)` closes a group) a
+ *   `"` followed by `)`s and then a boundary also closes, so
+ *   `(tag:#a OR tag:#"my tag")` keeps its last value.
+ *
  * Spans are `[startCol, endCol)` over the original input in UTF-16
  * code units (compatible with `string.length`). The quote characters
  * are INCLUDED in the span of a `quoted` token so chip projection can
  * faithfully re-insert them on serialise.
  */
-export function tokenize(input: string): RawToken[] {
+export function tokenize(input: string, parenClose = false): RawToken[] {
   const tokens: RawToken[] = []
   let i = 0
   const n = input.length
@@ -120,7 +124,7 @@ export function tokenize(input: string): RawToken[] {
       // scanning; if none qualifies, fall through to word-handling so
       // the stray quote degrades to a word instead of fragmenting the
       // rest of the query into a phantom phrase.
-      const close = findCloseAtBoundary(input, i)
+      const close = findCloseAtBoundary(input, i, parenClose)
       if (close !== -1) {
         tokens.push({
           kind: 'quoted',
@@ -143,7 +147,7 @@ export function tokenize(input: string): RawToken[] {
       const c = input[i]
       if (isWhitespace(c)) break
       if (c === '"' && i > start) {
-        const close = findCloseAtBoundary(input, i)
+        const close = findCloseAtBoundary(input, i, parenClose)
         if (close !== -1) {
           i = close + 1
           continue
@@ -207,12 +211,15 @@ export function isWhitespace(c: string | undefined): boolean {
 /**
  * Given an opening `"` at index `open`, find the index of a matching
  * close `"` that sits at a token boundary (followed by whitespace or
- * end-of-input). Returns `-1` if no qualifying close exists.
+ * end-of-input, after any `)`s with `parenClose`). Returns `-1` if no
+ * qualifying close exists.
  */
-function findCloseAtBoundary(input: string, open: number): number {
+function findCloseAtBoundary(input: string, open: number, parenClose: boolean): number {
   let close = input.indexOf('"', open + 1)
   while (close !== -1) {
-    const after = input[close + 1]
+    let end = close + 1
+    if (parenClose) while (input[end] === ')') end++
+    const after = input[end]
     if (after === undefined || isWhitespace(after)) {
       return close
     }

@@ -331,12 +331,12 @@ frontend	src/lib/jex-import.ts	StringLiteral	28	1	const id = (props['id'] ?? '')
 frontend	src/lib/jex-import.ts	StringLiteral	34	1	parentId: (props['parent_id'] ?? '').toLowerCase(),
 frontend	src/lib/jex-import.ts	StringLiteral	36	1	const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]/gi, '').toLowerCase()
 frontend	src/lib/jex-import.ts	StringLiteral	70	1	folders.set(id, { title: firstLine, parentId: (props['parent_id'] ?? '').toLowerCase() })
-frontend	src/lib/search-query/classify.ts	ArrayDeclaration	44	1	const quotedOut: Array<[number, number]> = []
-frontend	src/lib/search-query/classify.ts	ConditionalExpression	5	1	if (tag) {
-frontend	src/lib/search-query/classify.ts	EqualityOperator	5	1	if (cursor < input.length) append(cursor, input.length)
-frontend	src/lib/search-query/classify.ts	EqualityOperator	5	1	if (q[1] <= to) {
-frontend	src/lib/search-query/classify.ts	EqualityOperator	8	1	while (qi < quotedOrdered.length && (quotedOrdered[qi]?.[1] ?? 0) <= from) {
-frontend	src/lib/search-query/classify.ts	OptionalChaining	38	1	while (qi < quotedOrdered.length && (quotedOrdered[qi]?.[1] ?? 0) <= from) {
+frontend	src/lib/search-query/classify-word.ts	ArrayDeclaration	44	1	const quotedOut: Array<[number, number]> = []
+frontend	src/lib/search-query/classify-word.ts	ConditionalExpression	5	1	if (tag) {
+frontend	src/lib/search-query/classify-word.ts	EqualityOperator	5	1	if (cursor < input.length) append(cursor, input.length)
+frontend	src/lib/search-query/classify-word.ts	EqualityOperator	5	1	if (q[1] <= to) {
+frontend	src/lib/search-query/classify-word.ts	EqualityOperator	8	1	while (qi < quotedOrdered.length && (quotedOrdered[qi]?.[1] ?? 0) <= from) {
+frontend	src/lib/search-query/classify-word.ts	OptionalChaining	38	1	while (qi < quotedOrdered.length && (quotedOrdered[qi]?.[1] ?? 0) <= from) {
 frontend	src/lib/search-query/serialize.ts	ConditionalExpression	1	1	rest.length === 0 && word?.text === glued && word.kind === 'word' && !word.unclosedQuote
 frontend	src/lib/search-query/tokenize.ts	ConditionalExpression	8	1	return c !== undefined && /\s/.test(c)
 frontend	src/lib/search-query/tokenize.ts	StringLiteral	16	1	assertAdvanced('tokenize/outer', prevOuter, i)

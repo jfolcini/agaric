@@ -14,9 +14,15 @@
  * stable across input edits in the middle of the query.
  */
 
-import { t } from '@/lib/i18n'
+import {
+  buildFreeText,
+  classifyWord,
+  flagShadowedDates,
+  flagTagBesideUnder,
+  isOrWord,
+} from '@/lib/search-query/classify-word'
+import { classifyOr } from '@/lib/search-query/or-query'
 import { ensureRegistered } from '@/lib/search-query/register'
-import { looksLikeUnknownPrefix, recognise } from '@/lib/search-query/registry'
 import { type RawToken, tokenize } from '@/lib/search-query/tokenize'
 import type { FilterToken, SearchQueryAST } from '@/lib/search-query/types'
 
@@ -28,8 +34,11 @@ import type { FilterToken, SearchQueryAST } from '@/lib/search-query/types'
  */
 export function parse(input: string): SearchQueryAST {
   ensureRegistered()
-  const raw = tokenize(input)
-  return classify(raw, input)
+  // `OR` and parentheses are grammar only in a query holding the word `OR`
+  // (any case, as FTS5 reads it); every other query parses as it always has.
+  const grouped = tokenize(input, true)
+  if (grouped.some(isOrWord)) return classifyOr(grouped, input)
+  return classify(tokenize(input), input)
 }
 
 /**
@@ -62,145 +71,17 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
       quotedSpans.push(tok.span)
       continue
     }
-    // A word whose `"` never closed is free text, never a chip: serialise
-    // moves free text after the chips, where a boundary `"` would close
-    // the chip's quote and swallow everything in between.
-    if (tok.unclosedQuote) continue
-    const matched = recognise(tok.text, tok.span)
+    const matched = classifyWord(tok)
     if (matched) {
       filters.push(matched)
-      consumedSpans.push(tok.span)
-      continue
-    }
-    // Bare `#tag` alias: the `tag:` recogniser, so `#"my tag"` peels its
-    // quotes exactly as `tag:#"my tag"` does and serialises back to it.
-    if (tok.text.startsWith('#') && tok.text.length > 1) {
-      const tag = recognise(`tag:${tok.text}`, tok.span)
-      if (tag) {
-        filters.push(tag)
-        consumedSpans.push(tok.span)
-        continue
-      }
-    }
-    // Token shaped like `xxx:yyy` but unregistered → invalid chip.
-    // `looksLikeUnknownPrefix` returns null for `key://…`
-    // (pasted URLs), so those fall through to free-text below instead of
-    // being consumed as an invalid chip and silently dropped.
-    const unk = looksLikeUnknownPrefix(tok.text)
-    if (unk) {
-      filters.push({
-        kind: 'invalid',
-        source: tok.text,
-        error: `unknown filter key '${unk.key}:'`,
-        span: tok.span,
-      })
       consumedSpans.push(tok.span)
     }
     // Everything else is free-text.
   }
 
-  // Only the LAST due:/scheduled: token reaches the backend
-  // (see astToFilterProjection's "last wins"). Flag the earlier,
-  // shadowed tokens as invalid so the rendered chips agree with the
-  // effective query instead of showing filters that silently don't apply.
-  for (const kind of ['due', 'scheduled'] as const) {
-    const last = filters.findLastIndex((f) => f.kind === kind)
-    filters.forEach((f, i) => {
-      if (f.kind !== kind || i === last) return
-      filters[i] = {
-        kind: 'invalid',
-        source: input.slice(f.span[0], f.span[1]),
-        error: `shadowed by a later ${kind}: — only the last ${kind}: filter applies`,
-        span: f.span,
-      }
-    })
-  }
-
-  // The backend widens every tag of a query at once
-  // (`tags_match_inline_and_inherited`), so beside an `under:` a `tag:` chip
-  // would silently match inherited tags too. Flag it instead.
-  if (filters.some((f) => f.kind === 'under')) {
-    filters.forEach((f, i) => {
-      if (f.kind !== 'tag') return
-      filters[i] = {
-        kind: 'invalid',
-        source: input.slice(f.span[0], f.span[1]),
-        error: t('searchQuery.tagBesideUnder'),
-        span: f.span,
-      }
-    })
-  }
+  flagShadowedDates(filters, input, filters.keys())
+  flagTagBesideUnder(filters, input)
 
   const freeText = buildFreeText(input, consumedSpans, quotedSpans)
   return { filters, freeText }
-}
-
-/**
- * Reconstruct the free-text by removing the consumed (filter) spans from
- * `input`, then collapsing runs of whitespace — but ONLY outside quoted
- * phrases.
- *
- * Whitespace inside a `"…"` quoted span is preserved verbatim
- * because a quoted phrase is meant to match exactly; a global
- * `.replace(/\s+/g, ' ')` would silently rewrite the phrase. We walk the
- * surviving (non-consumed) text segment-by-segment against `input`,
- * collapsing only the segments that lie outside any quoted span.
- */
-function buildFreeText(
-  input: string,
-  consumed: Array<[number, number]>,
-  quoted: Array<[number, number]>,
-): string {
-  // Sort defensively — the tokeniser emits in order, but don't rely on it.
-  const consumedOrdered = [...consumed].toSorted((a, b) => a[0] - b[0])
-  const quotedOrdered = [...quoted].toSorted((a, b) => a[0] - b[0])
-
-  // First pass: strip the consumed (filter) spans, building the surviving
-  // text AND mapping each quoted span into the *output* coordinate space so
-  // the collapse pass below knows which output ranges to leave verbatim.
-  let stripped = ''
-  const quotedOut: Array<[number, number]> = []
-  let qi = 0
-  let cursor = 0
-
-  // Append input[from, to) to `stripped`, recording any quoted spans that
-  // fall in that range as output-coordinate ranges.
-  const append = (from: number, to: number) => {
-    while (qi < quotedOrdered.length && (quotedOrdered[qi]?.[1] ?? 0) <= from) {
-      qi++
-    }
-    let q = quotedOrdered[qi]
-    while (q && q[0] < to) {
-      const qs = Math.max(q[0], from)
-      const qe = Math.min(q[1], to)
-      const base = stripped.length + (qs - from)
-      quotedOut.push([base, base + (qe - qs)])
-      if (q[1] <= to) {
-        qi++
-        q = quotedOrdered[qi]
-      } else {
-        break
-      }
-    }
-    stripped += input.slice(from, to)
-  }
-
-  for (const [s, e] of consumedOrdered) {
-    if (s > cursor) append(cursor, s)
-    cursor = Math.max(cursor, e)
-  }
-  if (cursor < input.length) append(cursor, input.length)
-
-  // Second pass: collapse runs of whitespace, but copy quoted ranges
-  // Verbatim so intra-phrase whitespace survives.
-  let out = ''
-  let pos = 0
-  for (const [qs, qe] of quotedOut) {
-    out += stripped.slice(pos, qs).replace(/\s+/g, ' ')
-    out += stripped.slice(qs, qe)
-    pos = qe
-  }
-  out += stripped.slice(pos).replace(/\s+/g, ' ')
-
-  return out.trim()
 }

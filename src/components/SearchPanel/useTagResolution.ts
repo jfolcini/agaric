@@ -46,6 +46,8 @@ export interface TagResolution {
   pending: boolean
   /** True when at least one name settled without a matching tag. */
   hasUnresolved: boolean
+  /** Lowercased name → its tag's id, the ids nested under it, or `null` for none; absent while pending. */
+  byName: ReadonlyMap<string, string | string[] | null>
 }
 
 export function useTagResolution(
@@ -81,7 +83,7 @@ export function useTagResolution(
       else if (typeof resolved === 'string') tagIds.push(resolved)
       else tagAnyOf.push(resolved)
     }
-    return { tagIds, tagAnyOf, pending, hasUnresolved }
+    return { tagIds, tagAnyOf, pending, hasUnresolved, byName: tagNameMap }
   }, [tagNames, tagNameMap])
 
   // Resolve unsettled tag names from the active space's own tag list, one

@@ -15,6 +15,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::filters::FilterExpr;
 use crate::filters::primitive::LastEditedSpec;
 use crate::space::SpaceId;
 
@@ -246,6 +247,12 @@ pub struct SearchFilter {
     /// `projects/web`, #6760).
     #[serde(default)]
     pub tag_any_of: Vec<Vec<String>>,
+    /// #6742 — the filters of a search whose `OR` joins filters, as one tree,
+    /// AND-ed with the fields above (which the app leaves empty beside it).
+    /// Compiled through [`crate::filters::SearchProjection`]; only the leaves
+    /// the search syntax writes are accepted (`prepare_metadata`).
+    #[serde(default)]
+    pub filter_expr: Option<FilterExpr>,
 }
 
 /// Match span emitted by the toggle pipeline.

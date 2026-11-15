@@ -1343,6 +1343,7 @@ const SEARCH_STRUCTURAL_FILTER_FIELDS = [
   'excludedPropertyFilters',
   'lastEdited',
   'tagAnyOf',
+  'filterExpr',
 ] as const
 
 /**
@@ -1603,6 +1604,8 @@ function searchStructuralCandidates(
   // entry, and only the `LastEdited` primitive reads the stamp — so pay for it
   // per row ONLY when such a primitive is in play (the same reason
   // {@link rawLastEditedOf} memoizes it on the advanced-query path).
+  // #6742 — an OR query's filters, `add_metadata`'s `compile_expr` clause.
+  const filterExpr = (filter['filterExpr'] as Record<string, unknown> | null | undefined) ?? null
   const needsLastEdited = metadata.some((p) => p['type'] === 'LastEdited')
   return [...blocks.values()].filter((b) => {
     if (b['deleted_at'] || isSavedViewPage(b)) return false
@@ -1644,9 +1647,10 @@ function searchStructuralCandidates(
         return false
       }
     }
-    if (metadata.length > 0) {
+    if (metadata.length > 0 || filterExpr !== null) {
       const row = searchMetadataRow(b, needsLastEdited)
       if (!metadata.every((p) => metaRowMatchesFilter(row, p))) return false
+      if (filterExpr !== null && !metaRowMatchesExpr(row, filterExpr)) return false
     }
     return true
   })

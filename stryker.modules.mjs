@@ -49,7 +49,17 @@ export const MODULES = {
   },
   classify: {
     src: 'src/lib/search-query/classify.ts',
-    tests: ['src/lib/search-query/__tests__/classify.test.ts'],
+    tests: [
+      'src/lib/search-query/__tests__/classify.test.ts',
+      'src/lib/search-query/__tests__/or-query.test.ts',
+    ],
+  },
+  'classify-word': {
+    src: 'src/lib/search-query/classify-word.ts',
+    tests: [
+      'src/lib/search-query/__tests__/classify.test.ts',
+      'src/lib/search-query/__tests__/or-query.test.ts',
+    ],
   },
   serialize: {
     src: 'src/lib/search-query/serialize.ts',

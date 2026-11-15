@@ -3,7 +3,8 @@
  *
  * Simple mode has 3 query types (tag, property, backlinks) and writes the
  * older query text. Advanced mode writes the search syntax when the filter is
- * an AND of its tokens (`filterToQueryText`), and a `v2:` payload otherwise.
+ * a tree of AND and OR over its tokens (`filterToQueryText`), and a `v2:`
+ * payload otherwise.
  *
  * On phones < 768 px (`useIsMobile() === true`) the dialog renders as a
  * bottom Sheet via `useDialogOrSheet('dialog')` (#2665) — reachable from

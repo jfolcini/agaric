@@ -1843,6 +1843,8 @@ fn search_filter(
         last_edited: f.last_edited,
         tags_match_inline_and_inherited: true,
         tag_any_of: Vec::new(),
+        // An agent that needs an OR of filters uses `query`.
+        filter_expr: None,
     }
 }
 

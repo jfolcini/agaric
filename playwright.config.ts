@@ -86,7 +86,15 @@ export default defineConfig({
   },
   use: {
     baseURL: ORIGIN,
-    trace: 'on-first-retry',
+    // CI keeps a failed test's trace and final screenshot in `test-results/`,
+    // which `_validate.yml` uploads on failure: with no retries a flake gets one
+    // run, and that run is the only evidence. A passing test's trace is
+    // discarded. No screencast frames, the costly part of a trace; the DOM
+    // snapshots per action show what was on the page. Off locally.
+    trace: process.env['CI']
+      ? { mode: 'retain-on-failure', screenshots: false, snapshots: true, sources: true }
+      : 'off',
+    screenshot: process.env['CI'] ? 'only-on-failure' : 'off',
     // #1458: fail-fast navigation/action bounds. Against the static `vite
     // preview` build (no on-the-fly HMR transform), a `page.goto` resolves in
     // well under a second, so a 30s navigation bound only ever fires on a

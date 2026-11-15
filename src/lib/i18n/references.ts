@@ -357,6 +357,13 @@ export const references: Record<string, string> = {
   'searchQuery.propKeyEmpty': '{{prefix}}: key cannot be empty',
   'searchQuery.tagBesideUnder':
     'tag: and #tag cannot be combined with under:; use under: for every tag',
+  'searchQuery.unbalancedParen': 'this parenthesis has no partner',
+  'searchQuery.orMissingSide': 'OR needs a filter on each side',
+  'searchQuery.textBesideFilterOr':
+    'free text cannot be part of an OR of filters or a group of them; put the filters, or all the words, in parentheses of their own',
+  'searchQuery.wordGroupNotAlone': 'words in parentheses must be every word of the query',
+  'searchQuery.notBeforeFilter': 'NOT cannot negate a filter; use its not- form',
+  'searchQuery.emptyGroup': 'empty parentheses',
   'search.filterSyntaxIntro':
     'Filter syntax is live — type tag:#name or path:Journal/* in the search input, or use the Add filter button. Press ? for help.',
   'search.searchTags': 'Search tags...',

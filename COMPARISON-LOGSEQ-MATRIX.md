@@ -134,7 +134,7 @@ Logseq 2.0 turned this into its strongest domain. Agaric is behind, not ahead.
 | Query result table | `query-table:: true` + column picker; 2.0: Table/List/Gallery views with pinned, resizable columns and inline editing | Columns derived from the loaded rows' properties until picked; a column picker chooses and orders them, kept in the block; a cell edits its block's property or task state in place, with Undo (`src/components/query/QueryTableCell.tsx`, #6743); no column widths, and a block's text is not edited in its cell | Partial |
 | Live-updating results | Yes (DataScript reactivity) | Inline queries refetch on property and graph-structure events, including ones arriving by sync (`src/hooks/useQueryExecution.ts`, #5316) | Done |
 | Saved queries | Query nodes live in the graph | Each saved view is a page of its space carrying the internal `saved_view` property (`src/lib/saved-views.ts`, #6544): it syncs, a deleted one waits in the Trash, and it stays out of page lists, the `[[` picker, the graph and search. The Pages view and Advanced Query both use them | Done |
-| User-facing query language | Text you can read, diff, paste, version | **Partial.** A query block takes the search box's filter syntax as typed text (`{{query tag:#work state:TODO}}`, `src/lib/query-text.ts`), running every token the search box runs, free text and relative dates included, its tokens joined by AND, with no OR or groups yet (#6742); the builder writes that text for a filter it can say and `v2:<base64url(JSON)>` for the rest (#6628) | Partial |
+| User-facing query language | Text you can read, diff, paste, version | **Partial.** A query block takes the search box's filter syntax as typed text (`{{query tag:#work state:TODO}}`, `src/lib/query-text.ts`), running every token the search box runs, free text and relative dates included, its tokens joined by AND or by `OR` with parentheses (#6742), with no negated group, date range or comparison in the text yet; the builder writes that text for a filter it can say and `v2:<base64url(JSON)>` for the rest (#6628) | Partial |
 | Cross-space queries | Multi-graph search is manual | **Impossible.** `space_id` is mandatory, including MCP `query` | Gap |
 
 ## 8. Task Management
@@ -319,7 +319,7 @@ A judgment, not a count: each product is scored 1 to 10 per category on what it 
 | Linking system | 10 | 9 | 7 | No inline reference content, no count on the referenced block, a pages-only link picker |
 | Properties | 6 | 10 | 8 | One value per property, no defaults or display control |
 | Tags | 8 | 10 | 7 | Labels, not classes |
-| Query system | 9 | 9 | 8 | A board, picked columns, editable table cells, text queries and synced views; no Datalog, AND-only text |
+| Query system | 9 | 9 | 8 | A board, picked columns, editable table cells, text queries and synced views; no Datalog, and no negated group, range or comparison in the text |
 | Task management | 7 | 8 | 8 | Fixed states, no time tracking |
 | Daily journal | 8 | 7 | 9 | |
 | Search | 5 | 7 | 9 | No semantic search |

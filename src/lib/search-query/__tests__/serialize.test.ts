@@ -83,11 +83,12 @@ describe('serialize round-trip', () => {
     })
   }
 
-  // Filters and freeText must match (key-by-key); spans may move.
+  // Filters, freeText and the OR tree must match (key-by-key); spans may move.
   function roundTrips(s: string): boolean {
     const once = parse(s)
     const twice = parse(serialize(once))
     if (once.freeText !== twice.freeText) return false
+    if (JSON.stringify(once.expr) !== JSON.stringify(twice.expr)) return false
     if (once.filters.length !== twice.filters.length) return false
     for (let i = 0; i < once.filters.length; i++) {
       const a = once.filters[i]
@@ -117,6 +118,87 @@ describe('serialize round-trip', () => {
       ),
       { numRuns: 200 },
     )
+  })
+
+  // #6742 — queries in the OR grammar: filters, words, `OR`, `NOT` and
+  // parentheses (glued or apart, balanced or not), so random strings that
+  // almost never hold ` OR ` are not the only cover.
+  const orPiece = fc.oneof(
+    fc.constantFrom(
+      'tag:#a',
+      'tag:#"my tag"',
+      'under:#b',
+      'state:TODO',
+      'not-state:DONE',
+      'priority:1',
+      'due:today',
+      'due:overdue',
+      'path:Journal/*',
+      'prop:k="v w"',
+      'bogus:x',
+      'cats',
+      '"a phrase"',
+      'NOT',
+      'or',
+      'OR',
+      'OR',
+      '(',
+      ')',
+      '()',
+    ),
+    fc
+      .tuple(
+        fc.constantFrom('(', '((', ''),
+        fc.constantFrom('tag:#a', 'cats', 'tag:#"x y"', 'OR'),
+        fc.constantFrom(')', '))', ''),
+      )
+      .map((p) => p.join('')),
+  )
+  const orQuery = fc
+    .array(orPiece, { minLength: 1, maxLength: 9 })
+    .map((pieces) => [...pieces, 'OR'].join(' '))
+
+  it('idempotency over the OR grammar', () => {
+    fc.assert(fc.property(orQuery, roundTrips), { numRuns: 2000 })
+  })
+
+  it.each([
+    'state:TODO tag:#a OR tag:#b',
+    'state:TODO (tag:#a OR tag:#b)',
+    'meeting (tag:#a OR tag:#b)',
+    '(cats OR dogs) tag:#a',
+    '(tag:#x OR tag:#"my tag")',
+    'cats OR dogs tag:#a',
+    '(tag:#a OR tag:#b',
+    'tag:#a OR tag:#b)',
+    '() tag:#a OR tag:#b',
+  ])('round-trips the OR query %j', (s) => {
+    expect(roundTrips(s)).toBe(true)
+  })
+
+  it('writes an OR tree in its canonical form', () => {
+    expect(serialize(parse('state:TODO ( tag:#a or tag:#b ) ((due:today))'))).toBe(
+      'state:TODO (tag:#a OR tag:#b) due:today',
+    )
+    // A top-level OR beside free text, and free text holding OR beside filters.
+    expect(serialize(parse('meeting (tag:#a OR tag:#b)'))).toBe('(tag:#a OR tag:#b) meeting')
+    expect(serialize(parse('(cats OR dogs) tag:#a'))).toBe('tag:#a (cats OR dogs)')
+    expect(serialize(parse('(cats OR dogs)'))).toBe('cats OR dogs')
+    // A value ending in `)` is quoted, or it would close a group.
+    expect(tokenSource({ kind: 'tag', value: 'a)', span: [0, 0] })).toBe('tag:#"a)"')
+  })
+
+  it('removeFilterAt and addFilter keep the OR tree in step', () => {
+    const ast = parse('state:TODO (tag:#a OR tag:#b)')
+    expect(serialize(removeFilterAt(ast, 0))).toBe('tag:#a OR tag:#b')
+    const dropped = removeFilterAt(ast, 1)
+    expect(dropped.expr).toBeUndefined()
+    expect(serialize(dropped)).toBe('state:TODO tag:#b')
+    expect(
+      serialize(
+        addFilter(parse('tag:#a OR tag:#b'), { kind: 'state', value: 'DONE', span: [0, 0] }),
+      ),
+    ).toBe('(tag:#a OR tag:#b) state:DONE')
   })
 
   // Counterexamples the property found. A word whose `"` never closed used

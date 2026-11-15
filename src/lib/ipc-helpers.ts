@@ -33,6 +33,7 @@ import type {
   BulkTrashResponse,
   DateFilter,
   DateOp,
+  FilterExpr,
   ImportDialect,
   ImportProgressUpdate,
   ImportResult,
@@ -470,6 +471,8 @@ export async function searchBlocks(
     excludedStateFilter?: string[] | undefined
     /** `not-priority:` projection. Symmetric to `excludedStateFilter`. */
     excludedPriorityFilter?: string[] | undefined
+    /** #6742 — the filters as one tree, for a query whose `OR` joins filters. See `SearchFilter`. */
+    filterExpr?: FilterExpr | undefined
   },
   /**
    * Optional client-side abort. When the supplied
@@ -505,6 +508,7 @@ export async function searchBlocks(
         excludedPriorityFilter: params.excludedPriorityFilter ?? [],
         tagsMatchInlineAndInherited: params.tagsMatchInlineAndInherited ?? false,
         ...(params.tagAnyOf ? { tagAnyOf: params.tagAnyOf } : {}),
+        ...(params.filterExpr ? { filterExpr: params.filterExpr } : {}),
       }),
       signal,
     ),
