@@ -38,7 +38,8 @@
       {
         "name": "validate / validate-all",
         "status": "completed",
-        "conclusion": "success"
+        "conclusion": "success",
+        "details_url": "https://github.com/jfolcini/agaric/actions/runs/43713379704/job/132813673812"
       },
       {
         "name": "e2e-tauri-gate",
@@ -381,5 +382,13 @@
         "created_at": "2026-11-15T12:41:09Z"
       }
     ]
-  }
+  },
+  "repos/jfolcini/agaric/actions/runs/43713379704": {
+    "created_at": "2026-11-15T12:20:58Z"
+  },
+  "repos/jfolcini/agaric/commits?sha=main&until=2026-11-15T12:20:58Z&per_page=1": [
+    {
+      "sha": "07294ed635a0a0235bae47127f9553f89bec53ff"
+    }
+  ]
 }

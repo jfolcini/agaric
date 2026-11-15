@@ -36,10 +36,10 @@
 #             wraps a query macro, and on any doubt; `PRE_PUSH_SQLX_CHECK=1`
 #             forces it.
 #
-#   Phase C2 — the Playwright specs `scripts/e2e-related.sh` selects for the
-#             range, on the mock, when the range touches frontend code. At
-#             most E2E_MAX_SPECS; the whole lane, or more, is left to CI and
-#             says so.
+#   Phase C2 — `scripts/e2e-related.sh --run`: the Playwright specs it selects
+#             for the range, on the mock, when the range touches frontend
+#             code. The whole lane, or more specs than it runs, is left to CI
+#             and says so.
 #
 #   Phase F — `agaric-mcp` release build + MCP UDS smoke + externalBin
 #             host-triple verify. **Only when MCP paths change**
@@ -61,7 +61,7 @@
 # Explicitly NOT here (vs the prior CI-equivalent verifier):
 #
 #   * **The whole Playwright lane.** CI runs it when the diff can affect it;
-#     Phase C2 runs only the few specs `e2e-related.sh` selects.
+#     Phase C2 runs only the few specs `e2e-related.sh --run` selects.
 #   * **Full `vitest run` / `cargo nextest run --workspace --profile ci`.** Scoped to
 #     the push range above; CI still runs the full suites.
 #   * **Desktop bundle build / cross-OS / SLSA attestations.** Same as
@@ -182,53 +182,6 @@ merge_only_push() {
   own="$(git rev-list --no-merges --count "$pushed" ^origin/main 2>/dev/null)" || return 1
   [ "$own" = 0 ] && [ "$merges" -gt 0 ] 2>/dev/null || return 1
   echo "$merges"
-}
-
-# ── Related Playwright specs (mock lane) ────────────────────────────
-# Reads `scripts/e2e-related.sh` output on stdin and prints what Phase C2 does:
-# `none`, `run <spec>…`, or `skip: <why>`. A lane selection that is the whole
-# lane, is larger than E2E_MAX_SPECS, or that the output does not let us
-# read is left to CI, which runs the whole lane, and says so: undecided is
-# never "nothing ran, nothing said".
-# Defined up here so `--self-test` below can drive it directly.
-E2E_MAX_SPECS=6
-e2e_plan() {
-  local out verdict command specs count spec
-  out="$(cat)"
-  verdict="$(printf '%s\n' "$out" | grep -m1 '^Playwright: ')" \
-    || {
-      echo "skip: CI runs the whole lane (no Playwright verdict from e2e-related.sh)"
-      return
-    }
-  case "$verdict" in
-    *"nothing to run"*)
-      echo "none"
-      return
-      ;;
-    *"the whole lane"*)
-      echo "skip: CI runs the whole lane (${verdict#Playwright: })"
-      return
-      ;;
-  esac
-  command="$(printf '%s\n' "$out" | grep -A1 -m1 '^Playwright: ' | tail -n 1)"
-  specs="${command#  npx playwright test}"
-  if [ "$specs" = "$command" ] || [ -z "$specs" ]; then
-    echo "skip: CI runs the whole lane (e2e-related.sh selection not understood)"
-    return
-  fi
-  count=0
-  for spec in $specs; do
-    if [[ ! "$spec" =~ ^e2e/[A-Za-z0-9._/-]+\.spec\.ts$ ]]; then
-      echo "skip: CI runs the whole lane (e2e-related.sh selection not understood)"
-      return
-    fi
-    count=$((count + 1))
-  done
-  if [ "$count" -gt "$E2E_MAX_SPECS" ]; then
-    echo "skip: CI runs the whole lane ($count specs selected, more than the $E2E_MAX_SPECS run before a push)"
-    return
-  fi
-  echo "run$specs"
 }
 
 # ── MCP change classifier (#4419) ──────────────────────────────────
@@ -2376,27 +2329,6 @@ db.close()
     st_bad "merge-only push: only a merge of origin/main skips the verify" "$(echo "$st_out" | tr '\n' ' ')"
   fi
 
-  # 65. Related Playwright specs: a small selection runs; the whole lane, too
-  #     many specs and output it cannot read are left to CI, saying so.
-  st_e2e() { # <expected plan, a glob> <label> <e2e-related output>
-    local got
-    got="$(printf '%s\n' "$3" | e2e_plan)"
-    # shellcheck disable=SC2053 # $1 is a glob on purpose
-    if [[ "$got" == $1 ]]; then
-      st_ok "Phase C2 plan: $2"
-    else
-      st_bad "Phase C2 plan: $2" "plan '$got', expected $1"
-    fi
-  }
-  st_e2e_head=$'e2e specs for the range main...HEAD changes:\n'
-  st_e2e 'run e2e/a.spec.ts e2e/b-c.spec.ts' 'a small selection runs' "${st_e2e_head}Playwright: 2 spec(s), tagged @editor"$'\n  npx playwright test e2e/a.spec.ts e2e/b-c.spec.ts\nWebdriverIO: nothing to run'
-  st_e2e none 'nothing affected runs nothing' "${st_e2e_head}Playwright: nothing to run"$'\nWebdriverIO: nothing to run'
-  st_e2e 'skip: CI runs the whole lane (package.json changed*' 'the whole lane is left to CI' "${st_e2e_head}Playwright: package.json changed — the whole lane"$'\n  npx playwright test'
-  st_e2e 'skip: CI runs the whole lane (7 specs selected*' 'more than the cap is left to CI' "${st_e2e_head}Playwright: 7 spec(s), tagged @pages"$'\n  npx playwright test e2e/1.spec.ts e2e/2.spec.ts e2e/3.spec.ts e2e/4.spec.ts e2e/5.spec.ts e2e/6.spec.ts e2e/7.spec.ts'
-  st_e2e 'skip: *no Playwright verdict*' 'output with no Playwright verdict is left to CI' 'ERROR: something else'
-  st_e2e 'skip: *not understood*' 'a command that is not a spec list is left to CI' "${st_e2e_head}Playwright: 1 spec(s), changed"$'\n  npx playwright test; rm -rf'
-  st_e2e 'skip: *not understood*' 'a verdict with no command line is left to CI' "${st_e2e_head}Playwright: 1 spec(s), changed"
-
   if [ "$st_fail" != 0 ]; then
     echo "verify-ci-equivalent self-test FAILED" >&2
     exit 2
@@ -2770,35 +2702,24 @@ if ! bash scripts/test-related-ts.sh --range "$RANGE"; then
 fi
 
 # ── Phase C2: related Playwright specs on the mock (frontend range) ─
-# `scripts/e2e-related.sh` picks the specs by area tag; the whole lane, or more
-# than E2E_MAX_SPECS, is left to CI (see `e2e_plan`). One free port per run, so a
-# server another worktree left on 5173 is never the one tested.
+# `e2e-related.sh --run` runs the few specs the range can affect; the whole lane,
+# or more than it will run, it leaves to CI and says so. Exit 2 is the selector
+# unable to read the range: undecided is the whole lane, which CI runs.
 
 if [ "$HAS_TS" = "1" ]; then
   echo ""
   echo "→ Phase C2: related Playwright specs (range $RANGE)"
-  if ! e2e_out="$(bash scripts/e2e-related.sh --range "$RANGE" 2>&1)"; then
-    e2e_plan_out="skip: CI runs the whole lane (e2e-related.sh failed: $(printf '%s' "$e2e_out" | tail -n 1))"
-  else
-    e2e_plan_out="$(printf '%s\n' "$e2e_out" | e2e_plan)"
+  bash scripts/e2e-related.sh --range "$RANGE" --run
+  e2e_rc=$?
+  if [ "$e2e_rc" -eq 2 ]; then
+    echo "  CI runs the whole lane (e2e-related.sh could not read the range)"
+  elif [ "$e2e_rc" -ne 0 ]; then
+    echo ""
+    echo "✗ Pre-push verification FAILED at Phase C2 (related Playwright specs)."
+    echo "  Iterate: bash scripts/e2e-related.sh --range $RANGE --run"
+    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+    exit 1
   fi
-  case "$e2e_plan_out" in
-    none) echo "  no Playwright spec is affected" ;;
-    skip:*) echo "  ${e2e_plan_out#skip: }" ;;
-    run\ *)
-      e2e_specs="${e2e_plan_out#run }"
-      e2e_port="${PW_PORT:-$(node -e 'const s=require("node:net").createServer();s.listen(0,()=>{console.log(s.address().port);s.close()})')}"
-      echo "  PW_PORT=$e2e_port npx playwright test --trace off$e2e_specs"
-      # shellcheck disable=SC2086 # the plan is a space-separated spec list
-      if ! PW_PORT="$e2e_port" npx playwright test --trace off $e2e_specs; then
-        echo ""
-        echo "✗ Pre-push verification FAILED at Phase C2 (related Playwright specs)."
-        echo "  Iterate: PW_PORT=<port> npx playwright test$e2e_specs"
-        echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
-        exit 1
-      fi
-      ;;
-  esac
 fi
 
 # ── Phase D: cargo nextest related (scoped to push range) ──────────

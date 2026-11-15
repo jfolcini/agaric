@@ -24,6 +24,9 @@ const ROUTE = {
   files: `${R}/pulls/6820/files?per_page=100`,
   reviews: `${R}/pulls/6820/reviews?per_page=100`,
   mainFiles: `${R}/compare/07294ed635a0a0235bae47127f9553f89bec53ff...main?per_page=100`,
+  run: `${R}/actions/runs/43713379704`,
+  testedBase: `${R}/commits?sha=main&until=2026-11-15T12:20:58Z&per_page=1`,
+  mergeBase: `${R}/compare/main...${HEAD}?per_page=1`,
   ci: `${R}/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed&per_page=10`,
 }
 
@@ -212,28 +215,91 @@ void test('mergeable: dirty, unknown and draft fail; behind passes', () => {
   assert.equal(behind.status, 0, behind.out)
 })
 
-void test('main moved: a PR file that changed on main names the file; a rename counts under both names', () => {
+const SHARED = 'src/components/block-tree/use-block-action-orchestration.ts'
+const sharedChange = { filename: SHARED, status: 'modified', previous_filename: null }
+// The commits on main that touched `file` since the run was created, as the API lists them.
+const touching = (file) =>
+  `${R}/commits?sha=main&path=${file}&since=2026-11-15T12:20:58Z&per_page=20`
+
+void test('main moved onto a PR file: the file is named with the PR that changed it', () => {
   const shared = run((routes) => {
-    routes[ROUTE.mainFiles].files.push({
-      filename: 'src/components/block-tree/use-block-action-orchestration.ts',
-      status: 'modified',
-      previous_filename: null,
-    })
+    routes[ROUTE.mainFiles].files.push(sharedChange)
+    routes[touching(SHARED)] = [
+      {
+        sha: 'b'.repeat(40),
+        commit: { message: 'refactor(editor): split the orchestration (#6900)\n\nbody' },
+      },
+      { sha: 'c'.repeat(40), commit: { message: 'a commit that is not a squash merge' } },
+    ]
   })
   assertFailsOnly(shared, 'main moved', '1 PR file(s)')
-  assert.ok(
-    shared.out.includes('        src/components/block-tree/use-block-action-orchestration.ts'),
-    shared.out,
-  )
+  assert.ok(shared.out.includes(`        ${SHARED}  (#6900, ccccccc)`), shared.out)
+  assert.ok(shared.out.includes('merge main into the branch'), shared.out)
+})
 
+void test('main moved onto a PR file under another name: a rename counts both ways', () => {
   const renamed = run((routes) => {
     routes[ROUTE.mainFiles].files.push({
       filename: 'src/elsewhere/orchestration.ts',
       status: 'renamed',
-      previous_filename: 'src/components/block-tree/use-block-action-orchestration.ts',
+      previous_filename: SHARED,
     })
   })
   assertFailsOnly(renamed, 'main moved', '1 PR file(s)')
+})
+
+void test('main moved with no overlap: passes, judged from the commit CI tested, not the merge base', () => {
+  const tested = 'a'.repeat(40)
+  const r = run((routes) => {
+    // Main moved before the run started: a stale merge-base window would flag this file.
+    routes[ROUTE.mainFiles].files.push(sharedChange)
+    // CI tested main at `tested`; since then main only touched files the PR does not.
+    routes[ROUTE.testedBase] = [{ sha: tested }]
+    routes[`${R}/compare/${tested}...main?per_page=100`] = {
+      files: [{ filename: 'docs/BUILD.md', status: 'modified', previous_filename: null }],
+    }
+  })
+  assert.equal(r.status, 0, r.out)
+  const l = line(r.out, 'main moved')
+  assert.ok(l.startsWith('ok'), l)
+  assert.ok(l.includes('aaaaaaa') && l.includes('no re-merge needed'), l)
+})
+
+void test('main moved onto a PR file after CI ran: fails even though the merge base is older', () => {
+  const tested = 'a'.repeat(40)
+  const r = run((routes) => {
+    routes[ROUTE.testedBase] = [{ sha: tested }]
+    routes[`${R}/compare/${tested}...main?per_page=100`] = { files: [sharedChange] }
+    routes[touching(SHARED)] = [
+      { sha: 'b'.repeat(40), commit: { message: 'fix: a later change (#6901)' } },
+    ]
+  })
+  assertFailsOnly(r, 'main moved', 'aaaaaaa')
+  assert.ok(r.out.includes(`${SHARED}  (#6901)`), r.out)
+})
+
+void test('main moved: when the tested commit cannot be found it falls back to the merge base and says so', () => {
+  for (const route of [ROUTE.run, ROUTE.testedBase]) {
+    const ok = run((routes) => {
+      delete routes[route]
+    })
+    assert.equal(ok.status, 0, ok.out)
+    const l = line(ok.out, 'main moved')
+    assert.ok(l.includes('merge base 07294ed'), l)
+    assert.ok(l.includes('could not be determined'), l)
+
+    const overlapping = run((routes) => {
+      delete routes[route]
+      routes[ROUTE.mainFiles].files.push(sharedChange)
+    })
+    assertFailsOnly(overlapping, 'main moved', 'merge base 07294ed')
+  }
+
+  const none = run((routes) => {
+    delete routes[ROUTE.run]
+    delete routes[ROUTE.mergeBase]
+  })
+  assertFailsOnly(none, 'main moved', 'no base')
 })
 
 void test('main CI: a failed newest run fails and is named', () => {
@@ -275,7 +341,7 @@ void test('main CI: no completed run at all fails', () => {
 
 void test('fail closed: an endpoint that errors fails its check and never reads as nothing wrong', () => {
   const cases = [
-    [ROUTE.checks, 'validate / validate-all', 'could not be read'],
+    [ROUTE.checks, 'validate / validate-all: check runs', 'could not be read'],
     [ROUTE.reviews, 'review', 'could not be read'],
     [ROUTE.mainFiles, 'main moved', 'could not be read'],
     [ROUTE.ci, 'main CI', 'could not be read'],

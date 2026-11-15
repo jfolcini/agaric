@@ -16,9 +16,11 @@
 #                     reviewer skips (`claude-code-review.yml` paths-ignore)
 #   mergeable         `mergeable_state` is not dirty; `unknown` (GitHub is still
 #                     computing it) and `draft` fail too
-#   main moved        no file the PR changes has changed on main since the PR's
-#                     merge base: a PR whose CI predates a main change to a
-#                     shared file merges main first (.github/AGENTS.md § The gate)
+#   main moved        no file the PR changes has changed on main since the main
+#                     commit its CI tested against (the merge base when that is
+#                     unknown, said in the line). Main moving is fine; main
+#                     changing a PR file is not: merge main first
+#                     (.github/AGENTS.md § The gate). Overlaps name the PRs.
 #   main is green     the newest completed `ci.yml` push run on main concluded
 #                     success. In-progress runs are ignored; a cancelled run
 #                     (a pending run replaced by a newer push) says nothing
@@ -127,24 +129,75 @@ else
   esac
 fi
 
-# ── files that moved on main since the PR's merge base ─────────────
+# ── files that moved on main since the one CI tested ───────────────
+# PR CI tests the merge ref, the PR merged onto main as main stood when the run
+# was created. Main moving since is harmless unless a file it changed is a file
+# the PR changes. The API does not expose that merge commit, so the base is
+# main's newest commit at or before the run's creation time (the run keeps its
+# original `created_at` through re-runs, which reuse the same merge commit); when
+# that cannot be found the check falls back to the merge base, a wider window,
+# and says so.
+tested_base() { # sets TESTED_BASE and BASE_LABEL; returns 1 with BASE_LABEL = why not
+  local id created
+  TESTED_BASE=""
+  id=$(jq -r '[.[] | select(.name == "validate / validate-all") | .details_url][0] // ""' <<<"${runs:-[]}" \
+    | sed -n 's#.*/actions/runs/\([0-9][0-9]*\).*#\1#p')
+  [ -n "$id" ] || {
+    BASE_LABEL="no run id on the validate / validate-all check"
+    return 1
+  }
+  created=$(gh api "repos/$REPO/actions/runs/$id" 2>/dev/null | jq -er '.created_at') || {
+    BASE_LABEL="run $id could not be read"
+    return 1
+  }
+  TESTED_BASE=$(gh api "repos/$REPO/commits?sha=$BASE_REF&until=$created&per_page=1" 2>/dev/null | jq -er '.[0].sha') || {
+    BASE_LABEL="no $BASE_REF commit found at or before $created"
+    return 1
+  }
+  BASE_CREATED="$created"
+  BASE_LABEL="the $BASE_REF commit $(short "$TESTED_BASE") that CI run $id tested against"
+}
+
+# `#NNN` of the squash commit's first line, else the short sha.
+pr_of() { # <path>
+  gh api "repos/$REPO/commits?sha=$BASE_REF&path=$1&since=$BASE_CREATED&per_page=20" 2>/dev/null \
+    | jq -r --arg base "$TESTED_BASE" '[.[] | select(.sha != $base)
+        | (.commit.message | split("\n")[0] | ((capture("\\(#(?<n>[0-9]+)\\)$") | .n)? // null)) as $n
+        | if $n then "#" + $n else .sha[0:7] end] | unique | join(", ")' 2>/dev/null
+}
+
 if [ -z "$files" ]; then
   fail "main moved: not checked, the PR's changed files could not be read"
-elif ! cmp_json=$(gh api "repos/$REPO/compare/$BASE_REF...$HEAD?per_page=1" 2>/dev/null) \
-  || ! mb=$(jq -er '.merge_base_commit.sha' <<<"$cmp_json" 2>/dev/null); then
-  fail "main moved: the merge base of $BASE_REF and $(short "$HEAD") could not be found"
-elif ! raw=$(api "repos/$REPO/compare/$mb...$BASE_REF?per_page=100") || ! main_files=$(jq -s '[.[].files[]?]' <<<"$raw" 2>/dev/null); then
-  fail "main moved: the files changed on $BASE_REF since $(short "$mb") could not be read"
 else
-  # A rename counts under both names.
-  overlap=$(jq -nr --argjson pr "$files" --argjson main "$main_files" '
-    def names: map(.filename, .previous_filename) | map(select(. != null)) | unique;
-    ($pr | names) as $a | ($main | names) as $b | $a - ($a - $b) | .[]')
-  if [ -z "$overlap" ]; then
-    pass "main moved: no PR file changed on $BASE_REF since the merge base $(short "$mb")"
+  if tested_base; then
+    since="$TESTED_BASE"
+  elif cmp_json=$(gh api "repos/$REPO/compare/$BASE_REF...$HEAD?per_page=1" 2>/dev/null) \
+    && since=$(jq -er '.merge_base_commit.sha' <<<"$cmp_json" 2>/dev/null); then
+    BASE_CREATED=""
+    BASE_LABEL="the merge base $(short "$since") (the tested $BASE_REF commit could not be determined: $BASE_LABEL)"
   else
-    fail "main moved: $(wc -l <<<"$overlap" | tr -d ' ') PR file(s) changed on $BASE_REF since the merge base $(short "$mb"); merge $BASE_REF in and let CI re-run:"
-    sed 's/^/        /' <<<"$overlap"
+    since=""
+  fi
+  if [ -z "$since" ]; then
+    fail "main moved: no base to compare $BASE_REF against could be found"
+  elif ! raw=$(api "repos/$REPO/compare/$since...$BASE_REF?per_page=100") || ! main_files=$(jq -s '[.[].files[]?]' <<<"$raw" 2>/dev/null); then
+    fail "main moved: the files changed on $BASE_REF since $(short "$since") could not be read"
+  else
+    # A rename counts under both names.
+    overlap=$(jq -nr --argjson pr "$files" --argjson main "$main_files" '
+      def names: map(.filename, .previous_filename) | map(select(. != null)) | unique;
+      ($pr | names) as $a | ($main | names) as $b | $a - ($a - $b) | .[]')
+    moved=$(jq -s '[.[].files[]?] | length' <<<"$raw")
+    if [ -z "$overlap" ]; then
+      pass "main moved: none of the $moved file(s) changed on $BASE_REF since $BASE_LABEL is a PR file; no re-merge needed"
+    else
+      fail "main moved: $(wc -l <<<"$overlap" | tr -d ' ') PR file(s) changed on $BASE_REF since $BASE_LABEL; merge $BASE_REF into the branch, let CI re-run, then run this again:"
+      while IFS= read -r f; do
+        prs=""
+        [ -n "${BASE_CREATED:-}" ] && prs=$(pr_of "$f")
+        printf '        %s%s\n' "$f" "${prs:+  (${prs})}"
+      done <<<"$overlap"
+    fi
   fi
 fi
 

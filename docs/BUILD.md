@@ -265,13 +265,16 @@ Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — 
 | — | `check-migrations-immutable.sh --range` backstop | Push range |
 | B | externalBin placeholder | Only if Rust changed |
 | C | `vitest related` (`test-related-ts.sh --range`) | Push range |
+| C2 | `e2e-related.sh --range --run`: the Playwright specs the range can affect, on the mock | Only if the range touches frontend code; the whole lane, or more than six specs, is left to CI and says so |
 | D | `cargo nextest related` (`test-related-rust.sh --range`) | Push range; only if Rust changed |
 | D2 | `cargo test --doc --workspace` | Only if Rust changed |
 | E | `cargo sqlx prepare --workspace --check` against `src-tauri/.sqlx` | Only if the range can have changed a query (`scripts/lib/sqlx-query-range.mjs`): a `.rs` hunk overlapping a query macro, a `.sql`, `.sqlx/`, Cargo manifest or `sqlx.toml` change, or a `macro_rules!` wrapping a query macro; force with `PRE_PUSH_SQLX_CHECK=1` |
 | F | `agaric-mcp` release build + MCP UDS smoke + externalBin verify | Only if MCP paths changed |
 | G | `cargo audit` + `npm audit signatures` (warn-only here; both block in CI) | Always |
 
-**Playwright is deliberately skipped locally** — CI runs the e2e suite whenever the diff can affect it (`scripts/classify-changes.sh`); run `npx playwright test` by hand first if you've touched anything interaction-heavy. The full (non-range-scoped) `vitest run` / `cargo nextest run --workspace --profile ci`, and the desktop bundle build, are likewise CI/manual-only — see [Release pre-flight](#release-pre-flight) for the bundle build.
+**Playwright runs only the few specs the range can affect** (Phase C2, `just e2e-related --run` for uncommitted work): a selection that is the whole lane, or more than six specs, prints "CI runs the whole lane" and runs nothing, so run `npx playwright test` by hand first if you've touched anything interaction-heavy. The full (non-range-scoped) `vitest run` / `cargo nextest run --workspace --profile ci`, and the desktop bundle build, are likewise CI/manual-only — see [Release pre-flight](#release-pre-flight) for the bundle build.
+
+**A push that only merges `origin/main` skips the verifier**, saying why: when every commit it adds is a merge and none brings a commit that is not already on `origin/main` (a catch-up or conflict-fix merge), there is no change of its own to verify and CI runs the merge result. `PRE_PUSH_RANGE=origin/main...HEAD` verifies anyway. `scripts/push.sh` then pushes with `--no-verify`; a raw `git push` still runs the other pre-push hooks.
 
 **Push with `just push` (or [`scripts/push.sh`](../scripts/push.sh)), not raw `git push`, for anything that changes `.rs`.** Because the verify runs *inside* the pre-push hook — which fires only after `git push` has already opened and is holding the SSH connection — a several-minute verify leaves that connection idle long enough for GitHub to close it, and the pack upload then fails (`Connection to github.com closed by remote host` / `failed to push some refs`) even though the gate passed in full. `just push` / `scripts/push.sh` runs the verifier *first*, pre-push hooks included, then invokes `git push --no-verify`, so the freshly opened connection uploads immediately. It forwards all `git push` args (`just push -- -u origin my-branch`, `just push -- --force-with-lease`).
 
@@ -279,7 +282,7 @@ Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — 
 
 ### Is a PR ready to merge?
 
-`just merge-ready <pr>` ([`scripts/merge-ready.sh`](../scripts/merge-ready.sh)) answers it from `gh api` alone and prints one line per check, exiting non-zero if any fails: `validate / validate-all`, `e2e-tauri-gate` and `dco` are success on the PR's current head sha; the newest review is APPROVED on that sha (a Markdown-only diff needs none, the reviewer skips it); `mergeable_state` is not dirty; no file the PR changes has changed on `main` since its merge base (the files are listed: merge `main` in and let CI re-run, see [`.github/AGENTS.md`](../.github/AGENTS.md#the-gate)); and the newest completed `ci.yml` run on `main` succeeded, with in-progress and cancelled runs skipped and the run named. A call it cannot make is a failure, never a pass.
+`just merge-ready <pr>` ([`scripts/merge-ready.sh`](../scripts/merge-ready.sh)) answers it from `gh api` alone and prints one line per check, exiting non-zero if any fails: `validate / validate-all`, `e2e-tauri-gate` and `dco` are success on the PR's current head sha; the newest review is APPROVED on that sha (a Markdown-only diff needs none, the reviewer skips it); `mergeable_state` is not dirty; no file the PR changes has changed on `main` since the `main` commit its CI tested against (main moving past it is fine; a changed PR file is not, and the line names the files and the PRs that changed them: merge `main` in and let CI re-run, see [`.github/AGENTS.md`](../.github/AGENTS.md#the-gate); the merge base stands in when the tested commit cannot be found, and the line says so); and the newest completed `ci.yml` run on `main` succeeded, with in-progress and cancelled runs skipped and the run named. A call it cannot make is a failure, never a pass.
 
 ### Release pre-flight
 
