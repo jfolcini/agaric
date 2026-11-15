@@ -267,6 +267,47 @@ describe('PropertyDefinitionsList', () => {
     })
   })
 
+  // #6741 D5 — a list property is declared with its item type and the flag.
+  it('creates a definition that holds several values, and lists its type as such', async () => {
+    const user = userEvent.setup()
+    seedBlocks()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    render(<PropertyDefinitionsList />)
+    await user.type(await screen.findByPlaceholderText('Property key'), 'authors')
+    const several = screen.getByRole('checkbox', { name: t('properties.holdsSeveralValues') })
+
+    await user.click(several)
+    await user.click(screen.getByRole('button', { name: /Create/i }))
+
+    await waitFor(() => {
+      expect(spacePropertyDefs(PERSONAL.id).get('authors')?.['multiple']).toBe(true)
+    })
+    expect(spacePropertyDefs(PERSONAL.id).get('authors')?.['value_type']).toBe('text')
+    const row = (await screen.findByText('Authors')).closest('li') as HTMLElement
+    expect(within(row).getByText(t('properties.severalValuesType', { type: 'text' }))).toBeVisible()
+    expect(several).not.toBeChecked()
+  })
+
+  it('offers no several values for a boolean, and declares it holding one', async () => {
+    const user = userEvent.setup()
+    seedBlocks()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    render(<PropertyDefinitionsList />)
+    await user.type(await screen.findByPlaceholderText('Property key'), 'billable')
+    await user.click(screen.getByRole('checkbox', { name: t('properties.holdsSeveralValues') }))
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Type' }), 'boolean')
+    expect(
+      screen.queryByRole('checkbox', { name: t('properties.holdsSeveralValues') }),
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Create/i }))
+
+    await waitFor(() => {
+      expect(spacePropertyDefs(PERSONAL.id).get('billable')?.['value_type']).toBe('boolean')
+    })
+    expect(spacePropertyDefs(PERSONAL.id).get('billable')?.['multiple']).toBeUndefined()
+  })
+
   it('delete button shows confirmation dialog', async () => {
     const user = userEvent.setup()
     stubDefs(pageOf([makePropDef('to-delete', 'text')]))

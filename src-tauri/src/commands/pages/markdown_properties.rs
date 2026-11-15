@@ -1,9 +1,11 @@
 //! How a markdown surface reads a block's `key:: value` lines against the
 //! property definitions (#5160): a key names the reserved key or definition it
 //! folds to (D13), and a value a definition refuses is kept as text by an
-//! import and a paste, and refuses an Edit as Markdown save (D11).
+//! import and a paste, and refuses an Edit as Markdown save (D11). Under a
+//! key that holds a list, a line's value is the list's text
+//! (`import::property_list_items`, #6741).
 
-use agaric_engine::block_ops::{PropertyDeclaration, TypedPropertyArgs};
+use agaric_engine::block_ops::PropertyDeclaration;
 
 use super::*;
 
@@ -89,11 +91,19 @@ impl PropertyLines {
         space_id: Option<&str>,
         properties: impl IntoIterator<Item = &'a (String, String)>,
     ) -> Result<(), AppError> {
-        let names: Vec<&str> = properties
-            .into_iter()
-            .filter(|(key, _)| self.is_ref(&self.canonical_key(key)))
-            .map(|(_, value)| ref_name(value))
-            .collect();
+        let mut names: Vec<String> = Vec::new();
+        for (key, value) in properties {
+            match self.declarations.get(&self.canonical_key(key)) {
+                Some(declared) if declared.value_type != "ref" => {}
+                Some(declared) if declared.multiple => names.extend(
+                    import::property_list_items(value)
+                        .iter()
+                        .map(|item| ref_name(item).to_owned()),
+                ),
+                Some(_) => names.push(ref_name(value).to_owned()),
+                None => {}
+            }
+        }
         self.refs = resolve_ref_values(conn, space_id, names).await?;
         Ok(())
     }
@@ -194,21 +204,70 @@ impl PropertyLines {
             .is_some_and(|declaration| declaration.value_type == "ref")
     }
 
-    /// The typed arguments `value` is written with under `key`, a canonical
-    /// key, or why its definition refuses it. A copy's ref value is the id it
-    /// held; any other ref value is a block id or a page title in the space.
-    pub(super) fn read(&self, key: &str, value: &str) -> Result<TypedPropertyArgs, String> {
+    /// The block a ref value names: a copy's is the id it held; any other is
+    /// a block id or a page title in the space ([`Self::resolve_refs`]).
+    fn ref_id(&self, value: &str) -> Result<String, String> {
+        if self.mode == PropertyWrite::Copy {
+            return Ok(value.to_string());
+        }
+        let found = self.refs.get(ref_name(value)).cloned();
+        found.unwrap_or_else(|| Err(format!("'{value}' names no block")))
+    }
+
+    /// The list `value` writes under a key declared to hold one of
+    /// `value_type` items: a ref item as a single ref value is read, a number
+    /// item by the number rule, any other as its text.
+    fn read_list(&self, value: &str, value_type: &str) -> Result<PropertyValueFields, String> {
+        let items = import::property_list_items(value)
+            .into_iter()
+            .map(|item| match value_type {
+                "ref" => self.ref_id(&item).map(PropertyListItem::Text),
+                "number" => Ok(item
+                    .trim()
+                    .parse()
+                    .map_or(PropertyListItem::Text(item), PropertyListItem::Num)),
+                _ => Ok(PropertyListItem::Text(item)),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if items.is_empty() {
+            return Err("it has no value".to_string());
+        }
+        Ok(PropertyValueFields {
+            value_list: Some(PropertyList(items)),
+            ..Default::default()
+        })
+    }
+
+    /// The value `value` is written as under `key`, a canonical key, or why
+    /// its definition refuses it.
+    pub(super) fn read(&self, key: &str, value: &str) -> Result<PropertyValueFields, String> {
         let declaration = self.declaration(key);
         let value_type = declaration.as_ref().map(|d| d.value_type.as_str());
+        let fields = |args: agaric_engine::block_ops::TypedPropertyArgs| PropertyValueFields {
+            value_text: args.0,
+            value_num: args.1,
+            value_date: args.2,
+            value_ref: args.3.map(BlockId::from),
+            value_bool: args.4,
+            value_list: None,
+        };
+        if let Some(declared) = declaration.as_ref().filter(|d| d.multiple) {
+            let list = self.read_list(value, &declared.value_type)?;
+            if self.mode != PropertyWrite::Copy {
+                agaric_engine::block_ops::check_property_fields(key, list.clone(), Some(declared))
+                    .map_err(refusal)?;
+            }
+            return Ok(list);
+        }
         if self.mode == PropertyWrite::Copy {
-            return Ok(match value_type {
+            return Ok(fields(match value_type {
                 Some("ref") => (None, None, None, Some(value.to_string()), None),
                 _ => agaric_engine::block_ops::typed_property_args_for_registry_value(
                     key,
                     value.to_string(),
                     value_type,
                 ),
-            });
+            }));
         }
         if value.trim().is_empty() {
             return Err("it has no value".to_string());
@@ -221,18 +280,13 @@ impl PropertyLines {
             _ => value.to_string(),
         };
         let args = if value_type == Some("ref") {
-            let id = self
-                .refs
-                .get(ref_name(&value))
-                .cloned()
-                .unwrap_or_else(|| Err(format!("'{value}' names no block")))?;
-            (None, None, None, Some(id), None)
+            (None, None, None, Some(self.ref_id(&value)?), None)
         } else {
             agaric_engine::block_ops::typed_property_args_for_registry_value(key, value, value_type)
         };
         agaric_engine::block_ops::check_property_value(key, &args, declaration.as_ref())
             .map_err(refusal)?;
-        Ok(args)
+        Ok(fields(args))
     }
 
     /// Give each of `blocks`' properties its canonical key, and keep each line
@@ -313,11 +367,11 @@ fn ref_name(value: &str) -> &str {
 async fn resolve_ref_values(
     conn: &mut sqlx::SqliteConnection,
     space_id: Option<&str>,
-    names: Vec<&str>,
+    names: Vec<String>,
 ) -> Result<HashMap<String, Result<String, String>>, AppError> {
-    let (ids, titles): (Vec<&str>, Vec<&str>) = names
+    let (ids, titles): (Vec<String>, Vec<String>) = names
         .into_iter()
-        .partition(|name| BlockId::from_string(*name).is_ok_and(|id| id.as_str() == *name));
+        .partition(|name| BlockId::from_string(name).is_ok_and(|id| id.as_str() == name));
     let mut resolved = HashMap::new();
     if !ids.is_empty() {
         let ids_json = serde_json::to_string(&ids)?;
@@ -334,17 +388,16 @@ async fn resolve_ref_values(
         let live: HashMap<String, Option<String>> =
             rows.into_iter().map(|row| (row.id, row.space_id)).collect();
         for id in ids {
-            let outcome = match live.get(id) {
+            let outcome = match live.get(&id) {
                 None => Err(format!("'{id}' is not the id of a live block")),
                 Some(Some(target)) if space_id.is_some_and(|space| space != target) => {
                     Err(format!("'{id}' is a block of another space"))
                 }
-                Some(_) => Ok(id.to_string()),
+                Some(_) => Ok(id.clone()),
             };
-            resolved.insert(id.to_string(), outcome);
+            resolved.insert(id, outcome);
         }
     }
-    let titles: Vec<String> = titles.into_iter().map(str::to_string).collect();
     let matches = match space_id {
         Some(space) if !titles.is_empty() => {
             snapshot_page_link_matches(conn, space, &titles).await?
@@ -384,10 +437,50 @@ pub(crate) async fn read_typed_ref(
         return Ok((Some(text), None));
     }
     let name = ref_name(&text);
-    let id = resolve_ref_values(conn, space_id, vec![name])
+    let id = resolve_ref_values(conn, space_id, vec![name.to_owned()])
         .await?
         .remove(name)
         .expect("resolve_ref_values answers each name it is given")
         .map_err(AppError::validation)?;
     Ok((None, Some(id)))
+}
+
+/// Replace each item of `list`, written under a `ref` definition that holds a
+/// list on `block_id`, that is not a block id by the block its `[[Title]]` or
+/// title names in the block's space ([`read_typed_ref`], #6741).
+///
+/// # Errors
+///
+/// [`AppError::Validation`] naming why an item names no block.
+pub(crate) async fn read_typed_ref_list(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    list: &mut PropertyList,
+) -> Result<(), AppError> {
+    let is_id = |text: &str| BlockId::from_string(text).is_ok_and(|id| id.as_str() == text);
+    let names: Vec<String> = list
+        .texts()
+        .filter(|text| !is_id(text))
+        .map(|text| ref_name(text).to_owned())
+        .collect();
+    if names.is_empty() {
+        return Ok(());
+    }
+    let block = BlockId::from_trusted(block_id);
+    let space = agaric_store::space::resolve_block_space(&mut *conn, &block).await?;
+    let space_id = space.as_ref().map(SpaceId::as_str);
+    let resolved = resolve_ref_values(conn, space_id, names).await?;
+    for item in &mut list.0 {
+        let PropertyListItem::Text(text) = item else {
+            continue;
+        };
+        if is_id(text) {
+            continue;
+        }
+        let found = resolved.get(ref_name(text)).cloned();
+        *text = found
+            .expect("resolve_ref_values answers each name it is given")
+            .map_err(AppError::validation)?;
+    }
+    Ok(())
 }

@@ -13,11 +13,13 @@ use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::materializer::Materializer;
 use agaric_core::error::{AppError, ValidationCode};
 use agaric_core::ulid::BlockId;
+use agaric_engine::import::write_property_list;
 use agaric_engine::loro::engine::PropertyValue;
 use agaric_engine::loro::shared::LoroState;
 use agaric_store::op::{
-    OpPayload, PropertyDefState, PropertyDefWrite, PropertyValueFields, PropertyValueWrite,
-    RenamePropertyKeyPayload, RewritePropertiesPayload, RewriteReason, is_internal_property_key,
+    OpPayload, PropertyDefState, PropertyDefWrite, PropertyListItem, PropertyValueFields,
+    PropertyValueWrite, RenamePropertyKeyPayload, RewritePropertiesPayload, RewriteReason,
+    is_internal_property_key,
 };
 use agaric_store::space::SpaceId;
 
@@ -247,6 +249,22 @@ pub(crate) fn value_fields(value: &PropertyValue) -> Option<PropertyValueFields>
         PropertyValue::Null => return None,
     }
     Some(fields)
+}
+
+/// A held value as the lists of a key's values show it: a list as its line
+/// of text ([`write_property_list`]), so a list of one `a, b` item reads
+/// apart from a list of `a` and `b`.
+pub(crate) fn shown_value(value: &PropertyValue) -> String {
+    match value {
+        PropertyValue::List(list) => {
+            let items = list.0.iter().map(|item| match item {
+                PropertyListItem::Text(s) => s.clone(),
+                PropertyListItem::Num(n) => n.to_string(),
+            });
+            write_property_list(&items.collect::<Vec<_>>())
+        }
+        single => single.as_legacy_string().unwrap_or_default(),
+    }
 }
 
 /// The value writes of merging `from_key` into `into_key`, read from the

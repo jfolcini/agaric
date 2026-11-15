@@ -35,6 +35,7 @@ import type {
   PageResponse,
   PropertyDefinition,
   PropertyUnfitCounts,
+  PropertyValueForm,
   UnfitMoveCounts,
   UnfitPropertyValue,
   WithOps,
@@ -240,7 +241,12 @@ export function UnfitPropertyValues({
             <Title>{t('propertiesView.unfitTitle', { key })}</Title>
             <Description>
               {step === 'convert'
-                ? t('propertiesView.convertIntro', { type: definition.value_type })
+                ? t(
+                    definition.multiple === true
+                      ? 'propertiesView.convertIntroList'
+                      : 'propertiesView.convertIntro',
+                    { type: definition.value_type },
+                  )
                 : step === 'move'
                   ? t('propertiesView.moveIntro', { key })
                   : t('propertiesView.unfitDescription', { key, type: definition.value_type })}
@@ -321,7 +327,7 @@ interface UnfitValueListProps {
 /** The blocks holding a value that doesn't fit, a page at a time. */
 function UnfitValueList({ spaceId, definition, listSeq }: UnfitValueListProps): React.ReactElement {
   const { t } = useTranslation()
-  const { key, value_type: type } = definition
+  const { key } = definition
   const { data, isPending, isError, hasNextPage, fetchNextPage, isFetchingNextPage } =
     useInfiniteQuery(
       {
@@ -376,9 +382,7 @@ function UnfitValueList({ spaceId, definition, listSeq }: UnfitValueListProps): 
             <div className="flex min-w-0 items-baseline gap-2">
               <span className="min-w-0 truncate font-medium">{row.value}</span>
               <span className="shrink-0 text-xs text-muted-foreground">
-                {type === 'select' && row.form === 'text'
-                  ? t('propertiesView.unfitNotAnOption')
-                  : t('propertiesView.unfitForm', { form: row.form, type })}
+                {unfitReason(row.form, definition, t)}
               </span>
             </div>
           </li>
@@ -393,4 +397,23 @@ function UnfitValueList({ spaceId, definition, listSeq }: UnfitValueListProps): 
       />
     </div>
   )
+}
+
+/** Why a value of `form` doesn't fit `definition`: a list key holds a list, any other one value. */
+function unfitReason(
+  form: PropertyValueForm,
+  definition: PropertyDefinition,
+  t: ReturnType<typeof useTranslation>['t'],
+): string {
+  const { value_type: type } = definition
+  if (definition.multiple === true) {
+    if (form !== 'list') return t('propertiesView.unfitNotAList')
+    return type === 'select'
+      ? t('propertiesView.unfitItemNotAnOption')
+      : t('propertiesView.unfitItem', { type })
+  }
+  if (form === 'list') return t('propertiesView.unfitAList')
+  return type === 'select' && form === 'text'
+    ? t('propertiesView.unfitNotAnOption')
+    : t('propertiesView.unfitForm', { form, type })
 }

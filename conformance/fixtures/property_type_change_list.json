@@ -1,0 +1,668 @@
+{
+  "description": "#6741 — `change_property_type` turns a key into one that holds a list, and back. `people` (text): `X` \"Ann, Bob ,, Cy\", `Y` \"Solo\", `Z` \" , \". Split at commas, each text becomes the list of its trimmed parts, blanks dropped; `Z` has no part and is kept as it is, unfit (#6206); the undo puts the texts and the single-value definition back. `authors` (a list of text) stops holding a list, joined with semicolons: `X`'s two items become one text, `Y`'s one item its text. `scores` (a list of numbers) stops holding a list, joined with commas, which only a text or a URL takes: `Y`'s one item becomes its number, `X`'s two are kept as the list, which doesn't fit. Refused: a list of booleans, and a change of neither the type nor the flag. Last, a `related` list of refs written by a page's `[[Title]]` holds that page. The previews show a list as its line of text (`write_property_list`), so a list of one item holding a comma is quoted. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 15,
+      "ops": [
+        {
+          "key": "people",
+          "op_type": "set_property"
+        },
+        {
+          "key": "people",
+          "op_type": "set_property"
+        },
+        {
+          "key": "people",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "scores",
+          "op_type": "set_property"
+        },
+        {
+          "key": "scores",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "related",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "authors",
+        "value": "Ann; Doe, Jane",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B2",
+        "key": "people",
+        "value": "Ann, Bob ,, Cy",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B2",
+        "key": "related",
+        "value": ["B1"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B2",
+        "key": "scores",
+        "value": [1.0, 2.0],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B3",
+        "key": "authors",
+        "value": "Solo",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "people",
+        "value": "Solo",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "scores",
+        "value": 3.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B4",
+        "key": "people",
+        "value": " , ",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_list_of_booleans_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "neither_type_nor_flag_changes_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "people_becomes_a_list",
+      "returns": ["people#value_type=text#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_restores_the_texts",
+      "returns": [
+        "undo_ops#reversed_op_type=rewrite_properties#new_op_type=rewrite_properties#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_authors",
+      "returns": ["authors#value_type=text#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "authors_joins_into_text",
+      "returns": ["authors#value_type=text#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_scores",
+      "returns": ["scores#value_type=number#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "scores_takes_one_item_and_keeps_the_longer_list",
+      "returns": ["scores#value_type=number#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_related",
+      "returns": ["related#value_type=ref#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"related\"]"],
+      "name": "a_ref_item_by_its_title",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_ref_item_naming_no_page_is_refused",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "people_split_at_commas",
+      "rows": ["property_type_change_counts#converted=2#unfit=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "people_converted_at_commas",
+      "rows": [
+        "B2#page_id=B1#deleted=false#value=Ann, Bob ,, Cy#converted=Ann, Bob, Cy",
+        "B3#page_id=B1#deleted=false#value=Solo#converted=Solo"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "people_unfit_at_commas",
+      "rows": ["B4#page_id=B1#deleted=false#value= , #converted=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "people_converted_unsplit",
+      "rows": [
+        "B2#page_id=B1#deleted=false#value=Ann, Bob ,, Cy#converted=\"Ann, Bob ,, Cy\"",
+        "B3#page_id=B1#deleted=false#value=Solo#converted=Solo",
+        "B4#page_id=B1#deleted=false#value= , #converted=\" , \""
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "authors_back_to_a_list",
+      "rows": ["property_type_change_counts#converted=2#unfit=0"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "scores_unfit",
+      "rows": ["B2#page_id=B1#deleted=false#value=1, 2#form=list"],
+      "total_count": null
+    }
+  ],
+  "name": "property_type_change_list",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "people",
+        "value": {
+          "value_text": "Ann, Bob ,, Cy"
+        }
+      },
+      "command": "set_property",
+      "comment": "O1"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "people",
+        "value": {
+          "value_text": "Solo"
+        }
+      },
+      "command": "set_property",
+      "comment": "O2"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "people",
+        "value": {
+          "value_text": " , "
+        }
+      },
+      "command": "set_property",
+      "comment": "O3"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 0,
+          "unfit": 3
+        },
+        "key": "people",
+        "multiple": true,
+        "options": null,
+        "separator": null,
+        "spaceId": "$SPACE",
+        "valueType": "boolean"
+      },
+      "command": "change_property_type",
+      "comment": "validate_property_def_state: a boolean is never a list.",
+      "expect_error": "validation",
+      "name": "a_list_of_booleans_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 3,
+          "unfit": 0
+        },
+        "key": "people",
+        "multiple": false,
+        "options": null,
+        "separator": null,
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "change_property_type",
+      "comment": "Already a text that holds one value.",
+      "expect_error": "validation",
+      "name": "neither_type_nor_flag_changes_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 2,
+          "unfit": 1
+        },
+        "key": "people",
+        "multiple": true,
+        "options": null,
+        "separator": "comma",
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "change_property_type",
+      "comment": "O4 — `X` and `Y` become lists; `Z` has no part and stays as text.",
+      "name": "people_becomes_a_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O4"]
+      },
+      "command": "undo_ops",
+      "comment": "O5 — the texts and the single-value definition are back.",
+      "name": "undo_restores_the_texts",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "authors",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "create_property_def",
+      "comment": "O6.",
+      "name": "declare_authors",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "authors",
+        "value": {
+          "value_list": ["Ann", "Doe, Jane"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O7"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "authors",
+        "value": {
+          "value_list": ["Solo"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O8"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 2,
+          "unfit": 0
+        },
+        "key": "authors",
+        "multiple": false,
+        "options": null,
+        "separator": "semicolon",
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "change_property_type",
+      "comment": "O9 — `X`'s items joined with \"; \", `Y`'s one item its text.",
+      "name": "authors_joins_into_text",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "scores",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "create_property_def",
+      "comment": "O10.",
+      "name": "declare_scores",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "scores",
+        "value": {
+          "value_list": [1, 2]
+        }
+      },
+      "command": "set_property",
+      "comment": "O11"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "scores",
+        "value": {
+          "value_list": [3]
+        }
+      },
+      "command": "set_property",
+      "comment": "O12"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 1,
+          "unfit": 1
+        },
+        "key": "scores",
+        "multiple": false,
+        "options": null,
+        "separator": "comma",
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "change_property_type",
+      "comment": "O13 — only a text or a URL takes a joined list, so even with a separator only the list of one item converts.",
+      "name": "scores_takes_one_item_and_keeps_the_longer_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "related",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "ref"
+      },
+      "command": "create_property_def",
+      "comment": "O14.",
+      "name": "declare_related",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "related",
+        "value": {
+          "value_list": ["[[Home]]"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O15 — `read_typed_ref_list`: an item that is no block id names the page its `[[Title]]` or title names, as a single ref value's text does.",
+      "name": "a_ref_item_by_its_title",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "related",
+        "value": {
+          "value_list": ["[[Nobody]]"]
+        }
+      },
+      "command": "set_property",
+      "comment": "No page is titled `Nobody`: the write is refused.",
+      "expect_error": "validation",
+      "name": "a_ref_item_naming_no_page_is_refused",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "key": "people",
+        "multiple": true,
+        "options": null,
+        "separator": "comma",
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "preview_property_type_change",
+      "comment": "After the undo: `X` and `Y` convert, `Z` does not.",
+      "name": "people_split_at_commas"
+    },
+    {
+      "args": {
+        "key": "people",
+        "kind": "converted",
+        "limit": 50,
+        "multiple": true,
+        "options": null,
+        "separator": "comma",
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "list_property_type_change_values",
+      "comment": "Each list as its line of text.",
+      "name": "people_converted_at_commas"
+    },
+    {
+      "args": {
+        "key": "people",
+        "kind": "unfit",
+        "limit": 50,
+        "multiple": true,
+        "options": null,
+        "separator": "comma",
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "list_property_type_change_values",
+      "comment": "`Z`.",
+      "name": "people_unfit_at_commas"
+    },
+    {
+      "args": {
+        "key": "people",
+        "kind": "converted",
+        "limit": 50,
+        "multiple": true,
+        "options": null,
+        "separator": null,
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "list_property_type_change_values",
+      "comment": "Each text one item: `X`'s and `Z`'s hold a comma, so their lists show quoted.",
+      "name": "people_converted_unsplit"
+    },
+    {
+      "args": {
+        "key": "authors",
+        "multiple": true,
+        "options": null,
+        "separator": null,
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "preview_property_type_change",
+      "comment": "`authors` is a text again; each text becomes a list of one item.",
+      "name": "authors_back_to_a_list"
+    },
+    {
+      "args": {
+        "key": "scores",
+        "limit": 50,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_unfit_property_values",
+      "comment": "`X`'s list, which a key that holds one number does not take.",
+      "name": "scores_unfit"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "people",
+        "options": null,
+        "value_type": "text"
+      }
+    ],
+    "tags": []
+  }
+}

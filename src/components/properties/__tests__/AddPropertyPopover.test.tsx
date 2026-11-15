@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { PropertyDefinition } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 
 const mockUseIsTouch = vi.hoisted(() => vi.fn(() => false))
 
@@ -30,6 +31,7 @@ vi.mock('lucide-react', () => ({
   CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
   CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
+  Check: () => <svg data-testid="check-icon" />,
   CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
   Clock: () => <svg data-testid="clock-icon" />,
   MapPin: () => <svg data-testid="map-pin-icon" />,
@@ -410,7 +412,7 @@ describe('AddPropertyPopover', () => {
 
     await user.click(screen.getByRole('button', { name: /create definition/i }))
 
-    expect(onCreateDef).toHaveBeenCalledWith('newfield', 'text', null)
+    expect(onCreateDef).toHaveBeenCalledWith('newfield', 'text', null, false)
   })
 
   // #4710 — a `url` definition is declared from this popover; the selected
@@ -438,7 +440,65 @@ describe('AddPropertyPopover', () => {
     await user.selectOptions(await screen.findByLabelText('Value type'), 'url')
     await user.click(screen.getByRole('button', { name: /create definition/i }))
 
-    expect(onCreateDef).toHaveBeenCalledWith('homepage', 'url', null)
+    expect(onCreateDef).toHaveBeenCalledWith('homepage', 'url', null, false)
+  })
+
+  // #6741 D5 — the create flow declares a list with its item type.
+  it('creates a definition that holds several values through onCreateDef', async () => {
+    const user = userEvent.setup()
+    const onCreateDef = vi.fn()
+    render(
+      <AddPropertyPopover
+        definitions={[]}
+        onAdd={vi.fn()}
+        supportCreateDef
+        onCreateDef={onCreateDef}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    )
+    await user.type(await screen.findByLabelText('Search definitions'), 'authors')
+    await user.click(await screen.findByText(/Create "authors"/))
+
+    await user.click(screen.getByRole('checkbox', { name: t('properties.holdsSeveralValues') }))
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+
+    expect(onCreateDef).toHaveBeenCalledWith('authors', 'text', null, true)
+  })
+
+  it('offers no several values for a boolean', async () => {
+    const user = userEvent.setup()
+    const onCreateDef = vi.fn()
+    render(
+      <AddPropertyPopover
+        definitions={[]}
+        onAdd={vi.fn()}
+        supportCreateDef
+        onCreateDef={onCreateDef}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    )
+    await user.type(await screen.findByLabelText('Search definitions'), 'billable')
+    await user.click(await screen.findByText(/Create "billable"/))
+    await user.click(screen.getByRole('checkbox', { name: t('properties.holdsSeveralValues') }))
+
+    await user.selectOptions(screen.getByLabelText(t('pageProperty.valueTypeLabel')), 'boolean')
+    expect(
+      screen.queryByRole('checkbox', { name: t('properties.holdsSeveralValues') }),
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+
+    expect(onCreateDef).toHaveBeenCalledWith('billable', 'boolean', null, false)
+  })
+
+  it('marks a definition that holds several values in the picker', async () => {
+    const defs = [{ ...makeDef('authors', 'select'), multiple: true }]
+    render(<AddPropertyPopover definitions={defs} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)
+
+    expect(
+      await screen.findByText(t('properties.severalValuesType', { type: 'select' })),
+    ).toBeInTheDocument()
   })
 
   it('displays formatted property names', async () => {

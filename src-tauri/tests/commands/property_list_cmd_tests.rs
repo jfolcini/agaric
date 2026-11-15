@@ -15,20 +15,20 @@ use agaric_store::space::SpaceId;
 
 const GONE: &str = "01HZ0000000000000000000G0N";
 
-struct Fixture {
-    pool: SqlitePool,
-    mat: Materializer,
-    _dir: tempfile::TempDir,
-    a: String,
-    b: String,
-    page: BlockId,
-    child: BlockId,
-    target: BlockId,
-    other: BlockId,
-    foreign: BlockId,
+pub(super) struct Fixture {
+    pub(super) pool: SqlitePool,
+    pub(super) mat: Materializer,
+    pub(super) _dir: tempfile::TempDir,
+    pub(super) a: String,
+    pub(super) b: String,
+    pub(super) page: BlockId,
+    pub(super) child: BlockId,
+    pub(super) target: BlockId,
+    pub(super) other: BlockId,
+    pub(super) foreign: BlockId,
 }
 
-fn texts(items: &[&str]) -> PropertyList {
+pub(super) fn texts(items: &[&str]) -> PropertyList {
     PropertyList(
         items
             .iter()
@@ -37,11 +37,11 @@ fn texts(items: &[&str]) -> PropertyList {
     )
 }
 
-fn nums(items: &[f64]) -> PropertyList {
+pub(super) fn nums(items: &[f64]) -> PropertyList {
     PropertyList(items.iter().copied().map(PropertyListItem::Num).collect())
 }
 
-fn list_def(value_type: &str, options: Option<&str>) -> PropertyDefState {
+pub(super) fn list_def(value_type: &str, options: Option<&str>) -> PropertyDefState {
     PropertyDefState {
         value_type: value_type.into(),
         options: options.map(str::to_owned),
@@ -53,7 +53,7 @@ fn list_def(value_type: &str, options: Option<&str>) -> PropertyDefState {
 /// holds a single value; B declares `kept` as A does, `shape` as text that
 /// holds one value where A's holds a list, and nothing else of these. A holds
 /// a page with a child and two more pages, B one page.
-async fn fixture() -> Fixture {
+pub(super) async fn fixture() -> Fixture {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let a = create_space_inner(&pool, DEV, &mat, "A".into(), None)
@@ -122,7 +122,7 @@ async fn fixture() -> Fixture {
 }
 
 impl Fixture {
-    async fn set_fields(
+    pub(super) async fn set_fields(
         &self,
         block: &BlockId,
         key: &str,
@@ -141,7 +141,7 @@ impl Fixture {
         set.map(|_| ())
     }
 
-    async fn set_list(
+    pub(super) async fn set_list(
         &self,
         block: &BlockId,
         key: &str,
@@ -156,7 +156,7 @@ impl Fixture {
 
     /// The list `get_properties` shows for `block` under `key`: `None` with
     /// no row, and a panic for a row that holds anything else.
-    async fn list(&self, block: &BlockId, key: &str) -> Option<PropertyList> {
+    pub(super) async fn list(&self, block: &BlockId, key: &str) -> Option<PropertyList> {
         let row = get_properties_inner(&self.pool, block.clone())
             .await
             .unwrap()
@@ -177,7 +177,12 @@ impl Fixture {
     }
 
     /// What `space`'s doc holds for `block` under `key`.
-    fn engine_value(&self, space: &str, block: &BlockId, key: &str) -> Option<PropertyValue> {
+    pub(super) fn engine_value(
+        &self,
+        space: &str,
+        block: &BlockId,
+        key: &str,
+    ) -> Option<PropertyValue> {
         let mut guard = self
             .mat
             .loro_state()
@@ -190,7 +195,7 @@ impl Fixture {
             .expect("read the property")
     }
 
-    async fn op_count(&self) -> i64 {
+    pub(super) async fn op_count(&self) -> i64 {
         sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
             .fetch_one(&self.pool)
             .await
@@ -198,7 +203,7 @@ impl Fixture {
     }
 
     /// The newest op of `op_type` whose payload names `key`.
-    async fn last_op(&self, op_type: &str, key: &str) -> (OpRef, serde_json::Value) {
+    pub(super) async fn last_op(&self, op_type: &str, key: &str) -> (OpRef, serde_json::Value) {
         let (seq, payload): (i64, String) = sqlx::query_as(
             "SELECT seq, payload FROM op_log \
              WHERE device_id = ?1 AND op_type = ?2 AND json_extract(payload, '$.key') = ?3 \
@@ -217,14 +222,14 @@ impl Fixture {
         (op_ref, serde_json::from_str(&payload).unwrap())
     }
 
-    async fn undo(&self, op_ref: OpRef) {
+    pub(super) async fn undo(&self, op_ref: OpRef) {
         undo_op_inner(&self.pool, DEV, &self.mat, op_ref)
             .await
             .expect("undo");
         settle(&self.mat).await;
     }
 
-    async fn trash_and_purge(&self, block: &BlockId) {
+    pub(super) async fn trash_and_purge(&self, block: &BlockId) {
         delete_block_inner(&self.pool, DEV, &self.mat, block.clone())
             .await
             .unwrap();
@@ -236,7 +241,7 @@ impl Fixture {
     }
 }
 
-fn assert_refused(result: Result<(), AppError>, message: &str) {
+pub(super) fn assert_refused(result: Result<(), AppError>, message: &str) {
     match result {
         Err(AppError::Validation { message: got, .. }) => {
             assert!(got.contains(message), "expected {message:?}, got {got:?}");
@@ -378,12 +383,13 @@ async fn each_item_is_held_to_the_definitions_type_6741() {
             texts(&["2026-10-31", "2026-13-01"]),
             "expects a list of 'date'",
         ),
+        // A ref item that is no block id is read as a page's title.
         (
             "related",
             texts(&["not a block id"]),
-            "expects a list of 'ref'",
+            "no page is titled 'not a block id'",
         ),
-        ("related", texts(&[&lower]), "expects a list of 'ref'"),
+        ("related", texts(&[&lower]), "no page is titled"),
         (
             "stages",
             texts(&["draft", "published"]),

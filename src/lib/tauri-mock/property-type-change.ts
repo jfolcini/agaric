@@ -4,17 +4,26 @@
  * the change, with their refusals) and the undo of an earlier value into a key
  * retyped since (`fit_reverse_to_declared_type`, `commands/history.rs`); what
  * a value becomes under a type is `coerce.ts`. A value the new type does not
- * take is unfit: kept as it is, not written (#6206).
+ * take is unfit: kept as it is, not written (#6206). A change may also make
+ * the key hold a list, or stop it holding one (#6741).
  *
  * The commands read the space's `block_properties` rows, Trash included, as
  * the backend does. `revert.ts` imports this module, so like `property-keys.ts`
  * it does not import `handlers/shared.ts`.
  */
 
-import type { PropertyTypeChangeCounts } from '@/lib/bindings'
+import type { ListSeparator, PropertyTypeChangeCounts } from '@/lib/bindings'
 import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
-import { coerce, type HeldValue, heldText } from '@/lib/tauri-mock/coerce'
+import {
+  coerce,
+  type Held,
+  type HeldValue,
+  heldText,
+  isList,
+  RUST_TRIM,
+  shownValue,
+} from '@/lib/tauri-mock/coerce'
 import {
   applyRewrite,
   type DefState,
@@ -34,49 +43,103 @@ import { blocks, properties, pushOp, spacePropertyDefs } from '@/lib/tauri-mock/
 
 type Row = Record<string, unknown>
 
-/** `coerce`, then a select's options: what `value` becomes under `to`, or null. */
-function convert(value: HeldValue, to: DefState): HeldValue | null {
+/** The type a change takes a key to (`PropertyTypeTarget`), and where it splits or joins. */
+export interface TypeTarget {
+  valueType: string
+  options: string | null
+  /** Whether the key holds a list afterwards; null keeps what it holds now. */
+  multiple: boolean | null
+  separator: ListSeparator | null
+}
+
+/** `ConversionRule::item`: `coerce`, then a select's options. */
+function convertItem(value: HeldValue, to: DefState): HeldValue | null {
   const converted = coerce(value, to.value_type)
   if (to.value_type !== 'select' || converted === null) return converted
   const options = JSON.parse(to.options ?? '[]') as string[]
   return typeof converted === 'string' && options.includes(converted) ? converted : null
 }
 
+/** `ConversionRule::list`: every item converted, and at least one, or null. */
+function convertList(items: readonly HeldValue[], to: DefState): Held | null {
+  const converted = items.map((item) => convertItem(item, to))
+  const fits = converted.length > 0 && converted.every((item) => typeof item !== 'boolean')
+  return fits && !converted.includes(null) ? (converted as (string | number)[]) : null
+}
+
 /**
- * `type_change_target`: the key's definition now and after the change, past
+ * `ConversionRule::convert`: what a held `value` becomes under `to`, or null
+ * when it does not fit. A single value becomes a list of one item, or of the
+ * parts its text splits into at the separator; a list of one item becomes that
+ * item, and a longer one only a text or URL, joined by the separator.
+ */
+function convert(value: Held, to: DefState, separator: ListSeparator | null): Held | null {
+  if (isList(value)) {
+    if (to.multiple === true) return convertList(value, to)
+    if (value.length === 1) return convertItem(value[0] as HeldValue, to)
+    const joins = separator !== null && (to.value_type === 'text' || to.value_type === 'url')
+    return joins ? value.map(heldText).join(separator === 'comma' ? ', ' : '; ') : null
+  }
+  if (to.multiple !== true) return convertItem(value, to)
+  if (typeof value !== 'string' || separator === null) return convertList([value], to)
+  const parts = value
+    .split(separator === 'comma' ? ',' : ';')
+    .map((part) => part.replace(RUST_TRIM, ''))
+  return convertList(
+    parts.filter((part) => part !== ''),
+    to,
+  )
+}
+
+/**
+ * `type_change_defs`: the key's definition now and after the change, past
  * the refusals in the backend's order.
  */
-function typeChangeTarget(
-  spaceId: string,
-  key: string,
-  valueType: string,
-  options: string | null,
-): [DefState, DefState] {
+function typeChangeTarget(spaceId: string, key: string, target: TypeTarget): [DefState, DefState] {
+  const { valueType, options } = target
   refuseBuiltinKey(key)
   refuseInternalKey(key)
   validatePropertyDefShape(key, valueType, options)
   const from = defState(userDef(spaceId, key))
-  if (from.value_type === valueType) {
+  const multiple = target.multiple ?? from.multiple === true
+  if (from.value_type === valueType && (from.multiple === true) === multiple) {
     throw rejection({ kind: 'validation', message: `'${key}' is already a ${valueType} property` })
   }
-  return [from, { value_type: valueType, options }]
+  if (multiple && valueType === 'boolean') {
+    throw rejection({
+      kind: 'validation',
+      message: `property '${key}' cannot hold a list of booleans`,
+    })
+  }
+  return [from, { value_type: valueType, options, ...(multiple ? { multiple: true } : {}) }]
 }
 
-interface Held {
+interface HeldRow {
   blockId: string
-  value: HeldValue
-  converted: HeldValue | null
+  value: Held
+  converted: Held | null
 }
 
 /** Every value of `key` SQL shows in the space, by block, with what it becomes under `to`. */
-function heldValues(spaceId: string, key: string, to: DefState): Held[] {
+function heldValues(
+  spaceId: string,
+  key: string,
+  to: DefState,
+  separator: ListSeparator | null,
+): HeldRow[] {
   return rowHolders(spaceId, key).map((blockId) => {
-    const value = heldValueOf(properties.get(blockId)?.get(key) ?? {}) as HeldValue
-    return { blockId, value, converted: convert(value, to) }
+    const value = heldValueOf(properties.get(blockId)?.get(key) ?? {}) as Held
+    return { blockId, value, converted: convert(value, to, separator) }
   })
 }
 
-function countsOf(held: Held[]): PropertyTypeChangeCounts {
+/** `PropertyValue`'s equality: a list item for item. */
+function sameHeld(a: Held, b: Held): boolean {
+  if (!isList(a) || !isList(b)) return a === b
+  return a.length === b.length && a.every((item, i) => item === b[i])
+}
+
+function countsOf(held: HeldRow[]): PropertyTypeChangeCounts {
   const unfit = held.filter((h) => h.converted === null).length
   return { converted: held.length - unfit, unfit }
 }
@@ -85,11 +148,10 @@ function countsOf(held: Held[]): PropertyTypeChangeCounts {
 export function previewPropertyTypeChange(
   spaceId: string,
   key: string,
-  valueType: string,
-  options: string | null,
+  target: TypeTarget,
 ): PropertyTypeChangeCounts {
-  const [, to] = typeChangeTarget(spaceId, key, valueType, options)
-  return countsOf(heldValues(spaceId, key, to))
+  const [, to] = typeChangeTarget(spaceId, key, target)
+  return countsOf(heldValues(spaceId, key, to, target.separator))
 }
 
 /**
@@ -99,17 +161,16 @@ export function previewPropertyTypeChange(
 export function propertyTypeChangeValues(
   spaceId: string,
   key: string,
-  valueType: string,
-  options: string | null,
+  target: TypeTarget,
   kind: string,
 ): Row[] {
-  const [, to] = typeChangeTarget(spaceId, key, valueType, options)
-  return heldValues(spaceId, key, to)
+  const [, to] = typeChangeTarget(spaceId, key, target)
+  return heldValues(spaceId, key, to, target.separator)
     .filter((h) => (h.converted === null) === (kind === 'unfit'))
     .map((h) =>
       Object.assign(holderRow(h.blockId), {
-        value: heldText(h.value),
-        converted: h.converted === null ? null : heldText(h.converted),
+        value: shownValue(h.value),
+        converted: h.converted === null ? null : shownValue(h.converted),
       }),
     )
 }
@@ -131,12 +192,12 @@ export function holderRow(blockId: string): Row {
 export function changePropertyType(
   spaceId: string,
   key: string,
-  valueType: string,
-  options: string | null,
+  target: TypeTarget,
   acknowledged: PropertyTypeChangeCounts,
 ): Row {
-  const [from, to] = typeChangeTarget(spaceId, key, valueType, options)
-  const held = heldValues(spaceId, key, to)
+  const { valueType } = target
+  const [from, to] = typeChangeTarget(spaceId, key, target)
+  const held = heldValues(spaceId, key, to, target.separator)
   const counts = countsOf(held)
   if (counts.converted !== acknowledged.converted || counts.unfit !== acknowledged.unfit) {
     throw rejection({
@@ -149,7 +210,7 @@ export function changePropertyType(
   }
   // A value whose form stays, or that does not fit, is not written; the apply moves its slot.
   const values: ValueWrite[] = held.flatMap((h) =>
-    h.converted === null || h.converted === h.value
+    h.converted === null || sameHeld(h.converted, h.value)
       ? []
       : [
           {
@@ -222,7 +283,7 @@ export function fitToDeclaredType(blockId: string, key: string, fields: Row): Ro
   const valueType = declaredTypeOf(b ? (spaceOf(b) ?? blockId) : null, key)
   if (valueType === null || fitsDeclaredType(fields, valueType)) return fields
   const value = heldValueOf(fields)
-  if (value === null) return fields
+  if (value === null || isList(value)) return fields
   const converted = coerce(value, valueType)
   return converted === null ? fieldsUnder(value, 'text') : fieldsUnder(converted, valueType)
 }

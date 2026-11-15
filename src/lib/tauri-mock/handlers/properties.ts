@@ -58,6 +58,7 @@ import {
 import {
   changePropertyType,
   previewPropertyTypeChange,
+  type TypeTarget,
   propertyTypeChangeValues,
 } from '@/lib/tauri-mock/property-type-change'
 import {
@@ -85,6 +86,9 @@ import {
   todayDate,
 } from '@/lib/tauri-mock/seed'
 import { leaveForSpace, rankArrivals } from '@/lib/tauri-mock/space-move'
+
+/** A block id as it is stored: `BlockId::from_string(s)` answering `s` itself. */
+const CANONICAL_ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/
 
 /** #4554 — the two `app_settings` keys `reminders::get_settings` reads; `'1'` = enabled. */
 const REMINDERS_ENABLED_KEY = 'reminders.enabled'
@@ -380,6 +384,16 @@ function propertiesChanged<T>(
   return response
 }
 
+/** The `PropertyTypeTarget` a type-change command's arguments name. */
+function typeTarget(a: Record<string, unknown>): TypeTarget {
+  return {
+    valueType: a['valueType'] as string,
+    options: (a['options'] as string | null) ?? null,
+    multiple: (a['multiple'] as boolean | null) ?? null,
+    separator: (a['separator'] as TypeTarget['separator']) ?? null,
+  }
+}
+
 /** `fetch_live_block_in_tx`: the block a write may touch, or the backend's refusal. */
 function liveBlock(blockId: string): Record<string, unknown> {
   const b = blocks.get(blockId)
@@ -514,7 +528,7 @@ export const propertiesHandlers = {
     const valueDate = (valueArgs?.['value_date'] as string | null) ?? null
     let valueRef = (valueArgs?.['value_ref'] as string | null) ?? null
     const valueBool = (valueArgs?.['value_bool'] as boolean | null) ?? null
-    const valueList = (valueArgs?.['value_list'] as unknown[] | null) ?? null
+    let valueList = (valueArgs?.['value_list'] as unknown[] | null) ?? null
     // #2656 — mirror the real backend's op-log value validation so contract
     // drift fails e2e/unit instead of storing an invalid value silently. The
     // block's space's definitions apply (#5841).
@@ -532,6 +546,19 @@ export const propertiesHandlers = {
     // #6741 — a list is taken only by a definition that holds one, and such a
     // definition takes nothing else.
     const listDef = propertyDefinition(defSpace, key)
+    // `read_typed_ref_list`: a ref item that is no block id is the page its
+    // `[[Title]]` or title names in the block's space.
+    if (valueList !== null && listDef?.['multiple'] === true && listDef['value_type'] === 'ref') {
+      const holder = blocks.get(blockId)
+      const spaceId = holder
+        ? ((holder['space_id'] as string | null) ?? ownerSpaceOf(holder))
+        : null
+      valueList = valueList.map((item) =>
+        typeof item === 'string' && !CANONICAL_ULID.test(item)
+          ? resolveRefValue(item, spaceId)
+          : item,
+      )
+    }
     if (valueList !== null) assertValidListValue(key, valueList, listDef)
     else if (valueCount === 1 && listDef?.['multiple'] === true) {
       throw validationRejection(`Property '${key}' holds a list; set it with value_list.`)
@@ -1089,12 +1116,7 @@ export const propertiesHandlers = {
   // `property-type-change.ts`.
   preview_property_type_change: (args) => {
     const a = args as Record<string, unknown>
-    return previewPropertyTypeChange(
-      a['spaceId'] as string,
-      a['key'] as string,
-      a['valueType'] as string,
-      (a['options'] as string | null) ?? null,
-    )
+    return previewPropertyTypeChange(a['spaceId'] as string, a['key'] as string, typeTarget(a))
   },
 
   list_property_type_change_values: (args) => {
@@ -1103,8 +1125,7 @@ export const propertiesHandlers = {
     const rows = propertyTypeChangeValues(
       a['spaceId'] as string,
       a['key'] as string,
-      a['valueType'] as string,
-      (a['options'] as string | null) ?? null,
+      typeTarget(a),
       a['kind'] as string,
     )
     return paginateKeyset(rows, (row) => [row['block_id'] as string], limit, a['cursor'], null, [])
@@ -1115,8 +1136,7 @@ export const propertiesHandlers = {
     return changePropertyType(
       a['spaceId'] as string,
       a['key'] as string,
-      a['valueType'] as string,
-      (a['options'] as string | null) ?? null,
+      typeTarget(a),
       a['acknowledged'] as PropertyTypeChangeCounts,
     )
   },

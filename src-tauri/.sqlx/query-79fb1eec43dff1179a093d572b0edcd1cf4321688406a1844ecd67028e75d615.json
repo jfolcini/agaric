@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key AS \"key!\", value_text, value_date, value_num, value_ref,\n                  value_bool AS \"value_bool: i64\"\n           FROM block_properties\n           WHERE block_id = ?1\n             AND key NOT IN (\n                'space', 'is_space', 'created_at', 'completed_at',\n                'repeat-seq', 'repeat-origin', 'attachments', 'listStyle'\n             )",
+  "query": "SELECT bp.block_id AS \"block_id!: String\", bp.value_text, bp.value_num,\n                  bp.value_date, bp.value_ref, bp.value_bool,\n                  bp.value_list AS \"value_list: PropertyList\"\n           FROM block_properties bp JOIN blocks b ON b.id = bp.block_id\n           WHERE bp.key = ?2 AND (+b.space_id = ?1 OR +b.id = ?1)\n             AND (?3 IS NULL OR bp.block_id > ?3)\n           ORDER BY bp.block_id",
   "describe": {
     "columns": [
       {
-        "name": "key!",
+        "name": "block_id!: String",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
             "table": "block_properties",
-            "name": "key"
+            "name": "block_id"
           }
         }
       },
@@ -26,24 +26,24 @@
         }
       },
       {
-        "name": "value_date",
-        "ordinal": 2,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "block_properties",
-            "name": "value_date"
-          }
-        }
-      },
-      {
         "name": "value_num",
-        "ordinal": 3,
+        "ordinal": 2,
         "type_info": "Float",
         "origin": {
           "Table": {
             "table": "block_properties",
             "name": "value_num"
+          }
+        }
+      },
+      {
+        "name": "value_date",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_date"
           }
         }
       },
@@ -59,7 +59,7 @@
         }
       },
       {
-        "name": "value_bool: i64",
+        "name": "value_bool",
         "ordinal": 5,
         "type_info": "Integer",
         "origin": {
@@ -68,10 +68,21 @@
             "name": "value_bool"
           }
         }
+      },
+      {
+        "name": "value_list: PropertyList",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_list"
+          }
+        }
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 3
     },
     "nullable": [
       false,
@@ -79,8 +90,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "c5f9d1857bedc78107d089c235e736bd5d33bef3e53e3dcd4bdbe091e8af5009"
+  "hash": "79fb1eec43dff1179a093d572b0edcd1cf4321688406a1844ecd67028e75d615"
 }

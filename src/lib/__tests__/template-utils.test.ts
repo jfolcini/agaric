@@ -23,7 +23,7 @@ import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
 import { es } from 'date-fns/locale/es'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlockRow, withOps } from '@/__tests__/fixtures'
+import { makeBlockRow, makePropertyRow, withOps } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
   mockInvokeCommands,
@@ -1256,6 +1256,43 @@ describe('insertTemplateBlocks — task state, priority, dates and properties (#
     expect(typed?.['kickoff']).toMatchObject({ value_date: '2026-11-01', value_bool: null })
     expect(typed?.['done']).toMatchObject({ value_bool: false })
     expect(typed?.['reviewed']).toMatchObject({ value_bool: true })
+  })
+
+  // #6741 — a list goes as the copy's `value_list`; flattened into the text
+  // map, or dropped, the copy would lose it or the insert be refused.
+  it('sends a list value as the typed value_list', async () => {
+    let sent: unknown
+    stubTemplates({
+      load_page_subtree: () => ({
+        blocks: [makeBlockRow({ id: 'TC1', content: 'Stages', parent_id: 'TMPL', position: 0 })],
+        truncated: false,
+        total: 1,
+      }),
+      get_batch_properties: () => ({
+        TC1: [makePropertyRow({ key: 'stages', value_list: ['draft', 'b, c'] })],
+      }),
+      create_blocks_batch: (args) => {
+        sent = args['specs']
+        return withOps({ blocks: [makeBlockRow({ id: 'NEW1', content: 'Stages' })] })
+      },
+    })
+
+    await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
+
+    expect(sent).toMatchObject([
+      {
+        properties: {},
+        typedProperties: {
+          stages: {
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+            value_list: ['draft', 'b, c'],
+          },
+        },
+      },
+    ])
   })
 
   it('rejects a failed insert and leaves nothing of it behind', async () => {

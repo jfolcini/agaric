@@ -155,6 +155,49 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
     expect(keys).not.toContain('estimate')
   })
 
+  // #6741 — under a definition that holds several values the typed line is
+  // the list of its items.
+  it('a typed list under a list definition is stored as its items', async () => {
+    dispatch('create_property_def', {
+      spaceId: 'SPACE_PERSONAL',
+      key: 'stages',
+      valueType: 'text',
+      options: null,
+      multiple: true,
+    })
+
+    const edit = await commit('task\nstages:: draft, "review, final"')
+
+    expect(edit).toHaveBeenCalledExactlyOnceWith(BLOCK, 'task')
+    expect(stored().properties.find((p) => p.key === 'stages')?.value_list).toEqual([
+      'draft',
+      'review, final',
+    ])
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('a ref list names each page by title or `[[id]]`; one naming none keeps the line as text', async () => {
+    dispatch('create_property_def', {
+      spaceId: 'SPACE_PERSONAL',
+      key: 'links',
+      valueType: 'ref',
+      options: null,
+      multiple: true,
+    })
+
+    await commit(`task\nlinks:: getting started, [[${SEED_IDS.PAGE_QUICK_NOTES}]]`)
+    expect(stored().properties.find((p) => p.key === 'links')?.value_list).toEqual([
+      SEED_IDS.PAGE_GETTING_STARTED,
+      SEED_IDS.PAGE_QUICK_NOTES,
+    ])
+
+    const edit = await commit('task\nlinks:: getting started, Nobody')
+    expect(edit).toHaveBeenCalledExactlyOnceWith(BLOCK, 'task\nlinks:: getting started, Nobody')
+    expect(toast.error).toHaveBeenCalledExactlyOnceWith(
+      'Kept as text: links:: getting started, Nobody',
+    )
+  })
+
   it('a key that folds to two definitions names neither and stays as typed (D13)', async () => {
     dispatch('create_property_def', {
       spaceId: 'SPACE_PERSONAL',

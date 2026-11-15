@@ -30,6 +30,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { pageIndexQuery } from '@/lib/page-index'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
+import { savePropertyList } from '@/lib/property-save-utils'
 import { queryClient } from '@/lib/query-client'
 import { useSpaceStore } from '@/stores/space'
 
@@ -39,7 +40,7 @@ export interface UsePropertyRowEditorArgs {
   def: PropertyDefinition | undefined
   onSave: (rawValue: string) => void
   onDefUpdated?: ((updatedDef: PropertyDefinition) => void) | undefined
-  /** Called once the ref picker has written its page, with the ops that appended. */
+  /** Called once the ref picker has written its page (a list's one more item), with the ops. */
   onRefSaved?: ((refs: OpRef[]) => void) | undefined
   onCreateNewPage?: ((title: string) => void | Promise<void>) | undefined
   /**
@@ -275,10 +276,13 @@ export function usePropertyRowEditor({
   }, [t, currentSpaceId])
 
   const filteredRefPages = useMemo(() => {
-    if (!refSearch) return refPages
+    // A list's picker offers the pages it does not hold yet.
+    const held = new Set(prop.value_list ?? [])
+    const pages = held.size === 0 ? refPages : refPages.filter((p) => !held.has(p.id))
+    if (!refSearch) return pages
     // Unicode-aware fold.
-    return refPages.filter((p) => matchesSearchFolded(p.content || '', refSearch))
-  }, [refPages, refSearch])
+    return pages.filter((p) => matchesSearchFolded(p.content || '', refSearch))
+  }, [refPages, refSearch, prop.value_list])
 
   const handleSelectRefPage = useCallback(
     async (page: PageHeading) => {
@@ -286,16 +290,21 @@ export function usePropertyRowEditor({
       // save so it never sticks if the IPC call rejects.
       setSavingRefPageId(page.id)
       try {
-        const written = unwrap(
-          await commands.setProperty(blockId, prop.key, {
-            value_text: null,
-            value_num: null,
-            value_date: null,
-            value_ref: page.id,
-            value_bool: null,
-          }),
-        )
-        onRefSaved?.(written.op_refs)
+        // #6741 — under a definition that holds several values the page is
+        // one more item of the list.
+        const items = prop.value_list ?? []
+        const refs = def?.multiple
+          ? await savePropertyList(blockId, prop.key, [...items, page.id])
+          : unwrap(
+              await commands.setProperty(blockId, prop.key, {
+                value_text: null,
+                value_num: null,
+                value_date: null,
+                value_ref: page.id,
+                value_bool: null,
+              }),
+            ).op_refs
+        onRefSaved?.(refs)
         setRefPickerOpen(false)
       } catch (err) {
         logger.error(
@@ -312,7 +321,7 @@ export function usePropertyRowEditor({
         setSavingRefPageId(null)
       }
     },
-    [blockId, prop.key, onRefSaved, t],
+    [blockId, prop.key, prop.value_list, def, onRefSaved, t],
   )
 
   const handleCreateNewPage = useCallback(async () => {

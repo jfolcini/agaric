@@ -1,22 +1,11 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT block_id AS \"block_id!\", key AS \"key!\", value_text, value_date,\n                      value_num, value_ref, value_bool AS \"value_bool: i64\"\n               FROM block_properties\n               WHERE block_id IN (SELECT value FROM json_each(?1))\n                 AND key NOT IN (\n                    'space', 'is_space', 'created_at',\n                    'repeat-seq', 'repeat-origin', 'template', 'attachments', 'listStyle'\n                 )\n               ORDER BY block_id ASC, key ASC",
+  "query": "SELECT bp.key AS \"key!\", bp.value_text, bp.value_date, bp.value_num, bp.value_ref,\n                  bp.value_bool AS \"value_bool: i64\",\n                  bp.value_list AS \"value_list: PropertyList\",\n                  (bp.value_list IS NOT NULL AND EXISTS (\n                      SELECT 1 FROM blocks holder\n                      JOIN property_definitions d ON d.space_id = holder.space_id\n                      WHERE holder.id = bp.block_id AND d.key = bp.key\n                        AND d.value_type = 'ref')) AS \"list_of_refs!: bool\"\n           FROM block_properties bp\n           WHERE bp.block_id = ?1\n             AND bp.key NOT IN (\n                'space', 'is_space', 'created_at', 'completed_at',\n                'repeat-seq', 'repeat-origin', 'attachments', 'listStyle'\n             )",
   "describe": {
     "columns": [
       {
-        "name": "block_id!",
-        "ordinal": 0,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "block_properties",
-            "name": "block_id"
-          }
-        }
-      },
-      {
         "name": "key!",
-        "ordinal": 1,
+        "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +16,7 @@
       },
       {
         "name": "value_text",
-        "ordinal": 2,
+        "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +27,7 @@
       },
       {
         "name": "value_date",
-        "ordinal": 3,
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -49,7 +38,7 @@
       },
       {
         "name": "value_num",
-        "ordinal": 4,
+        "ordinal": 3,
         "type_info": "Float",
         "origin": {
           "Table": {
@@ -60,7 +49,7 @@
       },
       {
         "name": "value_ref",
-        "ordinal": 5,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -71,7 +60,7 @@
       },
       {
         "name": "value_bool: i64",
-        "ordinal": 6,
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -79,6 +68,23 @@
             "name": "value_bool"
           }
         }
+      },
+      {
+        "name": "value_list: PropertyList",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_list"
+          }
+        }
+      },
+      {
+        "name": "list_of_refs!: bool",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -86,13 +92,14 @@
     },
     "nullable": [
       false,
-      false,
       true,
       true,
       true,
       true,
-      true
+      true,
+      true,
+      false
     ]
   },
-  "hash": "f5865156cd8512a8be4aa732e63148ca70936f48288d8b5d77278d247159bb06"
+  "hash": "4e9ca16f74a6376719216e707145a61bbbe0dc283e438353d062d6389d388adf"
 }

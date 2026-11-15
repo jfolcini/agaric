@@ -889,6 +889,8 @@ fn type_change_target(args: &StepArgs<'_>) -> PropertyTypeTarget {
         key: arg_req(args, "key"),
         value_type: arg_req(args, "valueType"),
         options: opt_arg_as(args, "options"),
+        multiple: opt_arg_as(args, "multiple"),
+        separator: opt_arg_as(args, "separator"),
     }
 }
 

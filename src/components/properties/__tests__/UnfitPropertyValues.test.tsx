@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
-import type { AppError } from '@/lib/bindings'
+import type { AppError, PageResponse, UnfitPropertyValue } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { rowOf } from '@/lib/tauri-mock/property-keys'
@@ -118,6 +118,72 @@ describe('UnfitPropertyValues', () => {
     const beta = await within(dialog).findByText('beta')
     expect(beta.closest('li')).toHaveTextContent(t('propertiesView.unfitNotAnOption'))
     expect(button(dialog, 'propertiesView.unfitAddToOptions')).toBeInTheDocument()
+  })
+
+  // #6741 D3 — the list shape: a list key holds a list, any other key one value.
+  describe('the reason a list key or a list value does not fit (#6741)', () => {
+    function declare(key: string, def: Record<string, unknown>): void {
+      const defs = spacePropertyDefs(PERSONAL.id)
+      defs.set(key, { ...defs.get(key), ...def })
+    }
+
+    /** List `rows` as the key's values that don't fit; everything else from the mock. */
+    function listUnfit(rows: Array<Pick<UnfitPropertyValue, 'value' | 'form'>>): void {
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+        if (cmd !== 'list_unfit_property_values') return dispatch(cmd, args)
+        const page: PageResponse<UnfitPropertyValue> = {
+          items: rows.map((row) => ({
+            block_id: MTG_1,
+            page_id: SEED_IDS.PAGE_MEETINGS,
+            page_title: 'Meetings',
+            content: 'Weekly standup notes',
+            deleted: false,
+            ...row,
+          })),
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }
+        return page
+      })
+    }
+
+    it('says a value under a key that holds several is one value, not a list', async () => {
+      declare('context', { multiple: true })
+      render(<PropertyDefinitionsList />)
+      const dialog = await openDialog('context')
+      const office = await within(dialog).findByText('@office')
+      expect(office.closest('li')).toHaveTextContent(t('propertiesView.unfitNotAList'))
+    })
+
+    it('says a list under a key that holds one value is a list', async () => {
+      await contextBecomesNumber()
+      listUnfit([{ value: '3, 4', form: 'list' }])
+      render(<PropertyDefinitionsList />)
+      const dialog = await openDialog('context')
+      const list = await within(dialog).findByText('3, 4')
+      expect(list.closest('li')).toHaveTextContent(t('propertiesView.unfitAList'))
+    })
+
+    it("says an item of a list isn't of the item type", async () => {
+      declare('context', { value_type: 'number', multiple: true })
+      listUnfit([{ value: '3, x', form: 'list' }])
+      render(<PropertyDefinitionsList />)
+      const dialog = await openDialog('context')
+      const item = await within(dialog).findByText('3, x')
+      expect(item.closest('li')).toHaveTextContent(
+        t('propertiesView.unfitItem', { type: 'number' }),
+      )
+    })
+
+    it("says an item of a select's list is not one of its options", async () => {
+      declare('project', { multiple: true })
+      listUnfit([{ value: 'alpha, zeta', form: 'list' }])
+      render(<PropertyDefinitionsList />)
+      const dialog = await openDialog('project')
+      const option = await within(dialog).findByText('alpha, zeta')
+      expect(option.closest('li')).toHaveTextContent(t('propertiesView.unfitItemNotAnOption'))
+    })
   })
 
   it('offers no Add to options on a property that is not a select', async () => {

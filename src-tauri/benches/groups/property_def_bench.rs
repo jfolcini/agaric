@@ -973,6 +973,8 @@ async fn change_type(
         key: RETYPE_KEY.into(),
         value_type: to.into(),
         options: None,
+        multiple: None,
+        separator: None,
     };
     capture_op_refs(change_property_type_inner(
         pool,

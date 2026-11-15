@@ -744,7 +744,7 @@ export function BlockPropertyEditor({
                       newKey,
                       carried.valueType,
                       carried.options,
-                      null,
+                      carried.multiple ?? null,
                     ),
                   )
                   declaredKey = newKey
@@ -768,6 +768,7 @@ export function BlockPropertyEditor({
                     value_date: oldRow.value_date ?? null,
                     value_ref: oldRow.value_ref ?? null,
                     value_bool: oldRow.value_bool != null ? oldRow.value_bool !== 0 : null,
+                    ...(oldRow.value_list == null ? {} : { value_list: oldRow.value_list }),
                   }),
                 )
               } catch (err) {
