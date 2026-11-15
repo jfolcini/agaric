@@ -3,6 +3,7 @@ import { Select as SelectPrimitive } from 'radix-ui'
 import type * as React from 'react'
 
 import { SHARED_INPUT_CLASSES } from '@/components/ui/input'
+import { keepFocusThatMovedOn } from '@/lib/keep-focus-that-moved-on'
 import { cn } from '@/lib/utils'
 
 // PERF: hoisted from an inline string in render — twMerge then only re-parses
@@ -114,8 +115,7 @@ const SelectContent = ({
       // popover that click opened (#6729).
       onCloseAutoFocus={(event) => {
         onCloseAutoFocus?.(event)
-        const focused = document.activeElement
-        if (focused != null && focused !== document.body) event.preventDefault()
+        keepFocusThatMovedOn(event)
       }}
       {...props}
     >

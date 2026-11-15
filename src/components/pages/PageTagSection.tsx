@@ -122,8 +122,6 @@ export function PageTagSection({
             <Plus />
           </Button>
         </PopoverTrigger>
-        {/* The picker closes once its create or add IPC returns; a click into a
-            block meanwhile has moved the focus to that block's editor. */}
         <MenuPopoverContent
           className="space-y-2 p-3"
           aria-label={t('pageHeader.tagPicker')}

@@ -8,8 +8,10 @@
  * per-`FilterPredicate['kind']` contract, so pinning their direct behaviour is
  * exercising the public contract, not padding coverage.
  *
- * Scope: src/lib/filters/model.ts lines 161, 165, 177, 213, 220, 230, 252,
- * 258, 277, and every non-graph kind of `canonicalToGraphFilter`.
+ * Scope: `graphHasDateToPredicate`, the tag cases of `graphFilterToCanonical`
+ * and `canonicalToGraphFilter`, the latter's status and date guards and every
+ * non-graph kind, and the tag handling of `graphFiltersToCanonical` and
+ * `canonicalToGraphFilters`.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -22,13 +24,13 @@ import {
   graphFiltersToCanonical,
 } from '@/lib/filters/model'
 
-// ── lines 161 / 165 — graphHasDateToPredicate (via hasDueDate/hasScheduledDate) ──
+// ── graphHasDateToPredicate (via hasDueDate/hasScheduledDate) ──
 
 describe('graphFilterToCanonical — hasDueDate/hasScheduledDate date-sentinel mapping', () => {
   it('value=true maps to the After sentinel predicate (pins the exact string)', () => {
-    // Kills 161 [ObjectLiteral] (would empty the `{ type: 'After', date }`
-    // literal to `{}`), 161 [StringLiteral] ('After' -> ''), and 165
-    // [StringLiteral] (the GRAPH_HAS_DATE_SENTINEL constant -> '').
+    // Kills the [ObjectLiteral] that would empty the `{ type: 'After', date }`
+    // literal to `{}`, the [StringLiteral] 'After' -> '', and the
+    // [StringLiteral] GRAPH_HAS_DATE_SENTINEL -> ''.
     expect(graphFilterToCanonical({ type: 'hasDueDate', value: true })).toEqual({
       kind: 'date',
       field: 'due',
@@ -42,8 +44,8 @@ describe('graphFilterToCanonical — hasDueDate/hasScheduledDate date-sentinel m
   })
 
   it('value=false maps to the IsNull predicate (pins the exact literal, not {})', () => {
-    // Kills 161 [ObjectLiteral] on the `{ type: 'IsNull' }` branch and 161
-    // [StringLiteral] ('IsNull' -> '').
+    // Kills the [ObjectLiteral] on the `{ type: 'IsNull' }` branch and the
+    // [StringLiteral] 'IsNull' -> ''.
     expect(graphFilterToCanonical({ type: 'hasDueDate', value: false })).toEqual({
       kind: 'date',
       field: 'due',
@@ -52,9 +54,9 @@ describe('graphFilterToCanonical — hasDueDate/hasScheduledDate date-sentinel m
   })
 })
 
-// ── line 177 — graphFilterToCanonical's own `case 'tag'` ─────────────────────
+// ── graphFilterToCanonical's own `case 'tag'` ─────────────────────
 
-describe('graphFilterToCanonical — direct tag case (line 177)', () => {
+describe('graphFilterToCanonical — direct tag case', () => {
   it('projects a single-id tag filter without going through graphFiltersToCanonical', () => {
     // graphFiltersToCanonical special-cases 'tag' and never reaches this
     // switch arm, so it must be exercised directly. Kills the StringLiteral
@@ -76,9 +78,9 @@ describe('graphFilterToCanonical — direct tag case (line 177)', () => {
   })
 })
 
-// ── line 213 — canonicalToGraphFilter's own `case 'tag'` ─────────────────────
+// ── canonicalToGraphFilter's own `case 'tag'` ─────────────────────
 
-describe('canonicalToGraphFilter — direct tag case (line 213)', () => {
+describe('canonicalToGraphFilter — direct tag case', () => {
   it('projects a by-id tag predicate without going through canonicalToGraphFilters', () => {
     // canonicalToGraphFilters special-cases by:'id' tag predicates and never
     // reaches this switch arm either, so exercise it directly. Kills the
@@ -95,9 +97,9 @@ describe('canonicalToGraphFilter — direct tag case (line 213)', () => {
   })
 })
 
-// ── line 220 — status isNull/exclude guard ───────────────────────────────────
+// ── status isNull/exclude guard ───────────────────────────────────
 
-describe('canonicalToGraphFilter — status isNull/exclude guard (line 220)', () => {
+describe('canonicalToGraphFilter — status isNull/exclude guard', () => {
   it('a plain membership status predicate (both flags false) projects to graph', () => {
     // Kills the ConditionalExpression forced-true mutant: with both flags
     // false this must NOT collapse to null.
@@ -124,9 +126,9 @@ describe('canonicalToGraphFilter — status isNull/exclude guard (line 220)', ()
   })
 })
 
-// ── line 230 — date field === 'scheduled' guard ──────────────────────────────
+// ── date field === 'scheduled' guard ──────────────────────────────
 
-describe('canonicalToGraphFilter — date field routing (line 230)', () => {
+describe('canonicalToGraphFilter — date field routing', () => {
   it('a scheduled-field date predicate projects to hasScheduledDate', () => {
     // Kills the ConditionalExpression forced-false mutant: a real
     // field:'scheduled' predicate must still project.
@@ -192,9 +194,9 @@ describe('canonicalToGraphFilter — kinds with no graph dimension', () => {
   })
 })
 
-// ── line 252 — graphFiltersToCanonical's accumulator seed ───────────────────
+// ── graphFiltersToCanonical's accumulator seed ───────────────────
 
-describe('graphFiltersToCanonical — accumulator starts empty (line 252)', () => {
+describe('graphFiltersToCanonical — accumulator starts empty', () => {
   it('an empty filter list projects to an empty canonical list, not a seeded one', () => {
     // Kills the ArrayDeclaration mutant that seeds `out` with a placeholder
     // element instead of `[]` — the loop never runs, so the seed would leak
@@ -203,9 +205,9 @@ describe('graphFiltersToCanonical — accumulator starts empty (line 252)', () =
   })
 })
 
-// ── line 258 — empty-tagIds no-op preservation ──────────────────────────────
+// ── empty-tagIds no-op preservation ──────────────────────────────
 
-describe('graphFiltersToCanonical — empty-tagIds no-op preservation (line 258)', () => {
+describe('graphFiltersToCanonical — empty-tagIds no-op preservation', () => {
   it('an empty-id tag filter is preserved as one empty-id canonical tag entry', () => {
     // Kills the ConditionalExpression forced-false mutant: dropping this
     // push would silently discard the no-op filter instead of preserving it.
@@ -224,9 +226,9 @@ describe('graphFiltersToCanonical — empty-tagIds no-op preservation (line 258)
   })
 })
 
-// ── line 277 — canonicalToGraphFilters' tag-collection guard ────────────────
+// ── canonicalToGraphFilters' tag-collection guard ────────────────
 
-describe('canonicalToGraphFilters — tag-collection guard (line 277)', () => {
+describe('canonicalToGraphFilters — tag-collection guard', () => {
   it('a by-name tag predicate is neither collected into tagIds nor projected', () => {
     // Kills the ConditionalExpression forced-true mutant (would wrongly
     // enter the tag-collection branch for a by:'name' predicate, whose

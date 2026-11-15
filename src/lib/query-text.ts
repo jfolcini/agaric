@@ -267,25 +267,14 @@ function leafWords(leaf: FilterPrimitive): string[] {
     }
     case 'State':
     case 'Priority': {
-      const prefix = `${leaf.exclude ? 'not-' : ''}${leaf.type.toLowerCase()}:`
-      return [...leaf.values, ...(leaf.is_null ? ['none'] : [])].map((value) => prefix + value)
+      return valueWords(leaf)
     }
     case 'HasProperty': {
-      const { predicate } = leaf
-      const exclude = predicate.type === 'Ne' || predicate.type === 'NotExists'
-      const prefix = `${exclude ? 'not-prop' : 'prop'}:${leaf.key}=`
-      if (predicate.type === 'Exists' || predicate.type === 'NotExists') return [prefix]
-      if (predicate.type !== 'Eq' && predicate.type !== 'Ne') return []
-      return [prefix + quoteValueIfNeeded(String(predicate.value.value), prefix)]
+      return propertyWords(leaf)
     }
     case 'DueDate':
     case 'Scheduled': {
-      const { predicate } = leaf
-      const prefix = leaf.type === 'DueDate' ? 'due:' : 'scheduled:'
-      if (predicate.type === 'IsNull') return [`${prefix}none`]
-      return predicate.type === 'Between'
-        ? []
-        : [prefix + DATE_OPS[predicate.type] + predicate.date]
+      return dateWords(leaf)
     }
     case 'BlockType':
     case 'CaseSensitive':
@@ -310,6 +299,27 @@ function leafWords(leaf: FilterPrimitive): string[] {
       return []
     }
   }
+}
+
+function valueWords(leaf: Extract<FilterPrimitive, { type: 'State' | 'Priority' }>): string[] {
+  const prefix = `${leaf.exclude ? 'not-' : ''}${leaf.type.toLowerCase()}:`
+  return [...leaf.values, ...(leaf.is_null ? ['none'] : [])].map((value) => prefix + value)
+}
+
+function propertyWords(leaf: Extract<FilterPrimitive, { type: 'HasProperty' }>): string[] {
+  const { predicate } = leaf
+  const exclude = predicate.type === 'Ne' || predicate.type === 'NotExists'
+  const prefix = `${exclude ? 'not-prop' : 'prop'}:${leaf.key}=`
+  if (predicate.type === 'Exists' || predicate.type === 'NotExists') return [prefix]
+  if (predicate.type !== 'Eq' && predicate.type !== 'Ne') return []
+  return [prefix + quoteValueIfNeeded(String(predicate.value.value), prefix)]
+}
+
+function dateWords(leaf: Extract<FilterPrimitive, { type: 'DueDate' | 'Scheduled' }>): string[] {
+  const { predicate } = leaf
+  const prefix = leaf.type === 'DueDate' ? 'due:' : 'scheduled:'
+  if (predicate.type === 'IsNull') return [`${prefix}none`]
+  return predicate.type === 'Between' ? [] : [prefix + DATE_OPS[predicate.type] + predicate.date]
 }
 
 /** `expr` with nested nodes of one kind flattened, single children unwrapped and children sorted, so two trees compare whatever order built them. */
