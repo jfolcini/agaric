@@ -1611,6 +1611,19 @@
           }
         }
       ]
+    },
+    {
+      "name": "a `key::` line valued only by a no-break space is text, not a clear",
+      "text": "- a\n  note:: \n",
+      "tree": [
+        {
+          "content": "a\nnote:: ",
+          "depth": 0,
+          "properties": {
+            "listStyle": "bullet"
+          }
+        }
+      ]
     }
   ]
 }

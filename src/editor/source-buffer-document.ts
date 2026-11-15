@@ -100,14 +100,14 @@ export function isThematicBreak(trimmed: string): boolean {
   return /^(?:-{3,}|\*{3,}|_{3,})$/.test(trimmed.replace(TRAILING_WS, ''))
 }
 
-/** `split_property_line`: `key::` and a space, a tab or nothing, `key` a property key. */
+/** `split_property_line`: `key::` and a space, a tab or only spaces and tabs, `key` a property key. */
 function splitPropertyLine(line: string): { key: string; value: string } | null {
   const at = line.indexOf('::')
   if (at < 0) return null
   const key = line.slice(0, at)
   const rest = line.slice(at + 2)
   let value = ''
-  if (trim(rest) !== '') {
+  if (!/^[ \t]*$/.test(rest)) {
     if (rest.charAt(0) !== ' ' && rest.charAt(0) !== '\t') return null
     value = rest.slice(1)
   }

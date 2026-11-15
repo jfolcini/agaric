@@ -947,6 +947,11 @@ fn typed_rows() -> Vec<(&'static str, &'static str, Vec<BlockSpec>)> {
             "1. a\n\t1. b",
             vec![styled(0, "a", "ordered"), styled(1, "b", "ordered")],
         ),
+        (
+            "a `key::` line valued only by a no-break space is text, not a clear",
+            "- a\n  note::\u{a0}\n",
+            vec![styled(0, "a\nnote::\u{a0}", "bullet")],
+        ),
     ]
 }
 

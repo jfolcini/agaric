@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 5d46e778c9a851b0d61dc4841b35cc259ec6ef74f9251fc466a43e259c622a5f # shrinks to text = "* \na:: \n\t```\n"
 cc 8400e6c92da0fda85da5b4b27e9a7dd5f8fd0296a6ee8299e45d21883e01f570 # shrinks to text = "::\t\n"
+cc 438e11e99621b6e23e304967974f976b29a7e25aab4bdf812b62520737eccbb1 # shrinks to text = "\t\t\t\t\t\u{a0}\u{a0}- \na::\u{a0}\n* \n"
