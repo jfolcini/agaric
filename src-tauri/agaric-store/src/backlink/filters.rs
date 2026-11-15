@@ -11,7 +11,7 @@ use super::{FTS_ROW_CAP, SMALL_IN_LIMIT};
 use crate::filters::primitive::{
     DatePredicate, FilterPrimitive, Projection, PropertyPredicate, PropertyValue,
 };
-use crate::fts::sanitize_fts_query;
+use crate::fts::{parse_query, shown_text_contains};
 use crate::tag_query::{resolve_tag_leaves, resolve_tag_prefix_leaves};
 use agaric_core::error::AppError;
 use agaric_core::error::ValidationCode;
@@ -414,38 +414,61 @@ async fn resolve_due_date(
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
-/// A `Contains` leaf, over the FTS index and capped at `FTS_ROW_CAP`.
+/// A `Contains` leaf, over the FTS index and capped at `FTS_ROW_CAP`. A term
+/// under the trigram floor is the search box's substring test on the block's
+/// indexed text (#6752); a query of only such terms walks `blocks` by id and
+/// stops at the cap.
 async fn resolve_contains(pool: &SqlitePool, query: &str) -> Result<FxHashSet<String>, AppError> {
     if query.trim().is_empty() {
         return Ok(FxHashSet::default());
     }
-    let sanitized = sanitize_fts_query(query);
-    if sanitized.is_empty() {
+    let parsed = parse_query(query);
+    if parsed.match_expr.is_empty() && parsed.short_terms.is_empty() {
         return Ok(FxHashSet::default());
     }
-    // Query FTS5 index, join back to blocks to get block id and
-    // exclude deleted blocks.
-    //
+    let match_bind = usize::from(!parsed.match_expr.is_empty());
+    let short_terms = if parsed.short_terms.is_empty() {
+        (String::new(), Vec::new())
+    } else {
+        let (sql, patterns) = shown_text_contains(&parsed.short_terms, match_bind + 1);
+        (format!(" AND {sql}"), patterns)
+    };
     // #672 — cap the scan at `FTS_ROW_CAP` rows, matching
     // `eval_unlinked_references`. A short common token (e.g. "the")
     // matches a large fraction of the vault; without a cap every
     // matching id is materialised into the `FxHashSet` here and
     // then into a JSON bind downstream. We fetch `FTS_ROW_CAP + 1`
     // to detect truncation, then trim to `FTS_ROW_CAP` and warn.
-    let fts_sql = format!(
-        "SELECT fb.block_id \
-         FROM fts_blocks fb \
-         JOIN blocks b ON b.id = fb.block_id \
-         WHERE fts_blocks MATCH ?1 \
-           AND b.deleted_at IS NULL \
-         ORDER BY fb.block_id \
-         LIMIT {}",
-        FTS_ROW_CAP + 1
-    );
-    let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(fts_sql.as_str()))
-        .bind(&sanitized)
-        .fetch_all(pool)
-        .await?;
+    let fts_sql = if parsed.match_expr.is_empty() {
+        format!(
+            "SELECT b.id FROM blocks b INDEXED BY sqlite_autoindex_blocks_1 \
+             WHERE b.deleted_at IS NULL{} \
+             ORDER BY b.id \
+             LIMIT {}",
+            short_terms.0,
+            FTS_ROW_CAP + 1
+        )
+    } else {
+        format!(
+            "SELECT fb.block_id \
+             FROM fts_blocks fb \
+             JOIN blocks b ON b.id = fb.block_id \
+             WHERE fts_blocks MATCH ?1 \
+               AND b.deleted_at IS NULL{} \
+             ORDER BY fb.block_id \
+             LIMIT {}",
+            short_terms.0,
+            FTS_ROW_CAP + 1
+        )
+    };
+    let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(fts_sql.as_str()));
+    if !parsed.match_expr.is_empty() {
+        q = q.bind(&parsed.match_expr);
+    }
+    for pattern in &short_terms.1 {
+        q = q.bind(pattern);
+    }
+    let rows = q.fetch_all(pool).await?;
     if rows.len() > FTS_ROW_CAP {
         tracing::warn!(
             cap = FTS_ROW_CAP,
@@ -948,11 +971,8 @@ pub(crate) fn compile_backlink_filter<'a>(
             BacklinkFilter::BlockType { block_type } => Ok(compile_block_type(block_type)),
 
             // ── Hybrid leaves: pre-resolve once, embed as a json_each set ──
-            BacklinkFilter::Contains { query } => {
-                compile_contains(pool, filter, query, depth).await
-            }
-
-            BacklinkFilter::HasTag { .. }
+            BacklinkFilter::Contains { .. }
+            | BacklinkFilter::HasTag { .. }
             | BacklinkFilter::HasTagPrefix { .. }
             | BacklinkFilter::SourcePage { .. } => {
                 let ids = resolve_filter(pool, filter, depth).await?;
@@ -1064,27 +1084,6 @@ fn compile_created_in_range(
     Ok(BacklinkProjection::to_compiled(
         BacklinkProjection.compile(&prim),
     ))
-}
-
-/// A `Contains` leaf: resolved ONCE through the FTS helper and embedded as
-/// a set, never correlated per outer row.
-async fn compile_contains<'a>(
-    pool: &'a SqlitePool,
-    filter: &'a BacklinkFilter,
-    query: &str,
-    depth: u32,
-) -> Result<CompiledFilter, AppError> {
-    // Empty / whitespace-only / sanitizes-to-empty ⇒ empty set,
-    // matching the resolver's early returns.
-    if query.trim().is_empty() {
-        return Ok(CompiledFilter::never());
-    }
-    let sanitized = sanitize_fts_query(query);
-    if sanitized.is_empty() {
-        return Ok(CompiledFilter::never());
-    }
-    let ids = resolve_filter(pool, filter, depth).await?;
-    membership_fragment(&ids)
 }
 
 /// An `And` or `Or` node: the child fragments joined by `sep`.

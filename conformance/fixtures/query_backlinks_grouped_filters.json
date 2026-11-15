@@ -1,5 +1,5 @@
 {
-  "description": "What the References panel's filters keep (`compile_backlink_filters`, `agaric-store/src/backlink/filters.rs`), which `query_backlinks_grouped.json` leaves unpinned. Five sources link to page B1: B4, B5 and B6 on page Alpha, B7 on page Beta and B8 nested under B7. A task's state and priority live in their `blocks` columns, so `TodoState` and `Priority` read the column, and the Status and Priority `none` options (`Not` of an `Or` of every value) keep the blocks with no value. `SourcePage` walks `parent_id` from the named blocks, so excluding a page drops its nested blocks and excluding a block drops its subtree. `HasTag` and `HasTagPrefix` match an attached tag (B6) and an inline `#[id]` (B8); `PropertyIsSet` / `PropertyIsEmpty` read `block_properties`. An empty `Or` matches nothing, and `Not` of an empty `And` matches everything. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "description": "What the References panel's filters keep (`compile_backlink_filters`, `agaric-store/src/backlink/filters.rs`), which `query_backlinks_grouped.json` leaves unpinned. Five sources link to page B1: B4, B5 and B6 on page Alpha, B7 on page Beta and B8 nested under B7. A task's state and priority live in their `blocks` columns, so `TodoState` and `Priority` read the column, and the Status and Priority `none` options (`Not` of an `Or` of every value) keep the blocks with no value. `SourcePage` walks `parent_id` from the named blocks, so excluding a page drops its nested blocks and excluding a block drops its subtree. `HasTag` and `HasTagPrefix` match an attached tag (B6) and an inline `#[id]` (B8); `PropertyIsSet` / `PropertyIsEmpty` read `block_properties`. `Contains` answers a term under three characters as search does, by substring of the indexed text (#6752). An empty `Or` matches nothing, and `Not` of an empty `And` matches everything. Re-author `expected` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [
       {
@@ -427,6 +427,32 @@
         "B3->B7#parent_id=B3#page_id=B3#position=1#deleted_at=null",
         "B3->B8#parent_id=B7#page_id=B3#position=1#deleted_at=null",
         "filtered#count=5#truncated=false"
+      ],
+      "total_count": 5
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "contains_short_term",
+      "rows": [
+        "B2#page_title=Alpha#truncated=false",
+        "B2->B5#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B3#page_title=Beta#truncated=false",
+        "B3->B7#parent_id=B3#page_id=B3#position=1#deleted_at=null",
+        "filtered#count=2#truncated=false"
+      ],
+      "total_count": 5
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "contains_word_and_short_term",
+      "rows": [
+        "B2#page_title=Alpha#truncated=false",
+        "B2->B5#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=1#truncated=false"
       ],
       "total_count": 5
     }
@@ -888,6 +914,44 @@
       "command": "list_backlinks_grouped",
       "comment": "All five.",
       "name": "not_of_empty_and_matches_everything"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "query": "ve",
+            "type": "Contains"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "#6752 — a term under three characters is a substring of the indexed text: \"five\" and \"seven\".",
+      "name": "contains_short_term"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "query": "fi task",
+            "type": "Contains"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "#6752 — beside a longer word the short term narrows its match: only \"task five\", though `fi task` is not one substring of it.",
+      "name": "contains_word_and_short_term"
     }
   ],
   "seed": {

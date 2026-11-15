@@ -405,11 +405,11 @@ describe('SearchPanel replace across pages', () => {
     await waitFor(() => expect(run()).toHaveTextContent(runLabel(2, 2)))
   })
 
-  it('does not replace in regex mode or under three characters', async () => {
+  it('does not replace in regex mode or with no text to find', async () => {
     stubVault()
-    const { user, run } = await openReplace('ne', 'pin')
+    const { user, run } = await openReplace('', 'pin')
     expect(screen.getByTestId('search-replace-status')).toHaveTextContent(
-      t('search.replace.tooShort'),
+      t('search.replace.noText'),
     )
     expect(run()).toBeDisabled()
 
@@ -421,6 +421,65 @@ describe('SearchPanel replace across pages', () => {
       t('search.replace.noRegex'),
     )
     expect(run()).toBeDisabled()
+  })
+
+  it('replaces a two-letter term after loading every page, and Undo puts it back (#6752)', async () => {
+    vault = [
+      row('A1', 'Q3 plan', PAGE_A),
+      row('A2', 'q3 and Q3', PAGE_A),
+      row('B1', 'Q4 only', PAGE_B),
+      row('B2', 'notes for Q3', PAGE_B),
+    ]
+    stubVault({
+      search_blocks: (args) => {
+        const { cursor } = args as { cursor: string | null }
+        const items = (cursor === null ? vault.slice(0, 2) : vault.slice(2)).map((r) =>
+          structuredClone(r),
+        )
+        return cursor === null
+          ? { items, next_cursor: 'c1', has_more: true, total_count: null }
+          : { items, next_cursor: null, has_more: false, total_count: null }
+      },
+    })
+    const { user, run } = await openReplace('Q3', 'Q4')
+
+    // The count is the blocks on both pages of candidates, not the first page's.
+    await waitFor(() => expect(run()).toHaveTextContent(runLabel(3, 2)))
+    expect((callsOf('search_blocks').at(-1) as { query: string }).query).toBe('"Q3"')
+
+    await user.click(run())
+    await user.click(await screen.findByTestId('search-replace-confirm'))
+    await waitFor(() => expect(contentOf('A1')).toBe('Q4 plan'))
+    expect(contentOf('A2')).toBe('Q4 and Q4')
+    expect(contentOf('B1')).toBe('Q4 only')
+    expect(contentOf('B2')).toBe('notes for Q4')
+    expect(callsOf('edit_blocks_batch')).toHaveLength(1)
+
+    await waitFor(() => expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1))
+    const [, options] = vi.mocked(toast.success).mock.calls[0] as [
+      string,
+      { action: { label: string; onClick: () => void } },
+    ]
+    options.action.onClick()
+    await waitFor(() => expect(contentOf('A1')).toBe('Q3 plan'))
+    expect(contentOf('A2')).toBe('q3 and Q3')
+    expect(contentOf('B2')).toBe('notes for Q3')
+  })
+
+  it('refuses a two-letter term with more matching blocks than one run writes', async () => {
+    vault = Array.from({ length: MAX_BATCH_BLOCK_IDS + 1 }, (_, i) =>
+      row(`N${i}`, `Q3 ${i}`, PAGE_A),
+    )
+    stubVault()
+    const { run } = await openReplace('Q3', 'Q4')
+
+    await waitFor(() =>
+      expect(screen.getByTestId('search-replace-status')).toHaveTextContent(
+        t('search.replace.tooMany'),
+      ),
+    )
+    expect(run()).toBeDisabled()
+    expect(callsOf('edit_blocks_batch')).toEqual([])
   })
 
   it('Ctrl+H in the panel opens and closes the replace row', async () => {

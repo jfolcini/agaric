@@ -65,13 +65,13 @@ pub fn sanitize_fts_query(query: &str) -> String {
 const TRIGRAM_MIN_LEN: usize = 3;
 
 /// A search query split by what can answer it.
-pub(in crate::fts) struct ParsedQuery {
+pub(crate) struct ParsedQuery {
     /// The FTS5 MATCH expression over the terms the trigram index holds;
     /// empty when the query has none.
-    pub(in crate::fts) match_expr: String,
+    pub(crate) match_expr: String,
     /// The terms under [`TRIGRAM_MIN_LEN`] characters, which the index cannot
     /// hold: each is a required substring of the block's indexed text (#6752).
-    pub(in crate::fts) short_terms: Vec<String>,
+    pub(crate) short_terms: Vec<String>,
     /// Every term as typed, for highlighting.
     pub(in crate::fts) terms: Vec<String>,
 }
@@ -102,7 +102,7 @@ fn push_short_term(short_terms: &mut Vec<String>, terms: &mut Vec<String>, term:
 
 /// Split a raw query into its trigram MATCH expression and its short terms.
 /// [`sanitize_fts_query`] documents the expression's rules.
-pub(in crate::fts) fn parse_query(query: &str) -> ParsedQuery {
+pub(crate) fn parse_query(query: &str) -> ParsedQuery {
     // NFC-normalise the query before tokenisation so an
     // NFC query reaches the NFC-normalised FTS index emitted by
     // `strip_for_fts_with_maps`. Without this, NFD content (macOS

@@ -835,6 +835,42 @@ async fn filter_contains_no_match() {
     assert!(set.is_empty(), "nonexistent term should match no blocks");
 }
 
+/// #6752 — a term under three characters is a substring of the block's
+/// indexed text, alone or beside a longer word, as in the search box.
+#[tokio::test]
+async fn filter_contains_matches_a_short_term() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+    insert_fts(&pool, "SRC_A", "Q3 UI review").await;
+    insert_fts(&pool, "SRC_B", "review of the plan").await;
+    insert_fts(&pool, "SRC_C", "notes").await;
+
+    for (query, expected) in [
+        ("ui", vec!["SRC_A"]),
+        ("review UI", vec!["SRC_A"]),
+        ("review", vec!["SRC_A", "SRC_B"]),
+    ] {
+        let filter = BacklinkFilter::Contains {
+            query: query.into(),
+        };
+        let mut ids: Vec<String> = resolve_filter(&pool, &filter, 0)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+        ids.sort();
+        assert_eq!(ids, expected, "query {query:?}");
+    }
+
+    // The panel's query compiles the leaf into its SQL rather than resolving it.
+    let filters = vec![BacklinkFilter::Contains { query: "ui".into() }];
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &default_page(), None)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|i| i.id.as_str()).collect();
+    assert_eq!(ids, vec!["SRC_A"]);
+}
+
 #[tokio::test]
 async fn filter_contains_empty_query() {
     let (pool, _dir) = test_pool().await;

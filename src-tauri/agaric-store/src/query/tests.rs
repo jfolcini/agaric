@@ -1058,6 +1058,62 @@ async fn explicit_relevance_sort_accepted_with_fulltext() {
     assert_eq!(ids(&resp), set(&[F1, F2, F3]));
 }
 
+/// #6752 — a full-text term under three characters is the search box's
+/// substring test: alone (no MATCH), beside a longer word, with a filter that
+/// binds and a cursor page, and under a `Relevance` sort it cannot rank on.
+#[tokio::test]
+async fn fulltext_short_term_matches_like_the_search_box() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+
+    // "qu" is in F1 and F2 ("quick"); FX is in the other space.
+    let resp = compile_and_run(&pool, ft_req("qu")).await.unwrap();
+    assert_eq!(ids(&resp), set(&[F1, F2]));
+    assert_eq!(resp.total_count, Some(2));
+
+    // Beside a MATCH: "alpha" is in F1, F2, F3; "ze" only in F3 ("zeta").
+    let resp = compile_and_run(&pool, ft_req("alpha ze")).await.unwrap();
+    assert_eq!(ids(&resp), set(&[F3]));
+    assert_eq!(resp.total_count, Some(1));
+
+    // With a tag filter (binds) and a cursor (binds after them), one per page.
+    let page = |cursor: Option<String>| {
+        let mut request = ft_req("qu");
+        request.filter = leaf(FilterPrimitive::Tag {
+            tag: TAG_RED.to_string(),
+        });
+        request.limit = Some(1);
+        request.cursor = cursor;
+        request
+    };
+    let first = compile_and_run(&pool, page(None)).await.unwrap();
+    assert_eq!(ids(&first), set(&[F2]));
+    assert!(first.has_more);
+    let second = compile_and_run(&pool, page(first.next_cursor.clone()))
+        .await
+        .unwrap();
+    assert_eq!(ids(&second), set(&[F1]));
+    assert!(!second.has_more);
+
+    // `Relevance` has no rank without a MATCH: rows come newest first.
+    let mut request = ft_req("qu");
+    request.sort = vec![SortKey {
+        source: SortSource::Relevance,
+        desc: false,
+    }];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+    let order: Vec<&str> = resp.rows.iter().map(|r| r.block.id.as_str()).collect();
+    assert_eq!(order, vec![F2, F1]);
+
+    // A short term beside `OR` stays out, as in the search box, so nothing is left.
+    assert!(matches!(
+        compile_and_run(&pool, ft_req("qu OR ze"))
+            .await
+            .unwrap_err(),
+        AppError::Validation { .. }
+    ));
+}
+
 #[tokio::test]
 async fn relevance_sort_rejected_without_fulltext() {
     let (pool, _d) = test_pool().await;

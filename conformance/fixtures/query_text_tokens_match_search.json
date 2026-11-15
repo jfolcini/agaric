@@ -1,5 +1,5 @@
 {
-  "description": "#6742 — a query block runs the tokens the search box runs. Each pair of steps is one text: `search_*` is the request the search box sends for it and `block_*` the one a query block compiles it to (`compileQueryText`, pinned to these args by `query-text-conformance.test.ts`, which also holds each pair to the same rows). `path:` is a `PathGlob` over the title of the block's page, so it keeps every block on the page as search does, not the page row alone; `under:` is `TagUnder`, the tag attached (S2), inherited (S3, under S2) or written inline (S7); free text is the request's `fulltext`; a relative date is the dates it names on the day the query runs, here `overdue` against a due date in 2020 and one in 2999 so the rows do not move with the clock. Content arrives through `edit_block`, since only an op fills `fts_blocks` and `block_tag_refs`.",
+  "description": "#6742 — a query block runs the tokens the search box runs. Each pair of steps is one text: `search_*` is the request the search box sends for it and `block_*` the one a query block compiles it to (`compileQueryText`, pinned to these args by `query-text-conformance.test.ts`, which also holds each pair to the same rows). `path:` is a `PathGlob` over the title of the block's page, so it keeps every block on the page as search does, not the page row alone; `under:` is `TagUnder`, the tag attached (S2), inherited (S3, under S2) or written inline (S7); free text is the request's `fulltext`, a term under three characters matched by substring on both (#6752); a relative date is the dates it names on the day the query runs, here `overdue` against a due date in 2020 and one in 2999 so the rows do not move with the clock. Content arrives through `edit_block`, since only an op fills `fts_blocks` and `block_tag_refs`.",
   "expected": {
     "block_tags": [
       {
@@ -229,6 +229,38 @@
       "error": null,
       "has_more": false,
       "name": "block_text_and_state",
+      "rows": ["B2"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_short_text",
+      "rows": ["B6", "B4", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "block_short_text",
+      "rows": ["B6", "B4", "B2"],
+      "total_count": 3
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_text_and_short",
+      "rows": ["B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "block_text_and_short",
       "rows": ["B2"],
       "total_count": 1
     },
@@ -515,6 +547,68 @@
       "command": "run_advanced_query",
       "comment": "`state:TODO launch` in a query block.",
       "name": "block_text_and_state"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "la"
+      },
+      "command": "search_blocks",
+      "comment": "`la`, under three characters: the blocks whose text holds it (\"plan\", \"plain\", \"launch\").",
+      "name": "search_short_text"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "children": [],
+            "type": "And"
+          },
+          "fulltext": "la",
+          "limit": 50,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`la` in a query block: no MATCH, so a substring of the indexed text, as search does.",
+      "name": "block_short_text"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "launch pl"
+      },
+      "command": "search_blocks",
+      "comment": "`launch pl`: the word, narrowed to blocks also holding `pl`.",
+      "name": "search_text_and_short"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "children": [],
+            "type": "And"
+          },
+          "fulltext": "launch pl",
+          "limit": 50,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`launch pl` in a query block: the MATCH, narrowed by the substring.",
+      "name": "block_text_and_short"
     },
     {
       "args": {

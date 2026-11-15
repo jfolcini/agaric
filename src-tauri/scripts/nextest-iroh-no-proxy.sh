@@ -7,4 +7,4 @@ if [[ -z "${NEXTEST_ENV:-}" ]]; then
 fi
 
 bypass='*'
-printf 'NO_PROXY=%s\nno_proxy=%s\n' "$bypass" "$bypass" >> "$NEXTEST_ENV"
+printf 'NO_PROXY=%s\nno_proxy=%s\n' "$bypass" "$bypass" >>"$NEXTEST_ENV"
