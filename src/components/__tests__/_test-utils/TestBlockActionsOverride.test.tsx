@@ -35,7 +35,7 @@ function ActionsProbe(): React.ReactElement {
       type="button"
       data-testid="probe"
       data-has-on-delete={actions.onDelete ? 'yes' : 'no'}
-      onClick={() => actions.onDelete?.('BLOCK_X')}
+      onClick={() => void actions.onDelete?.('BLOCK_X')}
     >
       probe
     </button>

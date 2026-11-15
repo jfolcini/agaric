@@ -125,7 +125,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleCheckNow}
+                  onClick={() => void handleCheckNow()}
                   disabled={busy}
                   aria-label={t('help.updateCheckNowButton')}
                 >

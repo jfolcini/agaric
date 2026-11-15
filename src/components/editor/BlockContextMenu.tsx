@@ -620,7 +620,7 @@ function buildCalloutRows(
         disclosureId: calloutGroupId,
         disclosureLabel: label,
         action: () => {
-          actions.onTurnInto?.(blockId, 'callout', type)
+          void actions.onTurnInto?.(blockId, 'callout', type)
           onClose()
         },
       }
@@ -678,7 +678,7 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
             action: isActive
               ? undefined
               : () => {
-                  onTurnInto(blockId, blockType)
+                  void onTurnInto(blockId, blockType)
                   onClose()
                 },
           }

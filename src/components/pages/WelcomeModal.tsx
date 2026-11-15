@@ -307,7 +307,11 @@ export function WelcomeModal() {
         </Header>
         {parts.isMobile ? body : <DialogBody>{body}</DialogBody>}
         <Footer>
-          <Button variant="outline" onClick={handleCreateSamplePages} disabled={creating}>
+          <Button
+            variant="outline"
+            onClick={() => void handleCreateSamplePages()}
+            disabled={creating}
+          >
             {creating && <Spinner />}
             {t('welcome.createSamplePages')}
           </Button>

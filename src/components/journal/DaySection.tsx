@@ -48,7 +48,7 @@ interface DaySectionProps {
   agendaCountsBySource?: Record<string, Record<string, number>> | undefined
   backlinkCounts?: Record<string, number> | undefined
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
-  onAddBlock: (dateStr: string) => void
+  onAddBlock: (dateStr: string) => void | Promise<void>
   onPageDeleted?: ((dateStr: string) => void) | undefined
   /**
    * When `true`, defer mounting the heavy `BlockTree` (and its
@@ -219,7 +219,7 @@ function DaySectionInner({
   const [firstBlockRequested, setFirstBlockRequested] = useState(false)
   const handleAddFirstBlock = () => {
     setFirstBlockRequested(true)
-    onAddBlock(entry.dateStr)
+    void onAddBlock(entry.dateStr)
   }
   // A multi-day list shows an empty day as one row, the date plus "+", as
   // calendar and agenda lists do; a placeholder card per day made an empty week
@@ -444,7 +444,7 @@ function DaySectionInner({
                   pageId={entry.pageId}
                   actions={dailyActions}
                   onNavigateToPage={onNavigateToPage}
-                  onAddBlock={() => onAddBlock(entry.dateStr)}
+                  onAddBlock={() => void onAddBlock(entry.dateStr)}
                   onZoomChange={setZoomedBlockId}
                 />
               ) : (
@@ -486,7 +486,7 @@ function DaySectionInner({
           the CTA); the daily view's day page has its own. */}
       {entry.pageId && mode !== 'daily' && (
         <div className="mt-1">
-          <AddBlockButton onClick={() => onAddBlock(entry.dateStr)} />
+          <AddBlockButton onClick={() => void onAddBlock(entry.dateStr)} />
         </div>
       )}
 

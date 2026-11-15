@@ -531,7 +531,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                   isLoadingDiff={loadingDiffs.has(entry.seq)}
                   diffSpans={diffCache.get(entry.seq)}
                   onExpandToggle={handleExpandToggle}
-                  onRestore={handleRestore}
+                  onRestore={(restored) => void handleRestore(restored)}
                   // Only the expanded row gets the ref so the
                   // focus-on-change effect targets a single, current
                   // button. The ref is reassigned across renders when

@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils'
 interface DailyViewProps {
   entry: DayEntry
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
-  onAddBlock: (dateStr: string) => void
+  onAddBlock: (dateStr: string) => void | Promise<void>
   onPageDeleted?: ((dateStr: string) => void) | undefined
 }
 

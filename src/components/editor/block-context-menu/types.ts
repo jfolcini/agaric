@@ -123,7 +123,7 @@ export interface MenuItem {
   id: BlockMenuRowId
   label: string
   icon: React.ReactNode
-  action: (() => void) | undefined
+  action: (() => void | Promise<void>) | undefined
   className?: string
   shortcut?: string
   /** #264 — marks the active block type inside the "Turn into" group. */

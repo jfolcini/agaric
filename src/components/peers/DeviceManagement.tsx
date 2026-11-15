@@ -259,7 +259,7 @@ export function DeviceManagement(): React.ReactElement {
               aria-live="polite"
             >
               <p className="text-sm text-destructive flex-1">{error}</p>
-              <Button variant="outline" size="sm" onClick={() => loadData()}>
+              <Button variant="outline" size="sm" onClick={() => void loadData()}>
                 {t('device.retryButton')}
               </Button>
               <IconButton
@@ -348,7 +348,7 @@ export function DeviceManagement(): React.ReactElement {
                     variant="outline"
                     size="sm"
                     className="device-sync-all-btn mb-2"
-                    onClick={handleSyncAll}
+                    onClick={() => void handleSyncAll()}
                     disabled={syncingAll || syncingPeerId !== null}
                     aria-label={t('device.syncAllLabel')}
                   >
@@ -376,10 +376,10 @@ export function DeviceManagement(): React.ReactElement {
                           syncingPeerId={syncingPeerId}
                           syncingAll={syncingAll}
                           renamingPeerId={renamingPeerId}
-                          onSyncNow={handleSyncNow}
+                          onSyncNow={(peerId) => void handleSyncNow(peerId)}
                           onUnpair={(peerId) => setUnpairPeerId(peerId)}
                           onRename={(peerId) => setRenamePeerId(peerId)}
-                          onAddressUpdated={loadData}
+                          onAddressUpdated={() => void loadData()}
                         />
                       ))}
                     </div>
@@ -407,14 +407,16 @@ export function DeviceManagement(): React.ReactElement {
                 <IconButton
                   variant="ghost"
                   size="icon-sm"
-                  onClick={async () => {
-                    try {
-                      await writeText(deviceId)
-                      notify.success(t('device.deviceIdCopied'))
-                    } catch (err) {
-                      reportIpcError('DeviceManagement', 'device.copyFailed', err, t)
-                    }
-                  }}
+                  onClick={() =>
+                    void (async () => {
+                      try {
+                        await writeText(deviceId)
+                        notify.success(t('device.deviceIdCopied'))
+                      } catch (err) {
+                        reportIpcError('DeviceManagement', 'device.copyFailed', err, t)
+                      }
+                    })()
+                  }
                   tooltip={t('device.copyDeviceIdLabel')}
                   ariaLabel={t('device.copyDeviceIdLabel')}
                 >
@@ -466,7 +468,7 @@ export function DeviceManagement(): React.ReactElement {
         onOpenChange={(o) => {
           if (!o) setRenamePeerId(null)
         }}
-        onConfirm={handleRename}
+        onConfirm={(name) => void handleRename(name)}
         /*
           #4298: seeded from the user's override ALONE, not the display
           precedence. The dialog edits `device_name`, and pre-filling it with

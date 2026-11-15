@@ -93,8 +93,8 @@ function SwipeAffordances({
   blockId: string
   swipeRowDescId: string
   onDelete?: ((blockId: string) => void) | undefined
-  onIndent?: ((blockId: string) => void) | undefined
-  onDedent?: ((blockId: string) => void) | undefined
+  onIndent?: ((blockId: string) => void | Promise<void>) | undefined
+  onDedent?: ((blockId: string) => void | Promise<void>) | undefined
   gestureIntent: string | null | undefined
   thresholdCrossed: boolean
   onReset: () => void
@@ -253,9 +253,9 @@ interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
   listeners: DraggableSyntheticListeners
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
   onToggleCollapse?: ((blockId: string) => void) | undefined
-  onToggleTodo?: ((blockId: string) => void) | undefined
+  onToggleTodo?: ((blockId: string) => void | Promise<void>) | undefined
   onOpenDatePicker?: ((blockId: string, mode: 'due' | 'schedule') => void) | undefined
-  onTogglePriority?: ((blockId: string) => void) | undefined
+  onTogglePriority?: ((blockId: string) => void | Promise<void>) | undefined
   onShowProperties?: ((blockId: string) => void) | undefined
   onNavigate?: ((id: string) => void) | undefined
   onToggleAttachments: () => void
@@ -647,7 +647,7 @@ function SortableBlockInner({
   const deleteWithUndo = useCallback(
     (id: string) => {
       if (!onDelete) return
-      onDelete(id)
+      void onDelete(id)
       notify(t('block.swipe.deleted'), {
         duration: 5000,
         action: {
@@ -685,8 +685,8 @@ function SortableBlockInner({
     // undefined → dead gestures). The structural block actions come from the
     // same BlockActions context as delete; gate on their presence so the
     // gesture stays disabled wherever the action isn't wired.
-    onIndent: onIndent ? () => onIndent(blockId) : undefined,
-    onOutdent: onDedent ? () => onDedent(blockId) : undefined,
+    onIndent: onIndent ? () => void onIndent(blockId) : undefined,
+    onOutdent: onDedent ? () => void onDedent(blockId) : undefined,
   })
 
   // Finding 35 — a fired long-press (or native contextmenu) claims the

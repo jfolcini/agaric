@@ -615,6 +615,10 @@ export function BlockTree({
     onNavigateToPage,
     t,
   })
+  const handleNavigateAction = useCallback(
+    (blockId: string) => void handleNavigate(blockId),
+    [handleNavigate],
+  )
 
   // ── Context-aware placeholder for the editor ────────────────────────
   // Default empty-block placeholder advertises the slash-command palette,
@@ -641,7 +645,7 @@ export function BlockTree({
     resolveBlockStatus: resolve.resolveBlockStatus,
     resolveTagName: resolve.resolveTagName,
     resolveTagStatus: resolve.resolveTagStatus,
-    onNavigate: (id: string) => handleNavigateRef.current(id),
+    onNavigate: (id: string) => void handleNavigateRef.current(id),
     onTagClick,
     searchTags: resolve.searchTags,
     searchPages: resolve.searchPages,
@@ -1008,7 +1012,10 @@ export function BlockTree({
   const whenOwned = <A extends unknown[]>(fn: (...args: A) => void): ((...args: A) => void) =>
     ownsRovingBlock ? fn : () => {}
   dispatch.on('flush', handleFlush)
-  dispatch.on('slashCommand', whenOwned(handleSlashCommand))
+  dispatch.on(
+    'slashCommand',
+    whenOwned((item) => void handleSlashCommand(item)),
+  )
   dispatch.on('checkbox', whenOwned(handleCheckboxSyntax))
   dispatch.on('listStyle', whenOwned(handleListStyleSyntax))
   // #2656 — the `::` picker's extension already inserts the `key:: ` inline
@@ -1245,7 +1252,7 @@ export function BlockTree({
           onShowHistory: handleShowFocusedHistory,
           onDuplicate: handleDuplicateFocused,
           onTurnInto: handleTurnIntoFocused,
-          onFollowLink: handleNavigate,
+          onFollowLink: handleNavigateAction,
           onPageHistory: handlePageHistory,
         }
       : INERT_BLOCK_KEYBOARD_CALLBACKS,
@@ -1479,7 +1486,7 @@ export function BlockTree({
   const handleBatchDeleteAction = useCallback(() => void handleBatchDelete(), [handleBatchDelete])
   const handleOpenLinkInNewTab = useOpenLinkInNewTab(handleNavigate)
   const { blockActions, blockResolvers } = useBlockTreeContextBags({
-    onNavigate: handleNavigate,
+    onNavigate: handleNavigateAction,
     onOpenLinkInNewTab: handleOpenLinkInNewTab,
     onDelete: remove,
     onIndent: handleIndentById,
@@ -1678,7 +1685,9 @@ export function BlockTree({
                 <BlockDatePicker
                   mode={datePickerMode}
                   value={datePickerValue}
-                  onSelect={(day) => day && handleDatePick(day)}
+                  onSelect={(day) => {
+                    if (day) void handleDatePick(day)
+                  }}
                   onClose={() => setDatePickerOpen(false)}
                   onClear={() => void clearPickerDate()}
                 />
@@ -1700,7 +1709,7 @@ export function BlockTree({
               <Suspense fallback={null}>
                 <TemplatePicker
                   templatePages={templatePages}
-                  onSelect={handleTemplateSelect}
+                  onSelect={(templatePageId) => void handleTemplateSelect(templatePageId)}
                   onClose={() => setTemplatePickerOpen(false)}
                 />
               </Suspense>

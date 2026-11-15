@@ -455,7 +455,7 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
 
                 {/* Add block button — directly beneath the last block */}
                 <div>
-                  <AddBlockButton onClick={handleAddBlock} />
+                  <AddBlockButton onClick={() => void handleAddBlock()} />
                 </div>
               </div>
             }

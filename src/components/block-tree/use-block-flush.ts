@@ -85,7 +85,11 @@ export interface UseBlockFlushParams {
    *  `useRovingEditor` is created. May be null on first render. */
   rovingEditorRef: RefObject<RovingEditorHandle | null>
   /** Store action: persist a content edit for a single block. */
-  edit: (blockId: string, content: string, options?: { baseText?: string }) => void
+  edit: (
+    blockId: string,
+    content: string,
+    options?: { baseText?: string },
+  ) => Promise<boolean> | void
   /**
    * Store action: split a single block into multiple at the given content.
    * Resolves `true` only when the split fully committed (see the reducer's

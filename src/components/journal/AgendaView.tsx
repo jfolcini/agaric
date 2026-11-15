@@ -216,7 +216,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
         // #1345 — a load-more failure used to silently return the button to
         // idle with no feedback or retry path. Surface a retryable toast so
         // the user can re-attempt the same page fetch.
-        notify.retry(t('agenda.loadMoreFailed'), loadMoreAgenda)
+        notify.retry(t('agenda.loadMoreFailed'), () => void loadMoreAgenda())
       }
       setAgendaLoading(false)
     },
@@ -260,7 +260,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
         error={agendaError}
         onRetry={retryFilters}
         hasMore={agendaHasMore}
-        onLoadMore={loadMoreAgenda}
+        onLoadMore={() => void loadMoreAgenda()}
         onNavigateToPage={onNavigateToPage}
         hasActiveFilters={isNonDefaultAgendaFilters(agendaFilters)}
         onClearFilters={() => setAgendaFilters(makeDefaultAgendaFilters())}

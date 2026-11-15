@@ -55,6 +55,7 @@ export interface MenuRowContext {
  * child icon under the parent label (icon 14px + `gap-2` 8px + `px-2` 8px).
  */
 export function renderItem(item: MenuItem, ctx: MenuRowContext): React.ReactElement {
+  const { action } = item
   // #264 — the active "Turn into" type renders as a non-interactive
   // indicator: no action, no `itemIndex`, skipped by roving focus. It stays
   // ring-less (#1000) — only interactive rows carry the focus ring.
@@ -110,7 +111,7 @@ export function renderItem(item: MenuItem, ctx: MenuRowContext): React.ReactElem
         item.indented && (item.nested ? 'pl-12' : 'pl-7'),
         item.className,
       )}
-      onClick={item.action}
+      onClick={action === undefined ? undefined : () => void action()}
     >
       {item.icon}
       <span className="flex-1">{item.label}</span>

@@ -81,7 +81,7 @@ function deleteFromMenu(onDelete: (id: string) => void): HTMLElement {
   fireEvent.contextMenu(screen.getByTestId('sortable-block'), { clientX: 10, clientY: 10 })
   expect(screen.getByRole('menu', { name: 'Block actions' })).toBeInTheDocument()
   act(() => {
-    menuActions.current?.onDelete?.('BLOCK_A')
+    void menuActions.current?.onDelete?.('BLOCK_A')
   })
   return container
 }

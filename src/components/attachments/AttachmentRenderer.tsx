@@ -543,32 +543,34 @@ function AttachmentFileChip({
       type="button"
       className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/50 active:bg-accent/70 hover:text-foreground"
       aria-label={t('attachment.openFile', { filename: att.filename })}
-      onClick={async (e) => {
-        e.stopPropagation()
-        if (att.mime_type === 'application/pdf') {
-          // Asset protocol is disabled — read the bytes over IPC and hand
-          // the PDF viewer a blob URL it can fetch via pdfjs getDocument().
-          try {
-            const bytes = await readAttachment(att.id)
-            const url = URL.createObjectURL(bytesToBlob(bytes, att.mime_type))
-            onPdfOpen(url, att.filename, att.id)
-          } catch (err) {
-            logger.warn('AttachmentRenderer', 'read pdf bytes failed', { id: att.id }, err)
-            notify.error(t('attachments.loadFailed'))
+      onClick={(e) =>
+        void (async () => {
+          e.stopPropagation()
+          if (att.mime_type === 'application/pdf') {
+            // Asset protocol is disabled — read the bytes over IPC and hand
+            // the PDF viewer a blob URL it can fetch via pdfjs getDocument().
+            try {
+              const bytes = await readAttachment(att.id)
+              const url = URL.createObjectURL(bytesToBlob(bytes, att.mime_type))
+              onPdfOpen(url, att.filename, att.id)
+            } catch (err) {
+              logger.warn('AttachmentRenderer', 'read pdf bytes failed', { id: att.id }, err)
+              notify.error(t('attachments.loadFailed'))
+            }
+          } else {
+            // Non-image, non-PDF: `fs_path` is backend-relative (the backend owns
+            // storage), so it can't be opened externally. Read the bytes over IPC
+            // and trigger a browser download.
+            try {
+              const bytes = await readAttachment(att.id)
+              await triggerDownload(bytes, att.mime_type, att.filename)
+            } catch (err) {
+              logger.warn('AttachmentRenderer', 'download attachment failed', { id: att.id }, err)
+              notify.error(t('attachments.loadFailed'))
+            }
           }
-        } else {
-          // Non-image, non-PDF: `fs_path` is backend-relative (the backend owns
-          // storage), so it can't be opened externally. Read the bytes over IPC
-          // and trigger a browser download.
-          try {
-            const bytes = await readAttachment(att.id)
-            await triggerDownload(bytes, att.mime_type, att.filename)
-          } catch (err) {
-            logger.warn('AttachmentRenderer', 'download attachment failed', { id: att.id }, err)
-            notify.error(t('attachments.loadFailed'))
-          }
-        }
-      }}
+        })()
+      }
     >
       <MimeIcon mimeType={att.mime_type} />
       <span className="truncate max-w-[200px]">{att.filename}</span>
@@ -688,7 +690,7 @@ function MarkdownAttachment({
           type="button"
           className="ml-auto inline-flex shrink-0 items-center rounded bg-transparent border-0 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
           aria-label={t('attachment.downloadFile', { filename: att.filename })}
-          onClick={handleDownload}
+          onClick={(e) => void handleDownload(e)}
         >
           <Download className="h-3.5 w-3.5" aria-hidden="true" />
         </button>

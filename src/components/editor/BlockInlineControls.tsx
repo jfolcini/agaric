@@ -96,13 +96,13 @@ export function getInlinePropertyLimit(isMobile: boolean): number {
 export interface BlockInlineControlsProps {
   blockId: string
   todoState?: (string | null) | undefined
-  onToggleTodo?: ((blockId: string) => void) | undefined
+  onToggleTodo?: ((blockId: string) => void | Promise<void>) | undefined
 }
 
 export interface BlockMetadataRowProps {
   blockId: string
   priority?: (string | null) | undefined
-  onTogglePriority?: ((blockId: string) => void) | undefined
+  onTogglePriority?: ((blockId: string) => void | Promise<void>) | undefined
   dueDate?: (string | null) | undefined
   scheduledDate?: (string | null) | undefined
   /**
@@ -251,7 +251,7 @@ function PriorityBadge({
 }: {
   blockId: string
   priority: string
-  onTogglePriority?: ((blockId: string) => void) | undefined
+  onTogglePriority?: ((blockId: string) => void | Promise<void>) | undefined
 }): React.ReactElement {
   const { t } = useTranslation()
   return (
@@ -271,7 +271,7 @@ function PriorityBadge({
           onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
             e.stopPropagation()
-            onTogglePriority?.(blockId)
+            void onTogglePriority?.(blockId)
           }}
         >
           <span

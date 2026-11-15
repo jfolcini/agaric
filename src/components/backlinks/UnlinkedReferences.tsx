@@ -650,7 +650,7 @@ export function UnlinkedReferences({
                           variant="ghost"
                           size="sm"
                           className="link-it-button shrink-0 text-xs text-muted-foreground hover:text-primary"
-                          onClick={() => handleLinkIt(block.id, block.content ?? '')}
+                          onClick={() => void handleLinkIt(block.id, block.content ?? '')}
                           aria-label={t('backlinks.linkMention', {
                             text: (block.content ?? '').slice(0, 40),
                           })}

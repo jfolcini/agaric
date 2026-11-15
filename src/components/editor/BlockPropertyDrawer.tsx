@@ -352,8 +352,8 @@ export function BlockPropertyDrawer({
                 dueDate={dueDate}
                 scheduledDate={scheduledDate}
                 hasCustomProperties={properties.length > 0}
-                onSaveDate={handleSaveBuiltinDate}
-                onClearDate={handleClearBuiltinDate}
+                onSaveDate={(field, value) => void handleSaveBuiltinDate(field, value)}
+                onClearDate={(field) => void handleClearBuiltinDate(field)}
               />
             )}
 
@@ -379,7 +379,7 @@ export function BlockPropertyDrawer({
                       blockId={blockId}
                       prop={prop}
                       def={def}
-                      onSave={(v) => handleSave(prop.key, v, propType)}
+                      onSave={(v) => void handleSave(prop.key, v, propType)}
                       onDelete={
                         !SYSTEM_MANAGED_PROPERTY_KEYS.has(prop.key)
                           ? () => handleRemove(prop.key)

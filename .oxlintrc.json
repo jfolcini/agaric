@@ -229,7 +229,8 @@
     "typescript/no-misused-spread": "error",
     "typescript/no-deprecated": "error",
     "eslint/preserve-caught-error": "error",
-    "typescript/switch-exhaustiveness-check": "error"
+    "typescript/switch-exhaustiveness-check": "error",
+    "typescript/no-misused-promises": "error"
   },
   "overrides": [
     {

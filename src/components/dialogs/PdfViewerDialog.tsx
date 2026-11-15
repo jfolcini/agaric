@@ -600,7 +600,7 @@ export function PdfViewerDialog({
             <Button
               variant="default"
               size="sm"
-              onClick={handleSave}
+              onClick={() => void handleSave()}
               disabled={!hasAnnotations || saving}
               aria-label={t('pdfViewer.saveLabel')}
               data-testid="pdf-save"

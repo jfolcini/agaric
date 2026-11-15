@@ -360,7 +360,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         items={tags}
         skeleton={<LoadingSkeleton count={3} height="h-10" loading />}
         error={loadError && t('tags.loadFailed')}
-        onRetry={loadTags}
+        onRetry={() => void loadTags()}
         empty={<EmptyState icon={Tag} message={t('tagList.empty')} />}
       >
         {() => (
@@ -460,7 +460,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                               style={{ backgroundColor: resolveTagBackground(preset.value) }}
                               aria-label={t(`tagList.color.${preset.name}`)}
                               aria-pressed={color === preset.value}
-                              onClick={() => setColor(tag.tag_id, preset.value)}
+                              onClick={() => void setColor(tag.tag_id, preset.value)}
                             />
                           ))}
                         </fieldset>
@@ -475,7 +475,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                             // token-coloured tag falls back to the swatch default.
                             value={color && color.startsWith('#') ? color : '#000000'}
                             aria-label={t('tagList.customColorLabel')}
-                            onChange={(e) => setColor(tag.tag_id, e.target.value)}
+                            onChange={(e) => void setColor(tag.tag_id, e.target.value)}
                           />
                           {t('tagList.customColorLabel')}
                         </label>
@@ -483,7 +483,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                           <button
                             type="button"
                             className="mt-2 flex w-full items-center justify-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                            onClick={() => clearColor(tag.tag_id)}
+                            onClick={() => void clearColor(tag.tag_id)}
                           >
                             <X className="h-3 w-3" />
                             {t('tagList.clearColor')}
@@ -532,7 +532,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         description={t('tags.renameDescription')}
         placeholder={t('tags.renamePlaceholder')}
         ariaLabel={t('tagList.renameInputLabel')}
-        onConfirm={handleRenameTag}
+        onConfirm={(newName) => void handleRenameTag(newName)}
       />
 
       {/* Delete confirmation dialog */}

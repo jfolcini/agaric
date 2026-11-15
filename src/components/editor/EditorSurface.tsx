@@ -49,7 +49,7 @@ export function EditorSurface({
       className="mx-auto h-full max-w-reading rounded-none border-b-0 bg-transparent px-0"
       indent={
         onIndent && onDedent
-          ? { onIndent: () => onIndent(blockId), onOutdent: () => onDedent(blockId) }
+          ? { onIndent: () => void onIndent(blockId), onOutdent: () => void onDedent(blockId) }
           : undefined
       }
     />,

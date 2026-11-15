@@ -576,7 +576,7 @@ export function PageBrowserBatchToolbar({
           <Button
             variant="default"
             size="sm"
-            onClick={handleAddTag}
+            onClick={() => void handleAddTag()}
             disabled={busy || selectedTagId === ''}
             data-testid="page-batch-tag-confirm"
           >
@@ -627,7 +627,7 @@ export function PageBrowserBatchToolbar({
           <Button
             variant="default"
             size="sm"
-            onClick={handleMoveToSpace}
+            onClick={() => void handleMoveToSpace()}
             // Not `busy`: a disabled button drops the focus the confirmation hands back
             // on Cancel, and `handleMoveToSpace` already ignores a click while busy.
             disabled={selectedSpaceId === ''}
@@ -712,7 +712,7 @@ export function PageBrowserBatchToolbar({
           <Button
             variant="default"
             size="sm"
-            onClick={handleSetProperty}
+            onClick={() => void handleSetProperty()}
             disabled={busy || !canSetProperty}
             data-testid="page-batch-property-confirm"
           >

@@ -190,7 +190,7 @@ export function AddPropertyPopover({
             variant="ghost"
             size="sm"
             className="w-full justify-start gap-2"
-            onClick={() => handleAddFromDef(def)}
+            onClick={() => void handleAddFromDef(def)}
           >
             <span className="flex-1 text-left">{formatPropertyName(def.key)}</span>
             <Badge tone="outline" className="font-mono text-xs">
@@ -264,7 +264,7 @@ export function AddPropertyPopover({
           <Button
             size="sm"
             className="w-full"
-            onClick={handleCreateDef}
+            onClick={() => void handleCreateDef()}
             disabled={newDefType === 'select' && newDefOptionsJson === null}
           >
             {t('pageProperty.createDefinitionButton')}
