@@ -1,0 +1,7 @@
+# Session 4216 — main red: the board's drag test parked the pointer in the board's edge zone
+
+Two `QueryBoard.test.tsx` cases went red on main after #6817 (run 43709440243, `vitest (3)`; the scheduled `full-suite-frontend`, which is all `full-suite` failed on): "outlines only a column the lifted card can go to" with `expected [] to deeply equal [ 'now' ]`, then "has no a11y violations with the move menu open", whose click dnd-kit swallowed because the first test never reached its `drop()`.
+
+Cause, in the test: `carryOver` put the pointer 40 px into a column. The first stage column, "later", starts at x=0 in the layout mock, so the pointer sat inside `useAutoScrollOnDrag`'s 50 px left zone, and the board's new `x` loop scrolled it left. A browser clamps `scrollLeft` at 0; happy-dom does not, and its `requestAnimationFrame` is a `setImmediate`, so the offset grows with however many ticks run while the test waits. dnd-kit applied that offset to the columns, and the pointer over "now" landed in the gap between columns. Not #6809 or #6802: neither touches the board. #6817's own CI was green because the scroll is timing-dependent.
+
+Instrumented runs of the hook on the old test: the board scrolled in every run (−3 to −63 px); at −63 px it failed with CI's exact assertion, at −21 px or less it passed. Fix: `carryOver` aims at the column's middle. With it, 4/4 runs with `minScrollLeft=0`, the file 24/24, and `e2e/advanced-query-board.spec.ts` 7/7.

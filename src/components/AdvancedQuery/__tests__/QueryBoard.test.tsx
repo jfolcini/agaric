@@ -564,9 +564,13 @@ describe('QueryBoard', () => {
         await new Promise((resolve) => setTimeout(resolve, 50))
       })
 
+      /**
+       * Mid-column: near the board's edge the board scrolls, and happy-dom's
+       * `scrollLeft` runs below 0, sliding every column out from under the pointer.
+       */
       function carryOver(name: string): void {
-        const { left } = column(name).getBoundingClientRect()
-        fireEvent.pointerMove(document, { clientX: left + 40, clientY: 40, isPrimary: true })
+        const { left, width } = column(name).getBoundingClientRect()
+        fireEvent.pointerMove(document, { clientX: left + width / 2, clientY: 40, isPrimary: true })
       }
 
       /** Press the first card of `from`, carry it past the 8px threshold and over `to`. */
