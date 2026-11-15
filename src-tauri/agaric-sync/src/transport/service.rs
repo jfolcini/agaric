@@ -3,8 +3,8 @@
 //!
 //! # What this owns, and what it deliberately does not
 //!
-//! [`endpoint::lan_only`](crate::transport::endpoint::lan_only) builds a hardened
-//! endpoint; [`driver::run_session`](crate::transport::driver::run_session) drives one
+//! [`endpoint::lan_only`] builds a hardened
+//! endpoint; [`driver::run_session`] drives one
 //! session to a terminal state. Neither owns the thing between them — the loop that
 //! turns "a peer dialled us" into "here is a bi-stream and the identity behind it".
 //! That is this module, and it stops there. It does **not** drive sessions, look up
@@ -60,7 +60,7 @@
 //! [`EndpointId`](iroh::EndpointId) in the
 //! peer's TLS certificate, established by the QUIC handshake before a single
 //! application byte moves. This is plan #3464's D3, and it is the reason
-//! [`driver`](crate::transport::driver) needs only one session loop where the old stack
+//! [`driver`] needs only one session loop where the old stack
 //! needed two: the responder no longer has to read `HeadExchange` to find out who it is
 //! talking to.
 //!
