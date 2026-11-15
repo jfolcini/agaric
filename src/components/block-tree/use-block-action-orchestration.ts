@@ -1016,6 +1016,9 @@ export function useBlockActionOrchestration({
           baseText,
         })
         focusCreated()
+        // The mount `focusCreated` ran puts the caret at the end; what Enter moved
+        // is read from its start, so the next key goes before it.
+        rovingEditorRef.current.editor?.commands.focus('start')
         const focusedAt = performance.now()
         readSplitOffAsTyped(rovingEditorRef.current, createdId, split)
         const splitOk = await splitDone
