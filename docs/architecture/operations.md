@@ -15,6 +15,41 @@ Every interactive command is now in the enforced green tier except `revert_ops` 
 
 **Bounded-horizon projected agenda (#2601).** `projected_agenda_cache` now materializes only the next `HORIZON_OCCURRENCES` (13 × 7 = 91) occurrences per repeating block per date source, instead of every occurrence inside a fixed 365-day window. Reads become a pure O(window) index scan — recurrence expansion happens on the write/rebuild path, never on the interactive hot path. The rebuild records the guaranteed-complete horizon date (`today + HORIZON_DAYS = today + 90`, the tightest daily-cadence bound) in `projected_agenda_horizon`, written in the same transaction as the rows; `list_projected_agenda_inner` falls back to on-the-fly projection for any query whose end date reaches past it, so a sub-year horizon never returns an incomplete page. The rebuild also writes every occurrence in the `BACKWARD_WINDOW_DAYS` (90) before its reference date, so a past journal day's Due panel is the same index scan; a range starting earlier than `rebuild_today - 90` is projected on the fly, on the blocking pool (#5421). A repeat rule / date / todo-state edit rewrites only its own block's rows (`UpdateProjectedAgendaBlock`, #5423), projected from the stored `rebuild_today`; when that is no longer the local date, the edit runs the full rebuild instead, which advances the horizon. Boot, the midnight maintenance job, inbound sync, a `template` change, delete / restore / purge and a cross-page move rebuild in full. A vault that sits idle for days simply serves the rare far-future query from the on-the-fly fallback until the next full rebuild re-anchors `today`. The `bench_list_projected_agenda` green-tier bench warms the cache, then measures the index-scan read across 100/1K/10K/100K — flat under 200 ms because latency tracks the query window, not the fixture size.
 
+### Enter and merge through the app (#6559)
+
+How long Enter and a merge wait, from the key to the backend's answer, on the real app:
+
+```sh
+AGARIC_PERF=1 just e2e-real e2e-tauri/enter-merge-latency.e2e.ts
+```
+
+It splits block 250 of a 2,000-block page in the middle of its text 100 times (`split_block`) and merges each split back with Backspace (`merge_blocks`), on a 3,002-block vault, idle and while `e2e_sync_peer` rewrites a page of its own and the app pulls it; then it pastes 300 lines in page mode five times, each taken back with one Ctrl+Z. The times are the app's own `logLatencySample` lines (Settings › Debug mode), from the key's handler to the block taking focus, and to the backend's answer. Not 100K blocks: the spec's header says why, and `bench_enter_split_and_merge` above times the backend's share at 100K. The lane's runs are a debug backend with the production frontend, in WebKitGTK under Xvfb on a 4-core cloud container, so compare runs on one machine, never with the bench.
+
+Idle and paste from six runs (the spec at `98e1e69` and at `9c27173`, whose idle and paste halves are the same), under sync from the three at `9c27173`; each cell is the band of the runs' p50, then of their p95:
+
+| ms | Enter split, focus | Enter split, answer | Merge, focus | Merge, answer |
+|---|---|---|---|---|
+| Idle, p50 | 197–232 | 321–389 | 163–194 | 227–269 |
+| Idle, p95 | 272–333 | 420–529 | 220–261 | 329–365 |
+| Under sync, p50 | 194–215 | 313–352 | 172–184 | 245–283 |
+| Under sync, p95 | 269–313 | 425–535 | 238–273 | 390–471 |
+
+The 300-line paste saved in 3.5–4.1 s at p50 and 5.3–6.6 s at p95 (`page-mode-save`, five pastes a run), and one Ctrl+Z took it back 30 times in 30. No key was lost idle (1,200 keys); under sync one Backspace in 600 reached nothing (#6814).
+
+What they say:
+
+- **Under sync is inside the idle band** at p50 and at p95: a pull applying beside the keys did not lengthen the wait measurably, though it can lose a key (#6814).
+- **Most of the wait is the frontend's.** Focus reaches the new block 0.2 s after the key, before the backend answers, and since #6617 a key typed meanwhile lands there. The backend's share, the answer less the focus, is about 0.12 s for a split and 0.07 s for a merge in this debug build; the bench's optimized build takes 18 ms and 5 to 8 ms at 100K.
+- **The phone row is missing**: the same lines from logcat, by the steps on #6513.
+
+Go / no-go for what #6559 left open, on these numbers:
+
+- **Faster backend for Enter** (the sibling-slot create #6706 pointed at): no-go. The key does not wait for it, and it is the smaller half of the answer.
+- **Enter right after a merge, and a second Backspace on a blank block, still dropped**: no-go on desktop. The window is the merge's answer, 0.23 to 0.27 s at p50 here; the phone row decides.
+- **Page-mode batching** (#6732): done; a 300-line paste is seconds in this build, and one Ctrl+Z undoes it. Batching a pasted list's style writes was not measured (the paste here is plain lines); no-go until a list paste is.
+- **Keys lost while a pull applies**: go, as #6814.
+- **Writes on a vault pulled from a peer, or with a peer paired before them, are far slower** (a split about 2 s, a 300-line paste 91 s): go, as #6811, before the phone row, since a phone gets its vault by a pull.
+
 ## Architectural decisions that buy responsiveness
 
 ### Materializer apply-cursor semantics (C-2b)
