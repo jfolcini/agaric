@@ -51,6 +51,8 @@ const EDIT: &str = "word ";
 const SAMPLES: usize = 15;
 /// Deltas a boot would import after a snapshot.
 const TAIL: usize = 1_000;
+/// Delta tails [`boot_by_tail_size`] boots from.
+const COMPACTION_TAILS: [usize; 4] = [0, 1_000, 4_000, 16_000];
 
 fn block_id(i: usize) -> String {
     format!("01DURABILITYCOST{i:010}")
@@ -305,6 +307,46 @@ fn boot_with_a_tail(snapshot: &[u8], ids: &[String], scale: &str) -> Vec<u8> {
     session
 }
 
+/// Stage C's compaction threshold (#6521): the boot from saved rows by the
+/// size of the delta tail a space has piled up since its snapshot, and what
+/// folding that tail into a new snapshot costs. Each tail is that many typed
+/// words, one row each, spread over the space.
+fn boot_by_tail_size(snapshot: &[u8], ids: &[String], scale: &str) {
+    let mut live = rehydrate(snapshot);
+    let mut deltas = Vec::new();
+    for tail in COMPACTION_TAILS {
+        while deltas.len() < tail {
+            let id = &ids[(deltas.len() * 7 + 1) % ids.len()];
+            let since = live.version_vector();
+            type_a_word(&mut live, id);
+            deltas.push(live.export_update_since(&since).expect("delta"));
+        }
+        let rows = &deltas[..tail];
+        let bytes: usize = rows.iter().map(Vec::len).sum();
+        Timings::of(5, || {
+            timed(|| {
+                let mut engine = LoroEngine::with_peer_id(DEVICE).expect("engine");
+                let imported = engine
+                    .import_saved_rows(Some(snapshot), rows)
+                    .expect("import");
+                assert!(imported.complete, "no row is missing");
+                engine.rebuild_index_after_import();
+            })
+            .1
+        })
+        .report(
+            &format!("boot: snapshot + a tail of {tail} deltas"),
+            scale,
+            &format!(", {bytes} delta bytes"),
+        );
+    }
+    Timings::of(5, || timed(|| live.export_snapshot().expect("export")).1).report(
+        "compaction: export after the longest tail",
+        scale,
+        "",
+    );
+}
+
 /// A kept sync blob: the bytes one session's update holds, and its import at
 /// boot into the engine the last snapshot rebuilt.
 fn kept_sync_blob(snapshot: &[u8], session: &[u8], scale: &str) {
@@ -534,6 +576,7 @@ async fn measure(n: usize, rounds: usize) {
 
     let session = boot_with_a_tail(&snapshot, &ids, &scale);
     kept_sync_blob(&snapshot, &session, &scale);
+    boot_by_tail_size(&snapshot, &ids, &scale);
 
     edit_transaction(&pool, &snapshot, &ids[ids.len() / 2 + 1], &scale).await;
     import_with_its_delta(&pool, &snapshot, &session, &scale).await;

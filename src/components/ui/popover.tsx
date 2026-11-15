@@ -11,34 +11,27 @@ import { cn } from '@/lib/utils'
 // scroll gesture from chaining to the page behind the menu.
 //
 // #4313 — the cap is `--radix-popover-content-available-height`, NOT
-// `100dvh`. The original `max-h-[calc(100dvh-4rem)]` was written believing
-// "`dvh` tracks the soft keyboard"; it does not. On Android (edge-to-edge /
-// targetSdk 36) the IME shrinks only the VISUAL viewport, so `dvh`, `vh` and
-// `innerHeight` all keep reporting the full screen — which is precisely the
-// fact `computeKeyboardInset` is built on (`lib/keyboard-inset.ts` derives the
-// keyboard height as `innerHeight - (vv.height + vv.offsetTop)`, which would be
-// 0 if `dvh` shrank). Measured on a Pixel 8: the Turn-into popover grew to
-// ~850 CSS px inside a 914 px layout viewport whose bottom ~420 px was
-// keyboard, so its top third rendered ABOVE the screen edge and its rows were
-// unreachable — scrolling could not bring them back, because the container
-// itself was clipped.
+// `100dvh`: `dvh` follows the layout viewport, and anything that shrinks only
+// the VISUAL viewport (a pinch zoom; on Android before #6790, the keyboard)
+// leaves it reporting the full screen. Measured on a Pixel 8 then: the
+// Turn-into popover grew to ~850 CSS px with the keyboard covering the bottom
+// ~420 px, so its top third rendered ABOVE the screen edge, unreachable.
 //
-// The Radix var is already keyboard-aware, and this is the whole fix — do NOT
-// also feed the keyboard height in as bottom `collisionPadding`, which
+// The Radix var already measures the visible band, and this is the whole fix —
+// do NOT also feed the keyboard height in as bottom `collisionPadding`, which
 // subtracts it a second time (see the note on `EDGE_PADDING_PX` below).
 // `PopperContent` positions with `strategy: 'fixed'` and no `collisionBoundary`
 // (`@radix-ui/react-popper` 1.3.7), so `detectOverflow` falls through to
 // `rootBoundary: 'viewport'` → `@floating-ui/dom`'s `getViewportRect`, which
 // takes its width/height from `window.visualViewport` whenever that API exists
 // (`floating-ui.dom.mjs`, `getViewportRect`) — the VISUAL viewport, i.e. the
-// keyboard-free band, in the exact same layout-viewport coordinates
-// `computeKeyboardInset` works in (`y = vv.offsetTop`, `height = vv.height`).
-// `JournalCalendarDropdown` flips against the same signal by hand.
+// band actually on screen. `JournalCalendarDropdown` flips against the same
+// signal by hand.
 //
 // Nor does the primitive need its own `visualViewport` subscription to stay
 // current: `autoUpdate` (which Radix wires up) treats `window.visualViewport`
 // as an overflow ancestor and listens to its `resize`/`scroll`, so a popover
-// that is already open when the IME rises re-runs `size()` too.
+// that is already open when the viewport changes re-runs `size()` too.
 //
 // The `calc(100dvh-4rem)` fallback keeps a sane cap where the var has no value
 // yet. That is jsdom/happy-dom, where nothing ever lays the popper out enough

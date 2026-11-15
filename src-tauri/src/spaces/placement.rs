@@ -42,13 +42,8 @@
 //! ops, which no page's positional undo numbers, so the open pages keep their
 //! undo and redo.
 //!
-//! #6525: before any of that the task saves the engines. A session's imports
-//! are committed to SQL at once but reach `loro_doc_state` only through a
-//! snapshot pass, and boot replay restores local ops only, so a process killed
-//! before the next pass would boot with SQL ahead of its engines. An `Error`,
-//! or a converged `Some(0)`, saves while an engine is dirty: each space's
-//! import commits on its own, so a failed session may have committed some,
-//! and an imported property definition changes no block.
+//! The task saves no engine: an import's delta commits with its projection
+//! (#6521).
 
 use std::sync::Arc;
 
@@ -97,14 +92,6 @@ impl SpacePlacementSink {
     }
 }
 
-/// The snapshot pass a sync session ends with (#6525; see the module docs).
-async fn save_engines_after_session(pool: &SqlitePool, materializer: &Materializer) {
-    let saved = agaric_engine::loro::snapshot::save_engines_and_advance_cursor(pool, materializer)
-        .await
-        .saved;
-    tracing::info!(saved, "loro: persisted snapshots after a sync session");
-}
-
 impl SyncEventSink for SpacePlacementSink {
     fn on_sync_event(&self, event: SyncEvent) {
         let task = match &event {
@@ -115,14 +102,6 @@ impl SyncEventSink for SpacePlacementSink {
                 ..
             } if *changed_blocks != Some(0) => {
                 Some(self.spawn_after_import(remote_device_id.clone(), changed_page_ids.clone()))
-            }
-            // A property-definition-only import changes no block, and a failed
-            // session may have committed an import before it failed; either
-            // way the import dirtied its engine.
-            SyncEvent::Complete { .. } | SyncEvent::Error { .. }
-                if self.materializer.loro_state().registry.dirty_count() > 0 =>
-            {
-                Some(self.spawn_save())
             }
             _ => None,
         };
@@ -139,16 +118,8 @@ impl SyncEventSink for SpacePlacementSink {
 }
 
 impl SpacePlacementSink {
-    fn spawn_save(&self) -> tokio::task::JoinHandle<()> {
-        let pool = self.pool.clone();
-        let materializer = self.materializer.clone();
-        tokio::spawn(async move {
-            save_engines_after_session(&pool, &materializer).await;
-        })
-    }
-
-    /// The work after a session that changed something: save the engines,
-    /// place what came in space-less, repair, then signal open views.
+    /// The work after a session that changed something: place what came in
+    /// space-less, repair, then signal open views.
     fn spawn_after_import(
         &self,
         peer: String,
@@ -160,7 +131,6 @@ impl SpacePlacementSink {
         let materializer = self.materializer.clone();
         let view = self.view.clone();
         tokio::spawn(crate::db::following_a_sync(async move {
-            save_engines_after_session(&pool, &materializer).await;
             let placed =
                 match place_space_less_blocks(&pool, &read_pool, &device_id, &materializer).await {
                     Ok((0, 0)) => false,
@@ -557,11 +527,10 @@ mod tests {
         let task = sink.last_task.lock().unwrap().take().expect("spawned");
         task.await.unwrap();
 
-        // The drain barrier of the session-end save (#6525), the four
-        // rebuilds the placement's `space` op dispatches (#5275, #5426,
-        // #6209: the two tag-ref rebuilds, `RebuildPagesCacheCounts` and
-        // `RebuildPageLinkCache`), and the drain barrier itself.
-        assert_eq!(view.drained.lock().unwrap().clone(), vec![before + 6]);
+        // The four rebuilds the placement's `space` op dispatches (#5275,
+        // #5426, #6209: the two tag-ref rebuilds, `RebuildPagesCacheCounts`
+        // and `RebuildPageLinkCache`), and the drain barrier itself.
+        assert_eq!(view.drained.lock().unwrap().clone(), vec![before + 5]);
         // ...and those rebuilds are what made the tag resolvable.
         let refs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs WHERE tag_id = ?")
             .bind(&tag_id)

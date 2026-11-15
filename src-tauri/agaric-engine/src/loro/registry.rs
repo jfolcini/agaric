@@ -161,10 +161,9 @@ const CHECKPOINT_SETTLE: std::time::Duration = std::time::Duration::from_millis(
 /// device's UUID-v4 `device_id` so the engine's Loro `peer_id` is
 /// stable across the process lifetime.
 ///
-/// Issue #157 sub-item I / #2201 — PER-SPACE dirty tracking gates the
-/// `loro_snapshot_if_dirty` maintenance job so the periodic snapshot tick
-/// re-encodes ONLY the spaces mutated since their last successful persist,
-/// instead of every registered space.
+/// #2201 — PER-SPACE dirty tracking: a snapshot pass re-encodes ONLY the
+/// spaces mutated since their last successful persist, instead of every
+/// registered space.
 ///
 /// Every [`for_space`](Self::for_space) guard marks its space dirty when it
 /// is dropped, whether or not it wrote: the extra per-space snapshot of a
@@ -361,11 +360,7 @@ impl LoroEngineRegistry {
     }
 
     /// #2201 — number of spaces currently dirty (mutated since their last
-    /// successful persist). The `loro_snapshot_if_dirty` maintenance job
-    /// uses `dirty_count() > 0` as its predicate so it skips the snapshot
-    /// pass on a quiescent session — unchanged from the pre-#2201 global
-    /// proxy, only now it counts distinct dirty spaces rather than raw
-    /// `for_space` calls.
+    /// successful persist).
     pub fn dirty_count(&self) -> usize {
         self.dirty.stamps.lock().len()
     }
@@ -1054,8 +1049,7 @@ mod tests {
     /// Issue #157 sub-item I / #2201 — `dirty_count` now counts DISTINCT
     /// dirty spaces (not raw `for_space` calls): marking the same space
     /// twice keeps the count at 1, a second space bumps it to 2, and a
-    /// conditional clear with the captured stamp drops it. Pins the
-    /// `loro_snapshot_if_dirty` predicate (`dirty_count() > 0`) semantics.
+    /// conditional clear with the captured stamp drops it.
     #[test]
     fn dirty_count_tracks_distinct_spaces_and_conditional_clear_2201() {
         let r = LoroEngineRegistry::new();

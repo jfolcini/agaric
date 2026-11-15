@@ -36,6 +36,7 @@ import { Selection } from '@tiptap/pm/state'
 import { type Editor, Extension, ReactNodeViewRenderer, useEditor } from '@tiptap/react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 
+import { pinnedToolbarCover } from '@/components/FormattingToolbar/pinned-toolbar'
 import { posAtTextPoint, type TextPoint } from '@/editor/click-caret'
 import { computeContentDelta, computeLeaveDelta, shouldSplitOnBlur } from '@/editor/content-delta'
 import type { ContentDelta } from '@/editor/content-delta'
@@ -170,6 +171,23 @@ const EDITOR_PROPS = {
     autocorrect: 'on',
     spellcheck: 'true',
     inputmode: 'text',
+  },
+  // The cursor scrolls into view above the toolbar pinned on touch, not under it.
+  scrollThreshold: {
+    top: 0,
+    right: 0,
+    left: 0,
+    get bottom() {
+      return pinnedToolbarCover(document.querySelector('.formatting-toolbar[data-pinned]'))
+    },
+  },
+  scrollMargin: {
+    top: 5,
+    right: 5,
+    left: 5,
+    get bottom() {
+      return 5 + pinnedToolbarCover(document.querySelector('.formatting-toolbar[data-pinned]'))
+    },
   },
 } as const
 

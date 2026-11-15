@@ -5,10 +5,11 @@
  * board that keeps the list's single query, shows up here as cards in the
  * wrong column.
  */
-import type { Locator, Page } from '@playwright/test'
+import { devices, type Locator, type Page } from '@playwright/test'
 
 import {
   chooseSelectOption,
+  dndClickGuardLifted,
   expect,
   expectNoHorizontalOverflow,
   navigateToView,
@@ -39,6 +40,40 @@ async function moveCard(page: Page, from: string, text: string, to: string): Pro
     .getByRole('dialog', { name: 'Move to…' })
     .getByRole('button', { name: to, exact: true })
     .click()
+}
+
+const centre = async (locator: Locator): Promise<{ x: number; y: number }> => {
+  const box = await locator.boundingBox()
+  if (!box) throw new Error('no layout box')
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+}
+
+/** Two frames: the last move's render, then dnd-kit's "over" state from its effect. */
+const renderedFrame = (page: Page): Promise<unknown> =>
+  page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+
+/** dnd-kit's live region, while it says something about the card with `text`. */
+const announced = (page: Page, text: string): Locator =>
+  page.locator('[id^="DndLiveRegion-"]').filter({ hasText: text })
+
+/** Real touches through Chromium's own pipeline, as on a device (`withTouch` in helpers.ts). */
+async function touches(
+  page: Page,
+  run: (
+    send: (type: 'touchStart' | 'touchMove' | 'touchEnd', x?: number, y?: number) => Promise<void>,
+  ) => Promise<void>,
+): Promise<void> {
+  const cdp = await page.context().newCDPSession(page)
+  try {
+    await run(async (type, x, y) => {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type,
+        touchPoints: x === undefined || y === undefined ? [] : [{ x, y }],
+      })
+    })
+  } finally {
+    await cdp.detach()
+  }
 }
 
 /** Leave Advanced Query and come back, so every column is queried afresh. */
@@ -149,4 +184,103 @@ test('the board scrolls sideways inside a phone-width view @search @mobile', asy
   await expectNoHorizontalOverflow(page)
   await column(page, 'No value').scrollIntoViewIfNeeded()
   await expect(column(page, 'No value')).toBeInViewport()
+})
+
+test('a card dragged onto another column moves there, and the toast takes it back @search', async ({
+  page,
+}) => {
+  await seedSearchBlocks(page, [{ content: 'Board spec dragged', todo: 'TODO' }])
+  await openStateBoard(page)
+  await column(page, 'DOING').evaluate((el) => el.scrollIntoView({ block: 'center' }))
+  const from = await centre(card(page, 'TODO', 'Board spec dragged'))
+  const to = await centre(column(page, 'DOING'))
+
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 20; i++) {
+    await page.mouse.move(from.x + ((to.x - from.x) * i) / 20, from.y + ((to.y - from.y) * i) / 20)
+  }
+  await expect(page.getByTestId('query-board-drag-overlay')).toHaveText('Board spec dragged')
+  await renderedFrame(page)
+  await page.mouse.up()
+  await dndClickGuardLifted(page)
+
+  const toast = page.locator('[data-sonner-toast]').filter({ hasText: 'Moved to DOING' })
+  await expect(toast).toBeVisible()
+  await expect(card(page, 'DOING', 'Board spec dragged')).toHaveCount(1)
+  await expect(card(page, 'TODO', 'Board spec dragged')).toHaveCount(0)
+  await expect(announced(page, 'Board spec dragged')).toHaveText(
+    'Board spec dragged dropped over DOING.',
+  )
+  // The drop opened nothing: the board is still on screen.
+  await expect(page.getByTestId('query-board')).toBeVisible()
+
+  await reopenBoard(page)
+  await expect(card(page, 'DOING', 'Board spec dragged')).toHaveCount(1)
+
+  await moveCard(page, 'DOING', 'Board spec dragged', 'TODO')
+  await expect(card(page, 'TODO', 'Board spec dragged')).toHaveCount(1)
+})
+
+test.describe('The board on a touch tablet @search @mobile', () => {
+  const tablet = devices['iPad Pro 11 landscape']
+  test.use({ viewport: tablet.viewport, hasTouch: true, isMobile: tablet.isMobile })
+
+  test('a long press picks a card up and a drop moves it; a swipe scrolls the board', async ({
+    page,
+  }) => {
+    await seedSearchBlocks(page, [{ content: 'Board spec touched', todo: 'TODO' }])
+    await openStateBoard(page)
+    const viewport = page
+      .getByTestId('query-board')
+      .locator('[data-slot="scroll-area-viewport"]')
+      .first()
+    // Mid-screen, clear of the edges where dnd-kit scrolls under a held card.
+    await column(page, 'TODO').evaluate((el) => el.scrollIntoView({ block: 'center' }))
+
+    // A quick swipe across the card scrolls the board sideways and lifts nothing.
+    const swipe = await centre(card(page, 'TODO', 'Board spec touched'))
+    await touches(page, async (send) => {
+      await send('touchStart', swipe.x, swipe.y)
+      for (let i = 1; i <= 10; i++) await send('touchMove', swipe.x - i * 30, swipe.y)
+      await send('touchEnd')
+    })
+    await expect.poll(() => viewport.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0)
+    // Nothing was picked up: the drop below shows the region would say so.
+    await expect(announced(page, 'Board spec touched')).toHaveCount(0)
+    await viewport.evaluate((el) => {
+      el.scrollLeft = 0
+    })
+    await dndClickGuardLifted(page)
+    await expect(card(page, 'TODO', 'Board spec touched')).toHaveCount(1)
+
+    const from = await centre(card(page, 'TODO', 'Board spec touched'))
+    const to = await centre(column(page, 'DOING'))
+    await touches(page, async (send) => {
+      await send('touchStart', from.x, from.y)
+      // The card lifts once the long-press hold has passed.
+      await expect(page.getByTestId('query-board-drag-overlay')).toHaveText('Board spec touched')
+      for (let i = 1; i <= 20; i++) {
+        await send(
+          'touchMove',
+          from.x + ((to.x - from.x) * i) / 20,
+          from.y + ((to.y - from.y) * i) / 20,
+        )
+      }
+      await renderedFrame(page)
+      await send('touchEnd')
+    })
+    await dndClickGuardLifted(page)
+
+    await expect(
+      page.locator('[data-sonner-toast]').filter({ hasText: 'Moved to DOING' }),
+    ).toBeVisible()
+    await expect(card(page, 'DOING', 'Board spec touched')).toHaveCount(1)
+    await expect(announced(page, 'Board spec touched')).toHaveText(
+      'Board spec touched dropped over DOING.',
+    )
+    await reopenBoard(page)
+    await expect(card(page, 'DOING', 'Board spec touched')).toHaveCount(1)
+    await expect(card(page, 'TODO', 'Board spec touched')).toHaveCount(0)
+  })
 })
