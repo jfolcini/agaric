@@ -3172,7 +3172,7 @@ jobs:
           # `pinned_version_for` in scripts/setup-hooks.sh and the other
           # tool: lists in this repo. Verified by
           # scripts/check-tool-pins.mjs. shellcheck/shfmt pinned the same way (#6762).
-          tool: prek@0.5.10,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.52.0,sqruff@0.44.0,shellcheck@0.11.0,shfmt@3.14.1
+          tool: prek@0.5.10,zizmor@1.32.0,taplo-cli@0.10.0,typos-cli@1.52.0,sqruff@0.44.0,shellcheck@0.11.0,shfmt@3.14.1
 
       - name: Install cargo plugins via prebuilt binaries
         # cargo-deny/cargo-machete/cargo-audit are invoked by prek Rust hooks.
