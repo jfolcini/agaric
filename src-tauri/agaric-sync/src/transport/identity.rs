@@ -89,7 +89,7 @@ pub fn decode_secret_hex(raw: &str) -> Result<SecretKey, AppError> {
         )));
     }
     let mut bytes = [0u8; 32];
-    for (i, chunk) in trimmed.as_bytes().chunks_exact(2).enumerate() {
+    for (i, chunk) in trimmed.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let pair = std::str::from_utf8(chunk).map_err(|_| identity_err("key file is not UTF-8"))?;
         bytes[i] = u8::from_str_radix(pair, 16)
             .map_err(|_| identity_err(format!("key file byte {i} is not hex")))?;

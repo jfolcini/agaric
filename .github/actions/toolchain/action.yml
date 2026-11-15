@@ -84,7 +84,7 @@ runs:
       with:
         # #640: exact pin, kept in lockstep with rust-toolchain.toml and
         # src-tauri/Cargo.toml `rust-version`.
-        toolchain: 1.95.0
+        toolchain: 1.99.1
         # The install is `--profile minimal`, which ships neither component;
         # the cargo-fmt / clippy prek hooks need both.
         components: clippy,rustfmt

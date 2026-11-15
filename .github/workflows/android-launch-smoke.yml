@@ -54,7 +54,7 @@ jobs:
         with:
           # #640: exact toolchain pin — keep in lockstep with
           # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          toolchain: 1.95.0
+          toolchain: 1.99.1
           targets: x86_64-linux-android
 
       - name: Set up JDK 17

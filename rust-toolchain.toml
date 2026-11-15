@@ -9,7 +9,7 @@
 #   * the `toolchain:` input on every `./.github/actions/rust-toolchain` step
 #     (.github/workflows/*.yml and .github/actions/toolchain)
 #   * `rust-version` in src-tauri/Cargo.toml (MSRV documentation)
-channel = "1.95.0"
+channel = "1.99.1"
 # clippy + rustfmt are required by the prek hooks (`cargo clippy -- -D
 # warnings`, `cargo fmt --check`). With a floating `stable` they came along
 # implicitly (full-profile installs); a pinned exact version is typically a

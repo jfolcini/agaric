@@ -194,7 +194,7 @@ jobs:
         uses: ./.github/actions/rust-toolchain
         with:
           # Keep in lockstep with rust-toolchain.toml / src-tauri/Cargo.toml.
-          toolchain: 1.95.0
+          toolchain: 1.99.1
 
       - name: Rust cache (mcp-tests' entry, read-only)
         # `mcp-tests` compiles the same dev profile of the same dependency graph

@@ -13,7 +13,7 @@ name = "agaric-engine"
 version = "0.1.0"
 edition = "2024"
 # Keep in lockstep with ../Cargo.toml (the app crate) + rust-toolchain.toml.
-rust-version = "1.95.0"
+rust-version = "1.99.1"
 license = "GPL-3.0-or-later"
 publish = false
 
