@@ -11,7 +11,7 @@
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createElement } from 'react'
 import { toast } from 'sonner'
@@ -1365,6 +1365,18 @@ describe("BlockPropertyDrawer values that don't fit", () => {
     expect(await screen.findByLabelText(t('property.valueLabel', { key: 'note' }))).toHaveValue(
       'a, "b, c"',
     )
+  })
+
+  // #6741 — an undeclared key's list, as an import writes one, is its items.
+  it("shows an undeclared key's list as its items", async () => {
+    setupMock([makeProp('note', { value_list: ['a', 'b, c'] })], [])
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+    const items = await screen.findByRole('group', {
+      name: t('pageProperty.valueLabel', { key: 'note' }),
+    })
+    expect(within(items).getByText('b, c')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue(/b, c/)).not.toBeInTheDocument()
   })
 
   it("shows a ref under a number key as its target's title, and an untouched blur writes nothing", async () => {

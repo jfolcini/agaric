@@ -94,6 +94,7 @@ export function PropertyRowEditor({
   const valueLabel = t('pageProperty.valueLabel', { key: prop.key })
   const unfit = isUnfit(prop.key, valueForm(prop), prop.value_text, def, prop.value_list ?? null)
   const refTitle = useRefTitle(prop.value_ref)
+  const listDef = listDefinition(prop, def)
 
   return (
     <div className="property-row flex items-center gap-2 text-sm">
@@ -101,11 +102,11 @@ export function PropertyRowEditor({
         {formatPropertyName(prop.key)}
       </Badge>
       <div className="flex-1">
-        {def?.multiple ? (
+        {listDef ? (
           <ListEditor
             blockId={blockId}
             prop={prop}
-            def={def}
+            def={listDef}
             refPicker={bag.refPicker}
             ariaLabel={valueLabel}
             hasCreateNewPage={onCreateNewPage != null}
@@ -139,6 +140,27 @@ export function PropertyRowEditor({
       )}
     </div>
   )
+}
+
+/**
+ * The definition a row's list editor works under: the row's own when it holds
+ * several values, and for a list under an undeclared key a list of text, as
+ * an imported list's items are (#6741). `null` for a row edited as one value.
+ */
+export function listDefinition(
+  prop: PropertyRow,
+  def: PropertyDefinition | undefined,
+): PropertyDefinition | null {
+  if (def?.multiple === true) return def
+  if (def !== undefined || prop.value_list == null) return null
+  return {
+    key: prop.key,
+    value_type: 'text',
+    options: null,
+    created_at: '',
+    builtin: false,
+    multiple: true,
+  }
 }
 
 export interface EditorSlotProps {

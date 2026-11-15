@@ -26,6 +26,7 @@ import {
 } from '@/editor/source-buffer-document'
 import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, PageSort, commands } from '@/lib/bindings'
+import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { CROCKFORD_BASE32, ulidToDate } from '@/lib/format'
 import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
@@ -554,9 +555,10 @@ export function assertValidSetPropertyValue(
 
 /**
  * #6741 — `validate_list_items` (`op.rs`), then `validate_list_value`
- * (`block_ops.rs`): a list has an item, none of them blank; only a definition
- * that holds a list takes one; and each item is held to the definition's type
- * as a single value is.
+ * (`block_ops.rs`): a list has an item, none of them blank; a definition that
+ * holds a list takes one, and so does an undeclared key the app does not keep
+ * for itself; and each item is held to the definition's type as a single
+ * value is.
  */
 export function assertValidListValue(
   key: string,
@@ -567,6 +569,7 @@ export function assertValidListValue(
   if (list.some((item) => typeof item === 'string' && item.replace(RUST_TRIM, '') === '')) {
     throw validationRejection('set_property.value_list.item_empty')
   }
+  if (def === undefined && !INTERNAL_PROPERTY_KEYS.has(key)) return
   if (def?.['multiple'] !== true) {
     throw validationRejection(`Property '${key}' holds one value, not a list.`)
   }

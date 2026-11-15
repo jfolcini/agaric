@@ -101,7 +101,7 @@ Logseq 2.0 turned this into its strongest domain. Agaric is behind, not ahead.
 | --- | --- | --- | --- |
 | Typed values | OG: untyped text. **2.0: typed** Text, Number, Date, DateTime, Checkbox, Url, Node, and the `:schema :type` registry lists more (e.g. `:page`), with correct numeric sort; 2.0.2 adds Number defaults (#13724) | Text, number, date, select, ref, boolean, **url** (`src-tauri/migrations/0120_property_definitions_allow_url.sql`, #5142) | Done |
 | Schema registry | 2.0: properties are pages with their own config | `property_definitions` **per space** (`src-tauri/migrations/0129_property_definitions_per_space.sql`), synced as ops with the later change to a key winning (#5841). Settings › Properties shows how many live blocks use each key, renames a key, merges it into another, changes its type with a preview, renames a select option, and lists, converts or moves the values that do not fit (#5841, #6206), which are marked on their chip, in the Properties table and in the drawer (#6238). The built-ins are code constants (`BUILTIN_PROPERTY_DEFS` in `src-tauri/agaric-store/src/op.rs`) and locked (`BuiltinPropertyLocked`, #6017) | Done |
-| Multi-value | OG: opt-in comma splitting. **2.0: first-class multi-value on most types** | **Absent.** `PRIMARY KEY (block_id, key)` makes it structurally impossible (#6741) | Gap |
+| Multi-value | OG: opt-in comma splitting. **2.0: first-class multi-value on most types** | A definition of any type but boolean can **hold several values**: a multi-select, a list of pages, edited as chips and typed as `key:: a, "b, c"`. A filter holds when one item matches, grouping puts a block under each item, and Markdown import and export carry a YAML list item for item (`docs/features/properties.md`, #6741). Two devices that edit one list before they sync keep the later list whole | Done |
 | Default values / choices | 2.0: default value, enum choices with icons + ordering, per-tag scoping, checkbox-state mapping | `select` options only; `todo_state` and `priority` options now frozen (#6017) | Partial |
 | Property display control | 2.0: UI position, hide-by-default, hide-empty | Fixed layout: inline chips (ref and boolean chips, #5862) + drawer | Gap |
 | Constrained references | 2.0: a Node property can be constrained to nodes carrying a given tag | `ref` type accepts any page | Partial |
@@ -291,8 +291,8 @@ Each line counts the rows of one section by the status Agaric earned there: **Ah
 | 1. Block Model | 2 | 5 | 6 | 0 |
 | 2. Page Model | 2 | 7 | 1 | 0 |
 | 3. Editor & Formatting | 7 | 11 | 3 | 1 |
-| 4. Linking System | 2 | 3 | 8 | 0 |
-| 5. Properties | 0 | 4 | 5 | 0 |
+| 4. Linking System | 2 | 4 | 7 | 0 |
+| 5. Properties | 0 | 5 | 4 | 0 |
 | 6. Tags | 1 | 2 | 2 | 1 |
 | 7. Query System | 1 | 5 | 6 | 0 |
 | 8. Task Management | 4 | 4 | 4 | 0 |
@@ -304,7 +304,7 @@ Each line counts the rows of one section by the status Agaric earned there: **Ah
 | 14. Templates | 3 | 2 | 1 | 0 |
 | 15. Import / Export | 2 | 1 | 6 | 0 |
 | 16. Mobile & Platforms | 0 | 4 | 2 | 0 |
-| **Total (165 rows)** | **46** | **60** | **56** | **3** |
+| **Total (165 rows)** | **46** | **62** | **54** | **3** |
 <!-- scorecard:end -->
 
 ### By category, in points
@@ -317,7 +317,7 @@ A judgment, not a count: each product is scored 1 to 10 per category on what it 
 | Page management | 9 | 9 | 9 | Names made on two devices settle after a sync |
 | Editor formatting | 8 | 8 | 9 | Page mode is opt-in and capped |
 | Linking system | 10 | 9 | 7 | No inline reference content, no count on the referenced block, a pages-only link picker |
-| Properties | 6 | 10 | 8 | One value per property, no defaults or display control |
+| Properties | 6 | 10 | 9 | No defaults or display control; a list two devices edit before they sync keeps one device's whole |
 | Tags | 8 | 10 | 7 | Labels, not classes |
 | Query system | 9 | 9 | 8 | A board, picked columns, editable table cells, text queries and synced views; no Datalog, and no negated group, range or comparison in the text |
 | Task management | 7 | 8 | 8 | Fixed states, no time tracking |
@@ -333,7 +333,7 @@ A judgment, not a count: each product is scored 1 to 10 per category on what it 
 | Mobile | 5 | 4 | 5 | Sideloaded Android, no iOS |
 | Extensibility / ecosystem | 9 | 6 | 3 | A stylesheet, MCP, links and the mirror's files; no plugin API |
 | Project risk | 4 | 5 | 3 | One maintainer |
-| **Total** | **127** | **144** | **150** | |
+| **Total** | **127** | **144** | **151** | |
 
 How to read it:
 

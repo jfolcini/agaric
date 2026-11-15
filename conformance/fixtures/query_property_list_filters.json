@@ -1,5 +1,5 @@
 {
-  "description": "#6741 — the property filters over a list row, on every surface that compiles one: `run_advanced_query` (the compiler Pages, Search and the advanced query share), `list_backlinks_grouped` (the References panel), `filtered_blocks_query` (the agenda's property filter) and `list_property_values` (the value picker). A comparison holds for a list when it holds for at least one item; `Ne` holds when no item is equal. A text, ref or date value compares the string items, a number the number items, so neither kind reaches the other. On the advanced query `Ne` matches a block without the key; on the References panel it needs the key and an item of the value's kind; on `filtered_blocks_query` `neq` needs the key and no equal string item. `Exists` / `NotExists` test the key. The picker offers the items of a text, select or url list, not a ref or number list's. S3 `authors = [Ann, Bob]`, `points = [3, 7.5]`, `when = [2026-01-01, 2026-05-01]`, `related = [S2]`; S4 `authors = [Cy]`, `points = [10]`; S5 nothing; S6 `authors = [Ann]`, `when = [2026-02-02]`. S3..S6 each link to S1. Grouping by a list key is not pinned: the mock stubs grouped aggregates. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#6741 — the property filters over a list row, on every surface that compiles one: `run_advanced_query` (the compiler Pages, Search and the advanced query share), `list_backlinks_grouped` (the References panel), `filtered_blocks_query` (the agenda's property filter) and `list_property_values` (the value picker). A comparison holds for a list when it holds for at least one item; `Ne` holds when no item is equal. A text, ref or date value compares the string items, a number the number items, so neither kind reaches the other. On the advanced query `Ne` matches a block without the key; on the References panel it needs the key and an item of the value's kind; on `filtered_blocks_query` `neq` needs the key and no equal string item. `Exists` / `NotExists` test the key. The picker offers the items of a text, select or url list, not a ref or number list's, and counts an item a list repeats once: `Cy` is used once, after `Ann`'s two and beside `Bob`'s one. S3 `authors = [Ann, Bob]`, `points = [3, 7.5]`, `when = [2026-01-01, 2026-05-01]`, `related = [S2]`; S4 `authors = [Cy, Cy]`, `points = [10]`; S5 nothing; S6 `authors = [Ann]`, `when = [2026-02-02]`. S3..S6 each link to S1. Grouping by a list key is not pinned: the mock stubs grouped aggregates. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -888,7 +888,7 @@
         "blockId": "S4",
         "key": "authors",
         "value": {
-          "value_list": ["Cy"]
+          "value_list": ["Cy", "Cy"]
         }
       },
       "command": "set_property"

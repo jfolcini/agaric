@@ -63,7 +63,11 @@ pub(crate) async fn copy_page_blocks_in_tx(
     }
     let blocks = expand_or_drop(parsed.blocks, expand);
     let dest = BlockId::from_trusted(dest_page_id);
-    let lines = PropertyLines::load_for_block(tx, &dest, PropertyWrite::Copy).await?;
+    let mut lines = PropertyLines::load_for_block(tx, &dest, PropertyWrite::Copy).await?;
+    // #6741 — a copy writes back each list its blocks held, declared or not.
+    for (key, text) in undeclared_lists(&data) {
+        lines.note_list(key, text);
+    }
     Box::pin(create_parsed_blocks(
         tx,
         materializer,

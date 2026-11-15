@@ -1,5 +1,5 @@
 {
-  "description": "#6741 — a property that holds a list. A definition declared `multiple` takes a `value_list`, a JSON array of strings or numbers held to the definition's type item by item, and takes nothing else; no other key takes a list. The list is one value: a set replaces it whole, its undo restores the list it replaced, and a delete's undo restores the one it removed. Driven through the commands themselves (`via: \"command\"`).",
+  "description": "#6741 — a property that holds a list. A definition declared `multiple` takes a `value_list`, a JSON array of strings or numbers held to the definition's type item by item, and takes nothing else; an undeclared key takes a list of strings or numbers as it takes any value, but one the app keeps for itself, and a key that holds one value or a built-in key refuses one. The list is one value: a set replaces it whole, its undo restores the list it replaced, and a delete's undo restores the one it removed. Driven through the commands themselves (`via: \"command\"`).",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -200,12 +200,6 @@
       "code": null,
       "error": "validation",
       "name": "a_single_value_under_a_list_key_is_refused",
-      "returns": []
-    },
-    {
-      "code": null,
-      "error": "validation",
-      "name": "a_list_under_an_undeclared_key_is_refused",
       "returns": []
     },
     {
@@ -495,13 +489,26 @@
         "blockId": "S3",
         "key": "note",
         "value": {
+          "value_list": ["a", 3]
+        }
+      },
+      "command": "set_property",
+      "comment": "An undeclared key takes any value shape, a list too.",
+      "name": "an_undeclared_key_takes_a_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "template",
+        "value": {
           "value_list": ["a"]
         }
       },
       "command": "set_property",
-      "comment": "Only a definition that holds a list takes one.",
+      "comment": "A key the app keeps for itself refuses a list, declared or not.",
       "expect_error": "validation",
-      "name": "a_list_under_an_undeclared_key_is_refused",
+      "name": "a_list_under_an_internal_key_is_refused",
       "via": "command"
     },
     {

@@ -34,7 +34,7 @@ The table is the summary. [The feature matrix](COMPARISON-LOGSEQ-MATRIX.md) has 
 | Writing a page as one document | An outliner throughout: a page is edited block by block | Block mode, plus page mode (one editor for the page, off by default) and *Edit as Markdown* (the page as plain text) |
 | Block references | File version: `((uuid))`. DB version: blocks are referenced with `[[ ]]` like pages | `((id))` shows a one-line chip with a peek (a hover, or a long press on a phone), not the block's content |
 | Embeds | An embed shows the whole block | An embed shows a block or page live, text only: no checkboxes, properties or attachments in its rows. Text is editable in place after an unlock; structure is not |
-| Properties | DB version: Text, Number, Date, DateTime, Checkbox, Url and Node types; several values per property; defaults and choices; properties that list their reverse side | Text, number, date, select, reference, boolean and URL. One value per property. Definitions are per space, sync, and can be renamed, merged and retyped |
+| Properties | DB version: Text, Number, Date, DateTime, Checkbox, Url and Node types; several values per property; defaults and choices; properties that list their reverse side | Text, number, date, select, reference, boolean and URL, every type but boolean also holding several values. Definitions are per space, sync, and can be renamed, merged and retyped |
 | Tags | DB version: a tag is a class ("supertag") whose properties its nodes inherit, with parents through `Extends` | A tag is a label with a colour and its own listing page. `/` in a name nests the tag: a filter on the parent finds it, and the Tags view shows the tree. No classes |
 | Queries | Simple queries and Datalog advanced queries with custom views and result transforms. DB version: a query builder, and table, list and gallery views with filter, sort and group | A visual builder with nested AND / OR / NOT, sort, group and summaries; query blocks typed in the search syntax; results as a list, a table whose cells edit their block, or a board. No Datalog, no custom transforms, no gallery, and a query reads one space |
 | Tasks | File version: `TODO`/`DOING` or `LATER`/`NOW` markers and more, A/B/C priorities, scheduled and deadline dates, repeaters, time tracking. DB version: statuses you can add to, and a status history with time spent | Four fixed states, three priority levels, due and scheduled dates, repeat rules with an end date or count. No time tracking and no custom states |
@@ -57,7 +57,7 @@ The table is the summary. [The feature matrix](COMPARISON-LOGSEQ-MATRIX.md) has 
 ## Where Logseq is the better tool
 
 - **You want your notes as files.** The file version is the only one of the three whose notes are plain files on every platform.
-- **You model data.** Classes, inherited and multi-value properties, and table views on a tag are well ahead of Agaric's flat tags and single-value properties.
+- **You model data.** Classes, inherited properties, defaults, and table views on a tag are well ahead of Agaric's flat tags and plain property definitions.
 - **You write queries.** Datalog reaches joins and transforms that Agaric's builder cannot express.
 - **You depend on plugins**, custom JS, flashcards, whiteboards (file version), publishing or time tracking.
 - **Your devices are not on one network**, you need an iPhone, or you work with other people.

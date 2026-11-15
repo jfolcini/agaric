@@ -1762,6 +1762,7 @@ pub async fn create_property_def_in_tx(
     key: &str,
     value_type: &str,
     options: Option<&str>,
+    multiple: bool,
 ) -> Result<(), AppError> {
     validate_property_def_shape(key, value_type, options)?;
     if user_property_def(tx, space_id, key).await?.is_some() {
@@ -1770,7 +1771,7 @@ pub async fn create_property_def_in_tx(
     let def = PropertyDefState {
         value_type: value_type.to_owned(),
         options: options.map(str::to_owned),
-        multiple: false,
+        multiple,
     };
     write_property_def_in_tx(tx, state, device_id, space_id, key, Some(def)).await
 }
@@ -1895,7 +1896,10 @@ pub async fn seed_default_property_defs_in_tx(
     space_id: &str,
 ) -> Result<(), AppError> {
     for (key, value_type, options) in DEFAULT_PROPERTY_DEFS {
-        create_property_def_in_tx(tx, state, device_id, space_id, key, value_type, options).await?;
+        create_property_def_in_tx(
+            tx, state, device_id, space_id, key, value_type, options, false,
+        )
+        .await?;
     }
     Ok(())
 }

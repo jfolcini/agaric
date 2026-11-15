@@ -152,7 +152,7 @@ async fn describe(pool: &SqlitePool, id: &str) -> String {
 async fn properties(pool: &SqlitePool, id: &str) -> Vec<(String, String)> {
     sqlx::query_as(
         "SELECT key, COALESCE(value_text, CAST(value_num AS TEXT), value_date, value_ref, \
-         CAST(value_bool AS TEXT)) FROM block_properties \
+         CAST(value_bool AS TEXT), value_list) FROM block_properties \
          WHERE block_id = ? AND key NOT IN ('created_at', 'completed_at') ORDER BY key",
     )
     .bind(id)
@@ -521,8 +521,8 @@ async fn import_stores_block_style_front_matter_lists_as_aliases_tags_and_proper
     assert_eq!(aliases, ["Al", "Bee"]);
     assert_eq!(
         describe(&pool, &result.page_id).await,
-        "\"Note\" category=notes cssclasses=wide, dark tags=[\"a/b\", \"c\"]",
-        "a flow sequence is one comma-joined text property"
+        "\"Note\" category=notes cssclasses=[\"wide\",\"dark\"] tags=[\"a/b\", \"c\"]",
+        "a flow sequence is a list, item for item, under an undeclared key (#6741)"
     );
     assert_eq!(tag_block_names(&pool).await, ["a/b", "c"]);
     assert_eq!(
@@ -530,6 +530,50 @@ async fn import_stores_block_style_front_matter_lists_as_aliases_tags_and_proper
         ["\"body\" listStyle=bullet"]
     );
     assert_eq!(result.warnings, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// #6741 — a YAML list is a list value item for item, an item holding a comma
+/// one item, under a key declared to hold a list and under an undeclared key;
+/// a key declared to hold one value takes the items joined, as before lists.
+/// The export writes each list back as the YAML list it came from, which
+/// imports again as the same lists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_stores_a_front_matter_list_as_a_list_and_export_writes_it_back_6741() {
+    let (pool, dir, mat) = fixture().await;
+    for (key, multiple) in [("authors", true), ("editor", false)] {
+        let def = agaric_store::op::PropertyDefState {
+            value_type: "text".into(),
+            options: None,
+            multiple,
+        };
+        create_property_def_state_inner(&pool, DEV, &mat, TEST_SPACE_ID, key.into(), def)
+            .await
+            .unwrap();
+    }
+    let md = "---\nauthors: [\"Smith, John\", \"Doe, Jane\"]\neditor:\n  - Ann\n  - Bob\n\
+              keywords: [x, \"y, z\"]\n---\n- body\n";
+    let result = import(&pool, &mat, dir.path(), "Note.md", md, MD, None).await;
+    let lists = "\"Note\" authors=[\"Smith, John\",\"Doe, Jane\"] editor=Ann, Bob \
+                 keywords=[\"x\",\"y, z\"]";
+    assert_eq!(describe(&pool, &result.page_id).await, lists);
+    assert_eq!(result.warnings, Vec::<String>::new());
+
+    let exported = export_page_markdown_inner(&pool, &result.page_id)
+        .await
+        .unwrap();
+    for line in [
+        "authors: [\"Smith, John\", \"Doe, Jane\"]\n",
+        "editor: Ann, Bob\n",
+        "keywords: [x, \"y, z\"]\n",
+    ] {
+        assert!(exported.contains(line), "`{line}` in:\n{exported}");
+    }
+    let again = import(&pool, &mat, dir.path(), "Note2.md", &exported, MD, None).await;
+    assert_eq!(
+        describe(&pool, &again.page_id).await,
+        lists.replace("\"Note\"", "\"Note2\"")
+    );
     mat.shutdown();
 }
 
