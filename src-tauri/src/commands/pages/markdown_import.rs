@@ -130,6 +130,15 @@ pub(super) fn parse_import_payload(
         block.content = import::rewrite_logseq_image_sizes(&block.content);
     }
     normalize_foreign_forms(&mut parse_output.blocks, names_note);
+    let comments: usize = (parse_output.blocks.iter())
+        .filter(|block| !block.is_code)
+        .map(|block| import::inline_comment_count(&block.content))
+        .sum();
+    if comments > 0 {
+        parse_output.warnings.push(format!(
+            "{comments} Obsidian %%comment%% inside text kept as text, with its markers"
+        ));
+    }
     if !notes.is_empty() {
         for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
             block.content = rewrite_vault_wikilinks(&block.content, &notes);
@@ -148,10 +157,11 @@ pub(super) fn import_title(filename: Option<String>) -> String {
 }
 
 /// Each block's Obsidian note embeds ([`import::rewrite_obsidian_note_embeds`],
-/// `names_note` telling a note from a file) and foreign highlight and math
+/// `names_note` telling a note from a file), Obsidian comment
+/// ([`import::comment_as_callout`], #6751) and foreign highlight and math
 /// ([`import::normalize_foreign_inline`]) in Agaric's form, as import, paste,
 /// every MCP content write and Edit as Markdown take text in (#6033). A code
-/// block keeps its embeds.
+/// block keeps its embeds and comments.
 pub(super) fn normalize_foreign_forms(
     blocks: &mut [import::ParsedBlock],
     names_note: impl Fn(&str) -> bool,
@@ -159,6 +169,9 @@ pub(super) fn normalize_foreign_forms(
     for block in blocks {
         if !block.is_code {
             block.content = import::rewrite_obsidian_note_embeds(&block.content, &names_note);
+            if let Some(callout) = import::comment_as_callout(&block.content) {
+                block.content = callout;
+            }
         }
         if let std::borrow::Cow::Owned(content) = import::normalize_foreign_inline(&block.content) {
             block.content = content;
