@@ -13,7 +13,7 @@
  * chip-click handlers call it and re-serialise.
  */
 
-import { isOrWord } from '@/lib/search-query/classify'
+import { isOrWord } from '@/lib/search-query/classify-word'
 import { tokenize } from '@/lib/search-query/tokenize'
 import type { FilterNode, FilterToken, SearchQueryAST } from '@/lib/search-query/types'
 

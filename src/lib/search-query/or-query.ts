@@ -25,7 +25,7 @@ import {
   classifyWord,
   flagShadowedDates,
   flagTagBesideUnder,
-} from '@/lib/search-query/classify'
+} from '@/lib/search-query/classify-word'
 import { type RawToken, tokenize } from '@/lib/search-query/tokenize'
 import type { FilterNode, FilterToken, SearchQueryAST } from '@/lib/search-query/types'
 
