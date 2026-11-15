@@ -91,8 +91,7 @@ async function typeAcrossSplit(page: Page, surface: Surface): Promise<void> {
   await setMockLatency(page, 50)
   await page.keyboard.press('Enter')
   await page.keyboard.type('x')
-  // Where in the block: a mount puts the caret at the end today, latency or not.
-  await expectRows(page, surface, ['ab', /^(xcd|cdx)$/])
+  await expectRows(page, surface, ['ab', 'xcd'])
 }
 
 async function typeAcrossMerge(page: Page, surface: Surface): Promise<void> {

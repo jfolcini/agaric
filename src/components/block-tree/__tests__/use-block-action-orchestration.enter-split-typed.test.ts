@@ -37,8 +37,9 @@ function makeEditor(blockId: string, doc: string, split: { before: string; after
   let text = doc
   let stored = doc
   let baseline = doc
+  const focus = vi.fn()
   const handle = {
-    editor: null,
+    editor: { commands: { focus }, view: { focus: vi.fn() } },
     mount: vi.fn((id: string, markdown: string) => {
       active = id
       text = markdown
@@ -80,7 +81,7 @@ function makeEditor(blockId: string, doc: string, split: { before: string; after
   const type = (markdown: string) => {
     text = markdown
   }
-  return { handle: handle as unknown as RovingEditorHandle, type }
+  return { handle: handle as unknown as RovingEditorHandle, type, focus }
 }
 
 /**
@@ -95,7 +96,7 @@ async function splitAndLeave(
   dispatch('edit_block', { blockId: BLOCK_GS_1, toText: doc })
   const pageStore = createPageBlockStore(PAGE_GETTING_STARTED)
   await pageStore.getState().load()
-  const { handle, type } = makeEditor(BLOCK_GS_1, doc, split)
+  const { handle, type, focus } = makeEditor(BLOCK_GS_1, doc, split)
   const rovingEditorRef = { current: handle as RovingEditorHandle | null }
   // EditableBlock's auto-mount effect, which the commit that focuses the block
   // runs: mount it with its stored content unless the editor is already there.
@@ -151,7 +152,11 @@ async function splitAndLeave(
     result.current.handleFlush()
     await settlePendingSaves(newId as string)
   })
-  return { newId: newId as string, editsOnLeave: editsOf(newId as string) - editsBeforeLeave }
+  return {
+    newId: newId as string,
+    editsOnLeave: editsOf(newId as string) - editsBeforeLeave,
+    focus,
+  }
 }
 
 function editsOf(blockId: string): number {
@@ -267,5 +272,13 @@ describe('a block Enter splits off commits what it holds as typed when the caret
     expect(contentOf(newId)).toBe('status:: done')
     const props = dispatch('get_properties', { blockId: newId }) as PropertyRow[]
     expect(props.some((p) => p.key === 'status')).toBe(false)
+  })
+})
+
+describe('the caret after Enter splits a block', () => {
+  it('lands at the start of the block holding what Enter moved', async () => {
+    const { focus } = await splitAndLeave('helloworld', { before: 'hello', after: 'world' })
+
+    expect(focus).toHaveBeenCalledExactlyOnceWith('start')
   })
 })
