@@ -39,4 +39,11 @@ describe('joinListItems', () => {
     const items = ['Doe, Jane', '[[A, B]]', 'say "hi"', ' pad ', 'plain', '[open', 'next']
     expect(splitListItems(joinListItems(items))).toEqual(items)
   })
+
+  it('quotes an item holding a line break, so the line it is written on stays one line', () => {
+    const items = ['first\nsecond', 'cr\rhere', 'plain']
+    const text = joinListItems(items)
+    expect(text).toBe('"first\\nsecond", "cr\\rhere", plain')
+    expect(splitListItems(text)).toEqual(items)
+  })
 })

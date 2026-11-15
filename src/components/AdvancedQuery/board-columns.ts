@@ -2,10 +2,11 @@
  * The columns of a query board (#6542): one per value the group key can take,
  * each with the filter leaf that selects its cards.
  *
- * A board exists for task state and for a `select` property, the two keys with
- * a closed, ordered value set. Columns follow that order (the definition's
- * options, so reordering the options reorders the board), then the blocks with
- * no value. A select value that is not among the options gets one more column.
+ * A board exists for task state and for a `select` property that holds one
+ * value, the two keys with a closed, ordered value set. Columns follow that
+ * order (the definition's options, so reordering the options reorders the
+ * board), then the blocks with no value. A select value that is not among the
+ * options gets one more column.
  */
 
 import { parseSelectOptions } from '@/components/properties/PropertyRowEditor/shared'
@@ -77,6 +78,7 @@ export function boardColumns(
   if (key?.type === 'State') return stateColumns()
   if (key?.type !== 'Property') return null
   const def = defs?.get(key.key)
-  if (def?.value_type !== 'select') return null
+  // A select that holds several values (#6741) has none: its card would sit in two columns.
+  if (def?.value_type !== 'select' || def.multiple === true) return null
   return selectColumns(key.key, parseSelectOptions(def))
 }

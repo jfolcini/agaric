@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT bp.key AS \"key!\", bp.value_text, bp.value_date, bp.value_num, bp.value_ref,\n                  bp.value_bool AS \"value_bool: i64\",\n                  bp.value_list AS \"value_list: PropertyList\",\n                  (bp.value_list IS NOT NULL AND EXISTS (\n                      SELECT 1 FROM blocks holder\n                      JOIN property_definitions d ON d.space_id = holder.space_id\n                      WHERE holder.id = bp.block_id AND d.key = bp.key\n                        AND d.value_type = 'ref')) AS \"list_of_refs!: bool\"\n           FROM block_properties bp\n           WHERE bp.block_id = ?1\n             AND bp.key NOT IN (\n                'space', 'is_space', 'created_at', 'completed_at',\n                'repeat-seq', 'repeat-origin', 'attachments', 'listStyle'\n             )",
+  "query": "SELECT bp.key AS \"key!\", bp.value_text, bp.value_date, bp.value_num, bp.value_ref,\n                  bp.value_bool AS \"value_bool: i64\",\n                  bp.value_list AS \"value_list: PropertyList\",\n                  (bp.value_list IS NOT NULL AND EXISTS (\n                      SELECT 1 FROM blocks holder\n                      JOIN property_definitions d ON d.space_id = holder.space_id\n                      WHERE holder.id = bp.block_id AND d.key = bp.key\n                        AND d.value_type = 'ref')) AS \"list_of_refs!: bool\",\n                  (bp.value_text IS NOT NULL AND EXISTS (\n                      SELECT 1 FROM blocks holder\n                      JOIN property_definitions d ON d.space_id = holder.space_id\n                      WHERE holder.id = bp.block_id AND d.key = bp.key\n                        AND d.multiple = 1)) AS \"text_under_list!: bool\"\n           FROM block_properties bp\n           WHERE bp.block_id = ?1\n             AND bp.key NOT IN (\n                'space', 'is_space', 'created_at', 'completed_at',\n                'repeat-seq', 'repeat-origin', 'attachments', 'listStyle'\n             )",
   "describe": {
     "columns": [
       {
@@ -85,6 +85,12 @@
         "ordinal": 7,
         "type_info": "Integer",
         "origin": "Expression"
+      },
+      {
+        "name": "text_under_list!: bool",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -98,8 +104,9 @@
       true,
       true,
       true,
+      false,
       false
     ]
   },
-  "hash": "4e9ca16f74a6376719216e707145a61bbbe0dc283e438353d062d6389d388adf"
+  "hash": "5659da8437d842c9234ebdcd5c7d0047eb68f6028cd2f9680406d0cc0356428b"
 }

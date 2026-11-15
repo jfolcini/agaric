@@ -398,6 +398,19 @@ describe('buildInlinePropertySetParams', () => {
       expect(buildInlinePropertySetParams('B', 'k', '1, lots', list('number'))).toBeNull()
     })
 
+    // Rust reads an item with `f64::from_str` and keeps only a finite one, so a
+    // line it would refuse in Edit as Markdown is refused here too.
+    it('reads a number item only as a finite decimal, as Rust does', () => {
+      expect(buildInlinePropertySetParams('B', 'k', '-1.5e2, .5, 3., +4', list('number'))).toEqual({
+        blockId: 'B',
+        key: 'k',
+        valueList: [-150, 0.5, 3, 4],
+      })
+      for (const item of ['0x10', '0b1', '0o7', 'Infinity', '1e400', '1_000']) {
+        expect(buildInlinePropertySetParams('B', 'k', `1, ${item}`, list('number'))).toBeNull()
+      }
+    })
+
     it('takes date items only as days, and refuses the line otherwise', () => {
       expect(
         buildInlinePropertySetParams('B', 'k', '2026-01-02, 2026-03-04', list('date')),
@@ -407,6 +420,9 @@ describe('buildInlinePropertySetParams', () => {
         valueList: ['2026-01-02', '2026-03-04'],
       })
       expect(buildInlinePropertySetParams('B', 'k', '2026-01-02, soon', list('date'))).toBeNull()
+      // The whole item is the day: text before or after it refuses the line.
+      expect(buildInlinePropertySetParams('B', 'k', 'x2026-01-02', list('date'))).toBeNull()
+      expect(buildInlinePropertySetParams('B', 'k', '2026-01-02x', list('date'))).toBeNull()
     })
 
     it('refuses a line with no item', () => {

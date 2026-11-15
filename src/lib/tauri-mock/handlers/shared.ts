@@ -1424,17 +1424,41 @@ export function compareProperty(op: string, a: string | number, b: string | numb
 
 export type StoredProp = Record<string, unknown> | null
 
-/** `Eq` (EXISTS col = ?): the value column is present AND equals the comparand. */
+/**
+ * The items of `prop`'s list (#6741) a comparand compares: the number items
+ * for a `Num` comparand (`numeric`), else the string items (`Text`, `Ref`,
+ * `Date`), as the scalar path compares only its own column. Empty for no list.
+ */
+export function listCandidates(prop: StoredProp, numeric: boolean): Array<string | number> {
+  const list = prop?.['value_list']
+  if (!Array.isArray(list)) return []
+  const kind = numeric ? 'number' : 'string'
+  return (list as unknown[]).filter((item): item is string | number => typeof item === kind)
+}
+
+/** What `prop` holds that a comparand in `vc` compares: its scalar in that column, or its
+ * list's candidates. */
+function heldValues(
+  prop: NonNullable<StoredProp>,
+  vc: { col: string; wanted: string | number },
+): Array<string | number> {
+  const stored = (prop[vc.col] ?? null) as string | number | null
+  return [...(stored == null ? [] : [stored]), ...listCandidates(prop, vc.col === 'value_num')]
+}
+
+/** `Eq` (EXISTS col = ?): the value column is present AND equals the comparand, or a list
+ * item does. */
 export function propertyEqMatches(
   prop: StoredProp,
   value: Record<string, unknown> | undefined,
 ): boolean {
   const vc = propertyValueColumn(value)
-  const stored = prop && vc ? (prop[vc.col] ?? null) : null
-  return vc != null && stored != null && stored === vc.wanted
+  if (!prop || !vc) return false
+  return heldValues(prop, vc).includes(vc.wanted)
 }
 
-/** `Lt`/`Gt`/`Lte`/`Gte`: ordered compare, value column guarded `IS NOT NULL`. */
+/** `Lt`/`Gt`/`Lte`/`Gte`: ordered compare, value column guarded `IS NOT NULL`, or of a
+ * list item. */
 export function propertyCompareMatches(
   prop: StoredProp,
   op: string,
@@ -1442,14 +1466,13 @@ export function propertyCompareMatches(
 ): boolean {
   const vc = propertyValueColumn(value)
   if (!prop || !vc) return false
-  const stored = prop[vc.col] ?? null
-  if (stored == null) return false
-  return compareProperty(op, stored as string | number, vc.wanted)
+  return heldValues(prop, vc).some((held) => compareProperty(op, held, vc.wanted))
 }
 
 /**
- * `Contains`/`StartsWith`: `LIKE ? ESCAPE '\'` over a text column; a `Num`
- * comparand short-circuits to no match (a numeric column has no substring).
+ * `Contains`/`StartsWith`: `LIKE ? ESCAPE '\'` over a text column, or over a
+ * list's string items; a `Num` comparand short-circuits to no match (a numeric
+ * column has no substring).
  * SQLite `LIKE` is ASCII-case-insensitive and `escape_like` makes the needle
  * literal, so this is an ASCII-case-insensitive literal substring/prefix test.
  */
@@ -1460,13 +1483,14 @@ export function propertyLikeMatches(
 ): boolean {
   const vc = propertyValueColumn(value)
   if (!prop || !vc || vc.col === 'value_num') return false
-  const stored = prop[vc.col] ?? null
-  if (stored == null) return false
-  // `value_num` is excluded above, so the remaining columns are all TEXT,
-  // which is what the fold needs — it is a `.replace`, not a coercion.
-  const hay = foldAsciiUppercase(stored as string)
+  // `value_num` is excluded above, so the remaining columns, and the list
+  // items a text comparand takes, are all TEXT, which is what the fold needs:
+  // it is a `.replace`, not a coercion.
   const needle = foldAsciiUppercase(String(vc.wanted))
-  return contains ? hay.includes(needle) : hay.startsWith(needle)
+  return heldValues(prop, vc).some((held) => {
+    const hay = foldAsciiUppercase(held as string)
+    return contains ? hay.includes(needle) : hay.startsWith(needle)
+  })
 }
 
 /** The keys `reserved_key_blocks_column` maps to a same-named `blocks` column. */
@@ -1531,7 +1555,8 @@ export function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): 
       return propertyEqMatches(prop, value)
     }
     case 'Ne': {
-      // NOT EXISTS — true when the key is absent OR present-but-different.
+      // NOT EXISTS — true when the key is absent OR present-but-different, a
+      // list holding no equal item included.
       return !propertyEqMatches(prop, value)
     }
     case 'Lt':
@@ -2118,18 +2143,39 @@ function fbqTypedValueMatches(
   return fbqCompare(operator, lhs, rhs)
 }
 
+/** The scalar comparison, or a list's (#6741): `neq` when no string item is equal, any other
+ * operator when one string item compares true. */
+function fbqValueMatches(
+  operator: string,
+  lhs: string | null,
+  items: readonly string[],
+  rhs: string,
+  source: 'property' | 'reserved',
+): boolean {
+  const scalar = fbqTypedValueMatches(operator, lhs, rhs, source)
+  if (operator === 'neq') return scalar && !items.includes(rhs)
+  return scalar || items.some((item) => fbqCompare(operator, item, rhs))
+}
+
 /** Resolve a block's candidate text/date and storage source for `key`.
  * Returns null only when a non-reserved property key is absent; reserved keys
  * retain a result with null values so their backend `IS NOT NULL` gate wins. */
 export function fbqResolveValues(
   b: Record<string, unknown>,
   key: string,
-): { pText: string | null; pDate: string | null; source: 'property' | 'reserved' } | null {
+): {
+  pText: string | null
+  pDate: string | null
+  /** A list's string items (#6741), which the text and date filters both compare. */
+  pItems: string[]
+  source: 'property' | 'reserved'
+} | null {
   const prop = properties.get(b['id'] as string)?.get(key)
   if (prop) {
     return {
       pText: (prop['value_text'] as string | null) ?? null,
       pDate: (prop['value_date'] as string | null) ?? null,
+      pItems: listCandidates(prop, false) as string[],
       source: 'property',
     }
   }
@@ -2137,8 +2183,8 @@ export function fbqResolveValues(
   if (rowKind === undefined) return null // key absent
   const v = (b[key] as string | null | undefined) ?? null
   return rowKind === 'text'
-    ? { pText: v, pDate: null, source: 'reserved' }
-    : { pText: null, pDate: v, source: 'reserved' }
+    ? { pText: v, pDate: null, pItems: [], source: 'reserved' }
+    : { pText: null, pDate: v, pItems: [], source: 'reserved' }
 }
 
 /**
@@ -2152,7 +2198,7 @@ export function fbqPropertyFilterMatches(
 ): boolean {
   const resolved = fbqResolveValues(b, pf['key'] as string)
   if (resolved === null) return false
-  const { pText, pDate, source } = resolved
+  const { pText, pDate, pItems, source } = resolved
   const operator = ((pf['operator'] as string | null) ?? 'eq').toLowerCase()
 
   // #3930 review note 2 — a reserved key's `AND b.{col} IS NOT NULL` gate
@@ -2166,20 +2212,25 @@ export function fbqPropertyFilterMatches(
   if (source === 'reserved' && pText === null && pDate === null) return false
 
   const valueTextIn = (pf['valueTextIn'] as string[] | null) ?? null
-  if (valueTextIn && valueTextIn.length > 0 && (pText == null || !valueTextIn.includes(pText))) {
+  if (
+    valueTextIn &&
+    valueTextIn.length > 0 &&
+    ![...(pText == null ? [] : [pText]), ...pItems].some((held) => valueTextIn.includes(held))
+  ) {
     return false
   }
   const valueDateRange = (pf['valueDateRange'] as [string, string] | null) ?? null
   if (valueDateRange) {
     const [from, to] = valueDateRange
-    if (pDate == null || !(pDate >= from && pDate < to)) return false
+    const inRange = (held: string): boolean => held >= from && held < to
+    if (!(pDate != null && inRange(pDate)) && !pItems.some(inRange)) return false
   }
   const valueText = (pf['valueText'] as string | null) ?? null
-  if (valueText !== null && !fbqTypedValueMatches(operator, pText, valueText, source)) {
+  if (valueText !== null && !fbqValueMatches(operator, pText, pItems, valueText, source)) {
     return false
   }
   const valueDate = (pf['valueDate'] as string | null) ?? null
-  if (valueDate !== null && !fbqTypedValueMatches(operator, pDate, valueDate, source)) {
+  if (valueDate !== null && !fbqValueMatches(operator, pDate, pItems, valueDate, source)) {
     return false
   }
   return true

@@ -16,4 +16,14 @@ describe('propertySortFields', () => {
     ])
     expect(fields.map((field) => field.key)).toEqual(['meeting_date', 'deadline'])
   })
+
+  // #6741 — a list has no one value to sort by.
+  it('offers no key that holds several values', () => {
+    const fields = propertySortFields([
+      { ...def('stages', 'select', false), multiple: true },
+      { ...def('scores', 'number', false), multiple: true },
+      def('effort', 'number', false),
+    ])
+    expect(fields.map((field) => field.key)).toEqual(['effort'])
+  })
 })

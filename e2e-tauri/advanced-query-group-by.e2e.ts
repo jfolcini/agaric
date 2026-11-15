@@ -16,6 +16,9 @@
 // #5815; the links come from the materializer's `block_links`, which the mock
 // does not keep.
 //
+// A third case groups by a key that holds a list (#6741): a block sits in the
+// group of each of its items, which only the engine's per-item join shows.
+//
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
@@ -106,6 +109,32 @@ function globalChips(): Promise<string[]> {
   )
 }
 
+/**
+ * Type `marker` as the full-text term and wait until it matches `count`
+ * blocks. The FTS rows are written by the background materializer after an
+ * import; a remount re-runs the query (`refetchOnMount: 'always'`).
+ */
+async function scopeToMarker(marker: string, count: number): Promise<void> {
+  await typeInputVerified('[data-testid="advanced-query-fulltext"]', marker)
+  const total = $('[data-testid="advanced-query-total"]')
+  const scoped = `${count} matching blocks`
+  await browser.waitUntil(
+    async () => {
+      const matched = await browser
+        .waitUntil(async () => (await total.isExisting()) && (await total.getText()) === scoped, {
+          timeout: 5_000,
+        })
+        .then(
+          () => true,
+          () => false,
+        )
+      if (!matched) await openAdvancedQuery()
+      return matched
+    },
+    { timeout: ACTION_TIMEOUT, timeoutMsg: `the full-text term never matched: ${scoped}` },
+  )
+}
+
 /** Wait until the groups and the global chips read `groups` and `global`. */
 async function waitForGroups(groups: string[], global: string[], when: string): Promise<void> {
   const want = JSON.stringify({ groups, global })
@@ -185,26 +214,8 @@ describe('Agaric real-backend Advanced Query grouping (#5738) @search', () => {
     expect(await importMarkdownPage(TITLE, `${markdown}\n`)).toContain(`${TASKS.length} blocks`)
 
     await openAdvancedQuery()
-    await typeInputVerified('[data-testid="advanced-query-fulltext"]', MARKER)
-    // The FTS rows are written by the background materializer after the
-    // import; a remount re-runs the query (`refetchOnMount: 'always'`).
+    await scopeToMarker(MARKER, TASKS.length)
     const total = $('[data-testid="advanced-query-total"]')
-    const scoped = `${TASKS.length} matching blocks`
-    await browser.waitUntil(
-      async () => {
-        const matched = await browser
-          .waitUntil(async () => (await total.isExisting()) && (await total.getText()) === scoped, {
-            timeout: 5_000,
-          })
-          .then(
-            () => true,
-            () => false,
-          )
-        if (!matched) await openAdvancedQuery()
-        return matched
-      },
-      { timeout: ACTION_TIMEOUT, timeoutMsg: `the full-text term never matched: ${scoped}` },
-    )
 
     await chooseSelectOption('[data-testid="advanced-query-group"]', 'State')
     await waitForGroups(expectedGroups(false), [], 'grouped by state')
@@ -250,5 +261,55 @@ describe('Agaric real-backend backlinks query (#5815) @search @editor', () => {
     await navigateTo('Journal')
     await reopenPageByTitle(QUERY_PAGE)
     await waitForBacklinks(holderId, 'after navigating away and back', false)
+  })
+})
+
+const LIST_MARKER = runScopedMarker('wdio-grouped-list')
+const LIST_TITLE = runScopedMarker('wdio-list-query-doc')
+const AUTHORS = `${runScopedMarker('wdio-authors').replaceAll('-', '')}authors`
+const AUTHOR_LISTS = [
+  ['one', 'Ann, Bob'],
+  ['two', 'Ann'],
+  ['six', 'Cy'],
+] as const
+
+describe('Agaric real-backend Advanced Query grouping by a list key (#6741) @search', () => {
+  it("puts a block that holds two items in both items' groups", async () => {
+    const spaces = await invoke<Array<{ id: string; name: string }>>('list_spaces')
+    const spaceId = spaces.find((space) => space.name === 'Personal')?.id
+    if (spaceId === undefined) throw new Error('list_spaces returned no Personal space')
+    await invoke('create_property_def', {
+      spaceId,
+      key: AUTHORS,
+      valueType: 'text',
+      options: null,
+      multiple: true,
+    })
+    // A `key::` line under a key that holds a list imports as the list.
+    const markdown = AUTHOR_LISTS.map(
+      ([name, authors]) => `- ${LIST_MARKER} ${name}\n  ${AUTHORS}:: ${authors}`,
+    ).join('\n')
+    expect(await importMarkdownPage(LIST_TITLE, `${markdown}\n`)).toContain(
+      `${AUTHOR_LISTS.length} blocks`,
+    )
+
+    await openAdvancedQuery()
+    // The view keeps its working set across visits: drop a grouping and a
+    // summary another case set, so the total counts blocks.
+    await chooseSelectOption('[data-testid="advanced-query-group"]', 'None')
+    const removeSummary = $('[data-testid="advanced-query-aggregates"]').$(
+      'button[aria-label="Remove summary"]',
+    )
+    while (await removeSummary.isExisting()) await removeSummary.click()
+    await scopeToMarker(LIST_MARKER, AUTHOR_LISTS.length)
+    await chooseSelectOption('[data-testid="advanced-query-group"]', 'Property')
+    await typeInputVerified('[data-testid="advanced-query-group-property-key"]', AUTHORS)
+    // `gcount DESC, gkey ASC`: Ann holds blocks one and two, Bob and Cy one each.
+    const groups = ['Ann | 2 blocks', 'Bob | 1 block', 'Cy | 1 block']
+    await waitForGroups(groups, [], 'grouped by the list key')
+
+    await navigateTo('Journal')
+    await openAdvancedQuery()
+    await waitForGroups(groups, [], 'after navigating away and back')
   })
 })

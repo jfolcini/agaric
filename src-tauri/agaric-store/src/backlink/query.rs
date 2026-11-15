@@ -921,7 +921,8 @@ pub async fn list_property_keys(pool: &SqlitePool) -> Result<Vec<String>, AppErr
 /// for keys in #1424. Only the text channel (`value_text`) is surfaced:
 /// numeric / date / ref / bool channels are typed and don't benefit from
 /// a free-text typeahead, and `value_text` is also the channel that
-/// `select`-type definitions store their option values in.
+/// `select`-type definitions store their option values in. A text, select or
+/// url list adds its items (#6741).
 ///
 /// The same `PROPERTY_KEY_CAP` insurance applies: a single key carrying
 /// more than the cap distinct values is well beyond any realistic
@@ -929,22 +930,30 @@ pub async fn list_property_keys(pool: &SqlitePool) -> Result<Vec<String>, AppErr
 /// the result is actually truncated so a runaway cardinality surfaces in
 /// logs rather than silently dropping values.
 pub async fn list_property_values(pool: &SqlitePool, key: &str) -> Result<Vec<String>, AppError> {
-    // Distinct non-NULL `value_text` for the given key, ranked by usage
-    // (most-used first) with `value_text ASC` as a deterministic
-    // tiebreaker for equal-count values. `value_text IS NOT NULL` filters
-    // out rows whose value lives in a non-text channel.
-    let mut rows = sqlx::query_scalar!(
-        "SELECT value_text FROM block_properties \
-         WHERE key = ?1 AND value_text IS NOT NULL \
-         GROUP BY value_text ORDER BY COUNT(*) DESC, value_text ASC LIMIT 1001",
+    // Distinct `value_text` for the given key, ranked by usage (most-used
+    // first) with the value ASC as a deterministic tiebreaker for
+    // equal-count values. `value_text IS NOT NULL` filters out rows whose
+    // value lives in a non-text channel. A list adds its string items where
+    // its block's space defines the key as text, select or url (#6741): a ref
+    // list holds block ids, as `value_ref` does, and is left out like it.
+    // The `CAST` is for the macro, which cannot type a `json_each` column.
+    let mut values = sqlx::query_scalar!(
+        r#"SELECT v AS "v!: String" FROM (
+             SELECT value_text AS v FROM block_properties
+              WHERE key = ?1 AND value_text IS NOT NULL
+             UNION ALL
+             SELECT CAST(li.value AS TEXT) AS v FROM block_properties bp
+               JOIN blocks b ON b.id = bp.block_id
+               JOIN property_definitions d ON d.space_id = b.space_id AND d.key = bp.key
+               JOIN json_each(bp.value_list) li
+              WHERE bp.key = ?1 AND d.value_type IN ('text', 'select', 'url')
+                AND li.type = 'text'
+           )
+           GROUP BY v ORDER BY COUNT(*) DESC, v ASC LIMIT 1001"#,
         key,
     )
     .fetch_all(pool)
     .await?;
-    // `value_text` is nullable in the schema, so the scalar comes back as
-    // `Option<String>`; the `IS NOT NULL` filter guarantees `Some`, but
-    // flatten defensively rather than unwrap.
-    let mut values: Vec<String> = rows.drain(..).flatten().collect();
     if values.len() > PROPERTY_KEY_CAP {
         tracing::warn!(
             target: "agaric::list_property_values",
@@ -1173,6 +1182,60 @@ mod tests {
         );
         let category_values = list_property_values(&pool, "category").await.unwrap();
         assert_eq!(category_values, vec!["work".to_string()]);
+    }
+
+    /// #6741: the picker offers the string items of a list whose key its
+    /// space defines as text, select or url, counted with the scalar values;
+    /// a ref list's items are block ids, so it offers none, as it offers no
+    /// `value_ref`.
+    #[tokio::test]
+    async fn list_property_values_offers_text_list_items_6741() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "SPACE", "page", "space").await;
+        sqlx::query("INSERT INTO spaces (id) VALUES ('SPACE')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (key, value_type) in [("authors", "text"), ("related", "ref")] {
+            sqlx::query(
+                "INSERT INTO property_definitions (space_id, key, value_type, created_at, multiple) \
+                 VALUES ('SPACE', ?, ?, '2026-01-01T00:00:00Z', 1)",
+            )
+            .bind(key)
+            .bind(value_type)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        for id in ["B1", "B2", "B3", "B4"] {
+            insert_block(&pool, id, "content", id).await;
+        }
+        sqlx::query("UPDATE blocks SET space_id = 'SPACE' WHERE id <> 'SPACE'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (id, key, list) in [
+            ("B1", "authors", r#"["Ann","Bob"]"#),
+            ("B2", "authors", r#"["Ann"]"#),
+            ("B1", "related", r#"["B2"]"#),
+        ] {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_list) VALUES (?, ?, ?)",
+            )
+            .bind(id)
+            .bind(key)
+            .bind(list)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        insert_property_value(&pool, "B3", "authors", "Cy").await;
+        insert_property_value(&pool, "B4", "authors", "Ann").await;
+
+        let authors = list_property_values(&pool, "authors").await.unwrap();
+        assert_eq!(authors, vec!["Ann", "Bob", "Cy"], "Ann is used three times");
+        let related = list_property_values(&pool, "related").await.unwrap();
+        assert!(related.is_empty(), "a ref list offers no ids: {related:?}");
     }
 
     /// #1425: a key with no recorded values (or an unknown key) yields an

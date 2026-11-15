@@ -55,7 +55,7 @@
 
 import { trailingBackslashRun } from '@/editor/markdown-parse/vocab'
 import type { PropertyDefinition, PropertyList } from '@/lib/bindings'
-import { splitListItems } from '@/lib/property-list'
+import { readFiniteNumber, splitListItems } from '@/lib/property-list'
 
 /**
  * Keys the parser never treats as inline properties. Mirrors
@@ -295,8 +295,8 @@ function listItems(value: string, valueType: string): PropertyList | null {
   const list: PropertyList = []
   for (const item of items) {
     if (valueType === 'number') {
-      const num = Number(item)
-      if (Number.isNaN(num)) return null
+      const num = readFiniteNumber(item)
+      if (num === null) return null
       list.push(num)
     } else if (valueType === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(item)) {
       return null

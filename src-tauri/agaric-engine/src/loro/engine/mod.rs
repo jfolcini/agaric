@@ -395,6 +395,16 @@ impl From<&agaric_store::op::PropertyValueFields> for PropertyValue {
     }
 }
 
+impl From<&PropertyListItem> for PropertyValue {
+    /// A list's item as a single value of its kind.
+    fn from(item: &PropertyListItem) -> Self {
+        match item {
+            PropertyListItem::Text(s) => PropertyValue::Str(s.clone()),
+            PropertyListItem::Num(n) => PropertyValue::Num(*n),
+        }
+    }
+}
+
 impl PropertyValue {
     /// Native `LoroValue` to persist in the engine.
     fn to_loro(&self) -> LoroValue {
@@ -466,6 +476,16 @@ impl PropertyValue {
             other => Err(AppError::validation(format!(
                 "loro: property value expected a scalar or a list, got {other:?}"
             ))),
+        }
+    }
+
+    /// `self` as a list's item (#6741): a string or a number, and `None` for
+    /// any other value.
+    pub fn into_list_item(self) -> Option<PropertyListItem> {
+        match self {
+            PropertyValue::Str(s) => Some(PropertyListItem::Text(s)),
+            PropertyValue::Num(n) => Some(PropertyListItem::Num(n)),
+            PropertyValue::Bool(_) | PropertyValue::List(_) | PropertyValue::Null => None,
         }
     }
 

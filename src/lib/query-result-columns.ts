@@ -30,8 +30,9 @@ export const EXCLUDED_COLUMN_KEYS: ReadonlySet<string> = new Set<string>([
 
 /** Render a property row to a display string, or `null` when it carries no
  * value. Mirrors the typed-column precedence used elsewhere (text → num →
- * date → ref → bool). */
+ * date → ref → bool); a list (#6741) is its items joined, as its chip shows it. */
 export function propertyRowDisplay(row: PropertyRow): string | null {
+  if (row.value_list != null) return row.value_list.map(String).join(', ')
   if (row.value_text != null && row.value_text !== '') return row.value_text
   if (row.value_num != null) return String(row.value_num)
   if (row.value_date != null && row.value_date !== '') return row.value_date
@@ -85,17 +86,20 @@ export function deriveCustomColumns(
 }
 
 /** Resolve the sort/display value for any column key against a block. Custom
- * columns (prefixed) read from the side map; everything else reads the block
- * field. */
+ * columns (prefixed) read from the side map, a list (#6741) its first item as
+ * the stored rows hold it; everything else reads the block field. */
 export function columnValue(
   block: BlockRow,
   columnKey: string,
   customProps: Map<string, Map<string, string>>,
+  propertyRows?: Record<string, PropertyRow[]>,
 ): string | null {
   if (columnKey === 'content') return block.content
   if (columnKey.startsWith(CUSTOM_COLUMN_PREFIX)) {
     const propKey = columnKey.slice(CUSTOM_COLUMN_PREFIX.length)
-    return customProps.get(block.id)?.get(propKey) ?? null
+    const display = customProps.get(block.id)?.get(propKey) ?? null
+    const first = propertyRows?.[block.id]?.find((row) => row.key === propKey)?.value_list?.[0]
+    return display === null || first === undefined ? display : String(first)
   }
   return (block[columnKey as keyof BlockRow] as string | null) ?? null
 }

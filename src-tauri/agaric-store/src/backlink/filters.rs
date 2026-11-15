@@ -5,7 +5,7 @@ use futures_util::future::try_join_all;
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
-use super::projection::BacklinkProjection;
+use super::projection::{BacklinkProjection, list_items_match};
 use super::types::{BacklinkFilter, CompareOp};
 use super::{FTS_ROW_CAP, SMALL_IN_LIMIT};
 use crate::filters::primitive::{
@@ -202,7 +202,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
 
 /// A `PropertyText` or `PropertyDate` leaf, comparing the `value_text` or
 /// `value_date` column named by `column` — a literal at both call sites,
-/// never user input.
+/// never user input — or the string items of the row's list (#6741).
 async fn resolve_property_string(
     pool: &SqlitePool,
     column: &str,
@@ -237,12 +237,13 @@ async fn resolve_property_string(
         _ => value.to_string(),
     };
     let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
+    let list = list_items_match(false, sql_op, &format!("?2{escape_clause}"));
     let sql = format!(
         "SELECT bp.block_id \
          FROM block_properties bp \
          JOIN blocks b ON b.id = bp.block_id \
-         WHERE bp.key = ?1 AND bp.{column} IS NOT NULL \
-           AND bp.{column} {sql_op} ?2{escape_clause} \
+         WHERE bp.key = ?1 AND ((bp.{column} IS NOT NULL \
+           AND bp.{column} {sql_op} ?2{escape_clause}) OR {list}) \
            AND b.deleted_at IS NULL"
     );
     let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
@@ -253,7 +254,8 @@ async fn resolve_property_string(
     Ok(rows.into_iter().collect())
 }
 
-/// A `PropertyNum` leaf. `Contains`/`StartsWith` are meaningless for a
+/// A `PropertyNum` leaf, over `value_num` or the number items of the row's
+/// list (#6741). `Contains`/`StartsWith` are meaningless for a
 /// numeric value and short-circuit to the empty set.
 async fn resolve_property_num(
     pool: &SqlitePool,
@@ -283,12 +285,13 @@ async fn resolve_property_num(
             return Ok(FxHashSet::default());
         }
     };
+    let list = list_items_match(true, sql_op, "?2");
     let sql = format!(
         "SELECT bp.block_id \
          FROM block_properties bp \
          JOIN blocks b ON b.id = bp.block_id \
-         WHERE bp.key = ?1 AND bp.value_num IS NOT NULL \
-           AND bp.value_num {sql_op} ?2 \
+         WHERE bp.key = ?1 AND ((bp.value_num IS NOT NULL \
+           AND bp.value_num {sql_op} ?2) OR {list}) \
            AND b.deleted_at IS NULL"
     );
     let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))

@@ -116,7 +116,7 @@ fn property_filters_sql_exists(
         *next_param += 1;
         binds.push(pf.key.clone());
 
-        let value_pred = property_value_predicate_sql(pf, "bp", next_param, binds)?;
+        let value_pred = property_value_predicate_sql(pf, "bp", key_param, next_param, binds)?;
 
         frag.push_str(&format!(
             " AND EXISTS (SELECT 1 FROM block_properties bp \
@@ -603,5 +603,62 @@ async fn pushdown_plan_looks_blocks_up_by_candidate_id() {
                 "{props:?}: the property id set must come from a key index; plan: {plan:#?}"
             );
         }
+    }
+}
+
+/// #6741: a value filter holds for a list when it holds for one of its string
+/// items, and `neq` when none is equal; a list without a string item is
+/// unequal, as a value of another type is.
+#[tokio::test]
+async fn value_filters_compare_each_list_item_6741() {
+    const LIST: &str = "INSERT INTO block_properties (block_id, key, value_list) VALUES (?, ?, ?)";
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, PAGE, "page", "page", None, None).await;
+    for (i, id) in ["L1", "L2", "L3", "L4", "L5", "L6", "L7"]
+        .into_iter()
+        .enumerate()
+    {
+        let position = i64::try_from(i).unwrap() + 1;
+        insert_block(&pool, id, "content", id, Some(PAGE), Some(position)).await;
+    }
+    exec(&pool, LIST, &["L1", "authors", r#"["Ann","Bob"]"#]).await;
+    exec(&pool, LIST, &["L2", "authors", r#"["Cy"]"#]).await;
+    exec(&pool, TEXT_PROP, &["L3", "authors", "Ann"]).await;
+    exec(&pool, LIST, &["L5", "authors", "[3]"]).await;
+    exec(
+        &pool,
+        LIST,
+        &["L6", "when", r#"["2026-01-01","2026-05-01"]"#],
+    )
+    .await;
+    exec(&pool, LIST, &["L7", "when", r#"["2026-02-02"]"#]).await;
+    assign_all_to_test_space(&pool).await;
+    let scope = SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID));
+
+    for (label, filter, expected) in [
+        ("eq", text("authors", "eq", "Ann"), vec!["L1", "L3"]),
+        ("neq", text("authors", "neq", "Ann"), vec!["L2", "L5"]),
+        ("lt", text("authors", "lt", "B"), vec!["L1", "L3"]),
+        ("gte", text("authors", "gte", "Bob"), vec!["L1", "L2"]),
+        ("in", text_in("authors", &["Cy", "Bob"]), vec!["L1", "L2"]),
+        (
+            "presence",
+            presence("authors"),
+            vec!["L1", "L2", "L3", "L5"],
+        ),
+        ("date eq", date("when", "eq", "2026-05-01"), vec!["L6"]),
+        ("date neq", date("when", "neq", "2026-01-01"), vec!["L7"]),
+        (
+            "date range",
+            date_range("when", "2026-04-01", "2026-06-01"),
+            vec!["L6"],
+        ),
+    ] {
+        let resp =
+            filtered_blocks_query_inner(&pool, vec![filter], None, None, &scope, None, Some(50))
+                .await
+                .unwrap();
+        let got: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(got, expected, "{label}");
     }
 }

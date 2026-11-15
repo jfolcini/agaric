@@ -3482,3 +3482,205 @@ async fn query_negating_the_template_property_still_excludes_templates_6548() {
         assert_eq!(ids(&resp), expected, "{label} leaves the placeholder out");
     }
 }
+
+// ── #6741: a property that holds a list ─────────────────────────────────
+
+const B1: &str = "01B1000000000000000000000";
+const B2: &str = "01B2000000000000000000000";
+const B3: &str = "01B3000000000000000000000";
+const B4: &str = "01B4000000000000000000000";
+
+/// Set a list property: the JSON array text `value_list` holds.
+async fn set_property_list(pool: &SqlitePool, block_id: &str, key: &str, json: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_list) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(json)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// B1 `authors = [Ann, Bob]`, B2 `[Cy]`, B3 the scalar `Ann`, B4 none; B1
+/// `points = [3, 7.5]` (3 an integer item), B2 `[10.0]` (a real item); B1
+/// `when` holds two dates, B2 `related` one ref.
+async fn seed_lists(pool: &SqlitePool) {
+    seed(pool).await;
+    set_property_list(pool, B1, "authors", r#"["Ann","Bob"]"#).await;
+    set_property_list(pool, B2, "authors", r#"["Cy"]"#).await;
+    set_property(pool, B3, "authors", "Ann").await;
+    set_property_list(pool, B1, "points", "[3,7.5]").await;
+    set_property_list(pool, B2, "points", "[10.0]").await;
+    set_property_list(pool, B1, "when", r#"["2026-01-01","2026-05-01"]"#).await;
+    set_property_list(pool, B2, "related", &format!(r#"["{TAG_RED}"]"#)).await;
+}
+
+/// #6741: a comparison holds for a list when it holds for one of its items,
+/// and `Ne` when none is equal. A text, ref or date value compares the string
+/// items, a number the number items, so neither kind reaches the other.
+#[tokio::test]
+async fn has_property_compares_each_list_item_6741() {
+    use crate::filters::primitive::{PropertyPredicate as P, PropertyValue as V};
+    let (pool, _d) = test_pool().await;
+    seed_lists(&pool).await;
+    let text = |s: &str| V::Text {
+        value: s.to_string(),
+    };
+    let num = |n: f64| V::Num { value: n };
+    let cases: Vec<(&str, &str, P, Vec<&str>)> = vec![
+        ("eq", "authors", P::Eq { value: text("Ann") }, vec![B1, B3]),
+        (
+            "ne",
+            "authors",
+            P::Ne { value: text("Ann") },
+            vec![B2, B4, TAG_RED, TAG_BLUE],
+        ),
+        ("lt", "authors", P::Lt { value: text("B") }, vec![B1, B3]),
+        ("gt", "authors", P::Gt { value: text("Bz") }, vec![B2]),
+        (
+            "lte",
+            "authors",
+            P::Lte { value: text("Bob") },
+            vec![B1, B3],
+        ),
+        (
+            "gte",
+            "authors",
+            P::Gte { value: text("Bob") },
+            vec![B1, B2],
+        ),
+        (
+            "contains",
+            "authors",
+            P::Contains { value: text("o") },
+            vec![B1],
+        ),
+        (
+            "starts",
+            "authors",
+            P::StartsWith { value: text("C") },
+            vec![B2],
+        ),
+        ("exists", "authors", P::Exists, vec![B1, B2, B3]),
+        (
+            "not exists",
+            "authors",
+            P::NotExists,
+            vec![B4, TAG_RED, TAG_BLUE],
+        ),
+        ("num eq", "points", P::Eq { value: num(3.0) }, vec![B1]),
+        (
+            "num eq real",
+            "points",
+            P::Eq { value: num(10.0) },
+            vec![B2],
+        ),
+        ("num gt", "points", P::Gt { value: num(5.0) }, vec![B1, B2]),
+        ("num lte", "points", P::Lte { value: num(3.0) }, vec![B1]),
+        (
+            "num ne",
+            "points",
+            P::Ne { value: num(3.0) },
+            vec![B2, B3, B4, TAG_RED, TAG_BLUE],
+        ),
+        (
+            "num contains",
+            "points",
+            P::Contains { value: num(3.0) },
+            vec![],
+        ),
+        (
+            "text over numbers",
+            "points",
+            P::Eq { value: text("3") },
+            vec![],
+        ),
+        (
+            "text bound over numbers",
+            "points",
+            P::Lt { value: text("z") },
+            vec![],
+        ),
+        (
+            "number bound over texts",
+            "authors",
+            P::Gt { value: num(0.0) },
+            vec![],
+        ),
+        (
+            "date gte",
+            "when",
+            P::Gte {
+                value: V::Date {
+                    value: "2026-04-01".to_string(),
+                },
+            },
+            vec![B1],
+        ),
+        (
+            "ref eq",
+            "related",
+            P::Eq {
+                value: V::Ref {
+                    value: TAG_RED.to_string(),
+                },
+            },
+            vec![B2],
+        ),
+    ];
+    for (label, key, predicate, expected) in cases {
+        let filter = leaf(FilterPrimitive::HasProperty {
+            key: key.to_string(),
+            predicate,
+        });
+        let resp = compile_and_run(&pool, req(filter)).await.unwrap();
+        assert_eq!(ids(&resp), set(&expected), "{label}");
+    }
+}
+
+/// #6741: grouped by a list key, a block sits in the group of each of its
+/// items, as a block with two tags sits in both tag groups; a number item
+/// labels as a number value does (`3`, not `3.0`). The global aggregate reads
+/// no group join, so it counts the block once.
+#[tokio::test]
+async fn group_by_list_property_puts_a_block_in_each_item_group_6741() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    set_property_list(&pool, B1, "authors", r#"["Ann","Bob"]"#).await;
+    set_property_list(&pool, B2, "authors", r#"["Ann"]"#).await;
+    set_property(&pool, B3, "authors", "Bob").await;
+    set_property_list(&pool, B4, "authors", "[3.0]").await;
+
+    let mut request = group_req(
+        default_filter(),
+        GroupKey::Property {
+            key: "authors".to_string(),
+        },
+    );
+    request.aggregates = vec![AggregateSpec {
+        op: AggOp::Count,
+        target: None,
+    }];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+
+    let counts = group_counts(&resp);
+    let expected: std::collections::BTreeMap<String, i64> =
+        [("Ann", 2), ("Bob", 2), ("3", 1), ("none", 2)]
+            .into_iter()
+            .map(|(k, n)| (k.to_string(), n))
+            .collect();
+    assert_eq!(counts, expected);
+    assert_eq!(resp.total_count, Some(4), "four buckets");
+    let members = |key: &str| -> BTreeSet<String> {
+        find_group(&resp, key)
+            .members
+            .iter()
+            .map(|m| m.block.id.as_str().to_string())
+            .collect()
+    };
+    assert_eq!(members("Ann"), set(&[B1, B2]));
+    assert_eq!(members("Bob"), set(&[B1, B3]));
+    assert_eq!(members("3"), set(&[B4]));
+    // B1..B4 and the two tag blocks: six, though B1 sits in two groups.
+    assert_eq!(agg_at(&resp, 0).count, Some(6));
+}

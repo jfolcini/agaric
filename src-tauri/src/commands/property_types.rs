@@ -140,11 +140,7 @@ impl ConversionRule<'_> {
     fn list(&self, items: &[PropertyValue]) -> Option<PropertyValue> {
         let converted = items
             .iter()
-            .map(|item| match self.item(item)? {
-                PropertyValue::Str(s) => Some(PropertyListItem::Text(s)),
-                PropertyValue::Num(n) => Some(PropertyListItem::Num(n)),
-                _ => None,
-            })
+            .map(|item| self.item(item)?.into_list_item())
             .collect::<Option<Vec<_>>>()?;
         (!converted.is_empty()).then_some(PropertyValue::List(PropertyList(converted)))
     }
@@ -157,10 +153,10 @@ impl ConversionRule<'_> {
     fn convert(&self, value: &PropertyValue) -> Option<PropertyValue> {
         match (value, self.to.multiple) {
             (PropertyValue::List(list), true) => {
-                self.list(&list.0.iter().map(item_value).collect::<Vec<_>>())
+                self.list(&list.0.iter().map(PropertyValue::from).collect::<Vec<_>>())
             }
             (PropertyValue::List(list), false) => match (list.0.as_slice(), self.separator) {
-                ([only], _) => self.item(&item_value(only)),
+                ([only], _) => self.item(&PropertyValue::from(only)),
                 (items, Some(separator))
                     if matches!(self.to.value_type.as_str(), "text" | "url") =>
                 {
@@ -185,15 +181,10 @@ impl ConversionRule<'_> {
     }
 }
 
-fn item_value(item: &PropertyListItem) -> PropertyValue {
-    match item {
-        PropertyListItem::Text(s) => PropertyValue::Str(s.clone()),
-        PropertyListItem::Num(n) => PropertyValue::Num(*n),
-    }
-}
-
 fn item_text(item: &PropertyListItem) -> String {
-    item_value(item).as_legacy_string().unwrap_or_default()
+    PropertyValue::from(item)
+        .as_legacy_string()
+        .unwrap_or_default()
 }
 
 /// A definition's options, parsed.

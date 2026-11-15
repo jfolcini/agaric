@@ -533,6 +533,124 @@ async fn filter_property_num_gte() {
 }
 
 // ======================================================================
+// #6741: a property that holds a list
+// ======================================================================
+
+/// Insert a list property: the JSON array text `value_list` holds.
+async fn insert_list_property(pool: &SqlitePool, block_id: &str, key: &str, json: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_list) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(json)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// #6741: on the References panel a comparison holds for a list when it holds
+/// for one of its items. `Neq` needs the key, as on a scalar row: a list row
+/// matches when it has an item of the value's kind and none of them is equal.
+/// The resolver and the compiler (through `eval_backlink_query`) agree.
+#[tokio::test]
+async fn filter_property_compares_each_list_item_6741() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+    for id in ["SRC_D", "SRC_E"] {
+        insert_block(&pool, id, "content", id).await;
+        insert_block_link(&pool, id, "TARGET").await;
+    }
+    insert_list_property(&pool, "SRC_A", "authors", r#"["Ann","Bob"]"#).await;
+    insert_list_property(&pool, "SRC_B", "authors", r#"["Cy"]"#).await;
+    insert_property(&pool, "SRC_C", "authors", Some("Ann"), None, None).await;
+    insert_list_property(&pool, "SRC_E", "authors", "[3]").await;
+    insert_list_property(&pool, "SRC_A", "points", "[3,7.5]").await;
+    insert_list_property(&pool, "SRC_B", "points", "[10.0]").await;
+    insert_list_property(&pool, "SRC_A", "when", r#"["2026-01-01","2026-05-01"]"#).await;
+
+    let text = |op, value: &str| BacklinkFilter::PropertyText {
+        key: "authors".into(),
+        op,
+        value: value.into(),
+    };
+    let num = |key: &str, op, value| BacklinkFilter::PropertyNum {
+        key: key.into(),
+        op,
+        value,
+    };
+    let cases: Vec<(&str, BacklinkFilter, Vec<&str>)> = vec![
+        ("eq", text(CompareOp::Eq, "Ann"), vec!["SRC_A", "SRC_C"]),
+        // SRC_E's list holds no string item, SRC_D no `authors` at all.
+        ("neq", text(CompareOp::Neq, "Ann"), vec!["SRC_B"]),
+        ("lt", text(CompareOp::Lt, "B"), vec!["SRC_A", "SRC_C"]),
+        ("gt", text(CompareOp::Gt, "Bz"), vec!["SRC_B"]),
+        ("lte", text(CompareOp::Lte, "Bob"), vec!["SRC_A", "SRC_C"]),
+        ("gte", text(CompareOp::Gte, "Bob"), vec!["SRC_A", "SRC_B"]),
+        ("contains", text(CompareOp::Contains, "o"), vec!["SRC_A"]),
+        ("starts", text(CompareOp::StartsWith, "C"), vec!["SRC_B"]),
+        ("text over numbers", text(CompareOp::Eq, "3"), vec![]),
+        (
+            "is set",
+            BacklinkFilter::PropertyIsSet {
+                key: "authors".into(),
+            },
+            vec!["SRC_A", "SRC_B", "SRC_C", "SRC_E"],
+        ),
+        (
+            "is empty",
+            BacklinkFilter::PropertyIsEmpty {
+                key: "authors".into(),
+            },
+            vec!["SRC_D"],
+        ),
+        ("num eq", num("points", CompareOp::Eq, 3.0), vec!["SRC_A"]),
+        (
+            "num gt",
+            num("points", CompareOp::Gt, 5.0),
+            vec!["SRC_A", "SRC_B"],
+        ),
+        ("num neq", num("points", CompareOp::Neq, 3.0), vec!["SRC_B"]),
+        (
+            "num contains",
+            num("points", CompareOp::Contains, 3.0),
+            vec![],
+        ),
+        (
+            "number over texts",
+            num("authors", CompareOp::Gt, 0.0),
+            vec!["SRC_E"],
+        ),
+        (
+            "date gte",
+            BacklinkFilter::PropertyDate {
+                key: "when".into(),
+                op: CompareOp::Gte,
+                value: "2026-04-01".into(),
+            },
+            vec!["SRC_A"],
+        ),
+    ];
+    for (label, filter, expected) in cases {
+        let expected: FxHashSet<String> = expected.into_iter().map(str::to_string).collect();
+        // The resolver reads every block; the panel's base set is the sources.
+        let mut resolved = resolve_filter(&pool, &filter, 0).await.unwrap();
+        resolved.retain(|id| id.starts_with("SRC_"));
+        assert_eq!(resolved, expected, "[{label}] resolver");
+        let resp = eval_backlink_query(
+            &pool,
+            "TARGET",
+            Some(vec![filter]),
+            None,
+            &default_page(),
+            None,
+        )
+        .await
+        .unwrap();
+        let compiled: FxHashSet<String> = resp.items.iter().map(|r| r.id.to_string()).collect();
+        assert_eq!(compiled, expected, "[{label}] compiler");
+    }
+}
+
+// ======================================================================
 // PropertyDate filter
 // ======================================================================
 
@@ -7398,6 +7516,13 @@ mod parity_p1 {
         // s4: no properties at all (PropertyIsEmpty target).
         insert_property(pool, &s5, "score", None, Some(50.0), None).await;
         insert_property(pool, &nolink, "status", Some("active"), None, None).await;
+        // #6741 list rows: text items, a number item under the same key, and
+        // a number list.
+        insert_list_property(pool, &s1, "authors", r#"["Ann","Bob"]"#).await;
+        insert_list_property(pool, &s2, "authors", r#"["Cy"]"#).await;
+        insert_list_property(pool, &s5, "authors", "[4]").await;
+        insert_list_property(pool, &nolink, "authors", r#"["Ann"]"#).await;
+        insert_list_property(pool, &s3, "points", "[3,7.5]").await;
 
         // Tag blocks must exist as `block_type = 'tag'` rows (block_tags
         // FKs `tag_id` → blocks(id)).
@@ -7597,6 +7722,38 @@ mod parity_p1 {
                     key: "score".into(),
                     op: CompareOp::Contains,
                     value: 1.0,
+                }],
+            ),
+            (
+                "list_text_eq",
+                vec![prop_text("authors", CompareOp::Eq, "Ann")],
+            ),
+            (
+                "list_text_neq",
+                vec![prop_text("authors", CompareOp::Neq, "Ann")],
+            ),
+            (
+                "list_text_lt",
+                vec![prop_text("authors", CompareOp::Lt, "C")],
+            ),
+            (
+                "list_text_contains",
+                vec![prop_text("authors", CompareOp::Contains, "o")],
+            ),
+            (
+                "list_num_gt",
+                vec![BacklinkFilter::PropertyNum {
+                    key: "points".into(),
+                    op: CompareOp::Gt,
+                    value: 5.0,
+                }],
+            ),
+            (
+                "list_num_neq",
+                vec![BacklinkFilter::PropertyNum {
+                    key: "points".into(),
+                    op: CompareOp::Neq,
+                    value: 3.0,
                 }],
             ),
             (

@@ -26,9 +26,9 @@ import {
   isInlinePropertyKey,
 } from '@/lib/inline-property-parse'
 import { nameKey, normalizeTagName } from '@/lib/name-tokens'
-import { joinListItems, splitListItems } from '@/lib/property-list'
+import { joinListItems, RUST_F64, splitListItems } from '@/lib/property-list'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
-import { RUST_F64, RUST_TRIM } from '@/lib/tauri-mock/coerce'
+import { RUST_TRIM } from '@/lib/tauri-mock/coerce'
 import { withoutEvents } from '@/lib/tauri-mock/events'
 import { blocksHandlers } from '@/lib/tauri-mock/handlers/blocks'
 import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
@@ -302,8 +302,10 @@ function pushPropertyLines(
   const rows = [...(properties.get(row['id'] as string) ?? [])]
     .filter(([key]) => !BLOCK_LINE_HIDDEN_KEYS.has(key) && !task.keys.has(key))
     .toSorted(([a], [b]) => compareUtf8Bytes(a, b))
+  const spaceId = ownerSpaceOf(row)
   for (const [key, value] of rows) {
-    lines.push(`${indent}${key}:: ${writeSourcePropertyValue(frontMatterValue(value))}`)
+    const text = frontMatterValue(value, propertyDefinition(spaceId, key))
+    lines.push(`${indent}${key}:: ${writeSourcePropertyValue(text)}`)
   }
 }
 
@@ -328,11 +330,18 @@ const FOLDED_RESERVED_KEYS: ReadonlySet<string> = new Set(
 
 /**
  * `frontmatter_row_value` with no titles: a ref value is its id. A list is one
- * line of text (#6741).
+ * line of text (#6741), and so is a text under a key `def` says holds a list:
+ * a list of one, which reads back as one item.
  */
-function frontMatterValue(row: Record<string, unknown>): string {
+function frontMatterValue(
+  row: Record<string, unknown>,
+  def: Record<string, unknown> | undefined,
+): string {
   const list = row['value_list']
   if (Array.isArray(list)) return joinListItems(list.map(String))
+  if (typeof row['value_text'] === 'string' && def?.['multiple'] === true) {
+    return joinListItems([row['value_text']])
+  }
   const text = row['value_date'] ?? row['value_text'] ?? row['value_ref']
   if (typeof text === 'string') return text
   if (typeof row['value_num'] === 'number') return String(row['value_num'])
@@ -356,7 +365,12 @@ function pageFrontMatter(pid: string): FrontMatter {
         compareUtf8Bytes(a['id'] as string, b['id'] as string),
     )
   return {
-    properties: new Map(rows.map(([key, row]) => [key, frontMatterValue(row)])),
+    properties: new Map(
+      rows.map(([key, row]) => [
+        key,
+        frontMatterValue(row, propertyDefinition(ownerSpaceOf({ id: pid }), key)),
+      ]),
+    ),
     aliases: (pageAliases.get(pid) ?? []).toSorted(compareNocase),
     tags: tags.map((tag) => tag['content'] as string),
   }

@@ -1295,6 +1295,30 @@ describe('insertTemplateBlocks — task state, priority, dates and properties (#
     ])
   })
 
+  it('sends no value_list for a value that is no list', async () => {
+    let sent: unknown
+    stubTemplates({
+      load_page_subtree: () => ({
+        blocks: [makeBlockRow({ id: 'TC1', content: 'Effort', parent_id: 'TMPL', position: 0 })],
+        truncated: false,
+        total: 1,
+      }),
+      get_batch_properties: () => ({
+        TC1: [makePropertyRow({ key: 'effort', value_num: 3, value_list: null })],
+      }),
+      create_blocks_batch: (args) => {
+        sent = args['specs']
+        return withOps({ blocks: [makeBlockRow({ id: 'NEW1', content: 'Effort' })] })
+      },
+    })
+
+    await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
+
+    expect((sent as Array<{ typedProperties: unknown }>)[0]?.typedProperties).toStrictEqual({
+      effort: { value_num: 3, value_date: null, value_ref: null, value_bool: null },
+    })
+  })
+
   it('rejects a failed insert and leaves nothing of it behind', async () => {
     const tpl = await meetingTemplate()
     const dest = unwrap(await commands.createPageInSpace(null, 'Monday', SPACE))

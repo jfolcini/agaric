@@ -29,6 +29,7 @@ import {
   linkEdges,
   linkKind,
   linksTo,
+  listCandidates,
   pageRequestLimit,
   propertyCompareMatches,
   propertyEqMatches,
@@ -137,7 +138,9 @@ const PROPERTY_LEAF_VALUE_TYPES: Readonly<Record<string, string>> = {
  * AND value_<type> IS NOT NULL AND value_<type> <op> ?)`, so a block without the
  * property matches under no operator, `Neq` included. A column-backed key
  * compares its column as text whatever the leaf's type (`compile_column_property`).
- * `Contains` / `StartsWith` on a number match nothing.
+ * `Contains` / `StartsWith` on a number match nothing. A list (#6741) matches
+ * when one item of the leaf's type does, and `Neq` when it has such an item and
+ * none is equal.
  */
 function propertyLeafMatches(b: Record<string, unknown>, filter: Record<string, unknown>): boolean {
   const key = filter['key'] as string
@@ -158,7 +161,10 @@ function propertyLeafMatches(b: Record<string, unknown>, filter: Record<string, 
       return propertyEqMatches(prop, value)
     }
     case 'Neq': {
-      // `<>` over a non-NULL value is `<` or `>`.
+      // `<>` over a non-NULL value; a list (#6741) needs an item of the leaf's
+      // type and none equal to it.
+      const items = listCandidates(prop, value.type === 'Num')
+      if (items.length > 0) return !items.includes(value.value as string | number)
       return propertyCompareMatches(prop, 'Lt', value) || propertyCompareMatches(prop, 'Gt', value)
     }
     case 'Contains':

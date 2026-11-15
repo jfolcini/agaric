@@ -9,6 +9,7 @@
 //!   5. `set_priority_inner`
 //!   6. `set_due_date_inner`
 //!   7. `set_scheduled_date_inner`
+//!   8. an advanced-query property filter over list rows
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
@@ -18,6 +19,9 @@ use agaric_lib::commands::{
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
+use agaric_store::filters::FilterExpr;
+use agaric_store::filters::primitive::{FilterPrimitive, PropertyPredicate, PropertyValue};
+use agaric_store::query::{AdvancedQueryRequest, compile_and_run};
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -425,6 +429,112 @@ fn bench_set_scheduled_date(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// 8. A property filter over list rows (#6741)
+// ===========================================================================
+
+const FILTER_SPACE: &str = "01BENCHSPACE00000000000000";
+const FILTER_BLOCKS: usize = 100_000;
+const FILTER_HOLDERS: usize = 20_000;
+
+/// `FILTER_BLOCKS` blocks in one space: the first `FILTER_HOLDERS` hold the
+/// text `status = v{i % 100}`, the next `FILTER_HOLDERS` the list
+/// `authors = [v{i % 100}, w{i % 50}]`, so `v7` is held by 200 of each.
+async fn seed_filter_vault(pool: &SqlitePool) {
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'space', ?)",
+    )
+    .bind(FILTER_SPACE)
+    .bind(FILTER_SPACE)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+        .bind(FILTER_SPACE)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    for i in 0..FILTER_BLOCKS {
+        let id = format!("FILT{i:020}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, space_id) \
+             VALUES (?, 'content', 'filter bench block', ?, ?)",
+        )
+        .bind(&id)
+        .bind(i as i64 + 1)
+        .bind(FILTER_SPACE)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let (key, column, value) = if i < FILTER_HOLDERS {
+            ("status", "value_text", format!("v{}", i % 100))
+        } else if i < 2 * FILTER_HOLDERS {
+            let list = format!(r#"["v{}","w{}"]"#, i % 100, i % 50);
+            ("authors", "value_list", list)
+        } else {
+            continue;
+        };
+        let sql =
+            format!("INSERT INTO block_properties (block_id, key, {column}) VALUES (?, ?, ?)");
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(&id)
+            .bind(key)
+            .bind(value)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    tx.commit().await.unwrap();
+}
+
+/// The advanced query's `key = v7`, first page with its total count.
+fn eq_v7_request(key: &str) -> AdvancedQueryRequest {
+    AdvancedQueryRequest {
+        space_id: FILTER_SPACE.to_string(),
+        filter: FilterExpr::leaf(FilterPrimitive::HasProperty {
+            key: key.to_string(),
+            predicate: PropertyPredicate::Eq {
+                value: PropertyValue::Text {
+                    value: "v7".to_string(),
+                },
+            },
+        }),
+        sort: Vec::new(),
+        cursor: None,
+        limit: None,
+        fulltext: None,
+        group_by: None,
+        aggregates: Vec::new(),
+    }
+}
+
+/// An Eq filter over 20,000 list rows next to the same filter over 20,000
+/// text rows, in a 100,000-block space: the list matches through
+/// `json_each`, the text by its column.
+fn bench_property_filter_list(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "filter_list"));
+    rt.block_on(seed_filter_vault(&pool));
+    // Shape probe: each key matches its 200 holders of `v7`.
+    for key in ["status", "authors"] {
+        let resp = rt
+            .block_on(compile_and_run(&pool, eq_v7_request(key)))
+            .unwrap();
+        assert_eq!(resp.total_count, Some(200), "{key} = v7 matches 200 blocks");
+    }
+
+    let mut group = c.benchmark_group("property_filter_list");
+    for (label, key) in [("text_eq", "status"), ("list_eq", "authors")] {
+        group.bench_function(BenchmarkId::new(label, FILTER_BLOCKS), |b| {
+            b.to_async(&rt)
+                .iter(|| async { compile_and_run(&pool, eq_v7_request(key)).await.unwrap() });
+        });
+    }
+    group.finish();
+}
+
+// ===========================================================================
 // Harness
 // ===========================================================================
 
@@ -437,4 +547,5 @@ criterion_group!(
     bench_set_priority,
     bench_set_due_date,
     bench_set_scheduled_date,
+    bench_property_filter_list,
 );
