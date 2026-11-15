@@ -119,6 +119,10 @@ function getFilterKey(filter: BacklinkFilter): string {
     case 'HasTagPrefix': {
       return `HasTagPrefix:${filter.prefix}`
     }
+    case 'And':
+    case 'DueDate':
+    case 'Or':
+    case 'SourcePage':
     default: {
       return JSON.stringify(filter)
     }

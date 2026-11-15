@@ -226,6 +226,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                   </ins>
                 )
               }
+              case 'Equal':
               default: {
                 return (
                   <span key={key} ref={refCallback}>

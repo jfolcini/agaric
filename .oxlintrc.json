@@ -228,7 +228,8 @@
     "typescript/require-array-sort-compare": "error",
     "typescript/no-misused-spread": "error",
     "typescript/no-deprecated": "error",
-    "eslint/preserve-caught-error": "error"
+    "eslint/preserve-caught-error": "error",
+    "typescript/switch-exhaustiveness-check": "error"
   },
   "overrides": [
     {

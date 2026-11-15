@@ -127,6 +127,10 @@ export function filterSummary(
     case 'HasTagPrefix': {
       return `${tr('filter.tagPrefix', 'tag prefix')} "${filter.prefix}"`
     }
+    case 'And':
+    case 'DueDate':
+    case 'Or':
+    case 'SourcePage':
     default: {
       return tr('filter.default', 'filter')
     }

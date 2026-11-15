@@ -287,6 +287,24 @@ function leafWords(leaf: FilterPrimitive): string[] {
         ? []
         : [prefix + DATE_OPS[predicate.type] + predicate.date]
     }
+    case 'BlockType':
+    case 'CaseSensitive':
+    case 'ChildOf':
+    case 'Created':
+    case 'HasNoInboundLinks':
+    case 'HasParentMatching':
+    case 'LastEdited':
+    case 'LinkedFrom':
+    case 'LinksTo':
+    case 'Orphan':
+    case 'PathGlob':
+    case 'Regex':
+    case 'Snippet':
+    case 'Space':
+    case 'Stub':
+    case 'TagOrRef':
+    case 'TagUnder':
+    case 'WholeWord':
     default: {
       return []
     }

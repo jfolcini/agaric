@@ -1235,6 +1235,7 @@ export function datePredicateMatches(
     case 'Between': {
       return v >= (pred?.['from'] as string) && v <= (pred?.['to'] as string)
     }
+    case undefined:
     default: {
       return true
     }
@@ -1572,6 +1573,7 @@ export function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): 
     case 'StartsWith': {
       return propertyLikeMatches(prop, ptype === 'Contains', value)
     }
+    case undefined:
     default: {
       return true
     }

@@ -90,8 +90,11 @@ function toDatePredicate(op: PropertyFilter['operator'], date: string): DatePred
     case 'gte': {
       return { type: 'OnOrAfter', date }
     }
+    case 'eq':
+    case 'neq':
+    case undefined:
     default: {
-      // `eq` / undefined → exact day (matches legacy `value_date = X`).
+      // Exact day, matching legacy `value_date = X`.
       return { type: 'On', date }
     }
   }
@@ -118,6 +121,8 @@ function toPropertyPredicate(
     case 'gte': {
       return { type: 'Gte', value }
     }
+    case 'eq':
+    case undefined:
     default: {
       return { type: 'Eq', value }
     }
