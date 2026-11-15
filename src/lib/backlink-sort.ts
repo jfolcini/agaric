@@ -2,7 +2,8 @@
  * The sort fields the References panels offer, and the `BacklinkSort` each
  * one sends. Built-in fields come first; the user's own properties follow,
  * limited to the definitions whose type has an order
- * (`isSortablePropertyType`) and that are neither built-in nor bookkeeping.
+ * (`isSortablePropertyType`), that hold one value (a list, #6741, has no one
+ * value to sort by) and that are neither built-in nor bookkeeping.
  */
 
 import type { BacklinkSort, PropertyDefinition, SortDir } from '@/lib/bindings'
@@ -65,6 +66,7 @@ export function propertySortFields(defs: readonly PropertyDefinition[]): Propert
     .filter(
       (def) =>
         isSortablePropertyType(def.value_type) &&
+        def.multiple !== true &&
         !INTERNAL_PROPERTY_KEYS.has(def.key) &&
         !APP_MANAGED_BUILTIN_KEYS.has(def.key),
     )

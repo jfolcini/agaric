@@ -986,6 +986,13 @@ describe('folder picks of other note formats (#6032)', () => {
     expect(skippedFiles([bak], false, new Set())).toEqual({ other: 1, databases: 0 })
   })
 
+  it("does not count a Logseq graph's config.edn, which the import reads for titles", () => {
+    const config = folderFile(['{}'], 'config.edn', 'Graph/logseq/config.edn', 'text/plain')
+    const other = folderFile(['{}'], 'config.edn', 'Graph/other/config.edn', 'text/plain')
+
+    expect(skippedFiles([config, other], false, new Set())).toEqual({ other: 1, databases: 0 })
+  })
+
   it('does not count a hidden file of a plain pick, which has no folder path', () => {
     const hidden = new File(['x'], '.DS_Store')
     const shown = new File(['x'], 'data.bin')

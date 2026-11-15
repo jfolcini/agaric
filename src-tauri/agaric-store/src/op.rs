@@ -499,6 +499,14 @@ impl PropertyList {
             PropertyListItem::Num(_) => None,
         })
     }
+
+    /// The string items, to change in place.
+    pub fn texts_mut(&mut self) -> impl Iterator<Item = &mut String> {
+        self.0.iter_mut().filter_map(|item| match item {
+            PropertyListItem::Text(s) => Some(s),
+            PropertyListItem::Num(_) => None,
+        })
+    }
 }
 
 impl sqlx::Type<sqlx::Sqlite> for PropertyList {

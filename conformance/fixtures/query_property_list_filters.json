@@ -1,0 +1,2265 @@
+{
+  "description": "#6741 — the property filters over a list row, on every surface that compiles one: `run_advanced_query` (the compiler Pages, Search and the advanced query share), `list_backlinks_grouped` (the References panel), `filtered_blocks_query` (the agenda's property filter) and `list_property_values` (the value picker). A comparison holds for a list when it holds for at least one item; `Ne` holds when no item is equal. A text, ref or date value compares the string items, a number the number items, so neither kind reaches the other. On the advanced query `Ne` matches a block without the key; on the References panel it needs the key and an item of the value's kind; on `filtered_blocks_query` `neq` needs the key and no equal string item. `Exists` / `NotExists` test the key. The picker offers the items of a text, select or url list, not a ref or number list's. S3 `authors = [Ann, Bob]`, `points = [3, 7.5]`, `when = [2026-01-01, 2026-05-01]`, `related = [S2]`; S4 `authors = [Cy]`, `points = [10]`; S5 nothing; S6 `authors = [Ann]`, `when = [2026-02-02]`. S3..S6 each link to S1. Grouping by a list key is not pinned: the mock stubs grouped aggregates. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Lists",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card one on [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card two on [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card three on [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card four on [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 16,
+      "ops": [
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "key": "points",
+          "op_type": "set_property"
+        },
+        {
+          "key": "points",
+          "op_type": "set_property"
+        },
+        {
+          "key": "when",
+          "op_type": "set_property"
+        },
+        {
+          "key": "when",
+          "op_type": "set_property"
+        },
+        {
+          "key": "related",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B3",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B4",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B5",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B6",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "B3",
+        "key": "authors",
+        "value": ["Ann", "Bob"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B3",
+        "key": "points",
+        "value": [3.0, 7.5],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B3",
+        "key": "related",
+        "value": ["B2"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B3",
+        "key": "when",
+        "value": ["2026-01-01", "2026-05-01"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B4",
+        "key": "authors",
+        "value": ["Cy"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B4",
+        "key": "points",
+        "value": [10.0],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B6",
+        "key": "authors",
+        "value": ["Ann"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B6",
+        "key": "when",
+        "value": ["2026-02-02"],
+        "value_type": "List"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_authors",
+      "returns": ["authors#value_type=text#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_points",
+      "returns": ["points#value_type=number#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_when",
+      "returns": ["when#value_type=date#options=null#builtin=false#multiple=true"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_related",
+      "returns": ["related#value_type=ref#options=null#builtin=false#multiple=true"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_list_eq",
+      "rows": ["B6", "B3"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_list_ne",
+      "rows": ["B5", "B4", "B2", "B1"],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_list_lt",
+      "rows": ["B6", "B3"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_list_gt",
+      "rows": ["B4"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_list_lte",
+      "rows": ["B6", "B3"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_list_gte",
+      "rows": ["B4", "B3"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_list_contains",
+      "rows": ["B3"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_list_starts_with",
+      "rows": ["B4"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_list_exists",
+      "rows": ["B6", "B4", "B3"],
+      "total_count": 3
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_list_not_exists",
+      "rows": ["B5", "B2", "B1"],
+      "total_count": 3
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_number_list_eq",
+      "rows": ["B3"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_number_list_ne",
+      "rows": ["B6", "B5", "B4", "B2", "B1"],
+      "total_count": 5
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_number_list_lt",
+      "rows": ["B3"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_number_list_gt",
+      "rows": ["B4", "B3"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_number_list_lte",
+      "rows": ["B3"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_number_list_gte",
+      "rows": ["B4"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_number_list_contains",
+      "rows": [],
+      "total_count": 0
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_text_over_a_number_list",
+      "rows": [],
+      "total_count": 0
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_text_bound_over_a_number_list",
+      "rows": [],
+      "total_count": 0
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_number_bound_over_a_text_list",
+      "rows": [],
+      "total_count": 0
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_date_list_gte",
+      "rows": ["B3"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_ref_list_eq",
+      "rows": ["B3"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_list_eq",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=2#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_list_neq",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_list_lt",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=2#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_list_gt",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_list_lte",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=2#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_list_gte",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=2#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_list_contains",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_list_starts_with",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_list_is_set",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_list_is_empty",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B5#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_number_list_eq",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_number_list_neq",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_number_list_lt",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_number_list_gt",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=2#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_number_list_lte",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_number_list_gte",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_number_list_contains",
+      "rows": ["filtered#count=0#truncated=false"],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_text_over_a_number_list",
+      "rows": ["filtered#count=0#truncated=false"],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_text_neq_over_a_number_list",
+      "rows": ["filtered#count=0#truncated=false"],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_number_over_a_text_list",
+      "rows": ["filtered#count=0#truncated=false"],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_date_list_gte",
+      "rows": [
+        "B2#page_title=Lists#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_list_eq",
+      "rows": ["B3", "B6"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_list_neq",
+      "rows": ["B4"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_list_lt",
+      "rows": ["B3", "B6"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_list_gt",
+      "rows": ["B4"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_list_lte",
+      "rows": ["B3", "B6"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_list_gte",
+      "rows": ["B3", "B4"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_list_text_in",
+      "rows": ["B3", "B4"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_list_presence",
+      "rows": ["B3", "B4", "B6"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_text_neq_over_a_number_list",
+      "rows": ["B3", "B4"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_text_eq_over_a_number_list",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_date_list_eq",
+      "rows": ["B3"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_date_list_neq",
+      "rows": ["B6"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "filtered_date_list_range",
+      "rows": ["B3"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "values_of_a_text_list",
+      "rows": ["Ann", "Bob", "Cy"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "values_of_a_ref_list",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "values_of_a_number_list",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_property_list_filters",
+  "ops": [
+    {
+      "args": {
+        "key": "authors",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "create_property_def",
+      "name": "declare_authors",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "points",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "create_property_def",
+      "name": "declare_points",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "when",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "date"
+      },
+      "command": "create_property_def",
+      "name": "declare_when",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "related",
+        "multiple": true,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "ref"
+      },
+      "command": "create_property_def",
+      "name": "declare_related",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "card one on [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "card two on [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "card three on [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "toText": "card four on [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "authors",
+        "value": {
+          "value_list": ["Ann", "Bob"]
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "authors",
+        "value": {
+          "value_list": ["Cy"]
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "key": "authors",
+        "value": {
+          "value_list": ["Ann"]
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "points",
+        "value": {
+          "value_list": [3, 7.5]
+        }
+      },
+      "command": "set_property",
+      "comment": "3 is stored as the number 3.0."
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "points",
+        "value": {
+          "value_list": [10]
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "when",
+        "value": {
+          "value_list": ["2026-01-01", "2026-05-01"]
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "key": "when",
+        "value": {
+          "value_list": ["2026-02-02"]
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "related",
+        "value": {
+          "value_list": ["000000000000000000000000S2"]
+        }
+      },
+      "command": "set_property",
+      "comment": "A ref list: its items are block ids."
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "authors",
+              "predicate": {
+                "type": "Eq",
+                "value": {
+                  "type": "Text",
+                  "value": "Ann"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "S3 and S6 each hold `Ann` among their items.",
+      "name": "advanced_list_eq"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "authors",
+              "predicate": {
+                "type": "Ne",
+                "value": {
+                  "type": "Text",
+                  "value": "Ann"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`Ne` holds when no item is equal: S4, and every block without `authors` (S1, S2, S5).",
+      "name": "advanced_list_ne"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "authors",
+              "predicate": {
+                "type": "Lt",
+                "value": {
+                  "type": "Text",
+                  "value": "B"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`Ann` < `B`: S3 and S6.",
+      "name": "advanced_list_lt"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "authors",
+              "predicate": {
+                "type": "Gt",
+                "value": {
+                  "type": "Text",
+                  "value": "Bz"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "Only `Cy` > `Bz`: S4. S3's `Bob` is below it.",
+      "name": "advanced_list_gt"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "authors",
+              "predicate": {
+                "type": "Lte",
+                "value": {
+                  "type": "Text",
+                  "value": "Bob"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "S3 (`Ann`, `Bob`) and S6 (`Ann`).",
+      "name": "advanced_list_lte"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "authors",
+              "predicate": {
+                "type": "Gte",
+                "value": {
+                  "type": "Text",
+                  "value": "Bob"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "S3 (`Bob`) and S4 (`Cy`).",
+      "name": "advanced_list_gte"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "authors",
+              "predicate": {
+                "type": "Contains",
+                "value": {
+                  "type": "Text",
+                  "value": "o"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "A substring of one item: `Bob`, S3.",
+      "name": "advanced_list_contains"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "authors",
+              "predicate": {
+                "type": "StartsWith",
+                "value": {
+                  "type": "Text",
+                  "value": "C"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "S4's `Cy`.",
+      "name": "advanced_list_starts_with"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "authors",
+              "predicate": {
+                "type": "Exists"
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "The key alone: S3, S4, S6.",
+      "name": "advanced_list_exists"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "authors",
+              "predicate": {
+                "type": "NotExists"
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "S1, S2, S5.",
+      "name": "advanced_list_not_exists"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "points",
+              "predicate": {
+                "type": "Eq",
+                "value": {
+                  "type": "Num",
+                  "value": 3
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "A number compares the number items: S3's 3.",
+      "name": "advanced_number_list_eq"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "points",
+              "predicate": {
+                "type": "Ne",
+                "value": {
+                  "type": "Num",
+                  "value": 3
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "Every block but S3.",
+      "name": "advanced_number_list_ne"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "points",
+              "predicate": {
+                "type": "Lt",
+                "value": {
+                  "type": "Num",
+                  "value": 5
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "S3's 3.",
+      "name": "advanced_number_list_lt"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "points",
+              "predicate": {
+                "type": "Gt",
+                "value": {
+                  "type": "Num",
+                  "value": 5
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "S3's 7.5 and S4's 10.",
+      "name": "advanced_number_list_gt"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "points",
+              "predicate": {
+                "type": "Lte",
+                "value": {
+                  "type": "Num",
+                  "value": 7.5
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "S3.",
+      "name": "advanced_number_list_lte"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "points",
+              "predicate": {
+                "type": "Gte",
+                "value": {
+                  "type": "Num",
+                  "value": 10
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "S4.",
+      "name": "advanced_number_list_gte"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "points",
+              "predicate": {
+                "type": "Contains",
+                "value": {
+                  "type": "Num",
+                  "value": 3
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "A number has no substring: nothing.",
+      "name": "advanced_number_list_contains",
+      "expect_empty": true
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "points",
+              "predicate": {
+                "type": "Eq",
+                "value": {
+                  "type": "Text",
+                  "value": "3"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "A text value compares the string items only, and `points` holds none: nothing.",
+      "name": "advanced_text_over_a_number_list",
+      "expect_empty": true
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "points",
+              "predicate": {
+                "type": "Lt",
+                "value": {
+                  "type": "Text",
+                  "value": "z"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "SQLite orders every number below every text, so without the item type guard every number item would be `< 'z'`: nothing.",
+      "name": "advanced_text_bound_over_a_number_list",
+      "expect_empty": true
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "authors",
+              "predicate": {
+                "type": "Gt",
+                "value": {
+                  "type": "Num",
+                  "value": 0
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "And every text above every number: nothing.",
+      "name": "advanced_number_bound_over_a_text_list",
+      "expect_empty": true
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "when",
+              "predicate": {
+                "type": "Gte",
+                "value": {
+                  "type": "Date",
+                  "value": "2026-04-01"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "S3's 2026-05-01.",
+      "name": "advanced_date_list_gte"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "related",
+              "predicate": {
+                "type": "Eq",
+                "value": {
+                  "type": "Ref",
+                  "value": "000000000000000000000000S2"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "A ref compares the ids a ref list holds: S3.",
+      "name": "advanced_ref_list_eq"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "authors",
+            "op": "Eq",
+            "type": "PropertyText",
+            "value": "Ann"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S3 and S6.",
+      "name": "backlinks_list_eq"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "authors",
+            "op": "Neq",
+            "type": "PropertyText",
+            "value": "Ann"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "On the References panel `Neq` needs the key, as on a scalar row: S4 only, not S5.",
+      "name": "backlinks_list_neq"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "authors",
+            "op": "Lt",
+            "type": "PropertyText",
+            "value": "B"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S3 and S6.",
+      "name": "backlinks_list_lt"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "authors",
+            "op": "Gt",
+            "type": "PropertyText",
+            "value": "Bz"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S4.",
+      "name": "backlinks_list_gt"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "authors",
+            "op": "Lte",
+            "type": "PropertyText",
+            "value": "Bob"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S3 and S6.",
+      "name": "backlinks_list_lte"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "authors",
+            "op": "Gte",
+            "type": "PropertyText",
+            "value": "Bob"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S3 and S4.",
+      "name": "backlinks_list_gte"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "authors",
+            "op": "Contains",
+            "type": "PropertyText",
+            "value": "o"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S3.",
+      "name": "backlinks_list_contains"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "authors",
+            "op": "StartsWith",
+            "type": "PropertyText",
+            "value": "C"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S4.",
+      "name": "backlinks_list_starts_with"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "authors",
+            "type": "PropertyIsSet"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S3, S4, S6.",
+      "name": "backlinks_list_is_set"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "authors",
+            "type": "PropertyIsEmpty"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S5.",
+      "name": "backlinks_list_is_empty"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "points",
+            "op": "Eq",
+            "type": "PropertyNum",
+            "value": 3
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S3.",
+      "name": "backlinks_number_list_eq"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "points",
+            "op": "Neq",
+            "type": "PropertyNum",
+            "value": 3
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "A number list with no item equal: S4. S5 and S6 hold no `points`.",
+      "name": "backlinks_number_list_neq"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "points",
+            "op": "Lt",
+            "type": "PropertyNum",
+            "value": 5
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S3.",
+      "name": "backlinks_number_list_lt"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "points",
+            "op": "Gt",
+            "type": "PropertyNum",
+            "value": 5
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S3 and S4.",
+      "name": "backlinks_number_list_gt"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "points",
+            "op": "Lte",
+            "type": "PropertyNum",
+            "value": 3
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S3.",
+      "name": "backlinks_number_list_lte"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "points",
+            "op": "Gte",
+            "type": "PropertyNum",
+            "value": 10
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S4.",
+      "name": "backlinks_number_list_gte"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "points",
+            "op": "Contains",
+            "type": "PropertyNum",
+            "value": 3
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Nothing.",
+      "name": "backlinks_number_list_contains"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "points",
+            "op": "Eq",
+            "type": "PropertyText",
+            "value": "3"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Nothing: `points` holds no string item.",
+      "name": "backlinks_text_over_a_number_list"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "points",
+            "op": "Neq",
+            "type": "PropertyText",
+            "value": "3"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Nothing either: `Neq` needs an item of the value's kind.",
+      "name": "backlinks_text_neq_over_a_number_list"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "authors",
+            "op": "Gt",
+            "type": "PropertyNum",
+            "value": 0
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Nothing.",
+      "name": "backlinks_number_over_a_text_list"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "when",
+            "op": "Gte",
+            "type": "PropertyDate",
+            "value": "2026-04-01"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "S3.",
+      "name": "backlinks_date_list_gte"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "authors",
+            "operator": "eq",
+            "valueText": "Ann"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "S3 and S6.",
+      "name": "filtered_list_eq"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "authors",
+            "operator": "neq",
+            "valueText": "Ann"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "A row of the key with no string item equal: S4. S5 holds no `authors`.",
+      "name": "filtered_list_neq"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "authors",
+            "operator": "lt",
+            "valueText": "B"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "S3 and S6.",
+      "name": "filtered_list_lt"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "authors",
+            "operator": "gt",
+            "valueText": "Bz"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "S4.",
+      "name": "filtered_list_gt"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "authors",
+            "operator": "lte",
+            "valueText": "Bob"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "S3 and S6.",
+      "name": "filtered_list_lte"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "authors",
+            "operator": "gte",
+            "valueText": "Bob"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "S3 and S4.",
+      "name": "filtered_list_gte"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "authors",
+            "operator": "eq",
+            "valueTextIn": ["Cy", "Bob"]
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "Either listed value as one item: S3 and S4.",
+      "name": "filtered_list_text_in"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "authors",
+            "operator": "eq"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "S3, S4, S6.",
+      "name": "filtered_list_presence"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "points",
+            "operator": "neq",
+            "valueText": "3"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "`neq` holds for any row of the key whose text differs: both number lists, S3 and S4.",
+      "name": "filtered_text_neq_over_a_number_list"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "points",
+            "operator": "eq",
+            "valueText": "3"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "Nothing: the items are numbers.",
+      "name": "filtered_text_eq_over_a_number_list",
+      "expect_empty": true
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "when",
+            "operator": "eq",
+            "valueDate": "2026-05-01"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "S3.",
+      "name": "filtered_date_list_eq"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "when",
+            "operator": "neq",
+            "valueDate": "2026-01-01"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "S6; S3 holds the date.",
+      "name": "filtered_date_list_neq"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "when",
+            "operator": "eq",
+            "valueDateRange": ["2026-04-01", "2026-06-01"]
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "Half-open: S3's 2026-05-01.",
+      "name": "filtered_date_list_range"
+    },
+    {
+      "args": {
+        "key": "authors"
+      },
+      "command": "list_property_values",
+      "comment": "The items of a text list, counted with each other: `Ann` twice, then `Bob` and `Cy` by value.",
+      "name": "values_of_a_text_list"
+    },
+    {
+      "args": {
+        "key": "related"
+      },
+      "command": "list_property_values",
+      "comment": "A ref list holds block ids, which the picker never offers: nothing.",
+      "name": "values_of_a_ref_list",
+      "expect_empty": true
+    },
+    {
+      "args": {
+        "key": "points"
+      },
+      "command": "list_property_values",
+      "comment": "Nor number items: nothing.",
+      "name": "values_of_a_number_list",
+      "expect_empty": true
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Lists",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S4",
+        "parent_id": "S2",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S5",
+        "parent_id": "S2",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S6",
+        "parent_id": "S2",
+        "position": 4
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -315,6 +315,7 @@ export function QueryResult({
   const { sortedResults, sortKey, sortDir, handleColumnSort } = useQuerySorting({
     results,
     customProps,
+    propertyRows,
   })
 
   // #2663 — the page store's `edit()` action (tolerant of no ambient

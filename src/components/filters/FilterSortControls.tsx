@@ -3,7 +3,7 @@
  * an ascending/descending toggle.
  *
  * Built-in fields come first, then the user's properties whose type has an
- * order (`propertySortFields`). No sort means the backend's own order,
+ * order and that hold one value (`propertySortFields`). No sort means the backend's own order,
  * `DEFAULT_BACKLINK_SORT`, which the controls show and the toggle reverses.
  */
 

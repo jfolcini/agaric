@@ -34,6 +34,13 @@ describe('propertyRowDisplay', () => {
     expect(propertyRowDisplay(row({ key: 'k', value_bool: 0 }))).toBe('false')
   })
 
+  // #6741 — a list shows its items, as the property chip does.
+  it('shows a list as its items joined', () => {
+    expect(propertyRowDisplay(row({ key: 'k', value_list: ['Ann', 'Doe, Jane', 3] }))).toBe(
+      'Ann, Doe, Jane, 3',
+    )
+  })
+
   it('returns null when no value is set or text is empty', () => {
     expect(propertyRowDisplay(row({ key: 'k' }))).toBeNull()
     expect(propertyRowDisplay(row({ key: 'k', value_text: '' }))).toBeNull()
@@ -94,6 +101,14 @@ describe('columnValue', () => {
     expect(columnValue(block, 'content', customProps)).toBe('Hi')
     expect(columnValue(block, 'todo_state', customProps)).toBe('TODO')
     expect(columnValue(block, 'prop:area', customProps)).toBe('fe')
+  })
+
+  // #6741 — a list sorts by its first item, as that item shows alone.
+  it('reads a list column as its first item', () => {
+    const rows = { B1: [row({ key: 'authors', value_list: ['Zed', 'Ann'] })] }
+    const props = new Map([['B1', new Map([['authors', 'Zed, Ann']])]])
+    expect(columnValue(block, 'prop:authors', props, rows)).toBe('Zed')
+    expect(columnValue(block, 'prop:authors', props)).toBe('Zed, Ann')
   })
 
   it('returns null for a missing custom prop', () => {

@@ -53,14 +53,14 @@ function readItem(item: string): string {
 }
 
 /**
- * The text of `items`, joined by `, `: an item that holds a comma or a double quote, begins or
- * ends with whitespace, or leaves a `[` open, which would take the next comma, is written as a
- * JSON string.
+ * The text of `items`, joined by `, `: an item that holds a comma, a double quote or a line break,
+ * begins or ends with whitespace, or leaves a `[` open, which would take the next comma, is
+ * written as a JSON string.
  */
 export function joinListItems(items: readonly string[]): string {
   return items
     .map((item) =>
-      /[,"]|^\s|\s$/.test(item) || leavesBracketOpen(item) ? JSON.stringify(item) : item,
+      /[,"\n\r]|^\s|\s$/.test(item) || leavesBracketOpen(item) ? JSON.stringify(item) : item,
     )
     .join(', ')
 }
@@ -72,4 +72,16 @@ function leavesBracketOpen(item: string): boolean {
     else if (c === ']') depth = Math.max(0, depth - 1)
   }
   return depth > 0
+}
+
+/** Rust's `f64` grammar: a sign, digits with an optional point, an optional exponent. */
+export const RUST_F64 = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/
+
+/**
+ * `text` as a number the way Rust reads one (`f64::from_str`) and keeps it (finite only), or
+ * null: `Number` alone would also take `0x10`, `Infinity` and the empty string.
+ */
+export function readFiniteNumber(text: string): number | null {
+  const n = Number(text)
+  return RUST_F64.test(text) && Number.isFinite(n) ? n : null
 }

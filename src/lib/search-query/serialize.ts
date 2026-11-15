@@ -134,7 +134,7 @@ function withoutIndex(node: FilterNode, index: number): FilterNode | null {
   return children.length === 1 ? (children[0] as FilterNode) : { kind: node.kind, children }
 }
 
-const holdsOr = (node: FilterNode): boolean =>
+export const holdsOr = (node: FilterNode): boolean =>
   node.kind === 'or' || (node.kind === 'and' && node.children.some(holdsOr))
 
 /** Drop the filter at `index` and return a fresh AST. */

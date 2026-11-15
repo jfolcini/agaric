@@ -1,5 +1,6 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -415,6 +416,63 @@ describe('PageTagSection emoji insert (#286)', () => {
     // The emoji dialog is open; a close request on the underlying tag popover
     // must be suppressed (no onTagPickerChange(false)).
     expect(onTagPickerChange).not.toHaveBeenCalledWith(false)
+  })
+})
+
+describe('PageTagSection picker close focus', () => {
+  // Radix refocuses the trigger one timer after the picker unmounts. The timer
+  // is held here until a block editor has the focus, the order a busy main
+  // thread produces by chance when the user clicks into a block as the picker
+  // closes on its create.
+  function closeHoldingZeroDelayTimers(rerender: (ui: ReactElement) => void): () => void {
+    const held: Array<() => void> = []
+    const realSetTimeout = window.setTimeout.bind(window)
+    vi.spyOn(window, 'setTimeout').mockImplementation(((
+      fn: () => void,
+      ms?: number,
+      ...rest: unknown[]
+    ) => {
+      if (!ms) {
+        held.push(fn)
+        return 0
+      }
+      return realSetTimeout(fn, ms, ...rest)
+    }) as typeof window.setTimeout)
+    act(() => {
+      rerender(<PageTagSection {...defaultProps} showTagPicker={false} />)
+    })
+    return () => {
+      act(() => {
+        for (const fn of held.splice(0)) fn()
+      })
+      vi.mocked(window.setTimeout).mockRestore()
+    }
+  }
+
+  it('leaves the focus on the block editor it moved to while the picker closed', () => {
+    const { rerender } = render(<PageTagSection {...defaultProps} showTagPicker />)
+    const editor = document.createElement('div')
+    editor.contentEditable = 'true'
+    editor.tabIndex = 0
+    document.body.append(editor)
+
+    const release = closeHoldingZeroDelayTimers(rerender)
+    editor.focus()
+    release()
+
+    expect(screen.queryByLabelText('Search tags')).not.toBeInTheDocument()
+    expect(editor).toHaveFocus()
+    editor.remove()
+  })
+
+  it('returns the focus to the Add tag button when the close left it nowhere', () => {
+    const { rerender } = render(<PageTagSection {...defaultProps} showTagPicker />)
+
+    const release = closeHoldingZeroDelayTimers(rerender)
+    expect(document.activeElement).toBe(document.body)
+    release()
+
+    expect(screen.getByRole('button', { name: /add tag/i })).toHaveFocus()
   })
 })
 

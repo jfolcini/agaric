@@ -16,6 +16,8 @@ function def(key: string, valueType: string, options: string[] | null): Property
 const defs = new Map([
   ['stage', def('stage', 'select', ['later', 'now'])],
   ['effort', def('effort', 'number', null)],
+  // #6741 — a card that holds two of its options would sit in two columns.
+  ['labels', { ...def('labels', 'select', ['a', 'b']), multiple: true }],
 ])
 
 describe('boardColumns', () => {
@@ -77,6 +79,7 @@ describe('boardColumns', () => {
     ['a multi-valued key', { key: { type: 'Tag' } } as const],
     ['a property that is not a select', { key: { type: 'Property', key: 'effort' } } as const],
     ['a property with no definition', { key: { type: 'Property', key: 'nope' } } as const],
+    ['a select that holds several values', { key: { type: 'Property', key: 'labels' } } as const],
   ])('has no board for %s', (_name, groupBy) => {
     expect(boardColumns(groupBy, defs)).toBeNull()
   })

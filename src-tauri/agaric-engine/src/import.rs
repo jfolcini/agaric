@@ -4444,9 +4444,9 @@ pub fn property_list_items(value: &str) -> Vec<String> {
 }
 
 /// The text of `items`, joined by `, `, to read back as them
-/// ([`property_list_items`]): an item that holds a comma or a double quote,
-/// begins or ends with whitespace, or leaves a `[` open, which would take the
-/// next item's comma, is written as a JSON string.
+/// ([`property_list_items`]): an item that holds a comma, a double quote or a
+/// line break, begins or ends with whitespace, or leaves a `[` open, which
+/// would take the next item's comma, is written as a JSON string.
 pub fn write_property_list(items: &[String]) -> String {
     let leaves_bracket_open = |item: &str| {
         let depth = item.chars().fold(0usize, |depth, c| match c {
@@ -4457,7 +4457,8 @@ pub fn write_property_list(items: &[String]) -> String {
         depth > 0
     };
     let written = items.iter().map(|item| {
-        if item.contains([',', '"']) || item.trim() != item || leaves_bracket_open(item) {
+        if item.contains([',', '"', '\n', '\r']) || item.trim() != item || leaves_bracket_open(item)
+        {
             serde_json::to_string(item).expect("a string serialises")
         } else {
             item.clone()
@@ -9632,6 +9633,10 @@ mod tests_property_list_6741 {
             write_property_list(&strings(&["[[Page]]", "a]b", "a [b"])),
             r#"[[Page]], a]b, "a [b""#
         );
+        assert_eq!(
+            write_property_list(&strings(&["two\nlines", "cr\r"])),
+            r#""two\nlines", "cr\r""#
+        );
     }
 
     #[test]
@@ -9644,6 +9649,7 @@ mod tests_property_list_6741 {
             "plain",
             "a [b",
             "[[Page]]",
+            "two\nlines",
             "last",
         ]);
         assert_eq!(property_list_items(&write_property_list(&items)), items);

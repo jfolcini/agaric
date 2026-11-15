@@ -6,7 +6,7 @@
  * `property-type-change.ts` can both import it.
  */
 
-import { joinListItems } from '@/lib/property-list'
+import { joinListItems, readFiniteNumber } from '@/lib/property-list'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 
 /** `PropertyValue` as the engine holds it: a string (text, date or ref), a number or a boolean. */
@@ -20,8 +20,6 @@ export function isList(value: Held | null): value is ListValue {
   return Array.isArray(value)
 }
 
-/** Rust's `f64` grammar: a sign, digits with an optional point, an optional exponent. */
-export const RUST_F64 = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/
 /** Rust's `str::trim`: Unicode White_Space, which takes U+0085 and not U+FEFF, unlike JS's. */
 export const RUST_TRIM = /^\p{White_Space}+|\p{White_Space}+$/gu
 /** `canonical_ulid`: Crockford base32, any case, no overflow. */
@@ -29,11 +27,7 @@ const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i
 
 /** What a string becomes under each type that does not take any string, or null. */
 const STRING_COERCIONS: Readonly<Record<string, (s: string) => HeldValue | null>> = {
-  number: (s) => {
-    const trimmed = s.replace(RUST_TRIM, '')
-    const n = Number(trimmed)
-    return RUST_F64.test(trimmed) && Number.isFinite(n) ? n : null
-  },
+  number: (s) => readFiniteNumber(s.replace(RUST_TRIM, '')),
   date: (s) => (isIsoDate(s) ? s : null),
   boolean: (s) => (s === 'true' ? true : s === 'false' ? false : null),
   ref: (s) => (ULID.test(s) ? s.toUpperCase() : null),

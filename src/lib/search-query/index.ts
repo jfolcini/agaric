@@ -15,7 +15,13 @@ export { classify, parse } from '@/lib/search-query/classify'
 export { EXPANSION_CAP, expandBraces, validateGlob } from '@/lib/search-query/glob-validate'
 export { ensureRegistered } from '@/lib/search-query/register'
 export { looksLikeUnknownPrefix, recognise, registerTokenPrefix } from '@/lib/search-query/registry'
-export { addFilter, removeFilterAt, serialize, tokenSource } from '@/lib/search-query/serialize'
+export {
+  addFilter,
+  holdsOr,
+  removeFilterAt,
+  serialize,
+  tokenSource,
+} from '@/lib/search-query/serialize'
 export type { AstFilterProjection } from '@/lib/search-query/to-search-filter'
 export { astToFilterProjection } from '@/lib/search-query/to-search-filter'
 export type { RawToken } from '@/lib/search-query/tokenize'

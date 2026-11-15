@@ -160,6 +160,22 @@ void test('review: the newest review decides, not an earlier approval', () => {
   assertFailsOnly(r, 'review', 'CHANGES_REQUESTED')
 })
 
+void test('review: a COMMENTED review after the approval decides nothing', () => {
+  const comment = {
+    state: 'COMMENTED',
+    commit_id: HEAD,
+    submitted_at: '2026-11-15T13:00:00Z',
+    user: { login: 'agaric-reviewer[bot]' },
+  }
+  const after = run((routes) => routes[ROUTE.reviews].push(comment))
+  assert.equal(after.status, 0, after.out)
+
+  const alone = run((routes) => {
+    routes[ROUTE.reviews] = [comment]
+  })
+  assertFailsOnly(alone, 'review', 'none submitted')
+})
+
 void test('review: none submitted fails; a pending review does not count', () => {
   const none = run((routes) => {
     routes[ROUTE.reviews] = []
@@ -213,6 +229,24 @@ void test('mergeable: dirty, unknown and draft fail; behind passes', () => {
     routes[ROUTE.pr].mergeable_state = 'behind'
   })
   assert.equal(behind.status, 0, behind.out)
+})
+
+void test('main moved: 300 files, the compare API cap, fails closed', () => {
+  const filler = (n) =>
+    Array.from({ length: n }, (_, i) => ({
+      filename: `elsewhere/file-${i}.txt`,
+      status: 'modified',
+      previous_filename: null,
+    }))
+  const capped = run((routes) => {
+    routes[ROUTE.mainFiles].files = filler(300)
+  })
+  assertFailsOnly(capped, 'main moved', '300 or more files')
+
+  const below = run((routes) => {
+    routes[ROUTE.mainFiles].files = filler(299)
+  })
+  assert.equal(below.status, 0, below.out)
 })
 
 const SHARED = 'src/components/block-tree/use-block-action-orchestration.ts'

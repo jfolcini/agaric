@@ -1288,6 +1288,15 @@ impl GroupKeySql<'_> {
     }
 }
 
+/// A number as `propertyRowDisplay` shows it: `3`, not REAL `3.0`; `3.5`
+/// stays. NULL stays NULL.
+fn canonical_number(expr: &str) -> String {
+    format!(
+        "CASE WHEN {expr} = CAST({expr} AS INTEGER) THEN CAST(CAST({expr} AS INTEGER) AS TEXT) \
+         ELSE CAST({expr} AS TEXT) END"
+    )
+}
+
 /// Resolve a [`GroupKey`] into its SQL group-key expression, an optional
 /// `JOIN` clause, and an optional bound parameter.
 ///
@@ -1296,10 +1305,10 @@ impl GroupKeySql<'_> {
 /// bucket). It is built ENTIRELY from static column literals + literal
 /// `strftime` formats, so it is safe to repeat verbatim wherever the group
 /// key appears (SELECT / GROUP BY / PARTITION BY / IN). The
-/// `block_properties` lookup is materialised 1:1 in the JOIN clause (a PK
-/// seek), so it is evaluated ONCE per candidate row instead of re-run at
-/// every occurrence (#2269); the op_log MIN/MAX date buckets deliberately
-/// stay correlated scalar subqueries — see the comment on the
+/// `block_properties` lookup is materialised in the JOIN clause (a PK seek,
+/// one row per list item), so it is evaluated ONCE per candidate row instead
+/// of re-run at every occurrence (#2269); the op_log MIN/MAX date buckets
+/// deliberately stay correlated scalar subqueries — see the comment on the
 /// `Created`/`LastEdited` arms for the measured reason.
 ///
 /// The ONLY user-controlled input ([`GroupKey::Property`]'s `key`) is returned
@@ -1323,18 +1332,26 @@ fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) 
             // most one row matches), looked up once per candidate row and reused
             // wherever the key appears (SELECT / GROUP BY / PARTITION BY / IN);
             // the key stays a bound `?{pos}` in the ON clause, never an
-            // interpolated identifier. Migration 0062 lets exactly one value
-            // column be non-NULL, so the COALESCE yields whichever is set,
-            // rendered as `propertyRowDisplay` shows it: `value_num` in canonical
-            // form (`3`, not REAL `3.0`; `3.5` stays) and `value_bool` as
-            // `true`/`false`, where a stored 0 is a value, not an absence. An
-            // absent key falls through to the `none` bucket (#4607).
-            "COALESCE(gp.value_text, CASE WHEN gp.value_num = CAST(gp.value_num AS INTEGER) \
-             THEN CAST(CAST(gp.value_num AS INTEGER) AS TEXT) \
-             ELSE CAST(gp.value_num AS TEXT) END, gp.value_date, gp.value_ref, \
-             CASE gp.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END)"
-                .to_string(),
-            format!(" LEFT JOIN block_properties gp ON gp.block_id = b.id AND gp.key = ?{pos}"),
+            // interpolated identifier. A list row joins one `gi` row per item,
+            // so its block sits in each item's group, as `Tag` puts a block in
+            // each of its tags' groups (#6741). Exactly one value column is
+            // non-NULL, so the COALESCE yields whichever is set, rendered as
+            // `propertyRowDisplay` shows it: a number (`value_num` or a number
+            // item) in canonical form (`3`, not REAL `3.0`; `3.5` stays) and
+            // `value_bool` as `true`/`false`, where a stored 0 is a value, not
+            // an absence. An absent key falls through to the `none` bucket
+            // (#4607).
+            format!(
+                "COALESCE(gp.value_text, {}, gp.value_date, gp.value_ref, \
+                 CASE gp.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END, \
+                 CASE gi.type WHEN 'text' THEN gi.value ELSE {} END)",
+                canonical_number("gp.value_num"),
+                canonical_number("gi.value"),
+            ),
+            format!(
+                " LEFT JOIN block_properties gp ON gp.block_id = b.id AND gp.key = ?{pos} \
+                 LEFT JOIN json_each(gp.value_list) gi"
+            ),
             Some(Bind::Text(key.clone())),
         ),
         GroupKey::DateBucket { source, unit } => {

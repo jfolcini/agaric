@@ -904,11 +904,49 @@ fn property_value_column(value: &PropertyValue) -> (&'static str, Bind) {
     }
 }
 
+/// One item of the JSON array in `list` (a `block_properties.value_list`
+/// column) satisfies `test`, as in `li.value {test}` (`= ?`, `< ?`,
+/// `LIKE ? ESCAPE '\'`). Only the items of the compared value's kind count:
+/// numbers for a `numeric` value, strings otherwise. That guard is the list's
+/// `{col} IS NOT NULL`: SQLite orders every number below every text, so
+/// without it `<` would match a number item against a text bound (#6741).
+#[must_use]
+pub fn any_list_item(list: &str, numeric: bool, test: &str) -> String {
+    let item_type = if numeric {
+        "IN ('integer', 'real')"
+    } else {
+        "= 'text'"
+    };
+    format!(
+        "EXISTS (SELECT 1 FROM json_each({list}) li WHERE li.type {item_type} AND li.value {test})"
+    )
+}
+
+/// `Eq` (`negate = false`) or `Ne` (`negate = true`): a row of the key whose
+/// scalar equals the value, or whose list holds an item that does (#6741).
+/// `Ne` is its `NOT EXISTS`, so a block without the key matches it.
+fn compile_property_eq(key: &str, value: &PropertyValue, negate: bool, alias: &str) -> WhereClause {
+    let (col, bind) = property_value_column(value);
+    let item = any_list_item(
+        "value_list",
+        matches!(value, PropertyValue::Num { .. }),
+        "= ?",
+    );
+    let exists = if negate { "NOT EXISTS" } else { "EXISTS" };
+    WhereClause::new(
+        format!(
+            "{exists} (SELECT 1 FROM block_properties \
+             WHERE block_id = {alias}.id AND key = ? AND ({col} = ? OR {item}))"
+        ),
+        vec![Bind::Text(key.to_string()), bind.clone(), bind],
+    )
+}
+
 /// #1280 — compile an ordered comparison (`<`/`>`/`<=`/`>=`) over a single
 /// property column, guarding the column `IS NOT NULL` so a row missing the
 /// value never spuriously matches (mirrors the backlink `PropertyNum`/
 /// `PropertyDate`/`PropertyText` resolver semantics, which only consider
-/// rows whose value column is non-NULL).
+/// rows whose value column is non-NULL), or over any item of the row's list.
 fn compile_property_compare(
     key: &str,
     op: &str,
@@ -916,18 +954,24 @@ fn compile_property_compare(
     alias: &str,
 ) -> WhereClause {
     let (col, bind) = property_value_column(value);
+    let item = any_list_item(
+        "value_list",
+        matches!(value, PropertyValue::Num { .. }),
+        &format!("{op} ?"),
+    );
     WhereClause::new(
         format!(
             "EXISTS (SELECT 1 FROM block_properties \
              WHERE block_id = {alias}.id AND key = ? \
-               AND {col} IS NOT NULL AND {col} {op} ?)"
+               AND (({col} IS NOT NULL AND {col} {op} ?) OR {item}))"
         ),
-        vec![Bind::Text(key.to_string()), bind],
+        vec![Bind::Text(key.to_string()), bind.clone(), bind],
     )
 }
 
 /// #1280 — compile a substring (`Contains`) or prefix (`StartsWith`) match
-/// as `LIKE ? ESCAPE '\'`. On a `Num` value the predicate is meaningless
+/// as `LIKE ? ESCAPE '\'`, on the scalar column or on any string item of the
+/// row's list. On a `Num` value the predicate is meaningless
 /// (a numeric column has no substring), so it short-circuits to `1=0` —
 /// exactly as the backlink `PropertyNum` resolver returns the empty set.
 fn compile_property_like(
@@ -948,13 +992,18 @@ fn compile_property_like(
     } else {
         format!("{escaped}%")
     };
+    let item = any_list_item("value_list", false, "LIKE ? ESCAPE '\\'");
     WhereClause::new(
         format!(
             "EXISTS (SELECT 1 FROM block_properties \
              WHERE block_id = {alias}.id AND key = ? \
-               AND {col} IS NOT NULL AND {col} LIKE ? ESCAPE '\\')"
+               AND (({col} IS NOT NULL AND {col} LIKE ? ESCAPE '\\') OR {item}))"
         ),
-        vec![Bind::Text(key.to_string()), Bind::Text(pattern)],
+        vec![
+            Bind::Text(key.to_string()),
+            Bind::Text(pattern.clone()),
+            Bind::Text(pattern),
+        ],
     )
 }
 
@@ -1264,6 +1313,8 @@ impl Projection for PagesProjection {
         // - Eq / Ne over `Text` compare `block_properties.value_text`.
         // - Eq / Ne over `Ref` compare `block_properties.value_ref` (a
         //   column that has existed since migration 0001).
+        // - Every value comparison also holds when one item of the row's
+        //   `value_list` satisfies it, and `Ne` when none is equal (#6741).
         if let Some(column) = crate::db::reserved_key_blocks_column(key) {
             return compile_column_property(&format!("{alias}.{column}"), predicate);
         }
@@ -1281,26 +1332,8 @@ impl Projection for PagesProjection {
                 ),
                 vec![Bind::Text(key.to_string())],
             ),
-            PropertyPredicate::Eq { value } => {
-                let (col, v) = property_value_column(value);
-                WhereClause::new(
-                    format!(
-                        "EXISTS (SELECT 1 FROM block_properties \
-                         WHERE block_id = {alias}.id AND key = ? AND {col} = ?)"
-                    ),
-                    vec![Bind::Text(key.to_string()), v],
-                )
-            }
-            PropertyPredicate::Ne { value } => {
-                let (col, v) = property_value_column(value);
-                WhereClause::new(
-                    format!(
-                        "NOT EXISTS (SELECT 1 FROM block_properties \
-                         WHERE block_id = {alias}.id AND key = ? AND {col} = ?)"
-                    ),
-                    vec![Bind::Text(key.to_string()), v],
-                )
-            }
+            PropertyPredicate::Eq { value } => compile_property_eq(key, value, false, alias),
+            PropertyPredicate::Ne { value } => compile_property_eq(key, value, true, alias),
             PropertyPredicate::Lt { value } => compile_property_compare(key, "<", value, alias),
             PropertyPredicate::Gt { value } => compile_property_compare(key, ">", value, alias),
             PropertyPredicate::Lte { value } => compile_property_compare(key, "<=", value, alias),
@@ -2046,7 +2079,8 @@ mod tests {
         let w = p.compile(&eq_text);
         assert!(!w.is_unsupported());
         assert!(w.sql.contains("EXISTS") && w.sql.contains("value_text = ?"));
-        assert_eq!(w.binds.len(), 2);
+        // The key, then the value for the scalar and again for a list item.
+        assert_eq!(w.binds.len(), 3);
 
         let exists = FilterPrimitive::HasProperty {
             key: "kind".into(),
@@ -2089,7 +2123,7 @@ mod tests {
         let w = p.compile(&eq_ref);
         assert!(!w.is_unsupported());
         assert!(w.sql.contains("EXISTS") && w.sql.contains("value_ref = ?"));
-        assert_eq!(w.binds.len(), 2);
+        assert_eq!(w.binds.len(), 3);
 
         let ne_ref = FilterPrimitive::HasProperty {
             key: "parent".into(),
@@ -2102,7 +2136,7 @@ mod tests {
         let w = p.compile(&ne_ref);
         assert!(!w.is_unsupported());
         assert!(w.sql.contains("NOT EXISTS") && w.sql.contains("value_ref = ?"));
-        assert_eq!(w.binds.len(), 2);
+        assert_eq!(w.binds.len(), 3);
     }
 
     #[test]
@@ -2832,7 +2866,7 @@ mod tests {
         );
         assert_eq!(
             lt_num.binds,
-            vec![Bind::Text("count".into()), Bind::Real(3.5)]
+            vec![Bind::Text("count".into()), Bind::Real(3.5), Bind::Real(3.5)]
         );
 
         // Date ordered comparison → `value_date >= ?`.
@@ -2862,7 +2896,11 @@ mod tests {
         assert!(contains.sql.contains("LIKE ? ESCAPE '\\'"));
         assert_eq!(
             contains.binds,
-            vec![Bind::Text("label".into()), Bind::Text("%ab\\%c%".into())]
+            vec![
+                Bind::Text("label".into()),
+                Bind::Text("%ab\\%c%".into()),
+                Bind::Text("%ab\\%c%".into())
+            ]
         );
 
         // StartsWith over Text → `v%`.

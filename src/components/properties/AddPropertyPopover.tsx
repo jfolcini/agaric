@@ -37,15 +37,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
+import { keepFocusThatMovedOn } from '@/lib/keep-focus-that-moved-on'
 import { formatPropertyName, selectOptionsJson, valueTypeLabel } from '@/lib/property-utils'
-
-// Radix refocuses the trigger one timer after the picker unmounts. By then the
-// value input of the row just added may have the focus, and taking it away
-// commits that input while it is still empty, which drops the row.
-function keepFocusThatMovedOn(event: Event): void {
-  const focused = document.activeElement
-  if (focused != null && focused !== document.body) event.preventDefault()
-}
 
 export interface AddPropertyPopoverProps {
   /** Definitions to show in the picker. Already filtered by the parent. */

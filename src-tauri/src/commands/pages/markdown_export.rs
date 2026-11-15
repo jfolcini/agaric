@@ -20,6 +20,9 @@ pub(super) struct FrontmatterRow {
     /// The key is declared `ref` in the block's space, so `value_list`'s
     /// items are block ids.
     pub(super) list_of_refs: bool,
+    /// `value_text` is a single text under a key the block's space declares
+    /// to hold a list: a value that doesn't fit it (#6741).
+    pub(super) text_under_list: bool,
 }
 
 /// Render a [`FrontmatterRow`]'s single populated value column as plain text
@@ -30,7 +33,8 @@ pub(super) struct FrontmatterRow {
 /// Precedence: date, then text, then ref (`[[Title]]` where `link` gives the
 /// target's title, else the raw id, #6277 F3), then numeric, then bool, then
 /// a list as one line of text (`import::write_property_list`, #6741), each
-/// item written as a single value of its kind is. A
+/// item written as a single value of its kind is; a text under a key that
+/// holds a list is written as a list of one. A
 /// `block_properties` row stores its value in exactly one column (enforced by
 /// the `exactly_one_value` CHECK), so at most one branch ever fires; the
 /// ordering is a defensive fallback, not a real precedence rule.
@@ -41,7 +45,13 @@ fn frontmatter_row_value<'a>(
     if let Some(d) = prop.value_date.as_deref() {
         d.to_string()
     } else if let Some(t) = prop.value_text.as_deref() {
-        t.to_string()
+        // As a list of one, so the line reads back as one item, not as the
+        // parts its commas would split it into.
+        if prop.text_under_list {
+            import::write_property_list(&[t.to_string()])
+        } else {
+            t.to_string()
+        }
     } else if let Some(rf) = prop.value_ref.as_deref().filter(|s| !s.is_empty()) {
         link(rf).map_or_else(|| rf.to_string(), |title| format!("[[{title}]]"))
     } else if let Some(n) = prop.value_num {
@@ -1460,7 +1470,12 @@ async fn load_page_properties(
                       SELECT 1 FROM blocks holder
                       JOIN property_definitions d ON d.space_id = holder.space_id
                       WHERE holder.id = bp.block_id AND d.key = bp.key
-                        AND d.value_type = 'ref')) AS "list_of_refs!: bool"
+                        AND d.value_type = 'ref')) AS "list_of_refs!: bool",
+                  (bp.value_text IS NOT NULL AND EXISTS (
+                      SELECT 1 FROM blocks holder
+                      JOIN property_definitions d ON d.space_id = holder.space_id
+                      WHERE holder.id = bp.block_id AND d.key = bp.key
+                        AND d.multiple = 1)) AS "text_under_list!: bool"
            FROM block_properties bp
            WHERE bp.block_id = ?1
              AND bp.key NOT IN (
@@ -1493,6 +1508,7 @@ async fn load_page_properties(
             value_bool: r.value_bool,
             value_list: r.value_list,
             list_of_refs: r.list_of_refs,
+            text_under_list: r.text_under_list,
         })
         .collect();
     Ok(properties)
@@ -1600,7 +1616,12 @@ async fn load_descendant_properties(
                           SELECT 1 FROM blocks holder
                           JOIN property_definitions d ON d.space_id = holder.space_id
                           WHERE holder.id = bp.block_id AND d.key = bp.key
-                            AND d.value_type = 'ref')) AS "list_of_refs!: bool"
+                            AND d.value_type = 'ref')) AS "list_of_refs!: bool",
+                      (bp.value_text IS NOT NULL AND EXISTS (
+                          SELECT 1 FROM blocks holder
+                          JOIN property_definitions d ON d.space_id = holder.space_id
+                          WHERE holder.id = bp.block_id AND d.key = bp.key
+                            AND d.multiple = 1)) AS "text_under_list!: bool"
                FROM block_properties bp
                WHERE bp.block_id IN (SELECT value FROM json_each(?1))
                  AND bp.key NOT IN (
@@ -1625,6 +1646,7 @@ async fn load_descendant_properties(
                     value_bool: r.value_bool,
                     value_list: r.value_list,
                     list_of_refs: r.list_of_refs,
+                    text_under_list: r.text_under_list,
                 });
         }
     }

@@ -703,6 +703,38 @@ async fn an_option_rename_reaches_the_items_of_a_list_6741() {
     );
 }
 
+/// Undoing a set after an option rename restores the list with that option
+/// under its new name, as undo restores a single select value (#5841).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_a_set_follows_an_option_rename_into_the_list_6741() {
+    let f = fixture().await;
+    f.set_list(&f.child, "stages", texts(&["review", "draft"]))
+        .await
+        .unwrap();
+    f.set_list(&f.child, "stages", texts(&["draft"]))
+        .await
+        .unwrap();
+    let (second, _) = f.last_op("set_property", "stages").await;
+    rename_property_option_inner(
+        &f.pool,
+        DEV,
+        &f.mat,
+        &f.a,
+        "stages".into(),
+        "review".into(),
+        "in_review".into(),
+    )
+    .await
+    .unwrap();
+    settle(&f.mat).await;
+
+    f.undo(second).await;
+    assert_eq!(
+        f.list(&f.child, "stages").await,
+        Some(texts(&["in_review", "draft"]))
+    );
+}
+
 /// A definition's `multiple` is stored, read back by each definition read,
 /// kept by an options edit, and never set on a boolean.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
