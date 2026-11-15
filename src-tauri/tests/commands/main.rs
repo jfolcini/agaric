@@ -51,6 +51,7 @@ mod property_cmd_tests;
 mod property_key_cmd_tests;
 mod property_line_tests;
 mod property_list_cmd_tests;
+mod property_list_edit_cmd_tests;
 mod property_option_cmd_tests;
 mod property_type_cmd_tests;
 mod property_unfit_cmd_tests;

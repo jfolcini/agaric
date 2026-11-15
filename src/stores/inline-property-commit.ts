@@ -140,6 +140,7 @@ export async function commitInlineProperties(opts: {
           value_date: params.valueDate ?? null,
           value_ref: null,
           value_bool: params.valueBool ?? null,
+          ...(params.valueList === undefined ? {} : { value_list: params.valueList }),
         }),
       )
       if (resp?.op_refs) opRefs.push(...resp.op_refs)

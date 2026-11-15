@@ -2583,12 +2583,15 @@ fn history_after(op_type: &str, payload: &Value) -> Option<String> {
                 "value_date",
                 "value_ref",
                 "value_bool",
+                "value_list",
             ]
             .iter()
             .find_map(|k| field(k))?;
-            let value = value
-                .as_str()
-                .map_or_else(|| value.to_string(), str::to_owned);
+            let text = |v: &Value| v.as_str().map_or_else(|| v.to_string(), str::to_owned);
+            let value = match value.as_array() {
+                Some(items) => items.iter().map(text).collect::<Vec<_>>().join(", "),
+                None => text(value),
+            };
             Some(clip_history_text(&format!("{key}={value}")))
         }
         _ => None,

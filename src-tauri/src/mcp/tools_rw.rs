@@ -14,7 +14,7 @@
 //! | `append_block` | `append_block_resolving_names` | `block_type` hard-coded to `"content"`. `parent_id` required. |
 //! | `append_markdown` | [`append_markdown_inner`] | Markdown under `parent_id`, read and resolved as paste does: an unmatched `[[Name]]` / `#name` creates the page or tag. |
 //! | `update_block_content` | `edit_block_resolving_names` | |
-//! | `set_property` | [`set_property_inner`] | Exactly one of `value_*` must be provided. |
+//! | `set_property` | [`set_property_inner`], or [`set_property_list_inner`] for a `value_list` | Exactly one of `value_*` must be provided. |
 //! | `add_tag` | [`add_tag_inner`] | Tag block must already exist in the block's space. |
 //! | `create_page` | [`create_block_inner_with_space`] | `block_type = "page"`, `parent_id = None`. |
 //! | `delete_block` | [`delete_block_inner`] | Soft delete. Reversible via `reverse.rs`. |
@@ -91,7 +91,7 @@ use crate::commands::pages::markdown::{
     anchor_free, append_block_resolving_names, append_block_resolving_names_in_tx,
     apply_page_source_inner, edit_block_resolving_names, edit_block_resolving_names_in_tx,
 };
-use crate::commands::properties::set_property_inner_in_tx;
+use crate::commands::properties::{set_property_inner_in_tx, set_property_list_in_tx};
 use crate::commands::tags::{add_tag_in_tx, remove_tag_inner_in_tx};
 use crate::commands::{
     DeletePropertyResponse, DeleteResponse, MAX_ATTACHMENT_SIZE, MovedBlocks, PropertyLoss,
@@ -99,7 +99,7 @@ use crate::commands::{
     append_markdown_inner, capture_to_journal_inner, create_block_inner_with_space,
     delete_block_inner, delete_property_inner, get_active_block_inner, move_blocks_batch_inner,
     move_blocks_to_space_inner, preview_space_move_inner, remove_tag_inner, restore_block_inner,
-    revert_ops_inner, set_page_aliases_inner, set_property_inner,
+    revert_ops_inner, set_page_aliases_inner, set_property_inner, set_property_list_inner,
 };
 use crate::db::{CommandTx, validate_block_in_space};
 use crate::materializer::Materializer;
@@ -175,7 +175,26 @@ struct SetPropertyArgs {
     /// parse failure.
     #[serde(default)]
     value_bool: Option<bool>,
+    /// The items of a list (#6741), for a key whose definition holds several
+    /// values.
+    #[serde(default)]
+    value_list: Option<agaric_store::op::PropertyList>,
     space_id: String,
+}
+
+impl SetPropertyArgs {
+    /// Every slot the agent sent, when a list is among them.
+    fn list_value(&mut self) -> Option<agaric_store::op::PropertyValueFields> {
+        let value_list = Some(self.value_list.take()?);
+        Some(agaric_store::op::PropertyValueFields {
+            value_text: self.value_text.take(),
+            value_num: self.value_num,
+            value_date: self.value_date.take(),
+            value_ref: self.value_ref.take().map(BlockId::from),
+            value_bool: self.value_bool,
+            value_list,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -627,7 +646,10 @@ fn tool_desc_set_property() -> ToolDescription {
     ToolDescription {
         name: TOOL_SET_PROPERTY.to_string(),
         description: "Set (upsert) a typed property on a block. Exactly one of value_text / \
-                      value_num / value_date / value_ref / value_bool must be provided. The task \
+                      value_num / value_date / value_ref / value_bool / value_list must be \
+                      provided. A key whose definition holds several values (`multiple` in \
+                      list_property_defs) takes value_list and nothing else; any other key takes \
+                      no list. The task \
                       keys behave as in the app: `todo_state` and `priority` take value_text, \
                       `due_date` and `scheduled_date` take value_date, and `todo_state = DONE` \
                       stamps `completed_at` and creates a repeating task's next occurrence."
@@ -644,6 +666,12 @@ fn tool_desc_set_property() -> ToolDescription {
                 "value_date": { "type": "string", "description": "ISO-8601 date (exactly one value_* must be set)." },
                 "value_ref":  { "type": "string", "description": "Block ULID reference (exactly one value_* must be set)." },
                 "value_bool": { "type": "boolean", "description": "Boolean value (exactly one value_* must be set). #697 — for `value_type = 'boolean'` property definitions." },
+                "value_list": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": ["string", "number"] },
+                    "description": "The whole list, replacing the one the block holds (exactly one value_* must be set). Numbers under a number definition; strings otherwise: a YYYY-MM-DD date, one of a select's options, and under a ref definition a block ULID, `[[Title]]` or a page title.",
+                },
                 "space_id": {
                     "type": "string",
                     "description": "ULID of the space the agent is operating in. The write is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
@@ -1355,7 +1383,8 @@ async fn handle_set_property(
 ) -> Result<Value, AppError> {
     let args: SetPropertyArgs = parse_args(TOOL_SET_PROPERTY, args)?;
     let space_id = normalize_ulid_arg(&args.space_id);
-    let args = prepare_set_property(args)?;
+    let mut args = prepare_set_property(args)?;
+    let list = args.list_value();
     let block_id = args.block_id;
     // The exactly-one-value invariant is enforced inside
     // `set_property_inner` when a `caller_context` is supplied — passing
@@ -1367,26 +1396,32 @@ async fn handle_set_property(
     // Clone the key for the property-changed emit below — `set_property_inner`
     // takes it by value.
     let key_for_emit = args.key.clone();
-    let resp = with_space_guard(
-        &space_id,
-        vec![block_id.clone()],
-        set_property_inner(
-            pool,
-            device_id,
-            materializer,
-            active_id,
-            args.key,
-            args.value_text,
-            args.value_num,
-            args.value_date,
-            args.value_ref,
-            // #697 — thread the boolean slot through; the schema and the
-            // Error message now agree on the five accepted slots.
-            args.value_bool,
-            Some(TOOL_SET_PROPERTY),
-        ),
-    )
-    .await?;
+    let resp = if let Some(value) = list {
+        let set =
+            set_property_list_inner(pool, device_id, materializer, active_id, args.key, value);
+        with_space_guard(&space_id, vec![block_id.clone()], set).await?
+    } else {
+        with_space_guard(
+            &space_id,
+            vec![block_id.clone()],
+            set_property_inner(
+                pool,
+                device_id,
+                materializer,
+                active_id,
+                args.key,
+                args.value_text,
+                args.value_num,
+                args.value_date,
+                args.value_ref,
+                // #697 — thread the boolean slot through; the schema and the
+                // Error message now agree on the five accepted slots.
+                args.value_bool,
+                Some(TOOL_SET_PROPERTY),
+            ),
+        )
+        .await?
+    };
     // #2505: a property write touches the block's page (a visible todo
     // checkbox / priority badge etc. may need to re-render), so emit the
     // page-keyed `blocks:changed` AND the existing `block:properties-changed`
@@ -1424,6 +1459,18 @@ fn prepare_set_property(mut args: SetPropertyArgs) -> Result<SetPropertyArgs, Ap
         return Err(AppError::validation(format!(
             "tool `{TOOL_SET_PROPERTY}`: value_text length {} exceeds maximum {}",
             text.len(),
+            crate::commands::MAX_CONTENT_LENGTH,
+        )));
+    }
+    let listed: usize = args
+        .value_list
+        .iter()
+        .flat_map(agaric_store::op::PropertyList::texts)
+        .map(str::len)
+        .sum();
+    if listed > crate::commands::MAX_CONTENT_LENGTH {
+        return Err(AppError::validation(format!(
+            "tool `{TOOL_SET_PROPERTY}`: value_list length {listed} exceeds maximum {}",
             crate::commands::MAX_CONTENT_LENGTH,
         )));
     }
@@ -2468,10 +2515,14 @@ async fn set_property_in_batch(
     tx: &mut CommandTx,
     loro: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
-    args: SetPropertyArgs,
+    mut args: SetPropertyArgs,
 ) -> Result<Value, AppError> {
     let active_id =
         crate::ulid::verify_active_in_tx(tx, &BlockId::from_trusted(&args.block_id)).await?;
+    if let Some(value) = args.list_value() {
+        let set = set_property_list_in_tx(tx, loro, device_id, active_id, args.key, value);
+        return to_tool_result(&set.await?);
+    }
     let row = set_property_inner_in_tx(
         tx,
         loro,

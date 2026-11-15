@@ -5,7 +5,13 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { BUILTIN_PROPERTY_ICONS, formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
+import { t } from '@/lib/i18n'
+import {
+  BUILTIN_PROPERTY_ICONS,
+  formatPropertyName,
+  selectOptionsJson,
+  valueTypeLabel,
+} from '@/lib/property-utils'
 
 describe('formatPropertyName', () => {
   it('replaces underscores with spaces and title-cases', () => {
@@ -68,5 +74,18 @@ describe('selectOptionsJson', () => {
   it('is null when the list names no option', () => {
     expect(selectOptionsJson('')).toBeNull()
     expect(selectOptionsJson(' , ')).toBeNull()
+  })
+})
+
+describe('valueTypeLabel (#6741)', () => {
+  it('names a list by its item type and marks it', () => {
+    expect(valueTypeLabel({ value_type: 'select', multiple: true }, t)).toBe(
+      t('properties.severalValuesType', { type: 'select' }),
+    )
+  })
+
+  it('names a key that holds one value by its type alone', () => {
+    expect(valueTypeLabel({ value_type: 'select' }, t)).toBe('select')
+    expect(valueTypeLabel({ value_type: 'number', multiple: false }, t)).toBe('number')
   })
 })

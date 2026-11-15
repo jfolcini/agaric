@@ -410,6 +410,15 @@ function holdsShortTerms(stripped: string, shortTerms: string[]): boolean {
   return shortTerms.every((term) => folded.includes(foldForFtsIndex(term)))
 }
 
+/** A row's answer to `parse_query`'s split: its phrases in the index, its short terms in the text. */
+export function matchesSearchText(stripped: string, query: string): boolean {
+  const { phrases, shortTerms } = splitShortTerms(query)
+  return (
+    phrases.every((phrase) => matchesFtsIndex(stripped, phrase)) &&
+    holdsShortTerms(stripped, shortTerms)
+  )
+}
+
 // ---------------------------------------------------------------------------
 // #3837 — `run_advanced_query` sort + full-text narrowing.
 //
@@ -550,15 +559,12 @@ interface QueryCursorPayload {
  * side by side; a handler-level test cannot reach one of them by construction.
  *
  * A THIRD divergence, on the narrowing rather than the ranking:
- * `sanitize_fts_query` (`agaric-store/src/query/engine.rs`) ERRORS with "no
- * searchable terms (each term must be at least 3 characters)" whenever
- * `fulltext` is `Some` and sanitizes to empty. This mock instead treats
- * `fulltext: ''` as "no term at all" (falling back to the whole structural
- * set in `id DESC`) and happily substring-matches 1- and 2-character terms
- * the backend would reject outright. So a conformance test using a short
- * query pins mock-only behaviour against a backend that throws — the exact
- * failure mode this module exists to prevent. Treat any `fulltext` shorter
- * than 3 characters as untrustworthy here until the rejection is mirrored.
+ * `parse_fulltext` (`agaric-store/src/query/engine.rs`) ERRORS with "no
+ * searchable terms" whenever `fulltext` is `Some` and leaves nothing to search
+ * for (only operators, or only short terms beside an `OR`). This mock instead
+ * treats `fulltext: ''` as "no term at all" (falling back to the whole
+ * structural set in `id DESC`) and models no operator, so a conformance step
+ * whose text is only operators pins mock-only behaviour.
  */
 export function approximateFtsRank(stripped: string | null, foldedQuery: string): number {
   const foldedText = foldForFtsIndex(stripped ?? '')
@@ -2332,8 +2338,13 @@ export const searchHandlers = {
     // `fulltext`: an empty string is "no term", same convention as
     // `search_blocks`'s `!query` short-circuit.
     const fulltext = (request['fulltext'] as string | null | undefined) ?? ''
-    const hasFulltext = fulltext.length > 0
-    const foldedQuery = hasFulltext ? foldForFtsIndex(fulltext) : ''
+    // `parse_fulltext` (engine.rs) splits the text as search does (#6752): a
+    // query of only short terms has no MATCH, so nothing ranks it.
+    const phrases = fulltext.length > 0 ? splitShortTerms(fulltext).phrases : []
+    const hasFulltext = phrases.length > 0
+    // Every matched row holds the first phrase, so its rank is never the
+    // zero-occurrence case `approximateFtsRank` cannot order.
+    const foldedQuery = hasFulltext ? foldForFtsIndex(phrases[0] ?? '') : ''
     const edges = linkEdges()
     const matched: MatchedEntry[] = []
     // The engine leaves template pages and their placeholder blocks out unless
@@ -2376,13 +2387,19 @@ export const searchHandlers = {
       // SAME memo the relevance rank reads, which is what keeps the two
       // coupled. See `approximateFtsRank`'s docs for what remains approximated
       // (the score, and the FTS5 query grammar).
-      if (hasFulltext && !matchesFtsIndex(strippedFtsOf(entry), fulltext)) continue
+      if (fulltext.length > 0 && !matchesSearchText(strippedFtsOf(entry), fulltext)) continue
       matched.push(entry)
     }
     // #3837 — honour the request's `sort`, defaulting to relevance-first when
     // `fulltext` is present and to the `b.id DESC` recency keyset otherwise
     // (mirrors `resolve_sort` — see the comment above the handler).
-    const sortKeys = (request['sort'] as Array<Record<string, unknown>> | undefined) ?? []
+    // With no MATCH every row ties on relevance, so the engine drops that key.
+    const sortKeys = ((request['sort'] as Array<Record<string, unknown>> | undefined) ?? []).filter(
+      (key) =>
+        hasFulltext ||
+        fulltext.length === 0 ||
+        (key['source'] as Record<string, unknown> | undefined)?.['type'] !== 'Relevance',
+    )
     const sortTerms = resolveSortTerms(sortKeys, hasFulltext, foldedQuery)
     matched.sort(compareByTerms(sortTerms))
 

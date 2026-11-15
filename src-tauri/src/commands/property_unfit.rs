@@ -4,7 +4,10 @@
 //!
 //! A value doesn't fit when its `block_properties` row is not in the column
 //! its key's type takes (`declared_type_admits_shape`), or when it is a
-//! select's text outside the options. `space` and `is_space` are left out,
+//! select's text outside the options. Under a key that holds a list (#6741),
+//! a value fits when it is a list a write of it would be taken as
+//! (`check_property_fields`), so a single value doesn't; under any other key
+//! a list doesn't. `space` and `is_space` are left out,
 //! as `count_property_usage` leaves them out, and an undeclared key has none.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -19,12 +22,13 @@ use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::materializer::Materializer;
 use agaric_core::error::{AppError, ValidationCode};
 use agaric_core::ulid::BlockId;
-use agaric_engine::block_ops::{PropertyDeclaration, check_property_value, property_declaration};
+use agaric_engine::block_ops::{PropertyDeclaration, check_property_fields, property_declaration};
+use agaric_engine::import::property_list_items;
 use agaric_engine::loro::coerce::{coerce, value_fields_under};
 use agaric_engine::loro::engine::PropertyValue;
 use agaric_store::op::{
-    OpPayload, PropertyDefState, PropertyValueFields, PropertyValueWrite, RewritePropertiesPayload,
-    RewriteReason,
+    OpPayload, PropertyDefState, PropertyList, PropertyListItem, PropertyValueFields,
+    PropertyValueWrite, RewritePropertiesPayload, RewriteReason,
 };
 use agaric_store::pagination::{Cursor, PageRequest, PageResponse, build_page_response};
 use agaric_store::space::SpaceId;
@@ -33,7 +37,9 @@ use super::properties::{
     UNCOUNTED_PROPERTY_KEYS, append_and_apply, refuse_builtin_definition_write, user_property_def,
     write_property_def_in_tx,
 };
-use super::property_keys::{declared_def, refuse_internal_key, value_fields, visible_holders};
+use super::property_keys::{
+    declared_def, refuse_internal_key, shown_value, value_fields, visible_holders,
+};
 use super::{PropertyDefinition, WithOps, capture_op_refs, sanitize_internal_error};
 
 /// How many values of a key don't fit it: `unfit` on live blocks,
@@ -53,11 +59,14 @@ pub enum PropertyValueForm {
     Date,
     Ref,
     Boolean,
+    List,
 }
 
 impl PropertyValueForm {
     fn of(fields: &PropertyValueFields) -> Self {
-        if fields.value_num.is_some() {
+        if fields.value_list.is_some() {
+            Self::List
+        } else if fields.value_num.is_some() {
             Self::Number
         } else if fields.value_date.is_some() {
             Self::Date
@@ -127,8 +136,62 @@ struct Unfit {
     content: Option<String>,
 }
 
+/// A `block_properties` row [`unfit_values`] reads, with its key's definition.
+struct UnfitRow {
+    key: String,
+    block_id: String,
+    value_text: Option<String>,
+    value_num: Option<f64>,
+    value_date: Option<String>,
+    value_ref: Option<String>,
+    value_bool: Option<i64>,
+    value_list: Option<PropertyList>,
+    value_type: String,
+    options: Option<String>,
+    multiple: bool,
+    deleted: bool,
+    page_id: Option<String>,
+    page_title: Option<String>,
+    content: Option<String>,
+}
+
+impl UnfitRow {
+    /// The row as a value that doesn't fit its key, or `None` when it does.
+    /// The query keeps every value of a key that holds a list: whether a
+    /// list's items fit is the write check's to say.
+    fn unfit(self) -> Option<Unfit> {
+        let fields = PropertyValueFields {
+            value_text: self.value_text,
+            value_num: self.value_num,
+            value_date: self.value_date,
+            value_ref: self.value_ref.map(BlockId::from),
+            value_bool: self.value_bool.map(|b| b != 0),
+            value_list: self.value_list,
+        };
+        if self.multiple {
+            let decl = PropertyDeclaration {
+                value_type: self.value_type,
+                options: self.options,
+                multiple: true,
+            };
+            if check_property_fields(&self.key, fields.clone(), Some(&decl)).is_ok() {
+                return None;
+            }
+        }
+        Some(Unfit {
+            key: self.key,
+            block_id: self.block_id,
+            fields,
+            deleted: self.deleted,
+            page_id: self.page_id,
+            page_title: self.page_title,
+            content: self.content,
+        })
+    }
+}
+
 /// The built-in definitions whose values count, as a JSON array of
-/// `{key, value_type, options}`.
+/// `{key, value_type, options}`; none holds a list.
 fn counted_builtin_defs() -> Result<String, AppError> {
     Ok(serde_json::to_string(
         &agaric_store::op::BUILTIN_PROPERTY_DEFS
@@ -161,18 +224,23 @@ async fn unfit_values(
     // `CROSS JOIN` pins the definitions as the outer loop and `idx_block_props_key` as the way
     // into their keys' rows: with `sqlite_stat1`, which a vault has once its periodic optimise
     // has run, the planner otherwise drives from every property row of the vault.
-    let mut rows = sqlx::query!(
-        r#"WITH defs(key, value_type, options) AS (
-               SELECT key, value_type, options FROM property_definitions WHERE space_id = ?1
+    let mut rows = sqlx::query_as!(
+        UnfitRow,
+        r#"WITH defs(key, value_type, options, multiple) AS (
+               SELECT key, value_type, options, multiple
+               FROM property_definitions WHERE space_id = ?1
                UNION ALL
                SELECT json_extract(je.value, '$.key'), json_extract(je.value, '$.value_type'),
-                      json_extract(je.value, '$.options')
+                      json_extract(je.value, '$.options'), 0
                FROM json_each(?2) AS je
            )
            SELECT bp.key AS "key!: String", bp.block_id AS "block_id!: String",
                   bp.value_text AS "value_text?: String", bp.value_num AS "value_num?: f64",
                   bp.value_date AS "value_date?: String", bp.value_ref AS "value_ref?: String",
                   bp.value_bool AS "value_bool?: i64",
+                  bp.value_list AS "value_list?: PropertyList",
+                  d.value_type AS "value_type!: String", d.options AS "options?: String",
+                  d.multiple AS "multiple!: bool",
                   b.deleted_at IS NOT NULL AS "deleted!: bool",
                   b.page_id AS "page_id?: String", pg.content AS "page_title?: String",
                   b.content AS "content?: String"
@@ -183,7 +251,7 @@ async fn unfit_values(
            WHERE (?3 IS NULL OR d.key = ?3)
              AND bp.block_id > ?4
              AND (+b.space_id = ?1 OR +b.id = ?1)
-             AND NOT CASE d.value_type
+             AND (d.multiple OR NOT CASE d.value_type
                    WHEN 'text' THEN bp.value_text IS NOT NULL OR bp.value_ref IS NOT NULL
                    WHEN 'select' THEN bp.value_ref IS NOT NULL
                         OR (bp.value_text IS NOT NULL
@@ -194,7 +262,7 @@ async fn unfit_values(
                    WHEN 'date' THEN bp.value_date IS NOT NULL
                    WHEN 'boolean' THEN bp.value_bool IS NOT NULL
                    WHEN 'ref' THEN bp.value_ref IS NOT NULL
-                 END
+                 END)
            ORDER BY bp.key, bp.block_id"#,
         space_id,
         builtins,
@@ -206,31 +274,14 @@ async fn unfit_values(
     while values.len() < wanted
         && let Some(row) = rows.try_next().await?
     {
-        values.push(Unfit {
-            key: row.key,
-            block_id: row.block_id,
-            fields: PropertyValueFields {
-                value_text: row.value_text,
-                value_num: row.value_num,
-                value_date: row.value_date,
-                value_ref: row.value_ref.map(BlockId::from),
-                value_bool: row.value_bool.map(|b| b != 0),
-                value_list: None,
-            },
-            deleted: row.deleted,
-            page_id: row.page_id,
-            page_title: row.page_title,
-            content: row.content,
-        });
+        values.extend(row.unfit());
     }
     Ok(values)
 }
 
 /// A held value as text: how the list shows it and the distinct read groups it.
 fn shown(fields: &PropertyValueFields) -> String {
-    PropertyValue::from(fields)
-        .as_legacy_string()
-        .unwrap_or_default()
+    shown_value(&PropertyValue::from(fields))
 }
 
 /// [`PropertyUnfitCounts`] of `held` by each value as [`shown`], in byte order.
@@ -366,25 +417,35 @@ pub async fn remove_unfit_property_values_inner(
     Ok(counts)
 }
 
-/// A select's `options` followed by the texts of `held`, sorted: under a
-/// select, a text that doesn't fit is one not among them. `options` as stored
-/// when `held` has no text.
-fn with_unfit_texts(options: Option<&str>, held: &[Unfit]) -> Result<Option<String>, AppError> {
-    let added: BTreeSet<&str> = held
-        .iter()
-        .filter_map(|u| u.fields.value_text.as_deref())
-        .collect();
-    let Some(stored) = options.filter(|_| !added.is_empty()) else {
-        return Ok(options.map(str::to_owned));
+/// A select's options followed by the texts of `held` they lack, sorted:
+/// each text that doesn't fit, or under a select that holds a list each such
+/// item of the lists that don't. The options as stored when nothing is added.
+fn with_unfit_texts(def: &PropertyDefState, held: &[Unfit]) -> Result<Option<String>, AppError> {
+    let Some(stored) = def.options.as_deref() else {
+        return Ok(None);
     };
     let mut listed: Vec<String> = serde_json::from_str(stored)?;
+    let texts = held.iter().flat_map(|u| -> Vec<&str> {
+        match (&u.fields.value_list, def.multiple) {
+            (Some(list), true) => list.texts().collect(),
+            (None, false) => u.fields.value_text.as_deref().into_iter().collect(),
+            _ => Vec::new(),
+        }
+    });
+    let added: BTreeSet<&str> = texts
+        .filter(|text| !listed.iter().any(|o| o == text))
+        .collect();
+    if added.is_empty() {
+        return Ok(Some(stored.to_owned()));
+    }
     listed.extend(added.into_iter().map(str::to_owned));
     Ok(Some(serde_json::to_string(&listed)?))
 }
 
 /// Add to `space_id`'s select `key` the texts its blocks hold under it that
-/// aren't among its options, the Trash's included, sorted after the options
-/// it has, in one `SetPropertyDef` op. With nothing to add it appends no op.
+/// aren't among its options, the Trash's included (under a select that holds
+/// a list, the items of its lists), sorted after the options it has, in one
+/// `SetPropertyDef` op. With nothing to add it appends no op.
 /// Returns the definition after.
 ///
 /// # Errors
@@ -413,7 +474,7 @@ pub async fn add_unfit_values_to_options_inner(
     }
     let held = unfit_values(&mut tx, space_id, Some(&key), None, usize::MAX).await?;
     let def = PropertyDefState {
-        options: with_unfit_texts(def.options.as_deref(), &held)?,
+        options: with_unfit_texts(&def, &held)?,
         ..def
     };
     let state = materializer.loro_state();
@@ -458,22 +519,48 @@ pub async fn list_distinct_unfit_property_values_inner(
 }
 
 /// `value` as `key` holds it under `decl`: converted as the projection
-/// converts a value (`coerce`), then admitted by the check every typed write
-/// passes (`check_property_value`), which adds a select's options and refuses
-/// blank text. `None` when it doesn't fit.
+/// converts a value (`coerce`), under a key that holds a list each item of
+/// one, then admitted by the check every typed write passes
+/// (`check_property_fields`), which adds a select's options and refuses blank
+/// text. `None` when it doesn't fit: a list fits only a key that holds one,
+/// and a single value only a key that doesn't.
 fn fitted(key: &str, value: &PropertyValue, decl: &PropertyDeclaration) -> Option<PropertyValue> {
-    let held = coerce(value, &decl.value_type)?;
-    let f = value_fields_under(&held, &decl.value_type);
-    let args = (
-        f.value_text,
-        f.value_num,
-        f.value_date,
-        f.value_ref.map(BlockId::into_string),
-        f.value_bool,
-    );
-    check_property_value(key, &args, Some(decl))
+    let held = match (value, decl.multiple) {
+        (PropertyValue::List(list), true) => PropertyValue::List(PropertyList(
+            list.0
+                .iter()
+                .map(|item| {
+                    let item = match item {
+                        PropertyListItem::Text(s) => PropertyValue::Str(s.clone()),
+                        PropertyListItem::Num(n) => PropertyValue::Num(*n),
+                    };
+                    match coerce(&item, &decl.value_type)? {
+                        PropertyValue::Str(s) => Some(PropertyListItem::Text(s)),
+                        PropertyValue::Num(n) => Some(PropertyListItem::Num(n)),
+                        _ => None,
+                    }
+                })
+                .collect::<Option<_>>()?,
+        )),
+        (_, true) => return None,
+        (single, false) => coerce(single, &decl.value_type)?,
+    };
+    let fields = value_fields_under(&held, &decl.value_type);
+    check_property_fields(key, fields, Some(decl))
         .ok()
         .map(|()| held)
+}
+
+/// The value a replacement's text is read as under `decl`: under a key that
+/// holds a list, the items of the text ([`property_list_items`]).
+fn replacement_value(replacement: &str, decl: &PropertyDeclaration) -> PropertyValue {
+    if !decl.multiple {
+        return PropertyValue::Str(replacement.to_owned());
+    }
+    let items = property_list_items(replacement);
+    PropertyValue::List(PropertyList(
+        items.into_iter().map(PropertyListItem::Text).collect(),
+    ))
 }
 
 /// Refuse a mapping that names no value, or one value twice.
@@ -510,7 +597,7 @@ async fn fitted_replacements(
     replacements
         .iter()
         .map(|r| {
-            fitted(key, &PropertyValue::Str(r.replacement.clone()), &decl).ok_or_else(|| {
+            fitted(key, &replacement_value(&r.replacement, &decl), &decl).ok_or_else(|| {
                 AppError::validation(format!(
                     "'{}' doesn't fit '{key}' ({})",
                     r.replacement, decl.value_type
@@ -548,8 +635,9 @@ fn acknowledged_counts(
 
 /// Replace each value of `space_id`'s blocks under `key` that doesn't fit it,
 /// the Trash's included, by the replacement its shown text is mapped to,
-/// read under the key's type, in one `RewriteProperties` op recording each, so
-/// an undo puts them all back. A value not mapped stays. Returns how many it
+/// read under the key's type (under a key that holds a list, as the list its
+/// text writes), in one `RewriteProperties` op recording each, so an undo puts
+/// them all back. A value not mapped stays. Returns how many it
 /// converted; with nothing to convert it appends no op.
 ///
 /// # Errors
@@ -636,7 +724,8 @@ async fn move_target(
 
 /// What moving `space_id`'s values under `key` that don't fit it to
 /// `into_key` does, and per value moved its two writes, by block: removed
-/// under `key`, then written under `into_key` as [`fitted`] to it. A block
+/// under `key`, then written under `into_key` as [`fitted`] to it, a list
+/// only under a key that holds one. A block
 /// holding `into_key` keeps its value under `key`, whether or not it would
 /// fit; a target that is no ref has a `block_properties` row for each value,
 /// so the write over none records none.

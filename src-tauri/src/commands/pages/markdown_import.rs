@@ -1002,8 +1002,9 @@ pub(super) enum PropertyWrite {
 ///
 /// Each value is typed by its key's declared `value_type` (#2982): a
 /// number-, boolean- or date-typed custom property imports into the column it
-/// exported from, a `ref`-declared one as the block its id or title names, and
-/// the reserved date keys as `value_date` (#623). `lines` read the definitions
+/// exported from, a `ref`-declared one as the block its id or title names, one
+/// under a key that holds a list as the list its text writes (#6741), and the
+/// reserved date keys as `value_date` (#623). `lines` read the definitions
 /// once for the whole surface; a line they refuse is an error here, which only
 /// a source save reaches: an import and a paste keep such a line as text first
 /// ([`PropertyLines::keep_refused_as_text`]).
@@ -1017,24 +1018,19 @@ pub(super) async fn apply_block_properties(
 ) -> Result<u32, AppError> {
     let mut set: u32 = 0;
     for (key, value) in properties {
-        let (value_text, value_num, value_date, value_ref, value_bool) =
-            lines.read(key, value).map_err(|reason| {
-                let line = lines.typed_line(key, value);
-                AppError::validation(format!("`{line}` cannot be saved: {reason}"))
-            })?;
-        let (_block, prop_op) = agaric_engine::block_ops::set_property_in_tx_with_declaration(
+        let value = lines.read(key, value).map_err(|reason| {
+            let line = lines.typed_line(key, value);
+            AppError::validation(format!("`{line}` cannot be saved: {reason}"))
+        })?;
+        let (_block, prop_op) = Box::pin(agaric_engine::block_ops::set_property_value_in_tx(
             tx,
             materializer.loro_state(),
             device_id,
             block_id.to_string(),
             key,
-            value_text,
-            value_num,
-            value_date,
-            value_ref,
-            value_bool,
+            value,
             lines.declaration(key),
-        )
+        ))
         .await?;
         set += 1;
         tx.enqueue_background(prop_op);

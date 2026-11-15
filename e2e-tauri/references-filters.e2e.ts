@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// Real-backend References panel: Status, Priority, their `none`, and Created
-// Date (#5736).
+// Real-backend References panel: Status, Priority, their `none`, Created
+// Date (#5736), and Contains with a term under three characters (#6752).
 //
 // A task's state and priority live in `blocks.todo_state` / `blocks.priority`,
 // so the panel's builder sends `TodoState` / `Priority`, and `none` as
@@ -10,8 +10,11 @@
 // evaluates `Not` in JS, so only this lane shows the SQL. Created Date sends
 // `CreatedInRange`, which the backend compares against the time in each
 // block's ULID id, a bound being that day's UTC midnight, and which the mock
-// does not model at all. This spec imports sources linking one page and reads
-// the panel for each filter, some after leaving the page and coming back.
+// does not model at all. Contains reads the FTS index, which ignored a term
+// under three characters until #6752; the mock matched it by substring, so
+// only this lane showed the empty result. This spec imports sources linking
+// one page and reads the panel for each filter, some after leaving the page
+// and coming back.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -24,6 +27,7 @@ import {
   navigateTo,
   reopenPageByTitle,
   runScopedMarker,
+  typeInputVerified,
   waitForAppReady,
 } from './helpers'
 
@@ -32,13 +36,14 @@ const SOURCE = runScopedMarker('wdio-ref-source')
 const TARGET = runScopedMarker('wdio-ref-target')
 // `[#A]` / `[#B]` import as priority 1 / 2, the definition's first two levels,
 // from a page of a Logseq graph (#6277 decision 1).
+// `+1` is a two-character term no run id can contain: ids are base 36.
 const SOURCES = {
-  'todo-high': `TODO [#A] ${MARKER}-todo-high`,
+  'todo-high': `TODO [#A] ${MARKER}-todo-high +1`,
   'todo-medium': `TODO [#B] ${MARKER}-todo-medium`,
   'done-high': `DONE [#A] ${MARKER}-done-high`,
   // A state but no priority, so `none` for Status and for Priority differ.
   'todo-bare': `TODO ${MARKER}-todo-bare`,
-  plain: `${MARKER}-plain`,
+  plain: `${MARKER}-plain +1`,
 } as const
 type Source = keyof typeof SOURCES
 const ALL = Object.keys(SOURCES) as Source[]
@@ -163,7 +168,7 @@ async function clearFilters(): Promise<void> {
   await waitForListed(ALL, '', 'after Clear all')
 }
 
-describe('Agaric real-backend References Status / Priority / Created Date filters (#5736) @pages @search', () => {
+describe('Agaric real-backend References Status / Priority / Created Date / Contains filters (#5736) @pages @search', () => {
   it('lists exactly the sources each Status, Priority and none filter selects', async () => {
     await waitForAppReady()
     const markdown = Object.values(SOURCES)
@@ -202,5 +207,19 @@ describe('Agaric real-backend References Status / Priority / Created Date filter
     await clearFilters()
     await addCreatedFilter({ after: utcDay(2) })
     await waitForListed([], 'Showing 0 of 5 backlinks', 'Created after two days ahead')
+  })
+
+  // Reads the sources the first `it` imported.
+  it('lists the sources holding a two-character Contains term, alone and beside a word', async () => {
+    const addContains = (text: string) =>
+      addFilterWith('Contains', () =>
+        typeInputVerified(`${PANEL} input[aria-label="Contains text"]`, text),
+      )
+    await openTarget()
+    await addContains('+1')
+    await waitForListed(['todo-high', 'plain'], 'Showing 2 of 5 backlinks', 'Contains +1')
+    await clearFilters()
+    await addContains('+1 todo')
+    await waitForListed(['todo-high'], 'Showing 1 of 5 backlinks', 'Contains +1 todo')
   })
 })

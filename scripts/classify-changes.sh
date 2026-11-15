@@ -121,7 +121,7 @@ fi
 
 changed=()
 if [ -n "$diff_out" ]; then
-  mapfile -t changed <<< "$diff_out"
+  mapfile -t changed <<<"$diff_out"
 fi
 
 # An empty diff is more likely a base/head confusion than an intentional
@@ -319,7 +319,10 @@ lang_rust=false
 lang_js=false
 lang_actions=false
 for f in "${changed[@]}"; do
-  if [[ "$f" =~ $docs_re ]]; then docs=true; continue; fi
+  if [[ "$f" =~ $docs_re ]]; then
+    docs=true
+    continue
+  fi
 
   if [ "$docs_only" = "true" ]; then
     echo "Non-docs path detected: $f → docs_only=false (full lint suite)." >&2
@@ -330,14 +333,25 @@ for f in "${changed[@]}"; do
   if [[ "$f" =~ $test_only_re ]] && [[ ! "$f" =~ $test_only_exception_re ]]; then test_only=true; fi
   # A lint-only path builds nothing either, so the build gates treat it alike.
   if [[ "$f" =~ $rust_lint_only_re ]]; then test_only=true; fi
-  if [[ "$f" =~ $frontend_re ]]; then frontend=true; matched_cat=true; fi
+  if [[ "$f" =~ $frontend_re ]]; then
+    frontend=true
+    matched_cat=true
+  fi
   if [[ "$f" =~ $backend_re ]]; then
-    backend=true; matched_cat=true
+    backend=true
+    matched_cat=true
     if [[ ! "$f" =~ $rust_lint_only_re ]]; then rust_tests=true; fi
   fi
-  if [[ "$f" =~ $ci_re ]]; then ci=true; matched_cat=true; fi
+  if [[ "$f" =~ $ci_re ]]; then
+    ci=true
+    matched_cat=true
+  fi
   if [[ "$f" =~ $validate_lanes_re ]] && [[ ! "$f" =~ $validate_lanes_routed_re ]]; then
-    frontend=true; backend=true; rust_tests=true; vitest_full=true; pw_full=true
+    frontend=true
+    backend=true
+    rust_tests=true
+    vitest_full=true
+    pw_full=true
   fi
   # Build gates only: they never suppress the fail-closed branch below, and a
   # test-only file never makes a build relevant.
@@ -361,14 +375,21 @@ for f in "${changed[@]}"; do
   elif [[ "$f" =~ $vitest_test_re ]] && [[ ! "$f" =~ $src_test_infra_re ]]; then
     vitest_full=true
   else
-    if [[ "$f" =~ $frontend_re ]]; then vitest_full=true; pw_full=true; fi
+    if [[ "$f" =~ $frontend_re ]]; then
+      vitest_full=true
+      pw_full=true
+    fi
     if [[ "$f" =~ $pw_reads_re ]]; then pw_full=true; fi
     if [ "$test_only" = "false" ] && [[ "$f" =~ $real_backend_re ]]; then real_full=true; fi
   fi
   if [[ "$f" =~ $codeql_rust_re ]]; then lang_rust=true; fi
   if [[ "$f" =~ $codeql_js_re ]]; then lang_js=true; fi
   if [[ "$f" =~ $codeql_actions_re ]]; then lang_actions=true; fi
-  if [[ "$f" =~ $codeql_all_re ]]; then lang_rust=true; lang_js=true; lang_actions=true; fi
+  if [[ "$f" =~ $codeql_all_re ]]; then
+    lang_rust=true
+    lang_js=true
+    lang_actions=true
+  fi
   if [ "$matched_cat" = "false" ]; then
     echo "Unrecognized non-docs path: $f → pinning frontend=backend=rust_tests=ci=true, every lane whole and every CodeQL language (fail-closed)." >&2
     frontend=true
@@ -407,7 +428,10 @@ langs=()
 if [ "$lang_actions" = "true" ]; then langs+=('"actions"'); fi
 if [ "$lang_js" = "true" ]; then langs+=('"javascript-typescript"'); fi
 if [ "$lang_rust" = "true" ]; then langs+=('"rust"'); fi
-codeql_languages="[$(IFS=,; echo "${langs[*]}")]"
+codeql_languages="[$(
+  IFS=,
+  echo "${langs[*]}"
+)]"
 
 emit | sed 's/^/  /' >&2
 emit

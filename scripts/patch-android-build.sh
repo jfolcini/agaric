@@ -63,7 +63,7 @@ if ! grep -q 'sourceCompatibility = JavaVersion.VERSION_17' "$FILE"; then
       inserted = 1
     }
     { print }
-  ' "$FILE" > "$FILE.new"
+  ' "$FILE" >"$FILE.new"
   mv "$FILE.new" "$FILE"
 fi
 
@@ -101,8 +101,8 @@ esac
 sed -i.bak '/^distributionSha256Sum=/d' "$WRAPPER"
 rm -f "$WRAPPER.bak"
 # The properties file may lack a trailing newline.
-[[ -z "$(tail -c1 "$WRAPPER")" ]] || echo >> "$WRAPPER"
-echo "distributionSha256Sum=$gradle_sha256" >> "$WRAPPER"
+[[ -z "$(tail -c1 "$WRAPPER")" ]] || echo >>"$WRAPPER"
+echo "distributionSha256Sum=$gradle_sha256" >>"$WRAPPER"
 
 echo "patched $WRAPPER — distributionSha256Sum pinned"
 

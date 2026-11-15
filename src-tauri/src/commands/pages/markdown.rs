@@ -22,6 +22,7 @@ use agaric_engine::import::{
     ImportAnchor, ImportDialect, ImportProgressUpdate, ImportResult, VaultFile, is_escaped,
     percent_decode,
 };
+use agaric_store::op::{PropertyList, PropertyListItem, PropertyValueFields};
 use agaric_store::pagination::{BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest};
 use agaric_store::space::SpaceId;
 
@@ -1161,7 +1162,7 @@ pub use import_attachments::*;
 #[path = "markdown_properties.rs"]
 mod property_lines;
 use property_lines::PropertyLines;
-pub(crate) use property_lines::read_typed_ref;
+pub(crate) use property_lines::{read_typed_ref, read_typed_ref_list};
 
 #[path = "markdown_source_apply.rs"]
 mod source_apply;

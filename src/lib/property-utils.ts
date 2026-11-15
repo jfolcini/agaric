@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import type { LucideIcon } from 'lucide-react'
 import {
   CalendarCheck2,
@@ -23,6 +24,16 @@ export function formatPropertyName(key: string): string {
 
 /** The `value_type`s a definition can have. */
 export const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'] as const
+
+/** A definition's type as the definitions show it: `select`, or `select · several values` for a list. */
+export function valueTypeLabel(
+  def: { value_type: string; multiple?: boolean | undefined },
+  t: TFunction,
+): string {
+  return def.multiple === true
+    ? t('properties.severalValuesType', { type: def.value_type })
+    : def.value_type
+}
 
 /**
  * The options JSON `create_property_def` requires for a select, read from a

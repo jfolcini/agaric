@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { PropertyValueForm } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { type FitDefinition, isUnfit, valueForm } from '@/lib/property-fit'
+import { type FitDefinition, fitsDefinition, isUnfit, valueForm } from '@/lib/property-fit'
 import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 
 const FORMS: readonly PropertyValueForm[] = ['text', 'number', 'date', 'ref', 'boolean']
@@ -84,6 +84,52 @@ describe('isUnfit (#6206)', () => {
     const def = { value_type: 'future', options: null }
     expect(FORMS.filter((form) => isUnfit('k', form, null, def))).toEqual([])
   })
+
+  it('a key that holds one value takes no list, whatever its items (#6741)', () => {
+    expect(isUnfit('k-text', 'list', null, { value_type: 'text', options: null }, ['a'])).toBe(true)
+    expect(isUnfit('k', 'list', null, { value_type: 'future', options: null }, ['a'])).toBe(true)
+  })
+})
+
+// #6741 D3 — the same table as the backend's list rows (`property_unfit_cmd_tests.rs`).
+describe('fitsDefinition under a key that holds several values (#6741)', () => {
+  const several = (value_type: string, options: string | null = null): FitDefinition => ({
+    value_type,
+    options,
+    multiple: true,
+  })
+
+  it('takes a list, never one value', () => {
+    expect(fitsDefinition('list', null, several('text'), ['a', 'b'])).toBe(true)
+    expect(FORMS.filter((form) => fitsDefinition(form, 'a', several('text')))).toEqual([])
+  })
+
+  it('takes a list only when every item is of the item type', () => {
+    const fit = (def: FitDefinition, items: unknown[]) => fitsDefinition('list', null, def, items)
+    expect(fit(several('number'), [1, 2.5])).toBe(true)
+    expect(fit(several('number'), [1, '2'])).toBe(false)
+    for (const type of ['text', 'url', 'ref']) {
+      expect(fit(several(type), ['a', 'b'])).toBe(true)
+      expect(fit(several(type), ['a', 3])).toBe(false)
+    }
+    expect(fit(several('date'), ['2026-01-05', '2026-02-28'])).toBe(true)
+    expect(fit(several('date'), ['2026-01-05', '2026-02-30'])).toBe(false)
+    expect(fit(several('select', '["a","b"]'), ['b', 'a'])).toBe(true)
+    expect(fit(several('select', '["a","b"]'), ['a', 'z'])).toBe(false)
+    expect(fit(several('select'), ['z'])).toBe(true)
+    expect(fit(several('boolean'), ['true'])).toBe(false)
+  })
+
+  it('takes no list without items', () => {
+    expect(fitsDefinition('list', null, several('text'), [])).toBe(false)
+    expect(fitsDefinition('list', null, several('text'))).toBe(false)
+  })
+
+  it('marks a list whose item does not fit, and no undeclared key', () => {
+    expect(isUnfit('k', 'list', null, several('number'), ['x'])).toBe(true)
+    expect(isUnfit('k', 'list', null, several('number'), [1])).toBe(false)
+    expect(isUnfit('k', 'list', null, undefined, ['x'])).toBe(false)
+  })
 })
 
 describe('valueForm (#6206)', () => {
@@ -93,6 +139,7 @@ describe('valueForm (#6206)', () => {
     expect(valueForm({ value_date: '2026-01-05' })).toBe('date')
     expect(valueForm({ value_ref: 'BLOCK' })).toBe('ref')
     expect(valueForm({ value_bool: 0 })).toBe('boolean')
+    expect(valueForm({ value_list: ['a'] })).toBe('list')
   })
 
   it('is null for a row that holds no value', () => {

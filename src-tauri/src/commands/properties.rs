@@ -162,12 +162,39 @@ pub async fn set_property_list_inner(
 ) -> Result<ActiveBlockRow, AppError> {
     let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
     tx.arm_engine_rollback(materializer.loro_state());
+    let loro = materializer.loro_state();
+    // Boxed: inlined, it makes the `set_property` wrapper's future trip
+    // `clippy::large_futures`.
+    let block = Box::pin(set_property_list_in_tx(
+        &mut tx, loro, device_id, block_id, key, value,
+    ))
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(ActiveBlockRow::from_block_row_unchecked(block))
+}
+
+/// [`set_property_list_inner`] inside the caller's rollback-armed transaction
+/// (MCP `batch`). Under a `ref` definition each item names its target as a
+/// single ref value's text does: a block id, `[[Title]]` or a title.
+pub(crate) async fn set_property_list_in_tx(
+    tx: &mut CommandTx,
+    loro: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: ActiveBlockId,
+    key: String,
+    mut value: agaric_store::op::PropertyValueFields,
+) -> Result<BlockRow, AppError> {
     let declaration =
-        agaric_engine::block_ops::block_property_declaration(&mut tx, block_id.as_str(), &key)
-            .await?;
+        agaric_engine::block_ops::block_property_declaration(tx, block_id.as_str(), &key).await?;
+    let lists_refs = declaration
+        .as_ref()
+        .is_some_and(|decl| decl.multiple && decl.value_type == "ref");
+    if let Some(list) = value.value_list.as_mut().filter(|_| lists_refs) {
+        super::pages::markdown::read_typed_ref_list(tx, block_id.as_str(), list).await?;
+    }
     let (block, op_record) = agaric_engine::block_ops::set_property_value_in_tx(
-        &mut tx,
-        materializer.loro_state(),
+        tx,
+        loro,
         device_id,
         block_id.into_string(),
         &key,
@@ -176,8 +203,7 @@ pub async fn set_property_list_inner(
     )
     .await?;
     tx.enqueue_background(Arc::new(op_record));
-    tx.commit_and_dispatch(materializer).await?;
-    Ok(ActiveBlockRow::from_block_row_unchecked(block))
+    Ok(block)
 }
 
 /// [`set_property_inner`] inside the caller's rollback-armed transaction

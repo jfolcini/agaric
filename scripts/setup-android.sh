@@ -22,7 +22,10 @@ usage() {
 # `--help` wins regardless of position, same as scripts/setup.sh.
 for arg in "$@"; do
   case "$arg" in
-    -h|--help) usage; exit 0 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
   esac
 done
 
@@ -46,7 +49,10 @@ ci_file=.github/workflows/ci.yml
 # A cold NDK download is large; this only catches a genuine hang.
 install_timeout=1800
 
-die() { echo "error: $*" >&2; exit 1; }
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
 
 # --- Versions: read from CI -------------------------------------------------
 # Scoped to the android-build job so the Linux build job's own steps are never
@@ -88,7 +94,7 @@ sdk_packages=("platform-tools" "$platform_pkg" "$buildtools_pkg" "$ndk_pkg" "emu
 problems=()
 installed=()
 present=()
-pending=()   # check mode: what a real run would do
+pending=() # check mode: what a real run would do
 
 # --- 1. Prerequisites -------------------------------------------------------
 echo "== Prerequisites"
@@ -96,7 +102,10 @@ echo "== Prerequisites"
 java_bin=''
 if [ -n "${JAVA_HOME:-}" ]; then
   java_bin="$JAVA_HOME/bin/java"
-  [ -x "$java_bin" ] || { problems+=("JAVA_HOME ($JAVA_HOME) has no bin/java; point it at a JDK 17"); java_bin=''; }
+  [ -x "$java_bin" ] || {
+    problems+=("JAVA_HOME ($JAVA_HOME) has no bin/java; point it at a JDK 17")
+    java_bin=''
+  }
 elif command -v java >/dev/null 2>&1; then
   java_bin="$(command -v java)"
   echo "note: JAVA_HOME is unset; using $java_bin. Gradle works with this, but export JAVA_HOME to a JDK 17 to be explicit."
@@ -134,7 +143,10 @@ fi
 find_tool() {
   local t
   for t in "$sdk"/cmdline-tools/latest/bin/"$1" "$sdk"/cmdline-tools/*/bin/"$1"; do
-    if [ -x "$t" ]; then echo "$t"; return 0; fi
+    if [ -x "$t" ]; then
+      echo "$t"
+      return 0
+    fi
   done
   command -v "$1" 2>/dev/null || true
 }
@@ -272,7 +284,7 @@ elif [ -z "$avdmanager" ]; then
 else
   # `android emulator create` cannot name the AVD, so avdmanager. The `no`
   # answers its "custom hardware profile?" prompt.
-  ANDROID_HOME="$sdk" "$avdmanager" create avd -n "$avd_name" -k "$image_pkg" <<< no
+  ANDROID_HOME="$sdk" "$avdmanager" create avd -n "$avd_name" -k "$image_pkg" <<<no
   installed+=("AVD $avd_name")
 fi
 
@@ -321,7 +333,10 @@ fi
 echo "== Summary"
 if [ "$check" = true ]; then
   echo "(check mode: nothing was changed)"
-  [ "${#pending[@]}" -eq 0 ] || { echo "Would do:"; printf '  - %s\n' "${pending[@]}"; }
+  [ "${#pending[@]}" -eq 0 ] || {
+    echo "Would do:"
+    printf '  - %s\n' "${pending[@]}"
+  }
 else
   if [ "${#installed[@]}" -eq 0 ]; then
     echo "Installed: nothing new"

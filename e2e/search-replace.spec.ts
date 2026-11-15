@@ -120,6 +120,26 @@ test.describe('Replace across pages from Search @search @pages @editor', () => {
     await expect(page.getByText('third zorbex', { exact: true })).toBeVisible()
   })
 
+  test('replaces a two-letter term, counted on every block before the run (#6752)', async ({
+    page,
+  }) => {
+    await openSearchView(page)
+    const gamma = await seedPage(page, 'Replace Gamma', ['Q7 plan', 'q7 and Q7', 'Q8 only'])
+
+    await previewReplace(page, 'Q7', 'Q9')
+    await expect(page.getByRole('option')).toHaveCount(2)
+    await confirmReplace(page, 'Replace in 2 blocks across 1 page')
+    const toast = page.locator('[data-sonner-toast][data-front="true"]')
+    await expect(toast).toContainText('Replaced in 2 blocks across 1 page')
+    await expect.poll(() => stored(page, gamma)).toEqual(['Q9 plan', 'Q9 and Q9', 'Q8 only'])
+
+    await toast.getByRole('button', { name: 'Undo' }).click()
+    await expect.poll(() => stored(page, gamma)).toEqual(['Q7 plan', 'q7 and Q7', 'Q8 only'])
+
+    await openPage(page, 'Replace Gamma')
+    await expect(page.getByText('q7 and Q7', { exact: true })).toBeVisible()
+  })
+
   test('the keyboard reaches the preview: Ctrl+H, Space on a row, the page checkbox', async ({
     page,
   }) => {

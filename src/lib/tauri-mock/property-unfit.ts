@@ -5,16 +5,19 @@
  * `src-tauri/src/commands/property_unfit.rs`.
  *
  * A value doesn't fit when its row is not in a slot its key's type takes, or
- * when it is a select's text outside the options. The built-ins count but
+ * when it is a select's text outside the options. Under a key that holds a
+ * list (#6741) a value fits when it is a list `set_property` would take, and
+ * under any other key a list doesn't. The built-ins count but
  * `space` and `is_space`; an undeclared key has none. The space's blocks are
  * read Trash included, as the backend reads them.
  */
 
 import type { PropertyUnfitCounts, UnfitMoveCounts, UnfitValueReplacement } from '@/lib/bindings'
 import { fitsDefinition, UNCOUNTED_PROPERTY_KEYS, valueForm } from '@/lib/property-fit'
+import { splitListItems } from '@/lib/property-list'
 import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
-import { coerce, type HeldValue, heldText, RUST_TRIM } from '@/lib/tauri-mock/coerce'
+import { coerce, type Held, isList, RUST_TRIM, shownValue } from '@/lib/tauri-mock/coerce'
 import {
   applyRewrite,
   type DefState,
@@ -54,8 +57,36 @@ function countedDef(spaceId: string, key: string): DefState | null {
   return def ? defState(def) : null
 }
 
+/**
+ * `validate_list_items` and `validate_list_value`: `list` is one a key under
+ * `def`, which holds a list, takes. The mock's `assertValidListValue` throws
+ * the same rules; it lives in `handlers/shared.ts`, which this module cannot
+ * import (`revert.ts` → `property-type-change.ts`).
+ */
+function listFits(list: readonly unknown[], def: DefState): boolean {
+  const options =
+    def.value_type === 'select' && def.options !== null
+      ? (JSON.parse(def.options) as string[])
+      : null
+  return (
+    list.length > 0 &&
+    list.every((item) => {
+      if (typeof item === 'number') return def.value_type === 'number'
+      if (typeof item !== 'string' || item.replace(RUST_TRIM, '') === '') return false
+      if (def.value_type === 'number' || def.value_type === 'boolean') return false
+      if (def.value_type === 'date' || def.value_type === 'ref') {
+        return coerce(item, def.value_type) === item
+      }
+      return options === null || options.includes(item)
+    })
+  )
+}
+
 /** A row that holds no value fits no type, as no slot of it is set. */
 function fits(row: Row, def: DefState): boolean {
+  const list = row['value_list']
+  if (def.multiple === true) return Array.isArray(list) && listFits(list, def)
+  if (list != null) return false
   const form = valueForm(row)
   return (
     form !== null && fitsDefinition(form, (row['value_text'] as string | undefined) ?? null, def)
@@ -77,7 +108,7 @@ function heldRow(blockId: string, key: string): Row {
 
 /** `shown`: a held value as text, as the list shows it and the distinct read groups it. */
 function shown(blockId: string, key: string): string {
-  return heldText(heldValueOf(heldRow(blockId, key)) as HeldValue)
+  return shownValue(heldValueOf(heldRow(blockId, key)) as Held)
 }
 
 function countsOf(held: string[]): PropertyUnfitCounts {
@@ -96,7 +127,7 @@ export function unfitValues(spaceId: string, key: string): Row[] {
     const row = heldRow(blockId, key)
     return Object.assign(holderRow(blockId), {
       value: shown(blockId, key),
-      form: valueForm(row) ?? 'text',
+      form: row['value_list'] == null ? (valueForm(row) ?? 'text') : 'list',
     })
   })
 }
@@ -130,7 +161,7 @@ export function removeUnfitPropertyValues(
       block_id: blockId,
       key,
       value: null,
-      prior: fieldsUnder(heldValueOf(heldRow(blockId, key)) as HeldValue, 'text'),
+      prior: fieldsUnder(heldValueOf(heldRow(blockId, key)) as Held, 'text'),
     })),
   }
   const op = pushOp('rewrite_properties', { ...payload })
@@ -158,11 +189,20 @@ export function distinctUnfitValues(spaceId: string, key: string): Row[] {
 }
 
 /**
- * `fitted`: `value` as a key under `def` holds it — read by `coerce`, then
- * admitted by `check_property_value`, which refuses blank text and a select's
- * text outside the options — or null when it doesn't fit.
+ * `fitted`: `value` as a key under `def` holds it — read by `coerce`, under a
+ * key that holds a list each item of one, then admitted by
+ * `check_property_fields`, which refuses blank text and a select's text
+ * outside the options — or null when it doesn't fit: a list fits only a key
+ * that holds one, and a single value only a key that doesn't.
  */
-function fitted(value: HeldValue, def: DefState): HeldValue | null {
+function fitted(value: Held, def: DefState): Held | null {
+  if (def.multiple === true) {
+    if (!isList(value)) return null
+    const items = value.map((item) => coerce(item, def.value_type))
+    const list = items.filter((item) => typeof item === 'string' || typeof item === 'number')
+    return list.length === items.length && listFits(list, def) ? list : null
+  }
+  if (isList(value)) return null
   const held = coerce(value, def.value_type)
   if (held === null) return null
   if (typeof held === 'string' && held.replace(RUST_TRIM, '') === '') return null
@@ -175,7 +215,7 @@ function fittedReplacements(
   spaceId: string,
   key: string,
   replacements: UnfitValueReplacement[],
-): HeldValue[] {
+): Held[] {
   const def = countedDef(spaceId, key)
   if (def === null) {
     throw rejection({ kind: 'not_found', message: `property definition '${key}'` })
@@ -187,7 +227,8 @@ function fittedReplacements(
     })
   }
   return replacements.map((r) => {
-    const fit = fitted(r.replacement, def)
+    // `replacement_value`: under a key that holds a list, the items of the text.
+    const fit = fitted(def.multiple === true ? splitListItems(r.replacement) : r.replacement, def)
     if (fit === null) {
       throw rejection({
         kind: 'validation',
@@ -229,11 +270,11 @@ export function convertUnfitPropertyValues(
     converted.unfit += counts.unfit
     converted.unfit_in_trash += counts.unfit_in_trash
   }
-  const mapped = new Map(replacements.map((r, i) => [r.value, fitReplacements[i] as HeldValue]))
+  const mapped = new Map(replacements.map((r, i) => [r.value, fitReplacements[i] as Held]))
   const values = unfitHolders(spaceId, key).flatMap((blockId) => {
     const fit = mapped.get(shown(blockId, key))
     if (fit === undefined) return []
-    const prior = heldValueOf(heldRow(blockId, key)) as HeldValue
+    const prior = heldValueOf(heldRow(blockId, key)) as Held
     return [
       {
         block_id: blockId,
@@ -289,7 +330,7 @@ function planMove(
       counts.occupied += 1
       continue
     }
-    const held = heldValueOf(heldRow(blockId, key)) as HeldValue
+    const held = heldValueOf(heldRow(blockId, key)) as Held
     const fit = fitted(held, def)
     if (fit === null) {
       counts.unfit_there += 1
@@ -353,13 +394,17 @@ export function addUnfitValuesToOptions(spaceId: string, key: string): Row {
     })
   }
   const options = (def['options'] as string | null) ?? null
+  const listed = new Set(options === null ? [] : (JSON.parse(options) as string[]))
+  // `with_unfit_texts`: each text that doesn't fit, or under a select that
+  // holds a list each such item of the lists that don't.
+  const texts = unfitHolders(spaceId, key).flatMap((blockId): unknown[] => {
+    const row = heldRow(blockId, key)
+    const list = row['value_list']
+    if (def['multiple'] === true) return Array.isArray(list) ? list : []
+    return list == null ? [row['value_text']] : []
+  })
   const added = [
-    ...new Set(
-      unfitHolders(spaceId, key).flatMap((blockId) => {
-        const text = heldRow(blockId, key)['value_text']
-        return typeof text === 'string' ? [text] : []
-      }),
-    ),
+    ...new Set(texts.filter((text) => typeof text === 'string' && !listed.has(text)) as string[]),
   ].toSorted(compareUtf8Bytes)
   if (options === null || added.length === 0) return { ...def, builtin: false, op_refs: [] }
   const updated = {

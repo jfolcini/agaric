@@ -374,6 +374,46 @@ describe('stripPropertyLines', () => {
 })
 
 describe('buildInlinePropertySetParams', () => {
+  // #6741 — under a definition that holds several values the line's value is
+  // its items (`splitListItems`), each read as one value of the item type is.
+  describe('a list definition', () => {
+    const list = (valueType: string): PropertyDefinition => ({ ...def(valueType), multiple: true })
+
+    it('splits the value into its items', () => {
+      expect(
+        buildInlinePropertySetParams('B', 'k', 'a, "b, c", [[Page, One]]', list('text')),
+      ).toEqual({
+        blockId: 'B',
+        key: 'k',
+        valueList: ['a', 'b, c', '[[Page, One]]'],
+      })
+    })
+
+    it('reads number items as numbers, and refuses the line for one that is none', () => {
+      expect(buildInlinePropertySetParams('B', 'k', '1, 2.5', list('number'))).toEqual({
+        blockId: 'B',
+        key: 'k',
+        valueList: [1, 2.5],
+      })
+      expect(buildInlinePropertySetParams('B', 'k', '1, lots', list('number'))).toBeNull()
+    })
+
+    it('takes date items only as days, and refuses the line otherwise', () => {
+      expect(
+        buildInlinePropertySetParams('B', 'k', '2026-01-02, 2026-03-04', list('date')),
+      ).toEqual({
+        blockId: 'B',
+        key: 'k',
+        valueList: ['2026-01-02', '2026-03-04'],
+      })
+      expect(buildInlinePropertySetParams('B', 'k', '2026-01-02, soon', list('date'))).toBeNull()
+    })
+
+    it('refuses a line with no item', () => {
+      expect(buildInlinePropertySetParams('B', 'k', ', ,', list('text'))).toBeNull()
+    })
+  })
+
   it('stores value_text when there is no definition', () => {
     expect(buildInlinePropertySetParams('B', 'status', 'active', null)).toEqual({
       blockId: 'B',

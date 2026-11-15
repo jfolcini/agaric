@@ -6020,3 +6020,13 @@ async fn snapshot_list_attachments_response_shape() {
         ".items[].path" => "[PATH]",
     });
 }
+
+/// #6741 — a `set_property` op that wrote a list shows its items.
+#[test]
+fn history_after_shows_a_lists_items_6741() {
+    let payload = json!({ "key": "scores", "value_text": null, "value_list": ["a, b", 2.5] });
+    assert_eq!(
+        history_after("set_property", &payload).as_deref(),
+        Some("scores=a, b, 2.5")
+    );
+}

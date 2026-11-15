@@ -80,6 +80,8 @@ pub(super) async fn change(
             key: key.into(),
             value_type: ty.into(),
             options: opts.map(str::to_owned),
+            multiple: None,
+            separator: None,
         },
         PropertyTypeChangeCounts { converted, unfit },
     )

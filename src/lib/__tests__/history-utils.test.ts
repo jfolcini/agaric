@@ -426,6 +426,15 @@ describe('getPropertyPayload', () => {
     expect(getPropertyPayload(entry)).toEqual({ key: 'due_date', value: '2026-04-15' })
   })
 
+  // #6741 — a list op's value is its items joined.
+  it('shows a list value as its items joined', () => {
+    const entry = makeEntry(
+      JSON.stringify({ key: 'stages', value_text: null, value_list: ['a', 'b, c', 3] }),
+      'set_property',
+    )
+    expect(getPropertyPayload(entry)).toEqual({ key: 'stages', value: 'a, b, c, 3' })
+  })
+
   it('extracts key without value from delete_property', () => {
     const entry = makeEntry(JSON.stringify({ key: 'due_date' }), 'delete_property')
     expect(getPropertyPayload(entry)).toEqual({ key: 'due_date' })

@@ -35,23 +35,46 @@ DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --cached)
-      SOURCE="--cached"; shift ;;
+      SOURCE="--cached"
+      shift
+      ;;
     --range)
-      [ -n "${2:-}" ] || { echo "ERROR: --range requires a revspec" >&2; exit 2; }
-      SOURCE="--range"; RANGE="$2"; shift 2 ;;
+      [ -n "${2:-}" ] || {
+        echo "ERROR: --range requires a revspec" >&2
+        exit 2
+      }
+      SOURCE="--range"
+      RANGE="$2"
+      shift 2
+      ;;
     --worktree)
-      SOURCE="--worktree"; shift ;;
+      SOURCE="--worktree"
+      shift
+      ;;
     --dry)
-      DRY=1; shift ;;
+      DRY=1
+      shift
+      ;;
     *)
-      echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
+      echo "ERROR: unknown arg: $1" >&2
+      exit 2
+      ;;
   esac
 done
 
 case "$SOURCE" in
-  --cached)   DIFF=(git diff --cached); LABEL="staged" ;;
-  --range)    DIFF=(git diff "$RANGE"); LABEL="range $RANGE" ;;
-  --worktree) DIFF=(git diff HEAD); LABEL="working tree" ;;
+  --cached)
+    DIFF=(git diff --cached)
+    LABEL="staged"
+    ;;
+  --range)
+    DIFF=(git diff "$RANGE")
+    LABEL="range $RANGE"
+    ;;
+  --worktree)
+    DIFF=(git diff HEAD)
+    LABEL="working tree"
+    ;;
 esac
 
 PATHSPEC=('*.ts' '*.tsx' '*.mjs' 'conformance/')
@@ -65,8 +88,8 @@ FILES=$(echo "$CHANGED" | grep -E '\.(ts|tsx|mjs)$' | grep -v 'src/lib/bindings\
 # Test files that read `$1` (a path regex) through fs, found by content so a new
 # reader is picked up without editing this list.
 fs_readers() {
-  { grep -rlE --include='*.test.ts' --include='*.test.tsx' -e "$1" src e2e-tauri 2>/dev/null || true; } |
-    while read -r f; do
+  { grep -rlE --include='*.test.ts' --include='*.test.tsx' -e "$1" src e2e-tauri 2>/dev/null || true; } \
+    | while read -r f; do
       if grep -qE 'readFileSync|readdirSync' "$f"; then echo "$f"; fi
     done
 }
