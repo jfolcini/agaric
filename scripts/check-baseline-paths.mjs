@@ -108,10 +108,7 @@ export const EMBEDDED_SOURCES = [
 //   check-raw-tx.mjs BIN_FILE_GLOBS, lib/rust-scan.mjs TEST_FILE_GLOBS,
 //     EXTRA_TEST_FILE_GLOBS                           — structural patterns
 //   check-table-ownership.mjs OWNER / EXTRA_TEST_...  — table names / patterns
-// Two path-keyed sets are excluded for reasons about this script:
-//   check-dead-symbol-citations.mjs ALLOWED_FILE_BY_SYMBOL — `{symbol: path}`,
-//     paths on the RIGHT; the extractor returns keys, so declaring it would
-//     fail on every symbol name.
+// One path-keyed set is excluded for a reason about this script:
 //   check-tauri-command-sanitize.mjs ALLOWLIST — must stay empty, so the
 //     "yielded no entries" arm would fail permanently.
 // Scan roots (`CRATE_ROOTS`, `SCAN_ROOTS`) are each owning guard's own check.
