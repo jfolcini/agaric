@@ -27,6 +27,7 @@ import {
   type SaveResult,
   savePage,
 } from '@/editor/page-mode/page-save'
+import { logger } from '@/lib/logger'
 
 vi.mock('@/editor/content-delta', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/editor/content-delta')>()
@@ -784,6 +785,7 @@ describe('batches', () => {
   })
 
   it('sends a refused create batch a write at a time, which holds back only the create refused', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const { ed, backend, save } = open([[A, 0, 'foo']])
     caret(ed, 0, 3)
     press(ed, 'Enter')
@@ -799,6 +801,12 @@ describe('batches', () => {
     expect(error).toEqual(new Error(`refused: create ${NEW_2}`))
     expect(backend.batches).toEqual([`create ${NEW_1} ${NEW_2} ${NEW_3}`])
     expect(backend.calls).toEqual([`create ${NEW_1}`, `create ${NEW_2}`, `create ${NEW_3}`])
+    expect(warn).toHaveBeenCalledWith(
+      'savePage',
+      'A batch write was refused; sending it a write at a time',
+      { count: 3 },
+      new Error(`refused: create ${NEW_2}`),
+    )
     expect(backend.live()).toEqual([
       [A, 0, 'foo'],
       [NEW_1, 0, 'one'],

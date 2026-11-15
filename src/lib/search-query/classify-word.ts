@@ -24,10 +24,8 @@ export function classifyWord(tok: Extract<RawToken, { kind: 'word' }>): FilterTo
   if (matched) return matched
   // Bare `#tag` alias: the `tag:` recogniser, so `#"my tag"` peels its
   // quotes exactly as `tag:#"my tag"` does and serialises back to it.
-  if (tok.text.startsWith('#') && tok.text.length > 1) {
-    const tag = recognise(`tag:${tok.text}`, tok.span)
-    if (tag) return tag
-  }
+  // A `#` word is never an unknown `key:`, so one that is no tag is free text.
+  if (tok.text.startsWith('#') && tok.text.length > 1) return recognise(`tag:${tok.text}`, tok.span)
   // Token shaped like `xxx:yyy` but unregistered → invalid chip.
   // `looksLikeUnknownPrefix` returns null for `key://…`
   // (pasted URLs), so those fall through to free-text instead of
