@@ -153,6 +153,7 @@ pub(super) async fn apply_op_with_mode(
     // op type enqueues no FTS task at all. One pass in either direction — see
     // `ApplyEffects::move_fts_cohort`.
     reindex_restored_cohort_fts(pool, &effects.move_fts_cohort).await;
+    reindex_restored_cohort_fts(pool, &effects.purge_fts_referrers).await;
 
     Ok(())
 }
@@ -473,6 +474,9 @@ async fn cohort_referrers<S: AsRef<str>>(pool: &SqlitePool, cohort: &[S]) -> Vec
 /// cohort join the pass (#6243), so a restored target's name comes back to
 /// them. One pass, so the tag/page reference maps are loaded once rather than
 /// per member. Infallible / log-only, like its link counterpart.
+///
+/// A purge's referrers take the same pass (#6843): their membership is
+/// unchanged, but a `((ref))` to a purged block strips to `""`.
 pub async fn reindex_restored_cohort_fts<S: AsRef<str>>(pool: &SqlitePool, cohort: &[S]) {
     let referrers = cohort_referrers(pool, cohort).await;
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();

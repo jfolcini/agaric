@@ -319,6 +319,8 @@ async fn dispatch_committed_cohorts(pool: &SqlitePool, per_record_effects: &[App
                 // per id, so a swept id loses its row and an un-swept
                 // one gains a fresh one, from one list.
                 .chain(e.move_fts_cohort.iter())
+                // #6843: and a purge's referrers, re-stripped the same way.
+                .chain(e.purge_fts_referrers.iter())
         })
         .map(String::as_str)
         .collect();

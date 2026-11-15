@@ -3858,7 +3858,8 @@ async fn a_synced_edit_of_a_block_ref_target_re_strips_the_ref_6277() {
 
     // A deleted target keeps its first line, as its chip does, so the note
     // keeps its text and owes no reindex.
-    crate::commands::delete_block_inner(&fx.pool_a, "device-A", &fx.mat_a, target)
+    let target_id = target.clone();
+    crate::commands::delete_block_inner(&fx.pool_a, "device-A", &fx.mat_a, target.clone())
         .await
         .unwrap();
     fx.mat_a.flush_background().await.unwrap();
@@ -3872,6 +3873,37 @@ async fn a_synced_edit_of_a_block_ref_target_re_strips_the_ref_6277() {
             fts_drift(pool, mat).await,
             Vec::<String>::new(),
             "target deleted, on {label}"
+        );
+    }
+
+    // #6843: a purged target has no first line, so the note loses it: on A
+    // through the purge command, on B through the sweep that ends a pull.
+    crate::commands::purge_block_inner(&fx.pool_a, "device-A", &fx.mat_a, target)
+        .await
+        .unwrap();
+    fx.mat_a.flush_background().await.unwrap();
+    sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, space, &pool_b, &mat_b).await;
+    let swept = agaric_sync::sync_protocol::loro_sync::sweep_deferred_purges(
+        &pool_b,
+        &mat_b.loro_state().registry,
+    )
+    .await
+    .unwrap();
+    assert_eq!(swept, vec![target_id], "B sweeps the purged target");
+    mat_b
+        .enqueue_inbound_sync_rebuilds(&[], &swept)
+        .await
+        .unwrap();
+    mat_b.flush_inbound_rebuilds().await.unwrap();
+    for (label, pool, mat) in [("B", &pool_b, &mat_b), ("A", &fx.pool_a, &fx.mat_a)] {
+        assert!(
+            !fts_hits(pool, "Goal first").await.contains(&note_id),
+            "target purged, on {label}: its first line no longer finds the note"
+        );
+        assert_eq!(
+            fts_drift(pool, mat).await,
+            Vec::<String>::new(),
+            "target purged, on {label}"
         );
     }
     mat_b.shutdown();
