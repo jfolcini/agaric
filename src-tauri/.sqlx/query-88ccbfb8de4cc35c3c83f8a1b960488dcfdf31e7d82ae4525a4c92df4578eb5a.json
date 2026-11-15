@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT bp.block_id AS \"block_id!\", bp.key AS \"key!\", bp.value_text, bp.value_date,\n                      bp.value_num, bp.value_ref, bp.value_bool AS \"value_bool: i64\",\n                      bp.value_list AS \"value_list: PropertyList\",\n                      (bp.value_list IS NOT NULL AND EXISTS (\n                          SELECT 1 FROM blocks holder\n                          JOIN property_definitions d ON d.space_id = holder.space_id\n                          WHERE holder.id = bp.block_id AND d.key = bp.key\n                            AND d.value_type = 'ref')) AS \"list_of_refs!: bool\"\n               FROM block_properties bp\n               WHERE bp.block_id IN (SELECT value FROM json_each(?1))\n                 AND bp.key NOT IN (\n                    'space', 'is_space', 'created_at',\n                    'repeat-seq', 'repeat-origin', 'template', 'attachments', 'listStyle'\n                 )\n               ORDER BY bp.block_id ASC, bp.key ASC",
+  "query": "SELECT bp.block_id AS \"block_id!\", bp.key AS \"key!\", bp.value_text, bp.value_date,\n                      bp.value_num, bp.value_ref, bp.value_bool AS \"value_bool: i64\",\n                      bp.value_list AS \"value_list: PropertyList\",\n                      (bp.value_list IS NOT NULL AND EXISTS (\n                          SELECT 1 FROM blocks holder\n                          JOIN property_definitions d ON d.space_id = holder.space_id\n                          WHERE holder.id = bp.block_id AND d.key = bp.key\n                            AND d.value_type = 'ref')) AS \"list_of_refs!: bool\",\n                      (bp.value_text IS NOT NULL AND EXISTS (\n                          SELECT 1 FROM blocks holder\n                          JOIN property_definitions d ON d.space_id = holder.space_id\n                          WHERE holder.id = bp.block_id AND d.key = bp.key\n                            AND d.multiple = 1)) AS \"text_under_list!: bool\"\n               FROM block_properties bp\n               WHERE bp.block_id IN (SELECT value FROM json_each(?1))\n                 AND bp.key NOT IN (\n                    'space', 'is_space', 'created_at',\n                    'repeat-seq', 'repeat-origin', 'template', 'attachments', 'listStyle'\n                 )\n               ORDER BY bp.block_id ASC, bp.key ASC",
   "describe": {
     "columns": [
       {
@@ -96,6 +96,12 @@
         "ordinal": 8,
         "type_info": "Integer",
         "origin": "Expression"
+      },
+      {
+        "name": "text_under_list!: bool",
+        "ordinal": 9,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -110,8 +116,9 @@
       true,
       true,
       true,
+      false,
       false
     ]
   },
-  "hash": "f5de197bd398fbce3e412f6a52de9efda3e46be7300efc3b95fda8ecfe4137b2"
+  "hash": "88ccbfb8de4cc35c3c83f8a1b960488dcfdf31e7d82ae4525a4c92df4578eb5a"
 }

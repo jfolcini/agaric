@@ -582,6 +582,27 @@ async fn duplicate_copies_each_list_a_block_holds_6741() {
     );
 }
 
+/// A text under a key that holds a list, a value that doesn't fit it, is
+/// written as a list of one: Edit as Markdown's line and Duplicate's copy read
+/// it back as that one item, never as the parts its comma splits it into, so a
+/// copy is refused rather than saved as items the block never held.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_text_under_a_list_key_is_one_item_when_its_line_is_read_back_6741() {
+    let f = fixture().await;
+    f.declare("marks", single_def("text")).await;
+    f.set_text(&f.child, "marks", "1, 2").await;
+    f.change("marks", ("number", None, Some(true), SEMICOLON))
+        .await;
+    assert_eq!(f.text(&f.child, "marks").await.as_deref(), Some("1, 2"));
+
+    let source = page_source(&f.pool, &f.page).await;
+    // A list of one item holding a comma, as a whole-line JSON string.
+    let line = r#"marks:: "\"1, 2\"""#;
+    assert_eq!(source.matches(line).count(), 1, "`{line}` in:\n{source}");
+    let copy = duplicate_block_inner(&f.pool, DEV, &f.mat, f.child.clone()).await;
+    assert_refused(copy.map(drop), r#"got the item Text("1, 2")"#);
+}
+
 /// Edit as Markdown writes a list as one `key:: a, b` line, a ref item as a
 /// link to its page, and reads the line back as the list: a save that changes
 /// the line writes the new list, one that changes nothing writes nothing, and

@@ -1,5 +1,5 @@
 {
-  "description": "#6741 — a list as one line of text in the Edit as Markdown buffer, in Duplicate and in a template's batch. Under a key that holds a list a block's `key:: a, b` line, and the page's own `key: a, b` front matter line, is the list's text (`write_property_list`): an item holding a comma is quoted, a number is its digits. The page's own buffer saves as nothing; a changed line writes the list it reads as (`property_list_items`), each item under the item type; a number list item that is no number refuses the whole save. Duplicate copies the block's lists item for item, and a `create_blocks_batch` spec's typed property takes a list. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#6741 — a list as one line of text in the Edit as Markdown buffer, in Duplicate and in a template's batch. Under a key that holds a list a block's `key:: a, b` line, and the page's own `key: a, b` front matter line, is the list's text (`write_property_list`): an item holding a comma is quoted, a number is its digits. The page's own buffer saves as nothing; a changed line writes the list it reads as (`property_list_items`), each item under the item type; a number list item that is no number refuses the whole save. Duplicate copies the block's lists item for item, and a `create_blocks_batch` spec's typed property takes a list. A text under a key that holds a list is written as a list of one, so its line reads back as one item, not as the parts its comma splits it into. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -57,7 +57,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 13,
+      "count": 16,
       "ops": [
         {
           "op_type": "set_property_def"
@@ -106,6 +106,16 @@
         {
           "key": "authors",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "marks",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "rewrite_properties"
         }
       ]
     },
@@ -122,6 +132,12 @@
         "key": "authors",
         "value": ["Zed", "x, y"],
         "value_type": "List"
+      },
+      {
+        "block_id": "B2",
+        "key": "marks",
+        "value": "1, 2",
+        "value_type": "Text"
       },
       {
         "block_id": "B2",
@@ -197,6 +213,18 @@
       "error": "validation",
       "name": "a_list_beside_a_value_is_two_values",
       "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "declare_marks",
+      "returns": ["marks#value_type=text#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "marks_becomes_a_number_list",
+      "returns": ["marks#value_type=number#options=null#builtin=false#multiple=true"]
     }
   ],
   "expected_queries": [
@@ -212,6 +240,7 @@
         "line#text=",
         "B2#text=card",
         "line#text=  authors:: Zed, \"x, y\"",
+        "line#text=  marks:: \"\\\"1, 2\\\"\"",
         "line#text=  scores:: 7, 100",
         "line#text=",
         "B3#text=card",
@@ -384,6 +413,48 @@
       "comment": "A spec's typed property takes one value.",
       "expect_error": "validation",
       "name": "a_list_beside_a_value_is_two_values",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "marks",
+        "multiple": false,
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "create_property_def",
+      "comment": "A text key whose value will not fit the list it becomes.",
+      "name": "declare_marks",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "marks",
+        "value": {
+          "value_text": "1, 2"
+        }
+      },
+      "command": "set_property",
+      "comment": "One text holding a comma."
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 0,
+          "unfit": 1
+        },
+        "key": "marks",
+        "multiple": true,
+        "options": null,
+        "separator": "semicolon",
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "change_property_type",
+      "comment": "`1, 2` has no semicolon to split at and is no number: it stays as text, under a key that holds a list.",
+      "name": "marks_becomes_a_number_list",
       "via": "command"
     }
   ],
