@@ -98,8 +98,8 @@ pub use sql_only_fallback::count as sql_only_fallback_count;
 // multi-root cascade; a post-cascade call hits dead space resolution).
 pub use apply::{
     collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
-    dispatch_restore_ancestors, dispatch_restore_descendants, reindex_restored_cohort_fts,
-    reindex_restored_cohort_links, remove_deleted_cohort_fts,
+    dispatch_restore_ancestors, dispatch_restore_descendants, reindex_purge_referrers_fts,
+    reindex_restored_cohort_fts, reindex_restored_cohort_links, remove_deleted_cohort_fts,
 };
 // #6521: the kernel runs an applied op's cohort fan-out in the op's transaction.
 pub(crate) use apply::dispatch_cohorts;

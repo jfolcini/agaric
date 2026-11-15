@@ -2185,7 +2185,7 @@ pub async fn purge_block_inner(
     // `fs_path`s, which may be shared with surviving rows.
     enqueue_purged_attachment_gc(materializer, purge_counts.attachment_rows);
     // #6843: a `((ref))` to a purged block no longer shows its text.
-    crate::materializer::reindex_restored_cohort_fts(pool, &purge_counts.fts_referrers).await;
+    crate::materializer::reindex_purge_referrers_fts(pool, &purge_counts.fts_referrers).await;
 
     Ok(PurgeResponse {
         block_id,
@@ -2515,7 +2515,7 @@ pub async fn purge_all_deleted_inner(
     // rows via the #1993 dedup, so only the GC may decide to unlink.
     enqueue_purged_attachment_gc(materializer, purge_counts.attachment_rows);
     // #6843: a `((ref))` to a purged block no longer shows its text.
-    crate::materializer::reindex_restored_cohort_fts(pool, &purge_counts.fts_referrers).await;
+    crate::materializer::reindex_purge_referrers_fts(pool, &purge_counts.fts_referrers).await;
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -3195,7 +3195,7 @@ pub async fn purge_blocks_by_ids_inner(
     // GC pass (mirrors `purge_all_deleted_inner`).
     enqueue_purged_attachment_gc(materializer, purge_counts.attachment_rows);
     // #6843: a `((ref))` to a purged block no longer shows its text.
-    crate::materializer::reindex_restored_cohort_fts(pool, &purge_counts.fts_referrers).await;
+    crate::materializer::reindex_purge_referrers_fts(pool, &purge_counts.fts_referrers).await;
 
     Ok(BulkTrashResponse {
         affected_count: count,
