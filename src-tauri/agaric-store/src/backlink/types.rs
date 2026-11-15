@@ -108,7 +108,7 @@ pub enum BacklinkFilter {
 /// Not a [`BacklinkFilter`] variant: a compiled filter fragment is correlated
 /// on the SOURCE block alias `b` alone (`backlink/filters.rs`) and never sees
 /// the `block_links` row, so this predicate cannot be expressed there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum LinkKind {
     PageLink,

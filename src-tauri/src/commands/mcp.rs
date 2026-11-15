@@ -4,8 +4,9 @@
 //! Three commands are exposed to the frontend, plus
 //! `get_mcp_recent_activity`, which reads the shared activity ring:
 //!
-//! - `get_mcp_status` — returns `{ enabled, socket_path, active_connections }`
-//!   for the switch + connection count. Reads the `mcp-enabled` marker file
+//! - `get_mcp_status` — returns `{ enabled, socket_path, bridge_command,
+//!   bridge_args, active_connections }` for the switch, the copied agent
+//!   configs and the connection count. Reads the `mcp-enabled` marker file
 //!   and the shared [`McpLifecycle`] counter. Never touches the socket
 //!   itself.
 //! - `mcp_set_enabled(enabled)` — creates or deletes the marker file, then
@@ -48,6 +49,12 @@ use agaric_core::error::AppError;
 pub struct McpStatus {
     pub enabled: bool,
     pub socket_path: String,
+    /// The absolute path an agent config runs to start the bridge
+    /// ([`mcp::bridge_invocation`]).
+    pub bridge_command: String,
+    /// Arguments before the bridge's own: `["agaric-mcp"]` when
+    /// `bridge_command` is the AppImage, else none.
+    pub bridge_args: Vec<String>,
     pub active_connections: u32,
 }
 
@@ -69,9 +76,15 @@ pub fn get_mcp_socket_path_inner(app_data_dir: &Path) -> String {
 /// marker file. Safe to call regardless of whether the MCP task is
 /// currently running.
 #[tracing::instrument(skip(app_data_dir, lifecycle))]
-pub fn get_mcp_status_inner(app_data_dir: &Path, lifecycle: &McpLifecycle) -> McpStatus {
+pub fn get_mcp_status_inner(
+    app_data_dir: &Path,
+    lifecycle: &McpLifecycle,
+    app_exe: &Path,
+    appimage: Option<&Path>,
+) -> McpStatus {
     let enabled = mcp_enabled(app_data_dir);
     let socket_path = get_mcp_socket_path_inner(app_data_dir);
+    let (bridge_command, bridge_args) = mcp::bridge_invocation(app_exe, appimage);
     // `connection_count` is a usize; cap at u32::MAX for the wire (the
     // serialized frontend type uses `number`, which is a safe IEEE-754
     // double — anything under 2^53 round-trips cleanly).
@@ -79,6 +92,8 @@ pub fn get_mcp_status_inner(app_data_dir: &Path, lifecycle: &McpLifecycle) -> Mc
     McpStatus {
         enabled,
         socket_path,
+        bridge_command: bridge_command.to_string_lossy().into_owned(),
+        bridge_args,
         active_connections,
     }
 }
@@ -263,7 +278,19 @@ pub async fn get_mcp_status<R: tauri::Runtime>(
     lifecycle: tauri::State<'_, Arc<McpLifecycle>>,
 ) -> Result<McpStatus, AppError> {
     let app_data_dir = app_data_dir_from_handle(&app).map_err(sanitize_internal_error)?;
-    Ok(get_mcp_status_inner(&app_data_dir, lifecycle.inner()))
+    let app_exe = std::env::current_exe()
+        .map_err(AppError::Io)
+        .map_err(sanitize_internal_error)?;
+    // Only Linux runs AppImages, and only Linux hands over to the bridge.
+    let appimage = std::env::var_os("APPIMAGE")
+        .filter(|_| cfg!(target_os = "linux"))
+        .map(PathBuf::from);
+    Ok(get_mcp_status_inner(
+        &app_data_dir,
+        lifecycle.inner(),
+        &app_exe,
+        appimage.as_deref(),
+    ))
 }
 
 /// Tauri command: disconnect every in-flight MCP connection.
@@ -422,7 +449,7 @@ mod tests {
     fn status_reports_disabled_when_marker_absent() {
         let dir = TempDir::new().unwrap();
         let lc = make_lifecycle();
-        let status = get_mcp_status_inner(dir.path(), &lc);
+        let status = get_mcp_status_inner(dir.path(), &lc, Path::new("/usr/bin/agaric"), None);
         assert!(!status.enabled, "must be disabled when marker absent");
         assert_eq!(status.active_connections, 0);
         assert!(
@@ -436,7 +463,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join(MCP_ENABLED_MARKER), b"").unwrap();
         let lc = make_lifecycle();
-        let status = get_mcp_status_inner(dir.path(), &lc);
+        let status = get_mcp_status_inner(dir.path(), &lc, Path::new("/usr/bin/agaric"), None);
         assert!(status.enabled, "must be enabled when marker present");
     }
 
@@ -446,11 +473,24 @@ mod tests {
         let lc = make_lifecycle();
         lc.active_connections
             .store(3, std::sync::atomic::Ordering::Release);
-        let status = get_mcp_status_inner(dir.path(), &lc);
+        let status = get_mcp_status_inner(dir.path(), &lc, Path::new("/usr/bin/agaric"), None);
         assert_eq!(
             status.active_connections, 3,
             "status must reflect the lifecycle's current connection count",
         );
+    }
+
+    #[test]
+    fn status_names_the_bridge_an_appimage_config_runs_6736() {
+        let dir = TempDir::new().unwrap();
+        let status = get_mcp_status_inner(
+            dir.path(),
+            &make_lifecycle(),
+            Path::new("/tmp/.mount_Agaric/usr/bin/agaric"),
+            Some(Path::new("/home/me/Agaric.AppImage")),
+        );
+        assert_eq!(status.bridge_command, "/home/me/Agaric.AppImage");
+        assert_eq!(status.bridge_args, ["agaric-mcp"]);
     }
 
     // ── mcp_set_enabled_inner ────────────────────────────────────────────

@@ -367,6 +367,58 @@ pub fn default_mcp_socket_path(
     }
 }
 
+/// The first argument that makes the app's own executable hand over to the
+/// bridge beside it ([`bridge_handover_args`]). An AppImage's mount path changes
+/// every launch, so its agent config runs the AppImage file with this
+/// argument instead of naming the bridge inside the mount.
+pub const BRIDGE_ARG: &str = "agaric-mcp";
+
+/// The bridge executable for the app running from `app_exe`. Every desktop
+/// bundle installs each cargo `[[bin]]` in one folder: `/usr/bin` from the
+/// `.deb` and `.rpm`, `Agaric.app/Contents/MacOS`, the Windows install
+/// folder, `usr/bin` inside an AppImage.
+pub fn bridge_path(app_exe: &Path) -> PathBuf {
+    app_exe.with_file_name(format!("{BRIDGE_ARG}{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// The program and leading arguments an agent config runs to start the
+/// bridge: the bridge itself, or the AppImage file at `appimage` (its
+/// `$APPIMAGE`) with [`BRIDGE_ARG`], since the path inside its mount does not
+/// outlive the run.
+pub fn bridge_invocation(app_exe: &Path, appimage: Option<&Path>) -> (PathBuf, Vec<String>) {
+    match appimage {
+        Some(appimage) => (appimage.to_path_buf(), vec![BRIDGE_ARG.to_owned()]),
+        None => (bridge_path(app_exe), Vec::new()),
+    }
+}
+
+/// The bridge's arguments when the app was started as `agaric agaric-mcp …`;
+/// `args` excludes the program name.
+pub fn bridge_handover_args(
+    mut args: impl Iterator<Item = std::ffi::OsString>,
+) -> Option<impl Iterator<Item = std::ffi::OsString>> {
+    (args.next()? == BRIDGE_ARG).then_some(args)
+}
+
+/// Replace this process with the bridge when started as `agaric agaric-mcp …`
+/// ([`bridge_handover_args`]); return to start the app otherwise.
+#[cfg(target_os = "linux")]
+pub fn exec_bridge_if_asked() {
+    use std::os::unix::process::CommandExt;
+
+    let Some(args) = bridge_handover_args(std::env::args_os().skip(1)) else {
+        return;
+    };
+    let err = match std::env::current_exe() {
+        Ok(app_exe) => std::process::Command::new(bridge_path(&app_exe))
+            .args(args)
+            .exec(),
+        Err(err) => err,
+    };
+    eprintln!("agaric: could not start the {BRIDGE_ARG} bridge: {err}");
+    std::process::exit(1);
+}
+
 /// Return `true` when the MCP socket is enabled: the marker file exists in
 /// the application data directory. This mirrors the on-disk patterns used
 /// for `device-id` and `sync-cert`, so no new persistence mechanism is
@@ -1120,6 +1172,56 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = default_mcp_socket_path(dir.path());
         assert_eq!(path, std::path::PathBuf::from(MCP_PIPE_PATH));
+    }
+
+    #[test]
+    fn bridge_is_beside_the_app_in_the_deb_and_the_mac_bundle_6736() {
+        assert_eq!(
+            bridge_invocation(Path::new("/usr/bin/agaric"), None),
+            (PathBuf::from("/usr/bin/agaric-mcp"), Vec::new()),
+        );
+        assert_eq!(
+            bridge_invocation(
+                Path::new("/Applications/My Apps/Agaric.app/Contents/MacOS/agaric"),
+                None,
+            ),
+            (
+                PathBuf::from("/Applications/My Apps/Agaric.app/Contents/MacOS/agaric-mcp"),
+                Vec::new(),
+            ),
+        );
+    }
+
+    #[test]
+    fn an_appimage_runs_its_own_file_with_the_bridge_arg_6736() {
+        assert_eq!(
+            bridge_invocation(
+                Path::new("/tmp/.mount_AgaricXYZ/usr/bin/agaric"),
+                Some(Path::new("/home/me/Apps/Agaric 0.24.AppImage")),
+            ),
+            (
+                PathBuf::from("/home/me/Apps/Agaric 0.24.AppImage"),
+                vec!["agaric-mcp".to_owned()],
+            ),
+        );
+    }
+
+    #[test]
+    fn only_a_first_bridge_arg_hands_over_and_the_rest_pass_through_6736() {
+        let args = |list: &[&str]| {
+            list.iter()
+                .map(std::ffi::OsString::from)
+                .collect::<Vec<_>>()
+                .into_iter()
+        };
+        let forwarded: Vec<_> =
+            bridge_handover_args(args(&["agaric-mcp", "--socket", "/s", "--token", "t"]))
+                .expect("hands over")
+                .collect();
+        assert_eq!(forwarded, ["--socket", "/s", "--token", "t"]);
+        assert!(bridge_handover_args(args(&[])).is_none());
+        assert!(bridge_handover_args(args(&["agaric://page/01ABC"])).is_none());
+        assert!(bridge_handover_args(args(&["--socket", "agaric-mcp"])).is_none());
     }
 
     /// Access that was on through the read-write socket alone stays on.

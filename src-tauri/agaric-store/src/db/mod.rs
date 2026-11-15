@@ -91,7 +91,35 @@ pub const MAX_SQL_PARAMS: usize = 999;
 /// per-device monotonic sequence number that breaks ties / repairs
 /// backward steps).
 pub fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    let wall = chrono::Utc::now().timestamp_millis();
+    #[cfg(any(test, feature = "test-util"))]
+    if let Ok(last) = DISTINCT_NOW_MS.fetch_update(
+        std::sync::atomic::Ordering::SeqCst,
+        std::sync::atomic::Ordering::SeqCst,
+        |last| (last != 0).then(|| wall.max(last + 1)),
+    ) {
+        return wall.max(last + 1);
+    }
+    wall
+}
+
+/// The last [`now_ms`] handed out once [`distinct_now_ms`] is on, `0` while off.
+#[cfg(any(test, feature = "test-util"))]
+static DISTINCT_NOW_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// Test seam: from now on [`now_ms`] never repeats a millisecond, so two ops
+/// one command appends carry different stamps however fast the machine is,
+/// and a test can tell which one a derived value was taken from. It stays at
+/// or ahead of the wall clock. Process-global: nextest runs each test in its
+/// own process.
+#[cfg(any(test, feature = "test-util"))]
+pub fn distinct_now_ms() {
+    let _ = DISTINCT_NOW_MS.compare_exchange(
+        0,
+        1,
+        std::sync::atomic::Ordering::SeqCst,
+        std::sync::atomic::Ordering::SeqCst,
+    );
 }
 
 /// Process-global monotonic source for the **delete timestamp** that a

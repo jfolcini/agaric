@@ -452,6 +452,8 @@ const argBlockId = (args: Record<string, unknown>): string =>
  * a test that wants a populated load overrides it.
  */
 const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
+  // #6746 — the page's reference counts, read with the tree.
+  count_backlinks_in_page: () => ({}),
   load_page_subtree: () => Promise.reject(new Error('test: load suppressed')),
   list_all_pages_in_space: () => [],
   list_all_tags_in_space: () => [],

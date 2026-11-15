@@ -209,11 +209,13 @@ pub use property_unfit::{
 pub use queries::{
     DateFilter, DateOp, MatchOffset, NamedDateRange, PropertyFilter, SearchBlockRow, SearchFilter,
     SearchPropertyFilter, TagFilterExpr, count_backlinks_batch, count_backlinks_batch_inner,
-    count_unlinked_references, count_unlinked_references_inner, filtered_blocks_query,
-    filtered_blocks_query_inner, get_backlinks, get_backlinks_inner, get_status, get_status_inner,
-    list_backlinks_grouped, list_backlinks_grouped_inner, list_unfinished_tasks,
-    list_unfinished_tasks_inner, list_unlinked_references, list_unlinked_references_inner,
-    query_by_property, query_by_property_inner, search_blocks, search_blocks_inner,
+    count_backlinks_in_page, count_backlinks_in_page_inner, count_unlinked_references,
+    count_unlinked_references_inner, filtered_blocks_query, filtered_blocks_query_inner,
+    get_backlinks, get_backlinks_inner, get_status, get_status_inner, list_backlinks_grouped,
+    list_backlinks_grouped_inner, list_outgoing_links, list_outgoing_links_inner,
+    list_unfinished_tasks, list_unfinished_tasks_inner, list_unlinked_references,
+    list_unlinked_references_inner, query_by_property, query_by_property_inner, search_blocks,
+    search_blocks_inner,
 };
 pub use recovery::get_recovery_status;
 pub use spaces::{

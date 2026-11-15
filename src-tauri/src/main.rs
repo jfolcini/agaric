@@ -6,5 +6,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // An AppImage's agent config runs the AppImage with `agaric-mcp` first.
+    #[cfg(target_os = "linux")]
+    agaric_lib::mcp::exec_bridge_if_asked();
     agaric_lib::run();
 }

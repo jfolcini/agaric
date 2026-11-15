@@ -711,6 +711,24 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: null,
     totalKey: null,
   },
+  // #6746 — a page's per-block reference counts, the same keyed-count shape.
+  count_backlinks_in_page: {
+    rows: { kind: 'count-map' },
+    token: ID_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  // #6749 — a page's outgoing links; mirrors `OUTGOING_LINK_ATTRS` in the Rust twin.
+  list_outgoing_links: {
+    rows: PAGED,
+    token: {
+      kind: 'id',
+      idKey: 'source_id',
+      attrKeys: ['target_id', 'kind', 'target_page_id', 'target_page_title'],
+    },
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
   // The calendar's per-day agenda counts (#3830) — the NESTED keyed map
   // (`date -> source -> count`), projected `<date>-><source>#count=<n>`.
   count_agenda_batch_by_source: {

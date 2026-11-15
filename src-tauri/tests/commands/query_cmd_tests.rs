@@ -1,5 +1,7 @@
 use crate::prelude::*;
+use agaric_store::backlink::LinkKind;
 use agaric_store::space::{SpaceId, SpaceScope};
+use std::collections::HashMap;
 
 // ======================================================================
 // get_backlinks
@@ -4132,5 +4134,342 @@ async fn filtered_blocks_query_reserved_key_routes_to_column() {
         ids,
         ["FBR_TODO"].into_iter().collect(),
         "reserved-key filter must route to b.todo_state; got {ids:?}"
+    );
+}
+
+// ======================================================================
+// count_backlinks_in_page (#6746)
+// ======================================================================
+
+async fn insert_link_of_kind(
+    pool: &sqlx::SqlitePool,
+    source_id: &str,
+    target_id: &str,
+    kind: &str,
+) {
+    sqlx::query("INSERT INTO block_links (source_id, target_id, kind) VALUES (?, ?, ?)")
+        .bind(source_id)
+        .bind(target_id)
+        .bind(kind)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn soft_delete(pool: &sqlx::SqlitePool, id: &str) {
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_backlinks_in_page_counts_each_referenced_block_of_the_page() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "CIP_PAGE", "page", "page", None, None).await;
+    insert_block(&pool, "CIP_A", "content", "a", Some("CIP_PAGE"), Some(1)).await;
+    insert_block(&pool, "CIP_B", "content", "b", Some("CIP_PAGE"), Some(2)).await;
+    insert_block(&pool, "CIP_C", "content", "c", Some("CIP_PAGE"), Some(3)).await;
+    insert_block(&pool, "CIP_OTHER", "page", "other", None, None).await;
+    insert_block(&pool, "CIP_S1", "content", "s1", Some("CIP_OTHER"), Some(1)).await;
+    insert_block(&pool, "CIP_S2", "content", "s2", Some("CIP_OTHER"), Some(2)).await;
+    insert_block(&pool, "CIP_S3", "content", "s3", Some("CIP_OTHER"), Some(3)).await;
+    insert_block(&pool, "CIP_S4", "content", "s4", Some("CIP_OTHER"), Some(4)).await;
+    insert_block(
+        &pool,
+        "CIP_ELSE",
+        "content",
+        "else",
+        Some("CIP_OTHER"),
+        Some(5),
+    )
+    .await;
+    insert_link_of_kind(&pool, "CIP_S1", "CIP_A", "block_ref").await;
+    insert_link_of_kind(&pool, "CIP_S2", "CIP_A", "block_ref").await;
+    // A referrer on the page itself is not listed when A is zoomed, so not counted.
+    insert_link_of_kind(&pool, "CIP_B", "CIP_A", "block_ref").await;
+    // A deleted source does not count, so C has no count at all.
+    insert_link_of_kind(&pool, "CIP_S3", "CIP_C", "block_ref").await;
+    soft_delete(&pool, "CIP_S3").await;
+    // A link to the page itself is the Linked references header's count.
+    insert_link_of_kind(&pool, "CIP_S4", "CIP_PAGE", "page_link").await;
+    // A block of another page is another page's count.
+    insert_link_of_kind(&pool, "CIP_S4", "CIP_ELSE", "block_ref").await;
+    assign_all_to_test_space(&pool).await;
+
+    let counts = count_backlinks_in_page_inner(&pool, &"CIP_PAGE".into(), &test_space_scope())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts,
+        HashMap::from([("CIP_A".to_string(), 2)]),
+        "only the page's own blocks with a live referrer on another page are counted"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_backlinks_in_page_skips_referrers_of_another_space() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    insert_block(&pool, "CIS_PAGE", "page", "page", None, None).await;
+    insert_block(&pool, "CIS_A", "content", "a", Some("CIS_PAGE"), Some(1)).await;
+    insert_block(&pool, "CIS_PA", "page", "in a", None, None).await;
+    insert_block(&pool, "CIS_SA", "content", "sa", Some("CIS_PA"), Some(1)).await;
+    insert_block(&pool, "CIS_PB", "page", "in b", None, None).await;
+    insert_block(&pool, "CIS_SB", "content", "sb", Some("CIS_PB"), Some(1)).await;
+    insert_link_of_kind(&pool, "CIS_SA", "CIS_A", "block_ref").await;
+    insert_link_of_kind(&pool, "CIS_SB", "CIS_A", "block_ref").await;
+    assign_to_space(&pool, "CIS_PAGE", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "CIS_PA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "CIS_PB", TEST_SPACE_B_ID).await;
+
+    let counts = count_backlinks_in_page_inner(&pool, &"CIS_PAGE".into(), &test_space_scope())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts,
+        HashMap::from([("CIS_A".to_string(), 1)]),
+        "a referrer in another space is not counted"
+    );
+}
+
+#[tokio::test]
+async fn count_backlinks_in_page_rejects_an_empty_page_id() {
+    let (pool, _dir) = test_pool().await;
+    let err = count_backlinks_in_page_inner(&pool, &"".into(), &test_space_scope())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "an empty page id is a Validation error, got {err:?}"
+    );
+}
+
+// ======================================================================
+// list_outgoing_links (#6749)
+// ======================================================================
+
+/// Page `OL_PAGE` (space A) whose blocks link to: page `OL_T1` twice (from
+/// `OL_X` and `OL_Y`), block `OL_T2B` on page `OL_T2` by reference (from
+/// `OL_X`), a purged block (`OL_Z`'s owed row), a trashed page (`OL_W`) and a
+/// page of space B (`OL_V`). `OL_DEAD`, deleted, links to `OL_T1` too.
+async fn seed_outgoing_links(pool: &sqlx::SqlitePool) {
+    ensure_test_space(pool).await;
+    ensure_test_space_b(pool).await;
+    insert_block(pool, "OL_PAGE", "page", "home", None, None).await;
+    insert_block(pool, "OL_X", "content", "x", Some("OL_PAGE"), Some(1)).await;
+    insert_block(pool, "OL_Y", "content", "y", Some("OL_PAGE"), Some(2)).await;
+    insert_block(
+        pool,
+        "OL_Z",
+        "content",
+        "z ((01PURGED000000000000000000))",
+        Some("OL_PAGE"),
+        Some(3),
+    )
+    .await;
+    insert_block(pool, "OL_W", "content", "w", Some("OL_PAGE"), Some(4)).await;
+    insert_block(pool, "OL_V", "content", "v", Some("OL_PAGE"), Some(5)).await;
+    insert_block(pool, "OL_DEAD", "content", "dead", Some("OL_PAGE"), Some(6)).await;
+    insert_block(pool, "OL_T1", "page", "Target one", None, None).await;
+    insert_block(pool, "OL_T2", "page", "Target two", None, None).await;
+    insert_block(pool, "OL_T2B", "content", "t2b", Some("OL_T2"), Some(1)).await;
+    insert_block(pool, "OL_TRASH", "page", "Trashed", None, None).await;
+    insert_block(pool, "OL_ELSE", "page", "Elsewhere", None, None).await;
+    for page in ["OL_PAGE", "OL_T1", "OL_T2", "OL_TRASH"] {
+        assign_to_space(pool, page, TEST_SPACE_ID).await;
+    }
+    assign_to_space(pool, "OL_ELSE", TEST_SPACE_B_ID).await;
+    insert_link_of_kind(pool, "OL_X", "OL_T1", "page_link").await;
+    insert_link_of_kind(pool, "OL_X", "OL_T2B", "block_ref").await;
+    insert_link_of_kind(pool, "OL_Y", "OL_T1", "page_link").await;
+    insert_link_of_kind(pool, "OL_W", "OL_TRASH", "page_link").await;
+    insert_link_of_kind(pool, "OL_V", "OL_ELSE", "page_link").await;
+    insert_link_of_kind(pool, "OL_DEAD", "OL_T1", "page_link").await;
+    sqlx::query("INSERT INTO block_links_unresolved (source_id, target_id) VALUES (?, ?)")
+        .bind("OL_Z")
+        .bind("01PURGED000000000000000000")
+        .execute(pool)
+        .await
+        .unwrap();
+    soft_delete(pool, "OL_TRASH").await;
+    soft_delete(pool, "OL_DEAD").await;
+}
+
+fn outgoing_tuples(
+    rows: &[agaric_store::pagination::OutgoingLinkRow],
+) -> Vec<(&str, &str, Option<&str>)> {
+    rows.iter()
+        .map(|r| {
+            (
+                r.source_id.as_str(),
+                r.target_id.as_str(),
+                r.target_page_id.as_deref(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_outgoing_links_groups_by_target_page_with_unresolved_last() {
+    let (pool, _dir) = test_pool().await;
+    seed_outgoing_links(&pool).await;
+
+    let resp = list_outgoing_links_inner(
+        &pool,
+        &"OL_PAGE".into(),
+        None,
+        None,
+        Some(50),
+        &test_space_scope(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        outgoing_tuples(&resp.items),
+        vec![
+            ("OL_X", "OL_T1", Some("OL_T1")),
+            ("OL_Y", "OL_T1", Some("OL_T1")),
+            ("OL_X", "OL_T2B", Some("OL_T2")),
+            ("OL_V", "OL_ELSE", None),
+            ("OL_W", "OL_TRASH", None),
+            ("OL_Z", "01PURGED000000000000000000", None),
+        ],
+        "resolved links group under their target's page; another space's, a trashed and a purged target are unresolved, last; a deleted source holds none"
+    );
+    let x_ref = &resp.items[2];
+    assert_eq!(
+        x_ref.kind,
+        LinkKind::BlockRef,
+        "a ((ref)) row carries its kind"
+    );
+    assert_eq!(
+        x_ref.target_page_title.as_deref(),
+        Some("Target two"),
+        "a row names its target's page"
+    );
+    assert_eq!(
+        resp.items[5].kind,
+        LinkKind::BlockRef,
+        "an owed row's kind is read from the source's token"
+    );
+    assert_eq!(
+        resp.items[0].source_content.as_deref(),
+        Some("x"),
+        "a row names its source"
+    );
+    assert!(!resp.has_more, "everything fits one page");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_outgoing_links_narrows_to_one_kind() {
+    let (pool, _dir) = test_pool().await;
+    seed_outgoing_links(&pool).await;
+
+    let resp = list_outgoing_links_inner(
+        &pool,
+        &"OL_PAGE".into(),
+        Some(LinkKind::BlockRef),
+        None,
+        Some(50),
+        &test_space_scope(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        outgoing_tuples(&resp.items),
+        vec![
+            ("OL_X", "OL_T2B", Some("OL_T2")),
+            ("OL_Z", "01PURGED000000000000000000", None),
+        ],
+        "only the block references"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_outgoing_links_pages_by_cursor_without_overlap() {
+    let (pool, _dir) = test_pool().await;
+    seed_outgoing_links(&pool).await;
+    let scope = test_space_scope();
+
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    let mut pages = 0;
+    loop {
+        let resp =
+            list_outgoing_links_inner(&pool, &"OL_PAGE".into(), None, cursor, Some(4), &scope)
+                .await
+                .unwrap();
+        pages += 1;
+        seen.extend(
+            resp.items
+                .iter()
+                .map(|r| (r.source_id.clone(), r.target_id.clone())),
+        );
+        if !resp.has_more {
+            break;
+        }
+        cursor = resp.next_cursor;
+    }
+
+    assert_eq!(pages, 2, "six rows at four a page are two pages");
+    assert_eq!(
+        seen.iter()
+            .map(|(s, t)| format!("{s}>{t}"))
+            .collect::<Vec<_>>(),
+        vec![
+            "OL_X>OL_T1",
+            "OL_Y>OL_T1",
+            "OL_X>OL_T2B",
+            "OL_V>OL_ELSE",
+            "OL_W>OL_TRASH",
+            "OL_Z>01PURGED000000000000000000",
+        ],
+        "the cursor resumes after the last row, across the unresolved boundary"
+    );
+}
+
+#[tokio::test]
+async fn list_outgoing_links_rejects_an_out_of_range_limit() {
+    let (pool, _dir) = test_pool().await;
+    let err = list_outgoing_links_inner(
+        &pool,
+        &"OL_PAGE".into(),
+        None,
+        None,
+        Some(0),
+        &test_space_scope(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "limit 0 is a Validation error, got {err:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_outgoing_links_is_empty_for_a_page_without_links() {
+    let (pool, _dir) = test_pool().await;
+    seed_outgoing_links(&pool).await;
+    let resp = list_outgoing_links_inner(
+        &pool,
+        &"OL_T1".into(),
+        None,
+        None,
+        Some(50),
+        &test_space_scope(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        resp.items.is_empty(),
+        "a page whose blocks link nowhere lists nothing"
     );
 }

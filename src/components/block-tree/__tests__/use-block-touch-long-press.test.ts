@@ -1,13 +1,13 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useBlockTouchLongPress } from '@/components/block-tree/use-block-touch-long-press'
+import { haptic } from '@/lib/haptics'
 import {
   isInsideEditableText,
   LONG_PRESS_DELAY,
   LONG_PRESS_MOVE_THRESHOLD,
-  useBlockTouchLongPress,
-} from '@/components/block-tree/use-block-touch-long-press'
-import { haptic } from '@/lib/haptics'
+} from '@/lib/touch-press'
 
 vi.mock('@/lib/haptics', () => ({ haptic: vi.fn() }))
 

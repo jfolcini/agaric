@@ -10,7 +10,7 @@
 
 import { MoreVertical } from 'lucide-react'
 import type React from 'react'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
@@ -37,6 +37,8 @@ interface DayPageEditorProps {
   actions?: React.ReactNode
   onNavigateToPage?: NavigateToPageFn | undefined
   onAddBlock: () => void
+  /** Block mode's zoom root, or `null` at the day's root, for the day's linked references. */
+  onZoomChange?: ((blockId: string | null) => void) | undefined
 }
 
 export function DayPageEditor({
@@ -44,6 +46,7 @@ export function DayPageEditor({
   actions,
   onNavigateToPage,
   onAddBlock,
+  onZoomChange,
 }: DayPageEditorProps): React.ReactElement {
   const { t } = useTranslation()
   const isTouch = useIsTouch()
@@ -52,6 +55,15 @@ export function DayPageEditor({
   const [menuOpen, setMenuOpen] = useState(false)
   const pageMode = usePageMode(pageId)
   useEditModeShortcut(pageMode.mode, pageMode.changeMode)
+  // #6746 — page mode's reference count opens block mode zoomed on its block.
+  const [zoomOnMount, setZoomOnMount] = useState<string | null>(null)
+  const handleZoomChange = useCallback(
+    (blockId: string | null) => {
+      setZoomOnMount(null)
+      onZoomChange?.(blockId)
+    },
+    [onZoomChange],
+  )
 
   // A link into the day (search, a backlink, a breadcrumb): block mode focuses
   // its block once it has scrolled to it; page mode puts its cursor there itself.
@@ -117,11 +129,21 @@ export function DayPageEditor({
             editorRef={pageMode.editorRef}
             opening={pageMode.opening}
             onNavigateToPage={onNavigateToPage}
+            onOpenReferences={(blockId) => {
+              setZoomOnMount(blockId)
+              pageMode.changeMode('blocks')
+            }}
           />
         }
         blocks={
           <>
-            <BlockTree parentId={pageId} onNavigateToPage={onNavigateToPage} autoCreateFirstBlock />
+            <BlockTree
+              parentId={pageId}
+              onNavigateToPage={onNavigateToPage}
+              autoCreateFirstBlock
+              zoomOnMount={zoomOnMount}
+              onZoomChange={handleZoomChange}
+            />
             <div className="mt-1">
               <AddBlockButton onClick={onAddBlock} />
             </div>

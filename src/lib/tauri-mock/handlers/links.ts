@@ -39,7 +39,14 @@ import {
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import { inheritedTagIds } from '@/lib/tauri-mock/handlers/shared'
-import { blocks, linkMetadata, pageAliases, properties } from '@/lib/tauri-mock/seed'
+import { classifyLinkKind, scanLinkTargets } from '@/lib/tauri-mock/link-scan'
+import {
+  blocks,
+  linkMetadata,
+  pageAliases,
+  properties,
+  unresolvedLinks,
+} from '@/lib/tauri-mock/seed'
 
 /** Does `b` hold `key`: a `block_properties` row, or a set column for a
  *  column-backed key (#6051)? */
@@ -555,6 +562,84 @@ export const linksHandlers = {
     return result
   },
 
+  // #6746 — `count_backlinks_in_page_inner`: for each live block of the page
+  // (the page itself aside), its live referrers of the scope's space on
+  // another page; a block with none is absent.
+  count_backlinks_in_page: (args) => {
+    const a = args as Record<string, unknown>
+    const pageId = a['pageId'] as string
+    if (pageId.trim().length === 0) throw validationRejection('page_id must not be empty')
+    const spaceId = readActiveSpaceScope('count_backlinks_in_page', a)
+    const sources = [...blocks.values()].filter(
+      (b) =>
+        !b['deleted_at'] &&
+        inSpaceScope(b, spaceId) &&
+        b['page_id'] != null &&
+        b['page_id'] !== pageId,
+    )
+    const result: Record<string, number> = {}
+    for (const target of blocks.values()) {
+      const id = target['id'] as string
+      if (target['page_id'] !== pageId || id === pageId || target['deleted_at']) continue
+      const count = sources.filter((b) => linksTo(b, id)).length
+      if (count > 0) result[id] = count
+    }
+    return result
+  },
+
+  // #6749 — `pagination::list_outgoing_links`: the edges (`block_links`) and
+  // the owed tokens (`block_links_unresolved`) of the page's live blocks,
+  // ordered `(unresolved, target page, source_id || target_id)`.
+  list_outgoing_links: (args) => {
+    const a = args as Record<string, unknown>
+    const pageId = a['pageId'] as string
+    if (pageId.trim().length === 0) throw validationRejection('page_id must not be empty')
+    const limit = pageRequestLimit(a['limit'])
+    const spaceId = readActiveSpaceScope('list_outgoing_links', a)
+    const kind = (a['kind'] as string | null | undefined) ?? null
+    const rows: Record<string, unknown>[] = []
+    for (const source of blocks.values()) {
+      if (source['page_id'] !== pageId || source['deleted_at'] || !inSpaceScope(source, spaceId))
+        continue
+      const sourceId = source['id'] as string
+      const content = source['content'] as string | null
+      for (const targetId of new Set(scanLinkTargets(content))) {
+        const linkedKind = linksTo(source, targetId)
+          ? linkKind(source, targetId)
+          : unresolvedLinks.get(sourceId)?.has(targetId)
+            ? classifyLinkKind(content, targetId)
+            : null
+        if (linkedKind === null || (kind !== null && linkedKind !== kind)) continue
+        const target = blocks.get(targetId)
+        const resolved = target != null && !target['deleted_at'] && inSpaceScope(target, spaceId)
+        const targetPageId = resolved ? ((target['page_id'] as string | null) ?? targetId) : null
+        rows.push({
+          source_id: sourceId,
+          source_content: content,
+          target_id: targetId,
+          kind: linkedKind,
+          target_page_id: targetPageId,
+          target_page_title:
+            targetPageId === null
+              ? null
+              : ((blocks.get(targetPageId)?.['content'] as string | null) ?? null),
+        })
+      }
+    }
+    return paginateKeyset(
+      rows,
+      (r) => [
+        r['target_page_id'] === null ? 1 : 0,
+        (r['target_page_id'] as string | null) ?? '',
+        `${r['source_id'] as string}${r['target_id'] as string}`,
+      ],
+      limit,
+      a['cursor'],
+      null,
+      ['position', 'deleted_at'],
+    )
+  },
+
   list_backlinks_grouped: (args) => {
     const a = args as Record<string, unknown>
     const targetId = a['blockId'] as string
@@ -708,6 +793,8 @@ export const linksHandlers = {
   TypedHandlers,
   | 'get_backlinks'
   | 'count_backlinks_batch'
+  | 'count_backlinks_in_page'
+  | 'list_outgoing_links'
   | 'list_backlinks_grouped'
   | 'list_unlinked_references'
   | 'count_unlinked_references'

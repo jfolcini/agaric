@@ -38,6 +38,7 @@ export class FakeTasks implements PageTaskSource {
   readonly blocks = new Map<string, FlatBlock>()
   readonly properties = new Map<string, InlineProperty[]>()
   readonly attachments = new PageAttachments({})
+  readonly refCounts = new Map<string, number>()
   private readonly listeners = new Set<() => void>()
 
   constructor() {
@@ -66,6 +67,7 @@ export class FakeTasks implements PageTaskSource {
   blockOf = (id: string) => this.blocks.get(id)
   propertiesOf = (id: string) => this.properties.get(id) ?? []
   attachmentsOf = (id: string) => this.attachments.of(id)
+  refCountOf = (id: string) => this.refCounts.get(id) ?? 0
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
     return () => {
@@ -92,6 +94,7 @@ export class FakeTasks implements PageTaskSource {
   edit = vi.fn<(id: string) => void>()
   saveQuery = vi.fn((_id: string, _expression: string) => Promise.resolve(true))
   navigate = vi.fn<(id: string) => void>()
+  openReferences = vi.fn<(id: string) => void>()
   resolveBlockTitle = (id: string) => `title of ${id}`
 }
 

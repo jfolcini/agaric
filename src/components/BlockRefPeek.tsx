@@ -46,8 +46,11 @@ import { useTranslation } from 'react-i18next'
 
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Button } from '@/components/ui/button'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { type PeekKind, useBlockRefPeek } from '@/hooks/useBlockRefPeek'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { unwrap } from '@/lib/app-error'
@@ -186,17 +189,22 @@ function keepEditorFocus(event: React.MouseEvent): void {
 
 export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactElement | null {
   const { t } = useTranslation()
+  const isTouch = useIsTouch()
+  const isMobile = useIsMobile()
+  // A touch phone: a long press opens the peek as a bottom sheet (#6746).
+  const onPhone = isTouch && isMobile
   const {
     refId,
     kind,
     anchorRect,
     fromKeyboard,
+    asSheet,
     peekRef,
     close,
     keepOpen,
     scheduleClose,
     activateChip,
-  } = useBlockRefPeek(container)
+  } = useBlockRefPeek(container, onPhone)
   const spaceId = useSpaceStore((s) => s.currentSpaceId)
   const spaceName = useSpaceStore(
     (s) => s.availableSpaces.find((sp) => sp.id === s.currentSpaceId)?.name ?? null,
@@ -267,6 +275,10 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
       ? null
       : data.title
   const isPage = kind === 'page-link'
+  const dialogLabel =
+    title !== null
+      ? t('refPeek.dialogLabel', { title })
+      : t(isPage ? 'refPeek.pageDialogLabelUnknown' : 'refPeek.dialogLabelUnknown')
   const openButton = (
     <Button variant="ghost" size="xs" onMouseDown={keepEditorFocus} onClick={activateChip}>
       <ExternalLink aria-hidden="true" />
@@ -274,37 +286,8 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
     </Button>
   )
 
-  return (
-    <div
-      ref={peekRef}
-      data-testid="ref-peek"
-      // Keeps the roving editor mounted when the peek takes focus
-      // (`EDITOR_PORTAL_SELECTOR`, `@/editor/editor-portal`).
-      // Only a keyboard-opened peek takes focus, so only that one needs the
-      // editor-blur exemption; on a hover peek the attribute would abort the
-      // blur save for a click landing during the close grace.
-      data-editor-portal={fromKeyboard ? '' : undefined}
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a native <dialog> is modal (focus trap + inert background), which is wrong for a popover the pointer leaves by moving off it, and its non-modal form needs an imperative show() plus UA styles that fight floating-ui's placement
-      role="dialog"
-      aria-label={
-        title !== null
-          ? t('refPeek.dialogLabel', { title })
-          : t(isPage ? 'refPeek.pageDialogLabelUnknown' : 'refPeek.dialogLabelUnknown')
-      }
-      tabIndex={-1}
-      onPointerEnter={keepOpen}
-      onPointerLeave={scheduleClose}
-      className={cn(
-        'fixed z-50 flex w-80 max-w-[calc(100vw-1rem)] flex-col gap-2 rounded-md border',
-        'bg-popover p-3 text-popover-foreground shadow-(--shadow-floating)',
-        !reducedMotion && 'animate-in fade-in-0',
-      )}
-      style={
-        position
-          ? { left: position.x, top: position.y }
-          : { left: anchorRect.left, top: anchorRect.bottom + 4, visibility: 'hidden' }
-      }
-    >
+  const body = (
+    <>
       {data === undefined ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Spinner size="sm" className="shrink-0" />
@@ -389,6 +372,55 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
           </div>
         </>
       )}
+    </>
+  )
+
+  if (asSheet) {
+    return (
+      <Sheet open onOpenChange={(open) => !open && close()}>
+        <SheetContent
+          ref={peekRef}
+          side="bottom"
+          data-testid="ref-peek-sheet"
+          aria-describedby={undefined}
+          // The sheet takes focus: the roving editor stays mounted through it.
+          data-editor-portal=""
+        >
+          <SheetTitle className="sr-only">{dialogLabel}</SheetTitle>
+          {body}
+        </SheetContent>
+      </Sheet>
+    )
+  }
+
+  return (
+    <div
+      ref={peekRef}
+      data-testid="ref-peek"
+      // Keeps the roving editor mounted when the peek takes focus
+      // (`EDITOR_PORTAL_SELECTOR`, `@/editor/editor-portal`).
+      // Only a keyboard-opened peek takes focus, so only that one needs the
+      // editor-blur exemption; on a hover peek the attribute would abort the
+      // blur save for a click landing during the close grace.
+      data-editor-portal={fromKeyboard ? '' : undefined}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a native <dialog> is modal (focus trap + inert background), which is wrong for a popover the pointer leaves by moving off it, and its non-modal form needs an imperative show() plus UA styles that fight floating-ui's placement
+      role="dialog"
+      aria-label={dialogLabel}
+      tabIndex={-1}
+      onPointerEnter={keepOpen}
+      onPointerLeave={scheduleClose}
+      className={cn(
+        'fixed z-50 flex w-80 max-w-[calc(100vw-1rem)] flex-col gap-2 rounded-md border',
+        'bg-popover p-3 text-popover-foreground shadow-(--shadow-floating)',
+        !reducedMotion && 'animate-in fade-in-0',
+      )}
+      style={
+        position
+          ? { left: position.x, top: position.y }
+          : { left: anchorRect.left, top: anchorRect.bottom + 4, visibility: 'hidden' }
+      }
+    >
+      {body}
     </div>
   )
 }
