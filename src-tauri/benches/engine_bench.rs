@@ -25,6 +25,8 @@ mod loro_snapshot_bench;
 mod loro_wire_bench;
 #[path = "groups/op_log_bench.rs"]
 mod op_log_bench;
+#[path = "groups/pulled_vault_bench.rs"]
+mod pulled_vault_bench;
 #[path = "groups/rehydrate_bench.rs"]
 mod rehydrate_bench;
 #[path = "groups/soft_delete_bench.rs"]
@@ -53,5 +55,6 @@ criterion_main!(
     soft_delete_bench::benches,
     loro_wire_bench::benches,
     loro_snapshot_bench::benches,
+    pulled_vault_bench::benches,
     sync_import_bench::benches,
 );

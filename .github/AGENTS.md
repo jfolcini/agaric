@@ -56,3 +56,4 @@ curl -sSL "https://api.github.com/repos/jfolcini/agaric/actions/jobs/<job_id>/lo
 - `started_at` minus `created_at` is how long a job waited for a slot.
 - A Rust lane's cache state is its restore line: `Restored from cache key "…" full match: true`.
 - To show a workflow change working, use `workflow_dispatch` on its branch where the workflow has one. Every dispatch takes slots.
+- A PR that changes `src/components`, `src/editor` or `src/index.css` gets a screenshot of each passing test of its related Playwright specs, uploaded as the playwright job's `ui-screenshots-shard-N` artifact and linked from the run summary.

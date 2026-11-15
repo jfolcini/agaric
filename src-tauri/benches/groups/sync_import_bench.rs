@@ -77,25 +77,24 @@ fn unheld_pages() -> std::ops::Range<usize> {
 }
 
 // ---------------------------------------------------------------------------
-// Elapsed accumulator (mirrors `interactive_slo::Acc`); `loro_snapshot_bench`
-// uses this one.
+// Elapsed accumulator (mirrors `interactive_slo::Acc`).
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Default)]
-pub(crate) struct Acc {
+struct Acc {
     total: Rc<Cell<Duration>>,
     iters: Rc<Cell<u64>>,
 }
 
 impl Acc {
-    pub(crate) fn record(&self, elapsed: Duration, iters: u64) {
+    fn record(&self, elapsed: Duration, iters: u64) {
         self.total.set(self.total.get() + elapsed);
         self.iters.set(self.iters.get() + iters);
     }
 
     /// Mean seconds per iteration, or `None` when a name filter left the case
     /// out.
-    pub(crate) fn mean_secs(&self) -> Option<f64> {
+    fn mean_secs(&self) -> Option<f64> {
         let iters = self.iters.get();
         (iters > 0).then(|| self.total.get().as_secs_f64() / iters as f64)
     }

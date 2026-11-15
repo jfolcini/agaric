@@ -29,6 +29,8 @@ name: Scheduled deep checks
 #                    `workflow_dispatch` can flip
 #                    `slo_include_problem` to also measure the cache and
 #                    MostLinked counterfactual probes (#2508 / #2585).
+#                    Its last steps measure the Loro engine and a pulled vault
+#                    (`scripts/measure-loro.sh`, #6563): informational, no gate.
 #   bench-perf-gates — the `#[ignore]`d 20k-row perf gates, split out of
 #                    `bench-slo` because the two compiles (bench profile, then
 #                    test profile) did not fit one runner's cap. Selected by the
@@ -750,8 +752,10 @@ jobs:
     needs: select-lanes
     if: needs.select-lanes.outputs.bench_slo == 'true'
     runs-on: ubuntu-24.04
-    # A cold bench-profile build plus every probe, with about a quarter spare.
-    timeout-minutes: 55
+    # A cold bench-profile build plus every probe, with about a quarter spare, and
+    # then the Loro measurement (about 10 minutes at 10K blocks; its link is not yet
+    # timed here, so this is generous).
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -940,6 +944,41 @@ jobs:
             src-tauri/interactive_slo.log
             src-tauri/target/criterion/**/estimates.json
             src-tauri/target/criterion/**/benchmark.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Measure the Loro engine and a pulled vault (#6563, informational)
+        # Measurement only: no threshold, so nothing here can fail on a number.
+        # A gate comes once a few weekly runs have shown the noise band
+        # (docs/architecture/operations.md § Loro engine cost). 10K blocks, not
+        # the 100K scale: the lane's budget is for the SLO run. The shipped
+        # profile's values are set so this reuses the build above, and
+        # `scripts/measure-loro.sh` is what `just measure-loro` runs.
+        working-directory: src-tauri
+        shell: bash
+        env:
+          CARGO_PROFILE_BENCH_LTO: thin
+          CARGO_PROFILE_BENCH_CODEGEN_UNITS: "1"
+          MEASURE_LORO_LOG: measure-loro.log
+        run: |
+          set -euo pipefail
+          {
+            echo "## Loro engine cost and pulled vault (#6563) — measurement only"
+            echo
+            echo '```'
+            ../scripts/measure-loro.sh 10000
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Loro measurements (log + criterion estimates)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: loro-measurements
+          path: |
+            src-tauri/measure-loro.log
+            src-tauri/target/criterion/loro_snapshot/**/estimates.json
+            src-tauri/target/criterion/pulled_vault/**/estimates.json
           if-no-files-found: ignore
           retention-days: 90
 
