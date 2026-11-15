@@ -75,8 +75,8 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Where properties live | YAML front matter: **per file only** | On any block or page (`block_properties`), with `key:: value` typing and a drawer | Better |
-| Types | Text, List, Number, Checkbox, Date, Date & time, and Tags for the `tags` property (help, *Properties*) | Text, Number, Date, Boolean, Select, Ref, URL (`docs/features/properties.md`). **No list (#6741) and no date-time (#6758)** | Partial |
-| Multi-value | List is a first-class type | **Absent** as a type (#6741). `PRIMARY KEY (block_id, key)`; on import a YAML list other than `tags` / `aliases` is joined into one comma-separated value (`docs/features/import-export.md` § Pitfalls) | Gap |
+| Types | Text, List, Number, Checkbox, Date, Date & time, and Tags for the `tags` property (help, *Properties*) | Text, Number, Date, Boolean, Select, Ref, URL, each but Boolean also as a list (`docs/features/properties.md`, #6741). **No date-time (#6758)** | Partial |
+| Multi-value | List is a first-class type | A definition of any type but boolean can **hold several values**, so a list of text, of dates, a multi-select or a list of pages (#6741). A YAML list imports item for item under any key but `tags` / `aliases` / `attachments`, and exports as the same list (`docs/features/import-export.md`) | Done |
 | Typed references | No reference type; a link is text in a Text or List property | `ref` type, rename-safe, with a chip that opens the target | Better |
 | Enumerations | No select type among the types the help lists; that values autocomplete from use is **unverified** | `select` with options on the definition, option rename across the space | Better |
 | Schema | A property name has one type vault-wide; rename and retype from the Properties view | Definitions per space, synced; built-ins fixed and locked. Rename, merge and retype with a preview; a value the new type cannot hold is kept as text, marked wherever it shows, and can be removed, added to a select's options, converted or moved to another key; usage counts; *Copy to space…* (Settings › Properties, `docs/features/properties.md`, #6206) | Done |
@@ -329,7 +329,7 @@ No points are awarded. Each line counts the rows of one section by the status Ag
 | 1. Notes, Files and Data Ownership | 2 | 0 | 4 | 3 |
 | 2. Editor | 1 | 9 | 9 | 2 |
 | 3. Linking and Transclusion | 0 | 5 | 6 | 0 |
-| 4. Properties and Bases | 3 | 3 | 5 | 0 |
+| 4. Properties and Bases | 3 | 4 | 4 | 0 |
 | 5. Tags | 1 | 3 | 1 | 0 |
 | 6. Search | 0 | 4 | 3 | 1 |
 | 7. Queries | 1 | 1 | 4 | 0 |
@@ -352,7 +352,7 @@ No points are awarded. Each line counts the rows of one section by the status Ag
 | 24. Performance, Accessibility and Localisation | 0 | 0 | 2 | 2 |
 | 25. Platforms, Packaging and Updates | 0 | 1 | 3 | 1 |
 | 26. Licence, Governance and Longevity | 1 | 2 | 1 | 0 |
-| **Total (175 rows)** | **18** | **47** | **88** | **22** |
+| **Total (175 rows)** | **18** | **48** | **87** | **22** |
 <!-- scorecard:end -->
 
 How to read it:

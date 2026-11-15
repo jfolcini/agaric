@@ -426,11 +426,12 @@ pub(super) async fn create_import_page(
         }
     };
     let mut lines = PropertyLines::load(&mut tx, Some(space_id), PropertyWrite::Import).await?;
+    let front = frontmatter_values(parse_output);
     let values = parse_output
         .blocks
         .iter()
         .flat_map(|block| &block.properties)
-        .chain(&parse_output.frontmatter);
+        .chain(&front);
     lines.resolve_refs(&mut tx, Some(space_id), values).await?;
     create_note_targets(&mut tx, materializer, device_id, file, &mut lines).await?;
     lines.keep_refused_as_text(&mut parse_output.blocks, &mut parse_output.warnings);

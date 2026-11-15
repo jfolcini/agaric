@@ -59,7 +59,7 @@ pub(super) async fn apply_frontmatter_properties(
     let materializer = ctx.materializer;
     let device_id = ctx.device_id;
     let page_id = ctx.page_id.clone();
-    let lines = &ctx.lines;
+    let lines = &mut ctx.lines;
     let warnings = &mut ctx.warnings;
     // #1432 — apply the leading YAML frontmatter as PAGE-level properties,
     // closing the export↔import asymmetry: `export_page_markdown_inner`
@@ -72,7 +72,7 @@ pub(super) async fn apply_frontmatter_properties(
     // written into the FIRST chunk (alongside the page + space property),
     // before the block loop opens any new chunk, so they share the page's
     // atomic write.
-    for (key, value) in &parse_output.frontmatter {
+    for (key, value) in &frontmatter_values(parse_output) {
         // #2722 — `aliases` and `tags` are SEMANTIC frontmatter keys the
         // exporter emits from the `page_aliases` table and `block_tags`
         // associations (NOT from `block_properties`). The pre-#2722 importer
@@ -102,7 +102,15 @@ pub(super) async fn apply_frontmatter_properties(
             // here so it is never stamped as a misleading text property.
             continue;
         }
+        let is_list = parse_output
+            .frontmatter_list_items
+            .contains_key(key.as_str());
         let key = lines.canonical_key(key);
+        // #6741 — a YAML list is a list value, item for item, under any key
+        // but one that holds a single value, which takes its items joined.
+        if is_list {
+            lines.note_list(key.clone(), value.clone());
+        }
         // #1921 (B1) — the declaration read once for the whole import. A key
         // with no `property_definitions` row stays undeclared (`None`). A ref
         // value reads as a `key::` line's does: a live block id of the space,
@@ -131,6 +139,23 @@ pub(super) async fn apply_frontmatter_properties(
         tx.enqueue_background(prop_op);
     }
     Ok(tx)
+}
+
+/// The front matter's `(key, value)` pairs, a YAML list's value its items'
+/// text ([`import::write_property_list`], #6741), which reads back as exactly
+/// those items where the comma-joined `frontmatter` value would split an item
+/// holding a comma.
+pub(super) fn frontmatter_values(parse_output: &import::ParseOutput) -> Vec<(String, String)> {
+    let list = |key: &str| parse_output.frontmatter_list_items.get(key);
+    parse_output
+        .frontmatter
+        .iter()
+        .map(|(key, value)| {
+            let value =
+                list(key).map_or_else(|| value.clone(), |items| import::write_property_list(items));
+            (key.clone(), value)
+        })
+        .collect()
 }
 
 /// The individual items of a frontmatter list value.

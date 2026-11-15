@@ -8,10 +8,13 @@ use super::*;
 use crate::commands::tags::remove_tag_in_tx;
 
 /// A page's properties, aliases and tags as its front matter writes them,
-/// each property under the key it is written as.
+/// each property under the key it is written as, a YAML list's value its
+/// items' text ([`frontmatter_values`], #6741).
 #[derive(Clone, Default)]
 pub(super) struct FrontMatter {
     properties: Vec<(String, String)>,
+    /// The keys of `properties` written as a YAML list.
+    lists: HashSet<String>,
     aliases: Vec<String>,
     tags: Vec<String>,
 }
@@ -20,15 +23,20 @@ impl FrontMatter {
     /// What a source buffer's parse opens with.
     pub(super) fn of(parsed: &import::ParseOutput) -> Self {
         let mut front = Self::default();
-        for (key, value) in &parsed.frontmatter {
+        for (key, value) in frontmatter_values(parsed) {
             let items = || -> Vec<String> {
-                let items = frontmatter_items(parsed, key, value);
+                let items = frontmatter_items(parsed, &key, &value);
                 items.into_iter().map(str::to_owned).collect()
             };
             match key.as_str() {
                 "aliases" => front.aliases = items(),
                 "tags" => front.tags = items(),
-                _ => front.properties.push((key.clone(), value.clone())),
+                _ => {
+                    if parsed.frontmatter_list_items.contains_key(&key) {
+                        front.lists.insert(key.clone());
+                    }
+                    front.properties.push((key, value));
+                }
             }
         }
         front
@@ -57,18 +65,21 @@ impl FrontMatterEdit {
     pub(super) fn read(
         parsed: &import::ParseOutput,
         from: FrontMatter,
-        lines: &PropertyLines,
+        lines: &mut PropertyLines,
     ) -> Result<Self, AppError> {
         if let Some((line, why)) = &parsed.frontmatter_refusal {
             return Err(at_line(Some(*line), AppError::validation(why.clone())));
         }
         let mut to = FrontMatter::of(parsed);
         let mut typed = HashMap::new();
-        for (key, _) in &mut to.properties {
+        for (key, value) in &mut to.properties {
             let line = parsed.frontmatter_lines.get(key.as_str()).copied();
             let as_typed = key.clone();
             if !from.properties.iter().any(|(held, _)| held == key) {
                 *key = lines.canonical_key(key);
+            }
+            if to.lists.contains(&as_typed) {
+                lines.note_list(key.clone(), value.clone());
             }
             if typed.insert(key.clone(), (as_typed, line)).is_some() {
                 let why = format!("`{key}` is written twice");
