@@ -13,7 +13,7 @@
  *  - Displays formatted property names
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -227,6 +227,51 @@ describe('AddPropertyPopover', () => {
 
     expect(onAdd).toHaveBeenCalledWith(defs[0])
   })
+
+  // Radix refocuses the trigger one timer after the picker unmounts; the timer
+  // is held here until the new row's input has the focus, the order a stalled
+  // main thread produces by chance.
+  it.each([false, true])(
+    'leaves the focus on the input it moved to while the picker closed (touch=%s)',
+    async (touch) => {
+      mockUseIsTouch.mockReturnValue(touch)
+      const user = userEvent.setup()
+      render(
+        <>
+          <AddPropertyPopover definitions={[makeDef('context')]} onAdd={vi.fn()} />
+          <input aria-label="new value" />
+        </>,
+      )
+      await user.click(screen.getByRole('button', { name: 'Add property' }))
+
+      const held: Array<() => void> = []
+      const realSetTimeout = window.setTimeout.bind(window)
+      vi.spyOn(window, 'setTimeout').mockImplementation(((
+        fn: () => void,
+        ms?: number,
+        ...rest: unknown[]
+      ) => {
+        if (!ms) {
+          held.push(fn)
+          return 0
+        }
+        return realSetTimeout(fn, ms, ...rest)
+      }) as typeof window.setTimeout)
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /Context/ }))
+      })
+      const input = screen.getByRole('textbox', { name: 'new value' })
+      input.focus()
+      act(() => {
+        for (const fn of held.splice(0)) fn()
+      })
+      vi.mocked(window.setTimeout).mockRestore()
+
+      expect(screen.queryByRole('button', { name: /Context/ })).not.toBeInTheDocument()
+      expect(input).toHaveFocus()
+    },
+  )
 
   it('shows "Create" button when search does not match and supportCreateDef is true', async () => {
     const user = userEvent.setup()
