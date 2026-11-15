@@ -415,6 +415,11 @@ export const common: Record<string, string> = {
   // embed (#6032).
   'data.importFolderSkipped_one': 'Skipped {{count}} file that is not a note, an image or a PDF.',
   'data.importFolderSkipped_other': 'Skipped {{count}} files that are not notes, images or PDFs.',
+  // #6754 — a Logseq `{{query}}` with no query-block equivalent stays as a code block.
+  'data.importLogseqQueriesKept_one':
+    '{{count}} Logseq query has no equivalent here and was kept as a code block to rebuild.',
+  'data.importLogseqQueriesKept_other':
+    '{{count}} Logseq queries have no equivalent here and were kept as code blocks to rebuild.',
   // A Notion export's database table; its rows are pages of the export too.
   'data.importNotionDatabases_one':
     'Skipped {{count}} Notion database table (.csv); its rows import as pages.',
