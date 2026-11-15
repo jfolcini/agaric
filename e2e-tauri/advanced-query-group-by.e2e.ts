@@ -17,7 +17,8 @@
 // does not keep.
 //
 // A third case groups by a key that holds a list (#6741): a block sits in the
-// group of each of its items, which only the engine's per-item join shows.
+// group of each of its items, once though its list repeats one, which only the
+// engine's per-item join shows.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -269,7 +270,7 @@ const LIST_TITLE = runScopedMarker('wdio-list-query-doc')
 const AUTHORS = `${runScopedMarker('wdio-authors').replaceAll('-', '')}authors`
 const AUTHOR_LISTS = [
   ['one', 'Ann, Bob'],
-  ['two', 'Ann'],
+  ['two', 'Ann, Ann'],
   ['six', 'Cy'],
 ] as const
 
@@ -304,7 +305,8 @@ describe('Agaric real-backend Advanced Query grouping by a list key (#6741) @sea
     await scopeToMarker(LIST_MARKER, AUTHOR_LISTS.length)
     await chooseSelectOption('[data-testid="advanced-query-group"]', 'Property')
     await typeInputVerified('[data-testid="advanced-query-group-property-key"]', AUTHORS)
-    // `gcount DESC, gkey ASC`: Ann holds blocks one and two, Bob and Cy one each.
+    // `gcount DESC, gkey ASC`: Ann holds blocks one and two, block two's
+    // repeated Ann counting once, Bob and Cy one each.
     const groups = ['Ann | 2 blocks', 'Bob | 1 block', 'Cy | 1 block']
     await waitForGroups(groups, [], 'grouped by the list key')
 

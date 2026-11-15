@@ -22,6 +22,10 @@ pub(super) struct PropertyLines {
     /// The key each canonical `key:: value` line of a source buffer was typed
     /// with, when it was typed otherwise, to name the line by.
     typed: HashMap<(String, String), String>,
+    /// The `(key, list text)` pairs that write a list though no definition
+    /// says the key holds one (#6741): a front matter YAML list's, and in a
+    /// copy each list the copied blocks held ([`Self::note_list`]).
+    listed: HashSet<(String, String)>,
 }
 
 impl PropertyLines {
@@ -70,6 +74,7 @@ impl PropertyLines {
             spellings,
             refs: HashMap::new(),
             typed: HashMap::new(),
+            listed: HashSet::new(),
         })
     }
 
@@ -238,9 +243,32 @@ impl PropertyLines {
         })
     }
 
+    /// Read `text`, the text of `items` ([`import::write_property_list`]),
+    /// under `key` as the list it is, whether or not the key is declared to
+    /// hold one: a YAML list in front matter, or a list a copied block held.
+    pub(super) fn note_list(&mut self, key: String, text: String) {
+        self.listed.insert((key, text));
+    }
+
     /// The value `value` is written as under `key`, a canonical key, or why
-    /// its definition refuses it.
+    /// its definition refuses it. A list [`Self::note_list`] names is a list
+    /// under an undeclared key, but one the app keeps for itself, and under a
+    /// key that holds one value its items joined by `, `, as a list's text
+    /// was before lists (#6741).
     pub(super) fn read(&self, key: &str, value: &str) -> Result<PropertyValueFields, String> {
+        let declaration = self.declarations.get(key);
+        let listed = || self.listed.contains(&(key.to_owned(), value.to_owned()));
+        if declaration.is_none_or(|d| !d.multiple) && listed() {
+            if declaration.is_some() || agaric_store::op::is_internal_property_key(key) {
+                return self.read_value(key, &import::property_list_items(value).join(", "));
+            }
+            return self.read_list(value, "text");
+        }
+        self.read_value(key, value)
+    }
+
+    /// [`Self::read`] of a value no list text names.
+    fn read_value(&self, key: &str, value: &str) -> Result<PropertyValueFields, String> {
         let declaration = self.declaration(key);
         let value_type = declaration.as_ref().map(|d| d.value_type.as_str());
         let fields = |args: agaric_engine::block_ops::TypedPropertyArgs| PropertyValueFields {

@@ -422,8 +422,8 @@
       {
         "block_id": "B13",
         "key": "authors",
-        "value": "Lovelace, Ada",
-        "value_type": "Text"
+        "value": ["Lovelace, Ada"],
+        "value_type": "List"
       },
       {
         "block_id": "B13",
@@ -458,8 +458,8 @@
       {
         "block_id": "B14",
         "key": "authors",
-        "value": "Turing, Alan",
-        "value_type": "Text"
+        "value": ["Turing, Alan"],
+        "value_type": "List"
       },
       {
         "block_id": "B14",

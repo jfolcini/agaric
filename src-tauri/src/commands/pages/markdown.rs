@@ -279,7 +279,11 @@ pub async fn duplicate_block_inner(
             "block '{block_id}' holds a value Duplicate cannot copy"
         )));
     }
-    let lines = PropertyLines::load_for_block(&mut tx, &page_id, PropertyWrite::Copy).await?;
+    let mut lines = PropertyLines::load_for_block(&mut tx, &page_id, PropertyWrite::Copy).await?;
+    // #6741 — a copy writes back each list its blocks held, declared or not.
+    for (key, text) in undeclared_lists(&data) {
+        lines.note_list(key, text);
+    }
     let parent_id = root.parent_id.map(BlockId::into_string);
     let siblings =
         super::super::blocks::move_ops::ordered_live_children(&mut tx, parent_id.as_deref())

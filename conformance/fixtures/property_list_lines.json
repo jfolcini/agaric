@@ -1,5 +1,5 @@
 {
-  "description": "#6741 — a list as one line of text in the Edit as Markdown buffer, in Duplicate and in a template's batch. Under a key that holds a list a block's `key:: a, b` line, and the page's own `key: a, b` front matter line, is the list's text (`write_property_list`): an item holding a comma is quoted, a number is its digits. The page's own buffer saves as nothing; a changed line writes the list it reads as (`property_list_items`), each item under the item type; a number list item that is no number refuses the whole save. Duplicate copies the block's lists item for item, and a `create_blocks_batch` spec's typed property takes a list. A text under a key that holds a list is written as a list of one, so its line reads back as one item, not as the parts its comma splits it into. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#6741 — a list as one line of text in the Edit as Markdown buffer, in Duplicate and in a template's batch. Under a key that holds a list a block's `key:: a, b` line is the list's text (`write_property_list`), and the page's own front matter line a YAML list (`key: [a, \"b, c\"]`): an item holding a comma is quoted, a number is its digits. The page's own buffer saves as nothing; a changed line writes the list it reads as (`property_list_items`), each item under the item type; a number list item that is no number refuses the whole save. Duplicate copies the block's lists item for item, one under an undeclared key too, though its line alone reads as text; a YAML list under an undeclared key is a list, and a `create_blocks_batch` spec's typed property takes a list. A text under a key that holds a list is written as a list of one, so its line reads back as one item, not as the parts its comma splits it into. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -57,7 +57,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 16,
+      "count": 20,
       "ops": [
         {
           "op_type": "set_property_def"
@@ -78,6 +78,14 @@
           "op_type": "set_property"
         },
         {
+          "key": "keywords",
+          "op_type": "set_property"
+        },
+        {
+          "key": "cssclasses",
+          "op_type": "set_property"
+        },
+        {
           "key": "authors",
           "op_type": "set_property"
         },
@@ -90,10 +98,18 @@
           "op_type": "set_property"
         },
         {
+          "key": "keywords",
+          "op_type": "set_property"
+        },
+        {
           "op_type": "create_block"
         },
         {
           "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "key": "cssclasses",
           "op_type": "set_property"
         },
         {
@@ -128,9 +144,21 @@
         "value_type": "List"
       },
       {
+        "block_id": "B1",
+        "key": "keywords",
+        "value": ["x", "w"],
+        "value_type": "List"
+      },
+      {
         "block_id": "B2",
         "key": "authors",
         "value": ["Zed", "x, y"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B2",
+        "key": "cssclasses",
+        "value": ["wide", "dark, mode"],
         "value_type": "List"
       },
       {
@@ -149,6 +177,12 @@
         "block_id": "B3",
         "key": "authors",
         "value": ["Zed", "x, y"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B3",
+        "key": "cssclasses",
+        "value": ["wide", "dark, mode"],
         "value_type": "List"
       },
       {
@@ -235,16 +269,19 @@
       "name": "the_buffer_after_the_saves",
       "rows": [
         "line#text=---",
-        "line#text=authors: Zoe, Doe",
+        "line#text=authors: [Zoe, Doe]",
+        "line#text=keywords: [x, w]",
         "line#text=---",
         "line#text=",
         "B2#text=card",
         "line#text=  authors:: Zed, \"x, y\"",
+        "line#text=  cssclasses:: wide, \"dark, mode\"",
         "line#text=  marks:: \"\\\"1, 2\\\"\"",
         "line#text=  scores:: 7, 100",
         "line#text=",
         "B3#text=card",
         "line#text=  authors:: Zed, \"x, y\"",
+        "line#text=  cssclasses:: wide, \"dark, mode\"",
         "line#text=  scores:: 7, 100",
         "line#text=",
         "B4#text=from a template",
@@ -317,11 +354,44 @@
     },
     {
       "args": {
-        "baseSource": "---\nauthors: Zed, Doe\n---\n\ncard ^000000000000000000000000S2\n  authors:: \"Smith, John\", Doe\n  scores:: 2.5, 4\n",
-        "lineIds": [null, null, null, null, "000000000000000000000000S2", null, null, null],
+        "blockId": "S1",
+        "key": "keywords",
+        "value": {
+          "value_list": ["x", "y, z"]
+        }
+      },
+      "command": "set_property",
+      "comment": "An undeclared key's list, the page's own: a YAML list in the front matter."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "cssclasses",
+        "value": {
+          "value_list": ["wide", "dark, mode"]
+        }
+      },
+      "command": "set_property",
+      "comment": "An undeclared key's list on the card: its line reads as text, but Duplicate copies it as the list it is."
+    },
+    {
+      "args": {
+        "baseSource": "---\nauthors: [Zed, Doe]\nkeywords: [x, \"y, z\"]\n---\n\ncard ^000000000000000000000000S2\n  authors:: \"Smith, John\", Doe\n  cssclasses:: wide, \"dark, mode\"\n  scores:: 2.5, 4\n",
+        "lineIds": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          "000000000000000000000000S2",
+          null,
+          null,
+          null,
+          null
+        ],
         "merge": false,
         "pageId": "S1",
-        "source": "---\nauthors: Zed, Doe\n---\n\ncard\n  authors:: \"Smith, John\", Doe\n  scores:: 2.5, 4\n"
+        "source": "---\nauthors: [Zed, Doe]\nkeywords: [x, \"y, z\"]\n---\n\ncard\n  authors:: \"Smith, John\", Doe\n  cssclasses:: wide, \"dark, mode\"\n  scores:: 2.5, 4\n"
       },
       "command": "apply_page_source",
       "comment": "The page's own buffer: nothing differs, so nothing is written.",
@@ -330,24 +400,46 @@
     },
     {
       "args": {
-        "baseSource": "---\nauthors: Zed, Doe\n---\n\ncard ^000000000000000000000000S2\n  authors:: \"Smith, John\", Doe\n  scores:: 2.5, 4\n",
-        "lineIds": [null, null, null, null, "000000000000000000000000S2", null, null, null],
+        "baseSource": "---\nauthors: [Zed, Doe]\nkeywords: [x, \"y, z\"]\n---\n\ncard ^000000000000000000000000S2\n  authors:: \"Smith, John\", Doe\n  cssclasses:: wide, \"dark, mode\"\n  scores:: 2.5, 4\n",
+        "lineIds": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          "000000000000000000000000S2",
+          null,
+          null,
+          null,
+          null
+        ],
         "merge": false,
         "pageId": "S1",
-        "source": "---\nauthors: Zoe, Doe\n---\n\ncard\n  authors:: Zed , \"x, y\"\n  scores:: 7, 1e2\n"
+        "source": "---\nauthors: [Zoe, Doe]\nkeywords: [x, w]\n---\n\ncard\n  authors:: Zed , \"x, y\"\n  cssclasses:: wide, \"dark, mode\"\n  scores:: 7, 1e2\n"
       },
       "command": "apply_page_source",
-      "comment": "O6–O8 — the page's list, then the card's two lists, each read back as items: `x, y` one item, `1e2` the number 100.",
+      "comment": "O6–O9 — the page's two lists, the undeclared one read as a list because YAML writes it as one, then the card's two lists, each read back as items: `x, y` one item, `1e2` the number 100. The card's undeclared list is unchanged, so nothing writes it.",
       "name": "changed_list_lines_write_their_lists",
       "via": "command"
     },
     {
       "args": {
-        "baseSource": "---\nauthors: Zoe, Doe\n---\n\ncard ^000000000000000000000000S2\n  authors:: Zed, \"x, y\"\n  scores:: 7, 100\n",
-        "lineIds": [null, null, null, null, "000000000000000000000000S2", null, null, null],
+        "baseSource": "---\nauthors: [Zoe, Doe]\nkeywords: [x, w]\n---\n\ncard ^000000000000000000000000S2\n  authors:: Zed, \"x, y\"\n  cssclasses:: wide, \"dark, mode\"\n  scores:: 7, 100\n",
+        "lineIds": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          "000000000000000000000000S2",
+          null,
+          null,
+          null,
+          null
+        ],
         "merge": false,
         "pageId": "S1",
-        "source": "---\nauthors: Zoe, Doe\n---\n\ncard\n  authors:: Zed, w\n  scores:: 7, x\n"
+        "source": "---\nauthors: [Zoe, Doe]\nkeywords: [x, w]\n---\n\ncard\n  authors:: Zed, w\n  cssclasses:: wide, \"dark, mode\"\n  scores:: 7, x\n"
       },
       "command": "apply_page_source",
       "comment": "`x` is no number: the whole save is refused, naming the line, and the `authors` line it also changes is not written.",

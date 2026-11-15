@@ -16,6 +16,8 @@ struct PropRow {
     key: String,
     value_text: Option<String>,
     value_num: Option<f64>,
+    /// The JSON array a list stores.
+    value_list: Option<String>,
 }
 
 async fn page_id_by_title(pool: &sqlx::SqlitePool, title: &str) -> Option<String> {
@@ -33,7 +35,7 @@ async fn props_of(
     page_id: &str,
 ) -> std::collections::HashMap<String, PropRow> {
     let rows: Vec<PropRow> = sqlx::query_as(
-        "SELECT key, value_text, value_num FROM block_properties \
+        "SELECT key, value_text, value_num, value_list FROM block_properties \
          WHERE block_id = ? AND key != 'space' ORDER BY key",
     )
     .bind(page_id)
@@ -128,9 +130,14 @@ async fn import_bibliography_bibtex_happy_path_creates_typed_pages_1454() {
         Some("A Study of Things")
     );
     assert_eq!(
-        doe_props["authors"].value_text.as_deref(),
-        Some("Doe, Jane; Smith, John"),
-        "authors must be '; '-joined"
+        doe_props["authors"].value_list.as_deref(),
+        Some(r#"["Doe, Jane","Smith, John"]"#),
+        "authors must be a list, one item per author (#6741)"
+    );
+    assert_eq!(
+        property_def_multiple(&pool, "authors").await,
+        Some(true),
+        "`authors` is declared to hold a list"
     );
     assert_eq!(
         doe_props["year"].value_num,
@@ -224,7 +231,10 @@ async fn import_bibliography_csl_json_happy_path_1454() {
         props["reference-type"].value_text.as_deref(),
         Some("article-journal")
     );
-    assert_eq!(props["authors"].value_text.as_deref(), Some("Doe, Jane"));
+    assert_eq!(
+        props["authors"].value_list.as_deref(),
+        Some(r#"["Doe, Jane"]"#)
+    );
     assert_eq!(
         props["title"].value_text.as_deref(),
         Some("A Study of Things")
@@ -564,8 +574,8 @@ async fn import_bibliography_decodes_biblatex_fields_and_latex_6032() {
         .expect("World Health Organization 2024 page");
     let props = props_of(&pool, &who).await;
     assert_eq!(
-        props["authors"].value_text.as_deref(),
-        Some("World Health Organization"),
+        props["authors"].value_list.as_deref(),
+        Some(r#"["World Health Organization"]"#),
         "a wholly braced author is one name: {props:?}"
     );
     assert_eq!(
@@ -870,6 +880,14 @@ async fn import_bibliography_rejects_invalid_space_1454() {
 /// is a vault-global fact, not a per-block one.
 async fn property_def_type(pool: &sqlx::SqlitePool, key: &str) -> Option<String> {
     sqlx::query_scalar("SELECT value_type FROM property_definitions WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+async fn property_def_multiple(pool: &sqlx::SqlitePool, key: &str) -> Option<bool> {
+    sqlx::query_scalar("SELECT multiple FROM property_definitions WHERE key = ?")
         .bind(key)
         .fetch_optional(pool)
         .await

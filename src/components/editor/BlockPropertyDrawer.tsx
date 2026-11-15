@@ -17,7 +17,7 @@ import { useTranslation } from 'react-i18next'
 import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
 import { BuiltinDateFields } from '@/components/properties/BuiltinDateFields'
 import { PropertyField } from '@/components/properties/PropertyField'
-import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
+import { PropertyRowEditor, listDefinition } from '@/components/properties/PropertyRowEditor'
 import { readCurrentValue } from '@/components/properties/PropertyRowEditor/shared'
 import { useRefTitle } from '@/components/properties/useRefTitle'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
@@ -370,9 +370,10 @@ export function BlockPropertyDrawer({
               properties.map((prop) => {
                 const propType = getType(prop.key)
                 const def = definitions.find((d) => d.key === prop.key)
-                // A ref's page picker, a boolean's checkbox and a list's items (#6741)
-                // are the page Properties table's.
-                if ((propType === 'ref' || propType === 'boolean' || def?.multiple) && blockId) {
+                // A ref's page picker, a boolean's checkbox and a list's items (#6741),
+                // declared or not, are the page Properties table's.
+                const list = listDefinition(prop, def) !== null
+                if ((propType === 'ref' || propType === 'boolean' || list) && blockId) {
                   return (
                     <PropertyRowEditor
                       key={prop.key}

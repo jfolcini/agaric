@@ -647,12 +647,13 @@ pub async fn load_value_types(
     .collect())
 }
 
-/// [`validate_property_value`]'s list check (#6741): a list is taken only by
-/// a definition that holds several values, and such a definition takes
-/// nothing else. Each item is then held to the definition's type as a single
-/// value is: a number under `number`, a string otherwise, which is a
-/// `YYYY-MM-DD` date under `date`, a block id under `ref` and one of the
-/// options under `select`.
+/// [`validate_property_value`]'s list check (#6741): a list is taken by a
+/// definition that holds several values, which takes nothing else, and by an
+/// undeclared key, which takes any shape, but one the app keeps for itself
+/// ([`agaric_store::op::is_internal_property_key`]). Under a definition each
+/// item is then held to its type as a single value is: a number under
+/// `number`, a string otherwise, which is a `YYYY-MM-DD` date under `date`, a
+/// block id under `ref` and one of the options under `select`.
 fn validate_list_value(
     payload: &SetPropertyPayload,
     declaration: Option<&PropertyDeclaration>,
@@ -668,6 +669,9 @@ fn validate_list_value(
         };
     };
     let Some(decl) = list_decl else {
+        if declaration.is_none() && !agaric_store::op::is_internal_property_key(key) {
+            return Ok(());
+        }
         return Err(AppError::validation(format!(
             "Property '{key}' holds one value, not a list."
         )));

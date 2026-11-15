@@ -1957,3 +1957,65 @@ export async function createSpace(name: string): Promise<void> {
     `the space ${name} never appeared`,
   )
 }
+
+/** Open the page kebab's `item`. */
+export async function pageAction(item: string): Promise<void> {
+  const kebab = $('button[aria-label="Page actions"]')
+  await kebab.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await kebab.click()
+  // The menu's last rows reach the toast corner of the lane's window, where a
+  // toast from the step before takes a plain click.
+  await clickUncovered($('[role="menu"]').$(`[role="menuitem"]*=${item}`), item)
+}
+
+/**
+ * The open page's Export as Markdown, read off the clipboard. A sentinel goes
+ * on the clipboard first, so an earlier export's toast and text are not taken
+ * for this one's.
+ */
+export async function exportOpenPage(): Promise<string> {
+  const sentinel = runScopedMarker('wdio-rt-sentinel')
+  await invoke('plugin:clipboard-manager|write_text', { text: sentinel })
+  await pageAction('Export as Markdown')
+  let text = sentinel
+  await browser
+    .waitUntil(
+      async () => {
+        text = await clipboardText()
+        return text !== sentinel
+      },
+      { timeout: ACTION_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error('Export as Markdown never put the page on the clipboard')
+    })
+  return text
+}
+
+/**
+ * The items the open page's Properties table shows for the list under `key`
+ * (#6741), once it shows `count` of them.
+ */
+export async function propertyListItems(key: string, count: number): Promise<string[]> {
+  let items: string[] = []
+  await browser
+    .waitUntil(
+      async () => {
+        items = await browser.execute(
+          (name: string) =>
+            [
+              ...document.querySelectorAll(
+                `fieldset[aria-label="${name} value"] [data-slot="badge"] .truncate`,
+              ),
+            ].map((item) => item.textContent ?? ''),
+          key,
+        )
+        return items.length === count
+      },
+      { timeout: NAV_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(`${key} shows the items ${JSON.stringify(items)}, not ${count}`)
+    })
+  return items
+}

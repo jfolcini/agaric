@@ -20,6 +20,7 @@ import {
 } from '@/editor/source-buffer-document'
 import { base64UrlToUtf8 } from '@/lib/base64url'
 import type { PageHeading } from '@/lib/bindings'
+import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import {
   INLINE_PROPERTY_RESERVED_KEYS,
   foldPropertyKey,
@@ -309,9 +310,14 @@ function pushPropertyLines(
   }
 }
 
-/** The page's properties, aliases and tags, as its front matter writes them (#5160 S8). */
+/**
+ * The page's properties, aliases and tags, as its front matter writes them (#5160 S8), a
+ * list's value its items' text (#6741).
+ */
 interface FrontMatter {
   properties: Map<string, string>
+  /** The keys of `properties` written as a YAML list. */
+  lists: Set<string>
   aliases: string[]
   tags: string[]
 }
@@ -364,13 +370,16 @@ function pageFrontMatter(pid: string): FrontMatter {
         compareNocase(a['content'] as string, b['content'] as string) ||
         compareUtf8Bytes(a['id'] as string, b['id'] as string),
     )
+  const spaceId = ownerSpaceOf({ id: pid })
+  const isList = (key: string, row: Record<string, unknown>) =>
+    Array.isArray(row['value_list']) ||
+    (typeof row['value_text'] === 'string' &&
+      propertyDefinition(spaceId, key)?.['multiple'] === true)
   return {
     properties: new Map(
-      rows.map(([key, row]) => [
-        key,
-        frontMatterValue(row, propertyDefinition(ownerSpaceOf({ id: pid }), key)),
-      ]),
+      rows.map(([key, row]) => [key, frontMatterValue(row, propertyDefinition(spaceId, key))]),
     ),
+    lists: new Set(rows.filter(([key, row]) => isList(key, row)).map(([key]) => key)),
     aliases: (pageAliases.get(pid) ?? []).toSorted(compareNocase),
     tags: tags.map((tag) => tag['content'] as string),
   }
@@ -378,8 +387,10 @@ function pageFrontMatter(pid: string): FrontMatter {
 
 /**
  * DELIBERATE APPROXIMATION of `render_frontmatter`: the export's YAML, written
- * only when there is something to write, every value and list item bare. The
- * Rust tests own the quoting and the block scalars.
+ * only when there is something to write, every value and alias or tag bare, a
+ * property's list (#6741) as a YAML list whose item is quoted where it holds a
+ * flow character or reads as a number (`yaml_flow_item`). The Rust tests own
+ * the quoting and the block scalars.
  */
 function renderFrontMatter(front: FrontMatter): string {
   if (front.properties.size === 0 && front.aliases.length === 0 && front.tags.length === 0) {
@@ -388,8 +399,29 @@ function renderFrontMatter(front: FrontMatter): string {
   let yaml = '---\n'
   if (front.aliases.length > 0) yaml += `aliases: [${front.aliases.join(', ')}]\n`
   if (front.tags.length > 0) yaml += `tags: [${front.tags.join(', ')}]\n`
-  for (const [key, value] of front.properties) yaml += `${key}: ${value}\n`
+  for (const [key, value] of front.properties) {
+    const written = front.lists.has(key)
+      ? `[${splitListItems(value).map(yamlFlowItem).join(', ')}]`
+      : value
+    yaml += `${key}: ${written}\n`
+  }
   return `${yaml}---\n\n`
+}
+
+/** `yaml_flow_item`, approximated: an item bare, or quoted where YAML would read it otherwise. */
+function yamlFlowItem(item: string): string {
+  const plain =
+    item !== '' &&
+    item === item.trim() &&
+    !RUST_F64.test(item) &&
+    !/^[-?:,[\]{}#&*!|>'"%@`]/.test(item) &&
+    !/[,[\]{}:#"']/.test(item)
+  return plain ? item : JSON.stringify(item)
+}
+
+/** `import::parse_flow_sequence_items`: a `[a, "b, c"]` list's items, a quoted one unquoted. */
+function readFlowItems(value: string): string[] {
+  return splitListItems(value.slice(1, -1))
 }
 
 /** One layer of matching quotes off `value`, as `strip_yaml_quotes` takes it. */
@@ -417,7 +449,8 @@ function refusedAt(line: number | undefined, message: string): Error {
  * DELIBERATE APPROXIMATION of `import::read_page_properties` (#5160 S8): the
  * YAML front matter a buffer opens with, as `key: value` lines, `aliases:` and
  * `tags:` (or `alias:` and `tag:`) as `[a, b]` lists split on every comma, one
- * layer of quotes stripped. A line that is none of these, a key only the app
+ * layer of quotes stripped, and any other key's `[a, "b, c"]` as a list
+ * (#6741). A line that is none of these, a key only the app
  * sets and a key written twice refuse the save by their line, as does a `---`
  * nothing closes. No Logseq `key::` lines, block scalars or block sequences. Returns
  * the front matter, each key's line, and the buffer with its lines left blank,
@@ -428,7 +461,7 @@ function readFrontMatter(source: string): {
   lines: Map<string, number>
   body: string
 } {
-  const front: FrontMatter = { properties: new Map(), aliases: [], tags: [] }
+  const front: FrontMatter = { properties: new Map(), lists: new Set(), aliases: [], tags: [] }
   const lines = new Map<string, number>()
   const rows = source.split('\n')
   if (rows[0] !== '---') return { front, lines, body: source }
@@ -457,6 +490,9 @@ function readFrontMatter(source: string): {
         .split(',')
         .map((item) => unquoteYaml(item.trim()))
         .filter((item) => item !== '')
+    } else if (/^\[.*\]$/s.test(value)) {
+      front.properties.set(key, joinListItems(readFlowItems(value)))
+      front.lists.add(key)
     } else {
       front.properties.set(key, readFrontMatterScalar(value))
     }
@@ -467,6 +503,8 @@ function readFrontMatter(source: string): {
 /** What a save writes to the page's front matter (`markdown_source_front_matter.rs`). */
 interface FrontMatterWrites {
   set: Array<[string, string]>
+  /** The keys `set` writes a list under though no definition says they hold one (#6741). */
+  lists: Set<string>
   deleted: string[]
   /** The page's aliases after the save, or `null` when they stay. */
   aliases: string[] | null
@@ -487,11 +525,25 @@ function frontMatterWrites(
   now: FrontMatter,
   lines: ReadonlyMap<string, number>,
 ): FrontMatterWrites {
-  const set = [...to.properties].filter(
-    ([key, value]) =>
-      value !== '' && from.properties.get(key) !== value && now.properties.get(key) !== value,
-  )
+  const lists = new Set<string>()
+  // `PropertyLines::read` of a YAML list: a list under an undeclared key, but
+  // one the app keeps, and its items joined under a key of one value.
+  const set = [...to.properties]
+    .filter(
+      ([key, value]) =>
+        value !== '' && from.properties.get(key) !== value && now.properties.get(key) !== value,
+    )
+    .map(([key, value]): [string, string] => {
+      const def = propertyDefinition(spaceId, key)
+      if (!to.lists.has(key) || def?.['multiple'] === true) return [key, value]
+      if (def === undefined && !INTERNAL_PROPERTY_KEYS.has(key)) {
+        lists.add(key)
+        return [key, value]
+      }
+      return [key, splitListItems(value).join(', ')]
+    })
   for (const [key, value] of set) {
+    if (lists.has(key)) continue
     try {
       if (propertyDefinition(spaceId, key)?.['multiple'] === true) checkValue(spaceId, key, value)
       else assertValidSetPropertyValue(spaceId, key, value)
@@ -509,6 +561,7 @@ function frontMatterWrites(
   ]
   return {
     set,
+    lists,
     deleted: [...from.properties.keys()].filter(
       (key) => !(to.properties.get(key) ?? '') && now.properties.has(key),
     ),
@@ -606,13 +659,15 @@ function writeFrontMatter(
         key,
         value: holdsList
           ? lineColumns(spaceId, key, value)
-          : {
-              value_text: value,
-              value_num: null,
-              value_date: null,
-              value_ref: null,
-              value_bool: null,
-            },
+          : writes.lists.has(key)
+            ? { value_list: splitListItems(value) }
+            : {
+                value_text: value,
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+                value_bool: null,
+              },
       }) as { op_refs: OpRefs } | null
       out.opRefs.push(...(row?.op_refs ?? []))
     }

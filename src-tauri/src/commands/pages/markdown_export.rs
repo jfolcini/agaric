@@ -30,11 +30,10 @@ pub(super) struct FrontmatterRow {
 /// `key:: value` property emit loop in [`export_page_markdown_inner`] so both
 /// paths resolve a `block_properties` row identically.
 ///
-/// Precedence: date, then text, then ref (`[[Title]]` where `link` gives the
-/// target's title, else the raw id, #6277 F3), then numeric, then bool, then
-/// a list as one line of text (`import::write_property_list`, #6741), each
-/// item written as a single value of its kind is; a text under a key that
-/// holds a list is written as a list of one. A
+/// A list is one line of text (`import::write_property_list`, #6741) of the
+/// items [`frontmatter_row_items`] gives. Otherwise the precedence is date,
+/// then text, then ref (`[[Title]]` where `link` gives the target's title,
+/// else the raw id, #6277 F3), then numeric, then bool. A
 /// `block_properties` row stores its value in exactly one column (enforced by
 /// the `exactly_one_value` CHECK), so at most one branch ever fires; the
 /// ordering is a defensive fallback, not a real precedence rule.
@@ -42,16 +41,13 @@ fn frontmatter_row_value<'a>(
     prop: &FrontmatterRow,
     link: impl Fn(&str) -> Option<&'a str>,
 ) -> String {
+    if let Some(items) = frontmatter_row_items(prop, &link) {
+        return import::write_property_list(&items);
+    }
     if let Some(d) = prop.value_date.as_deref() {
         d.to_string()
     } else if let Some(t) = prop.value_text.as_deref() {
-        // As a list of one, so the line reads back as one item, not as the
-        // parts its commas would split it into.
-        if prop.text_under_list {
-            import::write_property_list(&[t.to_string()])
-        } else {
-            t.to_string()
-        }
+        t.to_string()
     } else if let Some(rf) = prop.value_ref.as_deref().filter(|s| !s.is_empty()) {
         link(rf).map_or_else(|| rf.to_string(), |title| format!("[[{title}]]"))
     } else if let Some(n) = prop.value_num {
@@ -65,22 +61,40 @@ fn frontmatter_row_value<'a>(
         } else {
             "false".to_string()
         }
-    } else if let Some(list) = &prop.value_list {
-        let items: Vec<String> = list
-            .0
-            .iter()
-            .map(|item| match item {
-                PropertyListItem::Text(id) if prop.list_of_refs => {
-                    link(id).map_or_else(|| id.clone(), |title| format!("[[{title}]]"))
-                }
-                PropertyListItem::Text(text) => text.clone(),
-                PropertyListItem::Num(n) => format!("{n}"),
-            })
-            .collect();
-        import::write_property_list(&items)
     } else {
         String::new()
     }
+}
+
+/// The items a [`FrontmatterRow`] is written as, each as a single value of
+/// its kind is, when it is written as a list (#6741): a list, and a text
+/// under a key that holds a list as a list of one, so its line reads back as
+/// one item, not as the parts its commas would split it into.
+fn frontmatter_row_items<'a>(
+    prop: &FrontmatterRow,
+    link: impl Fn(&str) -> Option<&'a str>,
+) -> Option<Vec<String>> {
+    if let Some(text) = prop.value_text.as_ref().filter(|_| prop.text_under_list) {
+        return Some(vec![text.clone()]);
+    }
+    let items = prop.value_list.as_ref()?.0.iter().map(|item| match item {
+        PropertyListItem::Text(id) if prop.list_of_refs => {
+            link(id).map_or_else(|| id.clone(), |title| format!("[[{title}]]"))
+        }
+        PropertyListItem::Text(text) => text.clone(),
+        PropertyListItem::Num(n) => format!("{n}"),
+    });
+    Some(items.collect())
+}
+
+/// Each list `data`'s blocks hold under a key no definition says holds one,
+/// as `(key, the text its line writes)`, which a copy reads back as that
+/// list (`PropertyLines::note_list`, #6741).
+pub(super) fn undeclared_lists(data: &PageExportData) -> Vec<(String, String)> {
+    let rows = data.descendant_properties.values().flatten();
+    rows.filter(|row| row.value_list.is_some() && !row.list_of_refs)
+        .map(|row| (row.key.clone(), frontmatter_row_value(row, |_| None)))
+        .collect()
 }
 
 /// The title `names` writes the ref-typed value `id` with, as `[[Title]]`
@@ -697,7 +711,14 @@ fn render_frontmatter(output: &mut String, data: &PageExportData, names: Names) 
             output.push_str(&format!("tags: {}\n", yaml_flow_sequence(tag_names_fm)));
         }
         for prop in properties {
-            let value = frontmatter_row_value(prop, |id| ref_link(data, names, id));
+            let link = |id: &str| ref_link(data, names, id);
+            // #6741 — a list as a YAML list, as `aliases` and `tags` are.
+            if let Some(items) = frontmatter_row_items(prop, link) {
+                let items = yaml_flow_sequence(&items);
+                output.push_str(&format!("{}: {items}\n", prop.key));
+                continue;
+            }
+            let value = frontmatter_row_value(prop, link);
             // #2715 — route the scalar through the YAML emit helper so a value
             // carrying a newline, a leading `---`, quotes, or other
             // YAML-significant content is quoted / block-scalar-encoded instead

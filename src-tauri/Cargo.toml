@@ -556,6 +556,14 @@ panic = "unwind"
 lto = false
 codegen-units = 16
 
+# `cargo bench` also builds the package's bins, and they take the profile's
+# panic while the bench harness always unwinds. Under the inherited abort that
+# is two `agaric_lib` units writing one unhashed rlib (the lib is also a
+# cdylib), and a bench linked against the abort one fails with `expected X,
+# found X`, depending on build order.
+[profile.bench]
+panic = "unwind"
+
 # #4696: the cargo-mutants lane's profile; `.cargo/mutants.toml` selects it
 # and carries the measurement. `[profile.dev.package."*"] debug = false`
 # below only covers dependencies; the workspace crates are what every mutant

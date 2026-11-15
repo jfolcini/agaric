@@ -1582,6 +1582,55 @@ mod tests {
         .collect()
     }
 
+    /// #6741 — a template block's list under a key no definition declares, as
+    /// an import writes one, lands as that list, not as the text its line
+    /// reads as.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn journal_for_date_copies_an_undeclared_list_as_a_list_6741() {
+        use agaric_store::op::{PropertyList, PropertyListItem, PropertyValueFields};
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        let template = seed_template(&pool, &mat, &space).await;
+        let second = child(&pool, &mat, &template, "Listed").await;
+        let list = PropertyList(vec![
+            PropertyListItem::Text("wide".into()),
+            PropertyListItem::Text("dark, mode".into()),
+        ]);
+        let value = PropertyValueFields {
+            value_list: Some(list.clone()),
+            ..Default::default()
+        };
+        crate::commands::set_property_list_inner(
+            &pool,
+            DEV,
+            &mat,
+            ActiveBlockId::from(second),
+            "cssclasses".into(),
+            value,
+        )
+        .await
+        .expect("an undeclared key takes a list");
+
+        let day = NaiveDate::parse_from_str(DAY, "%Y-%m-%d").unwrap();
+        let page = journal_for_date_inner(&pool, DEV, &mat, day, &space)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let page_id = page.id.into_string();
+        let held = sqlx::query_scalar!(
+            r#"SELECT bp.value_list AS "value_list: PropertyList"
+               FROM block_properties bp JOIN blocks b ON b.id = bp.block_id
+               WHERE b.page_id = ?1 AND b.content = 'Listed' AND bp.key = 'cssclasses'"#,
+            page_id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(held, [Some(list)]);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn journal_for_date_copies_the_template_with_nesting_and_variables() {
         let (pool, _dir) = test_pool().await;

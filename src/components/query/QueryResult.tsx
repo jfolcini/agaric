@@ -22,7 +22,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { PropertyRow } from '@/lib/bindings'
 import { countFilterLeaves, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
-import { buildCustomPropsMap } from '@/lib/query-result-columns'
+import { buildCustomPropsMap, propertyRowSortValue } from '@/lib/query-result-columns'
 import { chipTagId, isLegacyQueryText, readQueryText } from '@/lib/query-text'
 import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -35,13 +35,14 @@ const QueryBuilderModal = lazy(() =>
   import('@/components/dialogs/QueryBuilderModal').then((m) => ({ default: m.QueryBuilderModal })),
 )
 
-/** The result blocks' properties: as stored, and as the display values the columns show. */
+/** The result blocks' properties: as stored, as the display values the columns show, and as the values they sort by. */
 interface ResultProperties {
   rows: Record<string, PropertyRow[]>
   customProps: Map<string, Map<string, string>>
+  sortProps: Map<string, Map<string, string>>
 }
 
-const NO_PROPERTIES: ResultProperties = { rows: {}, customProps: new Map() }
+const NO_PROPERTIES: ResultProperties = { rows: {}, customProps: new Map(), sortProps: new Map() }
 
 /** A tag chip's token (`#[ULID]`, a `#name` typed in the block) as the tag's name. */
 function TagChipPill({ id }: { id: string }): React.ReactElement {
@@ -285,7 +286,7 @@ export function QueryResult({
 
   // Custom (non-reserved) properties are not carried on `BlockRow`; fetch them
   // for the result blocks only in table mode, where they become columns.
-  const [{ rows: propertyRows, customProps }, setProperties] = useState(NO_PROPERTIES)
+  const [{ rows: propertyRows, customProps, sortProps }, setProperties] = useState(NO_PROPERTIES)
   useEffect(() => {
     if (!tableMode || results.length === 0) {
       setProperties(NO_PROPERTIES)
@@ -296,7 +297,12 @@ export function QueryResult({
       .getBatchProperties(results.map((b) => b.id))
       .then(unwrap)
       .then((batch) => {
-        if (!cancelled) setProperties({ rows: batch, customProps: buildCustomPropsMap(batch) })
+        if (cancelled) return
+        setProperties({
+          rows: batch,
+          customProps: buildCustomPropsMap(batch),
+          sortProps: buildCustomPropsMap(batch, propertyRowSortValue),
+        })
       })
       .catch((err) => {
         // A property-fetch failure should not blank the table; fall back to
@@ -314,8 +320,7 @@ export function QueryResult({
 
   const { sortedResults, sortKey, sortDir, handleColumnSort } = useQuerySorting({
     results,
-    customProps,
-    propertyRows,
+    customProps: sortProps,
   })
 
   // #2663 — the page store's `edit()` action (tolerant of no ambient

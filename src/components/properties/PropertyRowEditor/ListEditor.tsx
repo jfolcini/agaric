@@ -62,7 +62,8 @@ export function ListEditor({
     writing.current = true
     setBusy(true)
     try {
-      onWritten?.(await savePropertyList(blockId, prop.key, next))
+      const refs = await savePropertyList(blockId, prop.key, next)
+      onWritten?.(refs)
       return true
     } catch (err) {
       logger.error('ListEditor', 'Failed to save list property', { blockId, key: prop.key }, err)

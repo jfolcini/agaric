@@ -83,6 +83,29 @@ describe('ListEditor', () => {
     expect(screen.queryByDisplayValue(/alpha/)).not.toBeInTheDocument()
   })
 
+  // An imported list needs no definition, so an undeclared key's list is
+  // edited as a list of text, never flattened into one text.
+  it('edits a list under an undeclared key as a list of text', async () => {
+    const user = userEvent.setup()
+    stubInvoke({ set_property: () => written })
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makePropertyRow({ key: 'tags', value_list: ['Smith, John', 3] })}
+        def={undefined}
+        onSave={vi.fn()}
+      />,
+    )
+
+    const group = screen.getByRole('group', { name: t('pageProperty.valueLabel', { key: 'tags' }) })
+    expect(within(group).getByText('Smith, John')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue(/Smith/)).not.toBeInTheDocument()
+    // No `onRefSaved`: the list writes whether or not a caller hears it.
+    await user.type(addInput(), 'Doe{Enter}')
+
+    await waitFor(() => expect(writtenList()).toEqual(['Smith, John', 3, 'Doe']))
+  })
+
   it('removing an item writes the others, and hears the ops', async () => {
     const user = userEvent.setup()
     stubInvoke({ set_property: () => written })
