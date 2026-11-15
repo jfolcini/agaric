@@ -2,7 +2,6 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 import { Select as SelectPrimitive } from 'radix-ui'
 import type * as React from 'react'
 
-import { keepFocusThatMovedOn } from '@/components/ui/dialog-shared'
 import { SHARED_INPUT_CLASSES } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 
@@ -110,9 +109,13 @@ const SelectContent = ({
         className,
       )}
       position={position}
+      // Radix refocuses the trigger one timer after the list unmounts. A click
+      // that lands first has moved focus on, and taking it back closes the
+      // popover that click opened (#6729).
       onCloseAutoFocus={(event) => {
         onCloseAutoFocus?.(event)
-        keepFocusThatMovedOn(event)
+        const focused = document.activeElement
+        if (focused != null && focused !== document.body) event.preventDefault()
       }}
       {...props}
     >
