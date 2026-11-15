@@ -173,6 +173,11 @@ verify:
 push *ARGS:
     bash scripts/push.sh {{ARGS}}
 
+# Can PR <pr> merge now? One line per check (required checks and review on the head sha, mergeable state, files moved on main, main's last completed CI run); exits non-zero on any failure. Uses `gh api` only.
+[group('verify')]
+merge-ready pr:
+    bash scripts/merge-ready.sh {{pr}}
+
 # --- Codegen ---------------------------------------------------------------
 
 # Regenerate Tauri IPC TypeScript bindings (src/lib/bindings.ts) after changing IPC-exposed Rust types.

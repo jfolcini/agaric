@@ -277,6 +277,10 @@ Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — 
 
 `SKIP_CI_VERIFY='<reason>' git push` short-circuits the script; the other pre-push hooks still run, and `scripts/push.sh` then pushes without `--no-verify` so they run there too. The value must be a real reason (≥8 chars), NOT a truthy flag — a bare `SKIP_CI_VERIFY=1` (or `true`/`yes`/`on`/…) is hard-rejected. Use e.g. `SKIP_CI_VERIFY='docs typo, no source change' git push`. Reserve it for docs-only typo fixes that obviously cannot affect CI behaviour; anything that touches source code should let the verifier run.
 
+### Is a PR ready to merge?
+
+`just merge-ready <pr>` ([`scripts/merge-ready.sh`](../scripts/merge-ready.sh)) answers it from `gh api` alone and prints one line per check, exiting non-zero if any fails: `validate / validate-all`, `e2e-tauri-gate` and `dco` are success on the PR's current head sha; the newest review is APPROVED on that sha (a Markdown-only diff needs none, the reviewer skips it); `mergeable_state` is not dirty; no file the PR changes has changed on `main` since its merge base (the files are listed: merge `main` in and let CI re-run, see [`.github/AGENTS.md`](../.github/AGENTS.md#the-gate)); and the newest completed `ci.yml` run on `main` succeeded, with in-progress and cancelled runs skipped and the run named. A call it cannot make is a failure, never a pass.
+
 ### Release pre-flight
 
 Pre-push does NOT run `cargo tauri build` (5-10 min wall clock per push is too slow for daily cadence). `scripts/release.sh` (see [Releasing](#releasing) below) runs this check for you, but you can also run it standalone:
