@@ -1,0 +1,11 @@
+# Session 4199 — the mobile search-view spec clicked a stale row on the bridge
+
+The scheduled `full-suite` run 43590125058 (#3394) failed in `full-suite-nextest (2)`, whose real-backend Playwright step ran `e2e/search-view-mobile.spec.ts` "a result row navigates to its owning page on mobile" on the bridge: no `Page title` reading "Getting Started" within 15 s. The run kept no artifacts. Later dispatched runs were green.
+
+Mechanism: a test race, not a product or seed bug. The spec reaches the panel by escalating the palette's "Review" query, so the panel runs a "Review" `search_blocks` and renders its rows. It then types "Welcome", presses Enter and clicks `[role="option"]` `.first()`. `useSearchResults` uses `keepPreviousData`, so the "Review" rows stay on screen until the "Welcome" reply lands. An IPC log over the bridge showed the click starting while that reply was still in flight; on a fast box it lands before Playwright's actionability checks finish, but on a slow runner the click hits a "Review" row and navigation goes to that row's page. Keeping old rows during a fetch is intended, and clicking one opens the page it shows, so the app is right. The mock answers synchronously, so the mock lane never sees the window. The desktop counterpart in `search-results.spec.ts` starts from an empty panel and has no stale rows.
+
+Traps: the panel searches with `search_blocks`; `search_blocks_partitioned` is the palette's. A delay injected on the partitioned command changes nothing in the panel, which first made the race look ruled out. A uniform delay on every search also hides it, because then the "Review" rows never render before the "Welcome" query.
+
+Fix: the spec clicks the option with text "Welcome", so the click waits for the current query's row.
+
+Shown: with `bridge.ts` delaying the panel's "Welcome" `search_blocks` reply by 300 ms (local, restored by trap), the old spec failed 3/3 with CI's exact error and the fixed spec passed 3/3. Without the delay, the old spec passed 30/30 and the whole real-backend project passed 180/180 at three workers. Fixed spec: 10/10 on the bridge, 2/2 on the mock. Falsified by skipping `navigateToPage` on the resolved-page path: red at the title assertion. `npm run typecheck` clean.
