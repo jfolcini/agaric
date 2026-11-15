@@ -83,6 +83,7 @@ import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { BlockResolversProvider } from '@/components/block-tree/use-block-resolvers'
 import { SelectionBubbleMenu } from '@/components/editor-toolbar/SelectionBubbleMenu'
 import { processFileAttachments } from '@/components/editor/EditableBlock'
+import { pinnedToolbarCover } from '@/components/FormattingToolbar/pinned-toolbar'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
@@ -397,13 +398,9 @@ function caretOf(editor: Editor): BlockCaret | null {
     : { blockId: blockIdOf($head.node(1)) as string, pos: $head.pos - $head.start(1) }
 }
 
-/**
- * How far up from the window's foot the toolbar pinned on touch reaches, over the keyboard too
- * (`ToolbarFrame`); none without one. ProseMirror scrolls the cursor into the window, under it.
- */
-function pinnedToolbarCover(frame: HTMLElement | null): number {
-  const bar = frame?.querySelector(':scope > [data-pinned]')
-  return bar ? Math.max(0, window.innerHeight - bar.getBoundingClientRect().top) : 0
+/** The toolbar pinned on touch over this page's text (`ToolbarFrame`), if any. */
+function pinnedBar(frame: HTMLElement | null): Element | null | undefined {
+  return frame?.querySelector(':scope > [data-pinned]')
 }
 
 interface PageModeDocumentProps {
@@ -615,7 +612,7 @@ function PageModeDocument({
         right: 0,
         left: 0,
         get bottom() {
-          return pinnedToolbarCover(frameRef.current)
+          return pinnedToolbarCover(pinnedBar(frameRef.current))
         },
       },
       scrollMargin: {
@@ -623,7 +620,7 @@ function PageModeDocument({
         right: 5,
         left: 5,
         get bottom() {
-          return 5 + pinnedToolbarCover(frameRef.current)
+          return 5 + pinnedToolbarCover(pinnedBar(frameRef.current))
         },
       },
     },

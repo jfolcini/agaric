@@ -6,18 +6,17 @@
  * (`touch-gestures`, `mobile-editor`) cover block-level gestures and gutter
  * controls but never the toolbar itself. On touch the toolbar takes a distinct
  * code path — it pins to the bottom of the layout viewport (`data-pinned`,
- * `position: fixed`) and lifts above the soft keyboard via `visualViewport`
- * listeners (`FormattingToolbar.tsx` `computeKeyboardInset`). None of that, nor
- * the 44 px touch floor on its buttons, was verified end-to-end.
+ * `position: fixed`), which on Android ends at the soft keyboard's top
+ * (`MainActivity.kt`, #6790). None of that, nor the 44 px touch floor on its
+ * buttons, was verified end-to-end.
  *
  * This spec drives an iPhone-13 viewport with touch enabled and asserts:
  *   1. the toolbar appears (pinned) when a block is focused;
  *   2. every visible toolbar button meets the 44 px coarse-pointer hit floor;
  *   3. the overflow ("More") menu opens/closes on tap and its items also meet
  *      the touch floor;
- *   4. the pinned toolbar's bottom inset tracks the soft-keyboard height when
- *      `visualViewport` reports the viewport shrinking (keyboard shown) and
- *      resets when it grows back (keyboard hidden);
+ *   4. the pinned toolbar rests on the soft keyboard when the viewport shrinks
+ *      for it (keyboard shown) and on the screen's foot when it grows back;
  *   5. a popover opened from that bar with the keyboard up is fully on screen
  *      AND still tall enough to use (#4313).
  */
@@ -33,6 +32,8 @@ const iPhone13 = devices['iPhone 13']
 // shared primitives). Allow a 1 px slack for sub-pixel layout rounding.
 const TOUCH_FLOOR = 44
 const SLACK = 1
+// The soft keyboard the viewport shrinks by.
+const KEYBOARD = 300
 
 test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
   test.use({
@@ -135,7 +136,7 @@ test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
     await expect(menu).toHaveCount(0)
   })
 
-  test('pinned toolbar bottom inset tracks the soft-keyboard height via visualViewport', async ({
+  test('pinned toolbar rests on the soft keyboard as the viewport shrinks for it', async ({
     page,
   }) => {
     await focusBlock(page, 0)
@@ -143,40 +144,19 @@ test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
     const toolbar = page.getByTestId('formatting-toolbar')
     await expect(toolbar).toBeVisible()
     await expect(toolbar).toHaveAttribute('data-pinned', 'true')
+    const barBottom = async () => {
+      const b = await toolbar.boundingBox()
+      return b === null ? null : Math.round(b.y + b.height)
+    }
+    const { width, height } = iPhone13.viewport
 
-    // With no keyboard up the bar rests at the viewport bottom (inset 0).
-    await expect.poll(async () => toolbar.evaluate((el) => el.style.bottom)).toBe('0px')
-
-    // Playwright does not emulate the on-screen keyboard, so simulate it:
-    // shrink `window.visualViewport.height` (which excludes the keyboard) and
-    // fire the `resize` event the toolbar listens for. The effect recomputes
-    // `innerHeight - (vv.height + vv.offsetTop)` and pushes the bar up by that
-    // keyboard height.
-    const KEYBOARD = 300
-    await page.evaluate((kbd) => {
-      const vv = window.visualViewport
-      if (!vv) throw new Error('visualViewport unavailable in test env')
-      Object.defineProperty(vv, 'height', {
-        configurable: true,
-        get: () => window.innerHeight - kbd,
-      })
-      Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 })
-      vv.dispatchEvent(new Event('resize'))
-    }, KEYBOARD)
-
-    await expect
-      .poll(async () => toolbar.evaluate((el) => Number.parseInt(el.style.bottom || '0', 10)))
-      .toBe(KEYBOARD)
-
-    // Hiding the keyboard (viewport grows back) resets the inset to 0.
-    await page.evaluate(() => {
-      const vv = window.visualViewport
-      if (!vv) return
-      Object.defineProperty(vv, 'height', { configurable: true, get: () => window.innerHeight })
-      vv.dispatchEvent(new Event('resize'))
-    })
-
-    await expect.poll(async () => toolbar.evaluate((el) => el.style.bottom)).toBe('0px')
+    // Playwright has no on-screen keyboard: on Android the webview ends at its
+    // top, so the keyboard showing is the viewport shrinking by its height.
+    await expect.poll(barBottom).toBe(height)
+    await page.setViewportSize({ width, height: height - KEYBOARD })
+    await expect.poll(barBottom).toBe(height - KEYBOARD)
+    await page.setViewportSize({ width, height })
+    await expect.poll(barBottom).toBe(height)
   })
 
   /**
@@ -194,8 +174,8 @@ test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
    *
    * The cap is now `--radix-popover-content-available-height`, which floating-ui
    * derives from `window.visualViewport` (its default `rootBoundary: 'viewport'`
-   * → `getViewportRect`), i.e. from a boundary that ALREADY excludes the
-   * keyboard.
+   * → `getViewportRect`), i.e. from the band actually on screen; on Android
+   * the keyboard now shrinks that band and the layout viewport alike (#6790).
    *
    * Two failure modes, two assertions:
    *   - too tall  → the popover runs off the top / under the keyboard (the
@@ -218,9 +198,8 @@ test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
    * The keyboard is raised BEFORE the popover opens — that is the real sequence
    * (the user is typing, the IME is up, then they tap the toolbar) and it makes
    * the assertion independent of whether anything re-runs the popper on a
-   * `visualViewport` resize.
+   * viewport resize.
    */
-  const KEYBOARD = 300
   // A menu capped to a single row is as broken as one drawn under the keyboard.
   // Two coarse-pointer rows (44 px each, see TOUCH_FLOOR) plus a little padding
   // is the smallest thing worth calling a menu. (The addend is deliberately
@@ -242,26 +221,19 @@ test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
     const toolbar = page.getByTestId('formatting-toolbar')
     await expect(toolbar).toBeVisible()
 
-    // Playwright cannot raise a real IME, so simulate it exactly as the test
-    // above does: shrink the visual viewport (the layout viewport, and hence
-    // `innerHeight`/`dvh`, deliberately stay at full height — that asymmetry IS
-    // the bug) and fire the `resize` the app listens for.
-    await page.evaluate((kbd) => {
-      const vv = window.visualViewport
-      if (!vv) throw new Error('visualViewport unavailable in test env')
-      Object.defineProperty(vv, 'height', {
-        configurable: true,
-        get: () => window.innerHeight - kbd,
-      })
-      Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 })
-      vv.dispatchEvent(new Event('resize'))
-    }, KEYBOARD)
+    // Playwright cannot raise a real IME, so simulate it as the test above
+    // does: the viewport shrinks by the keyboard's height.
+    const { width, height } = iPhone13.viewport
+    await page.setViewportSize({ width, height: height - KEYBOARD })
 
-    // The bar has lifted above the "keyboard": the popover's anchor is now at
-    // the very top edge of it, which is the geometry that produced the bug.
+    // The bar rests on the "keyboard": the popover's anchor is at the very top
+    // edge of it, which is the geometry that produced the bug.
     await expect
-      .poll(async () => toolbar.evaluate((el) => Number.parseInt(el.style.bottom || '0', 10)))
-      .toBe(KEYBOARD)
+      .poll(async () => {
+        const b = await toolbar.boundingBox()
+        return b === null ? null : Math.round(b.y + b.height)
+      })
+      .toBe(height - KEYBOARD)
 
     await page.getByRole('button', { name: 'Turn into', exact: true }).first().click()
     // Expand the tallest disclosure — the language list is what overflowed.
@@ -292,12 +264,9 @@ test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
       // Not clipped off the top of the screen.
       expect(geometry.top, 'popover top').toBeGreaterThanOrEqual(-SLACK)
       // Not drawn under the keyboard.
-      expect(geometry.bottom, 'popover bottom').toBeLessThanOrEqual(
-        geometry.innerHeight - KEYBOARD + SLACK,
-      )
+      expect(geometry.bottom, 'popover bottom').toBeLessThanOrEqual(geometry.innerHeight + SLACK)
       // The cap resolved at all — an empty value means the popover fell back to
-      // `calc(100dvh-4rem)`, i.e. to a cap measured against a screen that still
-      // includes the keyboard, which is the original bug.
+      // `calc(100dvh-4rem)`, which is not measured against the anchor.
       expect(geometry.availableHeight, 'available-height var').toMatch(/^-?[\d.]+px$/)
       // ...and it was not collapsed to an unusable sliver by double-counting the
       // keyboard. Deliberately NOT `getBoundingClientRect().height`: the 8rem

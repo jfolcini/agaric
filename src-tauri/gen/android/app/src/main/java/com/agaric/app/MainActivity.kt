@@ -40,6 +40,17 @@ import java.util.concurrent.atomic.AtomicReference
  * longer intersects a system bar or the display cutout. iOS and desktop are
  * untouched.
  *
+ * THE KEYBOARD (#6790)
+ * --------------------
+ * The bottom padding is the larger of the navigation bar and the on-screen
+ * keyboard, so the webview ends at the keyboard's top and the page's layout
+ * viewport shrinks with it, as `adjustResize` did before edge-to-edge. The
+ * ime() inset is not forwarded to the webview: there it would shrink only the
+ * visual viewport, leaving a short window panned over the full-height layout,
+ * and the top of a long page a second swipe away. WebView ignores the
+ * `interactive-widget` viewport key, so this is the only way to the
+ * `resizes-content` behaviour.
+ *
  * KEEPING THE STRIP ON-THEME: THE `ThemeBridge` (#4433)
  * -------------------------------------------------------
  * Padding (rather than resizing) `host` means anything painted on `host`
@@ -159,6 +170,8 @@ class MainActivity : TauriActivity() {
       // unioned in so a notch taller than the status bar still clears.
       val padded = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
       val safe = insets.getInsets(padded)
+      // The keyboard's inset already counts the navigation bar under it.
+      val bottom = maxOf(safe.bottom, insets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
       // There is deliberately NO `?: view` fallback here. Padding the WEBVIEW
       // insets the web content but leaves the webview itself occupying the bar
       // strip, so the status bar window keeps swallowing touches over the
@@ -204,22 +217,20 @@ class MainActivity : TauriActivity() {
         host.paddingLeft != safe.left ||
         host.paddingTop != safe.top ||
         host.paddingRight != safe.right ||
-        host.paddingBottom != safe.bottom
+        host.paddingBottom != bottom
       ) {
-        host.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+        host.setPadding(safe.left, safe.top, safe.right, bottom)
       }
-      // This listener replaces the webview's own `onApplyWindowInsets`, where
-      // Chromium reads the ime() inset and shrinks `window.visualViewport` by
-      // the overlap — the web layer's only keyboard signal
-      // (`src/lib/keyboard-inset.ts`). Forward the rest to it, with the types
-      // the host padding already cleared zeroed so the web content does not
-      // see them again as `env(safe-area-inset-*)` (#5353). Needs WebView
-      // M139+ and Android 12+: `WebView.onApplyWindowInsets` only delegates to
-      // Chromium from API 31, and on Android 11 Chromium's own listener is what
-      // this one replaced, so there the keyboard still covers the sheet.
+      // This listener replaces the webview's own `onApplyWindowInsets`. Forward
+      // the rest to it, with the types the host padding already cleared zeroed:
+      // the bars and cutout so the web content does not see them again as
+      // `env(safe-area-inset-*)` (#5353), and the keyboard so Chromium does not
+      // shrink `window.visualViewport` by it a second time (see the class doc).
       ViewCompat.onApplyWindowInsets(
         view,
-        WindowInsetsCompat.Builder(insets).setInsets(padded, Insets.NONE).build(),
+        WindowInsetsCompat.Builder(insets)
+          .setInsets(padded or WindowInsetsCompat.Type.ime(), Insets.NONE)
+          .build(),
       )
     }
   }

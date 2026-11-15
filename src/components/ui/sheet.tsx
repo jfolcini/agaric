@@ -6,7 +6,6 @@ import type * as React from 'react'
 import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-button'
 import { DIALOG_BODY_VIEWPORT_CLASS, OVERLAY_SCRIM_CLASS } from '@/components/ui/dialog-shared'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useSoftKeyboardInset } from '@/hooks/useSoftKeyboardInset'
 import { cn } from '@/lib/utils'
 
 // PERF: hoisted from an inline string in render — twMerge then only re-parses
@@ -66,70 +65,49 @@ const SheetContent = ({
   children,
   side = 'right',
   showCloseButton = true,
-  style,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: 'top' | 'right' | 'bottom' | 'left'
   showCloseButton?: boolean
-}) => {
-  // Bottom sheets are the IME-covered case: they anchor at `bottom-0` and
-  // host focusable inputs (AddPropertyPopover, SearchSheet, ConfirmDialog
-  // mobile, …). Lift the sheet above the keyboard and cap its height at
-  // the remaining visual viewport so a tall sheet can't shove its header
-  // off the top of the screen. Other sides keep their static anchoring.
-  const keyboardInset = useSoftKeyboardInset(side === 'bottom')
-  return (
-    <SheetPortal>
-      <SheetOverlay />
-      <SheetPrimitive.Content
-        ref={ref}
-        data-slot="sheet-content"
-        className={cn(
-          SHEET_CONTENT_BASE,
-          side === 'right' &&
-            'inset-y-0 right-0 h-full w-3/4 border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm',
-          side === 'left' &&
-            'inset-y-0 left-0 h-full w-3/4 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm',
-          side === 'top' &&
-            'inset-x-0 top-0 h-auto max-h-[calc(100dvh-2rem)] border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
-          // A tall bottom sheet stops at the phone header's edge (`min-h-14` in
-          // App.tsx) rather than slicing through the view title.
-          side === 'bottom' &&
-            'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-3.5rem-var(--safe-area-top))] border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
-          className,
-        )}
-        // While the soft keyboard is up, lift the bottom anchor above it
-        // and cap the height at the remaining (visual) viewport. Inline
-        // styles override the `bottom-0` / `max-h-*` classes only for the
-        // keyboard's lifetime; when the inset returns to 0 the style prop
-        // reverts and the class anchoring is back in charge (#760).
-        style={
-          keyboardInset > 0
-            ? {
-                ...style,
-                bottom: keyboardInset,
-                maxHeight: `calc(100% - ${keyboardInset}px)`,
-              }
-            : style
-        }
-        {...props}
-      >
-        {children}
-        {showCloseButton && (
-          <SheetPrimitive.Close
-            data-slot="sheet-close"
-            className={cn(
-              closeButtonClassName,
-              'top-4 right-4 sm:top-6 sm:right-6 data-[state=open]:bg-secondary',
-            )}
-          >
-            <CloseButtonIcon />
-          </SheetPrimitive.Close>
-        )}
-      </SheetPrimitive.Content>
-    </SheetPortal>
-  )
-}
+}) => (
+  <SheetPortal>
+    <SheetOverlay />
+    <SheetPrimitive.Content
+      ref={ref}
+      data-slot="sheet-content"
+      className={cn(
+        SHEET_CONTENT_BASE,
+        side === 'right' &&
+          'inset-y-0 right-0 h-full w-3/4 border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm',
+        side === 'left' &&
+          'inset-y-0 left-0 h-full w-3/4 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm',
+        side === 'top' &&
+          'inset-x-0 top-0 h-auto max-h-[calc(100dvh-2rem)] border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
+        // A tall bottom sheet stops at the phone header's edge (`min-h-14` in
+        // App.tsx) rather than slicing through the view title. With the
+        // keyboard up both edges move with the layout viewport, which on
+        // Android ends at the keyboard's top (`MainActivity.kt`, #6790).
+        side === 'bottom' &&
+          'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-3.5rem-var(--safe-area-top))] border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      {showCloseButton && (
+        <SheetPrimitive.Close
+          data-slot="sheet-close"
+          className={cn(
+            closeButtonClassName,
+            'top-4 right-4 sm:top-6 sm:right-6 data-[state=open]:bg-secondary',
+          )}
+        >
+          <CloseButtonIcon />
+        </SheetPrimitive.Close>
+      )}
+    </SheetPrimitive.Content>
+  </SheetPortal>
+)
 SheetContent.displayName = 'SheetContent'
 
 // Header/Footer carry no padding of their own (mirrors DialogHeader/
