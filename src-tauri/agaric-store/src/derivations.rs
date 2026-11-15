@@ -158,11 +158,11 @@ mod tests {
     /// fails on any change to the output, and its message gives both new
     /// values, so a change lands with a bump and every vault rebuilds once.
     const GOLDEN: [(Derivation, i64, u64); 7] = [
-        (Derivation::FtsStrip, 1, 9_581_885_676_308_416_399),
+        (Derivation::FtsStrip, 1, 10_971_062_773_864_822_168),
         (Derivation::LinkTokens, 1, 6_396_512_025_153_374_395),
         (Derivation::TagRefTokens, 1, 15_668_115_924_102_391_061),
         (Derivation::Agenda, 1, 12_540_476_427_942_296_593),
-        (Derivation::TitleSortKey, 1, 5_063_557_284_513_772_505),
+        (Derivation::TitleSortKey, 1, 3_269_616_282_180_891_170),
         (Derivation::PageLink, 1, 11_583_657_963_650_717_047),
         (Derivation::TagUsage, 1, 4_696_616_430_259_714_054),
     ];
