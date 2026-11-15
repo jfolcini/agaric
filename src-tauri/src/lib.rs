@@ -1927,43 +1927,6 @@ fn tombstone_purge_job(
     }
 }
 
-/// Issue #157 sub-item I — fire a snapshot pass every
-/// 60 s while backgrounded AND when the registry's
-/// dirty-engines proxy counter is non-zero.
-fn loro_snapshot_if_dirty_job(
-    lifecycle: &agaric_sync::foreground::LifecycleHooks,
-    pools: &db::DbPools,
-    materializer: &materializer::Materializer,
-) -> maintenance::MaintenanceJob {
-    let lifecycle_for_loro_pred = lifecycle.clone();
-    let loro_snapshot_write_pool = pools.write.clone();
-    // #2249: the maintenance predicate + job read engine state through
-    // clones of the materializer's Arc (no process global).
-    let loro_state_for_pred = Arc::clone(materializer.loro_state());
-    let materializer_for_snapshot_job = materializer.clone();
-    maintenance::MaintenanceJob {
-        name: "loro_snapshot_if_dirty",
-        interval: std::time::Duration::from_secs(60),
-        last_run: None,
-        predicate_grace: None,
-        skipped_since: None,
-        predicate: Box::new(move || {
-            if lifecycle_for_loro_pred
-                .is_foreground
-                .load(std::sync::atomic::Ordering::Acquire)
-            {
-                return false;
-            }
-            loro_state_for_pred.registry.dirty_count() > 0
-        }),
-        run: Box::new(move || {
-            let pool = loro_snapshot_write_pool.clone();
-            let materializer = materializer_for_snapshot_job.clone();
-            Box::pin(async move { maintenance::loro_snapshot_if_dirty(&pool, &materializer).await })
-        }),
-    }
-}
-
 /// The vault-wide `page_id` / `space_id` re-derivation (`RebuildPageIds`):
 /// the daemon's first tick, about a minute after boot, then daily (#5420).
 /// Local writes derive both in their own transaction, and every purge and
@@ -2069,7 +2032,6 @@ fn build_maintenance_jobs(
         cleanup_orphaned_attachments_tick_job(materializer),
         fts_idle_optimize_job(materializer),
         tombstone_purge_job(lifecycle, pools, device_id, materializer),
-        loro_snapshot_if_dirty_job(lifecycle, pools, materializer),
         page_ids_backstop_job(materializer),
         projected_agenda_midnight_job(materializer),
         reminders_tick_job(pools, app),
@@ -2122,7 +2084,7 @@ fn spawn_background_tasks(
         agaric_engine::draft::ORPHAN_DRAFTS_SWEEP_INTERVAL,
         orphan_drafts_shutdown,
         // #2621 (wave E2): `draft` is tauri-free, so the app injects Tauri's
-        // runtime spawner (mirrors `agaric_engine::loro::snapshot::spawn_periodic_snapshot`).
+        // runtime spawner (mirrors `agaric_engine::loro::snapshot::spawn_periodic_compaction`).
         |fut| {
             tauri::async_runtime::spawn(fut);
         },
@@ -2131,7 +2093,7 @@ fn spawn_background_tasks(
     // Issue #157 — MaintenanceDaemon, wired with its full job
     // vector (wal_checkpoint_truncate, op_log_compact,
     // pragma_optimize_tick, cleanup_orphaned_attachments_tick,
-    // fts_idle_optimize, tombstone_purge, loro_snapshot_if_dirty,
+    // fts_idle_optimize, tombstone_purge,
     // page_ids_backstop, projected_agenda_midnight, reminders_tick,
     // daily_snapshot). New jobs are added by extending
     // this vector without re-wiring the daemon.
@@ -2152,21 +2114,16 @@ fn spawn_background_tasks(
     // #703: flag never set; daemon observes constant `false`.
     maintenance::spawn_daemon(jobs, maintenance_shutdown);
 
-    // Periodic Loro snapshot persistence. Re-instated after the
-    // Parity flush task (which hosted the snapshot save
-    // on its tick) was deleted — that regression left
-    // `loro_doc_state` permanently empty while the apply cursor
-    // kept advancing, so on boot the engine could not be rebuilt
-    // and every edit/move failed "block not found". Persists each
-    // engine's snapshot every SNAPSHOT_INTERVAL_SECS so the next
-    // boot rehydrates without a full op-log replay; cancellation
-    // is via the managed flag, mirroring the sweepers above.
-    // #703: flag never set; snapshot task observes constant `false`.
+    // The engines' delta rows are folded into snapshots once they reach the
+    // compaction threshold, and the apply cursor follows the index work
+    // (#6521). Cancellation is via the managed flag, mirroring the sweepers
+    // above.
+    // #703: flag never set; the task observes constant `false`.
     let snapshot_shutdown = Arc::new(AtomicBool::new(false));
-    agaric_engine::loro::snapshot::spawn_periodic_snapshot(
+    agaric_engine::loro::snapshot::spawn_periodic_compaction(
         pools.write.clone(),
         snapshot_shutdown,
-        agaric_engine::loro::snapshot::SNAPSHOT_INTERVAL_SECS,
+        agaric_engine::loro::snapshot::COMPACTION_CHECK_INTERVAL_SECS,
         materializer.clone(),
         // `agaric-engine` stays tauri-free (#2621, wave E1): the app injects the
         // Tauri async runtime as the executor here.
@@ -2329,19 +2286,17 @@ fn on_app_suspended(
     drop(spawn_save_on_suspend(pool, materializer));
 }
 
-/// #6525: a mobile OS kills a suspended app without warning, and the engines
-/// reach `loro_doc_state` only through a snapshot pass, so suspend runs one.
+/// A mobile OS freezes a suspended app, often before the periodic tick, so
+/// suspend compacts when due and moves the apply cursor (#6521). Every
+/// engine write is durable without it.
 #[cfg(any(mobile, test))]
 fn spawn_save_on_suspend(
     pool: sqlx::SqlitePool,
     materializer: materializer::Materializer,
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
-        let saved =
-            agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &materializer)
-                .await
-                .saved;
-        tracing::info!(saved, "loro: persisted snapshots on suspend");
+        let saved = agaric_engine::loro::snapshot::compact_when_due(&pool, &materializer).await;
+        tracing::info!(saved, "loro: compaction check on suspend");
     })
 }
 
@@ -3463,10 +3418,9 @@ pub fn run() {
             std::process::exit(1);
         })
         .run(|app_handle, event| {
-            // Persist Loro snapshots on shutdown so the next boot
-            // rehydrates with no replay gap — a clean exit leaves
-            // `loro_doc_state` and the apply cursor at the op-log head,
-            // which the periodic 5-minute task alone cannot guarantee.
+            // A session shorter than the periodic tick still compacts when
+            // due and moves the apply cursor (#6521). Every engine write is
+            // durable without it.
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;
                 if let (Some(materializer), Some(pool)) = (
@@ -3474,13 +3428,9 @@ pub fn run() {
                     app_handle.try_state::<WritePool>(),
                 ) {
                     let saved = tauri::async_runtime::block_on(
-                        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(
-                            &pool.0,
-                            &materializer,
-                        ),
-                    )
-                    .saved;
-                    tracing::info!(saved, "loro: persisted snapshots on exit");
+                        agaric_engine::loro::snapshot::compact_when_due(&pool.0, &materializer),
+                    );
+                    tracing::info!(saved, "loro: compaction check on exit");
                 }
             }
         });
@@ -4077,39 +4027,40 @@ mod boot_path_tests {
         );
     }
 
-    /// #6525 — an OS suspend runs a snapshot pass: the space written before
-    /// it is clean afterwards, and its row holds the write.
+    /// #6521 — an OS suspend below the compaction threshold writes no
+    /// snapshot: the write's delta row is what keeps it. It moves the apply
+    /// cursor to the op-log head, so the next boot does not fan the write
+    /// out again.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn suspend_saves_the_engines_6525() {
+    async fn suspend_moves_the_cursor_and_leaves_the_delta_rows_6521() {
         let dir = tempfile::tempdir().expect("throwaway app-data dir");
         let pool = crate::db::init_pool(&dir.path().join("notes.db"))
             .await
             .expect("a migrated pool");
         let materializer = crate::materializer::Materializer::new(pool.clone());
-        let space = agaric_store::space::SpaceId::from_trusted(SPACE_6525);
-        let registry = &materializer.loro_state().registry;
-        registry
-            .for_space(&space, "dev-6525")
-            .expect("engine")
-            .engine_mut()
-            .apply_create_block("BLOCK_6525", "content", "before suspend", None, 0)
-            .expect("create");
+        crate::commands::create_space_inner(&pool, "dev-6521", &materializer, "S".into(), None)
+            .await
+            .expect("a write");
+        let head: i64 = sqlx::query_scalar("SELECT MAX(seq) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .expect("head");
 
         super::spawn_save_on_suspend(pool.clone(), materializer.clone())
             .await
-            .expect("the save task");
+            .expect("the suspend task");
 
-        assert_eq!(registry.dirty_count(), 0, "the pass saved the space");
-        let saved = agaric_engine::loro::snapshot::load_snapshot(&pool, &space)
-            .await
-            .expect("read the row")
-            .expect("the row");
-        let mut engine = agaric_engine::loro::engine::LoroEngine::new();
-        engine.import(&saved).expect("import");
-        assert!(
-            engine.contains_block("BLOCK_6525"),
-            "the row holds the write"
-        );
+        let (cursor, snapshots, deltas): (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT materialized_through_seq FROM materializer_apply_cursor), \
+                    (SELECT COUNT(*) FROM loro_doc_state), \
+                    (SELECT COUNT(*) FROM loro_doc_delta)",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read");
+        assert_eq!((cursor, snapshots), (head, 0));
+        assert!(deltas > 0, "the write's delta rows stay");
+        materializer.assert_saved_engines_match_live().await;
         materializer.shutdown();
     }
 

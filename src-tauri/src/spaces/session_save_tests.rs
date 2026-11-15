@@ -1,12 +1,13 @@
-//! #6525: what a sync session imported survives the process being killed
-//! after the session ended, because [`SpacePlacementSink`] saves the engines
-//! when it ends.
+//! #6525, #6521: what a sync session imported, and what this device wrote,
+//! survives the process being killed at any point after the write committed:
+//! each write's delta commits with it, and nothing is saved when a session
+//! ends ([`SpacePlacementSink`]).
 //!
 //! Device A authors and device B pulls, one `apply_remote` per pull. B ends a
 //! session through its sink, as the daemon does. A kill drops B's materializer
-//! and engines without the exit save; boot rehydrates a new one from
-//! `loro_doc_state` and runs boot recovery, which replays B's own ops after
-//! the apply cursor.
+//! and engines without the exit check; boot builds new ones from their saved
+//! rows, or, as the fallback for rows that cannot be used, from the snapshots
+//! with B's own ops replayed past them.
 //!
 //! One test reads the process-global `sql_only_fallback_count()` before and
 //! after its writes; nextest runs each test in its own process.
@@ -60,6 +61,23 @@ macro_rules! under_both_boots {
             #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
             async fn replaying_the_op_log() {
                 super::$scenario(Boot::Replay).await;
+            }
+        }
+    };
+}
+
+/// One test of `$scenario` under [`Boot::SavedRows`] alone: it keeps a
+/// peer's import across a kill, which the replay boot loses until the next
+/// sync when no compaction ran since
+/// (`the_boot_from_saved_rows_keeps_a_peers_import_the_replay_boot_loses_6521`).
+macro_rules! under_the_saved_rows_boot {
+    ($scenario:ident) => {
+        mod $scenario {
+            use super::Boot;
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+            async fn from_saved_rows() {
+                super::$scenario(Boot::SavedRows).await;
             }
         }
     };
@@ -184,21 +202,19 @@ impl Device {
         )
     }
 
-    /// The daemon reports the session's end through the sink the app wires.
+    /// The daemon reports the session's end through the sink the app wires,
+    /// and the task it spawns, if any, runs to its end.
     async fn end_session(&self, event: SyncEvent) {
         let sink = self.sink();
         sink.on_sync_event(event);
-        let task = sink
-            .last_task
-            .lock()
-            .unwrap()
-            .take()
-            .expect("the session's end spawns its task");
-        task.await.unwrap();
+        let task = sink.last_task.lock().unwrap().take();
+        if let Some(task) = task {
+            task.await.unwrap();
+        }
         self.mat.assert_saved_engines_match_live().await;
     }
 
-    /// The periodic snapshot pass.
+    /// A compaction: every dirty engine saved, the cursor moved.
     async fn save(&self) {
         agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&self.pool, &self.mat).await;
         self.mat.assert_saved_engines_match_live().await;
@@ -482,7 +498,7 @@ async fn a_sessions_import_survives_a_kill_after_the_session_ends_6525(boot: Boo
     a.shutdown();
     b.shutdown();
 }
-under_both_boots!(a_sessions_import_survives_a_kill_after_the_session_ends_6525);
+under_the_saved_rows_boot!(a_sessions_import_survives_a_kill_after_the_session_ends_6525);
 
 /// #6525 — after the kill B writes over what the session brought: it edits X,
 /// and creates a child under A's new page. Both reach B's engine (no SQL-only
@@ -524,7 +540,7 @@ async fn local_writes_after_a_kill_build_on_what_the_session_imported_6525(boot:
     a.shutdown();
     b.shutdown();
 }
-under_both_boots!(local_writes_after_a_kill_build_on_what_the_session_imported_6525);
+under_the_saved_rows_boot!(local_writes_after_a_kill_build_on_what_the_session_imported_6525);
 
 /// #6525 — B ticks a task the session brought, is killed, boots and pulls
 /// again: the tick is still in SQL, and in what B's engine exports.
@@ -593,11 +609,11 @@ async fn a_tick_on_an_imported_task_survives_a_kill_and_the_next_pull_6525(boot:
     a.shutdown();
     b.shutdown();
 }
-under_both_boots!(a_tick_on_an_imported_task_survives_a_kill_and_the_next_pull_6525);
+under_the_saved_rows_boot!(a_tick_on_an_imported_task_survives_a_kill_and_the_next_pull_6525);
 
-/// #6525 — a session that fails after one space's import committed still
-/// saves that import: the next space's doc does not import, and the daemon
-/// reports an error.
+/// #6525 — a session that fails after one space's import committed keeps
+/// that import across a kill: the next space's doc does not import, and the
+/// daemon reports an error, while the import's delta committed with it.
 async fn a_session_that_fails_after_an_import_still_saves_it_6525(boot: Boot) {
     use agaric_sync::sync_protocol::loro_sync_types::{
         LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage,
@@ -629,7 +645,7 @@ async fn a_session_that_fails_after_an_import_still_saves_it_6525(boot: Boot) {
     a.shutdown();
     b.shutdown();
 }
-under_both_boots!(a_session_that_fails_after_an_import_still_saves_it_6525);
+under_the_saved_rows_boot!(a_session_that_fails_after_an_import_still_saves_it_6525);
 
 /// A session that fails before importing anything, such as a peer that is
 /// unreachable on every retry, leaves no engine dirty and spawns no save pass.
@@ -650,11 +666,10 @@ async fn a_session_that_fails_without_an_import_spawns_no_save() {
 }
 
 /// #6525 — the boot-replay divergence through the sync path. B imports A's
-/// edit of X, edits X on top of it, ships that to A and is killed. Boot
-/// replays B's edit onto B's saved engine; because the session's end saved
-/// A's edit, the replay mints the op A already holds, and the two converge.
-/// Without that save it replays onto "abc" and the two diverge under equal
-/// version vectors (`loro::tests::boot_replay_onto_a_snapshot_without_the_peers_edit_diverges_6525`).
+/// edit of X, edits X on top of it, ships that to A and is killed. B's rows
+/// hold both edits, so boot applies nothing and the two converge. A replay
+/// onto a snapshot without A's edit would diverge under equal version vectors
+/// (`loro::tests::boot_replay_onto_a_snapshot_without_the_peers_edit_diverges_6525`).
 async fn a_replayed_edit_converges_with_the_peer_it_was_shipped_to_6525(boot: Boot) {
     let (a, mut b, space, _page, x) = paired(boot).await;
     edit_block_inner(&a.pool, DEV_A, &a.mat, x.clone(), "abcX".into())
@@ -689,10 +704,10 @@ async fn a_replayed_edit_converges_with_the_peer_it_was_shipped_to_6525(boot: Bo
     a.shutdown();
     b.shutdown();
 }
-under_both_boots!(a_replayed_edit_converges_with_the_peer_it_was_shipped_to_6525);
+under_the_saved_rows_boot!(a_replayed_edit_converges_with_the_peer_it_was_shipped_to_6525);
 
 /// #6525 — a session that imports only a property definition changes no
-/// block, yet its import dirtied B's engine, so its end still saves it.
+/// block, and the definition is in B's engine after a kill all the same.
 async fn a_session_that_imports_only_a_property_definition_saves_it_6525(boot: Boot) {
     let (a, mut b, space, _page, _x) = paired(boot).await;
     crate::commands::create_property_def_inner(
@@ -728,12 +743,12 @@ async fn a_session_that_imports_only_a_property_definition_saves_it_6525(boot: B
     a.shutdown();
     b.shutdown();
 }
-under_both_boots!(a_session_that_imports_only_a_property_definition_saves_it_6525);
+under_the_saved_rows_boot!(a_session_that_imports_only_a_property_definition_saves_it_6525);
 
-/// What a kill before the session-end save left behind: A creates page Y, B
-/// pulls it and is killed with no save, so B boots with Y in SQL and in no
-/// engine, and the child B then creates under Y lands in SQL only. Returns
-/// `(a, b, space, x, y, child)`.
+/// What a kill before any save of an import left behind, on a build that
+/// replayed the op log at boot: A creates page Y, B pulls it and is killed
+/// with no save, so B boots with Y in SQL and in no engine, and the child B
+/// then creates under Y lands in SQL only. Returns `(a, b, space, x, y, child)`.
 async fn a_child_stranded_under_a_peers_page()
 -> (Device, Device, SpaceId, BlockId, BlockId, BlockId) {
     // The build that left a vault this way replayed the op log at boot, and
@@ -795,6 +810,8 @@ async fn the_hydration_brings_a_stranded_local_block_to_the_engine_and_the_peer_
     b.save().await;
     let changed = b.pull(&a, &space).await;
     b.end_session(complete(changed)).await;
+    // A compaction, so the replay boot below keeps what A delivered.
+    b.save().await;
     b.kill_and_boot().await;
     assert_eq!(
         (
@@ -1057,7 +1074,7 @@ async fn a_batch_edit_between_a_sync_import_and_its_projection_leaves_the_block_
 }
 
 /// #6521 — B's last own op edits X; A then rewrites X and B's session brings
-/// that in and saves it. A restart of B must leave A's text alone.
+/// that in. A restart of B must leave A's text alone.
 async fn a_restart_keeps_a_peers_edit_made_after_this_devices_last_op_6521(boot: Boot) {
     let (a, mut b, space, _page, x) = paired(boot).await;
     edit_block_inner(&b.pool, DEV_B, &b.mat, x.clone(), "abcB".into())
@@ -1102,7 +1119,7 @@ async fn a_restart_keeps_a_peers_edit_made_after_this_devices_last_op_6521(boot:
     a.shutdown();
     b.shutdown();
 }
-under_both_boots!(a_restart_keeps_a_peers_edit_made_after_this_devices_last_op_6521);
+under_the_saved_rows_boot!(a_restart_keeps_a_peers_edit_made_after_this_devices_last_op_6521);
 
 /// #6521 — the same when B's rows were saved and its cursor did not move, as
 /// a direct `save_all_engines` leaves them and as a kill between a pass's rows
@@ -1584,6 +1601,176 @@ async fn the_first_boot_after_the_update_replays_once_6521() {
         rows(&b.pool).await,
         saved,
         "and keeps them: nothing was replayed, so nothing replaced them"
+    );
+    a.shutdown();
+    b.shutdown();
+}
+
+/// Every engine's snapshot row, by space.
+async fn snapshot_rows(pool: &SqlitePool) -> Vec<(String, Vec<u8>)> {
+    sqlx::query_as("SELECT space_id, snapshot FROM loro_doc_state ORDER BY space_id")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// #6521 — a kill after any commit loses nothing, with no snapshot pass after
+/// the fixture's: after each of B's imports and writes, B is killed and boots
+/// with the engines and SQL it held. A session's end writes no snapshot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_kill_after_any_commit_loses_nothing_6521() {
+    let (a, mut b, space, page, x) = paired(Boot::SavedRows).await;
+    let snapshots = snapshot_rows(&b.pool).await;
+    let kill_and_compare = async |b: &mut Device, step: &str| {
+        b.mat.flush_background().await.unwrap();
+        let held = (b.engine_state(), b.sql_state(true).await);
+        b.kill_and_boot().await;
+        assert_eq!(
+            engine_differences(&b.engine_state(), &held.0),
+            Vec::<String>::new(),
+            "after {step}: the engines the dead process held"
+        );
+        assert_eq!(b.sql_state(true).await, held.1, "after {step}: its SQL");
+        assert_eq!(
+            snapshot_rows(&b.pool).await,
+            snapshots,
+            "after {step}: no snapshot was written"
+        );
+    };
+
+    edit_block_inner(&a.pool, DEV_A, &a.mat, x.clone(), "abcA".into())
+        .await
+        .unwrap();
+    let from_a = create_block_inner(
+        &a.pool,
+        DEV_A,
+        &a.mat,
+        "content".into(),
+        "from A".into(),
+        Some(page.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let changed = b.pull(&a, &space).await;
+    b.end_session(complete(changed)).await;
+    kill_and_compare(&mut b, "an import and the session's end").await;
+
+    edit_block_inner(&b.pool, DEV_B, &b.mat, x.clone(), "abcA, then B".into())
+        .await
+        .unwrap();
+    kill_and_compare(&mut b, "an edit").await;
+
+    let child = create_block_inner(
+        &b.pool,
+        DEV_B,
+        &b.mat,
+        "content".into(),
+        "B's child".into(),
+        Some(from_a.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    set_todo_state_inner(
+        &b.pool,
+        DEV_B,
+        &b.mat,
+        child.as_str().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    kill_and_compare(&mut b, "a create and a property").await;
+
+    let deleted = delete_block_inner(&b.pool, DEV_B, &b.mat, from_a.clone())
+        .await
+        .unwrap();
+    kill_and_compare(&mut b, "a delete over a cohort").await;
+
+    restore_block_inner(&b.pool, DEV_B, &b.mat, from_a.clone(), deleted.deleted_at)
+        .await
+        .unwrap();
+    kill_and_compare(&mut b, "a restore").await;
+
+    crate::commands::move_block_inner(&b.pool, DEV_B, &b.mat, child.clone(), Some(page), 0)
+        .await
+        .unwrap();
+    kill_and_compare(&mut b, "a move").await;
+
+    edit_block_inner(
+        &a.pool,
+        DEV_A,
+        &a.mat,
+        from_a.clone(),
+        "from A, again".into(),
+    )
+    .await
+    .unwrap();
+    b.pull(&a, &space).await;
+    kill_and_compare(&mut b, "an import on top of B's writes").await;
+
+    assert_eq!(b.sql_content(&from_a).await, "from A, again");
+    assert_eq!(
+        b.engine_content(&space, &child).as_deref(),
+        Some("B's child")
+    );
+    a.shutdown();
+    b.shutdown();
+}
+
+/// #6521 — why boot still replays the sync inbox. A sync import reaches the
+/// engine after its write-ahead inbox slot and before its projection commits;
+/// a compaction in between saves the import in the snapshot, and a kill before
+/// the projection boots with the import in the engine and not in SQL. The peer
+/// will not send it again (B's version vector holds it), so only the slot's
+/// replay at boot projects it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_compaction_between_an_import_and_its_projection_is_healed_by_the_inbox_6521() {
+    let (a, mut b, space, page, _x) = paired(Boot::SavedRows).await;
+    let from_a = create_block_inner(
+        &a.pool,
+        DEV_A,
+        &a.mat,
+        "content".into(),
+        "from A".into(),
+        Some(page),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let (_, export) = a
+        .mat
+        .loro_state()
+        .registry
+        .snapshot_all_engines()
+        .into_iter()
+        .find(|(s, _)| *s == space)
+        .unwrap();
+    sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, ?, 0)")
+        .bind(space.as_str())
+        .bind(export.unwrap())
+        .execute(&b.pool)
+        .await
+        .unwrap();
+    b.import_without_projecting(&a, &space);
+    b.save().await;
+
+    b.kill_and_boot().await;
+
+    assert_eq!(b.engine_content(&space, &from_a).as_deref(), Some("from A"));
+    let projected: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(from_a.as_str())
+        .fetch_optional(&b.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        projected.as_deref(),
+        Some("from A"),
+        "the inbox replay projected it"
     );
     a.shutdown();
     b.shutdown();
