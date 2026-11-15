@@ -736,11 +736,17 @@ describe('AgendaView', () => {
     // is exercised on load-more. #1744 — "Clear filters" no longer empties
     // the filter (it restores the default), so the only path into the
     // no-filter branch is the filter builder emptying out.
-    mockedExecuteAgendaFilters.mockResolvedValue({
-      blocks: [makeBlock({ id: 'B1' })],
-      hasMore: true,
-      cursor: 'agenda-unfiltered:{"due":"DUE_C2"}',
-    })
+    mockedExecuteAgendaFilters.mockImplementation((filters) =>
+      Promise.resolve(
+        filters.length === 0
+          ? {
+              blocks: [makeBlock({ id: 'B1' }), makeBlock({ id: 'B3' })],
+              hasMore: true,
+              cursor: 'agenda-unfiltered:{"due":"DUE_C2"}',
+            }
+          : { blocks: [makeBlock({ id: 'B1' })], hasMore: true, cursor: 'cursor_filtered' },
+      ),
+    )
 
     render(<AgendaView />)
 
@@ -752,8 +758,11 @@ describe('AgendaView', () => {
     // no-filter (unfiltered superset) branch.
     filterChangeRef.current?.([])
 
+    // Load more only once the unfiltered page 1 has landed: the filter change
+    // commits before its re-run starts, and a re-run landing after the
+    // load-more replaces the appended page.
     await waitFor(() => {
-      expect(screen.getByTestId('agenda-filter-builder')).toHaveAttribute('data-filter-count', '0')
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '2')
     })
 
     mockedLoadMoreUnfilteredAgenda.mockResolvedValueOnce({
@@ -772,7 +781,7 @@ describe('AgendaView', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '2')
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '3')
       expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-more', 'false')
     })
 
