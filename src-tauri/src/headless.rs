@@ -80,8 +80,8 @@ impl HeadlessApp {
         Ok(headless)
     }
 
-    /// Save the engines and close the vault, so its files can be copied or
-    /// removed. Call it from outside an async runtime.
+    /// Close the vault, so its files can be copied or removed. Call it from
+    /// outside an async runtime.
     pub fn shutdown(self) {
         let materializer = self
             .app
@@ -90,10 +90,11 @@ impl HeadlessApp {
             .clone();
         let write = self.app.state::<crate::db::WritePool>().0.clone();
         let read = self.app.state::<crate::db::ReadPool>().0.clone();
-        // The save the app runs when the OS suspends it.
-        tauri::async_runtime::block_on(
-            agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&write, &materializer),
-        );
+        // What the app runs when the OS suspends it.
+        tauri::async_runtime::block_on(agaric_engine::loro::snapshot::compact_when_due(
+            &write,
+            &materializer,
+        ));
         materializer.shutdown();
         drop(self);
         tauri::async_runtime::block_on(async {

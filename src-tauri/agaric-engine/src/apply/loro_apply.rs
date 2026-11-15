@@ -1834,9 +1834,9 @@ pub async fn apply_purge_block_via_loro(
 
     // #2910: the cascade above deleted this space's `loro_doc_state` row (see
     // `purge_block_sql_cascade`) in the SAME purge transaction. Now evict the
-    // live per-space engine so neither the periodic `save_all_engines` tick nor
-    // the exit-time save can re-persist the dead space's CRDT state back into
-    // the just-deleted row, and boot rehydration never sees it again. Eviction
+    // live per-space engine so no snapshot pass can re-persist the dead
+    // space's CRDT state back into the just-deleted row, and boot
+    // rehydration never sees it again. Eviction
     // runs AFTER the cascade and after any per-space engine guard above was
     // dropped, and takes only the registry MAP lock (never nested with an
     // engine lock), so it cannot deadlock (mirrors the registry's `clear`
