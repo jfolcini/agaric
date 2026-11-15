@@ -1,0 +1,97 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH edges AS (\n             SELECT bl.source_id, s.content AS source_content, bl.target_id, bl.kind\n               FROM block_links bl\n               JOIN blocks s ON s.id = bl.source_id\n              WHERE s.page_id = ?1 AND s.deleted_at IS NULL AND +s.space_id = ?2\n             UNION ALL\n             SELECT u.source_id, s.content, u.target_id,\n                    CASE WHEN instr(s.content, '((' || u.target_id || '))') > 0\n                         THEN 'block_ref' ELSE 'page_link' END\n               FROM block_links_unresolved u\n               JOIN blocks s ON s.id = u.source_id\n              WHERE s.page_id = ?1 AND s.deleted_at IS NULL AND +s.space_id = ?2\n           ),\n           resolved AS (\n             SELECT e.source_id, e.source_content, e.target_id, e.kind,\n                    CASE WHEN t.deleted_at IS NULL AND t.space_id = ?2\n                         THEN COALESCE(t.page_id, t.id) END AS target_page_id\n               FROM edges e\n               LEFT JOIN blocks t ON t.id = e.target_id\n              WHERE ?3 IS NULL OR e.kind = ?3\n           ),\n           keyed AS (\n             SELECT r.*, r.target_page_id IS NULL AS unresolved,\n                    COALESCE(r.target_page_id, '') AS group_key,\n                    r.source_id || r.target_id AS pair_key\n               FROM resolved r\n           )\n           SELECT k.source_id AS \"source_id!\", k.source_content, k.target_id AS \"target_id!\",\n                  k.kind AS \"kind!: String\", k.target_page_id AS \"target_page_id?: String\",\n                  p.content AS target_page_title,\n                  k.unresolved AS \"unresolved!: i64\", k.group_key AS \"group_key!: String\",\n                  k.pair_key AS \"pair_key!: String\"\n             FROM keyed k\n             LEFT JOIN blocks p ON p.id = k.target_page_id\n            WHERE ?4 IS NULL OR (k.unresolved, k.group_key, k.pair_key) > (?4, ?5, ?6)\n            ORDER BY k.unresolved, k.group_key, k.pair_key\n            LIMIT ?7",
+  "describe": {
+    "columns": [
+      {
+        "name": "source_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_links_unresolved",
+            "name": "source_id"
+          }
+        }
+      },
+      {
+        "name": "source_content",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "target_id!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_links_unresolved",
+            "name": "target_id"
+          }
+        }
+      },
+      {
+        "name": "kind!: String",
+        "ordinal": 3,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "target_page_id?: String",
+        "ordinal": 4,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "target_page_title",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "unresolved!: i64",
+        "ordinal": 6,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "group_key!: String",
+        "ordinal": 7,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "pair_key!: String",
+        "ordinal": 8,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      null,
+      null,
+      true,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "d5c6506a335a4bdef90c26373369b067bf3abfa4a057c72f2902a9678bfb801c"
+}

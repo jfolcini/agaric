@@ -120,12 +120,12 @@ pub async fn list_outgoing_links(
     let rows = sqlx::query_as!(
         OutgoingLinkRecord,
         r#"WITH edges AS (
-             SELECT bl.source_id, bl.target_id, bl.kind
+             SELECT bl.source_id, s.content AS source_content, bl.target_id, bl.kind
                FROM block_links bl
                JOIN blocks s ON s.id = bl.source_id
               WHERE s.page_id = ?1 AND s.deleted_at IS NULL AND +s.space_id = ?2
              UNION ALL
-             SELECT u.source_id, u.target_id,
+             SELECT u.source_id, s.content, u.target_id,
                     CASE WHEN instr(s.content, '((' || u.target_id || '))') > 0
                          THEN 'block_ref' ELSE 'page_link' END
                FROM block_links_unresolved u
@@ -133,11 +133,10 @@ pub async fn list_outgoing_links(
               WHERE s.page_id = ?1 AND s.deleted_at IS NULL AND +s.space_id = ?2
            ),
            resolved AS (
-             SELECT e.source_id, s.content AS source_content, e.target_id, e.kind,
+             SELECT e.source_id, e.source_content, e.target_id, e.kind,
                     CASE WHEN t.deleted_at IS NULL AND t.space_id = ?2
                          THEN COALESCE(t.page_id, t.id) END AS target_page_id
                FROM edges e
-               JOIN blocks s ON s.id = e.source_id
                LEFT JOIN blocks t ON t.id = e.target_id
               WHERE ?3 IS NULL OR e.kind = ?3
            ),
