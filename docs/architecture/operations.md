@@ -132,9 +132,7 @@ What they say:
 - **Memory is per engine and held for the process's life.** At 100K blocks one space is about 175 MB of heap, 190 MB at its peak.
 - **The attachment scan** (`find_missing_attachments`, every live attachment statted once per sync session) takes 249–264 ms [183–310] over 10,000 attachments whose files are present, on every session.
 
-**A write on a pulled vault, beside the same write on the vault that wrote it** (#6811). `pulled_vault_bench` builds #6811's vault by commands (a 1,100-block page and 1,900 blocks of filler, about 3K blocks), pulls its space snapshot into a second empty vault with `apply_remote`, then times a split (`create_block_inner` at the middle sibling slot) and a 300-line paste (`create_blocks_batch_inner`) on both, the two arms alternating sample by sample:
-
-The same `just measure-loro` run prints it (`pulled_vault_bench`, about 5 minutes).
+**A write on a pulled vault, beside the same write on the vault that wrote it** (#6811). `pulled_vault_bench` builds #6811's vault by commands (a 1,100-block page and 1,900 blocks of filler, about 3K blocks), pulls its space snapshot into a second empty vault with `apply_remote`, then times a split (`create_block_inner` at the middle sibling slot) and a 300-line paste (`create_blocks_batch_inner`) on both, the two arms alternating sample by sample. The same `just measure-loro` run prints it (about 5 minutes).
 
 Two runs, same container and build; each cell is the two runs' medians, then the lowest and highest sample of either run. The page grows by one block per split and 300 per paste, so a run's timings drift up on both arms alike; the pulled-over-written ratio of each pair taken in turn is the figure that cancels it.
 
