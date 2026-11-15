@@ -36,6 +36,11 @@
 #             wraps a query macro, and on any doubt; `PRE_PUSH_SQLX_CHECK=1`
 #             forces it.
 #
+#   Phase C2 — `scripts/e2e-related.sh --run`: the Playwright specs it selects
+#             for the range, on the mock, when the range touches frontend
+#             code. The whole lane, or more specs than it runs, is left to CI
+#             and says so.
+#
 #   Phase F — `agaric-mcp` release build + MCP UDS smoke + externalBin
 #             host-triple verify. **Only when MCP paths change**
 #             (`src-tauri/src/mcp/**/*.rs`, `src-tauri/src/commands/mcp.rs`,
@@ -49,12 +54,14 @@
 #
 #   Phase G — warn-only `cargo audit` + `npm audit signatures`.
 #
+# Skipped entirely: a push whose added commits are all merges of origin/main
+# (a catch-up or conflict-fix merge) has no change of its own to verify, and
+# CI runs the merge result. `PRE_PUSH_RANGE=origin/main...HEAD` verifies anyway.
+#
 # Explicitly NOT here (vs the prior CI-equivalent verifier):
 #
-#   * **Playwright e2e.** CI runs it when the diff can affect it — local
-#     skip trades a delayed safety signal for a much faster push (Playwright
-#     dominated the prior pre-push wall clock). If you've touched anything
-#     interaction-heavy, run `npx playwright test` manually before pushing.
+#   * **The whole Playwright lane.** CI runs it when the diff can affect it;
+#     Phase C2 runs only the few specs `e2e-related.sh --run` selects.
 #   * **Full `vitest run` / `cargo nextest run --workspace --profile ci`.** Scoped to
 #     the push range above; CI still runs the full suites.
 #   * **Desktop bundle build / cross-OS / SLSA attestations.** Same as
@@ -152,6 +159,29 @@ default_push_range() {
   else
     return 1
   fi
+}
+
+# ── Merge-only pushes ───────────────────────────────────────────────
+# Prints how many merges this push adds and succeeds when every commit it adds
+# is a merge and none brings a commit that is not already on origin/main: a
+# catch-up or conflict-fix merge of main, which has no change of its own to
+# verify (CI runs the merge result). The commits pushed are those past the
+# tracking upstream, or past origin/main for a branch never pushed. Any git
+# failure, or any commit of the branch's own, fails: that is "verify".
+# Defined up here so `--self-test` below can drive it directly.
+merge_only_push() {
+  local pushed merges own
+  if git rev-parse --verify --quiet '@{upstream}' >/dev/null 2>&1; then
+    pushed='@{upstream}..HEAD'
+  elif git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+    pushed='origin/main..HEAD'
+  else
+    return 1
+  fi
+  merges="$(git rev-list --merges --count "$pushed" 2>/dev/null)" || return 1
+  own="$(git rev-list --no-merges --count "$pushed" ^origin/main 2>/dev/null)" || return 1
+  [ "$own" = 0 ] && [ "$merges" -gt 0 ] 2>/dev/null || return 1
+  echo "$merges"
 }
 
 # ── MCP change classifier (#4419) ──────────────────────────────────
@@ -2255,6 +2285,50 @@ db.close()
     st_bad "push range: the branch's own diff once main moved into it" "$(echo "$st_out" | tr '\n' ' ')"
   fi
 
+  # 64. Merge-only pushes: only merges of origin/main skip the verify.
+  #     Prints the merge count or `verify`, in order: main merged in; a
+  #     commit of the branch's own on top of that merge; nothing to push;
+  #     rebased onto main; a merge of a branch that is not main.
+  st_merge_root="$(mktemp -d -t pre-push-merge-only.XXXXXX)"
+  st_out="$(
+    # shellcheck source=lib/git-scratch-guard.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/lib/git-scratch-guard.sh"
+    git_scratch_guard "$st_merge_root"
+    git_scratch_init "$st_merge_root/repo"
+    cd "$st_merge_root/repo" || exit 1
+    git config remote.origin.url .
+    git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+    git config branch.feat.remote origin
+    git config branch.feat.merge refs/heads/feat
+    tree="$(git write-tree)"
+    commit() { git commit-tree "$tree" -m "$@"; }
+    verdict() { merge_only_push 2>/dev/null || echo verify; }
+    m1="$(commit m1)"
+    f1="$(commit f1 -p "$m1")"
+    m2="$(commit m2 -p "$m1")"
+    x1="$(commit x1 -p "$m1")"
+    git update-ref refs/remotes/origin/main "$m2"
+    git update-ref refs/remotes/origin/feat "$f1"
+    git symbolic-ref HEAD refs/heads/feat
+    git update-ref refs/heads/feat "$(commit catch-up -p "$f1" -p "$m2")"
+    verdict
+    git update-ref refs/heads/feat "$(commit f2 -p "$(git rev-parse feat)")"
+    verdict
+    git update-ref refs/heads/feat "$f1"
+    verdict
+    git update-ref refs/heads/feat "$(commit f1-rebased -p "$m2")"
+    verdict
+    git update-ref refs/heads/feat "$(commit merge-x -p "$f1" -p "$x1")"
+    verdict
+  )"
+  rm -rf "$st_merge_root"
+  st_want=$'1\nverify\nverify\nverify\nverify'
+  if [ "$st_out" = "$st_want" ]; then
+    st_ok "merge-only push: only a merge of origin/main skips the verify"
+  else
+    st_bad "merge-only push: only a merge of origin/main skips the verify" "$(echo "$st_out" | tr '\n' ' ')"
+  fi
+
   if [ "$st_fail" != 0 ]; then
     echo "verify-ci-equivalent self-test FAILED" >&2
     exit 2
@@ -2292,6 +2366,14 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
+
+# A push of nothing but merges of origin/main has no change of its own: skip
+# everything, the preflights too. An explicit PRE_PUSH_RANGE always verifies.
+if [ -z "${PRE_PUSH_RANGE:-}" ] && merge_only_merges="$(merge_only_push)"; then
+  echo "→ Pre-push verifier skipped: this push adds only $merge_only_merges merge(s) of origin/main and no commit of its own; CI runs the merge result."
+  echo "  (verify anyway: PRE_PUSH_RANGE=origin/main...HEAD)"
+  exit 0
+fi
 
 # ── Preflight: node dependencies (#3656) ───────────────────────────
 # Before Phase A, not after five of its hooks have gone red for reasons
@@ -2619,6 +2701,27 @@ if ! bash scripts/test-related-ts.sh --range "$RANGE"; then
   exit 1
 fi
 
+# ── Phase C2: related Playwright specs on the mock (frontend range) ─
+# `e2e-related.sh --run` runs the few specs the range can affect; the whole lane,
+# or more than it will run, it leaves to CI and says so. Exit 2 is the selector
+# unable to read the range: undecided is the whole lane, which CI runs.
+
+if [ "$HAS_TS" = "1" ]; then
+  echo ""
+  echo "→ Phase C2: related Playwright specs (range $RANGE)"
+  bash scripts/e2e-related.sh --range "$RANGE" --run
+  e2e_rc=$?
+  if [ "$e2e_rc" -eq 2 ]; then
+    echo "  CI runs the whole lane (e2e-related.sh could not read the range)"
+  elif [ "$e2e_rc" -ne 0 ]; then
+    echo ""
+    echo "✗ Pre-push verification FAILED at Phase C2 (related Playwright specs)."
+    echo "  Iterate: bash scripts/e2e-related.sh --range $RANGE --run"
+    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+    exit 1
+  fi
+fi
+
 # ── Phase D: cargo nextest related (scoped to push range) ──────────
 
 if [ "$HAS_RS" = "1" ]; then
@@ -2794,5 +2897,5 @@ if [ "$NOT_CI_EQUIVALENT" = "1" ]; then
 fi
 [ "$HAS_MCP" = "0" ] && echo "  (MCP build skipped — no MCP paths in range; CI will run the full check)"
 [ "$SQLX_SKIPPED" = "1" ] && echo "  (sqlx cache check skipped — no query change in range; CI's lint job runs it; force with PRE_PUSH_SQLX_CHECK=1)"
-echo "  (Playwright skipped — CI runs it when the diff can affect it; run \`npx playwright test\` locally if needed)"
+[ "$HAS_TS" = "0" ] && echo "  (Playwright skipped — no frontend change in range; CI runs it when the diff can affect it)"
 echo "  (release bundle build: run scripts/verify-release-build.sh manually before tagging)"

@@ -228,3 +228,59 @@ void test('--worktree with --range before the first commit reads the working tre
   withBranch([], (run) => {
     assert.deepEqual(run('--worktree', '--range', 'origin/main...HEAD'), UNCOMMITTED)
   }))
+
+// `--run` runs the Playwright pick through `npx`; a stand-in `npx` records its arguments and port.
+function runWith(paths, { npxStatus = 0 } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'e2e-related-run-'))
+  try {
+    const log = join(root, 'npx.log')
+    writeFileSync(
+      join(root, 'npx'),
+      `#!/usr/bin/env bash\necho "$PW_PORT $*" >> "${log}"\nexit ${npxStatus}\n`,
+      { mode: 0o755 },
+    )
+    const res = spawnSync('bash', [SCRIPT, '--stdin', '--run'], {
+      input: paths.join('\n'),
+      cwd: ROOT,
+      env: { ...process.env, PATH: `${root}:${process.env.PATH}`, PW_PORT: '' },
+      encoding: 'utf8',
+    })
+    let calls = []
+    try {
+      calls = readFileSync(log, 'utf8').trim().split('\n')
+    } catch {
+      // never invoked
+    }
+    return { status: res.status, out: res.stdout, calls }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+const SOME_SPECS = readdirSync(join(ROOT, 'e2e'))
+  .filter((f) => f.endsWith('.spec.ts'))
+  .toSorted()
+  .map((f) => `e2e/${f}`)
+
+void test('--run runs a small Playwright selection on its own port and passes failure through', () => {
+  const ok = runWith([SOME_SPECS[0]])
+  assert.equal(ok.status, 0, ok.out)
+  assert.equal(ok.calls.length, 1)
+  assert.match(ok.calls[0], new RegExp(`^\\d+ playwright test --trace off ${SOME_SPECS[0]}$`))
+
+  const red = runWith([SOME_SPECS[0]], { npxStatus: 3 })
+  assert.equal(red.status, 3, red.out)
+})
+
+void test('--run leaves a whole lane, a selection over the cap, and nothing to CI without running', () => {
+  const whole = runWith(['e2e/helpers.ts'])
+  const over = runWith(SOME_SPECS.slice(0, 7))
+  const nothing = runWith(['docs/BUILD.md'])
+  for (const r of [whole, over, nothing]) {
+    assert.equal(r.status, 0, r.out)
+    assert.deepEqual(r.calls, [])
+  }
+  assert.match(whole.out, /CI runs the whole lane/)
+  assert.match(over.out, /CI runs the whole lane \(7 Playwright specs selected/)
+  assert.match(nothing.out, /Playwright: nothing to run/)
+})

@@ -1,0 +1,394 @@
+{
+  "repos/jfolcini/agaric/pulls/6820": {
+    "number": 6820,
+    "state": "open",
+    "draft": false,
+    "mergeable_state": "clean",
+    "head": {
+      "sha": "6646bcdbf8f745909be86879e87af7f222e5f8e3"
+    },
+    "base": {
+      "ref": "main",
+      "sha": "07294ed635a0a0235bae47127f9553f89bec53ff"
+    }
+  },
+  "repos/jfolcini/agaric/commits/6646bcdbf8f745909be86879e87af7f222e5f8e3/check-runs?per_page=100": {
+    "total_count": 55,
+    "check_runs": [
+      {
+        "name": "cache-prune",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "build",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "android-build",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / stop-after-playwright",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / validate-all",
+        "status": "completed",
+        "conclusion": "success",
+        "details_url": "https://github.com/jfolcini/agaric/actions/runs/43713379704/job/132813673812"
+      },
+      {
+        "name": "e2e-tauri-gate",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "validate / stop-after-vitest-coverage",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / stop-after-vitest",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / vitest-coverage",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "CodeQL",
+        "status": "completed",
+        "conclusion": "neutral"
+      },
+      {
+        "name": "validate / stop-after-lint",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "Real-backend specs (4)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Real-backend specs (2)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Real-backend specs (1)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Real-backend specs (3)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "claude-review findings",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "validate / stop-after-verify-lockfiles",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / cargo-coverage",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / stop-after-cargo-coverage",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / mcp-tests",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / stop-after-mcp-tests",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / stop-after-docs-lint",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / stop-after-vitest-e2e-tauri",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / stop-after-cargo-tests",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / cargo-tests",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / docs-lint",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / verify-lockfiles",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / stop-after-detect-changes",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / vitest-e2e-tauri",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / playwright (4)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "validate / playwright (3)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "validate / vitest (1)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "validate / vitest (2)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "validate / vitest (3)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "validate / playwright (1)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "validate / lint",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "validate / playwright (2)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "stop-after-merge-result",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "merge-result",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / stop-after-verify-version-agreement",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "Analyze javascript-typescript",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "post",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "stop-after-session-log-pr-collision",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "Build the real-backend binaries",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "stop-after-dco",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "claude-review",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "e2e-tauri-apt-cache",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "validate / detect-changes",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "validate / verify-version-agreement",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "compute",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "session-log-pr-collision",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "detect",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "diff-scoped-mutation",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "detect",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "dco",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "repos/jfolcini/agaric/pulls/6820/files?per_page=100": [
+    {
+      "filename": "e2e/enter-merge-latency.spec.ts",
+      "status": "modified",
+      "previous_filename": null
+    },
+    {
+      "filename": "e2e/enter-split-caret.spec.ts",
+      "status": "added",
+      "previous_filename": null
+    },
+    {
+      "filename": "src/components/block-tree/__tests__/use-block-action-orchestration.enter-split-typed.test.ts",
+      "status": "modified",
+      "previous_filename": null
+    },
+    {
+      "filename": "src/components/block-tree/use-block-action-orchestration.ts",
+      "status": "modified",
+      "previous_filename": null
+    }
+  ],
+  "repos/jfolcini/agaric/pulls/6820/reviews?per_page=100": [
+    {
+      "state": "APPROVED",
+      "commit_id": "6646bcdbf8f745909be86879e87af7f222e5f8e3",
+      "submitted_at": "2026-11-15T12:05:26Z",
+      "user": {
+        "login": "agaric-reviewer[bot]"
+      }
+    },
+    {
+      "state": "APPROVED",
+      "commit_id": "6646bcdbf8f745909be86879e87af7f222e5f8e3",
+      "submitted_at": "2026-11-15T12:21:54Z",
+      "user": {
+        "login": "agaric-reviewer[bot]"
+      }
+    }
+  ],
+  "repos/jfolcini/agaric/compare/main...6646bcdbf8f745909be86879e87af7f222e5f8e3?per_page=1": {
+    "merge_base_commit": {
+      "sha": "07294ed635a0a0235bae47127f9553f89bec53ff"
+    },
+    "ahead_by": 2,
+    "behind_by": 3
+  },
+  "repos/jfolcini/agaric/compare/07294ed635a0a0235bae47127f9553f89bec53ff...main?per_page=100": {
+    "files": [
+      {
+        "filename": "docs/session-log/session-4216-board-drag-test-edge-zone.md",
+        "status": "added",
+        "previous_filename": null
+      },
+      {
+        "filename": "src/components/AdvancedQuery/__tests__/QueryBoard.test.tsx",
+        "status": "modified",
+        "previous_filename": null
+      }
+    ]
+  },
+  "repos/jfolcini/agaric/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed&per_page=10": {
+    "total_count": 2500,
+    "workflow_runs": [
+      {
+        "id": 43715117315,
+        "status": "completed",
+        "conclusion": "success",
+        "head_sha": "2eff170284a9e81f17c6caca274a16cbe2127f9a",
+        "html_url": "https://github.com/jfolcini/agaric/actions/runs/43715117315",
+        "created_at": "2026-11-15T12:41:23Z"
+      },
+      {
+        "id": 43715108359,
+        "status": "completed",
+        "conclusion": "cancelled",
+        "head_sha": "0a300b00be2b6114b49fa0f082ee9ac2f9b4c80a",
+        "html_url": "https://github.com/jfolcini/agaric/actions/runs/43715108359",
+        "created_at": "2026-11-15T12:41:16Z"
+      },
+      {
+        "id": 43715099733,
+        "status": "completed",
+        "conclusion": "success",
+        "head_sha": "6f76add534bd0a7367190b2351bc44d6c9e939f8",
+        "html_url": "https://github.com/jfolcini/agaric/actions/runs/43715099733",
+        "created_at": "2026-11-15T12:41:09Z"
+      }
+    ]
+  },
+  "repos/jfolcini/agaric/actions/runs/43713379704": {
+    "created_at": "2026-11-15T12:20:58Z"
+  },
+  "repos/jfolcini/agaric/commits?sha=main&until=2026-11-15T12:20:58Z&per_page=1": [
+    {
+      "sha": "07294ed635a0a0235bae47127f9553f89bec53ff"
+    }
+  ]
+}

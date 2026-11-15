@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────
 # Picks the e2e specs a change can affect, in both lanes, and prints the
-# command that runs each lane's pick (`just e2e-related`). It runs nothing:
-# CI runs both full suites; this is for choosing what to run before a push.
+# command that runs each lane's pick (`just e2e-related`). CI runs both full
+# suites; this is for choosing what to run before a push. It runs nothing, unless
+# given `--run`: then it runs the Playwright pick on the mock (one free port, so a
+# server another worktree left on 5173 is never the one tested) when that is at
+# most MAX_RUN_SPECS specs. The whole lane, or more, prints "CI runs the whole
+# lane" and runs nothing, exit 0. The WebdriverIO lane needs the real backend
+# build and is never run here.
 #
 # Every top-level test or describe title in both lanes ends with its area tags,
 # `… @editor @pages`; Playwright reads them as native tags (`--grep @editor`).
@@ -25,8 +30,8 @@
 #                                              only: the mock lane has no backend
 #   anything else                              nothing
 #
-# Diff sources (`--range` with `--worktree` reads both; otherwise the last one
-# given wins):
+# Flags: `--run` as above, with any diff source. Diff sources (`--range` with
+# `--worktree` reads both; otherwise the last one given wins):
 #   --cached         (default) files in the git index
 #   --range REVSPEC  files differing in a commit range, e.g. `--range main...HEAD`
 #   --worktree       uncommitted work: staged, unstaged and untracked files
@@ -62,6 +67,8 @@ AREA_WORDS=(
 SOURCE="cached"
 RANGE=""
 WORKTREE=0
+RUN=0
+MAX_RUN_SPECS=6
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -83,6 +90,10 @@ while [ $# -gt 0 ]; do
     --worktree)
       SOURCE="git"
       WORKTREE=1
+      shift
+      ;;
+    --run)
+      RUN=1
       shift
       ;;
     --stdin)
@@ -219,6 +230,8 @@ report_lane() {
   done
   shift
   if [ ${#specs[@]} -gt 0 ]; then why="changed"; fi
+  LANE_VERDICT=whole
+  LANE_SPECS=()
   if [ -n "$full" ]; then
     echo "$lane: $full changed — the whole lane"
     echo "  $command"
@@ -231,10 +244,13 @@ report_lane() {
     if [ -n "$matched" ]; then readarray -t -O "${#specs[@]}" specs <<<"$matched"; fi
   fi
   if [ ${#specs[@]} -eq 0 ]; then
+    LANE_VERDICT=none
     echo "$lane: nothing to run"
     return
   fi
   readarray -t specs < <(printf '%s\n' "${specs[@]}" | sort -u)
+  LANE_VERDICT=specs
+  LANE_SPECS=("${specs[@]}")
   echo "$lane: ${#specs[@]} spec(s), $why"
   line="  $command${flag:+ --}"
   for spec in "${specs[@]}"; do line="$line${flag:+ $flag} $spec"; done
@@ -244,5 +260,24 @@ report_lane() {
 echo "e2e specs for the $LABEL changes:"
 report_lane Playwright "$PW_FULL" 'npx playwright test' 'e2e/*.spec.ts' '' \
   ${PW_SPECS[@]+"${PW_SPECS[@]}"} -- ${PW_AREAS[@]+"${PW_AREAS[@]}"}
+PW_VERDICT=$LANE_VERDICT
+PW_PICK=(${LANE_SPECS[@]+"${LANE_SPECS[@]}"})
 report_lane WebdriverIO "$WD_FULL" 'npm run test:e2e-tauri' 'e2e-tauri/*.e2e.ts' '--spec' \
   ${WD_SPECS[@]+"${WD_SPECS[@]}"} -- ${WD_AREAS[@]+"${WD_AREAS[@]}"}
+
+if [ "$RUN" = 1 ]; then
+  case "$PW_VERDICT" in
+    none) ;;
+    specs)
+      if [ ${#PW_PICK[@]} -gt "$MAX_RUN_SPECS" ]; then
+        echo "CI runs the whole lane (${#PW_PICK[@]} Playwright specs selected, more than the $MAX_RUN_SPECS --run runs)"
+      else
+        PW_PORT="${PW_PORT:-$(node -e 'const s=require("node:net").createServer();s.listen(0,()=>{console.log(s.address().port);s.close()})')}"
+        export PW_PORT
+        echo "running on port $PW_PORT: npx playwright test --trace off ${PW_PICK[*]}"
+        exec npx playwright test --trace off "${PW_PICK[@]}"
+      fi
+      ;;
+    *) echo "CI runs the whole lane (Playwright: the selection is the whole lane)" ;;
+  esac
+fi

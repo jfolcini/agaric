@@ -90,7 +90,7 @@ test-be *ARGS:
 test-be-related *ARGS:
     bash scripts/test-related-rust.sh --worktree "$@"
 
-# The e2e specs your uncommitted work can affect, by area tag: prints one command per lane (Playwright, WebdriverIO) and runs neither; `--range main...HEAD` adds a branch's commits.
+# The e2e specs your uncommitted work can affect, by area tag: prints one command per lane (Playwright, WebdriverIO); `--run` runs the Playwright pick on the mock, or says "CI runs the whole lane" and runs nothing when it is the whole lane or over six specs; `--range main...HEAD` adds a branch's commits.
 [group('test')]
 [positional-arguments]
 e2e-related *ARGS:
@@ -172,6 +172,11 @@ verify:
 [group('verify')]
 push *ARGS:
     bash scripts/push.sh {{ARGS}}
+
+# Can PR <pr> merge now? One line per check (required checks and review on the head sha, mergeable state, files moved on main, main's last completed CI run); exits non-zero on any failure. Uses `gh api` only.
+[group('verify')]
+merge-ready pr:
+    bash scripts/merge-ready.sh {{pr}}
 
 # --- Codegen ---------------------------------------------------------------
 
