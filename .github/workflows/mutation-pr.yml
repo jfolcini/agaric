@@ -65,6 +65,23 @@ on:
     # next person re-measures rather than re-derives.
     paths:
       - 'src/**'
+      # Test files and generated or mock sources are not code a mutant can be
+      # planted in: `scripts/select-mutation-modules.mjs` leaves them out of
+      # the unmutated count (its `TEST_RE` and `EXCLUDED_RE`), so a diff of
+      # only these posts nothing, and starting the job for it costs a runner
+      # slot. Keep these in step with those two. This is safe to do with
+      # `paths:` only because the lane gates nothing. The trade: a test-only
+      # edit to an enrolled module's tests no longer mutates that module.
+      # Order matters: a `!` pattern excludes what the patterns above it matched.
+      - '!src/__tests__/**'
+      - '!src/**/__tests__/**'
+      - '!**.test.ts'
+      - '!**.test.tsx'
+      - '!**.spec.ts'
+      - '!**.spec.tsx'
+      - '!src/test-setup.ts'
+      - '!src/lib/bindings.ts'
+      - '!src/lib/tauri-mock/**'
       - 'stryker.modules.mjs'
       - 'stryker.config.mjs'
       - 'stryker.vitest.config.mjs'

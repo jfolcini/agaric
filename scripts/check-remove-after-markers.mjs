@@ -22,7 +22,7 @@
 // `src-tauri/Cargo.lock`, `src-tauri/fuzz/Cargo.lock`,
 // `src-tauri/tauri.conf.json` — `scripts/bump-version.sh`'s own
 // `Files updated:` header is the authoritative list) that
-// `verify-version-agreement` (`.github/workflows/_validate.yml`) already
+// the version step of `detect-changes` (`.github/workflows/_validate.yml`) already
 // keeps in mutual lockstep on every PR/push. This guard still has to pick
 // ONE to read `CURRENT_VERSION` from, and picks `src-tauri/tauri.conf.json`:
 //   - it is the Tauri application manifest — the version the SHIPPED app
@@ -31,9 +31,9 @@
 //     is asking: has a RUNNING INSTANCE of the app reached this version.
 //     `package.json` / `Cargo.toml` are build-tooling manifests one hop
 //     further from that question;
-//   - `verify-version-agreement`'s own comparison already treats it as the
+//   - that step's own comparison already treats it as the
 //     pivot value (`CONF`) every other manifest is checked against
-//     (`.github/workflows/_validate.yml`'s `verify-version-agreement` job):
+//     (`.github/workflows/_validate.yml`'s `detect-changes` job):
 //     `for v in "$CARGO" "$CARGO_LOCK" "$FUZZ_LOCK" "$PKG" "$PKG_LOCK"; do
 //     if [ "$v" != "$CONF" ]`. Reusing that pivot keeps this guard's notion
 //     of "current" answering the same question the existing mutual-agreement

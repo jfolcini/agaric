@@ -574,7 +574,7 @@ mv "$TMP" package-lock.json
 # path dependency on `..`, so the call above does not reach it. Left stale it
 # is not cosmetic: `cargo metadata --locked --manifest-path fuzz/Cargo.toml`
 # then fails outright, which is what `_validate.yml`'s `verify-lockfiles`
-# (#4142) and `verify-version-agreement` now assert on every backend PR.
+# (#4142) and the version step of `detect-changes` now assert on every backend PR.
 # Every release from 0.7.1 to 0.9.8 left this file behind (by up to five
 # versions) because nothing in the automation touched it.
 #

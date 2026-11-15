@@ -3275,9 +3275,9 @@ jobs:
     needs: select-lanes
     if: needs.select-lanes.outputs.full_suite == 'true'
     runs-on: ubuntu-24.04
-    # Sharded four ways like `_validate.yml`'s playwright job (whose 35-minute
-    # budget this mirrors; most of it is the browser + apt install on a cold
-    # mirror). The composite action carries the `.deb` cache the old
+    # Sharded four ways, its own count (`_validate.yml`'s playwright job runs
+    # three); most of the 35-minute budget is the browser + apt install on a
+    # cold mirror. The composite action carries the `.deb` cache the old
     # single-job lane lacked (#4115).
     timeout-minutes: 35
     permissions:
