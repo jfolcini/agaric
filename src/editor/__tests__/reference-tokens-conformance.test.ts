@@ -92,6 +92,11 @@ function inlinePiece(node: InlineNode): Piece {
       if (link) return ['link', `${node.text} -> ${link.attrs.href}`]
       return ['text', node.text]
     }
+    case 'block_ref':
+    case 'footnote_ref':
+    case 'hardBreak':
+    case 'image':
+    case 'math_inline':
     default: {
       throw new Error(`no piece for inline ${node.type}`)
     }

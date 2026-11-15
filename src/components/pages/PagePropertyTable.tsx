@@ -376,7 +376,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                   blockId={pageId}
                   prop={prop}
                   def={def}
-                  onSave={(rawValue) => doSaveProperty(prop.key, def, rawValue)}
+                  onSave={(rawValue) => void doSaveProperty(prop.key, def, rawValue)}
                   forceSaveOnBlur={draftKeys.has(prop.key)}
                   onDelete={canDelete ? () => setDeleteTarget(prop.key) : undefined}
                   onDefUpdated={(updatedDef) => {
@@ -384,11 +384,13 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                       prev.map((d) => (d.key === updatedDef.key ? updatedDef : d)),
                     )
                   }}
-                  onRefSaved={async () => {
-                    forgetDraft(prop.key)
-                    const updated = unwrap(await commands.getProperties(pageId))
-                    setProperties(updated)
-                  }}
+                  onRefSaved={() =>
+                    void (async () => {
+                      forgetDraft(prop.key)
+                      const updated = unwrap(await commands.getProperties(pageId))
+                      setProperties(updated)
+                    })()
+                  }
                 />
               )
             })}

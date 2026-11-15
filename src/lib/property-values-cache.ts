@@ -72,12 +72,12 @@ export const propertyValuesQueryFn = async (key: string): Promise<string[]> => {
  * marks it stale.
  */
 export function fetchPropertyValuesOnce(key: string): Promise<string[]> {
-  // `fetchQuery` (not `ensureQueryData`): both give cache-hit reuse and
-  // in-flight de-duplication, but `fetchQuery` gates on `isStaleByTime`, which
+  // `query` (not `ensureQueryData`): both give cache-hit reuse and
+  // in-flight de-duplication, but `query` gates on `isStaleByTime`, which
   // returns true for an invalidated query — so a per-key `invalidateQueries` is
   // honoured by the next plain-TS fetch (a refetch), matching the old cache's
   // invalidate→refetch contract. `ensureQueryData` would return the stale array.
-  return queryClient.fetchQuery({
+  return queryClient.query({
     queryKey: propertyValuesQueryKey(key),
     queryFn: () => propertyValuesQueryFn(key),
   })

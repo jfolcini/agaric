@@ -300,7 +300,13 @@ function menuActions(
       const item = [...TURN_INTO_COMMANDS, ...CALLOUT_COMMANDS].find((c) => c.id === itemId)
       if (item !== undefined) actions.current.turnInto(id, item)
     },
-    ...(mergeable ? { onMerge: (id: string) => run(mergeBlock(id)) } : {}),
+    ...(mergeable
+      ? {
+          onMerge: (id: string) => {
+            run(mergeBlock(id))
+          },
+        }
+      : {}),
     ...(onOpenLinkInNewTab === undefined ? {} : { onOpenLinkInNewTab }),
   }
   return bag

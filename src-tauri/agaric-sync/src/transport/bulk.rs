@@ -41,7 +41,7 @@
 //! `total_size` is a number the peer said. The threat model is the user's own
 //! paired devices, so "attacker" means "corruption or version skew" — but a
 //! wrong number must not become a resource commitment, which is the same
-//! discipline [`session`](crate::transport::session) applies to an oversized length
+//! discipline [`session`] applies to an oversized length
 //! prefix.
 //! [`recv_bulk`] therefore rejects `total_size > max_size` **before** it reads or
 //! allocates anything, and the cap is the caller's, because only the caller knows

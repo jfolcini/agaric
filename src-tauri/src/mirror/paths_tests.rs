@@ -101,6 +101,15 @@ fn a_long_cjk_segment_is_cut_on_a_char_boundary() {
 }
 
 #[test]
+fn a_mixed_width_text_is_cut_to_the_last_char_that_fits() {
+    assert_eq!(cut_to("ab漢字", 4), "ab");
+    assert_eq!(cut_to("ab漢字", 5), "ab漢");
+    assert_eq!(cut_to("é🙂", 5), "é");
+    assert_eq!(cut_to("é🙂", 6), "é🙂");
+    assert_eq!(cut_to("", 3), "");
+}
+
+#[test]
 fn case_and_nfc_variants_collide_and_the_lowest_id_keeps_the_name() {
     let paths = paths_of(&["API", "api", "ＡＰＩ", "caf\u{e9}", "cafe\u{301}"]);
     assert_eq!(

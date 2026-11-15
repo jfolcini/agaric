@@ -259,8 +259,9 @@ fn rewrite_anchor_tokens(
             // Same guards as `rewrite_inbound_page_links`: skip the
             // `#[[Tag]]` / `![[embed]]` forms and any already-internal
             // `[[ULID]]` ref.
-            if current_content[..m.start()].ends_with('#')
-                || current_content[..m.start()].ends_with('!')
+            if current_content
+                .get(..m.start())
+                .is_some_and(|before| before.ends_with(['#', '!']))
             {
                 return whole.to_string();
             }

@@ -124,7 +124,7 @@ function adb(args, { allowFail = false } = {}) {
       )
     }
     if (allowFail) return ''
-    throw new Error(`adb ${full.join(' ')} failed: ${err.stderr || err.message}`)
+    throw new Error(`adb ${full.join(' ')} failed: ${err.stderr || err.message}`, { cause: err })
   }
 }
 

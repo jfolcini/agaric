@@ -1,6 +1,6 @@
 //! LAN peer discovery over mDNS, as an iroh address lookup.
 //!
-//! [`transport::endpoint::lan_only`](crate::transport::endpoint::lan_only) builds from
+//! [`transport::endpoint::lan_only`] builds from
 //! `presets::Minimal` and calls `clear_address_lookup()`, so a bound endpoint has no
 //! discovery at all. This module supplies the one lookup Agaric wants —
 //! [`MdnsAddressLookup`](iroh_mdns_address_lookup::MdnsAddressLookup) from

@@ -272,6 +272,23 @@ export function canonicalToGraphFilter(predicate: FilterPredicate): GraphFilter 
     case 'excludeJournal': {
       return { type: 'excludeJournal', value: true }
     }
+    case 'blockType':
+    case 'caseSensitive':
+    case 'contains':
+    case 'createdRange':
+    case 'hasNoInboundLinks':
+    case 'lastEdited':
+    case 'linkedFrom':
+    case 'linksTo':
+    case 'orphan':
+    case 'pathGlob':
+    case 'property':
+    case 'regex':
+    case 'sourcePage':
+    case 'space':
+    case 'stub':
+    case 'tagPrefix':
+    case 'wholeWord':
     default: {
       return null
     }

@@ -648,8 +648,9 @@ fn tool_desc_set_property() -> ToolDescription {
         description: "Set (upsert) a typed property on a block. Exactly one of value_text / \
                       value_num / value_date / value_ref / value_bool / value_list must be \
                       provided. A key whose definition holds several values (`multiple` in \
-                      list_property_defs) takes value_list and nothing else; any other key takes \
-                      no list. The task \
+                      list_property_defs) takes value_list and nothing else; a key with no definition \
+                      takes a list of strings or numbers, as it takes any value; a key of one \
+                      value takes no list. The task \
                       keys behave as in the app: `todo_state` and `priority` take value_text, \
                       `due_date` and `scheduled_date` take value_date, and `todo_state = DONE` \
                       stamps `completed_at` and creates a repeating task's next occurrence."

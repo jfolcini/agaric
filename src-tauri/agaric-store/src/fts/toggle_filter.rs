@@ -1778,7 +1778,9 @@ mod unit_tests {
                 for (start, end) in ranges {
                     prop_assert!(start < end);
                     prop_assert!(content.is_char_boundary(start) && content.is_char_boundary(end));
-                    let covered: String = content[start..end]
+                    let covered: String = content
+                        .get(start..end)
+                        .expect("char boundaries asserted above")
                         .chars()
                         .filter(|c| !matches!(c, '*' | '~' | '=' | '`' | '\\'))
                         .collect();

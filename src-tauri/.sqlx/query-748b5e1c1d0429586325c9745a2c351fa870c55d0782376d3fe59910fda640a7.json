@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT bp.value_list AS \"value_list: PropertyList\"\n               FROM block_properties bp JOIN blocks b ON b.id = bp.block_id\n               WHERE b.page_id = ?1 AND b.content = 'Listed' AND bp.key = 'cssclasses'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_list: PropertyList",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_list"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "748b5e1c1d0429586325c9745a2c351fa870c55d0782376d3fe59910fda640a7"
+}

@@ -3640,14 +3640,15 @@ async fn has_property_compares_each_list_item_6741() {
 
 /// #6741: grouped by a list key, a block sits in the group of each of its
 /// items, as a block with two tags sits in both tag groups; a number item
-/// labels as a number value does (`3`, not `3.0`). The global aggregate reads
-/// no group join, so it counts the block once.
+/// labels as a number value does (`3`, not `3.0`), and an item a list repeats
+/// puts its block in that group once. The global aggregate reads no group
+/// join, so it counts the block once.
 #[tokio::test]
 async fn group_by_list_property_puts_a_block_in_each_item_group_6741() {
     let (pool, _d) = test_pool().await;
     seed(&pool).await;
     set_property_list(&pool, B1, "authors", r#"["Ann","Bob"]"#).await;
-    set_property_list(&pool, B2, "authors", r#"["Ann"]"#).await;
+    set_property_list(&pool, B2, "authors", r#"["Ann","Ann"]"#).await;
     set_property(&pool, B3, "authors", "Bob").await;
     set_property_list(&pool, B4, "authors", "[3.0]").await;
 

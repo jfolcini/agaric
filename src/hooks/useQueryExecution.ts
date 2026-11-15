@@ -202,6 +202,7 @@ export async function dispatchQuery(
       // With a target the resolver compiles it to `LinksTo`; only a missing one lands here.
       throw new QueryValidationError(t('query.backlinksRequiresTarget'))
     }
+    case 'unknown':
     default: {
       throw new QueryValidationError(t('query.unknownType', { type: parsed.type }))
     }

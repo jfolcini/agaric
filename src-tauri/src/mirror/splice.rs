@@ -166,9 +166,9 @@ fn same_block(a_text: &Laid, a: &Segment, b_text: &Laid, b: &Segment) -> bool {
 /// The number an ordered list item's line starts with.
 fn list_number(line: &str) -> Option<&str> {
     let rest = line.trim_start();
-    let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-    let after = rest[digits..].chars().next();
-    (digits > 0 && matches!(after, Some('.' | ')'))).then(|| &rest[..digits])
+    let after = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+    rest.strip_suffix(after)
+        .filter(|digits| !digits.is_empty() && after.starts_with(['.', ')']))
 }
 
 #[cfg(test)]

@@ -96,7 +96,7 @@ describe('Sheet a11y', () => {
   // sheet rather than an inert first paint.
   it('bottom sheet with a SheetBody stays keyboard-operable and axe-clean after interaction', async () => {
     const user = userEvent.setup()
-    const onSubmit = vi.fn((e: React.FormEvent) => e.preventDefault())
+    const onSubmit = vi.fn((e: React.SubmitEvent) => e.preventDefault())
     const { baseElement } = render(
       <Sheet open>
         <SheetContent side="bottom">

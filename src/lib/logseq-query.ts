@@ -188,6 +188,15 @@ function negate(node: Node): Node {
             case 'prop': {
               return { ...token, kind: 'notProp' }
             }
+            case 'due':
+            case 'invalid':
+            case 'notPriority':
+            case 'notProp':
+            case 'notState':
+            case 'pathExclude':
+            case 'scheduled':
+            case 'tag':
+            case 'under':
             default: {
               throw new Unsupported()
             }

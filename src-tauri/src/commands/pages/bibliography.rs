@@ -9,7 +9,7 @@
 //! commits, materializer dispatch).
 //!
 //! Authors-as-ref-pages is a documented follow-up and deliberately NOT in
-//! scope here: `authors` is stored as one "; "-joined text property.
+//! scope here: `authors` is a list of text, one item per author (#6741).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -23,6 +23,7 @@ use crate::db::{CommandTx, WriteCtx};
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_engine::bibliography::{self, BibEntry, BibliographyFormat};
+use agaric_store::op::{PropertyList, PropertyListItem, PropertyValueFields};
 use agaric_store::space::SpaceId;
 
 use super::super::*;
@@ -54,13 +55,19 @@ const BIB_PROPERTY_DEFS: &[(&str, &str)] = &[
     ("citation-key", "text"),
     ("reference-type", "text"),
     ("title", "text"),
-    ("authors", "text"),
+    (AUTHORS_KEY, "text"),
     ("year", "number"),
     ("doi", "text"),
     ("url", "text"),
     ("journal", "text"),
     ("abstract", "text"),
 ];
+
+/// The one [`BIB_PROPERTY_DEFS`] key declared to hold a list (#6741): one
+/// item per author, whose names carry their own commas. Under a space's own
+/// definition of the key that holds one value, or none, the authors are one
+/// text joined by `; `, as before lists.
+const AUTHORS_KEY: &str = "authors";
 
 /// Outcome of one `import_bibliography` call. Field shapes are part of the
 /// agreed IPC contract — do not change.
@@ -194,46 +201,51 @@ async fn declare_bib_property_defs(
                 preferred_type = %value_type,
                 "import: leaving property key undeclared; blocks already hold values under it"
             );
-            // The consequence of declaring differs by preferred type, and
-            // the warning has to name the one the user would actually hit
-            // (#4395 review note 2). Every key but `year` is `text`,
-            // for which "would reject every later text edit" is simply
-            // false — see the type-specific paragraph in this function's
-            // docblock.
-            let consequence = if *value_type == "text" {
-                format!(
-                    "declaring it '{value_type}' would reject every later number, date or \
-                     boolean write to it — an undeclared key accepts all five value shapes — \
-                     and could not be removed again while any of those values exists"
-                )
-            } else {
-                format!(
-                    "declaring it '{value_type}' would reject every later text edit of those \
-                     values, and drop the ones that are not valid '{value_type}' on the next \
-                     inbound sync"
-                )
-            };
-            warnings.push(format!(
-                "property '{key}' left undeclared: blocks in this space already hold values \
-                 under this key, and {consequence}; this import's '{key}' values are stored \
-                 as text"
-            ));
+            warnings.push(left_undeclared_warning(key, value_type));
             continue;
         }
-        create_property_def_in_tx(
-            tx,
-            ctx.materializer.loro_state(),
-            ctx.device_id,
-            space_id,
-            key,
-            value_type,
-            None,
-        )
-        .await?;
-        decls.insert((*key).to_string(), ((*value_type).to_string(), None, false));
+        let multiple = *key == AUTHORS_KEY;
+        let def = agaric_store::op::PropertyDefState {
+            value_type: (*value_type).to_owned(),
+            options: None,
+            multiple,
+        };
+        let loro = ctx.materializer.loro_state();
+        create_property_def_in_tx(tx, loro, ctx.device_id, space_id, key, def).await?;
+        decls.insert(
+            (*key).to_string(),
+            ((*value_type).to_string(), None, multiple),
+        );
     }
 
     Ok(())
+}
+
+/// The warning that `key`, preferred as `value_type`, is left undeclared
+/// because blocks already hold values under it ([`declare_bib_property_defs`]).
+/// The consequence of declaring differs by preferred type, and the warning has
+/// to name the one the user would actually hit (#4395 review note 2). Every
+/// key but `year` is `text`, for which "would reject every later text edit" is
+/// simply false — see the type-specific paragraph in that function's docblock.
+fn left_undeclared_warning(key: &str, value_type: &str) -> String {
+    let consequence = if value_type == "text" {
+        format!(
+            "declaring it '{value_type}' would reject every later number, date or \
+             boolean write to it — an undeclared key accepts all five value shapes — \
+             and could not be removed again while any of those values exists"
+        )
+    } else {
+        format!(
+            "declaring it '{value_type}' would reject every later text edit of those \
+             values, and drop the ones that are not valid '{value_type}' on the next \
+             inbound sync"
+        )
+    };
+    format!(
+        "property '{key}' left undeclared: blocks in this space already hold values \
+         under this key, and {consequence}; this import's '{key}' values are stored \
+         as text"
+    )
 }
 
 /// The per-import constants every entry write needs: the device appending the
@@ -509,14 +521,69 @@ async fn create_reference_page_in_tx(
     Ok(Some(page_id))
 }
 
-/// The typed properties one entry contributes, as flat `(key, value)` strings.
+/// The item type of the space's definition of [`AUTHORS_KEY`], when it holds
+/// a list.
+fn authors_list_type(decls: &HashMap<String, (String, Option<String>, bool)>) -> Option<&str> {
+    let (value_type, _, multiple) = decls.get(AUTHORS_KEY)?;
+    multiple.then_some(value_type.as_str())
+}
+
+/// Write `authors`, one entry's authors, as the list of `value_type` items
+/// [`AUTHORS_KEY`] holds, returning how many properties landed: one, or none
+/// when the definition refuses the list, with a warning.
+async fn set_entry_authors_in_tx(
+    tx: &mut CommandTx,
+    ctx: &BibImportCtx<'_>,
+    entry: &BibEntry,
+    page_id: &str,
+    (value_type, authors): (&str, PropertyList),
+    warnings: &mut Vec<String>,
+) -> Result<u64, AppError> {
+    let declaration = Some(agaric_engine::block_ops::PropertyDeclaration {
+        value_type: value_type.to_owned(),
+        options: None,
+        multiple: true,
+    });
+    let value = PropertyValueFields {
+        value_list: Some(authors),
+        ..Default::default()
+    };
+    match agaric_engine::block_ops::set_property_value_in_tx(
+        tx,
+        ctx.materializer.loro_state(),
+        ctx.device_id,
+        page_id.to_string(),
+        AUTHORS_KEY,
+        value,
+        declaration,
+    )
+    .await
+    {
+        Ok((_block, prop_op)) => {
+            tx.enqueue_background(prop_op);
+            Ok(1)
+        }
+        Err(AppError::Validation { message, .. }) => {
+            warnings.push(format!(
+                "entry '{}': property '{AUTHORS_KEY}' was rejected ({message}); skipped",
+                entry.citation_key
+            ));
+            Ok(0)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// The typed properties one entry contributes, as flat `(key, value)` strings,
+/// the authors joined by `; `, which a key that holds a list takes as its
+/// items instead ([`set_entry_authors_in_tx`]).
 fn entry_property_values(entry: &BibEntry) -> Vec<(&'static str, String)> {
     let mut props: Vec<(&str, String)> = vec![
         ("citation-key", entry.citation_key.clone()),
         ("reference-type", entry.entry_type.clone()),
     ];
     if !entry.authors.is_empty() {
-        props.push(("authors", entry.authors.join("; ")));
+        props.push((AUTHORS_KEY, entry.authors.join("; ")));
     }
     if let Some(year) = entry.year {
         props.push(("year", year.to_string()));
@@ -552,8 +619,16 @@ async fn set_entry_properties_in_tx(
     warnings: &mut Vec<String>,
 ) -> Result<u64, AppError> {
     let mut properties_set: u64 = 0;
+    let list_type = authors_list_type(decls);
     let props = entry_property_values(entry);
     for (key, value) in props {
+        if let Some(value_type) = list_type.filter(|_| key == AUTHORS_KEY) {
+            let items = entry.authors.iter().cloned().map(PropertyListItem::Text);
+            let authors = (value_type, PropertyList(items.collect()));
+            properties_set +=
+                set_entry_authors_in_tx(tx, ctx, entry, page_id, authors, warnings).await?;
+            continue;
+        }
         let (value_type, options, multiple) = match decls.get(key) {
             Some((t, o, m)) => (Some(t.clone()), o.clone(), *m),
             None => (None, None, false),

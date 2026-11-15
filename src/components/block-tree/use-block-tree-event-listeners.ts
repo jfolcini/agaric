@@ -63,8 +63,8 @@ const CALLOUT_TYPES = new Set(['info', 'warning', 'tip', 'error', 'note'])
 export interface UseBlockTreeEventListenersOptions {
   focusedBlockId: string | null
   rootParentId: string | null
-  handleToggleTodo: (id: string) => void
-  handleTogglePriority: (id: string) => void
+  handleToggleTodo: (id: string) => void | Promise<void>
+  handleTogglePriority: (id: string) => void | Promise<void>
   handleShowProperties: (id: string) => void
   handleOpenQueryBuilder: () => void
   handleOpenEmojiPicker: () => void
@@ -113,7 +113,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
   useEffect(() => {
     // ── Priority cycling command (from FormattingToolbar) ─────────────
     const onCyclePriority: BlockCommandHandler = (blockId) => {
-      handleTogglePriority(blockId)
+      void handleTogglePriority(blockId)
     }
 
     // ── Direct priority set from keyboard shortcuts (Ctrl+Shift+1/2/3) ──
@@ -139,7 +139,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     // race the focus-keyed routing now prevents: only the owning tree's
     // `handleToggleTodo` runs, against the store that holds the block.
     const onToggleTodo: BlockCommandHandler = (blockId) => {
-      handleToggleTodo(blockId)
+      void handleToggleTodo(blockId)
     }
 
     // ── Toolbar open-block-properties command ─────────────────────────

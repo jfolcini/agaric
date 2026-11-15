@@ -111,7 +111,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={handleCopy}
+                onClick={() => void handleCopy()}
                 data-testid="boot-copy-diagnostics"
               >
                 {copied ? t('boot.copiedLabel') : t('boot.copyDiagnosticsLabel')}

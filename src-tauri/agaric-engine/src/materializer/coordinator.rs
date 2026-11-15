@@ -1185,7 +1185,7 @@ impl Materializer {
             // decrement past the `-1` "hook off" sentinel.
             let allowance = self
                 .force_shed_after
-                .fetch_update(O::AcqRel, O::Acquire, |n| (n > 0).then(|| n - 1))
+                .try_update(O::AcqRel, O::Acquire, |n| (n > 0).then(|| n - 1))
                 .unwrap_or_else(|unchanged| unchanged);
             if allowance == 0 {
                 Err(mpsc::error::TrySendError::Full(task))

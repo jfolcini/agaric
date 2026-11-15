@@ -282,13 +282,10 @@ fn split_list_marker(text: &str) -> Option<(&'static str, &str)> {
     if let Some(rest) = text.strip_prefix("- ") {
         return Some((LIST_STYLE_BULLET, rest));
     }
-    let digits = text.bytes().take_while(u8::is_ascii_digit).count();
-    if digits == 0 {
+    let after = text.trim_start_matches(|c: char| c.is_ascii_digit());
+    if after.len() == text.len() {
         return None;
     }
-    // `digits` counts ASCII bytes from the start, so it is always a char
-    // boundary.
-    let after = &text[digits..];
     if after == "." {
         return Some((LIST_STYLE_ORDERED, ""));
     }
@@ -586,20 +583,25 @@ fn split_task_fields(line: &str, done: bool) -> TaskFields {
         .find(line)
         .map_or(line.len(), |anchor| anchor.start());
     let (head, anchor) = line.split_at(anchor_at);
-    let starts: Vec<usize> = head
-        .match_indices(TASK_SIGNIFIERS)
-        .map(|(at, _)| at)
-        .filter(|&at| !head[..at].ends_with('\\'))
-        .collect();
-    let description = &head[..starts.first().copied().unwrap_or(head.len())];
+    // `head` cut before each signifier no `\` escapes, from the end.
+    let mut description = head;
+    let mut segments = Vec::new();
+    for (at, _) in head.rmatch_indices(TASK_SIGNIFIERS) {
+        let Some((before, segment)) = description.split_at_checked(at) else {
+            continue;
+        };
+        if !before.ends_with('\\') {
+            segments.push(segment);
+            description = before;
+        }
+    }
     let mut kept = vec![
         description
             .strip_suffix(char::is_whitespace)
             .unwrap_or(description),
     ];
     let mut fields = Vec::new();
-    for (i, &at) in starts.iter().enumerate() {
-        let segment = &head[at..starts.get(i + 1).copied().unwrap_or(head.len())];
+    for segment in segments.into_iter().rev() {
         let mut chars = segment.chars();
         let signifier = chars.next().expect("a segment starts with its signifier");
         match task_field(signifier, chars.as_str().trim(), done) {
@@ -881,16 +883,17 @@ pub fn fence_run(text: &str) -> Option<FenceRun> {
     if ch != b'`' && ch != b'~' {
         return None;
     }
-    let len = text.bytes().take_while(|&b| b == ch).count();
-    (len >= 3 && !(ch == b'`' && text[len..].contains('`'))).then_some(FenceRun { ch, len })
+    let info = text.trim_start_matches(char::from(ch));
+    let len = text.len() - info.len();
+    (len >= 3 && !(ch == b'`' && info.contains('`'))).then_some(FenceRun { ch, len })
 }
 
 /// Whether `line` closes `fence`: a run of its character at least as long,
 /// alone on the line after any indentation.
 pub fn closes_fence(line: &str, fence: FenceRun) -> bool {
     let trimmed = line.trim_start();
-    let run = trimmed.bytes().take_while(|&b| b == fence.ch).count();
-    run >= fence.len && trimmed[run..].trim().is_empty()
+    let rest = trimmed.trim_start_matches(char::from(fence.ch));
+    trimmed.len() - rest.len() >= fence.len && rest.trim().is_empty()
 }
 
 /// The fence `line` opens as the outline reading (`LogseqOrg`) reads it: at
@@ -910,9 +913,7 @@ pub fn document_fence_opener(line: &str) -> Option<FenceRun> {
 fn line_fence(line: &str, mode: ParseMode) -> Option<FenceRun> {
     let trimmed = line.trim_start();
     match bullet_marker(trimmed) {
-        Some((len, _)) => {
-            fence_run(bullet_body(&trimmed[..len], bullet_text(trimmed, len), mode).text)
-        }
+        Some((marker, rest, _)) => fence_run(bullet_body(marker, bullet_text(rest), mode).text),
         None => fence_run(trimmed),
     }
 }
@@ -1082,33 +1083,35 @@ static LINK_CLOSE_RE: LazyLock<Regex> =
 /// ends at the space and `image.png` is no title. Backslash escapes are not
 /// read.
 fn link_destination(rest: &str) -> Option<(&str, usize)> {
-    let (destination, mut at) = if let Some(caps) = ANGLE_DESTINATION_RE.captures(rest) {
+    let (destination, mut after) = if let Some(caps) = ANGLE_DESTINATION_RE.captures(rest) {
         let whole = caps.get(0).expect("group 0 present");
-        (caps.get(1).expect("group 1 present").as_str(), whole.end())
+        (
+            caps.get(1).expect("group 1 present").as_str(),
+            rest.get(whole.end()..)?,
+        )
     } else {
         let bare = rest.trim_start_matches(|c: char| c.is_whitespace() && c != '\n');
         let mut depth = 0_usize;
-        let len = bare
-            .find(|c: char| match c {
-                '(' => {
-                    depth += 1;
-                    false
-                }
-                ')' if depth == 0 => true,
-                ')' => {
-                    depth -= 1;
-                    false
-                }
-                _ => c.is_whitespace(),
-            })
-            .unwrap_or(bare.len());
-        (&bare[..len], rest.len() - bare.len() + len)
+        bare.find(|c: char| match c {
+            '(' => {
+                depth += 1;
+                false
+            }
+            ')' if depth == 0 => true,
+            ')' => {
+                depth -= 1;
+                false
+            }
+            _ => c.is_whitespace(),
+        })
+        .and_then(|len| bare.split_at_checked(len))
+        .unwrap_or((bare, ""))
     };
-    if let Some(title) = LINK_TITLE_RE.find(&rest[at..]) {
-        at += title.end();
+    if let Some(title) = LINK_TITLE_RE.find(after) {
+        after = after.get(title.end()..)?;
     }
-    let close = LINK_CLOSE_RE.find(&rest[at..])?;
-    Some((destination, at + close.end()))
+    let close = LINK_CLOSE_RE.find(after)?;
+    Some((destination, rest.len() - after.len() + close.end()))
 }
 
 /// A markdown image `![alt](destination)` or link `[text](destination)` of a
@@ -1133,7 +1136,7 @@ pub fn markdown_link_tokens(content: &str) -> impl Iterator<Item = MarkdownLinkT
         while let Some(cap) = MARKDOWN_LINK_OPEN_RE.captures_at(content, from) {
             let open = cap.get(0).expect("group 0 present");
             from = open.end();
-            let Some((destination, len)) = link_destination(&content[from..]) else {
+            let Some((destination, len)) = content.get(from..).and_then(link_destination) else {
                 continue;
             };
             from += len;
@@ -1271,10 +1274,13 @@ pub fn detect_attachment_refs(content: &str, code_spans: &[(usize, usize)]) -> V
         if !token.is_image && !links_a_file(&original_ref) {
             continue;
         }
+        let Some(full_match) = content.get(token.start..token.end) else {
+            continue;
+        };
         refs.push(AttachmentRef {
             alt: token.text.to_string(),
             original_ref,
-            full_match: content[token.start..token.end].to_string(),
+            full_match: full_match.to_string(),
         });
     }
 
@@ -1344,7 +1350,7 @@ pub fn link_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> boo
                 && !is_escaped(content, start)
                 && names_note(embed_target_name(caps))
             {
-                whole[1..].to_string()
+                whole.strip_prefix('!').unwrap_or(whole).to_string()
             } else {
                 whole.to_string()
             }
@@ -1375,7 +1381,7 @@ pub fn rewrite_logseq_image_sizes(content: &str) -> String {
     }
     let code_spans = inline_code_spans(content);
     let mut out = String::with_capacity(content.len());
-    let mut copied = 0;
+    let (mut copied, mut tail) = (0, content);
     for token in markdown_link_tokens(content) {
         if !token.is_image
             || code_spans
@@ -1385,7 +1391,10 @@ pub fn rewrite_logseq_image_sizes(content: &str) -> String {
         {
             continue;
         }
-        let Some(attrs) = LOGSEQ_IMAGE_ATTRS_RE.captures(&content[token.end..]) else {
+        let Some(after) = content.get(token.end..) else {
+            continue;
+        };
+        let Some(attrs) = LOGSEQ_IMAGE_ATTRS_RE.captures(after) else {
             continue;
         };
         let (mut width, mut height) = (None, None);
@@ -1401,17 +1410,24 @@ pub fn rewrite_logseq_image_sizes(content: &str) -> String {
             continue;
         };
         let alt_end = token.start + "![".len() + token.text.len();
-        out.push_str(&content[copied..alt_end]);
+        let (Some(before), Some(destination), Some(rest)) = (
+            content.get(copied..alt_end),
+            content.get(alt_end..token.end),
+            after.get(attrs[0].len()..),
+        ) else {
+            continue;
+        };
+        out.push_str(before);
         out.push('|');
         out.push_str(width);
         if let Some(height) = height {
             out.push('x');
             out.push_str(height);
         }
-        out.push_str(&content[alt_end..token.end]);
-        copied = token.end + attrs[0].len();
+        out.push_str(destination);
+        (copied, tail) = (token.end + attrs[0].len(), rest);
     }
-    out.push_str(&content[copied..]);
+    out.push_str(tail);
     out
 }
 
@@ -1486,7 +1502,7 @@ fn math_fences_as_blocks(content: &str) -> (Vec<&str>, bool) {
         match literal_block(&lines, i) {
             Some((end, Some(run)))
                 if fence_run(line) == Some(run)
-                    && line[run.len..].trim() == "math"
+                    && line.trim_start_matches(char::from(run.ch)).trim() == "math"
                     && lines[i + 1..end]
                         .iter()
                         .all(|l| fence_opener(l).is_none() && unquoted(l).trim() != "$$") =>
@@ -1557,8 +1573,9 @@ fn unquoted(line: &str) -> &str {
 fn display_math(content: &str) -> Option<String> {
     let rest = content.trim().strip_prefix("\\[")?;
     let end = math_close(rest, b']')?;
-    let latex = math_latex(&rest[..end], true)?;
-    (end + 2 == rest.len()).then(|| format!("$$\n{latex}\n$$"))
+    let (body, close) = rest.split_at_checked(end)?;
+    let latex = math_latex(body, true)?;
+    (close == "\\]").then(|| format!("$$\n{latex}\n$$"))
 }
 
 /// One line of [`normalize_foreign_inline`], outside any fence or `$$` block.
@@ -1566,69 +1583,64 @@ fn normalize_inline_line(line: &str) -> Cow<'_, str> {
     if !["^^", "\\(", "\\["].iter().any(|form| line.contains(form)) {
         return Cow::Borrowed(line);
     }
-    let bytes = line.as_bytes();
     let mut out = String::with_capacity(line.len());
     // Where in `out` each `^^` that may open a highlight was written.
     let mut openers: Vec<usize> = Vec::new();
-    let mut i = 0;
-    while i < line.len() {
-        match bytes[i] {
-            b'`' => {
+    let mut rest = line;
+    let mut chars = rest.chars();
+    while let Some(c) = chars.next() {
+        let after_c = chars.as_str();
+        rest = match c {
+            '`' => {
                 // A code span, closed by a run of as many backticks; with
                 // none, the rest of the line is text, as the editor reads it.
-                let end = code_span_end(bytes, i).unwrap_or(line.len());
-                out.push_str(&line[i..end]);
-                i = end;
+                let (span, after) = code_span_end(rest.as_bytes(), 0)
+                    .and_then(|end| rest.split_at_checked(end))
+                    .unwrap_or((rest, ""));
+                out.push_str(span);
+                after
             }
-            b'[' => {
+            '[' => match after_c
+                .strip_prefix('[')
+                .and_then(|inner| inner.split_once("]]"))
+            {
                 // A page link's or a tag's `[[…]]` holds a title or a label,
                 // which is text, not Markdown.
-                let end = line[i..]
-                    .strip_prefix("[[")
-                    .and_then(|rest| rest.find("]]"))
-                    .map_or(i + 1, |at| i + 2 + at + 2);
-                out.push_str(&line[i..end]);
-                i = end;
-            }
-            b'\\' => {
-                // Math, or an escape: the `\` and the character it makes text.
-                let (text, next) = inline_math(line, i).unwrap_or_else(|| {
-                    let next = line[i + 1..]
-                        .chars()
-                        .next()
-                        .map_or(i + 1, |c| i + 1 + c.len_utf8());
-                    (Cow::Borrowed(&line[i..next]), next)
-                });
-                out.push_str(&text);
-                i = next;
-            }
-            b'^' => {
-                let run = bytes[i..].iter().take_while(|&&b| b == b'^').count();
-                let flanked = |c: Option<char>| c.is_some_and(|c| !c.is_whitespace());
-                let can_open = flanked(line[i + run..].chars().next());
-                let can_close = flanked(line[..i].chars().next_back());
-                if run == 2
-                    && can_close
-                    && let Some(at) = openers.pop()
-                {
-                    out.replace_range(at..at + 2, "==");
-                    out.push_str("==");
-                } else {
-                    if run == 2 && can_open {
-                        openers.push(out.len());
-                    }
-                    out.push_str(&line[i..i + run]);
+                Some((title, after)) => {
+                    out.push_str("[[");
+                    out.push_str(title);
+                    out.push_str("]]");
+                    after
                 }
-                i += run;
-            }
+                None => {
+                    out.push('[');
+                    after_c
+                }
+            },
+            '\\' => match inline_math(rest) {
+                Some((math, after)) => {
+                    out.push_str(&math);
+                    after
+                }
+                None => {
+                    // An escape: the `\` and the character it makes text.
+                    out.push('\\');
+                    let mut escaped = after_c.chars();
+                    out.extend(escaped.next());
+                    escaped.as_str()
+                }
+            },
+            '^' => push_caret_run(rest, &mut out, &mut openers),
             _ => {
-                let next = line[i..]
+                let (text, after) = rest
                     .find(['\\', '^', '`', '['])
-                    .map_or(line.len(), |at| i + at);
-                out.push_str(&line[i..next]);
-                i = next;
+                    .and_then(|at| rest.split_at_checked(at))
+                    .unwrap_or((rest, ""));
+                out.push_str(text);
+                after
             }
-        }
+        };
+        chars = rest.chars();
     }
     if out == line {
         Cow::Borrowed(line)
@@ -1637,28 +1649,55 @@ fn normalize_inline_line(line: &str) -> Cow<'_, str> {
     }
 }
 
-/// The span `\(…\)` or `\[…\]` opening at byte `at` of `line`, as written
-/// back, and the byte after it: `$…$` when it may be math, else as it stands.
+/// The run of `^` opening `rest`, written to `out`, which holds the line before
+/// it as written back, and the text after the run. A `^^` after text closes
+/// the last one `openers` holds, both written `==`; one before text may open
+/// a highlight, so where it was written is pushed to `openers`.
+fn push_caret_run<'a>(rest: &'a str, out: &mut String, openers: &mut Vec<usize>) -> &'a str {
+    let after = rest.trim_start_matches('^');
+    let run = rest.len() - after.len();
+    let flanked = |c: Option<char>| c.is_some_and(|c| !c.is_whitespace());
+    let can_open = flanked(after.chars().next());
+    // `out` ends in whitespace exactly where the text before `rest` does: no
+    // rewrite turns whitespace into text or back.
+    let can_close = flanked(out.chars().next_back());
+    if run == 2
+        && can_close
+        && let Some(at) = openers.pop()
+    {
+        out.replace_range(at..at + 2, "==");
+        out.push_str("==");
+    } else {
+        if run == 2 && can_open {
+            openers.push(out.len());
+        }
+        out.extend(std::iter::repeat_n('^', run));
+    }
+    after
+}
+
+/// The span `\(…\)` or `\[…\]` opening `rest`, as written back, and the text
+/// after it: `$…$` when it may be math, else as it stands.
 /// A leading digit is grouped (`${2x}$`), as the editor writes it, since `$2`
 /// reads as currency. `None` when no `\)` or `\]` closes it.
-fn inline_math(line: &str, at: usize) -> Option<(Cow<'_, str>, usize)> {
-    let (close, command) = match line.as_bytes().get(at + 1)? {
-        b'(' => (b')', false),
-        b'[' => (b']', true),
-        _ => return None,
+fn inline_math(rest: &str) -> Option<(Cow<'_, str>, &str)> {
+    let (inner, close, command) = match rest.strip_prefix("\\(") {
+        Some(inner) => (inner, b')', false),
+        None => (rest.strip_prefix("\\[")?, b']', true),
     };
-    let inner = &line[at + 2..];
     let end = math_close(inner, close)?;
-    let next = at + 2 + end + 2;
-    let Some(latex) = math_latex(&inner[..end], command) else {
-        return Some((Cow::Borrowed(&line[at..next]), next));
+    let (body, _) = inner.split_at_checked(end)?;
+    // The span is its `\(` or `\[`, its body and its `\)` or `\]`.
+    let (span, after) = rest.split_at_checked(2 + end + 2)?;
+    let Some(latex) = math_latex(body, command) else {
+        return Some((Cow::Borrowed(span), after));
     };
     let math = if latex.starts_with(|c: char| c.is_ascii_digit()) {
         format!("${{{latex}}}$")
     } else {
         format!("${latex}$")
     };
-    Some((Cow::Owned(math), next))
+    Some((Cow::Owned(math), after))
 }
 
 /// Where in `text` the `\` of the `\` + `close` that closes a math span opened
@@ -1791,9 +1830,9 @@ pub fn rewrite_org_blocks(content: &str) -> String {
 fn org_block_kind(line: &str) -> Option<(&str, Option<String>)> {
     let trimmed = line.trim();
     let kind = trimmed
-        .get(..8)
-        .filter(|begin| begin.eq_ignore_ascii_case("#+BEGIN_"))
-        .map(|_| &trimmed[8..])?;
+        .split_at_checked("#+BEGIN_".len())
+        .filter(|(begin, _)| begin.eq_ignore_ascii_case("#+BEGIN_"))
+        .map(|(_, kind)| kind)?;
     let upper = kind.to_ascii_uppercase();
     if upper == "QUOTE" {
         return Some((kind, None));
@@ -2147,7 +2186,9 @@ fn parse_import(content: &str, mode: ParseMode, keep_refs: bool) -> ParseOutput 
 /// even one reading `- :: value`, whose `-` is a valid key.
 fn strip_leading_properties(body: &str, mut read: impl FnMut(usize, &str, &str)) -> &str {
     let mut rest = body;
-    for (index, line) in body.split_inclusive('\n').enumerate() {
+    let mut index = 0;
+    while !rest.is_empty() {
+        let (line, after) = rest.split_once('\n').unwrap_or((rest, ""));
         let trimmed = line.trim();
         if !trimmed.is_empty() {
             let Some((key, value)) = split_property_line(trimmed)
@@ -2158,7 +2199,8 @@ fn strip_leading_properties(body: &str, mut read: impl FnMut(usize, &str, &str))
             };
             read(index, key.trim(), value.trim());
         }
-        rest = &rest[line.len()..];
+        rest = after;
+        index += 1;
     }
     rest
 }
@@ -2360,8 +2402,11 @@ fn source_outline(
 /// names its line in the buffer (#5160 X3).
 fn read_page_properties(normalized: &str, output: &mut ParseOutput) -> String {
     let mut refusal = None;
-    let mut at = 0;
-    if let Some((yaml, len)) = front_matter_fence(normalized) {
+    // The front matter's lines, and the text after them.
+    let mut front = ("", normalized);
+    if let Some((yaml, split)) = front_matter_fence(normalized)
+        .and_then(|(yaml, len)| Some((yaml, normalized.split_at_checked(len)?)))
+    {
         let mut warnings = Vec::new();
         let scan = scan_frontmatter(
             yaml,
@@ -2373,13 +2418,14 @@ fn read_page_properties(normalized: &str, output: &mut ParseOutput) -> String {
         let lines = scan.key_lines.into_iter();
         output.frontmatter_lines = lines.map(|(key, line)| (key, line + 1)).collect();
         refusal = scan.unread.map(|(line, why)| (line + 1, why));
-        at = len;
+        front = split;
     } else if normalized.lines().next() == Some("---") {
         let why = "the front matter this `---` opens has no closing `---`";
         refusal = Some((1, why.to_string()));
     }
-    let first = normalized[..at].matches('\n').count() + 1;
-    let rest = strip_leading_properties(&normalized[at..], |index, key, value| {
+    let (head, body) = front;
+    let first = head.matches('\n').count() + 1;
+    let rest = strip_leading_properties(body, |index, key, value| {
         let line = first + index;
         let fm = &mut output.frontmatter;
         let value = read_source_property_value(value);
@@ -2396,8 +2442,9 @@ fn read_page_properties(normalized: &str, output: &mut ParseOutput) -> String {
         refusal.get_or_insert((line, why));
     });
     output.frontmatter_refusal = refusal;
-    let read = &normalized[..normalized.len() - rest.len()];
-    format!("{}{rest}", "\n".repeat(read.matches('\n').count()))
+    // `rest` ends `normalized`, so the lines read are the ones it lacks.
+    let read_lines = normalized.matches('\n').count() - rest.matches('\n').count();
+    format!("{}{rest}", "\n".repeat(read_lines))
 }
 
 /// Clipboard text as blocks (#5140): read as a Document buffer is (#6190), so
@@ -2420,17 +2467,16 @@ pub fn read_pasted_text(text: &str) -> ParseOutput {
     // The front matter fence and its line count are measured on the normalized text,
     // so this runs before `source_outline`, whose own pass then finds nothing to do.
     let normalized = without_bom(text).replace("\r\n", "\n").replace('\r', "\n");
-    let front = front_matter_fence(&normalized).map(|(_, len)| len);
+    let front =
+        front_matter_fence(&normalized).and_then(|(_, len)| normalized.split_at_checked(len));
+    let pasted_front = front.is_some();
     let body = match front {
-        Some(len) => {
-            let lines = normalized[..len].matches('\n').count();
-            format!("{}{}", "\n".repeat(lines), &normalized[len..])
-        }
+        Some((head, rest)) => format!("{}{rest}", "\n".repeat(head.matches('\n').count())),
         None => normalized,
     };
     let mut output = source_outline(&body, ParseMode::Document, true, None);
     output.blocks.iter_mut().for_each(restore_text_anchor);
-    if front.is_some() {
+    if pasted_front {
         let why = "the front matter the text opens with is a page's, so it was not pasted";
         output.warnings.push(why.to_string());
     }
@@ -2647,10 +2693,10 @@ impl LossyCounts {
     }
 }
 
-/// The list marker opening `trimmed`, as its byte length and whether it is
+/// The list marker opening `trimmed`, the text after it and whether it is
 /// ordered: `-`, `+`, `*`, or one to nine digits and `.` or `)`, followed by a
 /// space, a tab or the end of the line (CommonMark § 5.2).
-fn bullet_marker(trimmed: &str) -> Option<(usize, bool)> {
+fn bullet_marker(trimmed: &str) -> Option<(&str, &str, bool)> {
     let bytes = trimmed.as_bytes();
     let (len, ordered) = match bytes.first()? {
         b'-' | b'+' | b'*' => (1, false),
@@ -2663,7 +2709,8 @@ fn bullet_marker(trimmed: &str) -> Option<(usize, bool)> {
         }
         _ => return None,
     };
-    matches!(bytes.get(len), None | Some(b' ' | b'\t')).then_some((len, ordered))
+    let (marker, rest) = trimmed.split_at_checked(len)?;
+    matches!(rest.as_bytes().first(), None | Some(b' ' | b'\t')).then_some((marker, rest, ordered))
 }
 
 /// A bullet line: a list marker, then its text or nothing.
@@ -2671,10 +2718,9 @@ fn is_bullet_line(trimmed: &str) -> bool {
     bullet_marker(trimmed).is_some()
 }
 
-/// A bullet's text: `trimmed` past its marker of `len` bytes and the one space
-/// or tab after it. Further spacing is the text's (D18).
-fn bullet_text(trimmed: &str, len: usize) -> &str {
-    let rest = &trimmed[len..];
+/// A bullet's text: `rest`, what follows its marker, past the one space or
+/// tab after it. Further spacing is the text's (D18).
+fn bullet_text(rest: &str) -> &str {
     rest.strip_prefix([' ', '\t']).unwrap_or(rest)
 }
 
@@ -2842,9 +2888,9 @@ impl<'a> Scan<'a> {
             return;
         }
         let item = bullet_marker(trimmed)
-            .filter(|&(len, ordered)| self.starts_item(trimmed, indent, len, ordered));
-        if let Some((len, _)) = item {
-            self.bullet(trimmed, indent, len, number);
+            .filter(|&(marker, rest, ordered)| self.starts_item(indent, marker, rest, ordered));
+        if let Some((marker, rest, _)) = item {
+            self.bullet(indent, marker, rest, number);
         } else if let Some(level) = heading_level(trimmed) {
             self.heading(trimmed, indent, level);
         } else if let Some((key, value)) = self.property_line(trimmed, indent) {
@@ -2975,15 +3021,15 @@ impl<'a> Scan<'a> {
     /// column, which must read back as the block it was, and a Document buffer
     /// an empty `1.` there too). So wrapped prose keeps a line that opens with
     /// `42.`, inside a list item as well as outside one.
-    fn starts_item(&self, trimmed: &str, indent: usize, len: usize, ordered: bool) -> bool {
+    fn starts_item(&self, indent: usize, marker: &str, rest: &str, ordered: bool) -> bool {
         if !self.continues_paragraph(indent) {
             return true;
         }
-        let has_text = !trimmed[len..].trim().is_empty();
+        let has_text = !rest.trim().is_empty();
         let in_item = self.open.iter().any(|open| open.kind == Kind::Bullet);
         if ordered {
             (has_text || (self.mode == ParseMode::Document && in_item))
-                && trimmed[..len - 1].parse::<u32>() == Ok(1)
+                && marker.strip_suffix(['.', ')']).map(str::parse::<u32>) == Some(Ok(1))
         } else {
             has_text || in_item
         }
@@ -3019,8 +3065,8 @@ impl<'a> Scan<'a> {
     /// Org `[#A]` its `priority` ([`bullet_body`]), the Tasks fields a
     /// checkbox task's line ends with its dates, priority and rule
     /// ([`split_task_fields`]), and a fence its text opens is its own.
-    fn bullet(&mut self, trimmed: &str, indent: usize, len: usize, number: usize) {
-        let body = bullet_body(&trimmed[..len], bullet_text(trimmed, len), self.mode);
+    fn bullet(&mut self, indent: usize, marker: &str, rest: &str, number: usize) {
+        let body = bullet_body(marker, bullet_text(rest), self.mode);
         let mut properties: Vec<(String, String)> = [
             (LIST_STYLE_KEY, body.list_style),
             ("todo_state", body.todo_state),
@@ -3039,7 +3085,7 @@ impl<'a> Scan<'a> {
             body.text.to_string()
         };
         self.pop_to(indent, None);
-        let content = indent + len + 1;
+        let content = indent + marker.len() + 1;
         self.push_block(
             &text,
             properties,
@@ -3356,19 +3402,17 @@ fn append_source_line(
 /// `line` less its leading spaces and tabs that start before column `width`.
 fn dedent(line: &str, width: usize) -> &str {
     let mut columns = 0;
-    let mut cut = 0;
-    for byte in line.bytes() {
+    line.trim_start_matches(|c: char| {
         if columns >= width {
-            break;
+            return false;
         }
-        columns = match byte {
-            b' ' => columns + 1,
-            b'\t' => past_tab(columns),
-            _ => break,
+        columns = match c {
+            ' ' => columns + 1,
+            '\t' => past_tab(columns),
+            _ => return false,
         };
-        cut += 1;
-    }
-    &line[cut..]
+        true
+    })
 }
 
 /// The column a tab at `columns` reaches: the next multiple of four, as
@@ -3381,8 +3425,8 @@ fn past_tab(columns: usize) -> usize {
 /// The columns `line`'s indentation spans: its UTF-8 bytes, a tab reaching the
 /// next tab stop.
 fn indent_columns(line: &str) -> usize {
-    let indent = &line[..line.len() - line.trim_start().len()];
-    indent.chars().fold(0, |columns, c| {
+    let indent = line.chars().take_while(|c| c.is_whitespace());
+    indent.fold(0, |columns, c| {
         if c == '\t' {
             past_tab(columns)
         } else {
@@ -3442,13 +3486,14 @@ pub fn needs_document_line_escape(line: &str) -> bool {
 /// that the ` ^ID` a buffer writes after a block's last line does not change
 /// which lines are escaped.
 fn opens_one_line_block(body: &str) -> bool {
-    let rule = body
-        .bytes()
+    let after_rule = body
+        .chars()
         .next()
-        .filter(|first| matches!(first, b'-' | b'*' | b'_'))
-        .map_or(0, |first| body.bytes().take_while(|&b| b == first).count());
+        .filter(|first| matches!(first, '-' | '*' | '_'))
+        .map_or(body, |first| body.trim_start_matches(first));
+    let rule = body.len() - after_rule.len();
     heading_level(body).is_some()
-        || (rule >= 3 && body[rule..].chars().next().is_none_or(char::is_whitespace))
+        || (rule >= 3 && after_rule.chars().next().is_none_or(char::is_whitespace))
 }
 
 /// `true` when a Document buffer must backslash-escape `text`, the first line
@@ -3587,8 +3632,10 @@ fn strip_frontmatter<'a>(
 
     // Case 1: fence at the very top of the file.
     if normalized.starts_with("---") {
-        if let Some(consumed) = parse_fence(normalized, frontmatter, list_items, warnings) {
-            return Cow::Owned(normalized[consumed..].to_string());
+        if let Some(after_fence) = parse_fence(normalized, frontmatter, list_items, warnings)
+            .and_then(|consumed| normalized.get(consumed..))
+        {
+            return Cow::Owned(after_fence.to_string());
         }
         return Cow::Borrowed(normalized);
     }
@@ -3619,18 +3666,19 @@ fn strip_frontmatter<'a>(
             let mut scratch_list_items: std::collections::HashMap<String, Vec<String>> =
                 std::collections::HashMap::new();
             let mut scratch_warn: Vec<String> = Vec::new();
-            if let Some(consumed) = parse_fence(
+            if let Some(after_fence) = parse_fence(
                 trimmed_rest,
                 &mut scratch_fm,
                 &mut scratch_list_items,
                 &mut scratch_warn,
-            ) && !scratch_fm.is_empty()
+            )
+            .and_then(|consumed| trimmed_rest.get(consumed..))
+                && !scratch_fm.is_empty()
             {
                 frontmatter.extend(scratch_fm);
                 list_items.extend(scratch_list_items);
                 warnings.extend(scratch_warn);
                 // Reassemble: heading line + the body after the fence.
-                let after_fence = &trimmed_rest[consumed..];
                 let mut out = String::with_capacity(heading.len() + after_fence.len());
                 out.push_str(heading);
                 out.push_str(after_fence);
@@ -3647,12 +3695,11 @@ fn strip_frontmatter<'a>(
 /// it.
 pub fn front_matter_fence(slice: &str) -> Option<(&str, usize)> {
     let after_open = slice.strip_prefix("---")?;
-    let end = after_open.find("\n---")?;
+    let (yaml, after_close) = after_open.split_once("\n---")?;
     // Through the rest of the closing line, its line break included, so what
-    // follows starts clean. `+ 4` skips the `\n---`, `3` the opening `---`.
-    let tail = &after_open[end + 4..];
-    let line_end = tail.find('\n').map_or(tail.len(), |n| n + 1);
-    Some((&after_open[..end], 3 + end + 4 + line_end))
+    // follows starts clean.
+    let rest = after_close.split_once('\n').map_or("", |(_, rest)| rest);
+    Some((yaml, slice.len() - rest.len()))
 }
 
 /// Parse a YAML inline flow sequence (`[a, b, "c, d"]`) into its individual
@@ -3912,18 +3959,9 @@ impl<'a> FrontmatterScan<'a> {
         // block is open).
         if is_blank || raw_indent > b.key_indent {
             let content_indent = *b.content_indent.get_or_insert(raw_indent);
-            // Strip the uniform block indentation; never panic on a line
-            // that is shorter than the content indent (blank lines).
-            let stripped = if raw.len() >= content_indent {
-                raw[raw
-                    .char_indices()
-                    .nth(content_indent)
-                    .map_or(raw.len(), |(i, _)| i)..]
-                    .to_string()
-            } else {
-                String::new()
-            };
-            b.lines.push(stripped);
+            // Strip the uniform block indentation; a line shorter than the
+            // content indent (a blank line) strips to nothing.
+            b.lines.push(raw.chars().skip(content_indent).collect());
             return true;
         }
         let finished = self.block.take().expect("block present");
@@ -4199,7 +4237,7 @@ static LOGSEQ_BLOCK_REF_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 /// The lowercased uuid of a [`LOGSEQ_BLOCK_REF_RE`] match.
 fn logseq_ref_uuid(found: &regex::Match<'_>) -> String {
-    found.as_str()[2..found.len() - 2].to_ascii_lowercase()
+    found.as_str().trim_matches(['(', ')']).to_ascii_lowercase()
 }
 
 /// Strip each `((uuid))` block reference outside an inline code span but one
@@ -4216,7 +4254,8 @@ fn strip_block_refs_counted(
     }
     let code_spans = inline_code_spans(text);
     let mut stripped = String::with_capacity(text.len());
-    let mut cursor = 0;
+    // The text after the last reference removed, from byte `cursor`.
+    let (mut cursor, mut tail) = (0, text);
     let mut removed = 0;
     for found in LOGSEQ_BLOCK_REF_RE.find_iter(text) {
         if code_spans
@@ -4226,14 +4265,20 @@ fn strip_block_refs_counted(
         {
             continue;
         }
-        stripped.push_str(&text[cursor..found.start()]);
-        cursor = found.end();
+        let (Some(before), Some(after)) =
+            (text.get(cursor..found.start()), text.get(found.end()..))
+        else {
+            continue;
+        };
+        stripped.push_str(before);
         removed += 1;
-        if stripped.ends_with(' ') && text[cursor..].starts_with(' ') {
-            cursor += 1;
-        }
+        tail = after
+            .strip_prefix(' ')
+            .filter(|_| stripped.ends_with(' '))
+            .unwrap_or(after);
+        cursor = text.len() - tail.len();
     }
-    stripped.push_str(&text[cursor..]);
+    stripped.push_str(tail);
     (stripped.trim().to_string(), removed)
 }
 
@@ -4337,14 +4382,12 @@ fn strip_block_anchor_marker(content: &str) -> (String, Option<String>) {
 /// matched separator and marker: the renderer wrote exactly one separator, so
 /// whitespace the block itself ends with is content.
 fn strip_written_anchor_marker(content: &str) -> (String, Option<String>) {
-    match OBSIDIAN_BLOCK_ANCHOR_RE.captures(content) {
-        Some(caps) => {
-            let whole = caps.get(0).expect("group 0 always present");
-            (
-                content[..whole.start()].to_string(),
-                Some(caps[1].to_string()),
-            )
-        }
+    let marked = OBSIDIAN_BLOCK_ANCHOR_RE.captures(content).and_then(|caps| {
+        let whole = caps.get(0).expect("group 0 always present");
+        Some((content.get(..whole.start())?, caps[1].to_string()))
+    });
+    match marked {
+        Some((before, id)) => (before.to_string(), Some(id)),
         None => (content.to_string(), None),
     }
 }
@@ -5098,6 +5141,42 @@ bare line (({UUID_B})) too"
             (format!("`(({UUID_A}))` ((not a uuid)) x"), 0),
             "a ref in an inline code span and a non-uuid body are text"
         );
+        assert_eq!(
+            strip_block_refs_counted(&format!("日本 (({UUID_A})) é (({UUID_B}))😀"), &none),
+            ("日本 é 😀".to_string(), 2),
+            "multi-byte text around a ref is cut on its char boundaries"
+        );
+    }
+
+    /// Multi-byte text before, between and in the fields of a Tasks line is
+    /// cut on char boundaries, and an escaped signifier stays in its field.
+    #[test]
+    fn task_fields_cut_multi_byte_text_on_char_boundaries() {
+        let read = split_task_fields("日本 é ⏫ 📅 2024-01-02 ✅ 2024-01-03 🛫 ü \\📅 ö", false);
+        assert_eq!(read.text, "日本 é ✅ 2024-01-03 🛫 ü 📅 ö");
+        let priority = agaric_store::op::PRIORITY_LEVELS[0].to_string();
+        assert_eq!(
+            read.fields,
+            [
+                ("priority".to_string(), priority),
+                ("due_date".to_string(), "2024-01-02".to_string())
+            ]
+        );
+        assert_eq!(read.unread, 2);
+    }
+
+    /// Front matter, page properties and a block scalar holding multi-byte
+    /// text are cut on char boundaries.
+    #[test]
+    fn front_matter_with_multi_byte_text_is_cut_on_char_boundaries() {
+        let out = read_pasted_text("---\ntitle: 日本\n---\n- é");
+        let contents: Vec<_> = out.blocks.iter().map(|b| b.content.as_str()).collect();
+        assert_eq!(contents, ["é"]);
+        assert_eq!(
+            front_matter_fence("---\nk: 日本\n---é\nrest"),
+            Some(("\nk: 日本", 20))
+        );
+        assert_eq!(front_matter_fence("---\nk: é\n---😀"), Some(("\nk: é", 17)));
     }
 
     #[test]
@@ -8990,9 +9069,10 @@ mod tests_task_syntax_5160 {
 #[cfg(test)]
 mod tests_line_probes_5160 {
     use super::{
-        FenceRun, closes_fence, continuation_line_is_ambiguous, document_fence_opener,
-        fence_opener, fence_run, needs_anchor_line_escape, parse_document_outline,
-        parse_logseq_markdown, strip_title_heading, unescape_code_line,
+        FenceRun, LIST_STYLE_ORDERED, bullet_marker, closes_fence, continuation_line_is_ambiguous,
+        document_fence_opener, fence_opener, fence_run, needs_anchor_line_escape,
+        parse_document_outline, parse_logseq_markdown, split_list_marker, strip_title_heading,
+        unescape_code_line,
     };
 
     /// The renderer escapes exactly the continuation lines the grammar would
@@ -9103,6 +9183,14 @@ mod tests_line_probes_5160 {
         // (D6); a keyword is looked past on import alone (D7).
         assert!(fence_opener("- [ ] ```").is_some());
         assert!(document_fence_opener("- [ ] ```").is_some());
+        // Multi-byte text after a run or a marker is cut on its char boundary.
+        assert_eq!(fence_run("```日本"), Some(FenceRun { ch: b'`', len: 3 }));
+        assert!(!closes_fence("```é", three));
+        assert!(fence_opener("12. ```é").is_some());
+        assert_eq!(bullet_marker("12. 日本"), Some(("12.", " 日本", true)));
+        assert_eq!(bullet_marker("-é"), None);
+        assert_eq!(split_list_marker("3. é"), Some((LIST_STYLE_ORDERED, "é")));
+        assert_eq!(split_list_marker("3é"), None);
         assert!(fence_opener("- TODO ```").is_some());
         assert!(document_fence_opener("- TODO ```").is_none());
     }
@@ -9154,6 +9242,10 @@ mod tests_logseq_image_sizes {
             (
                 "![a](x.png){:width 1} ![b](y.png){:width 2}",
                 "![a|1](x.png) ![b|2](y.png)",
+            ),
+            (
+                "é ![日本](ü.png){:width 3} 😀 ![ö](x.png){:width 4}ß",
+                "é ![日本|3](ü.png) 😀 ![ö|4](x.png)ß",
             ),
         ] {
             assert_eq!(rewrite_logseq_image_sizes(logseq), agaric, "{logseq:?}");
@@ -9397,6 +9489,14 @@ mod tests_foreign_inline_6033 {
             ),
             ("> [!TIP] ^^a^^ \\(x\\)", "> [!TIP] ==a== $x$"),
             ("> ```sh\n> x\n> ```\n^^a^^", "> ```sh\n> x\n> ```\n==a=="),
+            // Multi-byte text is cut on its char boundaries.
+            ("日本 ^^é^^ 😀", "日本 ==é== 😀"),
+            (r"é \(α^2\) ü", "é $α^2$ ü"),
+            ("`日本` ^^x^^ [[é]]", "`日本` ==x== [[é]]"),
+            (r"\é ^^x^^", r"\é ==x=="),
+            ("^^a [[日本]] b^^", "==a [[日本]] b=="),
+            (r"\[\frac{é}{日}\]", "$$\n\\frac{é}{日}\n$$"),
+            ("```math\n日本\n```", "$$\n日本\n$$"),
         ] {
             assert_eq!(normalized(foreign), agaric, "{foreign:?}");
         }

@@ -88,9 +88,8 @@ const CITATION_RE = new RegExp(`ARCHITECTURE\\.md\\s*${SECTION_MARK}`)
 
 // Enumeration, the `git ls-files` maxBuffer ceiling and the
 // "not a git repository" fail-open all moved to
-// `scripts/lib/guard-file-source.mjs` in #3962, so this guard and
-// `scripts/check-dead-symbol-citations.mjs` cannot drift apart on any of
-// them — they used to hold hand-kept copies annotated "kept in step with"
+// `scripts/lib/guard-file-source.mjs` in #3962, so the guards built on it
+// cannot drift apart on any of them — they used to hold hand-kept copies annotated "kept in step with"
 // each other, which is the arrangement that lets them stop being in step.
 
 function scanTargets(tracked) {

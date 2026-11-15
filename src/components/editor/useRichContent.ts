@@ -41,7 +41,7 @@ export interface UseRichContentCallbacks {
   /** Check whether a referenced tag is active or deleted. */
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Called with the content without a broken-link chip the user clicked. */
-  onRemoveBrokenLink?: ((contentWithoutLink: string) => void) | undefined
+  onRemoveBrokenLink?: ((contentWithoutLink: string) => void | Promise<void>) | undefined
 }
 
 export function useRichContent(
@@ -107,7 +107,7 @@ export function useRichContent(
             resolveBlockStatus: (id) => resolveBlockStatusRef.current?.(id) ?? 'active',
             resolveTagStatus: (id) => resolveTagStatusRef.current?.(id) ?? 'active',
             onRemoveBrokenLink: canRemoveBrokenLink
-              ? (next: string) => onRemoveBrokenLinkRef.current?.(next)
+              ? (next: string) => void onRemoveBrokenLinkRef.current?.(next)
               : undefined,
             footnotes,
           })

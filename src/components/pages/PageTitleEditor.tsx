@@ -11,7 +11,7 @@ export interface PageTitleEditorProps {
   title: string
   editableTitle: string
   titleRef: React.RefObject<HTMLDivElement | null>
-  onInput: (e: React.FormEvent<HTMLDivElement>) => void
+  onInput: (e: React.InputEvent<HTMLDivElement>) => void
   onBlur: () => void
   onKeyDown: (e: React.KeyboardEvent) => void
   /** Fired on keyup so the parent can track the caret offset (#286). */

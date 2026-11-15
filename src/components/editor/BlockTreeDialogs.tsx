@@ -88,7 +88,7 @@ export function BlockTreeDialogs({
           <QueryBuilderModal
             open={queryBuilderOpen}
             onOpenChange={setQueryBuilderOpen}
-            onSave={handleQuerySave}
+            onSave={(expression) => void handleQuerySave(expression)}
           />
         </Suspense>
       )}

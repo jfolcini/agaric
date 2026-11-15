@@ -391,7 +391,7 @@ function parseSource(code, filename) {
       },
     })
   } catch (err) {
-    throw new Error(`cannot parse ${filename}: ${err.message}`)
+    throw new Error(`cannot parse ${filename}: ${err.message}`, { cause: err })
   }
 }
 

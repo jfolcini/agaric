@@ -692,7 +692,7 @@ export function TrashView(): React.ReactElement {
         onClearFilter={clearFilter}
         onRowClick={handleRowClickWithFocus}
         onToggleSelection={toggleSelection}
-        onRestore={handleRestore}
+        onRestore={(block) => void handleRestore(block)}
         onRequestPurge={setConfirmPurgeId}
         getPageLabel={getPageLabel}
       />
@@ -702,7 +702,7 @@ export function TrashView(): React.ReactElement {
         onOpenChange={(open) => {
           if (!open) setConfirmPurgeId(null)
         }}
-        onConfirm={handlePurge}
+        onConfirm={(blockId) => void handlePurge(blockId)}
       />
 
       <TrashBatchPurgeDialog

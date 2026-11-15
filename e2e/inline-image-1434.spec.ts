@@ -55,7 +55,7 @@ test.describe('inline image attachment-ref (#1434) @attachments @editor', () => 
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
-    await editor.type(`pic ![a cat](attachment:${attachmentId}) done`)
+    await editor.pressSequentially(`pic ![a cat](attachment:${attachmentId}) done`)
 
     await saveBlock(page)
 

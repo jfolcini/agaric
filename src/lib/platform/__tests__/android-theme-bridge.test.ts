@@ -156,9 +156,11 @@ describe('resolveViaCanvas reads PIXELS, not the serialised string (#4464 review
    * real engine, where only the painted pixel answers the question.
    */
   const installCanvas = (paint: (input: string) => [number, number, number, number] | null) => {
-    const real = document.createElement.bind(document)
+    const real = (
+      document as { createElement(tag: string, options?: ElementCreationOptions): HTMLElement }
+    ).createElement.bind(document)
     return vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-      if (tag !== 'canvas') return real(tag as 'div')
+      if (tag !== 'canvas') return real(tag)
       let px: [number, number, number, number] = [0, 0, 0, 0]
       // Models the real default: opaque black. This is what makes the
       // transparent sentinel in the implementation load-bearing.

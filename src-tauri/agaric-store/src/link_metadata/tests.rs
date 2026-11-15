@@ -721,6 +721,16 @@ fn extract_domain_strips_userinfo() {
 }
 
 #[test]
+fn extract_origin_and_domain_split_non_ascii_userinfo_host_and_port() {
+    let url = "https://usér:pä@bücher.de:8080/路径";
+    assert_eq!(
+        extract_origin(url),
+        Some("https://bücher.de:8080".to_string())
+    );
+    assert_eq!(extract_domain(url), Some("bücher.de".to_string()));
+}
+
+#[test]
 fn extract_origin_handles_no_userinfo() {
     assert_eq!(
         extract_origin("https://host.com/page"),

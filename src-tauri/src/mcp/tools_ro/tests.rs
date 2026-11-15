@@ -3604,7 +3604,10 @@ async fn get_page_markdown_happy_path_5375() {
     );
     assert_eq!(
         crate::mcp::summarise::summarise("get_page_markdown", &args, &result),
-        format!("get_page_markdown — {} (5 lines)", &page.id.as_str()[..8])
+        format!(
+            "get_page_markdown — {} (5 lines)",
+            page.id.as_str().get(..8).unwrap()
+        )
     );
 }
 

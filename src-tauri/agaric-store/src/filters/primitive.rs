@@ -1165,10 +1165,13 @@ fn pages_date_predicate(predicate: &DatePredicate, column: &str) -> WhereClause 
 /// it). `None` when there is no head to bound: the pattern opens with `*`,
 /// `?` or `[`, or the head's last char has no successor.
 fn glob_literal_prefix_range(pattern: &str) -> Option<(String, String)> {
-    let lo = &pattern[..pattern.find(['*', '?', '[']).unwrap_or(pattern.len())];
-    let (last_at, last) = lo.char_indices().next_back()?;
+    let lo = pattern
+        .split_once(['*', '?', '['])
+        .map_or(pattern, |(head, _)| head);
+    let mut head_chars = lo.chars();
+    let last = head_chars.next_back()?;
     let bumped = char::from_u32(u32::from(last) + 1)?;
-    Some((lo.to_owned(), format!("{}{bumped}", &lo[..last_at])))
+    Some((lo.to_owned(), format!("{}{bumped}", head_chars.as_str())))
 }
 
 // ── Allowed-keys constants ───────────────────────────────────────────────

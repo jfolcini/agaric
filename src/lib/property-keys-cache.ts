@@ -40,7 +40,7 @@ export const PROPERTY_KEYS_GLOBAL_KEY = '__global__'
 /** Query-key root shared by every space-scoped property-keys entry. */
 const PROPERTY_KEYS_QUERY_ROOT = 'propKeys' as const
 
-// One entry per space. The slash menu reads it through `fetchQuery`, which
+// One entry per space. The slash menu reads it through `query`, which
 // leaves no observer to hold it, so it is kept for the session instead of
 // refetched once the client's `gcTime` passes.
 queryClient.setQueryDefaults([PROPERTY_KEYS_QUERY_ROOT], { gcTime: Number.POSITIVE_INFINITY })
@@ -82,13 +82,13 @@ export const propertyKeysQueryFn = async (): Promise<string[]> => {
 export function fetchPropertyKeysOnce(
   spaceKey: string = PROPERTY_KEYS_GLOBAL_KEY,
 ): Promise<string[]> {
-  // `fetchQuery` (not `ensureQueryData`): both give cache-hit reuse and
-  // in-flight de-duplication, but `fetchQuery` gates on `isStaleByTime`, which
+  // `query` (not `ensureQueryData`): both give cache-hit reuse and
+  // in-flight de-duplication, but `query` gates on `isStaleByTime`, which
   // returns true for an invalidated query — so an event-driven
   // `invalidateQueries` is honoured by the very next plain-TS fetch (a refetch),
   // matching the old cache's invalidate→refetch contract. `ensureQueryData`
   // would return the stale cached array instead.
-  return queryClient.fetchQuery({
+  return queryClient.query({
     queryKey: propertyKeysQueryKey(spaceKey),
     queryFn: propertyKeysQueryFn,
   })

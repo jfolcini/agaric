@@ -821,7 +821,7 @@ export function SearchPanel(): React.ReactElement {
         <section data-testid="alias-match" aria-label={t('search.aliasMatchRegion')}>
           <ResultCard
             block={aliasMatch}
-            onClick={() => handleResultClick(aliasMatch)}
+            onClick={() => void handleResultClick(aliasMatch)}
             disabled={loadingResultId === aliasMatch.id}
             showSpinner={loadingResultId === aliasMatch.id}
             contentClassName="line-clamp-2"
@@ -843,7 +843,7 @@ export function SearchPanel(): React.ReactElement {
         focusedIndex={focusedIndex}
         expandedGroups={expandedGroups}
         onToggleGroup={handleToggleGroup}
-        onResultClick={handleResultClick}
+        onResultClick={(block) => void handleResultClick(block)}
         // Phase 1 — passing a no-op tells `CollapsibleGroupList` to
         // render the page title via `<PageLink>` (its own click navigates
         // through `useTabsStore.navigateToPage`). The callback signature is

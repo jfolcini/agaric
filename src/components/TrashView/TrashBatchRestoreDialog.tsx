@@ -13,7 +13,7 @@ interface TrashBatchRestoreDialogProps {
   open: boolean
   selectedCount: number
   onOpenChange: (open: boolean) => void
-  onConfirm: () => void
+  onConfirm: () => void | Promise<void>
 }
 
 export function TrashBatchRestoreDialog({

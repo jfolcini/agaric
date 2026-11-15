@@ -44,6 +44,7 @@ function textRuns(node: DocJson, runs: string[] = []): string[] {
 function caretAt(x: number, y: number): { node: Node; offset: number } | null {
   const position = document.caretPositionFromPoint?.(x, y)
   if (position) return { node: position.offsetNode, offset: position.offset }
+  // oxlint-disable-next-line typescript/no-deprecated -- the fallback for WebKit builds that lack caretPositionFromPoint
   const range = document.caretRangeFromPoint?.(x, y)
   return range ? { node: range.startContainer, offset: range.startOffset } : null
 }

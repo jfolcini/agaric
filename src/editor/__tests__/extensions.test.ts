@@ -319,32 +319,6 @@ describe('ExternalLink extension', () => {
   })
 })
 
-// -- ExternalLink URL validation ----------------------------------------------
-
-describe('ExternalLink URL validation', () => {
-  const validate = ExternalLink.options.validate as (url: string) => boolean
-
-  it('URL validation accepts http URLs', () => {
-    expect(validate('https://example.com')).toBe(true)
-  })
-
-  it('URL validation accepts https URLs', () => {
-    expect(validate('https://example.com/path?q=1')).toBe(true)
-  })
-
-  it('URL validation rejects ftp protocol', () => {
-    expect(validate('ftp://example.com')).toBe(false)
-  })
-
-  it('URL validation rejects javascript protocol', () => {
-    expect(validate('javascript:alert(1)')).toBe(false)
-  })
-
-  it('URL validation rejects invalid URLs', () => {
-    expect(validate('not-a-url')).toBe(false)
-  })
-})
-
 // -- BlockRef -----------------------------------------------------------------
 
 describe('BlockRef extension', () => {

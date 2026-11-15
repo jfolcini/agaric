@@ -203,23 +203,20 @@ fn strip_ipv6_scope_id(addr: &str) -> Option<String> {
 
     if let Some(rest) = addr.strip_prefix('[') {
         // Bracketed form: split on closing bracket.
-        let close = rest.find(']')?;
-        let inside = &rest[..close];
-        let suffix = &rest[close..]; // starts with "]"
+        let (inside, after_bracket) = rest.split_once(']')?;
         let ip = match inside.split_once('%') {
             Some((ip, _scope)) => ip,
             None => inside,
         };
-        return Some(format!("[{ip}{suffix}"));
+        return Some(format!("[{ip}]{after_bracket}"));
     }
 
     // Un-bracketed form: split off the scope, then split scope-tail on the
     // port separator (`:`). Everything before `%` is the IPv6 literal;
     // everything from the final `:` in the scope-tail onward is `:port`.
     let (ip, scope_and_port) = addr.split_once('%')?;
-    let port_colon = scope_and_port.rfind(':')?;
-    let port = &scope_and_port[port_colon..];
-    Some(format!("[{ip}]{port}"))
+    let (_scope, port) = scope_and_port.rsplit_once(':')?;
+    Some(format!("[{ip}]:{port}"))
 }
 
 /// Resolve a peer's network address: prefer mDNS-discovered address,

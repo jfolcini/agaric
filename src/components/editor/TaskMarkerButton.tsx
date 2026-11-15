@@ -90,7 +90,7 @@ export function TaskMarkerButton({
 }: {
   blockId: string
   todoState: string
-  onToggleTodo?: ((blockId: string) => void) | undefined
+  onToggleTodo?: ((blockId: string) => void | Promise<void>) | undefined
 }): React.ReactElement {
   const { t } = useTranslation()
   return (
@@ -104,7 +104,7 @@ export function TaskMarkerButton({
           onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
             e.stopPropagation()
-            onToggleTodo?.(blockId)
+            void onToggleTodo?.(blockId)
           }}
           // A list row opens its block on Enter or Space; this key is the toggle's.
           onKeyDown={(e) => {

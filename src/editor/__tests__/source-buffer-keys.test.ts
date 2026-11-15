@@ -147,7 +147,7 @@ describe('indent and dedent', () => {
     ])
     caret(ed, 1, 2)
 
-    expect(press(ed, 'Unidentified', { code: 'Tab', keyCode: 9, shiftKey: true })).toBe(true)
+    expect(press(ed, 'Unidentified', { code: 'Tab', shiftKey: true })).toBe(true)
     expect(lines(ed)).toEqual([
       ['- p', P],
       ['- a', A],

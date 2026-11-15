@@ -98,7 +98,7 @@ export function AutostartRow(): React.ReactElement | null {
       label={t('settings.autostart.label')}
       description={t('settings.autostart.description')}
       checked={enabled}
-      onCheckedChange={handleToggle}
+      onCheckedChange={(next) => void handleToggle(next)}
       disabled={pending}
     />
   )

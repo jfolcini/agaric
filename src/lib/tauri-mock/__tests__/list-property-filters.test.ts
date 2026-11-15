@@ -177,7 +177,7 @@ describe('filtered_blocks_query — a property filter over a list', () => {
   })
 })
 
-describe('list_property_values — the items of a text, select or url list', () => {
+describe('list_property_values — the items of a text, select, url or undeclared list', () => {
   const values = (key: string) => dispatch('list_property_values', { key }) as string[]
   const define = (key: string, valueType: string) =>
     spacePropertyDefs(SPACE).set(key, {
@@ -193,8 +193,9 @@ describe('list_property_values — the items of a text, select or url list', () 
     expect(values('authors')).toEqual(['Ann', 'Bob', 'Cy'])
   })
 
-  it('offers nothing of a list whose key is undeclared, or declared ref, date or number', () => {
-    expect(values('authors')).toEqual(['Ann'])
+  // An undeclared list's items are text, as an imported YAML list's are.
+  it('offers the items of a list whose key is undeclared, nothing of a ref, date or number one', () => {
+    expect(values('authors')).toEqual(['Ann', 'Bob', 'Cy'])
     define('refs', 'ref')
     define('days', 'date')
     define('scores', 'number')

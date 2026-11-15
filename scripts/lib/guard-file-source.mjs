@@ -83,7 +83,6 @@
 //   scripts/check-md-link-targets.mjs
 //   scripts/check-doc-code-paths.mjs
 //   scripts/check-architecture-citations.mjs
-//   scripts/check-dead-symbol-citations.mjs
 //   scripts/check-remove-after-markers.mjs
 //
 // The self-tests that remain drive themselves through `runSourceScenarios`
@@ -532,8 +531,8 @@ export function indexBelongsTo(indexFile, repoRoot, env = process.env) {
  * next to: `GIT_DIR` alone was enough (`ls-files` falls back to that git
  * dir's own default index once a foreign `GIT_INDEX_FILE` is stripped), so
  * it corrupted `--worktree` and `--cached` alike, for every source mode
- * rather than only under AUTO. Reproduced against
- * `check-dead-symbol-citations.mjs` in a two-repository fixture: exit 0,
+ * rather than only under AUTO. Reproduced against a
+ * guard built on this helper in a two-repository fixture: exit 0,
  * empty stderr, over a violation sitting in both the index and the working
  * tree of the tree under judgement.
  *

@@ -5,7 +5,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use proptest::prelude::*;
 use tokio::runtime::Runtime;
 
 use super::*;

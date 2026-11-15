@@ -253,7 +253,7 @@ export function benchUniverse(manifestDir) {
       maxBuffer: 64 * 1024 * 1024,
     })
   } catch (err) {
-    throw new Error(`\`cargo metadata\` failed in ${manifestDir}: ${err.message}`)
+    throw new Error(`\`cargo metadata\` failed in ${manifestDir}: ${err.message}`, { cause: err })
   }
   const meta = JSON.parse(out)
   const pkg = (meta.packages ?? []).find((p) => p.name === 'agaric')

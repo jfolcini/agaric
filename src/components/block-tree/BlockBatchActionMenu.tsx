@@ -26,15 +26,15 @@ interface BlockBatchActionMenuProps {
   selectedBlockIds: string[]
   batchInProgress: boolean
   batchDeleteConfirm: boolean
-  onBatchSetTodo: (state: string | null) => void
+  onBatchSetTodo: (state: string | null) => void | Promise<void>
   /**
    * #1734 — cycle priority across the whole selection. Mirrors the bulk
    * priority path already in the right-click context menu so the discoverable
    * toolbar doesn't teach a lower capability ceiling. Optional: omitted callers
    * (e.g. tests / surfaces without a priority handler) simply hide the button.
    */
-  onBatchSetPriority?: (() => void) | undefined
-  onBatchDelete: () => void
+  onBatchSetPriority?: (() => void | Promise<void>) | undefined
+  onBatchDelete: () => void | Promise<void>
   onSetBatchDeleteConfirm: (open: boolean) => void
   onClearSelection: () => void
 }
@@ -81,7 +81,7 @@ export function BlockBatchActionMenu({
               size="sm"
               className="h-7 text-xs"
               disabled={batchInProgress}
-              onClick={() => onBatchSetTodo(state)}
+              onClick={() => void onBatchSetTodo(state)}
             >
               {label}
             </Button>
@@ -96,7 +96,7 @@ export function BlockBatchActionMenu({
             size="sm"
             className="h-7 text-xs"
             disabled={batchInProgress}
-            onClick={() => onBatchSetPriority()}
+            onClick={() => void onBatchSetPriority()}
           >
             <Signal className="mr-1" />
             {t('contextMenu.cyclePrioritySelected')}

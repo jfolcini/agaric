@@ -19,7 +19,7 @@ interface TrashEmptyDialogProps {
    */
   hasMore?: boolean
   onOpenChange: (open: boolean) => void
-  onConfirm: () => void
+  onConfirm: () => void | Promise<void>
 }
 
 export function TrashEmptyDialog({

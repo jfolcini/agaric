@@ -64,8 +64,9 @@ function updateStatusLabel(status: UpdateStatusValue, checking: boolean, t: TFun
         error: status.error ?? t('help.updateInstallFailedToast'),
       })
     }
+    case 'idle':
     default: {
-      // 'idle' — nothing has been checked yet this install.
+      // Nothing has been checked yet this install.
       return t('help.updateLastCheckedNever')
     }
   }
@@ -124,7 +125,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleCheckNow}
+                  onClick={() => void handleCheckNow()}
                   disabled={busy}
                   aria-label={t('help.updateCheckNowButton')}
                 >

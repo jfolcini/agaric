@@ -314,15 +314,17 @@ async fn a_list_reads_back_through_the_reads_and_the_engine_6741() {
     );
 }
 
-/// Only a key its space declares `multiple` takes a list, and such a key
-/// takes nothing else. A refused write appends no op and writes no row.
+/// A key its space declares `multiple` takes a list, and such a key takes
+/// nothing else; a key that holds one value, a built-in key and a key the app
+/// keeps for itself refuse one. A refused write appends no op and writes no
+/// row.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_list_is_taken_only_by_a_definition_that_holds_one_6741() {
     let f = fixture().await;
     let ops = f.op_count().await;
     let list = || texts(&["a", "b"]);
 
-    for key in ["undeclared", "single", "repeat", "todo_state", "due_date"] {
+    for key in ["single", "repeat", "todo_state", "due_date", "template"] {
         assert_refused(
             f.set_list(&f.child, key, list()).await,
             "holds one value, not a list",
@@ -368,6 +370,22 @@ async fn a_list_is_taken_only_by_a_definition_that_holds_one_6741() {
         0,
         "and none wrote a row"
     );
+}
+
+/// An undeclared key takes any value shape, a list of text or number items
+/// too (#6741): an imported YAML list needs no definition. It reads back item
+/// for item.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_undeclared_key_takes_a_list_6741() {
+    let f = fixture().await;
+    let mixed = PropertyList(vec![
+        PropertyListItem::Text("Smith, John".into()),
+        PropertyListItem::Num(3.0),
+    ]);
+    f.set_list(&f.child, "undeclared", mixed.clone())
+        .await
+        .expect("an undeclared key takes a list");
+    assert_eq!(f.list(&f.child, "undeclared").await, Some(mixed));
 }
 
 /// Each item is held to the definition's type as a single value is.

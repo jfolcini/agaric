@@ -55,7 +55,7 @@ function adb(args, { allowFail = false } = {}) {
     return execFileSync(ADB, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
   } catch (err) {
     if (allowFail) return ''
-    throw new Error(`adb ${args.join(' ')} failed: ${err.stderr || err.message}`)
+    throw new Error(`adb ${args.join(' ')} failed: ${err.stderr || err.message}`, { cause: err })
   }
 }
 

@@ -80,7 +80,7 @@ export function RefEditor({ prop, state, ariaLabel, hasCreateNewPage }: RefEdito
               <RefPickerEmpty
                 search={search}
                 hasCreateNewPage={hasCreateNewPage}
-                onCreateNewPage={handleCreateNewPage}
+                onCreateNewPage={() => void handleCreateNewPage()}
               />
             ) : (
               filteredPages.map((page) => (
@@ -90,7 +90,7 @@ export function RefEditor({ prop, state, ariaLabel, hasCreateNewPage }: RefEdito
                   content={page.content}
                   saving={savingRefPageId === page.id}
                   disabled={savingRefPageId !== null}
-                  onClick={() => handleSelectPage(page)}
+                  onClick={() => void handleSelectPage(page)}
                 />
               ))
             )}

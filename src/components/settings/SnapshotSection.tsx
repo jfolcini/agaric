@@ -74,7 +74,7 @@ export function SnapshotSection(): React.ReactElement {
           }
         >
           {isMobilePlatform() ? null : (
-            <Button variant="outline" size="sm" onClick={openFolder}>
+            <Button variant="outline" size="sm" onClick={() => void openFolder()}>
               <FolderOpen />
               {t('data.snapshotOpenFolder')}
             </Button>

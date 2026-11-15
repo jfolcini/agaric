@@ -30,11 +30,10 @@ pub(super) struct FrontmatterRow {
 /// `key:: value` property emit loop in [`export_page_markdown_inner`] so both
 /// paths resolve a `block_properties` row identically.
 ///
-/// Precedence: date, then text, then ref (`[[Title]]` where `link` gives the
-/// target's title, else the raw id, #6277 F3), then numeric, then bool, then
-/// a list as one line of text (`import::write_property_list`, #6741), each
-/// item written as a single value of its kind is; a text under a key that
-/// holds a list is written as a list of one. A
+/// A list is one line of text (`import::write_property_list`, #6741) of the
+/// items [`frontmatter_row_items`] gives. Otherwise the precedence is date,
+/// then text, then ref (`[[Title]]` where `link` gives the target's title,
+/// else the raw id, #6277 F3), then numeric, then bool. A
 /// `block_properties` row stores its value in exactly one column (enforced by
 /// the `exactly_one_value` CHECK), so at most one branch ever fires; the
 /// ordering is a defensive fallback, not a real precedence rule.
@@ -42,16 +41,13 @@ fn frontmatter_row_value<'a>(
     prop: &FrontmatterRow,
     link: impl Fn(&str) -> Option<&'a str>,
 ) -> String {
+    if let Some(items) = frontmatter_row_items(prop, &link) {
+        return import::write_property_list(&items);
+    }
     if let Some(d) = prop.value_date.as_deref() {
         d.to_string()
     } else if let Some(t) = prop.value_text.as_deref() {
-        // As a list of one, so the line reads back as one item, not as the
-        // parts its commas would split it into.
-        if prop.text_under_list {
-            import::write_property_list(&[t.to_string()])
-        } else {
-            t.to_string()
-        }
+        t.to_string()
     } else if let Some(rf) = prop.value_ref.as_deref().filter(|s| !s.is_empty()) {
         link(rf).map_or_else(|| rf.to_string(), |title| format!("[[{title}]]"))
     } else if let Some(n) = prop.value_num {
@@ -65,22 +61,40 @@ fn frontmatter_row_value<'a>(
         } else {
             "false".to_string()
         }
-    } else if let Some(list) = &prop.value_list {
-        let items: Vec<String> = list
-            .0
-            .iter()
-            .map(|item| match item {
-                PropertyListItem::Text(id) if prop.list_of_refs => {
-                    link(id).map_or_else(|| id.clone(), |title| format!("[[{title}]]"))
-                }
-                PropertyListItem::Text(text) => text.clone(),
-                PropertyListItem::Num(n) => format!("{n}"),
-            })
-            .collect();
-        import::write_property_list(&items)
     } else {
         String::new()
     }
+}
+
+/// The items a [`FrontmatterRow`] is written as, each as a single value of
+/// its kind is, when it is written as a list (#6741): a list, and a text
+/// under a key that holds a list as a list of one, so its line reads back as
+/// one item, not as the parts its commas would split it into.
+fn frontmatter_row_items<'a>(
+    prop: &FrontmatterRow,
+    link: impl Fn(&str) -> Option<&'a str>,
+) -> Option<Vec<String>> {
+    if let Some(text) = prop.value_text.as_ref().filter(|_| prop.text_under_list) {
+        return Some(vec![text.clone()]);
+    }
+    let items = prop.value_list.as_ref()?.0.iter().map(|item| match item {
+        PropertyListItem::Text(id) if prop.list_of_refs => {
+            link(id).map_or_else(|| id.clone(), |title| format!("[[{title}]]"))
+        }
+        PropertyListItem::Text(text) => text.clone(),
+        PropertyListItem::Num(n) => format!("{n}"),
+    });
+    Some(items.collect())
+}
+
+/// Each list `data`'s blocks hold under a key no definition says holds one,
+/// as `(key, the text its line writes)`, which a copy reads back as that
+/// list (`PropertyLines::note_list`, #6741).
+pub(super) fn undeclared_lists(data: &PageExportData) -> Vec<(String, String)> {
+    let rows = data.descendant_properties.values().flatten();
+    rows.filter(|row| row.value_list.is_some() && !row.list_of_refs)
+        .map(|row| (row.key.clone(), frontmatter_row_value(row, |_| None)))
+        .collect()
 }
 
 /// The title `names` writes the ref-typed value `id` with, as `[[Title]]`
@@ -245,13 +259,11 @@ pub(super) fn render_page_file(data: &PageExportData) -> PageFile {
 /// before it, which is never its own first line: a bare empty first line is
 /// written `\`.
 fn block_start_lines(text: &str, starts: &[(String, usize)]) -> Vec<Option<String>> {
-    let mut ids = vec![None; text.split('\n').count()];
-    let (mut line, mut at) = (0, 0);
+    let newlines: Vec<usize> = text.match_indices('\n').map(|(at, _)| at).collect();
+    let mut ids = vec![None; newlines.len() + 1];
     for (id, start) in starts {
-        let start = start + usize::from(text[*start..].starts_with('\n'));
-        line += text[at..start].matches('\n').count();
-        at = start;
-        ids[line] = Some(id.clone());
+        let start = start + usize::from(newlines.binary_search(start).is_ok());
+        ids[newlines.partition_point(|&newline| newline < start)] = Some(id.clone());
     }
     ids
 }
@@ -603,13 +615,13 @@ fn push_clipboard_bullet(
     content: &str,
     id: &str,
 ) -> bool {
-    let start = output.len();
-    let code = push_block_bullet(output, indent, list_marker, task_marker, written);
-    let read_back = import::parse_pasted_text(&output[start..]);
+    let mut bullet = String::new();
+    let code = push_block_bullet(&mut bullet, indent, list_marker, task_marker, written);
+    let read_back = import::parse_pasted_text(&bullet);
     if !code.open && matches!(read_back.as_slice(), [block] if block.content == content) {
+        output.push_str(&bullet);
         return code.any;
     }
-    output.truncate(start);
     push_anchored_bullet(output, indent, list_marker, task_marker, written, id)
 }
 
@@ -699,7 +711,14 @@ fn render_frontmatter(output: &mut String, data: &PageExportData, names: Names) 
             output.push_str(&format!("tags: {}\n", yaml_flow_sequence(tag_names_fm)));
         }
         for prop in properties {
-            let value = frontmatter_row_value(prop, |id| ref_link(data, names, id));
+            let link = |id: &str| ref_link(data, names, id);
+            // #6741 — a list as a YAML list, as `aliases` and `tags` are.
+            if let Some(items) = frontmatter_row_items(prop, link) {
+                let items = yaml_flow_sequence(&items);
+                output.push_str(&format!("{}: {items}\n", prop.key));
+                continue;
+            }
+            let value = frontmatter_row_value(prop, link);
             // #2715 — route the scalar through the YAML emit helper so a value
             // carrying a newline, a leading `---`, quotes, or other
             // YAML-significant content is quoted / block-scalar-encoded instead
@@ -821,7 +840,13 @@ pub(super) fn agent_markdown_stretch(
         }
         stop = next;
     }
-    Ok((markdown[begin..stop.1].to_owned(), stop.0.cloned()))
+    let stretch = markdown.get(begin..stop.1).ok_or_else(|| {
+        AppError::Internal(format!(
+            "block offsets {begin}..{} split a character",
+            stop.1
+        ))
+    })?;
+    Ok((stretch.to_owned(), stop.0.cloned()))
 }
 
 /// `source`, a buffer with each block's `^ID` written in it, as the text with
@@ -2143,57 +2168,56 @@ pub(super) fn push_block_bullet(
     let mut lines = resolved.split('\n').peekable();
     let first = lines.next().unwrap_or("");
     let followed = lines.peek().is_some();
-    let line_start = output.len();
-    output.push_str(indent);
+    let mut written = indent.to_owned();
     let markers = format!("{list_marker}{task_marker}");
     if first.is_empty() && !markers.is_empty() {
         // An EMPTY first line after a marker: emit the bare marker (`-`,
         // `1.`, `- [ ]`) rather than a line with trailing whitespace. Both
         // forms read back identically, but only this one is a byte-level
         // fixpoint.
-        output.push_str(markers.trim_end());
+        written.push_str(markers.trim_end());
     } else {
-        output.push_str(&markers);
+        written.push_str(&markers);
         if first_line_needs_escape(first, followed, list_marker, task_marker) {
-            output.push('\\');
+            written.push('\\');
         }
-        output.push_str(first);
+        written.push_str(first);
     }
     // Fences are tracked over each line as written, escape and marker
     // included, with the reader's own probes: an escaped ```` \- ``` ```` opens
     // no fence there, so it must open none here either.
-    let mut in_fence = import::document_fence_opener(&output[line_start..]);
+    let mut in_fence = import::document_fence_opener(&written);
     let mut code = CodeLines {
         any: in_fence.is_some(),
         last: in_fence.is_some(),
         open: false,
     };
+    output.push_str(&written);
     output.push('\n');
 
     let cont_indent = continuation_indent(indent, list_marker);
     for line in lines {
-        let line_start = output.len();
-        output.push_str(&cont_indent);
+        let mut written = cont_indent.clone();
         let needs_escape = if in_fence.is_some() {
             import::needs_anchor_line_escape(line)
         } else {
             import::needs_document_line_escape(line)
         };
         if needs_escape {
-            output.push('\\');
+            written.push('\\');
         }
-        output.push_str(line);
-        let written = &output[line_start..];
+        written.push_str(line);
         code.last = if let Some(fence) = in_fence {
-            if import::closes_fence(written, fence) {
+            if import::closes_fence(&written, fence) {
                 in_fence = None;
             }
             true
         } else {
-            in_fence = import::document_fence_opener(written);
+            in_fence = import::document_fence_opener(&written);
             in_fence.is_some()
         };
         code.any |= code.last;
+        output.push_str(&written);
         output.push('\n');
     }
     code.open = in_fence.is_some();

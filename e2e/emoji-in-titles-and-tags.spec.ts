@@ -35,7 +35,7 @@ test.describe('Emoji in titles & tags (#130) @editor @pages', () => {
   test('a tag can be created with an emoji in its name', async ({ page }) => {
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
-    await editor.type(`ship it @${ROCKET}rocket`, { delay: 30 })
+    await editor.pressSequentially(`ship it @${ROCKET}rocket`, { delay: 30 })
 
     const list = page.locator('[data-testid="suggestion-list"]')
     await expect(list).toBeVisible({ timeout: 5000 })

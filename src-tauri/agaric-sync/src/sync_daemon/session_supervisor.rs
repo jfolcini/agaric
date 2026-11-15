@@ -931,7 +931,7 @@ pub(crate) async fn daemon_loop(
 
 /// The bind policy's decision: where the sync endpoint binds, and why.
 ///
-/// [`lan_only`](crate::transport::endpoint::lan_only) confines egress by binding one
+/// [`lan_only`] confines egress by binding one
 /// subnet with `is_default_route(false)`, so it needs a real interface address and that
 /// interface's prefix length — not a wildcard. A `0.0.0.0` bind with an invented prefix
 /// would satisfy every check in `lan_only` and install a route for a block that does not

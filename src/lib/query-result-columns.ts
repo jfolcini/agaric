@@ -41,18 +41,27 @@ export function propertyRowDisplay(row: PropertyRow): string | null {
   return null
 }
 
+/** The value a property row sorts by: a list (#6741) its first item, as that
+ * item shows alone; any other row its display value. */
+export function propertyRowSortValue(row: PropertyRow): string | null {
+  const first = row.value_list?.[0]
+  return first === undefined ? propertyRowDisplay(row) : String(first)
+}
+
 /** Build a per-block map of custom-property key → display value from a
  * `getBatchProperties` result, dropping reserved/internal keys and rows with
- * no displayable value. */
+ * no displayable value; `value` gives the sort values instead
+ * ([`propertyRowSortValue`]). */
 export function buildCustomPropsMap(
   batch: Record<string, PropertyRow[]>,
+  value: (row: PropertyRow) => string | null = propertyRowDisplay,
 ): Map<string, Map<string, string>> {
   const byBlock = new Map<string, Map<string, string>>()
   for (const [blockId, rows] of Object.entries(batch)) {
     const props = new Map<string, string>()
     for (const row of rows) {
       if (EXCLUDED_COLUMN_KEYS.has(row.key)) continue
-      const display = propertyRowDisplay(row)
+      const display = value(row)
       if (display == null) continue
       props.set(row.key, display)
     }
@@ -86,20 +95,17 @@ export function deriveCustomColumns(
 }
 
 /** Resolve the sort/display value for any column key against a block. Custom
- * columns (prefixed) read from the side map, a list (#6741) its first item as
- * the stored rows hold it; everything else reads the block field. */
+ * columns (prefixed) read from the side map; everything else reads the block
+ * field. */
 export function columnValue(
   block: BlockRow,
   columnKey: string,
   customProps: Map<string, Map<string, string>>,
-  propertyRows?: Record<string, PropertyRow[]>,
 ): string | null {
   if (columnKey === 'content') return block.content
   if (columnKey.startsWith(CUSTOM_COLUMN_PREFIX)) {
     const propKey = columnKey.slice(CUSTOM_COLUMN_PREFIX.length)
-    const display = customProps.get(block.id)?.get(propKey) ?? null
-    const first = propertyRows?.[block.id]?.find((row) => row.key === propKey)?.value_list?.[0]
-    return display === null || first === undefined ? display : String(first)
+    return customProps.get(block.id)?.get(propKey) ?? null
   }
   return (block[columnKey as keyof BlockRow] as string | null) ?? null
 }

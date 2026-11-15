@@ -49,12 +49,12 @@ describe('dispatch — unmodeled plugin:* commands reject (#760)', () => {
     // relaunchApp's window.location.reload() fallback.
     ['plugin:process|restart', 'process'],
   ])('%s throws "plugin %s not found"', (cmd, pluginName) => {
-    expect(() => dispatch(cmd, {})).toThrowError(`plugin ${pluginName} not found`)
+    expect(() => dispatch(cmd, {})).toThrow(`plugin ${pluginName} not found`)
   })
 
   it('logs a structured warning naming the rejected command', () => {
     const warned = vi.mocked(logger.warn)
-    expect(() => dispatch('plugin:autostart|is_enabled', {})).toThrowError()
+    expect(() => dispatch('plugin:autostart|is_enabled', {})).toThrow()
     expect(warned).toHaveBeenCalledWith(
       'TauriMock',
       'unmodeled plugin command — rejecting like the real runtime',
@@ -63,7 +63,7 @@ describe('dispatch — unmodeled plugin:* commands reject (#760)', () => {
   })
 
   it('a plugin command with no | separator still rejects with the full name', () => {
-    expect(() => dispatch('plugin:bogus', {})).toThrowError('plugin bogus not found')
+    expect(() => dispatch('plugin:bogus', {})).toThrow('plugin bogus not found')
   })
 })
 

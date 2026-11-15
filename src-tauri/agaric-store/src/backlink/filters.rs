@@ -25,10 +25,7 @@ use agaric_core::sql_utils::escape_like;
 /// milliseconds.  This is the timestamp component of the ULID.
 #[cfg(test)]
 pub(crate) fn ulid_to_ms(ulid: &str) -> Option<u64> {
-    if ulid.len() < 10 {
-        return None;
-    }
-    let ts_part = &ulid[..10];
+    let ts_part = ulid.get(..10)?;
     let mut value: u64 = 0;
     for ch in ts_part.chars() {
         let digit = crockford_decode_char(ch)?;

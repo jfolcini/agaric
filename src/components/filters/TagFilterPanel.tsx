@@ -835,7 +835,7 @@ export function TagFilterPanel(): React.ReactElement {
                   <div role="gridcell">
                     <ResultCard
                       block={block}
-                      onClick={() => handleResultClick(block)}
+                      onClick={() => void handleResultClick(block)}
                       contentClassName="whitespace-pre-wrap"
                     >
                       {block.page_id && pageTitles.get(block.page_id) && (

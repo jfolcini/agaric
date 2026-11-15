@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 
-import type { BlockRow, PropertyRow } from '@/lib/bindings'
+import type { BlockRow } from '@/lib/bindings'
 import { columnValue } from '@/lib/query-result-columns'
 
 export type SortDirection = 'asc' | 'desc'
@@ -16,11 +16,9 @@ export function compareValues(a: string | null, b: string | null, dir: SortDirec
 
 interface UseQuerySortingOptions {
   results: BlockRow[]
-  /** Per-block custom-property values, so custom-property columns sort by
-   * their displayed value. Defaults to empty. */
+  /** Per-block custom-property values the columns sort by: a list's first
+   * item (`propertyRowSortValue`). Defaults to empty. */
   customProps?: Map<string, Map<string, string>> | undefined
-  /** Per-block property rows as stored, so a list column sorts by its first item (#6741). */
-  propertyRows?: Record<string, PropertyRow[]> | undefined
 }
 
 interface UseQuerySortingResult {
@@ -33,7 +31,7 @@ interface UseQuerySortingResult {
 const EMPTY_CUSTOM_PROPS = new Map<string, Map<string, string>>()
 
 export function useQuerySorting(options: UseQuerySortingOptions): UseQuerySortingResult {
-  const { results, customProps = EMPTY_CUSTOM_PROPS, propertyRows } = options
+  const { results, customProps = EMPTY_CUSTOM_PROPS } = options
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<SortDirection>('asc')
 
@@ -44,10 +42,10 @@ export function useQuerySorting(options: UseQuerySortingOptions): UseQuerySortin
     // sort the decorated tuples. `toSorted` is already non-mutating, so the
     // prior defensive `[...results]` spread before it is dropped.
     return results
-      .map((row) => ({ row, key: columnValue(row, sortKey, customProps, propertyRows) }))
+      .map((row) => ({ row, key: columnValue(row, sortKey, customProps) }))
       .toSorted((a, b) => compareValues(a.key, b.key, sortDir))
       .map((entry) => entry.row)
-  }, [results, sortKey, sortDir, customProps, propertyRows])
+  }, [results, sortKey, sortDir, customProps])
 
   const handleColumnSort = useCallback((key: string) => {
     setSortKey((prev) => {

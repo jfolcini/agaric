@@ -543,7 +543,7 @@ function PageModeDocument({
   const [options] = useState(() => ({
     extensions: pageModeExtensions({
       ...resolve,
-      onNavigate: (id: string) => handleNavigateRef.current(id),
+      onNavigate: (id: string) => void handleNavigateRef.current(id),
       onTagClick,
       placeholder: t('pageMode.placeholder'),
       pageId,
@@ -580,7 +580,7 @@ function PageModeDocument({
         attach: (id: string, files: File[]) => actions.current.attach(id, files),
         edit: (id: string) => actions.current.edit(id),
         saveQuery: (id: string, expression: string) => actions.current.saveQuery(id, expression),
-        navigate: (id: string) => handleNavigateRef.current(id),
+        navigate: (id: string) => void handleNavigateRef.current(id),
         resolveBlockTitle: resolve.resolveBlockTitle,
       },
       lists: {
@@ -898,12 +898,12 @@ function PageModeDocument({
         }),
       cyclePriority: (id) => afterSave(id, () => cyclePriority(id)),
       setPriority: (id, level) =>
-        afterSave(id, () => setBlockPriority(pageStore, pageId, id, level)),
+        void afterSave(id, () => setBlockPriority(pageStore, pageId, id, level)),
       openDatePicker,
       openDateLinkPicker,
       // After the save, so the block exists: the drawer writes to it.
       openPropertyDrawer: (id) =>
-        afterSave(id, () => {
+        void afterSave(id, () => {
           setDrawerBlockId(id)
           return Promise.resolve()
         }),

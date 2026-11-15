@@ -2,7 +2,7 @@
 //!
 //! # Why this module has to exist at all
 //!
-//! [`lan_only`](crate::transport::endpoint::lan_only) does not set a secret key, so
+//! [`lan_only`] does not set a secret key, so
 //! `Endpoint::bind` mints a fresh one on every call. For the slices that built
 //! `transport` that was invisible and harmless — every test binds, dials itself and
 //! throws both endpoints away.
@@ -89,7 +89,7 @@ pub fn decode_secret_hex(raw: &str) -> Result<SecretKey, AppError> {
         )));
     }
     let mut bytes = [0u8; 32];
-    for (i, chunk) in trimmed.as_bytes().chunks_exact(2).enumerate() {
+    for (i, chunk) in trimmed.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let pair = std::str::from_utf8(chunk).map_err(|_| identity_err("key file is not UTF-8"))?;
         bytes[i] = u8::from_str_radix(pair, 16)
             .map_err(|_| identity_err(format!("key file byte {i} is not hex")))?;

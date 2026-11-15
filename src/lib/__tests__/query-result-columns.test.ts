@@ -7,6 +7,7 @@ import { decodeInlineQueryPayload, encodeInlineQueryPayload } from '@/lib/inline
 import {
   buildCustomPropsMap,
   columnValue,
+  propertyRowSortValue,
   deriveCustomColumns,
   propertyRowDisplay,
   readQueryColumns,
@@ -103,12 +104,19 @@ describe('columnValue', () => {
     expect(columnValue(block, 'prop:area', customProps)).toBe('fe')
   })
 
-  // #6741 — a list sorts by its first item, as that item shows alone.
-  it('reads a list column as its first item', () => {
-    const rows = { B1: [row({ key: 'authors', value_list: ['Zed', 'Ann'] })] }
-    const props = new Map([['B1', new Map([['authors', 'Zed, Ann']])]])
-    expect(columnValue(block, 'prop:authors', props, rows)).toBe('Zed')
-    expect(columnValue(block, 'prop:authors', props)).toBe('Zed, Ann')
+  // #6741 — a list sorts by its first item, as that item shows alone, and
+  // shows as its items joined.
+  it('reads a list column as its first item from the sort map', () => {
+    const rows = {
+      B1: [
+        row({ key: 'authors', value_list: ['Zed', 'Ann'] }),
+        row({ key: 'area', value_text: 'fe' }),
+      ],
+    }
+    const sort = buildCustomPropsMap(rows, propertyRowSortValue)
+    expect(columnValue(block, 'prop:authors', sort)).toBe('Zed')
+    expect(columnValue(block, 'prop:area', sort)).toBe('fe')
+    expect(columnValue(block, 'prop:authors', buildCustomPropsMap(rows))).toBe('Zed, Ann')
   })
 
   it('returns null for a missing custom prop', () => {

@@ -113,6 +113,7 @@ export function resolveDiffBase({
       throw new Error(
         `resolveDiffBase: '${remoteRef}' is not present locally and ` +
           `\`git fetch --no-tags origin ${baseRef}\` failed: ${err.message}`,
+        { cause: err },
       )
     }
     if (!remoteRefExists()) {
@@ -138,6 +139,7 @@ export function resolveDiffBase({
       `resolveDiffBase: \`git merge-base ${remoteRef} ${head}\` failed. Either the two ` +
         `share no common ancestor in this checkout (a shallow fetch, or genuinely unrelated ` +
         `histories), or one of them is not a valid revision here. git said: ${err.message}`,
+      { cause: err },
     )
   }
   if (!SHA_RE.test(mergeBase)) {

@@ -101,13 +101,15 @@ pub(super) fn merge_source(
         named: Vec::new(),
         collapsed: Vec::new(),
     };
-    let body = match import::front_matter_fence(text) {
-        Some((yaml, len)) => {
+    let fence =
+        import::front_matter_fence(text).and_then(|(yaml, len)| Some((yaml, text.get(len..)?)));
+    let body = match fence {
+        Some((yaml, body)) => {
             let kept = file_front_matter(yaml, &mut source);
             if !kept.is_empty() {
                 source.text.push_str(&format!("---\n{kept}---\n"));
             }
-            &text[len..]
+            body
         }
         None => text,
     };

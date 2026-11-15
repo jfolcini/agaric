@@ -92,6 +92,7 @@ export function useHasHardwareKeyboard(): boolean {
       if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
         return
       }
+      // oxlint-disable-next-line typescript/no-deprecated -- an IME composition keydown can carry a real key name; only keyCode 229 marks it
       if (e.isTrusted === false || e.keyCode === 229 || e.key === 'Unidentified') {
         return
       }

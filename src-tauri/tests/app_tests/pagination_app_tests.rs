@@ -662,7 +662,8 @@ mod block_row_canonical_conformance {
                 let raw_select = &cap[1];
                 let normalized = canonicalize_select(raw_select);
                 if normalized != canonical_normalized {
-                    let line = src[..cap.get(0).unwrap().start()].matches('\n').count() + 1;
+                    let before = src.get(..cap.get(0).unwrap().start()).unwrap();
+                    let line = before.matches('\n').count() + 1;
                     failures.push(format!(
                         "  {path}:{line}\n    actual:    {normalized}\n    canonical: {canonical_normalized}",
                     ));
@@ -811,8 +812,8 @@ mod block_row_canonical_conformance {
                 // format string in all 3 sites). Drift case: someone
                 // substitutes a wrong const that happens to share the
                 // same visible form but isn't `BLOCK_ROW_RUNTIME_SELECT`.
-                let after = &src[m.end()..];
-                let window = &after[..after.len().min(500)];
+                let after = src.get(m.end()..).unwrap();
+                let window: String = after.chars().take(500).collect();
                 if !window.contains("BLOCK_ROW_RUNTIME_SELECT") {
                     failures.push(format!(
                         "  {path}: format!(\"SELECT {{}} FROM blocks…\") at byte {} does not reference BLOCK_ROW_RUNTIME_SELECT in its argument list (within 500 chars).",

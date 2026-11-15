@@ -71,6 +71,7 @@ function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
     case 'error': {
       return 'bg-destructive'
     }
+    case 'waiting':
     default: {
       return 'bg-muted-foreground'
     }
@@ -123,7 +124,7 @@ export interface AppSidebarProps {
   syncing: boolean
   isOnline: boolean
   onNewPage: () => void
-  onSyncClick: () => void
+  onSyncClick: () => void | Promise<void>
 }
 
 function AppSidebarInner({
@@ -340,7 +341,7 @@ function AppSidebarInner({
             // `aria-disabled`, not `disabled`: a disabled button takes no hover
             // or focus, so the offline / syncing tooltip could never show.
             aria-disabled={syncUnavailable}
-            onClick={syncUnavailable ? undefined : onSyncClick}
+            onClick={syncUnavailable ? undefined : () => void onSyncClick()}
           >
             <span className="relative inline-flex">
               {!isOnline ? (

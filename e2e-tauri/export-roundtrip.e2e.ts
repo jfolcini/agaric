@@ -19,13 +19,12 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
-  clickUncovered,
-  clipboardText,
   confirmDialog,
+  exportOpenPage,
   importMarkdownPage,
-  invoke,
   navigateTo,
   openNewPage,
+  pageAction,
   pasteFileIntoFocusedBlock,
   reopenPageByTitle,
   runScopedMarker,
@@ -83,40 +82,6 @@ async function rowShape(marker: string, ready: (row: RowShape) => boolean): Prom
       throw new Error(`the block ${marker} renders ${JSON.stringify(shape)}`)
     })
   return shape as unknown as RowShape
-}
-
-/** Open the page kebab's `item`. */
-async function pageAction(item: string): Promise<void> {
-  const kebab = $('button[aria-label="Page actions"]')
-  await kebab.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await kebab.click()
-  // The menu's last rows reach the toast corner of the lane's window, where a
-  // toast from the step before takes a plain click.
-  await clickUncovered($('[role="menu"]').$(`[role="menuitem"]*=${item}`), item)
-}
-
-/**
- * The open page's Export as Markdown, read off the clipboard. A sentinel goes
- * on the clipboard first, so an earlier export's toast and text are not taken
- * for this one's.
- */
-async function exportOpenPage(): Promise<string> {
-  const sentinel = runScopedMarker('wdio-rt-sentinel')
-  await invoke('plugin:clipboard-manager|write_text', { text: sentinel })
-  await pageAction('Export as Markdown')
-  let text = sentinel
-  await browser
-    .waitUntil(
-      async () => {
-        text = await clipboardText()
-        return text !== sentinel
-      },
-      { timeout: ACTION_TIMEOUT },
-    )
-    .catch(() => {
-      throw new Error('Export as Markdown never put the page on the clipboard')
-    })
-  return text
 }
 
 describe('Agaric real-backend export (#5740) @markdown', () => {

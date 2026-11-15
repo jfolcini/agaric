@@ -121,7 +121,12 @@ export function ExportSection(): React.ReactElement {
       </CardHeader>
       <CardContent className="space-y-4">
         <SettingRow label={t('data.exportCurrentSpaceLabel')} description={t('data.exportDesc')}>
-          <Button variant="outline" size="sm" disabled={exporting} onClick={handleExportAll}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={exporting}
+            onClick={() => void handleExportAll()}
+          >
             <Download />
             {exporting ? t('data.exporting') : t('data.exportButton')}
           </Button>
@@ -134,7 +139,7 @@ export function ExportSection(): React.ReactElement {
             variant="outline"
             size="sm"
             disabled={exportingAllSpaces}
-            onClick={handleExportAllSpaces}
+            onClick={() => void handleExportAllSpaces()}
             data-testid="export-all-spaces-button"
           >
             <Download />

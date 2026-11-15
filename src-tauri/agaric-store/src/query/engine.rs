@@ -1334,7 +1334,8 @@ fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) 
             // the key stays a bound `?{pos}` in the ON clause, never an
             // interpolated identifier. A list row joins one `gi` row per item,
             // so its block sits in each item's group, as `Tag` puts a block in
-            // each of its tags' groups (#6741). Exactly one value column is
+            // each of its tags' groups (#6741); an item the list repeats joins
+            // at its first place only, so the block sits in its group once. Exactly one value column is
             // non-NULL, so the COALESCE yields whichever is set, rendered as
             // `propertyRowDisplay` shows it: a number (`value_num` or a number
             // item) in canonical form (`3`, not REAL `3.0`; `3.5` stays) and
@@ -1350,7 +1351,9 @@ fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) 
             ),
             format!(
                 " LEFT JOIN block_properties gp ON gp.block_id = b.id AND gp.key = ?{pos} \
-                 LEFT JOIN json_each(gp.value_list) gi"
+                 LEFT JOIN json_each(gp.value_list) gi ON NOT EXISTS (\
+                 SELECT 1 FROM json_each(gp.value_list) gj \
+                 WHERE gj.key < gi.key AND gj.value = gi.value)"
             ),
             Some(Bind::Text(key.clone())),
         ),
@@ -1553,7 +1556,7 @@ async fn grouped_total_count(
         gkey = key.expr,
         from = ctx.from_clause,
         join = key.join,
-        pred = &ctx.predicate,
+        pred = ctx.predicate,
     );
     // dynamic-sql: GROUP-BY key + WHERE are the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
     let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
@@ -1650,7 +1653,7 @@ async fn fetch_group_buckets(
          WHERE {pred} GROUP BY gkey{having} \
          ORDER BY gcount DESC, gkey ASC LIMIT ?{limit_pos}",
         from = ctx.from_clause,
-        pred = &ctx.predicate,
+        pred = ctx.predicate,
     );
     // dynamic-sql: GROUP-BY key + per-group aggregate SELECT + WHERE + keyset HAVING are the runtime GroupKey + AggregateSpec set + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
     let mut q = sqlx::query(sqlx::AssertSqlSafe(group_sql.as_str()));
@@ -1758,7 +1761,7 @@ async fn fetch_member_preview(
          ) WHERE __rn <= ?{rn_pos}",
         cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
         from = ctx.from_clause,
-        pred = &ctx.predicate,
+        pred = ctx.predicate,
     );
     // dynamic-sql: windowed member preview over the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
     let mut mq = sqlx::query_as::<_, GroupMemberRow>(sqlx::AssertSqlSafe(member_sql.as_str()));

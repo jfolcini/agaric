@@ -222,7 +222,7 @@ test.describe('Tag insertion via @ picker @pages', () => {
 
     // Clear content and type @ to trigger tag picker
     await page.keyboard.press('Control+a')
-    await editor.type('test @')
+    await editor.pressSequentially('test @')
 
     // The suggestion list should appear
     await expect(page.locator('[data-testid="suggestion-list"]')).toBeVisible({ timeout: 5000 })
@@ -234,7 +234,7 @@ test.describe('Tag insertion via @ picker @pages', () => {
 
     // Clear and type content then trigger @ picker
     await page.keyboard.press('Control+a')
-    await editor.type('tagged: ')
+    await editor.pressSequentially('tagged: ')
     await page.getByRole('button', { name: 'Insert tag' }).click()
 
     // Wait for suggestion list and select the first tag
@@ -252,7 +252,7 @@ test.describe('Tag insertion via @ picker @pages', () => {
 
     // Insert a tag reference
     await page.keyboard.press('Control+a')
-    await editor.type('saved tag: ')
+    await editor.pressSequentially('saved tag: ')
     await page.getByRole('button', { name: 'Insert tag' }).click()
 
     const suggestionList = page.locator('[data-testid="suggestion-list"]')
@@ -305,7 +305,7 @@ test.describe('@ picker — create new tag & Tab autocomplete @pages', () => {
 
     // Clear content and type @ followed by a tag name that doesn't exist
     await page.keyboard.press('Control+a')
-    await editor.type('hello @nonexistenttag', { delay: 30 })
+    await editor.pressSequentially('hello @nonexistenttag', { delay: 30 })
 
     // The suggestion list should appear with a "Create" option
     const list = page.locator('[data-testid="suggestion-list"]')
@@ -333,7 +333,7 @@ test.describe('@ picker — create new tag & Tab autocomplete @pages', () => {
 
     // 1. Create a brand-new tag via the @ picker's Create option.
     await page.keyboard.press('Control+a')
-    await editor.type('crux @zzcruxtag', { delay: 30 })
+    await editor.pressSequentially('crux @zzcruxtag', { delay: 30 })
     const list = page.locator('[data-testid="suggestion-list"]')
     await expect(list).toBeVisible({ timeout: 5000 })
     const createItem = list.locator('[data-testid="suggestion-item"]', { hasText: /[Cc]reate/ })
@@ -374,7 +374,7 @@ test.describe('@ picker — create new tag & Tab autocomplete @pages', () => {
 
     // Clear and type partial content, then use the Insert tag button
     await page.keyboard.press('Control+a')
-    await editor.type('autocomplete: ')
+    await editor.pressSequentially('autocomplete: ')
     await page.getByRole('button', { name: 'Insert tag' }).click()
 
     // Wait for the suggestion list to appear

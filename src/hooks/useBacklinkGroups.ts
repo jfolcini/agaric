@@ -205,6 +205,10 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
+  const retry = useCallback(() => {
+    void refetch()
+  }, [refetch])
+
   return {
     groups,
     totalCount,
@@ -214,6 +218,6 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
     isFetchingMore: isFetchingNextPage,
     loadMore,
     isError,
-    refetch,
+    refetch: retry,
   }
 }

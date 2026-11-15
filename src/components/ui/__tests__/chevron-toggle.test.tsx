@@ -25,7 +25,7 @@ describe('ChevronToggle', () => {
     // ChevronRight renders a <polyline> or <path> — just verify it's an SVG
     expect(svg?.tagName).toBe('svg')
     // Should NOT have rotate-90
-    expect(svg?.className.baseVal ?? svg?.getAttribute('class') ?? '').not.toContain('rotate-90')
+    expect(svg?.getAttribute('class') ?? '').not.toContain('rotate-90')
   })
 
   it('applies rotate-90 when expanded', () => {

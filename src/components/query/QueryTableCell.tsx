@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { recordBlockWrite, writeBlockValue } from '@/components/AdvancedQuery/board-move'
-import { EditorSlot } from '@/components/properties/PropertyRowEditor'
+import { EditorSlot, listDefinition } from '@/components/properties/PropertyRowEditor'
 import { ListEditor } from '@/components/properties/PropertyRowEditor/ListEditor'
 import { readCurrentValue } from '@/components/properties/PropertyRowEditor/shared'
 import { usePropertyRowEditor } from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
@@ -80,7 +80,8 @@ function CellEditor({
   })
   const { valueType } = bag
   const { open: pickerOpen, handleOpen: openPicker } = bag.refPicker
-  const multiple = def?.multiple === true
+  const listDef = listDefinition(prop, def)
+  const multiple = listDef !== null
 
   // A ref's picker loads its pages and opens; a select opens by itself; the
   // other controls take the focus the cell's button had, a list's its add
@@ -127,11 +128,11 @@ function CellEditor({
         }
       }}
     >
-      {def?.multiple ? (
+      {listDef ? (
         <ListEditor
           blockId={block.id}
           prop={prop}
-          def={def}
+          def={listDef}
           refPicker={bag.refPicker}
           ariaLabel={valueLabel}
           hasCreateNewPage={false}

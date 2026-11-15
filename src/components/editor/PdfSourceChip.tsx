@@ -83,7 +83,7 @@ export function PdfSourceChip({ attachmentId, page }: PdfSourceChipProps): React
         title={label}
         // #1498: keep the editor focused, its caret where it was, through the click.
         onMouseDown={(e) => e.preventDefault()}
-        onClick={open}
+        onClick={(e) => void open(e)}
       >
         <FileText className="size-[calc(var(--agaric-font-size,1rem)*0.75)] flex-shrink-0" />
         <span className="max-w-64 truncate">{text}</span>

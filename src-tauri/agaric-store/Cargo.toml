@@ -11,7 +11,7 @@ name = "agaric-store"
 version = "0.1.0"
 edition = "2024"
 # Keep in lockstep with ../Cargo.toml (the app crate) + rust-toolchain.toml.
-rust-version = "1.95.0"
+rust-version = "1.99.1"
 license = "GPL-3.0-or-later"
 publish = false
 
@@ -137,6 +137,10 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 unsafe_code = "deny"
 
 [lints.clippy]
+# A mid-character index panics, and release builds abort on panic (AGENTS.md
+# pattern 8); a `debug_assert!` body is compiled out of release (pattern 5).
+string_slice = "deny"
+debug_assert_with_mut_call = "deny"
 too_many_lines = "warn"                     # AGENTS.md item 6; threshold in the workspace clippy.toml (#4639)
 cast_possible_truncation = "warn"
 cast_sign_loss = "warn"

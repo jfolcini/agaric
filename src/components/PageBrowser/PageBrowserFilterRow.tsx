@@ -156,8 +156,8 @@ function datePredicateSummary(prefix: string, predicate: DatePredicate, t: TFunc
     case 'On': {
       return t('pageBrowser.filter.summaryDateOn', { prefix, date: predicate.date })
     }
+    case 'Between':
     default: {
-      // Between
       return t('pageBrowser.filter.summaryDateBetween', {
         prefix,
         from: predicate.from,
@@ -224,6 +224,27 @@ export function pageFilterChipTitle(filter: FilterPrimitive, t: TFunction): stri
     case 'HasNoInboundLinks': {
       return t('pageBrowser.filter.facetHasNoInboundLinksDesc')
     }
+    case 'BlockType':
+    case 'CaseSensitive':
+    case 'ChildOf':
+    case 'Created':
+    case 'DueDate':
+    case 'HasParentMatching':
+    case 'HasProperty':
+    case 'LastEdited':
+    case 'LinkedFrom':
+    case 'LinksTo':
+    case 'PathGlob':
+    case 'Priority':
+    case 'Regex':
+    case 'Scheduled':
+    case 'Snippet':
+    case 'Space':
+    case 'State':
+    case 'Tag':
+    case 'TagOrRef':
+    case 'TagUnder':
+    case 'WholeWord':
     default: {
       return undefined
     }
@@ -317,6 +338,13 @@ export function pageFilterSummary(
     case 'HasNoInboundLinks': {
       return t('pageBrowser.filter.facetHasNoInboundLinks')
     }
+    case 'CaseSensitive':
+    case 'ChildOf':
+    case 'Regex':
+    case 'Snippet':
+    case 'TagOrRef':
+    case 'TagUnder':
+    case 'WholeWord':
     default: {
       // Search-only primitives never reach the Pages surface (allow-list
       // gate), but keep the switch exhaustive for type safety.

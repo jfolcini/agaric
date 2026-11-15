@@ -591,7 +591,7 @@ function BlockListItemInner({
             >
               <Calendar
                 mode="single"
-                onSelect={handleDateSelect}
+                onSelect={(date) => void handleDateSelect(date)}
                 data-testid="reschedule-calendar"
               />
             </PopoverContent>

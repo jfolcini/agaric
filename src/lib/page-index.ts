@@ -14,7 +14,7 @@ import { queryClient } from '@/lib/query-client'
 
 const PAGE_INDEX_QUERY_ROOT = 'page-index'
 
-/** The query of `spaceId`'s page index, for `useQuery` and `queryClient.fetchQuery`. */
+/** The query of `spaceId`'s page index, for `useQuery` and `queryClient.query`. */
 export function pageIndexQuery(spaceId: string): {
   queryKey: readonly [string, string]
   queryFn: () => Promise<PageHeading[]>

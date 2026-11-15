@@ -403,7 +403,12 @@ function liveBlock(blockId: string): Record<string, unknown> {
 }
 
 /** The item types whose list items the value typeahead offers (#6741). */
-const LIST_VALUE_TYPES_OFFERED: ReadonlySet<string | undefined> = new Set(['text', 'select', 'url'])
+const LIST_VALUE_TYPES_OFFERED: ReadonlySet<string | undefined> = new Set([
+  'text',
+  'select',
+  'url',
+  undefined,
+])
 
 /** The type `key`'s definition gives in the space of the block `blockId`, trashed or not. */
 function listItemType(blockId: string, key: string): string | undefined {
@@ -556,8 +561,8 @@ export const propertiesHandlers = {
         `SetProperty must have exactly 1 non-null value field, found ${valueCount}`,
       )
     }
-    // #6741 — a list is taken only by a definition that holds one, and such a
-    // definition takes nothing else.
+    // #6741 — a list is taken by a definition that holds one, which takes
+    // nothing else, and by an undeclared key.
     const listDef = propertyDefinition(defSpace, key)
     // `read_typed_ref_list`: a ref item that is no block id is the page its
     // `[[Title]]` or title names in the block's space.
@@ -755,8 +760,9 @@ export const propertiesHandlers = {
   // #1425 — distinct text values for a key, usage-ranked (most-used
   // first), `value ASC` tiebreaker. Mirrors the backend
   // `list_property_values`, surfacing the `value_text` channel and, from a
-  // list (#6741) whose key the holder's space declares text, select or url,
-  // each string item, counted with them; never ref ids, dates or numbers.
+  // list (#6741) whose key the holder's space declares text, select or url, or
+  // does not declare, each string item, counted with them, once per block
+  // however often the list repeats it; never ref ids, dates or numbers.
   list_property_values: (args) => {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
@@ -772,7 +778,7 @@ export const propertiesHandlers = {
       if (!Array.isArray(list) || !LIST_VALUE_TYPES_OFFERED.has(listItemType(blockId, key))) {
         continue
       }
-      for (const item of list as unknown[]) if (typeof item === 'string') count(item)
+      for (const item of new Set(list as unknown[])) if (typeof item === 'string') count(item)
     }
     return [...counts.entries()]
       .toSorted((x, y) => y[1] - x[1] || compareUtf8Bytes(x[0], y[0]))

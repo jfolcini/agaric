@@ -546,7 +546,7 @@ export function ImportSection(): React.ReactElement {
               multiple
               ref={fileInputRef}
               className="hidden"
-              onChange={handleFileImport}
+              onChange={(e) => void handleFileImport(e)}
               data-testid="import-file-input"
               aria-label={t('data.importButton')}
             />
@@ -585,7 +585,7 @@ export function ImportSection(): React.ReactElement {
               {...{ webkitdirectory: '', directory: '' }}
               ref={folderInputRef}
               className="hidden"
-              onChange={handleFileImport}
+              onChange={(e) => void handleFileImport(e)}
               data-testid="import-folder-input"
               aria-label={t('data.importFolderButton')}
             />
@@ -613,7 +613,7 @@ export function ImportSection(): React.ReactElement {
               {...{ webkitdirectory: '', directory: '' }}
               ref={obsidianVaultInputRef}
               className="hidden"
-              onChange={handleFileImport}
+              onChange={(e) => void handleFileImport(e)}
               data-testid="import-obsidian-input"
               aria-label={t('data.importObsidianButton')}
             />
@@ -640,7 +640,7 @@ export function ImportSection(): React.ReactElement {
               multiple
               ref={enexInputRef}
               className="hidden"
-              onChange={handleEnexImport}
+              onChange={(e) => void handleEnexImport(e)}
               data-testid="import-enex-input"
               aria-label={t('data.importEnexButton')}
             />
@@ -667,7 +667,7 @@ export function ImportSection(): React.ReactElement {
               multiple
               ref={jexInputRef}
               className="hidden"
-              onChange={handleJexImport}
+              onChange={(e) => void handleJexImport(e)}
               data-testid="import-jex-input"
               aria-label={t('data.importJexButton')}
             />
@@ -693,7 +693,7 @@ export function ImportSection(): React.ReactElement {
               accept=".bib,.json"
               ref={bibInputRef}
               className="hidden"
-              onChange={handleBibliographyImport}
+              onChange={(e) => void handleBibliographyImport(e)}
               data-testid="import-bib-input"
               aria-label={t('data.importBibliographyButton')}
             />

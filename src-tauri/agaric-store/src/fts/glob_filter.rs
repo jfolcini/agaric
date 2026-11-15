@@ -96,22 +96,21 @@ pub fn prepare_globs(entries: &[String]) -> Result<Vec<String>, AppError> {
 /// group are part of the brace alternative list and must not split
 /// the entry into separate globs.
 fn split_top_level_commas(input: &str) -> Vec<&str> {
-    let mut out: Vec<&str> = Vec::new();
     let mut depth: i32 = 0;
-    let mut last = 0usize;
-    for (i, ch) in input.char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                out.push(&input[last..i]);
-                last = i + 1;
+    input
+        .split(|ch| match ch {
+            '{' => {
+                depth += 1;
+                false
             }
-            _ => {}
-        }
-    }
-    out.push(&input[last..]);
-    out
+            '}' => {
+                depth = depth.saturating_sub(1);
+                false
+            }
+            ',' => depth == 0,
+            _ => false,
+        })
+        .collect()
 }
 
 /// Validate the cheap structural rules.
@@ -193,34 +192,34 @@ fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
     Ok(expand_segments_within_cap(parse_brace_segments(input)?))
 }
 
-/// Scan a pattern into segments, keeping the byte-offset cursor walk clear of
+/// Scan a pattern into segments, keeping the cursor walk clear of
 /// the cap accounting in [`expand_segments_within_cap`].
 fn parse_brace_segments(input: &str) -> Result<Vec<Segment>, AppError> {
     let mut segments: Vec<Segment> = Vec::new();
     let mut buf = String::new();
-    // #624: drive the cursor with `char_indices` so non-ASCII literals stay
-    // intact. The old `bytes[i] as char` reinterpreted each UTF-8 byte as a
-    // Latin-1 code point, so a brace pattern with non-ASCII text (`Café{1,2}`)
-    // mojibake'd (`é` → `Ã©`) and the expanded GLOBs silently never matched a
-    // title. `{`/`}` are ASCII (1 byte each), so the slice arithmetic below
-    // stays byte-correct on absolute byte offsets `i`/`end`.
-    let mut chars = input.char_indices().peekable();
-    while let Some((i, ch)) = chars.next() {
+    // #624: walk chars, not bytes, so non-ASCII literals (`Café{1,2}`) stay
+    // intact instead of mojibake-ing into GLOBs that never match a title.
+    let mut chars = input.chars();
+    while let Some(ch) = chars.next() {
         if ch == '{' {
             if !buf.is_empty() {
                 segments.push(Segment::Literal(std::mem::take(&mut buf)));
             }
-            // Find matching `}`. Already validated as un-nested.
-            let close = input[i + 1..].find('}');
-            let Some(rel) = close else {
-                // Unbalanced — should have been caught by `validate`.
-                return Err(AppError::validation_coded(
-                    ValidationCode::InvalidGlob,
-                    "unbalanced brace",
-                ));
-            };
-            let end = i + 1 + rel;
-            let inner = &input[i + 1..end];
+            // Consume through the matching `}`. Already validated as un-nested.
+            let mut inner = String::new();
+            loop {
+                match chars.next() {
+                    Some('}') => break,
+                    Some(c) => inner.push(c),
+                    // Unbalanced — should have been caught by `validate`.
+                    None => {
+                        return Err(AppError::validation_coded(
+                            ValidationCode::InvalidGlob,
+                            "unbalanced brace",
+                        ));
+                    }
+                }
+            }
             let alts: Vec<String> = inner
                 .split(',')
                 .map(str::trim)
@@ -232,15 +231,6 @@ fn parse_brace_segments(input: &str) -> Result<Vec<Segment>, AppError> {
             } else {
                 alts
             }));
-            // Skip the cursor past the consumed `{...}` group, i.e. every char
-            // whose byte offset is `<= end` (the closing `}` at byte `end`).
-            while let Some(&(j, _)) = chars.peek() {
-                if j <= end {
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
         } else {
             buf.push(ch);
         }
@@ -360,7 +350,7 @@ mod tests {
         // #624: the old `bytes[i] as char` cursor reinterpreted each UTF-8
         // byte of `é` as Latin-1, mojibake-ing the literal (`Café` → `CafÃ©`).
         // The expanded GLOBs then re-encoded as 4 garbage bytes and silently
-        // never matched a title. char_indices keeps the literal intact: ASCII
+        // never matched a title. A char walk keeps the literal intact: ASCII
         // folds (C→c), the non-ASCII `é` is preserved verbatim (matches #381).
         let out = prepare_globs(&["Café{1,2}".to_string()]).unwrap();
         assert_eq!(
@@ -374,6 +364,12 @@ mod tests {
             assert!(pat.contains('é'), "expected intact 'é' in {pat:?}");
             assert!(!pat.contains('Ã'), "mojibake leaked into {pat:?}");
         }
+    }
+
+    #[test]
+    fn non_ascii_inside_and_around_braces_and_top_level_commas_survives() {
+        let out = prepare_globs(&["日{本,é}x,ü/*".to_string()]).unwrap();
+        assert_eq!(out, vec!["*日本x*", "*日éx*", "ü/*"]);
     }
 
     #[test]

@@ -79,13 +79,14 @@ pub fn sanitize_attachment_filename(filename: &str) -> String {
     if safe.len() <= MAX_ATTACHMENT_FILENAME_BYTES {
         return safe;
     }
-    let mut cut = MAX_ATTACHMENT_FILENAME_BYTES;
-    while cut > 0 && !safe.is_char_boundary(cut) {
-        cut -= 1;
-    }
+    let head: String = safe
+        .char_indices()
+        .take_while(|&(i, c)| i + c.len_utf8() <= MAX_ATTACHMENT_FILENAME_BYTES)
+        .map(|(_, c)| c)
+        .collect();
     // Truncation could re-expose a trailing dot/space or empty the name — clean
     // the truncated head again so the cap can never revive an unsafe shape.
-    collapse_to_safe_component(&safe[..cut])
+    collapse_to_safe_component(&head)
 }
 
 /// Trim surrounding whitespace and trailing dots/spaces, then substitute the

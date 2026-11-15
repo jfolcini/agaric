@@ -85,9 +85,9 @@ import {
 /** What page mode does to a block's task, priority, dates and properties: block mode's commands. */
 export interface PageTaskActions {
   /** Cycle block `id`'s task state, as block mode's checkbox does. */
-  cycle: (id: string) => void
+  cycle: (id: string) => void | Promise<void>
   /** Cycle block `id`'s priority, as block mode's badge does. */
-  cyclePriority: (id: string) => void
+  cyclePriority: (id: string) => void | Promise<void>
   /** Set block `id`'s priority, as block mode's priority keys do. */
   setPriority: (id: string, level: '1' | '2' | '3') => void
   /** Open block mode's date picker on block `id`'s due or scheduled date. */
@@ -685,7 +685,7 @@ const PageTaskKeys = Extension.create<{ tasks: PageTaskSource }>({
             const id = caretBlockId(view.state)
             if (id === null) return false
             if (matchesShortcutBinding(event, 'cycleTaskState')) {
-              tasks.cycle(id)
+              void tasks.cycle(id)
               return true
             }
             if (matchesShortcutBinding(event, 'openDatePicker')) {

@@ -27,9 +27,9 @@ test.describe('Callout round-trip (#258) @editor @markdown', () => {
     await openPage(page, 'Getting Started')
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
-    await editor.type('important note')
+    await editor.pressSequentially('important note')
     // trigger the slash menu: a trailing "/callout" query, then select it
-    await editor.type(' /callout')
+    await editor.pressSequentially(' /callout')
     // Wait for the suggestion popup to render the filtered `/callout` item
     // before committing it with Enter, instead of a fixed sleep.
     const calloutItem = page.locator('#suggestion-callout')

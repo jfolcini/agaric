@@ -201,11 +201,10 @@ mod tests {
             .map(|raw| {
                 let trimmed = raw.trim();
                 // Strip any `as "<name>: <type>"` cast suffix.
-                if let Some(idx) = trimmed.find(" as ") {
-                    trimmed[..idx].trim().to_string()
-                } else {
-                    trimmed.to_string()
-                }
+                trimmed
+                    .split_once(" as ")
+                    .map_or(trimmed, |(column, _)| column.trim())
+                    .to_string()
             })
             .collect();
         let expected: Vec<String> = BLOCK_ROW_CANONICAL_FIELDS

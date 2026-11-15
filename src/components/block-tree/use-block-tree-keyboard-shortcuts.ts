@@ -89,8 +89,8 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
   clearSelected: () => void
   handleFlush: () => string | null
   setFocused: (id: string | null) => void
-  handleToggleTodo: (id: string) => void
-  handleSlashCommand: (item: { id: string; label: string }) => void
+  handleToggleTodo: (id: string) => void | Promise<void>
+  handleSlashCommand: (item: { id: string; label: string }) => void | Promise<void>
   rovingEditor: {
     editor: { state: { selection: { $anchor: { pos: number } } } } | null
     mount: (blockId: string, markdown: string, opts?: { cursorPlacement?: 'end' }) => void
@@ -588,7 +588,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
         // null` → 'TODO'), racing N conflicting `set_todo_state` IPCs.
         // addOwnedBlockListener now enforces it structurally.
         e.preventDefault()
-        handleToggleTodo(ownedBlockId)
+        void handleToggleTodo(ownedBlockId)
       }),
     [focusedBlockId, pageStore, handleToggleTodo],
   )
@@ -626,7 +626,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
         // risk); the gate (addOwnedBlockListener) confines the chord to the
         // owning tree.
         e.preventDefault()
-        handleSlashCommand({ id: `h${level}`, label: `Heading ${level}` })
+        void handleSlashCommand({ id: `h${level}`, label: `Heading ${level}` })
       }),
     [focusedBlockId, pageStore, handleSlashCommand],
   )

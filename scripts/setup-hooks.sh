@@ -38,7 +38,7 @@
 # handles that case.
 #
 # Two DIFFERENT version tables, opposite precedence (issue #3602, and #3611
-# for the sequel): a crate CI pins explicitly (today: sqruff, `sqruff@0.38.0`
+# for the sequel): a crate CI pins explicitly (today: sqruff, `sqruff@0.44.0`
 # in the `tool:` lists of `.github/workflows/_validate.yml` and
 # `scheduled-deep-checks.yml`) must install that EXACT version here too, and
 # — #3611 — REPLACE a differing one already on PATH, not just skip installing
@@ -285,7 +285,7 @@ ensure_uv() {
 
 # pinned_version_for <crate> — echoes the EXACT version this crate must
 # install as, matching a version CI pins explicitly (today: sqruff, via
-# `sqruff@0.38.0` in the `taiki-e/install-action` `tool:` lists of
+# `sqruff@0.44.0` in the `taiki-e/install-action` `tool:` lists of
 # `.github/workflows/_validate.yml` and `scheduled-deep-checks.yml`; and,
 # since #3742, prek/taplo-cli/typos-cli in the same lists). This is
 # purely a DATA table — it does not itself install anything and is not
@@ -319,10 +319,10 @@ ensure_uv() {
 # the version strings agreeing — see scripts/check-tool-pins.mjs).
 pinned_version_for() {
   case "$1" in
-    sqruff) echo "0.38.0" ;;
-    prek) echo "0.3.8" ;;
+    sqruff) echo "0.44.0" ;;
+    prek) echo "0.5.10" ;;
     taplo-cli) echo "0.10.0" ;;
-    typos-cli) echo "1.46.0" ;;
+    typos-cli) echo "1.52.0" ;;
     shellcheck) echo "0.11.0" ;;
     shfmt) echo "3.14.1" ;;
     *) echo "" ;;
@@ -559,7 +559,7 @@ if [ -z "$ZIZMOR_VERSION_AWK" ]; then
   warn "could not source ZIZMOR_VERSION_AWK from zizmor-hook.sh — falling back to cargo_get_pinned's \$NF default, which can disagree with the wrapper's \$2 and reinstall zizmor on every run (#3545)"
 fi
 
-# `sqruff --version` prints `sqruff 0.38.0` — unlike zizmor, no separate
+# `sqruff --version` prints `sqruff 0.44.0` — unlike zizmor, no separate
 # hook wrapper owns a competing version assertion for sqruff to drift
 # against (prek.toml's sqruff hook shells out to `sqruff lint` directly,
 # with no version check of its own), so there is no second file to source

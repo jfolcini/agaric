@@ -51,7 +51,7 @@ function stepGlobValidate(
   i: number,
   state: { bracket: number; brace: number },
 ): GlobValidationError | null {
-  const ch = input[i]
+  const ch = input.charAt(i)
   if (ch === '\\') {
     const next = input[i + 1]
     if (next === '{' || next === '}' || next === '[' || next === ']') {

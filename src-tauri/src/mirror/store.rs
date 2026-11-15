@@ -338,8 +338,12 @@ impl StateDir {
     }
 
     fn dir_for(&self, folder: &str) -> PathBuf {
-        let key = blake3::hash(folder.as_bytes()).to_hex();
-        self.base.join("folders").join(&key[..32])
+        let key: String = blake3::hash(folder.as_bytes())
+            .to_hex()
+            .chars()
+            .take(32)
+            .collect();
+        self.base.join("folders").join(key)
     }
 
     /// Bind the states to `folder`'s. Returns whether they changed.

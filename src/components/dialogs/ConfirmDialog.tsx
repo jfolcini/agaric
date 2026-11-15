@@ -277,7 +277,7 @@ export function ConfirmDialog({
               <Button
                 variant={isDestructive ? 'destructive' : 'default'}
                 disabled={isPending}
-                onClick={handleConfirmClick}
+                onClick={(event) => void handleConfirmClick(event)}
                 // Only auto-focus Action for non-destructive variants.
                 // oxlint-disable-next-line jsx-a11y/no-autofocus -- non-destructive confirm dialog (mobile Sheet): focus the primary Action on open so Enter confirms the expected, safe choice
                 autoFocus={!isDestructive}
@@ -305,7 +305,7 @@ export function ConfirmDialog({
               </AlertDialogCancel>
               <AlertDialogAction
                 className={cn(isDestructive && buttonVariants({ variant: 'destructive' }))}
-                onClick={handleConfirmClick}
+                onClick={(event) => void handleConfirmClick(event)}
                 disabled={isPending}
                 // Only auto-focus Action for non-destructive variants.
                 // oxlint-disable-next-line jsx-a11y/no-autofocus -- non-destructive confirm dialog (desktop AlertDialog): focus the primary Action on open so Enter confirms the expected, safe choice

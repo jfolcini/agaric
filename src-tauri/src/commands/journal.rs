@@ -513,15 +513,13 @@ fn expand_tokens(
 ) -> String {
     let mut out = String::with_capacity(content.len());
     let mut rest = content;
-    while let Some(start) = rest.find(open) {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + open.len()..];
-        let Some(end) = after.find(close) else {
+    while let Some((before, after)) = rest.split_once(open) {
+        out.push_str(before);
+        let Some((body, tail)) = after.split_once(close) else {
             out.push_str(open);
             rest = after;
             continue;
         };
-        let body = &after[..end];
         if let Some(value) = resolve(body) {
             out.push_str(&value);
         } else {
@@ -529,7 +527,7 @@ fn expand_tokens(
             out.push_str(body);
             out.push_str(close);
         }
-        rest = &after[end + close.len()..];
+        rest = tail;
     }
     out.push_str(rest);
     out
@@ -1584,6 +1582,55 @@ mod tests {
         .collect()
     }
 
+    /// #6741 — a template block's list under a key no definition declares, as
+    /// an import writes one, lands as that list, not as the text its line
+    /// reads as.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn journal_for_date_copies_an_undeclared_list_as_a_list_6741() {
+        use agaric_store::op::{PropertyList, PropertyListItem, PropertyValueFields};
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        let template = seed_template(&pool, &mat, &space).await;
+        let second = child(&pool, &mat, &template, "Listed").await;
+        let list = PropertyList(vec![
+            PropertyListItem::Text("wide".into()),
+            PropertyListItem::Text("dark, mode".into()),
+        ]);
+        let value = PropertyValueFields {
+            value_list: Some(list.clone()),
+            ..Default::default()
+        };
+        crate::commands::set_property_list_inner(
+            &pool,
+            DEV,
+            &mat,
+            ActiveBlockId::from(second),
+            "cssclasses".into(),
+            value,
+        )
+        .await
+        .expect("an undeclared key takes a list");
+
+        let day = NaiveDate::parse_from_str(DAY, "%Y-%m-%d").unwrap();
+        let page = journal_for_date_inner(&pool, DEV, &mat, day, &space)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let page_id = page.id.into_string();
+        let held = sqlx::query_scalar!(
+            r#"SELECT bp.value_list AS "value_list: PropertyList"
+               FROM block_properties bp JOIN blocks b ON b.id = bp.block_id
+               WHERE b.page_id = ?1 AND b.content = 'Listed' AND bp.key = 'cssclasses'"#,
+            page_id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(held, [Some(list)]);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn journal_for_date_copies_the_template_with_nesting_and_variables() {
         let (pool, _dir) = test_pool().await;
@@ -2092,6 +2139,17 @@ mod tests {
             "<% season %> {{foo}} <% open {{ x }} <% date+x %> <% date + 1 %> <% date+-1 %>"
         );
         assert_eq!(expand("plain"), "plain");
+    }
+
+    #[test]
+    fn journal_template_variables_keep_multibyte_text_around_tokens() {
+        let day = NaiveDate::from_ymd_opt(2031, 1, 2).unwrap();
+        let time = NaiveTime::from_hms_opt(9, 5, 0).unwrap();
+        let expand = |s: &str| expand_journal_template_variables(s, day, time);
+        assert_eq!(
+            expand("日本<% today %>é{{ time }}🎉<% été %>ü<% 開"),
+            "日本2031-01-02é09:05🎉<% été %>ü<% 開"
+        );
     }
 
     #[test]

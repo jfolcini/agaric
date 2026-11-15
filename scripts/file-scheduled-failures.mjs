@@ -231,7 +231,7 @@ export function parseNeeds(text) {
   try {
     parsed = JSON.parse(text)
   } catch (err) {
-    throw new Error(`the \`needs\` payload is not valid JSON (${err.message})`)
+    throw new Error(`the \`needs\` payload is not valid JSON (${err.message})`, { cause: err })
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('the `needs` payload is not a JSON object keyed by job id')

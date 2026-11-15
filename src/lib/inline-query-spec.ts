@@ -124,8 +124,9 @@ export function countFilterLeaves(expr: FilterExpr): number {
     case 'Not': {
       return countFilterLeaves(expr.child)
     }
+    case 'And':
+    case 'Or':
     default: {
-      // And | Or — sum over children.
       return expr.children.reduce((sum, child) => sum + countFilterLeaves(child), 0)
     }
   }

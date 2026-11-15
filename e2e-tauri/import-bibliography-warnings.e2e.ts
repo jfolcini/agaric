@@ -10,7 +10,8 @@
 // created page is re-opened from the Pages list after a navigation
 // round-trip, which is the durable read, and its paper title is read back
 // from the page's properties, as is the `journal` its biblatex
-// `journaltitle` maps to (#6032).
+// `journaltitle` maps to (#6032), and its two authors, each one item of the
+// `authors` list though both names hold a comma (#6741).
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -23,6 +24,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   navigateTo,
+  propertyListItems,
   reopenPageByTitle,
   runScopedMarker,
   waitForAppReady,
@@ -34,7 +36,7 @@ const PAGE_TITLE = `${FAMILY} ${YEAR}`
 const JOURNAL = 'WDIO Journal Title'
 const BIBTEX = [
   `@article{${FAMILY}key,`,
-  `  author = {${FAMILY}, Test},`,
+  `  author = {${FAMILY}, Test and Doe, Jane},`,
   '  title = {WDIO bibliography round trip},',
   `  journaltitle = {${JOURNAL}},`,
   `  year = {${YEAR}}`,
@@ -113,5 +115,14 @@ describe('Agaric real-backend bibliography import (#4671) @markdown', () => {
     const journal = $('[aria-label="journal value"]')
     await journal.waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await journal.getValue()).toBe(JOURNAL)
+  })
+
+  it('keeps each author as one item of the authors list (#6741)', async () => {
+    await navigateTo('Journal')
+    await reopenPageByTitle(PAGE_TITLE)
+    const properties = $('.page-property-table-header')
+    await properties.waitForClickable({ timeout: NAV_TIMEOUT })
+    await properties.click()
+    expect(await propertyListItems('authors', 2)).toEqual([`${FAMILY}, Test`, 'Doe, Jane'])
   })
 })

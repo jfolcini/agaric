@@ -249,7 +249,7 @@ export function TemplatesView(): React.ReactElement {
         items={templates}
         skeleton={<LoadingSkeleton count={3} height="h-14" data-testid="templates-loading" />}
         error={loadError && t('slash.templateLoadFailed')}
-        onRetry={loadTemplates}
+        onRetry={() => void loadTemplates()}
         empty={<EmptyState icon={LayoutTemplate} message={t('templates.empty')} />}
       >
         {() => (

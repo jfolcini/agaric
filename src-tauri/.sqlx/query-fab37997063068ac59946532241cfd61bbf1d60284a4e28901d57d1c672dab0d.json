@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT v AS \"v!: String\" FROM (\n             SELECT value_text AS v FROM block_properties\n              WHERE key = ?1 AND value_text IS NOT NULL\n             UNION ALL\n             SELECT v FROM (\n               SELECT DISTINCT bp.block_id, CAST(li.value AS TEXT) AS v FROM block_properties bp\n                 JOIN blocks b ON b.id = bp.block_id\n                 LEFT JOIN property_definitions d ON d.space_id = b.space_id AND d.key = bp.key\n                 JOIN json_each(bp.value_list) li\n                WHERE bp.key = ?1 AND (d.value_type IS NULL OR d.value_type IN ('text', 'select', 'url'))\n                  AND li.type = 'text'\n             )\n           )\n           GROUP BY v ORDER BY COUNT(*) DESC, v ASC LIMIT 1001",
+  "describe": {
+    "columns": [
+      {
+        "name": "v!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "fab37997063068ac59946532241cfd61bbf1d60284a4e28901d57d1c672dab0d"
+}

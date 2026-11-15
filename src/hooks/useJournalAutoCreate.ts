@@ -25,7 +25,7 @@ interface UseJournalAutoCreateOptions {
    * probe, so the mount path creates (or not) from it directly.
    */
   pageMapFetchedThisMount: boolean
-  handleAddBlock: (dateStr: string) => void
+  handleAddBlock: (dateStr: string) => void | Promise<void>
 }
 
 export function useJournalAutoCreate({
@@ -70,7 +70,7 @@ export function useJournalAutoCreate({
     if (fresh != null) {
       if (fresh.has(dateStr)) return
       autoCreatedRef.current = dateStr
-      createPage(dateStr)
+      void createPage(dateStr)
       return
     }
     let cancelled = false
@@ -83,7 +83,7 @@ export function useJournalAutoCreate({
         if (autoCreatedRef.current === dateStr) return
         if (hasCreatedPage(dateStr)) return
         autoCreatedRef.current = dateStr
-        createPage(dateStr)
+        void createPage(dateStr)
       })
       .catch(() => {
         // Probe failure leaves the page un-auto-created for this render.
@@ -132,7 +132,7 @@ export function useJournalAutoCreate({
           // the date; the second bails.
           if (autoCreatedRef.current === dateStr) return
           autoCreatedRef.current = dateStr
-          handleAddBlock(dateStr)
+          void handleAddBlock(dateStr)
         })
         .catch(() => {
           // Probe failure leaves the shortcut as a no-op for this press.

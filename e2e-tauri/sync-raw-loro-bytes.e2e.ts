@@ -68,7 +68,7 @@ function backendContents(ids: string[]): Promise<string[]> {
         try {
           return ((await invoke('get_block', { blockId })) as { content: string | null }).content
         } catch (error) {
-          throw new Error(`get_block ${blockId} failed: ${JSON.stringify(error)}`)
+          throw new Error(`get_block ${blockId} failed: ${JSON.stringify(error)}`, { cause: error })
         }
       }),
     )

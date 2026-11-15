@@ -367,7 +367,7 @@ export function PeerListItem({
             variant="outline"
             size="sm"
             className="device-cancel-sync-btn w-full sm:w-auto"
-            onClick={handleCancelSync}
+            onClick={() => void handleCancelSync()}
             disabled={cancelling}
             aria-label={t('device.cancelSyncLabel')}
           >

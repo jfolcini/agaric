@@ -308,6 +308,7 @@ export function AddFilterPopover({
           value = { type: 'Ref', value: v }
           break
         }
+        case 'Text':
         default: {
           value = { type: 'Text', value: v }
         }

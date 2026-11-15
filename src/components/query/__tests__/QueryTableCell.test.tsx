@@ -195,14 +195,16 @@ describe('a query table cell against the mock backend', () => {
 
   // #6741 — a key that holds several values: the cell shows the items and edits
   // them with the list editor, which writes the whole list, never one scalar.
-  async function holdList(key: string, valueType: string, items: string[]): Promise<void> {
-    await invoke('create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
-      key,
-      valueType,
-      options: null,
-      multiple: true,
-    })
+  async function holdList(key: string, valueType: string | null, items: string[]): Promise<void> {
+    if (valueType !== null) {
+      await invoke('create_property_def', {
+        spaceId: 'SPACE_PERSONAL',
+        key,
+        valueType,
+        options: null,
+        multiple: true,
+      })
+    }
     await invoke('set_property', {
       blockId: SEED_IDS.BLOCK_MTG_1,
       key,
@@ -235,6 +237,18 @@ describe('a query table cell against the mock backend', () => {
 
     const cell = await editCell('authors', 'Ann, Bob, Cy')
     await waitFor(() => expect(cell).toHaveFocus())
+    expect(writes()).toEqual(['set_property'])
+  })
+
+  // An undeclared key's list, as an import writes one, is edited as a list too.
+  it('edits an undeclared key’s list with the list editor', async () => {
+    await holdList('cssclasses', null, ['wide'])
+    const user = userEvent.setup()
+    render(<QueryResult expression={`${QUERY} columns:cssclasses`} />)
+
+    await user.click(await editCell('cssclasses', 'wide'))
+    await user.keyboard('dark{Enter}')
+    expect(await screen.findByText('dark')).toBeInTheDocument()
     expect(writes()).toEqual(['set_property'])
   })
 

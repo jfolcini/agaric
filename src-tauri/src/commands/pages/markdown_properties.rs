@@ -22,6 +22,10 @@ pub(super) struct PropertyLines {
     /// The key each canonical `key:: value` line of a source buffer was typed
     /// with, when it was typed otherwise, to name the line by.
     typed: HashMap<(String, String), String>,
+    /// The `(key, list text)` pairs that write a list though no definition
+    /// says the key holds one (#6741): a front matter YAML list's, and in a
+    /// copy each list the copied blocks held ([`Self::note_list`]).
+    listed: HashSet<(String, String)>,
 }
 
 impl PropertyLines {
@@ -70,6 +74,7 @@ impl PropertyLines {
             spellings,
             refs: HashMap::new(),
             typed: HashMap::new(),
+            listed: HashSet::new(),
         })
     }
 
@@ -238,9 +243,32 @@ impl PropertyLines {
         })
     }
 
+    /// Read `text`, the text of `items` ([`import::write_property_list`]),
+    /// under `key` as the list it is, whether or not the key is declared to
+    /// hold one: a YAML list in front matter, or a list a copied block held.
+    pub(super) fn note_list(&mut self, key: String, text: String) {
+        self.listed.insert((key, text));
+    }
+
     /// The value `value` is written as under `key`, a canonical key, or why
-    /// its definition refuses it.
+    /// its definition refuses it. A list [`Self::note_list`] names is a list
+    /// under an undeclared key, but one the app keeps for itself, and under a
+    /// key that holds one value its items joined by `, `, as a list's text
+    /// was before lists (#6741).
     pub(super) fn read(&self, key: &str, value: &str) -> Result<PropertyValueFields, String> {
+        let declaration = self.declarations.get(key);
+        let listed = || self.listed.contains(&(key.to_owned(), value.to_owned()));
+        if declaration.is_none_or(|d| !d.multiple) && listed() {
+            if declaration.is_some() || agaric_store::op::is_internal_property_key(key) {
+                return self.read_value(key, &import::property_list_items(value).join(", "));
+            }
+            return self.read_list(value, "text");
+        }
+        self.read_value(key, value)
+    }
+
+    /// [`Self::read`] of a value no list text names.
+    fn read_value(&self, key: &str, value: &str) -> Result<PropertyValueFields, String> {
         let declaration = self.declaration(key);
         let value_type = declaration.as_ref().map(|d| d.value_type.as_str());
         let fields = |args: agaric_engine::block_ops::TypedPropertyArgs| PropertyValueFields {
@@ -327,18 +355,22 @@ fn push_text_line(content: &mut String, line: &str) {
     content.push_str(line);
 }
 
-/// `text` with each `[[` that opens a page link escaped (#5160 N3).
+/// `text` with each `[[` that opens a page link escaped (#5160 N3). A `[[`
+/// is escaped already when the text between it and the `[[` before it ends in
+/// an odd run of backslashes.
 fn escape_page_links(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len() + 2);
-    let mut copied = 0;
-    for (at, _) in text.match_indices("[[") {
-        if !is_escaped(text, at) {
-            escaped.push_str(&text[copied..at]);
-            escaped.push('\\');
-            copied = at;
+    let mut before: Option<&str> = None;
+    for piece in text.split("[[") {
+        if let Some(before) = before {
+            if !is_escaped(before, before.len()) {
+                escaped.push('\\');
+            }
+            escaped.push_str("[[");
         }
+        escaped.push_str(piece);
+        before = Some(piece);
     }
-    escaped.push_str(&text[copied..]);
     escaped
 }
 
@@ -483,4 +515,20 @@ pub(crate) async fn read_typed_ref_list(
             .map_err(AppError::validation)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #6841 — each `[[` an odd backslash run does not already escape gains
+    /// one, after multi-byte text and back to back alike.
+    #[test]
+    fn each_unescaped_page_link_opener_is_escaped() {
+        assert_eq!(
+            escape_page_links(r"é [[日本]] \[[a]] 🙂[[[[b]] \\[[c]]"),
+            r"é \[[日本]] \[[a]] 🙂\[[\[[b]] \\\[[c]]"
+        );
+        assert_eq!(escape_page_links("ü"), "ü");
+    }
 }

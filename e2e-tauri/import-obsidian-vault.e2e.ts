@@ -11,7 +11,9 @@
 // navigation round-trip: the link chip opens the vault's note and no title
 // carries the vault's name, `[[über]]` names `Über.md` (the backend folds note
 // names in full Unicode, as the frontend does), the tag chip reads its name,
-// the front-matter property is set, the embed renders from the stored bytes,
+// the front-matter property is set, a front-matter YAML list is a list of two
+// items that the export writes back as the same YAML list (#6741), the embed
+// renders from the stored bytes,
 // a `|300` embed at that width, the image is an attachment only, never a
 // page, and `![[topic]]`, Obsidian's stored embed of a note, is an embed
 // block showing the note. `![[topic#^step]]`
@@ -32,10 +34,12 @@ import {
   blockStaticByMarker,
   expectAbsent,
   expectImageRendered,
+  exportOpenPage,
   importFolder,
   navigateTo,
   openPageTitled,
   pageEntryTitled,
+  propertyListItems,
   runScopedMarker,
   waitForAppReady,
 } from './helpers'
@@ -71,6 +75,7 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
     const homeMd = [
       '---',
       `reviewer: ${marker}-alice`,
+      'authors: ["Smith, John", "Doe, Jane"]',
       '---',
       `- ${marker}-links [[${topic}]] #${marker}-tag`,
       `- ${marker}-figure ![[pic.png]]`,
@@ -168,6 +173,11 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
     const reviewer = $('[aria-label="reviewer value"]')
     await reviewer.waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await reviewer.getValue()).toBe(`${marker}-alice`)
+    // A YAML list under an undeclared key is a list, an item holding a comma
+    // one item (#6741), and the export writes it back as that YAML list.
+    const authors = await propertyListItems('authors', 2)
+    expect(authors).toEqual(['Smith, John', 'Doe, Jane'])
+    expect(await exportOpenPage()).toContain('authors: ["Smith, John", "Doe, Jane"]\n')
 
     // The link names the vault's note, and opens it. The row is scrolled to
     // first: a row outside the scroller renders as a placeholder, chipless

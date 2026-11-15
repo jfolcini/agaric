@@ -875,12 +875,16 @@ export function fetchWorkflowRuns(repo, workflow, { event = 'schedule', branch }
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
     )
   } catch (err) {
-    throw new Error(`${workflow}: \`gh run list\` failed (${err.message.split('\n')[0]})`)
+    throw new Error(`${workflow}: \`gh run list\` failed (${err.message.split('\n')[0]})`, {
+      cause: err,
+    })
   }
   try {
     return JSON.parse(raw)
   } catch (err) {
-    throw new Error(`${workflow}: \`gh run list\` did not return JSON (${err.message})`)
+    throw new Error(`${workflow}: \`gh run list\` did not return JSON (${err.message})`, {
+      cause: err,
+    })
   }
 }
 

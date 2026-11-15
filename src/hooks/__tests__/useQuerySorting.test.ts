@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { compareValues, useQuerySorting } from '@/hooks/useQuerySorting'
+import { buildCustomPropsMap, propertyRowSortValue } from '@/lib/query-result-columns'
 
 describe('compareValues', () => {
   it('returns 0 when both values are null', () => {
@@ -202,12 +203,9 @@ describe('useQuerySorting', () => {
       value_list: items,
     })
     const propertyRows = { A: [list(['Ann', 'Zed'])], B: [list(['Ann'])] }
-    const customProps = new Map([
-      ['A', new Map([['authors', 'Ann, Zed']])],
-      ['B', new Map([['authors', 'Ann']])],
-    ])
+    const customProps = buildCustomPropsMap(propertyRows, propertyRowSortValue)
     const results = [blockC, blockA, blockB]
-    const { result } = renderHook(() => useQuerySorting({ results, customProps, propertyRows }))
+    const { result } = renderHook(() => useQuerySorting({ results, customProps }))
 
     act(() => {
       result.current.handleColumnSort('prop:authors')

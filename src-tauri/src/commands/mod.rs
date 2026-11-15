@@ -723,8 +723,9 @@ pub struct AttachmentRow {
 /// top-level type (e.g. `"image/png"`, `"image/jpeg"`).
 fn is_mime_allowed(mime: &str) -> bool {
     for pattern in ALLOWED_MIME_PATTERNS {
-        if pattern.ends_with("/*") {
-            let prefix = &pattern[..pattern.len() - 1]; // e.g. "image/"
+        if let Some(prefix) = pattern.strip_suffix('*') // e.g. "image/"
+            && prefix.ends_with('/')
+        {
             if let Some(subtype) = mime.strip_prefix(prefix) {
                 // Require a non-empty subtype with no further '/', so
                 // "image/" (empty) and "image/../x" (multi-segment) are

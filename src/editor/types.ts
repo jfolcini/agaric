@@ -293,6 +293,17 @@ function pmNodeSize(node: PMPositionNode): number {
     case 'math_block': {
       return 1
     }
+    case 'blockquote':
+    case 'bulletList':
+    case 'codeBlock':
+    case 'heading':
+    case 'listItem':
+    case 'orderedList':
+    case 'paragraph':
+    case 'table':
+    case 'tableCell':
+    case 'tableHeader':
+    case 'tableRow':
     default: {
       return 2 + pmContentSize(node.content)
     }
@@ -318,6 +329,14 @@ function pmRightmostTextblockEnd(node: PMPositionNode, start: number): number | 
     case 'math_block': {
       return undefined
     }
+    case 'blockquote':
+    case 'bulletList':
+    case 'listItem':
+    case 'orderedList':
+    case 'table':
+    case 'tableCell':
+    case 'tableHeader':
+    case 'tableRow':
     default: {
       let childStart = start + 1
       let rightmost: number | undefined

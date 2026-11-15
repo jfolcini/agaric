@@ -88,18 +88,15 @@ async fn reserved_key_set_matches_db_check_constraint_589() {
     // Locate the `key_not_reserved` CHECK, then its `key NOT IN (...)`
     // list. Parsing is anchored on the named constraint so an unrelated
     // NOT IN elsewhere in the DDL cannot be picked up by mistake.
-    let check_start = ddl
-        .find("key_not_reserved")
+    let (_, tail) = ddl
+        .split_once("key_not_reserved")
         .expect("block_properties DDL must contain the key_not_reserved CHECK (migration 0088)");
-    let tail = &ddl[check_start..];
-    let not_in_start = tail
-        .find("NOT IN (")
+    let (_, list_onward) = tail
+        .split_once("NOT IN (")
         .expect("key_not_reserved CHECK must use `key NOT IN (...)`");
-    let list_start = not_in_start + "NOT IN (".len();
-    let list_end = tail[list_start..]
-        .find(')')
+    let (list, _) = list_onward
+        .split_once(')')
         .expect("key NOT IN list must be closed with ')'");
-    let list = &tail[list_start..list_start + list_end];
 
     let db_keys: BTreeSet<String> = list
         .split(',')
@@ -4213,16 +4210,24 @@ fn sql_drops_blocks_table(sql: &str) -> bool {
     let collapsed = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
     let collapsed = collapsed.replace("DROP TABLE IF EXISTS ", "DROP TABLE ");
     let needle = "DROP TABLE BLOCKS";
-    let mut start = 0;
-    while let Some(pos) = collapsed[start..].find(needle) {
-        let after = start + pos + needle.len();
-        match collapsed.as_bytes().get(after) {
+    let mut rest = collapsed.as_str();
+    while let Some((_, after)) = rest.split_once(needle) {
+        match after.bytes().next() {
             None => return true,
-            Some(c) if !c.is_ascii_alphanumeric() && *c != b'_' => return true,
-            _ => start = after,
+            Some(c) if !c.is_ascii_alphanumeric() && c != b'_' => return true,
+            _ => rest = after,
         }
     }
     false
+}
+
+#[test]
+fn sql_drops_blocks_table_skips_a_longer_name_to_find_the_real_drop() {
+    let sql = "INSERT INTO t VALUES ('日本é'); DROP TABLE blocks_old; DROP TABLE blocks;";
+    assert!(sql_drops_blocks_table(sql));
+    assert!(!sql_drops_blocks_table(
+        "UPDATE t SET v = 'é'; DROP TABLE blocks_old; -- DROP TABLE blocks"
+    ));
 }
 
 /// Sorted versions of every UP migration, and the subset whose SQL drops

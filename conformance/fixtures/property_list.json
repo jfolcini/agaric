@@ -1,5 +1,5 @@
 {
-  "description": "#6741 — a property that holds a list. A definition declared `multiple` takes a `value_list`, a JSON array of strings or numbers held to the definition's type item by item, and takes nothing else; no other key takes a list. The list is one value: a set replaces it whole, its undo restores the list it replaced, and a delete's undo restores the one it removed. Driven through the commands themselves (`via: \"command\"`).",
+  "description": "#6741 — a property that holds a list. A definition declared `multiple` takes a `value_list`, a JSON array of strings or numbers held to the definition's type item by item, and takes nothing else; an undeclared key takes a list of strings or numbers as it takes any value, but one the app keeps for itself, and a key that holds one value or a built-in key refuses one. The list is one value: a set replaces it whole, its undo restores the list it replaced, and a delete's undo restores the one it removed. Driven through the commands themselves (`via: \"command\"`).",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -44,7 +44,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 13,
+      "count": 14,
       "ops": [
         {
           "op_type": "set_property_def"
@@ -79,6 +79,10 @@
         },
         {
           "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "key": "note",
           "op_type": "set_property"
         },
         {
@@ -118,6 +122,12 @@
         "block_id": "B2",
         "key": "stages",
         "value": ["review", "draft"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B3",
+        "key": "note",
+        "value": ["a", 3.0],
         "value_type": "List"
       }
     ]
@@ -204,8 +214,15 @@
     },
     {
       "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"note\"]"],
+      "name": "an_undeclared_key_takes_a_list",
+      "returns": ["B3"]
+    },
+    {
+      "code": null,
       "error": "validation",
-      "name": "a_list_under_an_undeclared_key_is_refused",
+      "name": "a_list_under_an_internal_key_is_refused",
       "returns": []
     },
     {
@@ -307,7 +324,8 @@
         "B2->authors#List=[Smith, John,Doe]",
         "B2->related#List=[000000000000000000000000S1,000000000000000000000000S3]",
         "B2->scores#List=[2.5,4]",
-        "B2->stages#List=[review,draft]"
+        "B2->stages#List=[review,draft]",
+        "B3->note#List=[a,3]"
       ],
       "total_count": null
     },
@@ -495,13 +513,26 @@
         "blockId": "S3",
         "key": "note",
         "value": {
+          "value_list": ["a", 3]
+        }
+      },
+      "command": "set_property",
+      "comment": "O11. An undeclared key takes any value shape, a list too.",
+      "name": "an_undeclared_key_takes_a_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "template",
+        "value": {
           "value_list": ["a"]
         }
       },
       "command": "set_property",
-      "comment": "Only a definition that holds a list takes one.",
+      "comment": "A key the app keeps for itself refuses a list, declared or not.",
       "expect_error": "validation",
-      "name": "a_list_under_an_undeclared_key_is_refused",
+      "name": "a_list_under_an_internal_key_is_refused",
       "via": "command"
     },
     {
@@ -622,7 +653,7 @@
         "opRef": "O10"
       },
       "command": "undo_op",
-      "comment": "O11. The reverse of O10 sets the two-author list back.",
+      "comment": "O12. The reverse of O10 sets the two-author list back.",
       "name": "undo_restores_the_list_a_set_replaced",
       "via": "command"
     },
@@ -632,16 +663,16 @@
         "key": "scores"
       },
       "command": "delete_property",
-      "comment": "O12. A delete records the list it removed.",
+      "comment": "O13. A delete records the list it removed.",
       "name": "delete_a_list",
       "via": "command"
     },
     {
       "args": {
-        "opRef": "O12"
+        "opRef": "O13"
       },
       "command": "undo_op",
-      "comment": "O13. So its undo sets it again.",
+      "comment": "O14. So its undo sets it again.",
       "name": "undo_restores_a_deleted_list",
       "via": "command"
     }

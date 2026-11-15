@@ -182,3 +182,11 @@ fn a_list_number_is_every_digit_before_its_dot_or_parenthesis() {
     assert_eq!(list_number(". none"), None);
     assert_eq!(list_number("4 none"), None);
 }
+
+#[test]
+fn a_list_number_stops_at_the_first_non_ascii_digit() {
+    assert_eq!(list_number("12.日本"), Some("12"));
+    assert_eq!(list_number("７. full-width"), None);
+    assert_eq!(list_number("1٣) arabic-indic"), None);
+    assert_eq!(list_number("é1. x"), None);
+}
